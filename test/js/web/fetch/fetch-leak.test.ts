@@ -11,10 +11,10 @@ import {
   isWindows,
   tempDir,
 } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { fstatSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
-import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1128,9 +1128,40 @@ describe("fetch() frees a sent request body while the response is still streamin
       { headers: { "Content-Type": "text/event-stream" } },
     );
 
-  // Each reads the whole request, then answers with a body that never ends.
-  const serve = (options = {}) =>
-    Bun.serve({
+  const secure = { tls: COMMON_CERT, hostname: "127.0.0.1" };
+  const anyCert = { tls: { rejectUnauthorized: false } };
+  type Transport = [serve: object, init: BunFetchRequestInit];
+  const tcp: Transport = [{}, {}];
+  const tls: Transport = [secure, anyCert];
+  const h2: Transport = [
+    { ...secure, http2: true, http1: false },
+    { ...anyCert, protocol: "http2" },
+  ];
+  const h3: Transport = [
+    { ...secure, http3: true, http1: false },
+    { ...anyCert, protocol: "http3" },
+  ];
+
+  test.concurrent.each<[string, string, ...Transport]>([
+    // Copied per fetch().
+    ["typed array", `const body = () => bytes;`, ...tcp],
+    // Transcoded to UTF-8 per fetch().
+    ["non-ASCII string", `const shared = bytes.latin1Slice() + "\\u00e9"; const body = () => shared;`, ...tcp],
+    // fetch() shares these with the JS value, so each fetch() needs a value that only it keeps.
+    ["ASCII string", `const body = () => bytes.latin1Slice();`, ...tcp],
+    ["Blob", `const body = () => new Blob([bytes]);`, ...tcp],
+    ["typed array that a 303 redirect drops", `const body = () => bytes; path = "/303";`, ...tcp],
+    [
+      "typed array and its compressed copy",
+      `require("crypto").randomFillSync(bytes); const body = () => bytes;`,
+      {},
+      { compress: { encoding: "zstd", level: 1 } },
+    ],
+    ["typed array over TLS", `const body = () => bytes;`, ...tls],
+    ["typed array over HTTP/2", `const body = () => bytes;`, ...h2],
+    ["typed array over HTTP/3", `const body = () => bytes;`, ...h3],
+  ])("%s", async (_, setup, options, init) => {
+    using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
       ...options,
@@ -1139,58 +1170,11 @@ describe("fetch() frees a sent request body while the response is still streamin
         return new URL(req.url).pathname === "/303" ? Response.redirect("/", 303) : endless();
       },
     });
-  async function serveHttp2() {
-    const sessions: http2.ServerHttp2Session[] = [];
-    const server = http2.createSecureServer(COMMON_CERT);
-    server.on("session", session => sessions.push(session));
-    server.on("stream", stream => {
-      // The client exits with the responses open.
-      stream.on("error", () => {});
-      stream.resume().on("end", () => {
-        stream.respond({ ":status": 200 });
-        stream.write("data: 1\n\n");
-      });
-    });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    return {
-      url: new URL(`https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`),
-      [Symbol.dispose]() {
-        for (const session of sessions) session.destroy();
-        server.close();
-      },
-    };
-  }
-
-  const anyCert = `init.tls = { rejectUnauthorized: false };`;
-  const cases: Record<string, [setup: string, serve?: () => Bun.MaybePromise<Disposable & { url: URL }>]> = {
-    // Copied per fetch().
-    "typed array": [`const body = () => ascii;`],
-    // Transcoded to UTF-8 per fetch().
-    "non-ASCII string": [`const shared = ascii.latin1Slice() + "\\u00e9"; const body = () => shared;`],
-    // fetch() shares these with the JS value, so each fetch() needs a value that only it keeps.
-    "ASCII string": [`const body = () => ascii.latin1Slice();`],
-    "Blob": [`const body = () => new Blob([ascii]);`],
-    "typed array that a 303 redirect drops": [`const body = () => ascii; path = "/303";`],
-    "typed array and its compressed copy": [
-      `const body = () => random; init.compress = { encoding: "zstd", level: 1 };`,
-    ],
-    "typed array over TLS": [`const body = () => ascii; ${anyCert}`, () => serve({ tls: COMMON_CERT })],
-    "typed array over HTTP/2": [`const body = () => ascii; ${anyCert} init.protocol = "http2";`, serveHttp2],
-    "typed array over HTTP/3": [
-      `const body = () => ascii; ${anyCert} init.protocol = "http3";`,
-      () => serve({ tls: COMMON_CERT, http3: true, hostname: "127.0.0.1" }),
-    ],
-  };
-  test.concurrent.each(Object.keys(cases))("%s", async kind => {
-    const [setup, start = serve] = cases[kind];
-    using server = await start();
-    // The other transports are slow on a debug build.
-    const count = start === serve ? 24 : 12;
+    // TLS is slow on a debug build.
+    const count = init.tls ? 12 : 24;
     const code = /* js */ `
-      const ascii = Buffer.alloc(4 * 1024 * 1024, "a");
-      const random = new Uint8Array(ascii.length);
-      for (let i = 0; i < random.length; i += 65536) crypto.getRandomValues(random.subarray(i, i + 65536));
-      const init = { method: "POST" };
+      const bytes = Buffer.alloc(4 * 1024 * 1024, "a");
+      const init = { ...${JSON.stringify(init)}, method: "POST" };
       let path = "/";
       ${setup}
       const responses = [];
@@ -1210,7 +1194,7 @@ describe("fetch() frees a sent request body while the response is still streamin
       process.exit(0);
     `;
     // Unfixed: 4 MiB per request. Fixed: about 0, but up to a third of that for the values that the
-    // GC frees on a debug build, where a loop that only makes them measures the same.
+    // GC frees on a debug build, where a loop that only makes them grows no less.
     await expectRssDeltaBelow(["--smol", "-e", code], { release: count * 2, debug: count * 2.5 });
   });
 
@@ -1229,7 +1213,7 @@ describe("fetch() frees a sent request body while the response is still streamin
   }
 
   // Windows has no sendfile(): fetch() reads the file first and sends bytes.
-  test.skipIf(isWindows)("file sent with sendfile()", async () => {
+  test.concurrent.skipIf(isWindows)("file sent with sendfile()", async () => {
     using dir = tempDir("fetch-sendfile-body", { "body.bin": Buffer.alloc(64 * 1024, "a") });
     const path = join(String(dir), "body.bin");
     let beforeHead = -1;
@@ -1247,7 +1231,7 @@ describe("fetch() frees a sent request body while the response is still streamin
     expect({ beforeHead, afterHead }).toEqual({ beforeHead: 1, afterHead: 0 });
   });
 
-  test.skipIf(isWindows)("when JavaScript is busy until more than the head has arrived", async () => {
+  test.concurrent.skipIf(isWindows)("when JavaScript is busy until more than the head has arrived", async () => {
     using dir = tempDir("fetch-busy-body", { "body.bin": Buffer.alloc(64 * 1024, "a") });
     const file = Promise.withResolvers<ReadableStreamDefaultController>();
     const redirected = Promise.withResolvers<void>();
@@ -1325,49 +1309,48 @@ describe("fetch() frees a sent request body while the response is still streamin
     expect(exitCode).toBe(0);
   });
 
-  // Passes without the early free too; fails if the free does not wait for the send.
-  test.each(["typed array", "file"])("but not a %s that is still being sent", async kind => {
-    const bytes = Buffer.alloc(16 * 1024 * 1024, "a");
+  // These pass without the early free too, and fail if it does not wait for the send. The server
+  // answers first and reads once fetch() has resolved. Until then it takes 1 MiB of the 16, and the
+  // flow-control window or the kernel a few more (the kernel of Windows takes everything).
+  test.concurrent.each<[string, ...Transport]>([
+    ["typed array", ...tcp],
+    ["file", ...tcp],
+    ["typed array over TLS", ...tls],
+    // These have a second slice of the body in the stream, which would then point at freed memory.
+    ["typed array over HTTP/2", ...h2],
+    ["typed array over HTTP/3", ...h3],
+    ["compressed copy over HTTP/2", h2[0], { ...h2[1], compress: { encoding: "zstd", level: 1 } }],
+  ])("but not a %s that is still being sent", async (kind, options, init) => {
+    const bytes = randomBytes(16 * 1024 * 1024);
     using dir = tempDir("fetch-unsent-body", kind === "file" ? { "body.bin": bytes } : {});
-    const body = kind === "file" ? Bun.file(join(String(dir), "body.bin")) : bytes;
-    const head = Promise.withResolvers<void>();
-    const sockets: net.Socket[] = [];
-    const server = net.createServer(socket => {
-      sockets.push(socket);
-      let header = Buffer.alloc(0);
-      let received = -1;
-      let valid = true;
-      socket.on("error", head.reject);
-      socket.on("data", chunk => {
-        if (received === -1) {
-          header = Buffer.concat([header, chunk]);
-          const end = header.indexOf("\r\n\r\n");
-          if (end === -1) return;
-          chunk = header.subarray(end + 4);
-          received = 0;
-          // Answer with most of the body unread, and read on once fetch() has resolved.
-          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
-          socket.pause();
-          head.promise.then(() => socket.resume());
-        }
-        received += chunk.length;
-        valid &&= chunk.equals(bytes.subarray(0, chunk.length));
-        if (received >= bytes.length) {
-          const result = JSON.stringify({ received, valid });
-          socket.end(`${result.length.toString(16)}\r\n${result}\r\n0\r\n\r\n`);
-        }
-      });
+    const path = join(String(dir), "body.bin");
+    const resolved = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      ...options,
+      fetch: ({ body }) =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue("sha1 ");
+              await resolved.promise;
+              const sent = await Bun.readableStreamToBytes(body!);
+              controller.enqueue(Bun.SHA1.hash(init.compress ? Bun.zstdDecompressSync(sent) : sent, "hex"));
+              controller.close();
+            },
+          }),
+        ),
     });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    try {
-      const { port } = server.address() as net.AddressInfo;
-      const response = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body });
-      Bun.gc(true);
-      head.resolve();
-      expect(await response.json()).toEqual({ received: bytes.length, valid: true });
-    } finally {
-      for (const socket of sockets) socket.destroy();
-      server.close();
-    }
+    const response = await fetch(server.url, {
+      ...init,
+      method: "POST",
+      body: kind === "file" ? Bun.file(path) : bytes,
+    });
+    if (kind === "file" && !isWindows) expect(countOpen(path)).toBe(1);
+    // Without ASAN, freed bytes stay as they were until the allocator collects them.
+    Bun.gc(true);
+    resolved.resolve();
+    expect(await response.text()).toBe(`sha1 ${Bun.SHA1.hash(bytes, "hex")}`);
   });
 });

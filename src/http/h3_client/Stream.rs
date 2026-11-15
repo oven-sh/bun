@@ -32,6 +32,7 @@ pub struct Stream {
 
     // BACKREF: borrows the request body owned by `client`; not freed here.
     // `RawSlice` carries the outlives-holder invariant.
+    // `EMPTY` once all of it is sent: the body may be freed from then on.
     pub(crate) pending_body: bun_ptr::RawSlice<u8>,
     pub(crate) headers_sent: bool,
     pub(crate) request_body_done: bool,

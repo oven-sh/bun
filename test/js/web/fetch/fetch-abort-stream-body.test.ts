@@ -607,3 +607,41 @@ test.skipIf(!isMacOS)("server socket sees 'end' when a fetch upload is aborted m
     server.close();
   }
 });
+
+// The same choice of FIN after fetch() has let go of the body, which the kernel may still be sending.
+test.skipIf(!isMacOS)("server socket sees 'end' when a fetch upload is aborted after the response head", async () => {
+  const events: string[][] = [];
+  const sockets: net.Socket[] = [];
+  let socketClosed = Promise.withResolvers<void>();
+
+  const server = net.createServer(s => {
+    sockets.push(s);
+    const ev: string[] = [];
+    events.push(ev);
+    s.on("data", d => {
+      if (d.at(-1) === 0) s.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+    });
+    s.on("end", () => ev.push("end"));
+    s.on("error", (e: NodeJS.ErrnoException) => ev.push(`error:${e.code}`));
+    s.once("close", () => {
+      ev.push("close");
+      socketClosed.resolve();
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as net.AddressInfo).port;
+
+  try {
+    for (let i = 0; i < 8; i++) {
+      socketClosed = Promise.withResolvers<void>();
+      const ac = new AbortController();
+      await fetch(`http://127.0.0.1:${port}/upload`, { method: "POST", body: "\0", signal: ac.signal });
+      ac.abort();
+      await socketClosed.promise;
+    }
+    expect(events).toEqual(Array(8).fill(["end", "close"]));
+  } finally {
+    for (const s of sockets) s.destroy();
+    server.close();
+  }
+});

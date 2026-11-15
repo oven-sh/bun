@@ -1080,7 +1080,7 @@ fn print_exception(
 
     let global = vm_ref.global();
 
-    if let Some(exception) = value.as_exception(vm_ref.jsc_vm.get()) {
+    if let Some(exception) = value.as_exception(vm_ref.jsc_vm()) {
         // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
         // JSC heap; we only read through it for the duration of this call.
         let exception = unsafe { &*exception };
@@ -1564,7 +1564,7 @@ fn stop_active_handles(vm: &VirtualMachine, reason: bun_jsc::StopReason) -> Swee
 /// Returns `next_test_id` advanced past every ID assigned (the caller writes
 /// it back into `TestReporterAgent::next_test_id`).
 fn retroactively_report_discovered_tests(
-    agent: &mut bun_jsc::debugger::TestReporterHandle,
+    agent: &bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
     use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry, clone_active_strong};

@@ -33,7 +33,7 @@
 //! Before this crate existed the body above was hand-typed ~180 times across
 //! ~100 files (plus three crate-local `macro_rules! opaque!` copies in
 //! `boringssl_sys`, `uws_sys`, and `uws`). [`opaque_ffi!`] is the single
-//! source of truth, except for `boringssl_sys`, whose handles have no `opaque_ref`.
+//! source of truth, and [`sealed_handle!`] is its form without `opaque_ref`.
 #![no_std]
 
 /// Declare one or more opaque FFI handle types. See the [crate] docs for the
@@ -104,6 +104,55 @@ macro_rules! opaque_ffi {
     ($( $(#[$m:meta])* $v:vis $name:ident ),+ $(,)?) => {
         $crate::opaque_ffi! { $( $(#[$m])* $v struct $name; )+ }
     };
+}
+
+/// [`opaque_ffi!`] without `opaque_ref`. Alignment 2 makes [`opaque_deref`] reject these types too, so a handle cannot have a tag in bit 0.
+#[macro_export]
+macro_rules! sealed_handle {
+    ($( $(#[$m:meta])* $v:vis struct $name:ident; )+) => {$(
+        $(#[$m])*
+        #[repr(C, align(2))]
+        $v struct $name {
+            _p: ::core::cell::UnsafeCell<[u8; 0]>,
+            _m: ::core::marker::PhantomData<(*mut u8, ::core::marker::PhantomPinned)>,
+        }
+        impl $name {
+            /// As `as_mut_ptr` of an `opaque_ffi!` type.
+            #[inline(always)]
+            pub fn as_mut_ptr(&self) -> *mut Self {
+                self._p.get().cast::<Self>()
+            }
+        }
+    )+};
+}
+
+/// Declare the owner of a handle: it derefs to the handle, and `Drop` passes it to `$free`.
+/// `Option<$name>` is a nullable `$handle *`.
+///
+/// # Safety
+/// The module only makes a `$name` from a handle that stays live until `$free` is called on it.
+#[macro_export]
+macro_rules! owned_handle {
+    ($($(#[$m:meta])* $v:vis struct $name:ident($handle:ty) => unsafe $free:path;)+) => {$(
+        $(#[$m])*
+        #[repr(transparent)]
+        $v struct $name(::core::ptr::NonNull<$handle>);
+
+        impl ::core::ops::Deref for $name {
+            type Target = $handle;
+            fn deref(&self) -> &$handle {
+                // SAFETY: the contract of `owned_handle!`.
+                unsafe { self.0.as_ref() }
+            }
+        }
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                // SAFETY: the contract of `owned_handle!`.
+                unsafe { $free(self.0.as_ptr()) };
+            }
+        }
+    )+};
 }
 
 // ───────────────────────────────────────────────────────────────────────────

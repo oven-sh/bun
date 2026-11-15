@@ -23,7 +23,7 @@ fn parse_date_time_text(bytes: &[u8], global_object: &JSGlobalObject) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
-fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
+fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell<'static>> {
     let len = hex.len() / 2;
     let mut buf: Vec<u8> = Vec::new();
     buf.try_reserve_exact(len)
@@ -43,7 +43,7 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
 /// `MAXDIM` of the server.
 const MAX_ARRAY_DIMENSIONS: usize = 6;
 
-fn array(cells: Vec<SQLDataCell>) -> Result<SQLDataCell> {
+fn array(cells: Vec<SQLDataCell<'_>>) -> Result<SQLDataCell<'_>> {
     if cells.capacity() > u32::MAX as usize {
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
@@ -109,7 +109,7 @@ struct ArrayParser<'a> {
 }
 
 impl<'a> ArrayParser<'a> {
-    fn level(&mut self, depth: usize) -> Result<SQLDataCell> {
+    fn level(&mut self, depth: usize) -> Result<SQLDataCell<'static>> {
         use types::Tag as T;
         if depth > MAX_ARRAY_DIMENSIONS || self.next_byte()? != b'{' {
             return Err(AnyPostgresError::UnsupportedArrayFormat);
@@ -141,7 +141,7 @@ impl<'a> ArrayParser<'a> {
     }
 
     /// The rest of a level of numbers and NULLs, which need no cell each.
-    fn numbers(&mut self, is_float: bool) -> Result<SQLDataCell> {
+    fn numbers(&mut self, is_float: bool) -> Result<SQLDataCell<'static>> {
         use bun_core::fmt::{parse_decimal, parse_f64};
         let mut values: Vec<JSValue> = Vec::new();
         loop {
@@ -180,7 +180,7 @@ impl<'a> ArrayParser<'a> {
     }
 
     /// Inside the quotes a backslash takes the next byte as it is.
-    fn quoted(&mut self) -> Result<SQLDataCell> {
+    fn quoted(&mut self) -> Result<SQLDataCell<'static>> {
         let mut rest: &'a [u8] = &self.rest[1..];
         self.unescaped.clear();
         loop {
@@ -206,7 +206,7 @@ impl<'a> ArrayParser<'a> {
         }
     }
 
-    fn bare(&mut self) -> Result<SQLDataCell> {
+    fn bare(&mut self) -> Result<SQLDataCell<'static>> {
         match self.bare_text()? {
             b"NULL" => Ok(SQLDataCell::null()),
             text => from_text(self.bigint, self.element, text, self.global_object),
@@ -230,7 +230,7 @@ fn parse_array(
     element: types::Tag,
     bigint: bool,
     global_object: &JSGlobalObject,
-) -> Result<SQLDataCell> {
+) -> Result<SQLDataCell<'static>> {
     // `[0:2]={1,2,3}`: only the whole value has bounds, and JS arrays start at 0.
     let rest = if bytes.first() == Some(&b'[') {
         let equals = strings::index_of_char_usize(bytes, b'=')
@@ -271,7 +271,7 @@ fn binary_numbers<const SIZE: usize>(
     length: usize,
     rest: &mut &[u8],
     decode: impl Fn([u8; SIZE]) -> JSValue,
-) -> Result<SQLDataCell> {
+) -> Result<SQLDataCell<'static>> {
     let mut values: Vec<JSValue> = Vec::with_capacity(length);
     for _ in 0..length {
         let size = i32::from_be_bytes(take(rest)?);
@@ -286,7 +286,11 @@ fn binary_numbers<const SIZE: usize>(
     Ok(SQLDataCell::numbers(values))
 }
 
-fn binary_level(element: types::Tag, lengths: &[usize], rest: &mut &[u8]) -> Result<SQLDataCell> {
+fn binary_level(
+    element: types::Tag,
+    lengths: &[usize],
+    rest: &mut &[u8],
+) -> Result<SQLDataCell<'static>> {
     use types::Tag as T;
     let [length, inner @ ..] = lengths else {
         return array(Vec::new());
@@ -318,7 +322,7 @@ fn binary_level(element: types::Tag, lengths: &[usize], rest: &mut &[u8]) -> Res
 }
 
 /// What the server's `array_send` writes.
-fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
+fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell<'_>> {
     let dimensions = u32::from_be_bytes(take(&mut rest)?) as usize;
     // Set also for an array that had a NULL once.
     let _has_nulls: [u8; 4] = take(&mut rest)?;
@@ -357,7 +361,7 @@ fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
 }
 
 /// `ResultFormats::Decodable`, plus the types whose binary form is their text.
-fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
+fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell<'_>> {
     use types::Tag as T;
     match tag {
         T::int2_array => binary_array(T::int2, bytes),
@@ -403,7 +407,7 @@ fn from_text(
     tag: types::Tag,
     bytes: &[u8],
     global_object: &JSGlobalObject,
-) -> Result<SQLDataCell> {
+) -> Result<SQLDataCell<'static>> {
     use bun_core::fmt::{parse_decimal, parse_f64};
     use types::Tag as T;
     match tag {
@@ -443,7 +447,7 @@ fn from_text(
 }
 
 pub(crate) struct Putter<'a> {
-    pub list: SmallVec<[SQLDataCell; 70]>,
+    pub list: SmallVec<[SQLDataCell<'a>; 70]>,
     pub fields: &'a [protocol::FieldDescription],
     /// What Bind asked for; the `fields` of the Describe before it always say text.
     pub formats: types::ResultFormats,
@@ -480,7 +484,7 @@ impl<'a> Putter<'a> {
     fn put_impl<const IS_RAW: bool>(
         &mut self,
         index: u32,
-        optional_bytes: Option<&[u8]>,
+        optional_bytes: Option<&'a [u8]>,
     ) -> Result<bool> {
         // Bounds check to prevent crash when there are no fields
         if (index as usize) >= self.fields.len() {
@@ -511,11 +515,11 @@ impl<'a> Putter<'a> {
         Ok(true)
     }
 
-    pub(crate) fn put_raw(&mut self, index: u32, optional_bytes: Option<&[u8]>) -> Result<bool> {
+    pub(crate) fn put_raw(&mut self, index: u32, optional_bytes: Option<&'a [u8]>) -> Result<bool> {
         self.put_impl::<true>(index, optional_bytes)
     }
 
-    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&[u8]>) -> Result<bool> {
+    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&'a [u8]>) -> Result<bool> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }

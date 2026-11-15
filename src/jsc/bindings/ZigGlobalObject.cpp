@@ -1953,12 +1953,9 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+#if OS(LINUX)
 extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type)
 {
-
-// Windows doesn't have mmap
-// This code should pretty much only be called on Linux.
-#if !OS(WINDOWS)
     // Empty makes the caller fall back to the copying path, which throws for this length.
     if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -1991,10 +1988,8 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }
-#else
-    return JSC::JSValue::encode(JSC::JSValue {});
-#endif
 }
+#endif
 
 extern "C" JSC::EncodedJSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
 {

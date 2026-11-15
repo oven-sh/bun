@@ -28,7 +28,7 @@ static constexpr unsigned kStrongRefIndexShift = 48;
 static constexpr uintptr_t kStrongRefSlotMask = (static_cast<uintptr_t>(1) << kStrongRefIndexShift) - 1;
 static_assert(sizeof(uintptr_t) == 8, "StrongRef handle encoding requires 64-bit pointers");
 static_assert(StrongRootBlock::capacity < (1u << (64 - kStrongRefIndexShift)), "slot index must fit in the top 16 bits");
-static_assert(sizeof(StrongRootBlock::Slot) == sizeof(JSC::JSValue), "Rust Impl::get reads the slot as a JSValue");
+static_assert(sizeof(StrongRootBlock::Slot) == sizeof(JSC::JSValue), "Rust OwnedImpl::get reads the slot as a JSValue");
 
 static ALWAYS_INLINE StrongRefImpl* encodeStrongRef(StrongRootBlock* block, unsigned index)
 {
@@ -62,7 +62,7 @@ extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalOb
     decodeStrongRefBlock(ref)->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
 }
 
-// The Rust caller (Strong.rs Impl::destroy) skips this call once
+// The Rust caller (Strong.rs OwnedImpl::drop) skips this call once
 // VirtualMachine.is_shutting_down is true, so the block cell is guaranteed
 // live here: destructOnExit / WebWorker__teardownJSCVM set that flag before
 // their final collectNow, which is the only point the block can go dead while

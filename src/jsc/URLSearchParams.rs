@@ -1,16 +1,16 @@
 use core::ffi::c_void;
 
-use crate::JSValue;
+use crate::{DOMWrapped, JSValue};
 use bun_core::EncodedSlice;
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque FFI handle to WebCore::URLSearchParams (lives on the C++ side).
     pub struct URLSearchParams;
 }
 
 unsafe extern "C" {
-    safe fn URLSearchParams__fromJS<'a>(value: JSValue) -> Option<&'a URLSearchParams>;
-    // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&` is
+    safe fn URLSearchParams__fromJS(value: JSValue) -> *mut URLSearchParams;
+    // safe: `URLSearchParams` is a `sealed_handle!` ZST handle (`&` is
     // ABI-identical to a non-null `*mut`); `ctx` is an opaque round-trip pointer
     // C++ only forwards to `callback` with the address of a local (synchronous, never retained).
     safe fn URLSearchParams__toString(
@@ -21,10 +21,10 @@ unsafe extern "C" {
 }
 
 impl URLSearchParams {
-    // The returned opaque handle is owned by the JS GC heap, not by `value`;
-    // callers must keep the JS object alive while using it.
-    pub fn from_js<'a>(value: JSValue) -> Option<&'a URLSearchParams> {
-        URLSearchParams__fromJS(value)
+    /// `None` if `value` is not a `URLSearchParams`.
+    pub fn with_wrapped<R>(value: JSValue, f: impl FnOnce(&Self) -> R) -> Option<R> {
+        // SAFETY: a `JSURLSearchParams` holds a ref on what it wraps.
+        unsafe { DOMWrapped::new(value, URLSearchParams__fromJS(value)) }.map(|params| f(&params))
     }
 
     pub fn to_string<Ctx>(&self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: EncodedSlice)) {

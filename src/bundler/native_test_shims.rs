@@ -27,12 +27,11 @@ not_called_by_tests! {
     __bun_jsc_generate_internal_module_bytecode_from_source
     __bun_jsc_generate_internal_module_bytecode
     __bun_jsc_generate_cached_bytecode
-    __bun_jsc_encoder_string_table_take
+    __bun_jsc_encoder_string_table_serialize
     __bun_jsc_encoder_string_table_slot
     __bun_jsc_encoder_string_table_new
     __bun_jsc_bytecode_link_encoder_new
     __bun_jsc_bytecode_link_encoder_finish
-    __bun_jsc_bytecode_link_encoder_destroy
     __bun_jsc_bytecode_link_encoder_add_module
     __bun_jsc_bytecode_link_encoder_add_internal_module_from_source
     __bun_jsc_bytecode_link_encoder_add_internal_module
@@ -51,6 +50,8 @@ not_called_by_tests! {
     __bun_dispatch__DevServerHandle__Bake__barrel_needed_exports
     __bun_dispatch__DevServerHandle__Bake__asset_hash
     URL__getFileURLString
+    Bun__EncoderStringTable__destroy
+    Bun__BytecodeLinkEncoder__destroy
     JSBundlerPlugin__hasOnBeforeParsePlugins
     JSBundlerPlugin__freezeFilters
     JSBundlerPlugin__callOnBeforeParsePlugins

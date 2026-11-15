@@ -8,17 +8,15 @@
 //! module; the rest carry the body inline (mostly `run_from_main_thread()` →
 //! resume the parent state via NodeId).
 
-use crate::shell::interpreter::{
-    Interpreter, NodeId, PoolTask, ShellInterpreter, ShellTask, ShellWork,
-};
+use crate::shell::interpreter::{Interpreter, NodeId, PoolTask, ShellInterpreterRef, ShellWork};
 use crate::shell::yield_::Yield;
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
-#[repr(C)]
 pub(crate) struct ShellAsyncTask {
-    pub interp: core::ptr::NonNull<ShellInterpreter>,
-    pub node: core::cell::Cell<NodeId>,
+    /// `Some` while it is queued.
+    pub interp: Option<ShellInterpreterRef>,
+    pub node: NodeId,
 }
 
 /// Stat task backing shell conditional expressions (`[ -f x ]` etc.).
@@ -51,7 +49,7 @@ unsafe impl Send for ShellGlobTask {}
 
 impl ShellWork for ShellGlobTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
-    fn run_from_thread_pool(&mut self, _: &ShellTask) {
+    fn run_from_thread_pool(&mut self) {
         match Self::walk_impl(&mut self.walker, &mut self.result) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => self.err = Some(ShellGlobErr::Syscall(e)),
@@ -70,7 +68,7 @@ impl ShellWork for ShellGlobTask {
 
 impl ShellGlobTask {
     pub(crate) fn create_and_schedule(
-        interp: &Interpreter<'_>,
+        interp: &mut Interpreter<'_>,
         expansion: NodeId,
         walker: bun_glob::BunGlobWalkerZ,
     ) {
@@ -110,9 +108,5 @@ impl ShellGlobTask {
     }
 }
 
-/// A child node in the
-/// recursive rm tree-walk; posts back to main when its subtree is empty.
-/// Re-export: the real DirTask lives in `builtins::rm` (full recursive
-/// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
-/// for the verbose-write bounce-back.
+/// Posted for `-v` output, and by the root when the operand is done.
 pub(crate) use crate::shell::builtins::rm::DirTask as ShellRmDirTask;

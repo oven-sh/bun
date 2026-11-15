@@ -1,15 +1,14 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
-use bun_ptr::BackRef;
 
 use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
-    shell_statat,
+    Interpreter, NodeId, OwnedFd, PoolTask, ShellWork, shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -26,7 +25,6 @@ pub(crate) struct MvArgs {
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
     pub(crate) target_idx: usize,
-    pub(crate) target_fd: Option<OwnedFd>,
     /// `-n` — do not overwrite an existing file
     pub(crate) no_clobber: bool,
 }
@@ -40,8 +38,6 @@ pub(crate) enum MvState {
     Executing {
         task_count: usize,
         tasks_done: usize,
-        error_signal: AtomicBool,
-        tasks: Vec<ShellMvBatchedTask>,
         err: Option<bun_sys::Error>,
     },
     Done,
@@ -166,9 +162,8 @@ impl Mv {
                     }
                 };
 
-                let maybe_fd = target_fd.as_ref().map(OwnedFd::fd);
                 // Trying to move multiple files into a non-directory.
-                if maybe_fd.is_none() && n_sources > 1 {
+                if target_fd.is_none() && n_sources > 1 {
                     let buf = Builtin::fmt_error(
                         Some(Kind::Mv),
                         format_args!("{} is not a directory\n", bstr::BStr::new(target)),
@@ -179,14 +174,19 @@ impl Mv {
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
-                let (sources_start, no_clobber) = {
-                    let me = Self::state_mut(interp, cmd);
-                    me.args.target_fd = target_fd;
-                    (me.args.sources_start, me.args.no_clobber)
+                let shared = Arc::new(Shared {
+                    target: ZBox::from_bytes(target),
+                    target_fd,
+                    error_signal: AtomicBool::new(false),
+                });
+                let me = Self::state_mut(interp, cmd);
+                let (sources_start, no_clobber) = (me.args.sources_start, me.args.no_clobber);
+                me.state = MvState::Executing {
+                    task_count,
+                    tasks_done: 0,
+                    err: None,
                 };
-                let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
-                let mut tasks: Vec<ShellMvBatchedTask> = Vec::with_capacity(task_count);
                 for i in 0..task_count {
                     let start = sources_start + i * BATCH;
                     let end = (start + BATCH).min(target_idx);
@@ -194,48 +194,19 @@ impl Mv {
                     for j in start..end {
                         srcs.push(ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(j)));
                     }
-                    tasks.push(ShellMvBatchedTask {
+                    let task = ShellMvBatchedTask {
                         cmd,
-                        idx: i,
                         was_on_disk: srcs
                             .iter()
                             .map(|it| is_on_disk_at(cwd, it.as_bytes()))
                             .collect(),
                         sources: srcs,
-                        target: ZBox::from_bytes(target),
-                        target_fd: maybe_fd,
+                        shared: Arc::clone(&shared),
                         no_clobber,
                         cwd,
-                        error_signal: None,
                         err: None,
-                        task: ShellTask::new(interp),
-                    });
-                }
-
-                Self::state_mut(interp, cmd).state = MvState::Executing {
-                    task_count,
-                    tasks_done: 0,
-                    error_signal: AtomicBool::new(false),
-                    tasks,
-                    err: None,
-                };
-                // Now that the AtomicBool has its final address, point
-                // every task at it and schedule.
-                if let MvState::Executing {
-                    error_signal,
-                    tasks,
-                    ..
-                } = &mut Self::state_mut(interp, cmd).state
-                {
-                    let sig = BackRef::new(&*error_signal);
-                    for t in tasks.iter_mut() {
-                        t.error_signal = Some(sig);
-                        // SAFETY: `t` lives in `MvState::Executing::tasks`,
-                        // which is fully populated before any task is scheduled
-                        // and never grown afterward, so its address is stable
-                        // for the worker call's lifetime.
-                        unsafe { ShellTask::schedule(&raw mut *t) };
-                    }
+                    };
+                    PoolTask::schedule(interp, task);
                 }
                 Yield::suspended()
             }
@@ -267,41 +238,30 @@ impl Mv {
         }
     }
 
-    fn batched_move_task_done(interp: &mut Interpreter<'_>, cmd: NodeId, task_idx: usize) -> Yield {
-        let (all_done, had_err, sources, was_on_disk, target, is_folder) = {
-            let MvState::Executing {
-                task_count,
-                tasks_done,
-                error_signal,
-                tasks,
-                err,
-            } = &mut Self::state_mut(interp, cmd).state
-            else {
-                unreachable!()
-            };
-            let target = ZBox::from_bytes(tasks[task_idx].target.as_bytes());
-            if let Some(e) = tasks[task_idx].err.take() {
-                error_signal.store(true, Ordering::SeqCst);
-                if err.is_none() {
-                    *err = Some(e);
-                }
-            }
-            let sources = core::mem::take(&mut tasks[task_idx].sources);
-            let was_on_disk = core::mem::take(&mut tasks[task_idx].was_on_disk);
-            let is_folder = tasks[task_idx].target_fd.is_some() || sources.len() > 1;
-            *tasks_done += 1;
-            (
-                *tasks_done >= *task_count,
-                err.is_some(),
-                sources,
-                was_on_disk,
-                target,
-                is_folder,
-            )
+    fn batched_move_task_done(
+        interp: &mut Interpreter<'_>,
+        task: &mut ShellMvBatchedTask,
+    ) -> Yield {
+        let cmd = task.cmd;
+        let MvState::Executing {
+            task_count,
+            tasks_done,
+            err,
+        } = &mut Self::state_mut(interp, cmd).state
+        else {
+            unreachable!()
         };
+        if let Some(e) = task.err.take() {
+            task.shared.error_signal.store(true, Ordering::SeqCst);
+            err.get_or_insert(e);
+        }
+        *tasks_done += 1;
+        let (all_done, had_err) = (*tasks_done >= *task_count, err.is_some());
+        let target = &task.shared.target;
+        let is_folder = task.shared.target_fd.is_some() || task.sources.len() > 1;
         // A task that fails has moved those in front, and `-n` leaves some where they are.
-        let sources = sources.iter().zip(was_on_disk);
-        for (source, _) in sources.filter(|&(_, was_on_disk)| was_on_disk) {
+        let sources = task.sources.iter().zip(&task.was_on_disk);
+        for (source, _) in sources.filter(|&(_, &was_on_disk)| was_on_disk) {
             let (cwd, source) = (Builtin::shell(interp, cmd).cwd(), source.as_bytes());
             let name = bun_paths::basename(strings::without_trailing_slash(source));
             match is_folder {
@@ -394,7 +354,7 @@ pub(crate) struct ShellMvCheckTargetTask {
 
 impl ShellWork for ShellMvCheckTargetTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
-    fn run_from_thread_pool(&mut self, _: &ShellTask) {
+    fn run_from_thread_pool(&mut self) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         self.result = Some(match shell_openat(self.cwd, &self.target, flags, 0) {
             Ok(fd) => Ok(Some(OwnedFd(fd))),
@@ -408,27 +368,23 @@ impl ShellWork for ShellMvCheckTargetTask {
     }
 }
 
+/// What the [`ShellMvBatchedTask`]s of one `mv` share.
+struct Shared {
+    target: ZBox,
+    target_fd: Option<OwnedFd>,
+    error_signal: AtomicBool,
+}
+
 /// renameat() each source into the target.
 pub(crate) struct ShellMvBatchedTask {
     pub(crate) cmd: NodeId,
-    /// Index into `MvState::Executing::tasks` so the main-thread completion
-    /// can route to `Mv::batched_move_task_done`.
-    pub(crate) idx: usize,
     pub(crate) sources: Vec<ZBox>,
     /// Which of them the disk has had.
     was_on_disk: Vec<bool>,
-    pub(crate) target: ZBox,
-    pub(crate) target_fd: Option<bun_sys::Fd>,
+    shared: Arc<Shared>,
     pub(crate) no_clobber: bool,
     pub(crate) cwd: bun_sys::Fd,
-    /// Back-reference into `MvState::Executing::error_signal`. The owning
-    /// `MvState` outlives every batched task (tasks are joined / counted in
-    /// `batched_move_task_done` before the state transitions), so the
-    /// `BackRef` invariant holds. `None` only between construction and
-    /// scheduling — never observed by `run_from_thread_pool`.
-    pub(crate) error_signal: Option<BackRef<AtomicBool>>,
     pub(crate) err: Option<bun_sys::Error>,
-    pub task: ShellTask,
 }
 
 impl ShellMvBatchedTask {
@@ -440,12 +396,12 @@ impl ShellMvBatchedTask {
             return this.move_multiple_into_dir();
         }
         // Moving one entry into a directory.
-        if let Some(dir) = this.target_fd {
+        if let Some(dir) = &this.shared.target_fd {
             let mut buf = bun_paths::path_buffer_pool::get();
             if let Err(e) = Self::move_in_dir(
                 this.cwd,
-                dir,
-                this.target.as_bytes(),
+                dir.fd(),
+                this.shared.target.as_bytes(),
                 &this.sources[0],
                 this.no_clobber,
                 &mut buf,
@@ -459,16 +415,15 @@ impl ShellMvBatchedTask {
             this.cwd,
             &this.sources[0],
             this.cwd,
-            &this.target,
+            &this.shared.target,
             this.no_clobber,
         ) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
-                e.with_path(this.target.as_bytes())
+                e.with_path(this.shared.target.as_bytes())
             } else {
                 e
             });
         }
-        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     /// `renameat()`, falling through to [`Self::move_across_devices`] on EXDEV.
@@ -753,12 +708,10 @@ impl ShellMvBatchedTask {
         let mut buf = bun_paths::path_buffer_pool::get();
         // `target_fd` is always Some when sources.len() > 1 — `next` rejected
         // the multi-source-into-non-directory case before scheduling.
-        let dir = self.target_fd.expect("target_fd set for multi-source mv");
+        let dir = self.shared.target_fd.as_ref();
+        let dir = dir.expect("target_fd set for multi-source mv").fd();
         for i in 0..self.sources.len() {
-            if self
-                .error_signal
-                .is_some_and(|sig| sig.load(Ordering::SeqCst))
-            {
+            if self.shared.error_signal.load(Ordering::SeqCst) {
                 // Another batch hit an error — abort the move loop, but still
                 // post back to the main thread so `tasks_done` reaches
                 // `task_count` and `mv` doesn't hang.
@@ -767,7 +720,7 @@ impl ShellMvBatchedTask {
             if let Err(e) = Self::move_in_dir(
                 self.cwd,
                 dir,
-                self.target.as_bytes(),
+                self.shared.target.as_bytes(),
                 &self.sources[i],
                 self.no_clobber,
                 &mut buf,
@@ -779,27 +732,12 @@ impl ShellMvBatchedTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellMvBatchedTask {
+impl ShellWork for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
-    /// An element of `MvState::Executing.tasks`, which drops with the interpreter.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
+    fn run_from_thread_pool(&mut self) {
+        Self::run_from_thread_pool(self)
     }
-}
-
-// `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's
-// internal deref is SAFETY-commented.
-impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter<'_>) -> Yield {
-        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
-        // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.
-        let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
-        Mv::batched_move_task_done(interp, cmd, idx)
+    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
+        Mv::batched_move_task_done(interp, self)
     }
 }

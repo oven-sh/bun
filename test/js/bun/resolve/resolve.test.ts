@@ -1337,7 +1337,7 @@ describe("dangling symlinks in node_modules", () => {
       const bad = join(root, "bad");
 
       // 1) Make "bad" unreadable. loadAsFile -> readDirectory(bad) fails with
-      //    EACCES, which stores EntriesOption{ .err = ... } in rfs.entries.
+      //    EACCES, which stores the error in rfs.entries.
       chmodSync(bad, 0o000);
       let threw = false;
       try { Bun.resolveSync("./bad/index.js", root); } catch { threw = true; }

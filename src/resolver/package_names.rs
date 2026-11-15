@@ -337,11 +337,8 @@ impl Resolver<'_> {
         let Some(directory) = self.read_dir_info_ignore_error(folder) else {
             return Vec::new();
         };
-        let _lock = crate::fs::FileSystem::instance()
-            .fs
-            .entries_mutex
-            .lock_guard();
-        let entries = directory.get_entries_ref_locked(self.generation);
+        let mut entries_map = self.fs_ref().fs.entries.lock();
+        let entries = directory.get_entries(&mut entries_map, self.generation);
         let mut names: Vec<Vec<u8>> = entries.map_or_else(Vec::new, |entries| {
             entries.data.keys().map(|name| name.to_vec()).collect()
         });

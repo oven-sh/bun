@@ -2838,7 +2838,7 @@ impl TestCommand {
                 t.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
                 t.options.react_compiler_filter = Some(react_compiler_filter(
                     scope,
-                    FileSystem::instance().top_level_dir(),
+                    FileSystem::get().top_level_dir(),
                 ));
             }
             t.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
@@ -4110,7 +4110,7 @@ impl TestCommand {
                         bun_test::Execution::Result::Fail,
                         Output::enable_ansi_colors_stderr(),
                     ));
-                    let top_level_dir = FileSystem::instance().top_level_dir();
+                    let top_level_dir = FileSystem::get().top_level_dir();
                     let title = resolve_path::fmt_relative(top_level_dir, file_path);
                     let _ = writeln!(failures, " {}", title);
                     reporter.failures_to_repeat_buf.set(failures);

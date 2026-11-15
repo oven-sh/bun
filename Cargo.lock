@@ -140,7 +140,6 @@ dependencies = [
  "allocator-api2",
  "bun_mimalloc_sys",
  "bun_opaque",
- "bun_wyhash",
  "libc",
 ]
 

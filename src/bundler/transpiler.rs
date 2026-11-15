@@ -67,7 +67,7 @@ impl<'a> Transpiler<'a> {
 
     /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
     /// so free `BundleOptions` here. `log` is borrowed; left alone.
-    /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
+    /// `resolver` is a value field whose caches are process-global, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
     /// `resolver_bundle_options_subset`) is released.
     ///
@@ -496,17 +496,10 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
-                // Copy the listing's basenames out under `entries_mutex`,
-                // refreshing it at our generation in the same critical
-                // section: concurrent resolvers rewrite the `DirEntry` map in
-                // place under that lock, and `dot_env::Loader::load` does
-                // file I/O between probes.
+                // Copied: `Loader::load` does file I/O between probes.
                 let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::get()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
+                    let mut entries_map = Fs::FileSystem::get().fs.entries.lock();
+                    match dir_info.get_entries(&mut entries_map, self.resolver.generation) {
                         Some(entries) => dot_env::DirEntryKeys(
                             entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
                         ),
@@ -709,20 +702,6 @@ fn to_parser_module_type(
     m
 }
 
-/// The inline `bun_resolver::fs` module exposes the `FileSystem`
-/// struct + `INSTANCE`/`INSTANCE_LOADED` statics (resolver/lib.rs:120,129) but
-/// not the `init` constructor (that lives in the still-gated file-backed
-/// `resolver/fs.rs`). All fields are `pub` and `EntriesMap`/`Mutex` have
-/// public constructors, so reproduce the singleton-init here:
-/// first call sets `top_level_dir` (defaulting to getcwd),
-/// subsequent calls return the existing instance untouched.
-fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut Fs::FileSystem> {
-    // `FileSystem` initialization calls `adjustUlimit()`
-    // to raise RLIMIT_NOFILE and stores the returned limit in
-    // `file_limit`, which `RealFS::need_to_close_files` reads.
-    Fs::FileSystem::init(top_level_dir).map_err(Into::into)
-}
-
 /// Project this crate's `options::BundleOptions<'a>` into the
 /// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
 /// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
@@ -849,18 +828,7 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         mut env: Arc<dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
-        // (the same path `FileSystem::init` already uses for the
-        // `None`/getcwd case — fs.rs:222) so the cwd lives in the
-        // process-lifetime BSS string store without `Box::leak`. PORTING.md
-        // §Forbidden bars `Box::leak` even for singletons; on subsequent
-        // per-worker `Transpiler::init` calls the previous leak was discarded
-        // (`FileSystem::init` only stores `top_level_dir` on first call).
-        let cwd: Option<&'static [u8]> = match opts.absolute_working_dir.as_deref() {
-            Some(s) => Some(Fs::DirnameStore::instance().append_slice(s)?),
-            None => None,
-        };
-        let fs: *mut Fs::FileSystem = init_file_system(cwd)?;
+        Fs::FileSystem::init(opts.absolute_working_dir.as_deref())?;
 
         // hide elapsed time when loglevel is warn or error. A shared loader keeps its setting.
         if let Some(env) = Arc::get_mut(&mut env) {
@@ -892,7 +860,7 @@ impl<'a> Transpiler<'a> {
                 outbase,
                 ..Default::default()
             },
-            resolver: Resolver::init1(log, fs, resolver_opts, env),
+            resolver: Resolver::init1(log, resolver_opts, env),
             output_files: Vec::new(),
             resolve_results,
             resolve_queue: ResolveQueue::default(),

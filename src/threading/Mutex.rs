@@ -54,23 +54,6 @@ impl Mutex {
         unsafe { Impl::unlock_raw(&raw const (*this).impl_) }
     }
 
-    /// Debug-only check that the calling thread already holds this mutex.
-    /// Intended for `debug_assert!`-ing a "caller must hold the lock" contract
-    /// (e.g. the resolver's `entries_mutex`). In release builds the locking-thread
-    /// id is not tracked, so this just returns `true` to make the assert a
-    /// no-op there.
-    #[inline]
-    pub fn is_held_by_current_thread(&self) -> bool {
-        #[cfg(debug_assertions)]
-        {
-            self.impl_.locking_thread.load(Ordering::Relaxed) == current_thread_id()
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            true
-        }
-    }
-
     /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
     #[inline]
     #[must_use = "the mutex unlocks immediately if the guard is dropped"]

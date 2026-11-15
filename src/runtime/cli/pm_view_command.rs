@@ -76,16 +76,11 @@ pub(crate) fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // `root_dir` is in the resolver's directory cache, so lookups must hold
-                // `entries_mutex`.
-                let has_package_json = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::get()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
-                    manager.root_dir.has_comptime_query(b"package.json")
-                };
-                if !has_package_json {
+                let Some(fd) = (bun_resolver::fs::FileSystem::get().fs.entries.lock())
+                    .at_index(manager.root_dir.index)
+                    .filter(|entries| entries.has_comptime_query(b"package.json"))
+                    .map(|entries| entries.fd)
+                else {
                     const NO_NAME: &str = "no package name given and no package.json found";
                     if json_output {
                         print_json_error(NO_NAME, spec_, None);
@@ -93,8 +88,7 @@ pub(crate) fn view(
                         Output::err_generic(NO_NAME, ());
                     }
                     Global::exit(1);
-                }
-                let fd = manager.root_dir.fd;
+                };
                 if !fd.is_valid() {
                     break 'from_package_json;
                 }

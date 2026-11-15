@@ -4,9 +4,7 @@ import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-// `bun_alloc::bss_singleton!` (and its `bss_map_inner!` wrapper) emits a private
-// `static STORAGE` inside the accessor fn at each declare site, and a `BSSList` or
-// `BSSStringList` is a `static` of its module. Two declarations with the same name are
+// A `BSSList` or `BSSStringList` is a `static` of its module. Two declarations with the same name are
 // two separate process-lifetime heaps, not two names for one store: a slice
 // interned through one reads as "not ours" to the other's `as_interned()`, and the
 // second store costs its own backing buffer (about 532 KiB for file names).
@@ -33,14 +31,8 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-const VIS = String.raw`(?:pub(?:\([^)]*\))?\s+)?`;
-// `bss_map_inner! { pub(crate) name : T, N, B }`.
-const TYPED = new RegExp(String.raw`\bbss_map_inner!\s*[{(]\s*${VIS}([A-Za-z_]\w*)\s*:`, "g");
 // `static NAME: Once<BSSStringList>`, `static NAME: Once<Guarded<BSSList<T, N>>>`.
 const STATIC = /(?<!')\bstatic\s+([A-Za-z_]\w*)\s*:.*\bBSS(?:String)?List\b/g;
-// `bss_singleton! { #[attr] pub fn name() -> T }`. The macro definitions in
-// bun_alloc spell the name as `$name`, which `\w` does not match.
-const RAW = new RegExp(String.raw`\bbss_singleton!\s*[{(](?:\s*#\[[^\]]*\])*\s*${VIS}fn\s+([A-Za-z_]\w*)\s*\(`, "g");
 
 const declarations = new Map<string, string[]>();
 for (const abs of rustSources) {
@@ -54,24 +46,18 @@ for (const abs of rustSources) {
   // Strip `//` comments so prose mentions of a declaration do not count.
   const lines = content.split("\n").map(line => line.replace(/\/\/.*/, ""));
   for (const [index, line] of lines.entries()) {
-    for (const re of [TYPED, STATIC, RAW]) {
-      re.lastIndex = 0;
-      for (let m = re.exec(line); m !== null; m = re.exec(line)) {
-        const name = m[1];
-        const sites = declarations.get(name) ?? [];
-        sites.push(`${source}:${index + 1}`);
-        declarations.set(name, sites);
-      }
+    for (const [, name] of line.matchAll(STATIC)) {
+      const sites = declarations.get(name) ?? [];
+      sites.push(`${source}:${index + 1}`);
+      declarations.set(name, sites);
     }
   }
 }
 
 test("scans the known bss singleton declare sites", () => {
-  // Guards against the regexes or the tracked/realpath filters over-firing and
+  // Guards against the regex or the tracked/realpath filters over-firing and
   // leaving nothing to scan, which would make the uniqueness check vacuous.
-  expect([...declarations.keys()]).toEqual(
-    expect.arrayContaining(["DIRNAME_STORE", "FILENAME_STORE", "ENTRY_STORE", "entries_option_map"]),
-  );
+  expect([...declarations.keys()]).toEqual(expect.arrayContaining(["DIRNAME_STORE", "FILENAME_STORE", "ENTRY_STORE"]));
 });
 
 test("every bss singleton name is declared exactly once", () => {

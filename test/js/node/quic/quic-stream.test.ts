@@ -740,3 +740,113 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+async function runWithServerKeys(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { createPrivateKey } from "node:crypto";
+       import { readFileSync } from "node:fs";
+       import { connect, listen } from "node:quic";
+       const keys = [createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}))];
+       const certs = [readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))})];
+       const transportParams = { maxIdleTimeout: 2 };
+       const serverOptions = { sni: { "*": { keys, certs } }, alpn: "x", transportParams };
+       const clientOptions = { alpn: "x", verifyPeer: "manual", transportParams };
+       ${script}`,
+    ],
+    env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("destroy() doesn't abort a stream that lsquic freed after the abort was deferred", async () => {
+  const result = await runWithServerKeys(`
+    const remote = Promise.withResolvers(), dropped = Promise.withResolvers();
+    const server = await listen(session => {
+      session.closed.catch(() => {});
+      session.ondatagram = () => session.sendDatagram("pong");
+      session.onstream = stream => (stream.closed.catch(() => {}), remote.resolve(stream));
+    }, serverOptions);
+    let gap = false, clientPort, pong;
+    const relay = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket, data, port) {
+          if (port !== server.address.port) socket.send(data, server.address.port, "127.0.0.1"), (clientPort = port);
+          else if (!gap || data.length < 400) socket.send(data, clientPort, "127.0.0.1");
+          else dropped.resolve(), pong && session.sendDatagram("ping"); // The pong can be in there.
+        },
+      },
+    });
+    const session = await connect(
+      { address: "127.0.0.1", port: relay.port },
+      { ...clientOptions, ondatagram: () => pong?.resolve() },
+    );
+    async function roundTrip() {
+      pong = Promise.withResolvers();
+      session.sendDatagram("ping");
+      await pong.promise;
+      pong = undefined;
+    }
+    await session.opened;
+
+    // Nothing is written, so an abort is deferred. The send side ends here.
+    const stream = await session.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.resetStream(1n);
+    const { writer } = await remote.promise;
+    await roundTrip();
+
+    // The final size is known, and the read side stays open.
+    gap = true;
+    writer.writeSync(new Uint8Array(1000));
+    await dropped.promise;
+    writer.writeSync(new Uint8Array(1));
+    writer.endSync();
+    await roundTrip();
+
+    stream.onerror = () => stream.stopSending();
+    stream.destroy(new Error("destroyed"));
+    await roundTrip();
+    console.log(stream.destroyed);
+    process.exit(0);
+  `);
+  expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});
+
+test.concurrent("a session that refers to its closed stream is collected", async () => {
+  const result = await runWithServerKeys(`
+    import { heapStats } from "bun:jsc";
+    const server = await listen(session => {
+      session.closed.catch(() => {});
+      session.onstream = async stream => {
+        for await (const _ of stream);
+        stream.writer.endSync();
+      };
+    }, serverOptions);
+    async function once() {
+      const session = await connect(server.address, clientOptions);
+      await session.opened;
+      session.control = await session.createBidirectionalStream({ body: "x" });
+      for await (const _ of session.control);
+      await session.control.closed;
+      await session.close();
+    }
+    for (let i = 0; i < 4; i++) await once();
+    const alive = ({ QuicSession = 0, QuicStream = 0 } = heapStats().objectTypeCounts) => QuicSession + QuicStream;
+    let count = Infinity;
+    for (let i = 0; i < 5 && count > 2; i++) {
+      await new Promise(setImmediate);
+      Bun.gc(true);
+      count = alive();
+    }
+    console.log(count <= 2);
+    process.exit(0);
+  `);
+  expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});

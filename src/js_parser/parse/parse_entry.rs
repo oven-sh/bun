@@ -357,7 +357,7 @@ impl<'a> Options<'a> {
 }
 
 /// The runtime's on-disk cache of transpiled files.
-pub trait RuntimeTranspilerCache {
+pub trait TranspilerCache {
     fn get(
         &mut self,
         source: &bun_ast::Source<'_>,
@@ -433,7 +433,7 @@ impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse_with_cache(
         mut self,
-        cache: Option<&mut dyn RuntimeTranspilerCache>,
+        cache: Option<&mut dyn TranspilerCache>,
     ) -> Result<crate::Result<'a>, Error> {
         #[cfg(target_arch = "wasm32")]
         {
@@ -831,7 +831,7 @@ fn lower_one_date_time_literal<'a>(
 impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(
         self,
-        mut cache: Option<&mut dyn RuntimeTranspilerCache>,
+        mut cache: Option<&mut dyn TranspilerCache>,
     ) -> Result<crate::Result<'a>, Error> {
         bun_crash_handler::scoped_action!(bun_crash_handler::Action::Parse(self.source.path.text));
 

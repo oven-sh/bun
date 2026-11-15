@@ -30,7 +30,7 @@ impl JavaScript {
         defines: &'a Define,
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
-        cache: Option<&mut dyn js_parser::RuntimeTranspilerCache>,
+        cache: Option<&mut dyn js_parser::TranspilerCache>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;

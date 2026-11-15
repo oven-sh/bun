@@ -15,7 +15,7 @@ use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use bstr::BStr;
-use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, OnceMap, recycle};
+use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, OnceMap, recycle_vec};
 use bun_core::strings;
 use bun_http::lshpack;
 use bun_jsc::ErrorCode as JscErrorCode;
@@ -2744,7 +2744,7 @@ impl H2FrameParser {
         let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
         if !segments.is_empty() {
             self.flush_batch_vectored(&data, &segments);
-            BATCH_SEGMENTS.set(recycle(segments));
+            BATCH_SEGMENTS.set(recycle_vec(segments));
         } else if !data.is_empty() {
             let _ = self._write(&data);
         }
@@ -2784,7 +2784,7 @@ impl H2FrameParser {
                 } else {
                     socket.write_vectored_raw(&iov)
                 };
-                BATCH_IOVECS.set(recycle(iov));
+                BATCH_IOVECS.set(recycle_vec(iov));
                 if w < 0 { 0 } else { w as usize }
             }
             _ => {

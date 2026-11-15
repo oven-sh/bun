@@ -459,12 +459,10 @@ impl Debugger {
 
         let _ = this.global().handle_rejected_promises();
 
-        if let Some(log) = this.log() {
-            if log.msgs_len() > 0 {
-                let _ = log.print(bun_core::Output::error_writer());
-                bun_core::pretty_errorln!("\n");
-                bun_core::Output::flush();
-            }
+        if this.log.msgs_len() > 0 {
+            let _ = this.log.print(bun_core::Output::error_writer());
+            bun_core::pretty_errorln!("\n");
+            bun_core::Output::flush();
         }
 
         bun_core::scoped_log!(debugger, "wake");

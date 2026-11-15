@@ -414,10 +414,6 @@ pub(crate) struct CurrentBundle {
     pub(crate) requests: deferred_request::List,
     /// Answered by `finalize_bundle_cleanup`.
     pub(crate) script_requests: Vec<bun_ptr::RefPtr<DeferredScriptRequest>>,
-    /// Resolution failures are grouped by incremental graph file index.
-    /// Unlike parse failures (`handleParseTaskFailure`), the resolution
-    /// failures can be created asynchronously, and out of order.
-    pub(crate) resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
     pub(crate) pending_request: Option<PendingRequest>,
 }
 
@@ -523,7 +519,7 @@ pub(crate) struct DevServer {
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
-    pub(crate) log: Log,
+    pub(crate) log: &'static Log,
     pub(crate) plugin_state: PluginState,
     /// Owned by `bundler_options` or by the server.
     pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,

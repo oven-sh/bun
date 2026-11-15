@@ -506,7 +506,7 @@ fn finalize_bundle_inner(
 
     dev.graphs.incremental_result.had_adjusted_edges = false;
 
-    dev.prepare_and_log_resolution_failures()?;
+    dev.prepare_and_log_resolution_failures(&result.resolution_failures)?;
     dev.report_html_routes_without_html()?;
 
     // Pass 2, update the graph's edges by performing import diffing on each

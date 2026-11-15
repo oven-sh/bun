@@ -1440,12 +1440,13 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
 #[cold]
 #[inline(never)]
 fn warn_unsupported_platform(
-    manager: &PackageManager,
+    manager: &mut PackageManager,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
 ) {
     use crate::npm::Negatable;
 
+    let log = manager.log();
     let lockfile: &Lockfile = &manager.lockfile;
     let options = &manager.options;
     let pkgs = &lockfile.packages;
@@ -1498,7 +1499,7 @@ fn warn_unsupported_platform(
             continue;
         }
         warned.push(id);
-        manager.log().add_warning_fmt(
+        log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
@@ -2027,8 +2028,9 @@ fn root_package_json_source(
     root_package_json_path: &ZStr,
     has_lockfile: bool,
 ) -> crate::Result<Source<'static>> {
+    let log = manager.log();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
-        manager.log(),
+        log,
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
@@ -2043,8 +2045,8 @@ fn root_package_json_source(
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
-    if manager.log().errors.get() > 0 {
-        manager.log().print(Output::error_writer())?;
+    if log.errors.get() > 0 {
+        log.print(Output::error_writer())?;
     }
     Output::err(
         err,

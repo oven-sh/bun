@@ -435,7 +435,6 @@ impl DevServer {
             had_reload_event,
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             script_requests: Vec::new(),
-            resolution_failure_entries: Default::default(),
             pending_request,
         });
 

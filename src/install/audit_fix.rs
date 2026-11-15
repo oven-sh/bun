@@ -421,7 +421,7 @@ fn take_manifest_error(msgs: &mut Vec<bun_ast::Msg>, name: &[u8]) -> (Box<[u8]>,
     )
 }
 
-fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavailable]) {
+fn print_manifest_unavailable(manager: &mut PackageManager, items: &[ManifestUnavailable]) {
     let log = manager.log();
     if manager.options.log_level == LogLevel::Silent {
         log.reset();

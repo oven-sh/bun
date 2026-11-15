@@ -3281,8 +3281,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
         };
         let group = groups.bun_connect_group::<true>(loop_);
-        // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
-        // `InternalSocket::Connected` above.
+        // SAFETY: `established_us_socket` returned `raw_socket`, and no JavaScript ran since.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
             (*raw_socket).adopt_tls(
                 group,

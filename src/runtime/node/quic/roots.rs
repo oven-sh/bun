@@ -44,15 +44,17 @@ fn binary_search<V>(entries: &[(Key, V)], key: Key) -> Result<usize, usize> {
     entries.binary_search_by_key(&key, |entry| entry.0)
 }
 
-impl<T: JsPayload, V: Borrow<StrongWrapper<T>>> StrongWrapperMap<T, V> {
-    pub(super) const fn new() -> Self {
+impl<T, V> Default for StrongWrapperMap<T, V> {
+    fn default() -> Self {
         Self {
-            entries: Cell::new(Vec::new()),
-            next_key: Cell::new(0),
+            entries: Cell::default(),
+            next_key: Cell::default(),
             _payload: PhantomData,
         }
     }
+}
 
+impl<T: JsPayload, V: Borrow<StrongWrapper<T>>> StrongWrapperMap<T, V> {
     pub(super) fn next_key(&self) -> Key {
         Key(self.next_key.replace(self.next_key.get() + 1))
     }

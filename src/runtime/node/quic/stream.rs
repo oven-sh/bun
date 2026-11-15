@@ -1,6 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_int;
-use core::mem::MaybeUninit;
+use core::mem::{MaybeUninit, offset_of};
 use core::sync::atomic::Ordering::Relaxed;
 use core::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64};
 use std::collections::VecDeque;
@@ -10,7 +10,7 @@ use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult, StringJsc,
 use bun_lsquic_sys as lsquic;
 use bun_ptr::CellExt as _;
 
-use super::aliased_struct::{AliasedStruct, all_atomic_struct};
+use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::engine::StrongCtx;
 use super::roots::{Key, StrongWrapperCell};
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
@@ -23,6 +23,7 @@ const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
 all_atomic_struct! {
     /// Mirrors Node's `Stream::State` (see `node_quic_binding.rs` for the
     /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
+    #[derive(Default)]
     pub(crate) struct StreamState {
         pub(crate) id: AtomicI64,
         pub(crate) pending: AtomicU8,
@@ -61,6 +62,13 @@ pub(crate) const STREAM_STATS_FIELDS: &[&str] = &[
     "BYTES_ACCUMULATED",
     "MAX_BYTES_ACCUMULATED",
 ];
+
+all_atomic_struct! {
+    struct StateAndStats {
+        state: StreamState,
+        stats: [AtomicU64; STREAM_STATS_FIELDS.len()],
+    }
+}
 
 const IDX_STATS_CREATED_AT: usize = 0;
 const IDX_STATS_OPENED_AT: usize = 1;
@@ -129,8 +137,7 @@ pub(crate) struct QuicStream {
     /// Empty after `teardown` or `release_session`.
     session: StrongWrapperCell<QuicSession>,
     key: Key,
-    state: AliasedStruct<StreamState>,
-    stats: AliasedStruct<[AtomicU64; STREAM_STATS_FIELDS.len()]>,
+    state_and_stats: AliasedStruct<StateAndStats>,
     outbound: Outbound,
     inbound: Inbound,
     wakeup: Cell<Option<Strong>>,
@@ -157,8 +164,10 @@ impl QuicStream {
             raw: lsquic::BoundStream::default(),
             session: StrongWrapperCell::new(Some(session)),
             key,
-            state: AliasedStruct::new(StreamState::default()),
-            stats: AliasedStruct::new([const { AtomicU64::new(0) }; _]),
+            state_and_stats: AliasedStruct::new(StateAndStats {
+                state: StreamState::default(),
+                stats: [const { AtomicU64::new(0) }; _],
+            }),
             outbound: Outbound::default(),
             inbound: Inbound::default(),
             wakeup: Cell::new(None),
@@ -174,20 +183,17 @@ impl QuicStream {
             destroyed: Cell::new(false),
         };
         stream.write_stat(IDX_STATS_CREATED_AT, super::now_ns());
-        stream.state.id.store(-1, Relaxed);
-        stream.state.pending.store(1, Relaxed);
+        stream.state().id.store(-1, Relaxed);
+        stream.state().pending.store(1, Relaxed);
         stream
-            .state
+            .state()
             .high_water_mark
             .store(DEFAULT_HIGH_WATER_MARK, Relaxed);
-        let state = stream.state.to_array_buffer(global)?;
-        let stats = stream.stats.to_array_buffer(global)?;
+        let buffer = stream.state_and_stats.to_array_buffer(global)?;
         let this_value = stream.into_js_wrapper(global);
         let handle = this_value.to_js();
-        handle.put(global, b"state", state);
-        handle.put(global, b"stats", stats);
-        handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
-        handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
+        let stats_byte_offset = offset_of!(StateAndStats, stats);
+        put_state_and_stats(global, handle, buffer, buffer, stats_byte_offset);
         Ok(StrongCtx::new(StrongWrapper::new(this_value, global)))
     }
 
@@ -196,8 +202,8 @@ impl QuicStream {
         let s = &self.raw;
         let Some(id) = s.id() else { return };
         let id = id as i64;
-        self.state.id.store(id, Relaxed);
-        self.state.pending.store(0, Relaxed);
+        self.state().id.store(id, Relaxed);
+        self.state().pending.store(0, Relaxed);
         self.write_stat(IDX_STATS_OPENED_AT, super::now_ns());
         let pre_reset_code = s.error_code();
         if s.is_rejected() && self.peer_stop_sending_code.get().is_none() {
@@ -225,8 +231,8 @@ impl QuicStream {
             self.wrote_to_lsquic.set(true);
             if s.send_headers(&bytes, count, eos) == 0 {
                 if eos {
-                    self.state.fin_sent.store(1, Relaxed);
-                    self.state.write_ended.store(1, Relaxed);
+                    self.state().fin_sent.store(1, Relaxed);
+                    self.state().write_ended.store(1, Relaxed);
                     s.shutdown(1);
                 } else {
                     want_write = true;
@@ -237,7 +243,7 @@ impl QuicStream {
                 s.reset(H3_INTERNAL_ERROR);
                 s.stop_sending(H3_INTERNAL_ERROR);
                 self.mark_reset(H3_INTERNAL_ERROR);
-                self.state.write_ended.store(1, Relaxed);
+                self.state().write_ended.store(1, Relaxed);
                 self.outbound.discard();
                 break;
             }
@@ -246,9 +252,9 @@ impl QuicStream {
             let local = (id & 1 == 0) != is_server;
             if local {
                 self.inbound.ended.set(true);
-                self.state.read_ended.store(1, Relaxed);
+                self.state().read_ended.store(1, Relaxed);
             } else {
-                self.state.write_ended.store(1, Relaxed);
+                self.state().write_ended.store(1, Relaxed);
                 s.want_read(true);
             }
         } else {
@@ -263,18 +269,21 @@ impl QuicStream {
         self.session.with(|session| session.push_event(event));
     }
 
+    fn state(&self) -> &StreamState {
+        &self.state_and_stats.state
+    }
     fn write_stat(&self, idx: usize, value: u64) {
-        self.stats[idx].store(value, Relaxed);
+        self.state_and_stats.stats[idx].store(value, Relaxed);
     }
     fn read_stat(&self, idx: usize) -> u64 {
-        self.stats[idx].load(Relaxed)
+        self.state_and_stats.stats[idx].load(Relaxed)
     }
     fn add_stat(&self, idx: usize, delta: u64) {
         self.write_stat(idx, self.read_stat(idx).wrapping_add(delta));
     }
 
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
-        (self.state.reset.load(Relaxed) != 0).then(|| self.state.reset_code.load(Relaxed))
+        (self.state().reset.load(Relaxed) != 0).then(|| self.state().reset_code.load(Relaxed))
     }
     pub(super) fn release_session(&self) {
         self.session.take();
@@ -298,15 +307,15 @@ impl QuicStream {
     }
     /// True until lsquic opens the stream.
     pub(super) fn is_pending(&self) -> bool {
-        self.state.pending.load(Relaxed) != 0
+        self.state().pending.load(Relaxed) != 0
     }
 
     pub(super) fn stream_id(&self) -> i64 {
-        self.state.id.load(Relaxed)
+        self.state().id.load(Relaxed)
     }
 
     fn is_write_done(&self) -> bool {
-        self.state.fin_sent.load(Relaxed) != 0 || self.state.write_ended.load(Relaxed) != 0
+        self.state().fin_sent.load(Relaxed) != 0 || self.state().write_ended.load(Relaxed) != 0
     }
 
     fn push_inbound(&self, data: &[u8], fin: bool) {
@@ -328,7 +337,7 @@ impl QuicStream {
         }
         if fin {
             self.inbound.ended.set(true);
-            self.state.fin_received.store(1, Relaxed);
+            self.state().fin_received.store(1, Relaxed);
         }
     }
 
@@ -341,7 +350,7 @@ impl QuicStream {
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
         self.outbound.discard();
-        self.state.write_ended.store(1, Relaxed);
+        self.state().write_ended.store(1, Relaxed);
         // Node destroys it silently.
         self.raw.shutdown_internal();
     }
@@ -349,10 +358,10 @@ impl QuicStream {
     pub(super) fn apply_peer_stop_sending(&self, code: u64) {
         // bit 1 of the id = uni per RFC 9000 §2.1
         let local_uni =
-            self.stream_id() & STREAM_ID_UNI_BIT != 0 && self.state.read_ended.load(Relaxed) != 0;
-        self.state.write_ended.store(1, Relaxed);
-        if local_uni && code != 0 && self.state.reset_code.load(Relaxed) == 0 {
-            self.state.reset_code.store(code, Relaxed);
+            self.stream_id() & STREAM_ID_UNI_BIT != 0 && self.state().read_ended.load(Relaxed) != 0;
+        self.state().write_ended.store(1, Relaxed);
+        if local_uni && code != 0 && self.state().reset_code.load(Relaxed) == 0 {
+            self.state().reset_code.store(code, Relaxed);
         }
     }
 
@@ -363,14 +372,14 @@ impl QuicStream {
         self.inbound.chunks.with_taken(VecDeque::clear);
         self.inbound.errored.set(true);
         self.inbound.ended.set(true);
-        self.state.reset.store(1, Relaxed);
+        self.state().reset.store(1, Relaxed);
         // First reset wins: lsquic re-resets rejected 0-RTT streams with
         // code 0 after cancel_early_rejected recorded the application
         // error node reports, which would erase it.
-        if self.state.reset_code.load(Relaxed) == 0 {
-            self.state.reset_code.store(code, Relaxed);
+        if self.state().reset_code.load(Relaxed) == 0 {
+            self.state().reset_code.store(code, Relaxed);
         }
-        self.state.read_ended.store(1, Relaxed);
+        self.state().read_ended.store(1, Relaxed);
     }
 
     pub(super) fn is_destroyed(&self) -> bool {
@@ -383,13 +392,13 @@ impl QuicStream {
         !self.headers_received.replace(true)
     }
     pub(super) fn wants_headers(&self) -> bool {
-        self.state.wants_headers.load(Relaxed) != 0
+        self.state().wants_headers.load(Relaxed) != 0
     }
     pub(super) fn wants_reset(&self) -> bool {
-        self.state.wants_reset.load(Relaxed) != 0
+        self.state().wants_reset.load(Relaxed) != 0
     }
     pub(super) fn wants_block(&self) -> bool {
-        self.state.wants_block.load(Relaxed) != 0
+        self.state().wants_block.load(Relaxed) != 0
     }
     fn note_write_blocked(&self) {
         if self.blocked_reported.replace(true) {
@@ -427,7 +436,7 @@ impl QuicStream {
                 s.shutdown(1);
                 self.wrote_to_lsquic.set(true);
                 self.outbound.end.set(PendingEnd::None);
-                self.state.fin_sent.store(1, Relaxed);
+                self.state().fin_sent.store(1, Relaxed);
                 if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
                     s.shutdown(0);
                 }
@@ -438,10 +447,10 @@ impl QuicStream {
         }
         s.flush();
         let pending = pending as u32;
-        let was_full = self.state.write_desired_size.load(Relaxed) == 0
-            && self.state.has_outbound.load(Relaxed) != 0;
-        let hwm = self.state.high_water_mark.load(Relaxed);
-        self.state
+        let was_full = self.state().write_desired_size.load(Relaxed) == 0
+            && self.state().has_outbound.load(Relaxed) != 0;
+        let hwm = self.state().high_water_mark.load(Relaxed);
+        self.state()
             .write_desired_size
             .store(hwm.saturating_sub(pending), Relaxed);
         if was_full && pending < hwm {
@@ -456,7 +465,7 @@ impl QuicStream {
 
     pub(super) fn end_read_side(&self, global: &JSGlobalObject) {
         self.inbound.ended.set(true);
-        self.state.read_ended.store(1, Relaxed);
+        self.state().read_ended.store(1, Relaxed);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm();
             vm.event_loop().run_callback(
@@ -482,7 +491,7 @@ impl QuicStream {
         self.outbound.data.with_taken(VecDeque::clear);
         self.inbound.chunks.with_taken(VecDeque::clear);
         self.inbound.ended.set(true);
-        self.state.read_ended.store(1, Relaxed);
+        self.state().read_ended.store(1, Relaxed);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm();
             vm.event_loop().run_callback(
@@ -498,7 +507,7 @@ impl QuicStream {
     }
 
     pub(crate) fn get_reader<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        self.state.has_reader.store(1, Relaxed);
+        self.state().has_reader.store(1, Relaxed);
         this_value
     }
 
@@ -573,7 +582,7 @@ impl QuicStream {
         self.outbound.started.set(true);
         self.outbound.extend_from_slice(bytes);
         self.outbound.end.set(PendingEnd::Fin);
-        self.state.has_outbound.store(1, Relaxed);
+        self.state().has_outbound.store(1, Relaxed);
     }
 
     pub(crate) fn init_streaming_source(&self) {
@@ -581,10 +590,10 @@ impl QuicStream {
             return;
         }
         self.outbound.started.set(true);
-        self.state.has_outbound.store(1, Relaxed);
-        self.state
+        self.state().has_outbound.store(1, Relaxed);
+        self.state()
             .write_desired_size
-            .store(self.state.high_water_mark.load(Relaxed), Relaxed);
+            .store(self.state().high_water_mark.load(Relaxed), Relaxed);
     }
 
     pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<JSValue> {
@@ -610,8 +619,8 @@ impl QuicStream {
             append(buf.byte_slice());
         }
         let pending = self.outbound.len() as u32;
-        self.state.write_desired_size.store(
-            self.state
+        self.state().write_desired_size.store(
+            self.state()
                 .high_water_mark
                 .load(Relaxed)
                 .saturating_sub(pending),
@@ -629,7 +638,7 @@ impl QuicStream {
         self.outbound.started.set(true);
         self.outbound
             .end
-            .set(if self.state.wants_trailers.load(Relaxed) != 0 {
+            .set(if self.state().wants_trailers.load(Relaxed) != 0 {
                 PendingEnd::Trailers
             } else {
                 PendingEnd::Fin
@@ -691,9 +700,9 @@ impl QuicStream {
     }
 
     fn mark_local_reset(&self, code: u64) {
-        self.state.write_ended.store(1, Relaxed);
-        self.state.reset.store(1, Relaxed);
-        self.state.reset_code.store(code, Relaxed);
+        self.state().write_ended.store(1, Relaxed);
+        self.state().reset.store(1, Relaxed);
+        self.state().reset_code.store(code, Relaxed);
         self.outbound.discard();
     }
 
@@ -709,10 +718,10 @@ impl QuicStream {
 
     fn mark_local_stop(&self, code: u64) {
         self.inbound.ended.set(true);
-        self.state.read_ended.store(1, Relaxed);
+        self.state().read_ended.store(1, Relaxed);
         // Mirrors Node treating the local stop as the close error.
-        if self.state.reset_code.load(Relaxed) == 0 {
-            self.state.reset_code.store(code, Relaxed);
+        if self.state().reset_code.load(Relaxed) == 0 {
+            self.state().reset_code.store(code, Relaxed);
         }
     }
 
@@ -803,16 +812,16 @@ impl QuicStream {
         if s.is_null() {
             self.pending_headers
                 .with_taken(|q| q.push((bytes, header_count, eos)));
-            self.state.has_outbound.store(1, Relaxed);
+            self.state().has_outbound.store(1, Relaxed);
             return Ok(JSValue::js_boolean(true));
         }
         let rv = s.send_headers(&bytes, header_count, eos);
         if rv == 0 {
             self.wrote_to_lsquic.set(true);
-            self.state.has_outbound.store(1, Relaxed);
+            self.state().has_outbound.store(1, Relaxed);
             if eos {
-                self.state.fin_sent.store(1, Relaxed);
-                self.state.write_ended.store(1, Relaxed);
+                self.state().fin_sent.store(1, Relaxed);
+                self.state().write_ended.store(1, Relaxed);
                 s.shutdown(1);
                 self.session.with(|session| session.schedule_process());
             } else {
@@ -888,7 +897,7 @@ impl QuicStream {
         }
         let stream = &self.raw;
         if stream.received_early_data() {
-            self.state.received_early_data.store(1, Relaxed);
+            self.state().received_early_data.store(1, Relaxed);
         }
         let mut buf = [const { MaybeUninit::uninit() }; 16 * 1024];
         let mut got_any = false;

@@ -2,7 +2,7 @@
 
 use core::cell::{Cell, OnceCell};
 use core::ffi::{c_int, c_uint, c_void};
-use core::mem::MaybeUninit;
+use core::mem::{MaybeUninit, offset_of};
 use core::net::{IpAddr, SocketAddr};
 use core::sync::atomic::Ordering::Relaxed;
 use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64};
@@ -22,7 +22,7 @@ use bun_ptr::CellExt as _;
 use crate::socket::SocketAddress;
 use crate::socket::socket_address::{inet, sockaddr};
 
-use super::aliased_struct::{AliasedStruct, all_atomic_struct};
+use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint};
 use super::engine::{self, StrongCtx};
@@ -161,6 +161,7 @@ all_atomic_struct! {
     /// `IDX_STATE_SESSION_*` constants on the binding are `offset_of!` values
     /// into this struct, so the layout must stay in sync with what the JS layer
     /// reads (`src/js/internal/quic/state.ts`).
+    #[derive(Default)]
     pub(crate) struct SessionState {
         pub(crate) listener_flags: AtomicU32,
         pub(crate) closing: AtomicU8,
@@ -223,6 +224,13 @@ pub(crate) const SESSION_STATS_FIELDS: &[&str] = &[
     "PING_RECV",
     "PKT_DISCARDED",
 ];
+
+all_atomic_struct! {
+    struct StateAndStats {
+        state: SessionState,
+        stats: [AtomicU64; SESSION_STATS_FIELDS.len()],
+    }
+}
 
 /// Copied in the lsquic callback because the conn can be freed before the handshake event is dispatched.
 pub(super) struct HskSnapshot {
@@ -370,8 +378,7 @@ pub(crate) struct QuicSession {
     is_server: bool,
     local_addr: Cell<StoredAddr>,
     pub(super) remote_addr: Cell<StoredAddr>,
-    state: AliasedStruct<SessionState>,
-    stats: AliasedStruct<[AtomicU64; SESSION_STATS_FIELDS.len()]>,
+    state_and_stats: AliasedStruct<StateAndStats>,
     events: Cell<Vec<SessionEvent>>,
     origin_buf: Cell<Vec<u8>>,
     deferred_aborts: Cell<Vec<DeferredAbort>>,
@@ -427,8 +434,10 @@ impl QuicSession {
             is_server,
             local_addr: Cell::new(StoredAddr::default()),
             remote_addr: Cell::new(StoredAddr::default()),
-            state: AliasedStruct::new(SessionState::default()),
-            stats: AliasedStruct::new([const { AtomicU64::new(0) }; _]),
+            state_and_stats: AliasedStruct::new(StateAndStats {
+                state: SessionState::default(),
+                stats: [const { AtomicU64::new(0) }; _],
+            }),
             events: Cell::new(Vec::new()),
             origin_buf: Cell::new(Vec::new()),
             deferred_aborts: Cell::new(Vec::new()),
@@ -449,7 +458,7 @@ impl QuicSession {
             final_conn_status: Cell::new(None),
             pending_local_bidi: Cell::new(VecDeque::new()),
             pending_local_uni: Cell::new(VecDeque::new()),
-            streams: StrongWrapperMap::new(),
+            streams: StrongWrapperMap::default(),
             handshake_reported: Cell::new(false),
             new_token_reported: Cell::new(false),
             close_when_bound: Cell::new(false),
@@ -468,7 +477,7 @@ impl QuicSession {
             ),
         };
         // This is the only write to the application fields, like node's `Session::SetApplication`.
-        let s = &session.state;
+        let s = session.state();
         s.internal_error_code.store(1, Relaxed);
         s.stream_open_allowed.store(1, Relaxed);
         s.application_type.store(application as u8, Relaxed);
@@ -483,14 +492,11 @@ impl QuicSession {
             }
         }
         session.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
-        let state = session.state.to_array_buffer(global)?;
-        let stats = session.stats.to_array_buffer(global)?;
+        let buffer = session.state_and_stats.to_array_buffer(global)?;
         let this_value = session.into_js_wrapper(global);
         let handle = this_value.to_js();
-        handle.put(global, b"state", state);
-        handle.put(global, b"stats", stats);
-        handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
-        handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
+        let stats_byte_offset = offset_of!(StateAndStats, stats);
+        put_state_and_stats(global, handle, buffer, buffer, stats_byte_offset);
         Ok(StrongCtx::new(StrongWrapper::new(this_value, global)))
     }
 
@@ -515,13 +521,21 @@ impl QuicSession {
     }
 
     fn has_listener(&self, flag: u32) -> bool {
-        self.state.listener_flags.load(Relaxed) & flag != 0
+        self.state().listener_flags.load(Relaxed) & flag != 0
     }
     fn add_stat(&self, idx: usize, delta: u64) {
-        self.write_stat(idx, self.stats[idx].load(Relaxed).wrapping_add(delta));
+        self.write_stat(
+            idx,
+            self.state_and_stats.stats[idx]
+                .load(Relaxed)
+                .wrapping_add(delta),
+        );
+    }
+    fn state(&self) -> &SessionState {
+        &self.state_and_stats.state
     }
     fn write_stat(&self, idx: usize, value: u64) {
-        self.stats[idx].store(value, Relaxed);
+        self.state_and_stats.stats[idx].store(value, Relaxed);
     }
     pub(super) fn is_server(&self) -> bool {
         self.is_server
@@ -666,7 +680,7 @@ impl QuicSession {
         let Some(tp) = self.conn.peer_transport_params() else {
             return;
         };
-        self.state
+        self.state()
             .max_datagram_size
             .store(datagram_budget(&tp), Relaxed);
     }
@@ -677,7 +691,7 @@ impl QuicSession {
         }
         if self.destroyed.get()
             || self.close_reported.get()
-            || self.state.graceful_close.load(Relaxed) != 0
+            || self.state().graceful_close.load(Relaxed) != 0
         {
             self.pending_tickets.with_taken(VecDeque::clear);
             return;
@@ -785,7 +799,7 @@ impl QuicSession {
                 }
             }
             SessionEvent::HandshakeConfirmed => {
-                self.state.handshake_confirmed.store(1, Relaxed);
+                self.state().handshake_confirmed.store(1, Relaxed);
                 if self.handshake_pending_ok.get() {
                     let close_wins = self.streams.is_empty()
                         && self.events.with_taken(|e| {
@@ -1053,7 +1067,7 @@ impl QuicSession {
             SessionEvent::EarlyDataFailed => {
                 // Node parity: their `closed` promises reject with an
                 // application error.
-                let code = self.state.internal_error_code.load(Relaxed).max(1);
+                let code = self.state().internal_error_code.load(Relaxed).max(1);
                 self.streams
                     .for_each(|stream| stream.cancel_early_rejected(code));
             }
@@ -1252,7 +1266,7 @@ impl QuicSession {
         // Already closing: the CONNECTION_CLOSE precedes this
         // stream's packet and a closing endpoint discards new
         // streams (RFC 9000 s10.2.1). Raw QUIC only.
-        if self.state.graceful_close.load(Relaxed) == 1 && !self.is_http() {
+        if self.state().graceful_close.load(Relaxed) == 1 && !self.is_http() {
             stream.suppress_announce();
             stream.raw.close();
             return;
@@ -1331,12 +1345,12 @@ impl QuicSession {
             .filter(|_| ok)
             .and_then(|s| s.peer_transport_params.as_ref())
             .map_or(0, datagram_budget);
-        self.state.handshake_completed.store(ok as u8, Relaxed);
-        self.state.handshake_confirmed.store(ok as u8, Relaxed);
-        self.state
+        self.state().handshake_completed.store(ok as u8, Relaxed);
+        self.state().handshake_confirmed.store(ok as u8, Relaxed);
+        self.state()
             .stream_open_allowed
             .store(open_allowed as u8, Relaxed);
-        self.state
+        self.state()
             .max_datagram_size
             .store(max_datagram_size, Relaxed);
         if !ok {
@@ -1491,7 +1505,7 @@ impl QuicSession {
         if self.close_reported.replace(true) {
             return;
         }
-        self.state.closing.store(1, Relaxed);
+        self.state().closing.store(1, Relaxed);
         self.write_stat(IDX_STATS_SESSION_DESTROYED_AT, now_ns());
         // Take the close reason before emit_qlog: that runs onSessionQlog,
         // which is user JS and drains microtasks, so a destroy() from inside
@@ -1678,7 +1692,7 @@ impl QuicSession {
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
             let (app, code, reason) = self.parse_close_options(global, options.to_js())?;
-            self.state.graceful_close.store(1, Relaxed);
+            self.state().graceful_close.store(1, Relaxed);
             if self.conn.is_null() {
                 if self.is_server && !self.close_reported.get() {
                     self.pending_graceful.set(Some((app, code, reason)));
@@ -1783,7 +1797,7 @@ impl QuicSession {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
         // Oversized for the negotiated budget: not sent (Node returns 0n).
-        let max_size = self.state.max_datagram_size.load(Relaxed);
+        let max_size = self.state().max_datagram_size.load(Relaxed);
         if max_size == 0 || buf.byte_slice().len() > max_size as usize {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
@@ -1794,13 +1808,13 @@ impl QuicSession {
         let id = self
             .next_datagram_id
             .replace(self.next_datagram_id.get() + 1);
-        let max_pending = self.state.max_pending_datagrams.load(Relaxed);
+        let max_pending = self.state().max_pending_datagrams.load(Relaxed);
         if max_pending > 0 && self.datagram_queue.with_taken(|q| q.len()) >= max_pending as usize {
             // Node reports the abandonment synchronously from within
             // sendDatagram.
             if self.datagram_drop_newest {
                 self.report_datagram_abandoned(this_value.to_js(), global, id)?;
-                self.state.last_datagram_id.store(id, Relaxed);
+                self.state().last_datagram_id.store(id, Relaxed);
                 return JSValue::from_uint64_no_truncate(global, id);
             }
             if let Some((dropped_id, _)) = self.datagram_queue.with_taken(VecDeque::pop_front) {
@@ -1814,7 +1828,7 @@ impl QuicSession {
         }
         self.datagram_queue
             .with_taken(|q| q.push_back((id, payload)));
-        self.state.last_datagram_id.store(id, Relaxed);
+        self.state().last_datagram_id.store(id, Relaxed);
         self.conn.want_datagram_write(true);
         self.schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
@@ -2142,7 +2156,7 @@ impl QuicSession {
             };
             let len = payload.len();
             if len > buf.len() {
-                let max = self.state.max_datagram_size.load(Relaxed) as usize;
+                let max = self.state().max_datagram_size.load(Relaxed) as usize;
                 if max == 0 || len > max {
                     queue.pop_front();
                     self.push_event(SessionEvent::DatagramStatus { id, sent: false });

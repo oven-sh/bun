@@ -30,7 +30,6 @@ unsafe impl<T: AllAtomic, const N: usize> AllAtomic for [T; N] {}
 macro_rules! all_atomic_struct {
     ($(#[$meta:meta])* $vis:vis struct $Name:ident { $($field_vis:vis $field:ident: $Field:ty),+ $(,)? }) => {
         $(#[$meta])*
-        #[derive(Default)]
         #[repr(C)]
         $vis struct $Name { $($field_vis $field: $Field),+ }
 
@@ -76,4 +75,18 @@ impl<T> core::ops::Deref for AliasedStruct<T> {
     fn deref(&self) -> &T {
         &self.0
     }
+}
+
+pub(super) fn put_state_and_stats(
+    global: &JSGlobalObject,
+    handle: JSValue,
+    state: JSValue,
+    stats: JSValue,
+    stats_byte_offset: usize,
+) {
+    handle.put(global, b"state", state);
+    handle.put(global, b"stats", stats);
+    handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
+    let stats_byte_offset = JSValue::js_number(stats_byte_offset as f64);
+    handle.put(global, b"statsByteOffset", stats_byte_offset);
 }

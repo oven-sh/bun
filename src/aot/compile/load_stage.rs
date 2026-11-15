@@ -844,6 +844,7 @@ impl<'a> Build<'a> {
             builtin_names: shared.builtin_names,
             platform: self.platform,
             in_parallel: &in_parallel,
+            find_required_file: &|folder, name| host.find_file_that_require_finds(folder, name),
         });
         steps.end("contents of the program");
         self.files_of_guesses = match options.aot.checks_only || options.load.runs_tests {

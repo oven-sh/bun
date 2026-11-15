@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/what-package-json-names-is-the-file-that-a-require-of-the-name-finds.test.ts": {
+    "default": 2300,
+    "asan": 9200
+  },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,
     "asan": 240000

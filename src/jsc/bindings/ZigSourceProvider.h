@@ -88,9 +88,9 @@ bool hasStringTooLongForBytecodeCache(JSC::VM&, const JSC::SourceCode& source);
 
 // Bytecode that is a section of the executable: not owned, and there for the life of the process. `entryOffset` is where
 // the module's cache entry starts in `bytes` when they are the one payload of a link.
-inline Ref<JSC::CachedBytecode> embeddedBytecode(std::span<uint8_t> bytes, uint32_t entryOffset)
+inline Ref<JSC::CachedBytecode> embeddedBytecode(std::span<const uint8_t> bytes, uint32_t entryOffset)
 {
-    Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(bytes, nullptr, {});
+    Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(spanConstCast<uint8_t>(bytes), nullptr, {});
     bytecode->setPayloadIsPersistent();
     bytecode->setEntryOffset(entryOffset);
     return bytecode;

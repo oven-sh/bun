@@ -3175,7 +3175,6 @@ export default db;
             });
         }
 
-        let module_info = file.module_info;
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -3191,14 +3190,14 @@ export default db;
             },
             bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
-            module_info: if !module_info.is_empty() {
+            module_info: if !file.module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,
                 )
                 .ok()
                 .and_then(|table| {
                     bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                            ::create_with_table(&table, module_info)
+                            ::create_with_table(&table, file.module_info)
                 });
                 debug_assert!(decoded.is_some(), "embedded module_info does not decode");
                 decoded
@@ -4268,11 +4267,10 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return Some(path.len());
     }
     let file = bun_standalone_graph::Graph::get_ref()?.find_library(input_path)?;
-    let file_contents: &[u8] = file.contents;
 
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
     // users on a shared `/tmp` from colliding.
-    let content_hash = bun_wyhash::hash(file_contents);
+    let content_hash = bun_wyhash::hash(file.contents);
     let uid = extract_owner_uid();
     let mut canonical_name_buf = [0u8; 64];
     let canonical_name = bun_core::fmt::buf_print_z(
@@ -4292,7 +4290,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let tmpdir = Fs::FileSystem::get().tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
-        let size_ok = st.st_size as usize == file_contents.len();
+        let size_ok = st.st_size as usize == file.contents.len();
         #[cfg(unix)]
         let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
         #[cfg(windows)]
@@ -4316,7 +4314,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
 
     let write_ok = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(file_contents)
+        .write_all(file.contents)
         .is_ok();
     if !write_ok {
         let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);

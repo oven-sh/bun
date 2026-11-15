@@ -269,7 +269,7 @@ test.skipIf(isMacOS)(
       expect({ field, ...(await run(exe)) }).toEqual({
         field,
         stdout: "",
-        stderr: expect.stringContaining("Corrupted module graph: a record is out of range"),
+        stderr: expect.stringContaining("Corrupted module graph: invalid record"),
         exitCode: 1,
       });
       stompU32(exe, at, bytes.readUInt32LE(at));

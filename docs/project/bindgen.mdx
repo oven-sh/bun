@@ -586,7 +586,7 @@ What outlives a call:
 
 - one of a class's **`internalFields`** (below), which the GC visits;
 - a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread;
-- a `StrongWrapper<T>`, which is a `Strong` made from a `JsWrapper<T>`: `strong.payload(cx)` borrows the struct from it.
+- a `StrongWrapper<T>`, which is a `Strong` made from a `JsWrapper<T>`: `strong.payload()` borrows the struct from it, and panics in a `Drop` that the teardown of the VM runs.
 
 A list of values goes in a `MarkedArgumentBuffer`, never a `Vec` or a `Box`: the GC does
 not look inside heap allocations. The compiler does not check this one.

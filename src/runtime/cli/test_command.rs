@@ -1,4 +1,4 @@
-use core::cell::{Cell, OnceCell};
+use core::cell::{Cell, OnceCell, RefCell};
 
 use bun_io::Write as _;
 
@@ -1792,7 +1792,7 @@ pub(crate) struct CommandLineReporter {
     pub(crate) last_printed_dot: Cell<bool>,
 
     /// Set in a `--parallel` worker, which sends per-test output to the coordinator instead of to stderr.
-    pub(crate) worker: OnceCell<ParallelRunner::WorkerLink>,
+    pub(crate) worker: OnceCell<ParallelRunner::CoordinatorLink>,
 
     pub(crate) failures_to_repeat_buf: Cell<Vec<u8>>,
     pub(crate) skips_to_repeat_buf: Cell<Vec<u8>>,
@@ -2757,10 +2757,10 @@ impl TestCommand {
                     .test_options
                     .test_filter_regex()
                     .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
-                snapshots: Cell::new(Some(Snapshots::init(ctx.test_options.update_snapshots))),
+                snapshots: RefCell::new(Snapshots::init(ctx.test_options.update_snapshots)),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 current_file: jest::CurrentFile::default(),
-                index: Cell::default(),
+                file_ids: Cell::default(),
                 default_timeout_override: Cell::new(u32::MAX),
                 vi_config: Cell::default(),
                 vi_config_of_preload: Cell::default(),
@@ -4059,7 +4059,7 @@ impl TestCommand {
                 }
 
                 // Automatically execute bun_test tests
-                if !buntest.has_results() {
+                if !buntest.has_queued_results() {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
                 bun_test::BunTest::run(&buntest, vm.global())?;
@@ -4070,7 +4070,7 @@ impl TestCommand {
                 let mut prev_unhandled_count = vm.unhandled_error_counter.get();
                 while buntest.phase.get() != bun_test::Phase::Done {
                     // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
-                    if buntest.has_results() {
+                    if buntest.has_queued_results() {
                         bun_test::BunTest::run_next_tick(
                             &std::rc::Rc::downgrade(&buntest),
                             global,

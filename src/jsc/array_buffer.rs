@@ -276,7 +276,7 @@ impl ArrayBuffer {
         ty: JSType,
     ) -> JsResult<Option<JSValue>> {
         let whole = bytes.slice();
-        let Some(memfd) = bytes.memfd() else {
+        let Some(memfd) = bytes.memfd_for_clone() else {
             return Ok(None);
         };
         if !bun_core::is_slice_in_buffer(part, whole) {

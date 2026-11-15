@@ -207,6 +207,7 @@ const loadFixture = {
   "entry.ts": `console.log("unused");`,
   "render.ts": `export function render() { return new Response("rendered"); }`,
   "routes/index.ts": `export default {};`,
+  "routes/other.ts": `export default {};`,
   // Each kind of server whose first request starts the plugin load. The two HTML routes without
   // a dev server start it in html_bundle::Route::schedule_bundle.
   "serve.ts": /* ts */ `
@@ -214,10 +215,15 @@ const loadFixture = {
     import other from "./other.html";
 
     const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
-    const routes = { "/": html, "/other": other, "/barrier": new Response("barrier") };
+    const barrier = { "/barrier": new Response("barrier") };
+    const routes = { "/": html, "/other": other, ...barrier };
     const kinds = {
       "dev-server-page": { development: true, routes },
-      "dev-server-framework-route": { development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } },
+      "dev-server-framework-route": {
+        development: true,
+        routes: barrier,
+        app: { framework: { fileSystemRouterTypes: [fsr] } },
+      },
       "html-route": { development: false, routes },
       "html-route-without-hmr": { development: { hmr: false }, routes },
     };
@@ -470,48 +476,59 @@ test.concurrent.each(["dev-server-page", "html-route"])(
   },
 );
 
-test.concurrent("two more requests while the setup() of an imported plugin runs the event loop", async () => {
-  using dir = tempDir("serve-plugins-setup-requests", {
-    ...loadFixture,
-    "plugin.ts": /* ts */ `
-      export default {
-        name: "event-loop-plugin",
-        setup() {
-          const test = globalThis.__test;
-          test.setups++;
-          // Bun.build() runs the event loop until the setup() of this plugin settles: the server
-          // has read the other two requests when it answers a connection made later.
-          let inSetup = true;
-          const ran = () => void (test.loopRanInSetup = inSetup);
-          const wait = { name: "wait", setup: () => test.barrier().then(ran) };
-          Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"], plugins: [wait] }).catch(() => {});
-          inSetup = false;
-        },
-      };
-    `,
-    "server.ts": /* ts */ `
-      import "./plugin.ts";
-      import { serve } from "./serve.ts";
+// A parked framework request counts in server.pendingRequests. So `parked` shows that the event
+// loop in setup() read the other two requests: it is the first request and those two.
+test.concurrent.each([
+  { kind: "dev-server-page", parked: 0 },
+  { kind: "dev-server-framework-route", parked: 3 },
+])(
+  "two more requests while the setup() of an imported plugin runs the event loop ($kind)",
+  async ({ kind, parked }) => {
+    using dir = tempDir("serve-plugins-setup-requests", {
+      ...loadFixture,
+      "plugin.ts": /* ts */ `
+        export default {
+          name: "event-loop-plugin",
+          setup() {
+            const test = globalThis.__test;
+            test.setups++;
+            // Bun.build() runs the event loop until the setup() of this plugin settles: the server
+            // has read the other two requests when it answers a connection made later.
+            let inSetup = true;
+            const ran = () => void (test.loopRanInSetup = inSetup);
+            const wait = { name: "wait", setup: () => test.barrier().then(ran) };
+            Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"], plugins: [wait] }).catch(() => {});
+            inSetup = false;
+            test.parked = test.server.pendingRequests;
+          },
+        };
+      `,
+      "server.ts": /* ts */ `
+        import "./plugin.ts";
+        import { serve } from "./serve.ts";
 
-      const server = serve("dev-server-page");
-      const test = (globalThis.__test = {
-        setups: 0,
-        barrier: () => fetch(new URL("/barrier", server.url)).then(res => res.text()),
-      });
+        const server = serve(process.argv[2]);
+        const test = (globalThis.__test = {
+          server,
+          setups: 0,
+          barrier: () => fetch(new URL("/barrier", server.url)).then(res => res.text()),
+        });
 
-      const get = path => fetch(new URL(path, server.url)).then(res => res.status);
-      const statuses = await Promise.all([get("/"), get("/other"), get("/")]);
-      await server.stop(true);
-      console.log(JSON.stringify({ statuses, setups: test.setups, loopRanInSetup: test.loopRanInSetup }));
-    `,
-  });
+        const get = path => fetch(new URL(path, server.url)).then(res => res.status);
+        const statuses = await Promise.all([get("/"), get("/other"), get("/")]);
+        await server.stop(true);
+        const { setups, parked, loopRanInSetup } = test;
+        console.log(JSON.stringify({ statuses, setups, parked, loopRanInSetup }));
+      `,
+    });
 
-  const { report, exitCode, stderr } = await runServer(String(dir), []);
-  expect({ report, exitCode }, stderr).toEqual({
-    report: { statuses: [200, 200, 200], setups: 1, loopRanInSetup: true },
-    exitCode: 0,
-  });
-});
+    const { report, exitCode, stderr } = await runServer(String(dir), [kind]);
+    expect({ report, exitCode }, stderr).toEqual({
+      report: { statuses: [200, 200, 200], setups: 1, parked, loopRanInSetup: true },
+      exitCode: 0,
+    });
+  },
+);
 
 // These loads need no turn of the event loop to fail. They answer like a load that fails later:
 // the request that waits for the load gets 500, and the error is reported once.

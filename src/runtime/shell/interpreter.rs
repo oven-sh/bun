@@ -26,14 +26,20 @@
 //! own data up via `interp.as_<state>(this)` / `interp.as_<state>_mut(this)`.
 
 use bun_collections::VecExt;
+use bun_core::IntrusiveField;
+use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::BoxedTask;
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::{GlobalRef, JsCell, JsCellRefExt as _, JsRef};
+use bun_jsc::{ConcurrentPoster, GlobalRef, JsCell, JsCellRefExt as _, JsRef};
 use bun_options_types::context::ContextData;
 use bun_ptr::{AliasableBox, CellExt as _};
+use bun_threading::work_pool::{OwnedTask, WorkPool};
 use core::cell::Cell;
 use core::fmt;
 use core::ops::ControlFlow;
 use core::ptr::NonNull;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use bun_sys::{self, Fd, File};
@@ -308,6 +314,8 @@ pub(crate) struct Interpreter<'a> {
 
     /// Back-ref to the owner of this interpreter.
     shell_interp: NonNull<ShellInterpreter>,
+    /// Number of [`ShellInterpreterRef`]s that are out.
+    pending_tasks: u32,
     /// Same as [`ShellInterpreter::context`].
     pub(crate) context: Option<bun_jsc::ContextId>,
 
@@ -512,6 +520,7 @@ impl<'a> Interpreter<'a> {
             arena,
             script_ast,
             shell_interp,
+            pending_tasks: 0,
             context: None,
             async_commands_executing: 0,
             quiet: false,
@@ -1251,6 +1260,7 @@ impl ShellInterpreter {
 
         self.exit_code.set(Some(exit_code));
         let output = self.with_interp(|interp| {
+            assert_eq!(interp.pending_tasks, 0, "script finished before its tasks");
             [IoKind::Stdout, IoKind::Stderr].map(|kind| interp.take_buffered(kind))
         });
         // Frees what the script ran on without waiting for the wrapper to be collected.
@@ -2344,78 +2354,84 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 // ShellTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Thread-pool task wrapper used by [`PoolTask`] and the mv/rm/cp builtins.
-///
-/// A trait the per-builtin task struct implements. The container-of chain
-/// (WorkPoolTask → ShellTask → Ctx) is built from `core::mem::offset_of!` in
-/// [`ShellTaskCtx::TASK_OFFSET`] + the `#[repr(C)]` first-field guarantee on
-/// [`ShellTask::task`].
-///
-/// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
-/// JS-side `ConcurrentTask`.
-/// Its `Taskable::context` is `ContextId::NONE`: a step is what its interpreter is waiting for, and the
-/// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
-/// `finish`, `fail`).
-pub(crate) trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
-    /// Byte offset of the embedded `task: ShellTask` field within `Self`.
-    /// Implementors define this as `core::mem::offset_of!(Self, task)`.
-    const TASK_OFFSET: usize;
-    /// Worker-thread body. Takes `&mut Self`: the trampoline recovers the
-    /// heap allocation from the intrusive task node and forms the unique
-    /// borrow once; no impl re-enters or frees `self` here (that happens in
-    /// `run_from_main_thread`).
-    fn run_from_thread_pool(this: &mut Self);
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter<'_>) -> Yield;
+/// A queued task's reference to its [`ShellInterpreter`], whose `finish` panics while one is out.
+pub(crate) struct ShellInterpreterRef(NonNull<ShellInterpreter>);
 
-    /// Recover `*mut Self` from the intrusive `*mut WorkPoolTask` that the
-    /// thread pool hands the callback. `WorkPoolTask` is the first
-    /// `#[repr(C)]` field of [`ShellTask`], so the `WorkPoolTask*` and
-    /// `ShellTask*` coincide; one `byte_sub(TASK_OFFSET)` walks back to the
-    /// outer `Self`.
-    ///
-    /// Provided so the two opt-out builtins (`cp`/`rm`, which install a
-    /// custom `work_pool_callback` and bypass [`shell_task_trampoline`]) can
-    /// reuse the exact recovery the generic trampoline performs, instead of
-    /// each open-coding the `byte_sub` walk.
+// SAFETY: only `get` dereferences the pointer, on the thread of the script.
+unsafe impl Send for ShellInterpreterRef {}
+
+impl ShellInterpreterRef {
+    pub(crate) fn new(interp: &mut Interpreter<'_>) -> Self {
+        interp.pending_tasks += 1;
+        ShellInterpreterRef(interp.shell_interp)
+    }
+
+    /// # Safety
+    /// Called by the event loop of the script, for the queued task that held `self`.
+    unsafe fn get(&self) -> &ShellInterpreter {
+        // SAFETY: `pending_tasks` includes `self`, or a task that shares its `interp_owners`, so `finish`
+        // has not run. Only a VM teardown frees the interpreter before that, and it releases the queued
+        // tasks first. Both callers hold `ensure_still_alive` from before `finish` can run.
+        unsafe { self.0.as_ref() }
+    }
+
+    /// Gives up the reference, and then runs [`ShellInterpreter::run_yield_with`].
     ///
     /// # Safety
-    /// `task` must point at the [`WorkPoolTask`] node embedded in a live
-    /// `Self` allocation at `Self::TASK_OFFSET` (i.e. the `task.task` field
-    /// of the `ShellTask` field), with provenance covering the whole `Self`.
-    #[inline(always)]
-    unsafe fn from_work_task(task: *mut WorkPoolTask) -> *mut Self {
-        // SAFETY: caller contract — `task` is the first `#[repr(C)]` field of
-        // `ShellTask`, embedded in `Self` at `TASK_OFFSET`.
-        unsafe { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
+    /// See [`Self::get`].
+    pub(crate) unsafe fn run_yield_with(
+        self,
+        f: impl for<'a> FnOnce(&mut Interpreter<'a>) -> Yield,
+    ) {
+        // SAFETY: caller contract.
+        unsafe { self.get() }.run_yield_with(|interp| {
+            interp.pending_tasks -= 1;
+            f(interp)
+        });
     }
+}
+
+/// A thread-pool task that [`ShellTask::on_finish`] can post to the loop of its script.
+///
+/// Its `BoxedTask::context` is `ContextId::NONE`: a step is what its interpreter is waiting for, and the
+/// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
+/// `finish`, `fail`).
+pub(crate) trait ShellTaskCtx: IntrusiveField<ShellTask> + BoxedTask + Send {
+    /// `is_last` is false while a task related by [`ShellTask::new_child`] is still out.
+    fn run_from_main_thread(self: Box<Self>, shell_interp: &ShellInterpreter, is_last: bool);
 }
 
 pub(crate) type WorkPoolTask = bun_threading::work_pool::Task;
 
-#[repr(C)]
-pub(crate) struct ShellTask {
-    /// Intrusive thread-pool node. MUST be the first field so the
-    /// `*mut WorkPoolTask` → `*mut ShellTask` cast in the trampoline is a
-    /// no-op`).
-    pub task: WorkPoolTask,
-    pub(crate) event_loop: EventLoopHandle,
-    /// How the pool thread bounces the task back to its owning loop; held only
-    /// while the task is out on the pool (`arm` until `on_finish`). For a JS
-    /// loop this is the ticket its VM waits for: the context lives in
-    /// interpreter state a JS wrapper may own.
-    pub(crate) poster: Option<bun_jsc::ConcurrentPoster>,
-    pub(crate) keep_alive: bun_io::KeepAlive,
-    /// Back-ref to the owning [`ShellInterpreter`].
-    pub(crate) interp: NonNull<ShellInterpreter>,
-    /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
-    /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
-    /// mini arm holds an `AnyTaskWithExtraContext`.
-    pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
+/// Owned storage for either kind of concurrent task.
+enum EventLoopTask {
+    Js(ConcurrentTask),
+    Mini(AnyTaskWithExtraContext),
 }
 
-impl Drop for ShellTask {
-    fn drop(&mut self) {
-        self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
+// SAFETY: it is empty until `ShellTask::on_finish` puts a `Send` task into it.
+unsafe impl Send for EventLoopTask {}
+
+pub(crate) struct ShellTask {
+    /// Held while the task is out on the pool. For a JS loop this is the ticket its VM waits for.
+    poster: Option<ConcurrentPoster>,
+    /// `None` once the task is back.
+    interp: Option<ShellInterpreterRef>,
+    /// Cloned by `new_child`. The task that drops the last clone decrements `pending_tasks`.
+    interp_owners: Option<Arc<()>>,
+    /// Intrusive concurrent-task node for the worker→main bounce.
+    concurrent_task: EventLoopTask,
+}
+
+/// For a task that never calls `on_finish`.
+impl Default for ShellTask {
+    fn default() -> Self {
+        ShellTask {
+            poster: None,
+            interp: None,
+            interp_owners: None,
+            concurrent_task: EventLoopTask::Js(Default::default()),
+        }
     }
 }
 
@@ -2424,233 +2440,136 @@ impl ShellTask {
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
     #[track_caller]
-    fn new_child(parent: &ShellTask) -> Self {
+    pub(crate) fn new_child(parent: &mut ShellTask) -> Self {
+        let poster = parent.poster.as_ref();
         ShellTask {
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: shell_task_unset_callback,
-            },
-            // Spelled out so `#[track_caller]` names this site, not `Option::clone`.
-            #[allow(clippy::manual_map)]
-            poster: match &parent.poster {
-                Some(p) => Some(p.clone()),
-                None => None,
-            },
-            event_loop: parent.event_loop,
-            keep_alive: Default::default(),
-            interp: parent.interp,
-            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
+            poster: Some(
+                poster
+                    .expect("shell task on the pool holds its poster")
+                    .clone(),
+            ),
+            interp: parent
+                .interp
+                .as_ref()
+                .map(|interp| ShellInterpreterRef(interp.0)),
+            interp_owners: Some(Arc::clone(parent.interp_owners.get_or_insert_default())),
+            ..Default::default()
         }
     }
 
-    pub(crate) fn new(interp: &Interpreter<'_>) -> Self {
-        let event_loop = interp.event_loop;
-        ShellTask {
-            task: WorkPoolTask {
-                node: Default::default(),
-                // Real callback is installed by `schedule::<C>()`; this only
-                // fires if a caller forgets the `<C>` (debug-asserted there).
-                callback: shell_task_unset_callback,
-            },
-            poster: None,
-            event_loop,
-            keep_alive: Default::default(),
-            interp: interp.shell_interp,
-            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
-        }
-    }
-
-    /// Installs the per-`C`
-    /// trampoline and hands the intrusive task to the global [`WorkPool`].
-    ///
-    /// SAFETY: `ctx` must be a live heap allocation that embeds this
-    /// `ShellTask` at `C::TASK_OFFSET` and outlives the worker-thread call.
-    pub(crate) unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
-        log!("ShellTask schedule");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this)
-                .keep_alive
-                .ref_((*this).event_loop.as_event_loop_ctx());
-            Self::schedule_no_ref::<C>(ctx);
-        }
-    }
-
-    /// Install the per-`C` trampoline and hand the intrusive task to
-    /// [`WorkPool`] WITHOUT a `keep_alive.ref` — for tasks scheduled
-    /// recursively from a worker thread where no JS-thread VM thread-local
-    /// exists (e.g. `ls`).
-    ///
-    /// SAFETY: same as [`Self::schedule`].
-    unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_threading::work_pool::WorkPool;
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        // Stay on raw pointers: once `WorkPool::schedule` returns the worker
-        // thread may already be touching `*this`, so we must not hold a live
-        // `&mut ShellTask` across that call.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this).task.callback = shell_task_trampoline::<C>;
-            (*this).arm();
-            WorkPool::schedule(&raw mut (*this).task);
-        }
-    }
-
-    /// About to leave the owning thread: take the poster (for a JS loop, a
-    /// ticket on its VM) unless a pool-thread parent already handed one down
-    /// (`new_child`). Owning thread otherwise.
+    /// Creates the poster (for a JS loop, a ticket on its VM).
     #[track_caller]
-    pub(crate) fn arm(&mut self) {
-        if self.poster.is_none() {
-            self.poster = Some(bun_jsc::ConcurrentPoster::from_event_loop_handle(
-                &self.event_loop,
-            ));
+    pub(crate) fn new(interp: &mut Interpreter<'_>) -> Self {
+        ShellTask {
+            poster: Some(ConcurrentPoster::from_event_loop_handle(&interp.event_loop)),
+            interp: Some(ShellInterpreterRef::new(interp)),
+            ..Default::default()
         }
     }
 
-    /// Called from the worker
-    /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
+    pub(crate) fn take_poster(&mut self) -> ConcurrentPoster {
+        self.poster
+            .take()
+            .expect("shell task on the pool holds its poster")
+    }
+
+    /// Called from the worker thread; enqueues the embedded
     /// concurrent task so the main thread re-enters via
     /// [`run_from_main_thread`](Self::run_from_main_thread).
-    ///
-    /// # Safety
-    /// `ctx` must be the same live heap allocation passed to
-    /// [`schedule`](Self::schedule); not touched again on the worker thread
-    /// after this returns.
-    pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::EventLoopTask;
+    pub(crate) fn on_finish<C: ShellTaskCtx>(mut ctx: Box<C>) {
         log!("ShellTask onFinish");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
-        // main thread may already be touching `*this`, so no live `&mut`
-        // into it may span that call. `this` is live and exclusively owned by
-        // this thread until the enqueue below.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            // Moved out: the owning thread may free `*this` once it is queued.
-            let poster = (*this)
-                .poster
-                .take()
-                .expect("shell task on the pool is armed");
-            match &mut (*this).concurrent_task {
-                EventLoopTask::Js(ct) => {
-                    // Tag resolved via `C: Taskable`.
-                    poster.post_js_intrusive(core::ptr::NonNull::from(ct.from(ctx)));
-                }
-                EventLoopTask::Mini(at) => {
-                    // Pass the monomorphised callback explicitly.
-                    let at = at.from(this, shell_task_run_from_main_thread_mini::<C>);
-                    poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
-                }
+        // Moved out: the owning thread may free `*ctx` once it is queued.
+        let poster = C::field_mut(&mut ctx).take_poster();
+        let task = bun_event_loop::Task::from_boxed(ctx);
+        let ctx = task.ptr().cast::<C>();
+        // SAFETY: the box that `from_boxed` leaked, which no other thread has before the post.
+        let node = unsafe { &mut (*C::field_of(ctx)).concurrent_task };
+        if !poster.is_js() {
+            *node = EventLoopTask::Mini(Default::default());
+        }
+        match node {
+            EventLoopTask::Js(ct) => {
+                ct.task = task;
+                poster.post_js_intrusive(NonNull::from(ct));
             }
-            drop(poster);
+            EventLoopTask::Mini(at) => {
+                let at = at.from(ctx, |ctx, _| {
+                    // SAFETY: the loop of `poster` calls this once.
+                    unsafe { Self::run_from_main_thread(bun_core::heap::take(ctx)) }
+                });
+                poster.post_mini(NonNull::new(at).expect("intrusive task"));
+            }
         }
     }
 
     /// # Safety
-    /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
-    /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
-    /// thread after the worker bounce-back.
-    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C) {
+    /// Called by the event loop that the poster of `ctx` posts to.
+    pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(mut ctx: Box<C>) {
         log!("ShellTask runFromJS");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        unsafe {
-            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            let shell_interp = (*this).interp.as_ref();
-            shell_interp.run_yield_with(|interp| C::run_from_main_thread(ctx, interp));
+        let task = C::field_mut(&mut ctx);
+        let interp_ref = task.interp.take().expect("shell task comes back once");
+        // SAFETY: caller contract.
+        let shell_interp = unsafe { interp_ref.get() };
+        let _keep = shell_interp.ensure_still_alive();
+        let is_last = task
+            .interp_owners
+            .take()
+            .is_none_or(|it| Arc::into_inner(it).is_some());
+        if is_last {
+            shell_interp.with_interp(|interp| interp.pending_tasks -= 1);
         }
+        ctx.run_from_main_thread(shell_interp, is_last);
     }
 }
 
 /// What a [`PoolTask`] takes to the pool and back.
-pub(crate) trait ShellWork: Send {
+pub(crate) trait ShellWork: Send + 'static {
     const TAG: bun_event_loop::TaskTag;
-    fn run_from_thread_pool(&mut self, task: &ShellTask);
+    fn run_from_thread_pool(&mut self);
     fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield;
 }
 
 /// Owned by the pool, then by the queue of the interpreter's loop.
 pub(crate) struct PoolTask<W> {
+    work_task: WorkPoolTask,
     task: ShellTask,
     work: W,
 }
 
+bun_threading::intrusive_work_task!([W] PoolTask<W>, work_task);
+bun_core::intrusive_field!([W] PoolTask<W>, task: ShellTask);
+
 impl<W: ShellWork> PoolTask<W> {
-    pub(crate) fn schedule(interp: &Interpreter<'_>, work: W) {
-        let task = ShellTask::new(interp);
-        // SAFETY: freed once it is back.
-        unsafe { ShellTask::schedule(bun_core::heap::alloc(Self { task, work })) };
-    }
-
-    pub(crate) fn schedule_no_ref(interp: &Interpreter<'_>, work: W) {
-        Self::schedule_task_no_ref(ShellTask::new(interp), work);
-    }
-
-    #[track_caller]
-    pub(crate) fn schedule_child(parent: &ShellTask, work: W) {
-        Self::schedule_task_no_ref(ShellTask::new_child(parent), work);
-    }
-
-    fn schedule_task_no_ref(task: ShellTask, work: W) {
-        // SAFETY: freed once it is back.
-        unsafe { ShellTask::schedule_no_ref(bun_core::heap::alloc(Self { task, work })) };
+    pub(crate) fn schedule(interp: &mut Interpreter<'_>, work: W) {
+        log!("ShellTask schedule");
+        WorkPool::schedule_new(Self {
+            work_task: WorkPoolTask::default(),
+            task: ShellTask::new(interp),
+            work,
+        });
     }
 }
 
-impl<W: ShellWork> bun_event_loop::Taskable for PoolTask<W> {
-    const TAG: bun_event_loop::TaskTag = W::TAG;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { bun_core::heap::destroy(this) };
+impl<W: ShellWork> OwnedTask for PoolTask<W> {
+    fn run(mut self: Box<Self>) {
+        self.work.run_from_thread_pool();
+        ShellTask::on_finish(self);
     }
+}
+
+impl<W: ShellWork> BoxedTask for PoolTask<W> {
+    const TAG: bun_event_loop::TaskTag = W::TAG;
+    fn release_unrun(self: Box<Self>) {}
     /// See [`ShellTaskCtx`]: a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
 impl<W: ShellWork> ShellTaskCtx for PoolTask<W> {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        this.work.run_from_thread_pool(&this.task);
+    fn run_from_main_thread(mut self: Box<Self>, shell_interp: &ShellInterpreter, _: bool) {
+        shell_interp.run_yield_with(move |interp| self.work.run_from_main_thread(interp));
     }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter<'_>) -> Yield {
-        // SAFETY: the box that was scheduled, which the queue has let go of.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.work.run_from_main_thread(interp)
-    }
-}
-
-/// Recover `*Ctx` from the
-/// intrusive `*WorkPoolTask`, run the user body, then post back to main.
-unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
-    // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
-    // embedded in `C` at `TASK_OFFSET`. `ctx`
-    // remains the live heap allocation handed to `schedule`.
-    unsafe {
-        let ctx = C::from_work_task(task);
-        // The worker thread is the sole accessor until `on_finish` publishes
-        // the task back; the `&mut` ends before that call.
-        C::run_from_thread_pool(&mut *ctx);
-        ShellTask::on_finish::<C>(ctx);
-    }
-}
-
-/// Mini-loop `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
-fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
-    // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
-    // mini-loop dispatch runs on the main thread.
-    unsafe {
-        ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET))
-    };
-}
-
-// Body never dereferences the pointer; a safe `fn` item coerces to the
-// `WorkPoolTask::callback` field type at the assignment site.
-#[cold]
-fn shell_task_unset_callback(_: *mut WorkPoolTask) {
-    debug_assert!(false, "ShellTask scheduled without schedule::<C>()");
 }
 
 #[cold]

@@ -1363,11 +1363,8 @@ impl Stream {
     }
 
     pub(crate) fn flush_queue(&self, client: &H2FrameParser, written: &mut usize) -> FlushState {
-        if client.foreign_cork_runs_js() && self.has_sendable_frame(client) {
-            // Uncorking the other parser runs JS that can flush this queue: do it before dequeuing.
-            client.cork();
-        }
         if !self.can_send_data() {
+            // empty or cannot send data
             return FlushState::NoAction;
         }
         let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
@@ -1565,15 +1562,6 @@ impl Stream {
 
     fn has_queued_data(&self) -> bool {
         self.data_frame_queue.with_taken(|queue| !queue.is_empty())
-    }
-
-    fn has_sendable_frame(&self, client: &H2FrameParser) -> bool {
-        let has_window = self.remote_window_available() > 0 && client.remote_window_available() > 0;
-        self.can_send_data()
-            && self.data_frame_queue.with_taken(|queue| {
-                let front = queue.peek_front();
-                front.is_some_and(|front| has_window || front.slice().is_empty())
-            })
     }
 
     fn remote_window_available(&self) -> usize {
@@ -2217,35 +2205,15 @@ impl H2FrameParser {
             // already corked
             return;
         }
-        // force uncork; JS that runs under the write can take the slot again
-        while let Some(corked) = Self::set_corked(None) {
+        if let Some(corked) = Self::set_corked(None) {
+            // force uncork
             corked.finish_uncork();
-            if self.is_corked() {
-                return;
-            }
         }
         // cork
         Self::set_corked(Some(self.ref_guard()));
         self.register_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
         CORK_OFFSET.with(|c| c.set(0));
-    }
-
-    fn foreign_cork_runs_js(&self) -> bool {
-        Self::with_corked(|corked| {
-            corked.is_some_and(|other| {
-                !std::ptr::eq(other, self)
-                    && CORK_OFFSET.with(|c| c.get()) > 0
-                    && other.transport_write_runs_js()
-            })
-        })
-    }
-
-    /// Uncorking another parser runs JS that can send a header block; HPACK needs them in encoding order.
-    fn cork_before_header_block(&self) {
-        if self.foreign_cork_runs_js() {
-            self.cork();
-        }
     }
 
     /// Bytes in `write_buffer` that were not handed to the transport yet.
@@ -2549,7 +2517,15 @@ impl H2FrameParser {
     /// `resize()` the buffer: under this session's own transport writes, or when taking the
     /// cork slot first flushes another such session's corked bytes through its transport.
     fn stable_payload<'a>(&self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
-        if !bytes.is_empty() && (self.transport_write_runs_js() || self.foreign_cork_runs_js()) {
+        let foreign_cork_runs_js = || {
+            Self::with_corked(|corked| match corked {
+                Some(other) if !std::ptr::eq(other, self) => {
+                    CORK_OFFSET.with(|c| c.get()) > 0 && other.transport_write_runs_js()
+                }
+                _ => false,
+            })
+        };
+        if !bytes.is_empty() && (self.transport_write_runs_js() || foreign_cork_runs_js()) {
             Cow::Owned(bytes.to_vec())
         } else {
             Cow::Borrowed(bytes)
@@ -5098,7 +5074,6 @@ impl H2FrameParser {
             );
         }
 
-        self.cork_before_header_block();
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -5942,12 +5917,6 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        // If a read under the uncork below freed the stream, handle_received_stream_id would reopen it.
-        let _streams = self.streams.borrow();
-        if self.is_server.get() {
-            // A client stream gets its context below, so a GOAWAY or destroy() here would miss it.
-            self.cork_before_header_block();
-        }
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -6343,7 +6312,6 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
-        let mut signal: Option<AbortSignalRef> = None;
         if !options.is_undefined_or_null() {
             if !options.is_object() {
                 stream.state.set(StreamState::CLOSED);
@@ -6487,7 +6455,7 @@ impl H2FrameParser {
                         self.abort_stream(&stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
-                    signal = Some(signal_);
+                    stream.attach_signal(self, signal_);
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"options.signal",
@@ -6703,17 +6671,6 @@ impl H2FrameParser {
 
                 offset += chunk_size;
             }
-        }
-
-        // After HEADERS: RST_STREAM on an idle stream is a PROTOCOL_ERROR (RFC 9113 §6.4).
-        if let Some(signal) = signal
-            && stream.state.get() != StreamState::CLOSED
-        {
-            if signal.aborted() {
-                self.abort_stream_for_signal(stream_id, signal.js_reason(global_object));
-                return Ok(JSValue::js_number(stream_id as f64));
-            }
-            stream.attach_signal(self, signal);
         }
 
         if end_stream {

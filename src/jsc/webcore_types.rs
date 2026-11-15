@@ -715,6 +715,11 @@ pub mod store {
             }
         }
 
+        /// Whoever has the descriptor or the name of a mapped object can write to it.
+        pub fn can_change_under_borrow(&self) -> bool {
+            !matches!(self.storage, Storage::Heap(_) | Storage::Static(_))
+        }
+
         /// The bytes of [`Self::init_static`] must not be written to.
         pub fn slice_raw(&mut self) -> *mut [u8] {
             match &mut self.storage {

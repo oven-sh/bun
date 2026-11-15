@@ -1,8 +1,22 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
+import { CString, ptr } from "bun:ffi";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  gc,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  nodeExe,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
@@ -5802,4 +5816,281 @@ it("UTF-8 decoders don't write out of bounds while another thread writes to the 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "ok true\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// ASAN reports the overflow and fills uninitialized heap memory with 0xbe.
+const decodeRaceEnv = isASAN && {
+  Malloc: "1",
+  ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0:symbolize=0:max_malloc_fill_size=4194304",
+};
+
+// fs.read() replaces the input between the length pass and the conversion pass.
+describe.concurrent("decoders don't write out of bounds while fs.read() writes to the input", () => {
+  const text = (before, fill, after = "", encoding = "utf8") =>
+    Buffer.concat([Buffer.from(before, encoding), Buffer.alloc(60_000, fill, encoding), Buffer.from(after, encoding)]);
+  const utf8 = [text("é", "€"), text("é", "a")];
+  const json = [text(`"é`, "€", `"\n`), text(`"é`, "a", `"\n`)];
+  const xml = `<?xml version="1.0" encoding="ISO-8859-1"?><latin1>é`;
+
+  it.each([
+    [`buffer.toString()`, ...utf8],
+    [`new TextDecoder().decode(buffer)`, ...utf8],
+    [`new TextDecoder().decode(buffer, { stream: true })`, ...utf8],
+    [`new TextDecoder("utf-8", { fatal: true }).decode(buffer)`, ...utf8],
+    [`new StringDecoder().write(buffer)`, ...utf8],
+    [`transcode(buffer, "utf8", "latin1").toString("latin1")`, ...utf8],
+    [`new CString(ptr(buffer), 0, buffer.length).toString()`, ...utf8],
+    [`await Bun.readableStreamToText(ReadableStream.from([buffer]))`, ...utf8],
+    [`Bun.markdown.render(buffer, { text: text => text })`, ...utf8],
+    [`Bun.JSONL.parse(buffer)[0]`, ...json],
+    [`Bun.JSONL.parseChunk(buffer).values[0]`, ...json],
+    [`Bun.TOML.parse(buffer).a`, text(`a = "é`, "€", `"`), text(`a = "é`, "a", `"`)],
+    [`Bun.XML.parse(buffer).utf8`, text("<utf8>é", "€", "</utf8>"), text("<utf8>é", "a", "</utf8>")],
+    [`Bun.XML.parse(buffer).latin1`, text(xml, "a", "</latin1>", "latin1"), text(xml, "é", "</latin1>", "latin1")],
+    [
+      `Bun.unsafe.arrayBufferToString(new Uint16Array(buffer.buffer))`,
+      text("a", "a", "", "utf16le"),
+      text("€", "a", "", "utf16le"),
+    ],
+  ])("%s", async (decode, a, b) => {
+    using dir = tempDir("buffer-read-decode-race", {
+      a,
+      b,
+      "fixture.mjs": `
+        import { CString, ptr } from "bun:ffi";
+        import { transcode } from "node:buffer";
+        import { openSync, read, readFileSync } from "node:fs";
+        import { StringDecoder } from "node:string_decoder";
+        const rounds = [["a", "b"], ["b", "a"]].map(([before, after]) => [readFileSync(before), openSync(after)]);
+        const buffer = Buffer.from(new ArrayBuffer(${a.length}));
+        const deadline = performance.now() + 500;
+        let unwritten = 0;
+        while (performance.now() < deadline) {
+          for (const [before, fd] of rounds) {
+            buffer.set(before);
+            const { promise, resolve, reject } = Promise.withResolvers();
+            read(fd, buffer, 0, buffer.length, 0, error => (error ? reject(error) : resolve()));
+            try {
+              if (/\\ubebe|\\xbe\\xbe/.test(${decode})) unwritten++;
+            } catch (e) {
+              if (e.code !== "ERR_ENCODING_INVALID_ENCODED_DATA" && e.name !== "SyntaxError") throw e;
+            }
+            await promise;
+          }
+        }
+        console.log(unwritten);
+      `,
+    });
+    expect(await bunRun(join(String(dir), "fixture.mjs"), decodeRaceEnv)).toSpawn("0");
+  });
+});
+
+// Valid text of more than 4096 bytes is converted in chunks.
+describe.concurrent("decoders don't write out of bounds while a Worker rewrites text in a SharedArrayBuffer", () => {
+  it.each([
+    `buffer.toString()`,
+    `new StringDecoder().end(buffer)`,
+    `(await Array.fromAsync(new Response(ReadableStream.from([buffer])).textStream())).join("")`,
+  ])("%s", async decode => {
+    using dir = tempDir("buffer-shared-text-decode-race", {
+      "fixture.mjs": `
+        import { once } from "node:events";
+        import { StringDecoder } from "node:string_decoder";
+        import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+        const texts = ["€", "a"].map(fill => Buffer.concat([Buffer.from("é"), Buffer.alloc(9000, fill)]));
+        const buffer = Buffer.from(workerData ?? new SharedArrayBuffer(texts[0].length));
+        if (isMainThread) {
+          await once(new Worker(import.meta.path, { workerData: buffer.buffer }), "message");
+          const deadline = performance.now() + 500;
+          let unwritten = 0;
+          while (performance.now() < deadline) {
+            if (/\\ubebe|\\xbe\\xbe/.test(${decode})) unwritten++;
+          }
+          console.log(unwritten);
+          process.exit(0);
+        }
+        buffer.set(texts[0]);
+        parentPort.postMessage("go");
+        for (;;) for (const text of texts) buffer.set(text);
+      `,
+    });
+    expect(await bunRun(join(String(dir), "fixture.mjs"), decodeRaceEnv)).toSpawn("0");
+  });
+});
+
+// With --smol, a Blob of 1 MB is in a memfd, which only Linux has.
+it.skipIf(!isLinux)("Blob.text() doesn't write out of bounds while fs.write() writes to its memfd", async () => {
+  using dir = tempDir("buffer-memfd-decode-race", {
+    "fixture.mjs": `
+      import { readdirSync, readlinkSync, write } from "node:fs";
+      const texts = ["€", "a"].map(fill => Buffer.concat([Buffer.from("é"), Buffer.alloc(1_050_000, fill)]));
+      const blob = new Blob([texts[1]]);
+      const isMemfd = fd => {
+        try {
+          return readlinkSync("/proc/self/fd/" + fd).startsWith("/memfd:memfd-num-");
+        } catch {
+          // readdirSync() closed its own descriptor.
+          return false;
+        }
+      };
+      const fd = Number(readdirSync("/proc/self/fd").find(isMemfd));
+      const deadline = performance.now() + 500;
+      let unwritten = 0;
+      while (performance.now() < deadline) {
+        for (const text of texts) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          write(fd, text, 0, text.length, 0, error => (error ? reject(error) : resolve()));
+          if (/\\ubebe/.test(await blob.text())) unwritten++;
+          await promise;
+        }
+      }
+      console.log(unwritten);
+    `,
+  });
+  expect(await bunRun(["--smol", join(String(dir), "fixture.mjs")], decodeRaceEnv)).toSpawn("0");
+});
+
+// simdutf's validate_utf8_with_errors rewinds to the 0xff byte before the input if the first byte changes between two loads.
+// Bun.mmap is not supported on Windows.
+it.skipIf(isWindows)("Bun.TOML.parse doesn't crash while a Worker writes to the Bun.mmap() input", async () => {
+  using dir = tempDir("buffer-mmap-decode-race", {
+    mapped: Buffer.concat([Buffer.of(0xff), Buffer.alloc(120, 0x80)]),
+    "fixture.mjs": `
+      import { once } from "node:events";
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+      const bytes = Bun.mmap("mapped").subarray(1);
+      if (isMainThread) {
+        await once(new Worker(import.meta.path), "message");
+        const deadline = performance.now() + 500;
+        while (performance.now() < deadline) {
+          try {
+            Bun.TOML.parse(bytes);
+          } catch (e) {
+            if (e.name !== "SyntaxError") throw e;
+          }
+        }
+        console.log("ok");
+        process.exit(0);
+      }
+      parentPort.postMessage("go");
+      for (;;) {
+        Atomics.store(bytes, 0, 0x61);
+        Atomics.store(bytes, 0, 0x80);
+      }
+    `,
+  });
+  expect(await bunRun(join(String(dir), "fixture.mjs"))).toSpawn("ok");
+});
+
+describe("UTF-8 decoders return the same text on both sides of each length threshold", () => {
+  const repeatText = (text, count) => Buffer.alloc(count * text.length * 2, text, "ucs2").toString("ucs2");
+  const byteAtATime = bytes => {
+    const decoder = new TextDecoder();
+    let text = "";
+    for (let i = 0; i < bytes.length; i++) text += decoder.decode(bytes.subarray(i, i + 1), { stream: true });
+    return text + decoder.decode();
+  };
+
+  const fills = ["a", "aaaaaaaaaaaaaaaaaaaé", "é", "€", "😀", "a€😀é"];
+  it.each(fills)("toString, TextDecoder and transcode of repeated %s", fill => {
+    const width = Buffer.byteLength(fill);
+    const repeat = count => Buffer.alloc(count * width, fill);
+    const text = count => repeatText(fill, count);
+    // Around the constants of unicode.rs: 256, 768, 4096, 65536, and past twice that.
+    for (const length of [250, 260, 760, 780, 4090, 4100, 65_530, 65_540, 140_000]) {
+      const count = Math.ceil(length / width);
+      const valid = Buffer.concat([Buffer.from("é"), repeat(count)]);
+      const expected = "é" + text(count);
+      expect(valid.toString()).toBe(expected);
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(valid)).toBe(expected);
+      expect(BufferModule.transcode(valid, "utf8", "utf8").toString()).toBe(expected);
+
+      const streaming = new TextDecoder();
+      const cut = Buffer.concat([valid, Buffer.from([0xf0, 0x9f, 0x98])]);
+      expect(streaming.decode(cut, { stream: true })).toBe(expected);
+      expect(streaming.decode(Uint8Array.of(0x80))).toBe("😀");
+
+      for (const before of [count >> 1, count - 2]) {
+        const damage = repeat(2);
+        damage[width - 1] = 0xf0;
+        const after = count - before - 2;
+        const damaged = Buffer.concat([Buffer.from("é"), repeat(before), damage, repeat(after)]);
+        const replaced = "é" + text(before) + byteAtATime(damage) + text(after);
+        expect(damaged.toString()).toBe(replaced);
+        expect(new TextDecoder().decode(damaged)).toBe(replaced);
+        expect(() => new TextDecoder("utf-8", { fatal: true }).decode(damaged)).toThrow(TypeError);
+        expect(BufferModule.transcode(damaged, "utf8", "utf8").toString()).toBe(replaced);
+      }
+    }
+  });
+
+  const inputs = [8, 1023, 1024, 1025, 4000].flatMap(length => [
+    [Buffer.alloc(length, "a"), repeatText("a", length)],
+    [Buffer.from(repeatText("a", length - 2) + "é"), repeatText("a", length - 2) + "é"],
+    // utf16_length_from_utf8 returns 0, the byte length and twice the byte length for these three.
+    [Buffer.alloc(length, 0x80), repeatText("\ufffd", length)],
+    [
+      Buffer.concat([Buffer.alloc(length - 3, "a"), Buffer.of(0xc3, 0xa9, 0xf0)]),
+      repeatText("a", length - 3) + "é\ufffd",
+    ],
+    [Buffer.alloc(length, 0xf0), repeatText("\ufffd", length)],
+    [
+      Buffer.concat([Buffer.from("€€"), Buffer.alloc(length - 7, "a"), Buffer.of(0xe2)]),
+      `€€${repeatText("a", length - 7)}\ufffd`,
+    ],
+  ]);
+
+  it.each([
+    ["transcode", bytes => BufferModule.transcode(bytes, "utf8", "utf8").toString()],
+    ["CString", bytes => new CString(ptr(bytes), 0, bytes.length).toString()],
+    ["readableStreamToText with one chunk", bytes => Bun.readableStreamToText(ReadableStream.from([bytes]))],
+    [
+      "readableStreamToText with two chunks",
+      bytes => Bun.readableStreamToText(ReadableStream.from([bytes.subarray(0, 3), bytes.subarray(3)])),
+    ],
+    [
+      "textStream with a character in two chunks",
+      async bytes => {
+        const chunks = [Buffer.of(0xe2), Buffer.concat([Buffer.of(0x82, 0xac), bytes])];
+        return (await Array.fromAsync(new Response(ReadableStream.from(chunks)).textStream())).join("").slice(1);
+      },
+    ],
+    ["Blob", bytes => new Blob([bytes]).text()],
+    [
+      "bun:sqlite",
+      bytes => {
+        using db = new Database(":memory:");
+        return db.query("SELECT CAST(? AS TEXT) AS text").get(bytes).text;
+      },
+    ],
+    ["readFileSync", (bytes, path) => (writeFileSync(path, bytes), readFileSync(path, "utf8"))],
+    ["Bun.file", (bytes, path) => (writeFileSync(path, bytes), Bun.file(path).text())],
+  ])("%s", async (_, decode) => {
+    using dir = tempDir("buffer-decode-lengths", {});
+    for (const [i, [bytes, expected]] of inputs.entries()) {
+      expect(await decode(bytes, join(String(dir), String(i)))).toBe(expected);
+    }
+  });
+
+  // macOS and Windows have shorter limits and reject names that are not valid Unicode.
+  it.skipIf(!isLinux)("readlinkSync", () => {
+    using dir = tempDir("buffer-decode-lengths-readlink", {});
+    for (const [i, [bytes, expected]] of inputs.entries()) {
+      const path = join(String(dir), String(i));
+      symlinkSync(bytes, path);
+      expect(readlinkSync(path)).toBe(expected);
+    }
+  });
+
+  it.skipIf(!isLinux)("readdirSync", () => {
+    using dir = tempDir("buffer-decode-lengths-readdir", {});
+    const names = inputs.filter(([bytes]) => bytes.length <= 255);
+    for (const [bytes] of names) writeFileSync(Buffer.concat([Buffer.from(dir + "/"), bytes]), "");
+    const expected = names.map(([, name]) => name).sort();
+    for (const recursive of [false, true]) {
+      expect(readdirSync(String(dir), { recursive }).sort()).toEqual(expected);
+      const entries = readdirSync(String(dir), { recursive, withFileTypes: true });
+      expect(entries.map(entry => entry.name).sort()).toEqual(expected);
+    }
+  });
 });

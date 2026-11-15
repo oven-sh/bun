@@ -482,7 +482,7 @@ impl String {
     /// `DEAD` when longer than [`Self::max_length`], `OUT_OF_MEMORY` when the
     /// transcode could not allocate.
     pub fn from_owned_utf8(bytes: Vec<u8>) -> Self {
-        match strings::to_utf16_alloc(&bytes, false, false) {
+        match strings::StableBytes::from(&bytes).to_utf16_alloc(false) {
             Ok(None) => Self::create_external_globally_allocated_latin1(bytes),
             Ok(Some(utf16)) => Self::create_external_globally_allocated_utf16(utf16),
             Err(_) => Self::utf16_transcode_failure(&bytes),

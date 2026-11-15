@@ -669,7 +669,7 @@ impl Worker {
         arena: &'static ThreadLocalArena,
     ) -> Transpiler<'static> {
         // SAFETY: `from` is the `BundleV2`-owned transpiler (or its
-        // `client_transpiler`), which outlives every worker; the
+        // client transpiler), which outlives every worker; the
         // `&'a`-carrying fields inside reference process-lifetime data.
         unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
     }

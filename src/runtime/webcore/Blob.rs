@@ -2104,7 +2104,15 @@ impl BlobExt for Blob {
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
         // SAFETY: fn contract.
-        match decode_text(self, global, TextBytes::InStore(unsafe { &*raw_bytes }))? {
+        let raw_bytes = unsafe { &*raw_bytes };
+        let bytes = match self.store().map(|store| &store.data) {
+            Some(store::Data::Bytes(bytes)) if !bytes.can_change_under_borrow() => {
+                // SAFETY: fn contract. JS only gets to write to a store after a `Transfer` took its last reference.
+                TextBytes::Stable(unsafe { strings::StableBytes::new(raw_bytes) })
+            }
+            _ => TextBytes::Mapped(raw_bytes),
+        };
+        match decode_text::<true>(self, global, bytes)? {
             Text::Decoded(value) => Ok(value),
             Text::Utf16(external) => {
                 if LIFETIME == Lifetime::Transfer {
@@ -5119,19 +5127,19 @@ enum Text<'a> {
 
 #[derive(Copy, Clone)]
 enum TextBytes<'a> {
-    /// What the scan finds holds for the next read too. Another process can write to a mapped store.
-    InStore(&'a [u8]),
     Stable(strings::StableBytes<'a>),
+    Mapped(&'a [u8]),
 }
 
-fn decode_text<'a>(
+/// `IN_STORE`: what the scan finds holds for the next read too.
+fn decode_text<'a, const IN_STORE: bool>(
     blob: &Blob,
     global: &JSGlobalObject,
     bytes: TextBytes<'a>,
 ) -> JsResult<Text<'a>> {
     let raw_bytes = match bytes {
-        TextBytes::InStore(bytes) => bytes,
         TextBytes::Stable(bytes) => bytes.slice(),
+        TextBytes::Mapped(bytes) => bytes,
     };
     let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
     if buf.is_empty() {
@@ -5145,13 +5153,13 @@ fn decode_text<'a>(
         return Ok(Text::Ascii(buf));
     }
     let converted = match bytes {
-        TextBytes::InStore(_) => strings::to_utf16_alloc(buf, false, false),
         TextBytes::Stable(bytes) => bytes
             .substring(raw_bytes.len() - buf.len())
             .to_utf16_alloc(false),
+        TextBytes::Mapped(_) => strings::to_utf16_alloc(buf, false, false),
     }
     .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?;
-    if let TextBytes::InStore(_) = bytes {
+    if IN_STORE {
         blob.set_is_ascii_flag(converted.is_none());
     }
     Ok(converted.map_or(Text::Ascii(buf), Text::Utf16))
@@ -5167,7 +5175,7 @@ pub(crate) struct ToFormDataWithBytesFn;
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
         let by = by.into_vec();
-        match decode_text(b, g, TextBytes::Stable(strings::StableBytes::from(&by)))? {
+        match decode_text::<false>(b, g, TextBytes::Stable(strings::StableBytes::from(&by)))? {
             Text::Decoded(value) => Ok(value),
             Text::Utf16(external) => {
                 drop(by);

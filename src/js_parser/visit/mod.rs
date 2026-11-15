@@ -635,78 +635,68 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
-        match binding.data {
-            BData::BObject(bound_object) => {
-                let bound_object = bound_object.get();
-                if let ExprData::EObject(mut object) = expr.data {
-                    if object.was_originally_macro {
-                        for property in bound_object.properties() {
-                            if property.flags.contains(flags::Property::IsSpread) {
-                                return;
-                            }
+    /// A copy of `expr` without what `binding` does not read: other expressions can share its nodes.
+    fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) -> Expr {
+        match (binding.data, expr.data) {
+            (BData::BObject(bound_object), ExprData::EObject(object))
+                if object.was_originally_macro =>
+            {
+                let bound_properties = bound_object.properties();
+                if bound_properties
+                    .iter()
+                    .any(|property| property.flags.contains(flags::Property::IsSpread))
+                {
+                    return expr;
+                }
+                let mut kept = E::Object {
+                    properties: G::PropertyList::init_capacity(
+                        object.properties.len().min(bound_properties.len()),
+                    ),
+                    ..*object
+                };
+                for property in bound_properties {
+                    let Some(name) = property.key.as_string_literal(self.arena) else {
+                        return expr;
+                    };
+                    let Some(query) = object.as_property(name) else {
+                        continue;
+                    };
+                    let value = self.visit_binding_and_expr_for_macro(property.value, query.expr);
+                    match kept.as_property(name) {
+                        // Each of the bindings reads another part of it.
+                        Some(repeated) => {
+                            kept.properties[repeated.i as usize].value = Some(query.expr);
                         }
-                        let mut end: u32 = 0;
-                        for property in bound_object.properties() {
-                            if let Some(name) = property.key.as_string_literal(self.arena) {
-                                if let Some(query) = object.as_property(name) {
-                                    match query.expr.data {
-                                        ExprData::EObject(_) | ExprData::EArray(_) => {
-                                            self.visit_binding_and_expr_for_macro(
-                                                property.value,
-                                                query.expr,
-                                            );
-                                        }
-                                        _ => {
-                                            if self.options.features.inlining {
-                                                if let BData::BIdentifier(id) = property.value.data
-                                                {
-                                                    self.const_values
-                                                        .put(id.r#ref, query.expr)
-                                                        .expect("oom");
-                                                }
-                                            }
-                                        }
-                                    }
-                                    let i = query.i as usize;
-                                    if i >= end as usize {
-                                        object.properties.slice_mut().swap(i, end as usize);
-                                        end += 1;
-                                    }
-                                }
-                            }
-                        }
-                        object.properties.truncate(end as usize);
+                        None => kept.properties.push(G::Property {
+                            value: Some(value),
+                            ..object.properties[query.i as usize]
+                        }),
                     }
                 }
+                self.new_expr(kept, expr.loc)
             }
-            BData::BArray(bound_array) => {
-                let bound_array = bound_array.get();
-                if let ExprData::EArray(mut array) = expr.data {
-                    if array.was_originally_macro && !bound_array.has_spread {
-                        let bound_items = bound_array.items();
-                        let trunc_n = array.items.len().min(bound_items.len());
-                        array.items.truncate(trunc_n);
-                        let n = array.items.len_u32() as usize;
-                        for (item, child_expr) in bound_items[..n]
-                            .iter()
-                            .zip(array.items.slice_mut().iter_mut())
-                        {
-                            if matches!(item.binding.data, BData::BMissing(_)) {
-                                *child_expr = self.new_expr(E::Missing {}, expr.loc);
-                                continue;
-                            }
-                            self.visit_binding_and_expr_for_macro(item.binding, *child_expr);
-                        }
-                    }
+            (BData::BArray(bound_array), ExprData::EArray(array))
+                if array.was_originally_macro && !bound_array.has_spread =>
+            {
+                let bound_items = bound_array.items();
+                let mut items =
+                    ExprNodeList::init_capacity(array.items.len().min(bound_items.len()));
+                for (item, child_expr) in bound_items.iter().zip(array.items.iter()) {
+                    items.push(if matches!(item.binding.data, BData::BMissing(_)) {
+                        self.new_expr(E::Missing {}, expr.loc)
+                    } else {
+                        self.visit_binding_and_expr_for_macro(item.binding, *child_expr)
+                    });
                 }
+                self.new_expr(E::Array { items, ..*array }, expr.loc)
             }
-            BData::BIdentifier(id) => {
+            (BData::BIdentifier(id), _) => {
                 if self.options.features.inlining {
                     self.const_values.put(id.r#ref, expr).expect("oom");
                 }
+                expr
             }
-            BData::BMissing(_) => {}
+            _ => expr,
         }
     }
 
@@ -742,7 +732,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(decl.binding, value);
+                        decl.value =
+                            Some(self.visit_binding_and_expr_for_macro(decl.binding, value));
                     }
                 }
             }

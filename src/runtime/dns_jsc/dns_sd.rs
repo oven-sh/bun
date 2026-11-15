@@ -312,7 +312,7 @@ impl QueryState {
 
 pub(crate) struct JscRequest {
     state: QueryState,
-    query: Query,
+    query: PendingQuery,
 }
 
 #[derive(Clone, Copy)]
@@ -344,7 +344,7 @@ impl Inflight {
                 // SAFETY: it left `inflight` and its refs are deallocated, so nothing else reaches it.
                 let mut request = unsafe { bun_core::heap::take(r) };
                 let results = request.state.take_results();
-                bun_output::scoped_log!(GetAddrInfoRequest, "completeDnsSd: {}", results.len());
+                bun_output::scoped_log!(DNSLookup, "completeDnsSd: {}", results.len());
                 request.query.complete_native(if results.is_empty() {
                     Err(EMPTY_STATUS)
                 } else {
@@ -761,7 +761,7 @@ fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.
-pub(crate) fn start(query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
+pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), PendingQuery> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.

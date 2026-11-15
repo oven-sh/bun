@@ -1728,7 +1728,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
             // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume && !(signalNumber == SIGTRAP && Bun__AOT__isRecordingOrder())) {
+            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume && !(eventEmitter.scriptExecutionContext()->vm().hasCompiledCode() && signalNumber == SIGTRAP && Bun__AOT__isRecordingOrder())) {
 #elif OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {

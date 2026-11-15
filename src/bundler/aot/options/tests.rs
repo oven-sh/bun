@@ -153,7 +153,7 @@ fn byte_lists(texts: &[&str]) -> Vec<Vec<u8>> {
 fn set_framework(options: &mut BundleOptions<'_>) {
     let built_in_modules = bun_collections::StringArrayHashMap::new();
     let framework = Framework::new(built_in_modules, None, None, Vec::new());
-    options.framework = Some(Box::leak(Box::new(framework)));
+    options.framework = Some(Arc::new(framework));
 }
 
 fn set_root_and_compile_name(options: &mut BundleOptions<'_>) {

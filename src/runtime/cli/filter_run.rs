@@ -765,11 +765,7 @@ pub(crate) fn run_scripts_with_filter(
     let _ = bun_resolver::fs::FileSystem::init(None)?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
-    // TODO(refactor): out-param init — `configureEnvForRun` writes through the
-    // out-param. Per PORTING.md this should be reshaped to
-    // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
-    // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
-    let mut transpiler_slot = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
+    let mut transpiler_slot = None;
     let (this_transpiler, _) = RunCommand::configure_env_for_run(
         &mut *ctx,
         &mut transpiler_slot,

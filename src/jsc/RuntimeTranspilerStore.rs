@@ -191,7 +191,8 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
-    pub(crate) store: TranspilerJobStore,
+    /// Boxed: 22 KB that `VirtualMachine::init` would otherwise copy.
+    pub(crate) store: Box<TranspilerJobStore>,
     pub enabled: Cell<bool>,
     pub(crate) queue: Queue,
     /// JS thread only.
@@ -205,7 +206,7 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: TranspilerJobStore::init(),
+            store: TranspilerJobStore::new_boxed(),
             enabled: Cell::new(true),
             queue: Queue::new(),
             jobs_scheduled: Cell::new(0),
@@ -624,7 +625,7 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The slot lives inside the VM, which waits for this ticket, so it is
+        // The slot belongs to the VM, which waits for this ticket, so it is
         // alive throughout. Transpile only while the VM still runs script;
         // either way hand the job back to the JS thread, which completes or
         // releases it.

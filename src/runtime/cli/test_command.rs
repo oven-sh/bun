@@ -2807,18 +2807,18 @@ impl TestCommand {
         }
 
         bun_ast::initialize_store();
-        let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
+        let options = jsc::virtual_machine::InitOptions {
             // Clone (not take): build_worker_argv reads ctx.args to forward them to workers.
             transform_options: ctx.args.clone(),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
             env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
             smol: ctx.runtime_options.smol,
             is_main_thread: true,
             graph: run_compiled::graph(),
             ..Default::default()
-        })?;
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
         crate::jsc_hooks::state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));

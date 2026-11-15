@@ -143,18 +143,12 @@ impl Body {
     }
 }
 
-impl Body {
-    pub(crate) fn reset(&self) {
-        self.value_mut().reset();
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // PendingValue
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct PendingValue {
-    pub(crate) promise: Option<JSValue>,
+    pub(crate) promise: Option<jsc::Strong>,
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
 
@@ -305,7 +299,7 @@ impl PendingValue {
         let mut stream = self.readable.get()?;
 
         if let Some(blob) = stream.to_any_blob(global) {
-            self.readable.deinit();
+            self.readable = Default::default();
             return Some(blob);
         }
 
@@ -333,7 +327,7 @@ impl PendingValue {
             }
         }
         let blob = stream.to_any_blob(global)?;
-        self.readable.deinit();
+        self.readable = Default::default();
         Some(blob)
     }
 }
@@ -441,11 +435,7 @@ pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
 pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
-    // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
-    // heap-stable `Box<HiveAllocator>` for the VM lifetime.
-    let pool = unsafe { &raw const **(*state).body_value_pool };
+    let pool: &HiveAllocator = &crate::jsc_hooks::runtime_state().body_value_pool;
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }
@@ -710,9 +700,8 @@ impl Value {
             }
             Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
                 let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                let string = blob.to_string(cx, Lifetime::Transfer);
-                blob.detach();
-                ReadableStream::from_decoded_text(cx.global(), string?)
+                let string = blob.to_string(cx, Lifetime::Transfer)?;
+                ReadableStream::from_decoded_text(cx.global(), string)
             }
             Value::Blob(_) => {
                 let stream = {
@@ -880,10 +869,9 @@ impl Value {
                 // Blob.Store owns a `Vec`, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
-                // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
-                let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
+                let owned = encoded.to_vec();
                 drop(encoded);
-                let blob = Blob::init(owned.into_vec(), global_this);
+                let blob = Blob::init(owned, global_this);
                 blob.content_type
                     .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);
@@ -941,11 +929,10 @@ impl Value {
                     .map(|bytes| {
                         // BACKREF: `Source::bytes()` payload is live for the
                         // ReadableStream JS wrapper's lifetime.
-                        let mut blob = new.use_as_any_blob_allow_non_utf8_string();
+                        let blob = new.use_as_any_blob_allow_non_utf8_string();
                         bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
                             blob.slice(),
                         )));
-                        blob.detach();
                     });
 
                 if fed.is_some() {
@@ -953,7 +940,7 @@ impl Value {
                 } else {
                     readable.done();
                 }
-                locked.readable.deinit();
+                locked.readable = Default::default();
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
@@ -961,8 +948,8 @@ impl Value {
                 return Ok(());
             }
 
-            if let Some(promise_) = locked.promise.take() {
-                let promise = promise_.as_any_promise().unwrap();
+            if let Some(root) = locked.promise.take() {
+                let promise = root.get().as_any_promise().unwrap();
 
                 match &mut locked.action {
                     // These ones must use promise.wrap() to handle exceptions thrown while calling .toJS() on the value.
@@ -970,9 +957,7 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            let result = promise.wrap(cx.global(), |_| blob.to_string_transfer(cx));
-                            blob.detach();
-                            result?;
+                            promise.wrap(cx.global(), |_| blob.to_string_transfer(cx))?;
                         }
                         _ => {
                             let blob = new.use_();
@@ -981,44 +966,30 @@ impl Value {
                     },
                     Action::GetJSON => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(cx.global(), |_| blob.to_json_share(cx));
-                        blob.detach();
-                        result?;
+                        promise.wrap(cx.global(), |_| blob.to_json(cx))?;
                     }
                     Action::GetArrayBuffer => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result =
-                            promise.wrap(cx.global(), |_| blob.to_array_buffer_transfer(cx));
-                        blob.detach();
-                        result?;
+                        promise.wrap(cx.global(), |_| blob.to_array_buffer_transfer(cx))?;
                     }
                     Action::GetBytes => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result =
-                            promise.wrap(cx.global(), |_| blob.to_uint8_array_transfer(cx));
-                        blob.detach();
-                        result?;
+                        promise.wrap(cx.global(), |_| blob.to_uint8_array_transfer(cx))?;
                     }
                     Action::GetFormData(form_data_slot) => 'inner: {
-                        let mut blob = new.use_as_any_blob();
+                        let blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
-                            // `blob.detach()` below covers the reject error path too.
-                            let r = promise.reject(
+                            promise.reject(
                                 cx.global(),
                                 cx.global().create_error_instance(format_args!(
                                     "Internal error: task for FormData must not be null"
                                 )),
-                            );
-                            blob.detach();
-                            r?;
+                            )?;
                             break 'inner;
                         };
                         // `webcore::form_data::AsyncFormData` re-exports `bun_core::form_data::AsyncFormData`;
                         // `to_js` is provided via the `AsyncFormDataExt` extension trait.
-                        let result = async_form_data.to_js(cx.global(), blob.slice(), promise);
-                        blob.detach();
-                        // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
-                        result?;
+                        async_form_data.to_js(cx.global(), blob.slice(), promise)?;
                     }
                     Action::None | Action::GetBlob => {
                         let blob = new.use_();
@@ -1031,7 +1002,7 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_utf8();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
+                                let mime_type = MimeType::init(content_slice.slice());
                                 set_blob_content_type(&blob, mime_type);
                             }
                         }
@@ -1041,7 +1012,6 @@ impl Value {
                         promise.resolve(cx.global(), blob.into_js(cx.global()))?;
                     }
                 }
-                promise_.unprotect();
             }
         }
         Ok(())
@@ -1171,19 +1141,11 @@ impl Value {
                 unreachable!()
             };
 
-            if let Some(promise_value) = locked.promise.take() {
-                // `unprotect` + `ensure_still_alive` are non-Drop side effects
-                // (GC root decrement) that must run even if
-                // reject_with_async_stack errors.
-                let promise_value = scopeguard::guard(promise_value, |p| {
-                    p.unprotect();
-                    p.ensure_still_alive();
-                });
-                if let Some(promise) = promise_value.as_any_promise() {
-                    if promise.status() == jsc::js_promise::Status::Pending {
-                        promise.reject_with_async_stack(global, err_ref.to_js(global))?;
-                    }
-                }
+            if let Some(root) = locked.promise.take()
+                && let Some(promise) = root.get().as_any_promise()
+                && promise.status() == jsc::js_promise::Status::Pending
+            {
+                promise.reject_with_async_stack(global, err_ref.to_js(global))?;
             }
 
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
@@ -1210,14 +1172,6 @@ impl Value {
             }
         }
         Ok(())
-    }
-
-    /// A locked body stays locked, without its stream.
-    pub fn reset(&mut self) {
-        match self {
-            Value::Locked(locked) => locked.readable.deinit(),
-            _ => *self = Value::Null,
-        }
     }
 }
 
@@ -1454,7 +1408,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared body-clone for `clone_into` / `clone_value`: clone through the
+    /// Shared body-clone for `Request` and `Response`: clone through the
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
     fn clone_body_value_via_cached_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
@@ -1492,15 +1446,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         locked.action = action;
         let Some(readable) = owned_readable.or_else(|| locked.readable.get()) else {
             let promise = JSPromise::create(global_this).to_js();
-            locked.promise = Some(promise);
-            promise.protect();
+            locked.promise = Some(jsc::Strong::create(promise, global_this));
             if let Some(on_start_buffering) = locked.on_start_buffering.take() {
                 // Last use of `locked`: the producer may settle the body, and so replace it.
                 on_start_buffering(locked.task.unwrap());
             }
             return Ok(promise);
         };
-        // Don't protect() this promise: the stream keeps it alive, and nothing would unprotect it (#13678).
+        // Don't root this promise: the stream keeps it alive (#13678).
         let promise = match &mut locked.action {
             Action::GetJSON => global_this.readable_stream_to_json(readable.value),
             Action::GetArrayBuffer => global_this.readable_stream_to_array_buffer(readable.value),
@@ -1520,7 +1473,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         };
         // That can run script, which can replace the body.
         if let Value::Locked(locked) = self.get_body_value() {
-            locked.readable.deinit();
+            locked.readable = Default::default();
         }
         if promise.is_ok() {
             // The consumer holds its reader now; keep the lock once it lets go.
@@ -1563,9 +1516,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| blob.to_string(&cx, Lifetime::Transfer));
-        blob.detach();
-        result
+        JSPromise::wrap(global_object, |_| blob.to_string(&cx, Lifetime::Transfer))
     }
 
     fn get_body(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1706,9 +1657,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx, Lifetime::Share));
-        blob.detach();
-        result
+        JSPromise::wrap(global_object, |_| blob.to_json(&cx))
     }
 
     fn array_buffer(
@@ -1761,11 +1710,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| {
+        JSPromise::wrap(global_object, |_| {
             blob.to_array_buffer(&cx, Lifetime::Transfer)
-        });
-        blob.detach();
-        result
+        })
     }
 
     fn bytes(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1809,11 +1756,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| {
+        JSPromise::wrap(global_object, |_| {
             blob.to_uint8_array(&cx, Lifetime::Transfer)
-        });
-        blob.detach();
-        result
+        })
     }
 
     fn form_data(
@@ -1872,7 +1817,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             );
         }
 
-        let mut blob: AnyBlob = value.use_as_any_blob();
+        let blob: AnyBlob = value.use_as_any_blob();
         // `encoder.encoding` is `bun_core::form_data::Encoding`; convert
         // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
         let encoding = match encoder.encoding {
@@ -1887,12 +1832,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
                 Ok(v) => v,
                 Err(crate::Error::JSError) => {
-                    blob.detach();
                     let error = global_object.take_error(jsc::JsError::Thrown);
                     return Ok(JSPromise::rejected_promise(global_object, error).to_js());
                 }
                 Err(err) => {
-                    blob.detach();
                     return Ok(global_object
                         .err(
                             jsc::ErrorCode::FORMDATA_PARSE_ERROR,
@@ -1901,7 +1844,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                         .reject());
                 }
             };
-        blob.detach();
 
         Ok(JSPromise::wrap_value(global_object, js_value))
     }
@@ -1967,7 +1909,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
+                    let mime_type = MimeType::init(content_slice.slice());
                     set_blob_content_type(&blob, mime_type);
                 }
             }

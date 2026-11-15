@@ -617,20 +617,22 @@ impl Extraction {
         // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
         // NUL-terminated slice) so there is no need to reconstruct an
         // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname, self.npm_mode);
+        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname);
 
         let mut norm_buf = bun_paths::os_path_buffer_pool::get();
-        if rest.len() >= norm_buf.len() {
+        let normalized = if self.npm_mode {
+            bun_archive::normalize_npm_entry_path(entry, &mut norm_buf[..])?
+        } else {
+            (rest.len() < norm_buf.len()).then(|| {
+                resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
+            })
+        };
+        let Some(normalized) = normalized else {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
             );
             return Ok(());
-        }
-        let normalized = if self.npm_mode {
-            bun_archive::normalize_npm_entry_path(rest, &mut norm_buf[..])
-        } else {
-            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
         };
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;
@@ -652,11 +654,11 @@ impl Extraction {
         }
         #[cfg(windows)]
         {
-            if bun_archive::has_windows_root(path) {
-                return Ok(());
-            }
             if self.npm_mode {
                 apply_windows_npm_path_escapes(path);
+            }
+            if bun_archive::starts_elsewhere_on_windows(path) {
+                return Ok(());
             }
         }
 
@@ -841,6 +843,10 @@ impl TarballStream {
             }
         }
 
+        if (self.decoder.as_ref()).is_some_and(tar::Decoder::skipped_header) {
+            tarball.warn_about_skipped_header(log);
+        }
+
         if tarball.resolution.tag == ResolutionTag::Github {
             'insert_tag: {
                 if self.extraction.resolved_github_dirname.is_empty() {
@@ -1012,11 +1018,9 @@ fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
 // Skips any leading `/` delimiters, then returns everything after the first
 // path component, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-// With `npm`, leading `/` delimiters are not skipped. As in npm, the empty name before them is the
-// first component, so for `"/package/index.js"` the result is `"package/index.js"`.
-fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
+fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
-    while !npm && i < s.len() && s[i] == ('/' as OSPathChar) {
+    while i < s.len() && s[i] == ('/' as OSPathChar) {
         i += 1;
     }
     while i < s.len() && s[i] != ('/' as OSPathChar) {
@@ -1028,7 +1032,5 @@ fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
     &s[i..]
 }
 
-// Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
-// discriminant; Job/Status live on PackageManagerTask.
 use crate::package_manager_task::{Job, Status as TaskStatus, Task};
 use crate::resolution::Tag as ResolutionTag;

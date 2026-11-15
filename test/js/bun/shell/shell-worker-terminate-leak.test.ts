@@ -150,7 +150,13 @@ test.skipIf(!isASAN || isWindows)(
       postMessage("ok");
     `,
       {},
-      expectClosedByTerminate("out.txt"),
+      {
+        // The child has its own copy, so there is nothing left for terminate() to close.
+        beforeTerminate: `
+          ${defineIsOpen("out.txt")}
+          if (isOpen()) throw new Error("still open after the spawn");
+        `,
+      },
     );
   },
   LEAK_TEST_TIMEOUT,
@@ -171,6 +177,30 @@ test.skipIf(isWindows)(
     `,
       {},
       expectClosedByTerminate("target"),
+    );
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() before cp has heard that its copy finished does not leak the task",
+  async () => {
+    // From a callback: leaksan.supp hides what a module allocates while it is evaluated.
+    // Several, one at a time: a stale pointer in the pool's queues can hide a task from LSan.
+    await runTerminateScenario(
+      `
+      const { existsSync, writeFileSync } = require("node:fs");
+      writeFileSync("source", "");
+      setImmediate(() => {
+        for (const target of "abcdefgh") {
+          Bun.$\`cp source \${target}\`.nothrow().run();
+          while (!existsSync(target)) Bun.sleepSync(1);
+        }
+        postMessage("ok");
+        while (true);
+      });
+    `,
+      { BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
     );
   },
   LEAK_TEST_TIMEOUT,

@@ -4,7 +4,7 @@ use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue, JsError, JsRes
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::WTFString;
-use bun_sql::shared::{ColumnIdentifier, Data};
+use bun_sql::shared::ColumnIdentifier;
 
 /// `DataCell` in SQLClient.cpp, which only reads it.
 #[repr(C)]
@@ -301,14 +301,11 @@ pub(crate) fn dedupe_columns<'a>(
     for name_or_index in columns {
         // The verdict of an earlier pass, when the other columns may have had other names.
         if let ColumnIdentifier::Duplicate(name) = &mut *name_or_index {
-            *name_or_index = ColumnIdentifier::init(core::mem::take(name)).unwrap_or_oom();
+            *name_or_index = ColumnIdentifier::init(core::mem::take(name).into());
         }
         match &mut *name_or_index {
             ColumnIdentifier::Name(name) => {
-                let found_existing = seen_fields
-                    .get_or_put(name.slice())
-                    .unwrap_or_oom()
-                    .found_existing;
+                let found_existing = seen_fields.get_or_put(name).unwrap_or_oom().found_existing;
                 if found_existing {
                     *name_or_index = ColumnIdentifier::Duplicate(core::mem::take(name));
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
@@ -320,9 +317,9 @@ pub(crate) fn dedupe_columns<'a>(
                 let index = *index;
                 if seen_numbers.contains(&index) {
                     let mut digits = bun_core::fmt::ItoaBuf::new();
-                    *name_or_index = ColumnIdentifier::Duplicate(Data::Owned(
+                    *name_or_index = ColumnIdentifier::Duplicate(
                         bun_core::fmt::itoa(&mut digits, index).to_vec(),
-                    ));
+                    );
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
                 } else {
                     seen_numbers.push(index);

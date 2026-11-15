@@ -6,8 +6,7 @@ use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
-use bun_sql::mysql::protocol::stack_reader::PacketReader;
-use bun_sql::shared::Data;
+use bun_sql::mysql::protocol::packet_reader::PacketReader;
 use bun_sql::shared::SQLQueryResultMode;
 
 use crate::shared::CachedStructure;
@@ -48,52 +47,52 @@ impl<'a> Row<'a> {
         )
     }
 
-    fn parse_value(&self, column: &ColumnDefinition41, value: &Data) -> SQLDataCell {
+    fn parse_value(&self, column: &ColumnDefinition41, value: &[u8]) -> SQLDataCell {
         bun_core::scoped_log!(
             MySQLResultSet,
             "parseValue: {} {}",
             <&'static str>::from(column.column_type),
-            bstr::BStr::new(value.slice())
+            bstr::BStr::new(value)
         );
         use bun_sql::mysql::protocol::FieldType::*;
         match column.column_type {
             MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => {
-                let val: f64 = bun_core::parse_double(value.slice()).unwrap_or(f64::NAN);
+                let val: f64 = bun_core::parse_double(value).unwrap_or(f64::NAN);
                 SQLDataCell::float8(val)
             }
             // YEAR arrives as a bare ASCII integer in the text protocol; parse it
             // like SHORT so `.simple()` returns the same JS number as the binary path.
             MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_YEAR => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
+                    let val: u16 = parse_int::<u16>(value, 10).unwrap_or(0);
                     SQLDataCell::uint4(val as u32)
                 } else {
-                    let val: i16 = parse_int::<i16>(value.slice(), 10).unwrap_or(0);
+                    let val: i16 = parse_int::<i16>(value, 10).unwrap_or(0);
                     SQLDataCell::int4(val as i32)
                 }
             }
             MYSQL_TYPE_LONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
+                    let val: u32 = parse_int::<u32>(value, 10).unwrap_or(0);
                     SQLDataCell::uint4(val)
                 } else {
-                    let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(i32::MIN);
+                    let val: i32 = parse_int::<i32>(value, 10).unwrap_or(i32::MIN);
                     SQLDataCell::int4(val)
                 }
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
+                    let val: u32 = parse_int::<u32>(value, 10).unwrap_or(0);
                     SQLDataCell::uint4(val)
                 } else {
                     // -8_388_608 is the minimum value of a signed 24-bit int
-                    let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(-8_388_608);
+                    let val: i32 = parse_int::<i32>(value, 10).unwrap_or(-8_388_608);
                     SQLDataCell::int4(val)
                 }
             }
             MYSQL_TYPE_LONGLONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u64 = parse_int::<u64>(value.slice(), 10).unwrap_or(0);
+                    let val: u64 = parse_int::<u64>(value, 10).unwrap_or(0);
                     if val <= u32::MAX as u64 {
                         return SQLDataCell::uint4(u32::try_from(val).expect("int cast"));
                     }
@@ -101,7 +100,7 @@ impl<'a> Row<'a> {
                         return SQLDataCell::uint8(val);
                     }
                 } else {
-                    let val: i64 = parse_int::<i64>(value.slice(), 10).unwrap_or(0);
+                    let val: i64 = parse_int::<i64>(value, 10).unwrap_or(0);
                     if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
                         return SQLDataCell::int4(i32::try_from(val).expect("int cast"));
                     }
@@ -110,14 +109,14 @@ impl<'a> Row<'a> {
                     }
                 }
 
-                SQLDataCell::string(value.slice())
+                SQLDataCell::string(value)
             }
-            MYSQL_TYPE_JSON => SQLDataCell::json(value.slice()),
+            MYSQL_TYPE_JSON => SQLDataCell::json(value),
 
             MYSQL_TYPE_TIME => {
                 // lets handle TIME special case as string
                 // -838:59:50 to 838:59:59 is valid
-                SQLDataCell::string(value.slice())
+                SQLDataCell::string(value)
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
                 // MySQL's DATE/DATETIME/TIMESTAMP text has no timezone, so parse
@@ -126,7 +125,7 @@ impl<'a> Row<'a> {
                 // read "2024-06-15 12:00:00" as local time and make the text and
                 // binary protocols disagree on non-UTC hosts. Zero/invalid dates
                 // fall through to NaN (Invalid Date).
-                let date = match DateTime::from_text(value.slice()) {
+                let date = match DateTime::from_text(value) {
                     Some(dt) => dt.to_js_timestamp(self.global_object).unwrap_or(f64::NAN),
                     None => f64::NAN,
                 };
@@ -136,14 +135,13 @@ impl<'a> Row<'a> {
             // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
             // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
             // heuristic would wrongly return them as a Buffer.
-            MYSQL_TYPE_NEWDECIMAL => SQLDataCell::string(value.slice()),
+            MYSQL_TYPE_NEWDECIMAL => SQLDataCell::string(value),
             MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {
-                    let slice = value.slice();
-                    SQLDataCell::bool(!slice.is_empty() && slice[0] == 1)
+                    SQLDataCell::bool(value.first() == Some(&1))
                 } else {
-                    SQLDataCell::raw(value.slice())
+                    SQLDataCell::raw(value)
                 }
             }
             _ => {
@@ -154,9 +152,9 @@ impl<'a> Row<'a> {
                 if column.flags.contains(ColumnFlags::BINARY)
                     && column.character_set == decode_binary_value::BINARY_CHARSET
                 {
-                    SQLDataCell::raw(value.slice())
+                    SQLDataCell::raw(value)
                 } else {
-                    SQLDataCell::string(value.slice())
+                    SQLDataCell::string(value)
                 }
             }
         }
@@ -175,11 +173,11 @@ impl<'a> Row<'a> {
                 // this dont matter if is raw because we will sent as null too like in postgres
                 SQLDataCell::null()
             } else if self.raw {
-                SQLDataCell::raw(reader.encode_len_string()?.slice())
+                SQLDataCell::raw(reader.encode_len_string()?)
             } else {
                 reader.skip(result.bytes_read);
                 let string_data = reader.read(usize::try_from(result.value).expect("int cast"))?;
-                self.parse_value(column, &string_data)
+                self.parse_value(column, string_data)
             };
             value.set_column(
                 u32::try_from(index).expect("int cast"),
@@ -207,7 +205,7 @@ impl<'a> Row<'a> {
         for (i, column) in self.columns.iter().enumerate() {
             let byte_pos = (bitmap_offset + i) >> 3;
             let bit_pos = ((bitmap_offset + i) & 7) as u8;
-            let is_null = (null_bitmap.slice()[byte_pos] & (1u8 << bit_pos)) != 0;
+            let is_null = (null_bitmap[byte_pos] & (1u8 << bit_pos)) != 0;
 
             let mut value = if is_null {
                 SQLDataCell::null()

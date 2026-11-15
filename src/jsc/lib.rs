@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
@@ -156,6 +157,8 @@ pub mod js_type;
 pub mod js_value;
 #[path = "rare_data.rs"]
 pub mod rare_data;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod spawn_sync_event_loop;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]
@@ -348,7 +351,7 @@ pub use self::uuid::{UUID, UUID5, UUID7};
 
 pub use self::js_function::JSFunction;
 pub use self::js_module_loader::JSModuleLoader;
-pub use self::strong::{Optional as StrongOptional, Strong};
+pub use self::strong::{Optional as StrongOptional, Strong, StrongCell};
 pub use self::weak::{Weak, WeakRefType};
 
 pub use self::exception::Exception;
@@ -452,8 +455,6 @@ pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
 
-#[path = "AsyncModule.rs"]
-pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]
@@ -504,13 +505,12 @@ pub fn initialize(options: InitializeOptions) {
     if options.runs_compiled_code {
         bindgen::hold_results_to_declared_types();
     }
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
-    // it is handed. JSCInitialize is called exactly once at startup.
+    // SAFETY: nothing changes the environment during the call, which is made once at startup;
+    // `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
     unsafe {
+        let env = bun_sys::environ();
         JSCInitialize(
-            env.as_ptr(),
+            env.as_ptr().cast(),
             env.len(),
             on_jsc_invalid_env_var,
             options.eval_mode,
@@ -526,9 +526,11 @@ pub fn initialize(options: InitializeOptions) {
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
-    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+    }
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -1126,10 +1128,6 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 pub mod js_string;
 pub use self::js_string::{JSString, JSStringView};
 
-#[path = "RefString.rs"]
-pub mod ref_string;
-pub use self::ref_string as RefString;
-
 pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
@@ -1415,6 +1413,12 @@ impl Ref {
         }
         self.has.set(true);
         vm.active_tasks.update(|n| n + 1);
+    }
+}
+
+impl Drop for Ref {
+    fn drop(&mut self) {
+        self.unref(virtual_machine::VirtualMachine::get());
     }
 }
 

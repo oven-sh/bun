@@ -66,6 +66,7 @@ pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
+    type Source = webcore::AnyBlob;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -142,19 +143,9 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // `*mut Process` has no sound placeholder anyway.
 
 impl<'a> Subprocess<'a> {
-    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
-    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
-    fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
+    fn take_pending_start_writer(&self) -> Option<RefPtr<StaticPipeWriter<'a>>> {
         match self.stdin.get() {
-            Writable::Buffer(buffer) => {
-                let writer = Writable::buffer_writer_mut(buffer);
-                if writer.started {
-                    writer.started = false;
-                    Some(buffer.as_ptr())
-                } else {
-                    None
-                }
-            }
+            Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start_ref.take(),
             _ => None,
         }
     }
@@ -357,13 +348,7 @@ impl Subprocess<'_> {
                     };
                     pipe.source.with_mut(|s| s.clear());
                 }
-                Writable::Buffer(_) => {
-                    let Writable::Buffer(buffer) = core::mem::replace(stdin, Writable::Ignore)
-                    else {
-                        unreachable!()
-                    };
-                    Writable::buffer_writer_mut(&buffer).source.detach();
-                }
+                Writable::Buffer(_) => drop(core::mem::replace(stdin, Writable::Ignore)),
                 _ => {}
             }),
             StdioKind::Stdout | StdioKind::Stderr => {
@@ -382,17 +367,12 @@ impl Subprocess<'_> {
                     match pipe_state {
                         PipeReader::State::Done(done) => {
                             let taken = core::mem::take(done);
-                            out.set(Readable::Buffer(readable::CowString::init_owned(
-                                taken.into_boxed_slice(),
-                            )));
+                            out.set(Readable::Buffer(taken.into_boxed_slice()));
                             // pipe.state was emptied via take()
                         }
                         PipeReader::State::Err(bytes, err) => {
                             let taken = core::mem::take(bytes);
-                            out.set(Readable::Errored(
-                                readable::CowString::init_owned(taken.into_boxed_slice()),
-                                err.clone(),
-                            ));
+                            out.set(Readable::Errored(taken.into_boxed_slice(), err.clone()));
                         }
                         // *out stays Readable::Ignore (set by replace above).
                         PipeReader::State::Pending => {}
@@ -761,9 +741,7 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);
 
         jsc_vm.on_subprocess_exit(&self.process);
@@ -819,10 +797,7 @@ impl Subprocess<'_> {
         if let Writable::Buffer(buffer) = self.stdin.get() {
             Writable::buffer_writer_mut(buffer).close();
         }
-        if let Some(writer) = pending_start {
-            // SAFETY: `started` ⇒ start +1 was live entering; last use.
-            unsafe { RefCount::deref(writer) };
-        }
+        drop(pending_start);
 
         if !existing_stdin_value.is_empty() {
             crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
@@ -1011,18 +986,13 @@ impl Subprocess<'_> {
         match io {
             StdioKind::Stdin => {
                 let pending_start = self.take_pending_start_writer();
-                if let Some(writer) = pending_start {
-                    // SAFETY: live StaticPipeWriter with >= 2 refs.
-                    unsafe { (*writer).close() };
+                if let Some(writer) = &pending_start {
+                    Writable::buffer_writer_mut(writer).close();
                 }
                 if !called {
                     Writable::finalize(self);
                 } else {
                     self.stdin.with_mut(|s| s.close());
-                }
-                if let Some(writer) = pending_start {
-                    // SAFETY: `started` ⇒ start +1 was live entering; last use.
-                    unsafe { RefCount::deref(writer) };
                 }
             }
             StdioKind::Stdout => {
@@ -1089,9 +1059,7 @@ impl Subprocess<'_> {
         }
 
         self.process().detach();
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);
 
         self.stdout_maxbuf.set(None);
@@ -1243,25 +1211,13 @@ impl Subprocess<'_> {
     }
 }
 
-pub(crate) use bun_spawn::subprocess::{Source, SourceData};
-
-// JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
-// `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the
-// value (§Dispatch cold path).
-impl SourceData for webcore::AnyBlob {
+impl static_pipe_writer::Source for webcore::AnyBlob {
     fn slice(&self) -> &[u8] {
         webcore::AnyBlob::slice(self)
-    }
-    fn detach(&mut self) {
-        webcore::AnyBlob::detach(self)
     }
     fn memory_cost(&self) -> usize {
         webcore::AnyBlob::memory_cost(self)
     }
-}
-#[inline]
-pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
-    Source::Any(Box::new(b))
 }
 
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this

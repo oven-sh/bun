@@ -74,13 +74,12 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            bundler_framework_views: _,
-            bundler_options: _,
             server_transpiler: _,
             client_transpiler: _,
             ssr_transpiler: _,
             log: _,
             plugin_state: _,
+            plugins: _,
             current_bundle: _,
             next_bundle: _,
             deferred_request_pool: _,
@@ -120,7 +119,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .ssr_transpiler
     //   .log
     //   .framework
-    //   .bundler_options
     //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.
@@ -132,9 +130,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for bundle in dev.route_bundles.iter() {
         other_bytes += bundle.memory_cost();
     }
-    // .bundler_framework_views (the pointed-to Frameworks are owned elsewhere;
-    // count the Vec's own backing store)
-    other_bytes += memory_cost_array_list(&dev.bundler_framework_views);
     // .graphs.server
     {
         let cost = dev.graphs.server.memory_cost_detailed();
@@ -310,10 +305,10 @@ impl DevServer {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
-        dev.emit_memory_visualizer_message();
         dev.memory_visualizer_timer
             .state
             .set(EventLoopTimerState::FIRED);
+        dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         crate::jsc_hooks::timer_all().update(timer, &next);
     }

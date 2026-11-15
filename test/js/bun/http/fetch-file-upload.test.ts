@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { readdirSync, readlinkSync, realpathSync } from "fs";
+import { isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { join } from "path";
 
 test("uploads roundtrip", async () => {
@@ -219,6 +220,29 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
   });
+});
+
+test.skipIf(!isLinux)("uploading an empty slice closes the file", async () => {
+  using dir = tempDir("fetch-file-empty-slice", { "f.bin": Buffer.alloc(64 * 1024) });
+  const path = realpathSync(join(String(dir), "f.bin"));
+  await using server = Bun.serve({
+    port: 0,
+    fetch: async req => new Response(String((await req.bytes()).length)),
+  });
+
+  for (let i = 0; i < 20; i++) {
+    const res = await fetch(server.url, { method: "POST", body: Bun.file(path).slice(0, 0) });
+    expect(await res.text()).toBe("0");
+  }
+
+  const timesOpen = readdirSync("/proc/self/fd").filter(fd => {
+    try {
+      return readlinkSync(`/proc/self/fd/${fd}`) === path;
+    } catch {
+      return false;
+    }
+  }).length;
+  expect(timesOpen).toBe(0);
 });
 
 test("missing file throws the expected error", async () => {

@@ -1,8 +1,7 @@
 //! Bidirectional IPC channel for `bun test --parallel`. Reads are
-//! frame-decoded in the loop's data callback; writes go through the platform
+//! frame-decoded by the owner between ticks; writes go through the platform
 //! socket/pipe with backpressure buffered and drained via the loop, so a full
-//! kernel buffer never truncates a frame. The owner type provides
-//! `on_channel_frame(kind, &mut Frame::Reader)` and `on_channel_done()`.
+//! kernel buffer never truncates a frame.
 //!
 //! POSIX backend: `uws::NewSocketHandler` adopted from a socketpair fd.
 //! Windows backend: `uv::Pipe` over the inherited duplex named-pipe end (same
@@ -10,21 +9,12 @@
 //!
 //! Lifetime: a `Channel` is embedded as a field in an owner that outlives all
 //! uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
-//! `WorkerLoop` which lives for the process). The owner is recovered via
-//! `container_of` (field offset) so the channel default-inits without a
-//! self-pointer. `Drop` assumes no write is in flight — true for both call
+//! `CoordinatorLink` which lives for the process). `Drop` assumes no write is in flight: true for both
 //! sites (start() errdefer and reap_worker after the peer has exited).
-//!
-//! Reentrancy: the read/close/writable callbacks re-enter the owner, which
-//! may call back into this channel (`send`), so every method takes `&self`
-//! and mutable state lives in `Cell`/[`JsCell`]. Owners must not drop or
-//! replace the channel from inside one of its callbacks; the coordinator
-//! defers reaping until the callback frame has unwound.
 
 use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
-use core::marker::PhantomData;
 
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
@@ -34,6 +24,8 @@ use bun_sys::Fd;
 use bun_sys::FdExt as _;
 #[cfg(not(windows))]
 use bun_uws as uws;
+#[cfg(not(windows))]
+use bun_uws_sys::thunk::ExtSlot;
 
 #[cfg(windows)]
 use bun_libuv_sys::UvStream as _;
@@ -44,70 +36,57 @@ use bun_sys::windows::libuv as uv;
 
 use super::frame;
 
-/// The owner implements [`bun_core::IntrusiveField<Channel<Self>>`]
-/// (via `bun_core::intrusive_field!`) plus the two callbacks below.
-pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
-    /// Before the frames of one read.
-    fn on_channel_data(&mut self) {}
-    fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
-    fn on_channel_done(&mut self);
-}
-
-// The struct itself carries no `ChannelOwner` bound so that owners
-// (Worker, WorkerCommands) can embed `Channel<Self>` as a field before their
-// `impl ChannelOwner` is in scope. Method impls that recover the owner via
-// `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
-// on `Drop` than on the struct, so Drop/Default below are unbounded too.)
-pub(crate) struct Channel<Owner> {
-    /// Incoming bytes that don't yet form a complete frame.
-    pub(crate) r#in: JsCell<Vec<u8>>,
+#[derive(Default)]
+pub(crate) struct Channel {
+    /// Incoming bytes that the owner has not read as frames yet.
+    r#in: JsCell<Vec<u8>>,
+    /// `in` has grown since the owner last took it.
+    has_incoming: Cell<bool>,
     /// Outgoing bytes the kernel didn't accept yet.
     pub out: JsCell<Vec<u8>>,
     pub(crate) done: Cell<bool>,
     /// The peer's byte stream stopped decoding as frames, i.e. something in
-    /// the peer wrote straight to fd 3: a length `ingest` rejected, or on
+    /// the peer wrote straight to fd 3: a length `next_frame` rejected, or on
     /// Windows a read error from libuv's own IPC framing underneath ours. Set
-    /// together with `done`, transport still attached. The coordinator kills
+    /// together with `done`. The coordinator kills
     /// such a worker and reports this rather than the exit status it caused.
     pub(crate) corrupt_frame: Cell<bool>,
+    /// A corrupt frame or a failed write that the coordinator has not killed the worker for yet.
+    pub(crate) kill_pending: Cell<bool>,
 
     pub(crate) backend: Backend,
+}
 
-    root: Cell<*mut Channel<Owner>>,
+/// `in`, taken out while its frames are decoded.
+pub(crate) struct IncomingFrames {
+    bytes: Vec<u8>,
+    head: usize,
+    is_corrupt: bool,
+}
 
-    _owner: PhantomData<*mut Owner>,
+impl IncomingFrames {
+    pub(crate) fn next_frame(&mut self) -> Option<(frame::Kind, frame::Reader<'_>)> {
+        loop {
+            let (&[ref len @ .., kind], rest) =
+                self.bytes[self.head..].split_first_chunk::<{ frame::HEADER_LEN }>()?;
+            let len = u32::from_le_bytes(*len);
+            if len > frame::MAX_PAYLOAD {
+                self.is_corrupt = true;
+                return None;
+            }
+            let p = rest.get(..len as usize)?;
+            self.head += frame::HEADER_LEN + p.len();
+            if let Ok(kind) = frame::Kind::try_from(kind) {
+                return Some((kind, frame::Reader { p }));
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
 pub(crate) type Backend = WindowsBackend;
 #[cfg(not(windows))]
 pub(crate) type Backend = PosixBackend;
-
-impl<Owner> Default for Channel<Owner> {
-    fn default() -> Self {
-        Self {
-            r#in: JsCell::new(Vec::new()),
-            out: JsCell::new(Vec::new()),
-            done: Cell::new(false),
-            corrupt_frame: Cell::new(false),
-            backend: Backend::default(),
-            root: Cell::new(core::ptr::null_mut()),
-            _owner: PhantomData,
-        }
-    }
-}
-
-impl<Owner: ChannelOwner> Channel<Owner> {
-    #[inline]
-    fn owner_ptr(&self) -> *mut Owner {
-        let root = self.root.get();
-        debug_assert!(!root.is_null(), "Channel::owner_ptr before adopt");
-        // SAFETY: `self` is embedded at `Owner::OFFSET` inside an `Owner`
-        // that outlives all callbacks (see module doc); `root` is that same
-        // address with the owner's write provenance.
-        unsafe { Owner::from_field_ptr(root) }
-    }
-}
 
 // -- POSIX (usockets) --------------------------------------------------------
 
@@ -133,26 +112,15 @@ impl Default for PosixBackend {
 }
 
 #[cfg(not(windows))]
-impl<Owner: ChannelOwner> Channel<Owner> {
+impl Channel {
     /// Shared embedded group for this channel. Uses `.dynamic` kind +
-    /// per-Owner vtable because the test-parallel channel is an internal-only
-    /// one-off whose ext type (`*mut Self`) varies by Owner — not worth a
+    /// its own vtable because the channel is an internal-only one-off — not worth a
     /// `SocketKind` value of its own. The per-file isolation swap skips
     /// `rare.test_parallel_ipc_group` so the coordinator link survives.
     fn ensure_posix_group(vm: &VirtualMachine) -> &uws::SocketGroup {
         let loop_ = vm.uws_loop();
         let g = vm.rare_data().test_parallel_ipc_group(loop_);
-        // First Owner to call wins the vtable; coordinator and worker run in
-        // separate processes so there's never more than one Owner type sharing
-        // this group.
-        if g.vtable.get().is_none() {
-            // cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
-            // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
-            // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
-            // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
-            // exactly what `vtable::make` would produce.
-            g.vtable.set(Some(&PosixHandlers::<Owner>::VTABLE));
-        }
+        g.vtable.set(Some(uws::vtable::make::<Self>()));
         g
     }
 }
@@ -163,10 +131,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 pub(crate) struct WindowsBackend {
     pub(crate) pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
     /// Read scratch — libuv asks us to allocate before each read.
-    /// Wrapped so every byte is interior-mutable: libuv forms
-    /// `&mut Channel` from the stored root on each read; a plain array here
-    /// would be the one field where that retag pops the shared views held
-    /// during frame decoding.
     pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
     /// Payload owned by the in-flight uv_write; must stay stable until the
     /// callback. New writes go to `out` until this completes, then the buffers
@@ -191,21 +155,13 @@ impl Default for WindowsBackend {
 
 // -- adopt -------------------------------------------------------------------
 
-impl<Owner: ChannelOwner> Channel<Owner> {
+impl Channel {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    /// `this` is the channel's address derived from the owner's `&mut`.
-    pub(crate) fn adopt(this: *mut Self, vm: &VirtualMachine, fd: Fd) -> bool {
-        // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
-        let self_ = unsafe { &*this };
-        self_.root.set(this);
-        Self::adopt_impl(self_, this, vm, fd)
-    }
-
-    fn adopt_impl(&self, this: *mut Self, vm: &VirtualMachine, fd: Fd) -> bool {
+    pub(crate) fn adopt(&self, vm: &VirtualMachine, fd: Fd) -> bool {
         #[cfg(windows)]
         {
-            let _ = (this, vm); // registered via `adopt_pipe_impl` from `self.root`
+            let _ = vm;
             // With ipc=true
             // libuv wraps reads/writes in its own framing; both ends use it so
             // the wrapping is transparent and our payload bytes pass through
@@ -232,11 +188,12 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 );
                 return false;
             }
-            return self.adopt_pipe_impl(pipe);
+            return self.adopt_pipe(pipe);
         }
         #[cfg(not(windows))]
         {
             let g = Self::ensure_posix_group(vm);
+            let this = core::ptr::from_ref(self).cast_mut();
             let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, true) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
@@ -253,19 +210,11 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
     /// reading. The pipe stays ref'd so the loop blocks for the peer's first frame.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(this: *mut Self, pipe: uv::Owned<uv::Pipe>) -> bool {
-        // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
-        let self_ = unsafe { &*this };
-        self_.root.set(this);
-        self_.adopt_pipe_impl(pipe)
-    }
-
-    #[cfg(windows)]
-    fn adopt_pipe_impl(&self, mut pipe: uv::Owned<uv::Pipe>) -> bool {
+    pub(crate) fn adopt_pipe(&self, mut pipe: uv::Owned<uv::Pipe>) -> bool {
         // The read callbacks are expressed via the `StreamReader` trait impl
         // below and routed through `read_start_ctx`, which stashes `self` in
         // `handle.data`.
-        let rc = pipe.read_start_ctx::<Self>(self.root.get());
+        let rc = pipe.read_start_ctx::<Self>(self);
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
             bun_core::debug_warn!(
                 "Channel.adoptPipe: readStart failed: {}",
@@ -332,7 +281,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 if e.get_errno() == bun_sys::E::AGAIN {
                     0
                 } else {
-                    self.mark_done();
+                    self.mark_failed();
                     return;
                 }
             }
@@ -360,11 +309,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         self.backend
             .write_buf
             .set(uv::uv_buf_t::init(self.backend.inflight.get().as_slice()));
-        let this: *mut Self = self.root.get();
+        let this = core::ptr::from_ref(self).cast_mut();
         // SAFETY: `p` is the `this` handed to `write` below — the live Channel
         // stashed for the callback; every Channel method is `&self`.
-        let on_write: fn(*mut Self, uv::ReturnCode) =
-            |p, s| unsafe { WindowsHandlers::<Owner>::on_write(&*p, s) };
+        let on_write: fn(*mut Self, uv::ReturnCode) = |p, s| unsafe { &*p }.on_write(s);
         // SAFETY: `write_req`/`write_buf`/`inflight` live in `self`, which is
         // address-stable and outlives the write, so libuv may hold them until
         // `on_write` fires.
@@ -378,21 +326,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         };
         if rc.is_err() {
             self.backend.inflight.with_mut(|inflight| inflight.clear());
-            self.mark_done();
-        }
-    }
-
-    /// True while the underlying socket/pipe is still open. When `done` is set
-    /// with the transport still attached, it was not a clean close: a corrupt
-    /// frame (`corrupt_frame`) or, on Windows, a failed write.
-    pub(crate) fn is_attached(&self) -> bool {
-        #[cfg(windows)]
-        {
-            return self.backend.pipe.get().is_some();
-        }
-        #[cfg(not(windows))]
-        {
-            !self.backend.socket.get().is_detached()
+            self.mark_failed();
         }
     }
 
@@ -444,68 +378,46 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
     }
 
-    // -- frame decode (shared) -----------------------------------------------
+    // -- read ----------------------------------------------------------------
 
     fn ingest(&self, data: &[u8]) {
         if self.done.get() {
             return;
         }
-        // SAFETY: see `owner_ptr()` — the Owner outlives all callbacks and the `&mut Owner` lives only for this call.
-        unsafe { &mut *self.owner_ptr() }.on_channel_data();
-        let mut buf = self.r#in.replace(Vec::new());
-        buf.extend_from_slice(data);
-        let mut head: usize = 0;
-        while buf.len() - head >= 5 {
-            let len = u32::from_le_bytes(buf[head..][..4].try_into().unwrap());
-            if len > frame::MAX_PAYLOAD {
-                self.mark_corrupt();
-                return;
-            }
-            if buf.len() - head < 5usize + len as usize {
-                break;
-            }
-            let Ok(kind) = frame::Kind::try_from(buf[head + 4]) else {
-                head += 5usize + len as usize;
-                continue;
-            };
-            let mut rd = frame::Reader {
-                p: &buf[head + 5..][..len as usize],
-            };
-            // SAFETY: see `owner_ptr()` — the Owner outlives all callbacks and
-            // the `&mut Owner` lives only for this call.
-            let owner: &mut Owner = unsafe { &mut *self.owner_ptr() };
-            owner.on_channel_frame(kind, &mut rd);
-            head += 5usize + len as usize;
-        }
-        buf.drain_front(head);
-        self.r#in.with_mut(|cur| {
-            if cur.is_empty() {
-                *cur = buf;
-            } else {
-                buf.extend_from_slice(cur);
-                *cur = buf;
-            }
-        });
+        self.r#in.with_mut(|r#in| r#in.extend_from_slice(data));
+        self.has_incoming.set(true);
     }
 
-    fn mark_done(&self) {
-        if self.done.get() {
-            return;
+    /// `None` if nothing has arrived since the last call. Goes back through `restore_incoming`.
+    pub(crate) fn take_incoming(&self) -> Option<IncomingFrames> {
+        self.has_incoming.take().then(|| IncomingFrames {
+            bytes: self.r#in.take(),
+            head: 0,
+            is_corrupt: false,
+        })
+    }
+
+    pub(crate) fn restore_incoming(&self, mut incoming: IncomingFrames) {
+        if incoming.is_corrupt {
+            return self.mark_corrupt();
         }
+        incoming.bytes.drain_front(incoming.head);
+        debug_assert!(self.r#in.get().is_empty());
+        self.r#in.set(incoming.bytes);
+    }
+
+    fn mark_failed(&self) {
         self.done.set(true);
-        // SAFETY: see `owner_ptr()`.
-        unsafe { (*self.owner_ptr()).on_channel_done() };
+        self.kill_pending.set(true);
     }
 
-    /// `mark_done` for an undecodable stream; the transport is left attached
-    /// so the owner's `on_channel_done` sees it as a protocol error.
     fn mark_corrupt(&self) {
         self.corrupt_frame.set(true);
-        self.mark_done();
+        self.mark_failed();
     }
 }
 
-impl<Owner> Drop for Channel<Owner> {
+impl Drop for Channel {
     fn drop(&mut self) {
         self.done.set(true);
         #[cfg(not(windows))]
@@ -521,145 +433,69 @@ impl<Owner> Drop for Channel<Owner> {
 
 // -- platform callbacks ------------------------------------------------------
 
-/// `vtable.make()` shape: `(ext: **Self, *us_socket_t, …)`. Hand-rolled here
-/// instead of `uws::vtable::make::<PosixHandlers<Owner>>()` because the
-/// upstream `bun_uws_sys::vtable::Handler` trait is `'static`-bounded and one
-/// owner (`WorkerCommands<'a>`) carries a lifetime. The trampolines below are
-/// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
-struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+impl uws::vtable::Handler for Channel {
+    type Ext = ExtSlot<Self>;
 
-/// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
-// Inherent associated types are unstable in Rust, so this lives as a free alias.
-#[cfg(not(windows))]
-type PosixExt<Owner> = *mut Channel<Owner>;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
 
-#[cfg(not(windows))]
-impl<Owner: ChannelOwner> PosixHandlers<Owner> {
-    /// Per-Owner static vtable. `&Self::VTABLE` const-promotes to
-    /// `&'static SocketGroupVTable` (all fields are `Option<fn>`; no Drop).
-    const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
-        on_open: None,
-        on_data: Some(Self::raw_on_data),
-        on_fd: None,
-        on_writable: Some(Self::raw_on_writable),
-        on_close: Some(Self::raw_on_close),
-        on_timeout: None,
-        on_long_timeout: None,
-        on_end: Some(Self::raw_on_end),
-        on_connect_error: None,
-        on_connecting_error: None,
-        on_handshake: None,
-    };
-
-    /// Recover `&Channel<Owner>` from the socket ext slot.
-    ///
-    /// # Safety
-    /// `s` is a live us_socket_t whose ext was sized for and stamped with
-    /// `*mut Channel<Owner>` in `adopt()`; the owner outlives all usockets
-    /// callbacks (see module doc).
-    #[inline(always)]
-    unsafe fn chan<'a>(s: *mut uws::us_socket_t) -> &'a Channel<Owner> {
-        // SAFETY: caller upholds this fn's contract — `s` is live and its ext
-        // slot was stamped with `*mut Channel<Owner>` in `adopt()`.
-        unsafe { &**(*s).ext::<PosixExt<Owner>>() }
+    fn on_data(ext: &mut Self::Ext, _: *mut uws::us_socket_t, data: &[u8]) {
+        let Some(this) = ext.owner_ref() else { return };
+        this.ingest(data);
     }
 
-    #[optimize(size)]
-    unsafe extern "C" fn raw_on_data(
-        s: *mut uws::us_socket_t,
-        data: *mut u8,
-        len: core::ffi::c_int,
-    ) -> *mut uws::us_socket_t {
-        // SAFETY: usockets guarantees `data[0..len]` is valid for the call.
-        let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
-        // SAFETY: see `chan` doc.
-        unsafe { Self::chan(s) }.ingest(slice);
-        s
+    fn on_writable(ext: &mut Self::Ext, _: *mut uws::us_socket_t) {
+        let Some(this) = ext.owner_ref() else { return };
+        this.flush();
     }
 
-    unsafe extern "C" fn raw_on_writable(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
-        // SAFETY: see `chan` doc.
-        unsafe { Self::chan(s) }.flush();
-        s
-    }
-
-    unsafe extern "C" fn raw_on_close(
-        s: *mut uws::us_socket_t,
-        _code: core::ffi::c_int,
-        _reason: *mut c_void,
-    ) -> *mut uws::us_socket_t {
-        // SAFETY: see `chan` doc.
-        let chan = unsafe { Self::chan(s) };
-        chan.backend.socket.set(Socket::DETACHED);
-        chan.mark_done();
-        s
-    }
-
-    unsafe extern "C" fn raw_on_end(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
-        // SAFETY: `s` is a live us_socket_t passed by usockets.
-        unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
-        s
+    fn on_close(ext: &mut Self::Ext, _: *mut uws::us_socket_t, _: i32, _: Option<*mut c_void>) {
+        let Some(this) = ext.owner_ref() else { return };
+        this.backend.socket.set(Socket::DETACHED);
+        this.done.set(true);
     }
 }
 
 #[cfg(windows)]
-struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
-
-#[cfg(windows)]
-impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
-    fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
-        let _ = suggested;
-        // SAFETY: hands libuv the cell payload; the buffer is only written by
-        // libuv until `on_read` consumes it, all on this thread.
-        let buf: &mut [u8; 16 * 1024] = unsafe { &mut *self_.backend.read_chunk.as_ptr() };
-        &mut buf[..]
-    }
-    fn on_error(self_: &Channel<Owner>, err: bun_sys::E) {
+impl Channel {
+    fn on_error(&self, err: bun_sys::E) {
         // libuv frames this pipe itself (ipc=1), so bytes the peer writes
         // straight to fd 3 fail its frame-header check and surface here as a
-        // read error instead of reaching `ingest`; report it the way `ingest`
-        // reports a bad frame, before detaching. EOF is the peer closing its
-        // end: mirror the POSIX on_close path and detach first so it reads as
-        // a clean close.
+        // read error instead of reaching `ingest`; report it like a bad frame.
         if err != bun_sys::E::EOF {
-            self_.mark_corrupt();
+            self.mark_corrupt();
         }
-        self_.backend.pipe.set(None);
-        self_.mark_done();
+        self.backend.pipe.set(None);
+        self.done.set(true);
     }
-    fn on_write(self_: &Channel<Owner>, status: uv::ReturnCode) {
-        self_.backend.inflight.with_mut(|inflight| inflight.clear());
-        if self_.done.get() {
+    fn on_write(&self, status: uv::ReturnCode) {
+        self.backend.inflight.with_mut(|inflight| inflight.clear());
+        if self.done.get() {
             return;
         }
         if status.is_err() {
-            self_.mark_done();
+            self.mark_failed();
             return;
         }
-        self_.submit_windows_write();
+        self.submit_windows_write();
     }
 }
 
-/// Adapter from `UvStream::read_start_ctx` to `WindowsHandlers`; expressed as
-/// a trait impl so the `extern "C"` trampoline stays zero-alloc.
+// SAFETY: only these callbacks use `read_chunk`, and the pipe closes with the channel.
 #[cfg(windows)]
-impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
+unsafe impl uv::StreamReader for Channel {
     #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
-        WindowsHandlers::<Owner>::on_alloc(this, suggested_size)
+    fn on_read_alloc(this: &Self, _: usize) -> *mut [u8] {
+        this.backend.read_chunk.as_ptr()
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
-        WindowsHandlers::<Owner>::on_error(this, e);
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
+        this.on_error(bun_sys::windows::translate_uv_error_to_e(err));
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
-        // `read_start_ctx`; `data` points into its `read_chunk` and is only
-        // read (copied by `ingest`).
-        let this = unsafe { &*this };
-        this.ingest(data);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        this.ingest(&this.backend.read_chunk.get()[..nread]);
     }
 }

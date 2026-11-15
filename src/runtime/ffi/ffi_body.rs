@@ -222,7 +222,8 @@ pub(crate) struct FFI {
     /// Leaked when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
     pub functions: ManuallyDrop<JsCell<StringArrayHashMap<Function>>>,
     pub closed: Cell<bool>,
-    pub shared_state: Cell<Option<NonNull<TCC::State>>>,
+    /// Leaked like `functions`, which call into it.
+    pub shared_state: ManuallyDrop<Cell<Option<TCC::OwnedState>>>,
 }
 
 impl Default for FFI {
@@ -231,7 +232,7 @@ impl Default for FFI {
             dylib: JsCell::new(None),
             functions: ManuallyDrop::new(JsCell::new(StringArrayHashMap::default())),
             closed: Cell::new(false),
-            shared_state: Cell::new(None),
+            shared_state: ManuallyDrop::new(Cell::new(None)),
         }
     }
 }
@@ -646,7 +647,7 @@ impl CompileC {
     pub(crate) fn compile(
         &mut self,
         global_this: &JSGlobalObject,
-    ) -> crate::Result<NonNull<TCC::State>> {
+    ) -> crate::Result<TCC::OwnedState> {
         let ctx = std::ptr::from_mut::<CompileC>(self);
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
@@ -661,7 +662,7 @@ impl CompileC {
         };
 
         // TODO: correctly handle invalid user-provided options
-        let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
+        let mut state = match TCC::OwnedState::init::<CompileC, true>(&TCC::Config {
             options: Some(compile_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
@@ -678,9 +679,6 @@ impl CompileC {
                 return Err(crate::Error::DeferredErrors);
             }
         };
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
-        // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
@@ -829,7 +827,7 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        CompilerRT::define(state);
+        CompilerRT::define(&mut state);
 
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
@@ -855,7 +853,7 @@ impl CompileC {
 
         if self
             .source
-            .add(state, &mut self.current_file_for_errors)
+            .add(&mut state, &mut self.current_file_for_errors)
             .is_err()
         {
             if !self.deferred_errors.is_empty() {
@@ -866,8 +864,8 @@ impl CompileC {
             }
         }
 
-        CompilerRT::inject(state);
-        stdarg::inject(state);
+        CompilerRT::inject(&mut state);
+        stdarg::inject(&mut state);
 
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
@@ -922,7 +920,7 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        Ok(state_ptr)
+        Ok(state)
     }
 }
 
@@ -1197,8 +1195,8 @@ impl FFI {
         }
 
         // Now we compile the code with tinycc.
-        let mut tcc_state: Option<NonNull<TCC::State>> = match compile_c.compile(global_this) {
-            Ok(s) => Some(s),
+        let tcc_state = match compile_c.compile(global_this) {
+            Ok(s) => s,
             Err(err) => match err {
                 crate::Error::DeferredErrors => {
                     let mut combined: Vec<u8> = Vec::new();
@@ -1227,12 +1225,6 @@ impl FFI {
                 }
             },
         };
-        let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
-            if let Some(state) = s {
-                // SAFETY: state is a valid TCC::State pointer from compile()
-                unsafe { TCC::State::destroy(state.as_ptr()) };
-            }
-        });
 
         let napi_env = make_napi_env_if_needed(compile_c.symbols.map.values(), global_this);
 
@@ -1281,7 +1273,7 @@ impl FFI {
 
         let lib = FFI {
             dylib: JsCell::new(None),
-            shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
+            shared_state: ManuallyDrop::new(Cell::new(Some(tcc_state))),
             functions: ManuallyDrop::new(JsCell::new(core::mem::take(&mut compile_c.symbols.map))),
             closed: Cell::new(false),
         };
@@ -1370,11 +1362,14 @@ impl FFI {
         let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
-            self.shared_state.set(None);
+            if let Some(state) = self.shared_state.take() {
+                state.leak();
+            }
             self.functions.with_mut(|functions| {
-                for function in functions.values_mut() {
-                    function.state = None;
-                }
+                let states = functions.values_mut().iter_mut();
+                states
+                    .filter_map(|function| function.state.take())
+                    .for_each(TCC::OwnedState::leak);
             });
         }
         self.do_close();
@@ -1395,11 +1390,8 @@ impl FFI {
             .values()
             .iter()
             .any(Function::needs_napi_env);
-        if let Some(state) = self.shared_state.take()
-            && !has_napi_env
-        {
-            // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
-            unsafe { TCC::State::destroy(state.as_ptr()) };
+        if !has_napi_env {
+            self.shared_state.set(None);
         }
         self.functions.set(StringArrayHashMap::default());
     }
@@ -2007,7 +1999,7 @@ pub(super) fn generate_symbols(
 pub(crate) struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: ZBox,
-    pub state: Option<NonNull<TCC::State>>,
+    pub state: Option<TCC::OwnedState>,
 
     pub return_type: ABIType,
     pub arg_types: Vec<ABIType>,
@@ -2026,16 +2018,6 @@ impl Default for Function {
             arg_types: Vec::new(),
             step: Step::Pending,
             threadsafe: false,
-        }
-    }
-}
-
-impl Drop for Function {
-    fn drop(&mut self) {
-        // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
-        if let Some(state) = self.state.take() {
-            // SAFETY: state is a valid TCC::State pointer; we own it
-            unsafe { TCC::State::destroy(state.as_ptr()) };
         }
     }
 }
@@ -2103,7 +2085,7 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(&TCC::Config {
+        let mut state = match TCC::OwnedState::init::<Function, false>(&TCC::Config {
             options: Some(tcc_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
@@ -2114,20 +2096,6 @@ impl Function {
             Ok(s) => s,
             Err(_) => return Err(crate::Error::TCCMissing),
         };
-
-        self.state = Some(state);
-        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
-            // SAFETY: this_ptr is &mut self for the duration of compile()
-            if matches!(unsafe { &(*this_ptr).step }, Step::Failed { .. }) {
-                // SAFETY: as above.
-                if let Some(s) = unsafe { (*this_ptr).state.take() } {
-                    // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
-                }
-            }
-        });
-        // SAFETY: state is non-null, just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
 
         if let Some(env) = napi_env {
             // `makeNapiEnvForFFI` leaks a ref on `env`: the address stays valid for JIT'd code.
@@ -2140,7 +2108,7 @@ impl Function {
             }
         }
 
-        CompilerRT::define(state);
+        CompilerRT::define(&mut state);
 
         // SAFETY: source_code was NUL-terminated above
         if state
@@ -2151,7 +2119,7 @@ impl Function {
             return Ok(());
         }
 
-        CompilerRT::inject(state);
+        CompilerRT::inject(&mut state);
         // `symbol_from_dynamic_library` is a dlsym'd address; valid for the
         // loaded library's lifetime, which outlives the TCC state.
         if state
@@ -2177,6 +2145,7 @@ impl Function {
             ptr: symbol.as_ptr().cast::<c_void>(),
             ..Default::default()
         });
+        self.state = Some(state);
         Ok(())
     }
 

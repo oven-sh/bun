@@ -7,7 +7,7 @@ use bun_core::Output;
 use bun_core::strings;
 #[cfg(not(windows))]
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, Task, TaskTag, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
@@ -92,13 +92,13 @@ bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
 impl FSWatcher {
     /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
     /// task; the queue takes ownership unless the VM has been torn down, in
-    /// which case the caller gets it back.
+    /// which case it stays the caller's.
     #[cfg(not(windows))]
-    pub(crate) fn post(
+    pub(crate) fn post_intrusive(
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
-    ) -> bun_jsc::vm_handle::Posted {
-        self.handle.post(self.loop_kind, task)
+    ) -> bun_jsc::vm_handle::Posted<()> {
+        self.handle.post_intrusive(self.loop_kind, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -133,17 +133,14 @@ pub(crate) struct FSWatchTaskPosix {
 }
 
 #[cfg(not(windows))]
-impl Taskable for FSWatchTaskPosix {
+impl BoxedTask for FSWatchTaskPosix {
     const TAG: TaskTag = task_tag::FSWatchTask;
     /// A batch of events the watcher thread posted that nobody will emit:
     /// same as the refused-post path in `enqueue_events`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
     /// afterwards finds it closed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -204,20 +201,20 @@ impl FSWatcher {
             this.pending_events.with_mut(Events::clear);
             return;
         };
-        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
+        let task = Task::from_boxed(Box::new(FSWatchTaskPosix {
             events: this.pending_events.take(),
             concurrent_task: ConcurrentTask::default(),
             ctx,
         }));
-        // SAFETY: `task` is a freshly-boxed task; the concurrent queue takes
-        // ownership of the `ConcurrentTask` node (and transitively the box)
-        // until the JS thread drains and `heap::take`s it in `dispatch`.
+        let batch = task.ptr().cast::<FSWatchTaskPosix>();
+        // SAFETY: `batch` is the box that `task` owns. Its node carries `task` until the JS
+        // thread takes it out, or until the post is refused.
         unsafe {
-            (*task).concurrent_task.task = Task::init(task);
-            let node = core::ptr::NonNull::new_unchecked(&raw mut (*task).concurrent_task);
-            if let bun_jsc::vm_handle::Posted::Refused(_) = this.post(node) {
+            (*batch).concurrent_task.task = task;
+            let node = core::ptr::NonNull::new_unchecked(&raw mut (*batch).concurrent_task);
+            if let bun_jsc::vm_handle::Posted::Refused(()) = this.post_intrusive(node) {
                 // VM torn down: nobody will emit these events.
-                drop(bun_core::heap::take(task));
+                drop(bun_core::heap::take(batch));
             }
         }
     }
@@ -289,15 +286,12 @@ pub(crate) struct FSWatchTaskWindows {
 }
 
 #[cfg(windows)]
-impl Taskable for FSWatchTaskWindows {
+impl BoxedTask for FSWatchTaskWindows {
     const TAG: TaskTag = task_tag::FSWatchTask;
     /// As the POSIX task.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// As `FSWatchTaskPosix`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

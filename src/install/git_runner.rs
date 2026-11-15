@@ -8,7 +8,7 @@ use std::ffi::CString;
 
 use bstr::BStr;
 use bun_core::fmt::for_terminal;
-use bun_core::{Output, strings};
+use bun_core::{CStrList, Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
 #[cfg(unix)]
@@ -17,7 +17,7 @@ use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
+use bun_spawn::{ProcessHandle, Rusage, SpawnOptions, Status};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
 
@@ -50,7 +50,6 @@ impl PackageManager {
             let Some(task) = self.git_tasks.pop_front() else {
                 break;
             };
-            self.running_git_tasks.fetch_add(1, Ordering::Relaxed);
             GitSubprocess::start(self, task);
         }
     }
@@ -696,12 +695,10 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
             };
             let name = entry.name.slice_u8();
             let kind = match entry.kind {
-                EntryKind::Unknown => {
-                    match bun_sys::lstatat(fd, &bun_core::ZBox::from_bytes(name)) {
-                        Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
-                        Err(_) => return false,
-                    }
-                }
+                EntryKind::Unknown => match bun_sys::lstatat(fd, entry.name.as_zstr()) {
+                    Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+                    Err(_) => return false,
+                },
                 known => known,
             };
             match kind {
@@ -780,6 +777,14 @@ pub(crate) struct GitSubprocess {
     staging: JsCell<Option<CacheStaging>>,
 }
 
+impl Drop for GitSubprocess {
+    fn drop(&mut self) {
+        self.manager()
+            .running_git_tasks
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl GitSubprocess {
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task>) {
         let cache_dir = manager.get_cache_directory();
@@ -791,6 +796,7 @@ impl GitSubprocess {
             Job::GitCheckout { request, .. } => &request.name,
             _ => unreachable!("not a git task"),
         };
+        manager.running_git_tasks.fetch_add(1, Ordering::Relaxed);
         let runner = RefPtr::new(GitSubprocess {
             ref_count: Cell::new(1),
             owner: Cell::new(None),
@@ -1176,8 +1182,10 @@ impl GitSubprocess {
         {
             argv.push(CString::new(*arg).map_err(|_| Error::InvalidCharacter)?);
         }
-        let argv: Vec<&CStr> = argv.iter().map(CString::as_c_str).collect();
-        let envp: Vec<&CStr> = env.envp.iter().chain(variable).collect();
+        let argv = argv.iter().map(|arg| Some(arg.as_c_str().into()));
+        let argv: Vec<_> = argv.chain([None]).collect();
+        // Without `variable`, the list ends one place earlier.
+        let envp = [env.envp.unterminated(), &[variable.map(Into::into), None]].concat();
 
         let this_ptr: *mut c_void = this.as_ptr().cast();
         this.read_error.set(None);
@@ -1200,8 +1208,8 @@ impl GitSubprocess {
             ..Default::default()
         };
 
-        let mut spawned =
-            bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp))??;
+        let (argv, env) = (CStrList::new(&argv), Some(CStrList::new(&envp)));
+        let mut spawned = bun_spawn::spawn_process(&spawn_options, argv, env)??;
         // `envp` borrows from `git_env`. The exit handler, which may run below, replaces `git_env`
         // after `Step::Config`.
         drop(envp);
@@ -1412,12 +1420,7 @@ impl GitSubprocess {
             Step::Log => {
                 let commit = strings::trim(stdout, b" \t\r\n");
                 // With `--ignore-missing`, git prints nothing and exits with 0 if no HEAD resolves.
-                let result = if ok && !commit.is_empty() {
-                    Ok(commit.to_vec())
-                } else {
-                    Err(Error::InstallFailed)
-                };
-                Self::finish_commit(this, result);
+                Self::finish_commit(this, (ok && !commit.is_empty()).then(|| commit.to_vec()));
             }
             Step::ListTree(git_dir) => {
                 if ok {
@@ -1483,7 +1486,7 @@ impl GitSubprocess {
     /// Fails the task with `err`. Frees `this`.
     fn fail(this: ThisPtr<Self>, err: Error) {
         if matches!(this.task().job, Job::GitCommit { .. }) {
-            Self::finish_commit(this, Err(err));
+            Self::finish_commit(this, None);
         } else {
             let staging = this.staging.take();
             Self::finish_on_pool(this, Finalize::Failed { staging, err });
@@ -1493,11 +1496,7 @@ impl GitSubprocess {
     /// Drops the owning ref: the process handle and readers are torn down on
     /// this (the event loop's) thread, and the git slot is free again.
     fn release(this: ThisPtr<Self>) {
-        let owner = this.owner.take().expect("git runner finished twice");
-        this.manager()
-            .running_git_tasks
-            .fetch_sub(1, Ordering::Relaxed);
-        drop(owner);
+        drop(this.owner.take().expect("git runner finished twice"));
     }
 
     /// Hands a clone or checkout task to the thread pool for `finalize`.
@@ -1514,7 +1513,7 @@ impl GitSubprocess {
     }
 
     /// Hands the finished commit lookup to `resolve_tasks`. Frees `this`.
-    fn finish_commit(this: ThisPtr<Self>, result: Result<Vec<u8>, Error>) {
+    fn finish_commit(this: ThisPtr<Self>, found: Option<Vec<u8>>) {
         let manager = this.manager;
         let task_ptr = this.task;
         {
@@ -1522,15 +1521,12 @@ impl GitSubprocess {
             let Job::GitCommit { sha, .. } = &mut task.job else {
                 unreachable!("not a commit task");
             };
-            match result {
-                Ok(found) => {
+            match found {
+                Some(found) => {
                     *sha = found;
                     task.status = Task::Status::Success;
                 }
-                Err(err) => {
-                    task.status = Task::Status::Fail;
-                    task.err = Some(err);
-                }
+                None => task.status = Task::Status::Fail,
             }
         }
         Self::release(this);

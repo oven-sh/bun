@@ -151,7 +151,7 @@ impl DevServer {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
-            let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = self.log.print(Output::error_writer());
         }
         Ok(())
     }
@@ -228,7 +228,6 @@ impl DevServer {
 
             for removed in &self.graphs.incremental_result.failures_removed {
                 payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
-                removed.deinit(self);
             }
 
             let mut i = 0;
@@ -314,7 +313,6 @@ impl DevServer {
 
             for removed in &self.graphs.incremental_result.failures_removed {
                 payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
-                removed.deinit(self);
             }
 
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);

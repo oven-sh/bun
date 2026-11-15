@@ -15,7 +15,7 @@ use std::rc::Rc;
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
 pub(crate) use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, InHeap, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+    EventLoopTimer, InHeap, OwnedTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 // bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
@@ -45,28 +45,21 @@ macro_rules! impl_timer_object {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
-            pub event_loop_timer: super::EventLoopTimer,
+            pub event_loop_timer: super::OwnedTimer,
             pub internals: super::TimerObjectInternals,
         }
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
-
-        impl ::core::ops::Drop for $T {
-            fn drop(&mut self) {
-                // SAFETY: last ref gone; JS thread with RuntimeState installed.
-                unsafe { self.internals.deinit() }
-            }
-        }
 
         impl ::core::default::Default for $T {
             fn default() -> Self {
                 Self {
                     ref_count: ::bun_ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
-                    event_loop_timer: super::EventLoopTimer::init_paused(
+                    event_loop_timer: super::OwnedTimer::init_paused(
                         super::EventLoopTimerTag::$T,
                     ),
-                    // Default-constructed here, then overwritten in `init()`.
+                    // Default-constructed here, then filled in by `init()`.
                     internals: super::TimerObjectInternals::default(),
                 }
             }
@@ -113,7 +106,7 @@ macro_rules! impl_timer_object {
                 // Heap-allocate; `*mut Self` is the
                 // pointer the JS wrapper holds. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
-                // `deref → deinit → heap::take`.
+                // `deref`.
                 let payload: *mut Self =
                     ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
                 // SAFETY: `payload` is a fresh heap allocation whose ownership
@@ -121,7 +114,7 @@ macro_rules! impl_timer_object {
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
-                // owned here; `internals.init()` writes every field.
+                // owned here.
                 unsafe {
                     (*payload).internals.init(
                         js_value, cx, id, kind, interval, callback, arguments, clock,
@@ -228,7 +221,7 @@ impl TimerHeap {
     /// # Safety
     /// `v` is a node currently in *this* heap.
     #[inline]
-    pub(crate) unsafe fn remove(&self, v: *const EventLoopTimer) {
+    unsafe fn remove(&self, v: *const EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.remove(v.cast_mut()) };
     }
@@ -241,18 +234,38 @@ impl TimerHeap {
         if r.is_null() { None } else { Some(r) }
     }
 
+    pub(crate) fn first_deadline(&self) -> Option<Timespec> {
+        // SAFETY: `peek` returns a live heap node.
+        self.peek().map(|first| unsafe { (*first).next.get() })
+    }
+
     #[inline]
-    pub(crate) fn find_max(&self) -> Option<*mut EventLoopTimer> {
+    pub(crate) fn last_deadline(&self) -> Option<Timespec> {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
-        // live for the heap's lifetime (intrusive invariant maintained by `All`).
-        let r = unsafe { self.0.find_max() };
-        if r.is_null() { None } else { Some(r) }
+        // live while linked (intrusive invariant maintained by `All`).
+        unsafe { self.0.find_max().as_ref() }.map(|last| last.next.get())
+    }
+
+    pub(crate) fn has_immediate(&self) -> bool {
+        self.first_immediate().is_some()
+    }
+
+    pub(crate) fn delete_first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let first = self.first_immediate()?;
+        // SAFETY: just found in this heap.
+        unsafe { self.remove(first) };
+        Some(first)
     }
 
     /// Only a faked `setImmediate` puts an `ImmediateObject` in a heap.
-    pub(crate) fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+    fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let root = self.peek()?;
+        // SAFETY: `peek` returns a live heap node.
+        if unsafe { (*root).tag } == EventLoopTimerTag::ImmediateObject {
+            return Some(root);
+        }
         let mut first: Option<*mut EventLoopTimer> = None;
-        let mut stack = vec![self.0.peek()];
+        let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             if node.is_null() {
                 continue;
@@ -439,8 +452,8 @@ impl EventLoopDelayMonitor {
         let next = enabled.iter().map(|enabled| enabled.next);
         if let Some(next) = next.min_by(Timespec::order) {
             timer_all().update(&raw const self.event_loop_timer, &next);
-        } else if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
+        } else {
+            self.event_loop_timer.disarm();
         }
     }
 }
@@ -665,14 +678,8 @@ impl All {
             "timer scheduled after teardown closed the heap's uv timer"
         );
 
-        let reg_next = self.timers.peek().map(|timer| {
-            // SAFETY: `peek` returns a live heap node.
-            unsafe { (*timer).next.get() }
-        });
-        let wtf_next = self.wtf_timers.lock().peek().map(|timer| {
-            // SAFETY: `peek` returns a live heap node.
-            unsafe { (*timer).next.get() }
-        });
+        let reg_next = self.timers.first_deadline();
+        let wtf_next = self.wtf_timers.lock().first_deadline();
         let Some(next_ts) = Self::soonest(reg_next, wtf_next) else {
             return;
         };
@@ -861,10 +868,7 @@ impl All {
 
         let wtf_next = self.drain_due_wtf_timers(maybe_now, vm);
 
-        let reg_next = self.timers.peek().map(|min| {
-            // SAFETY: `peek` returns a live heap node.
-            unsafe { (*min).next.get() }
-        });
+        let reg_next = self.timers.first_deadline();
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
             if let Some(us) = quic_next_tick_us {

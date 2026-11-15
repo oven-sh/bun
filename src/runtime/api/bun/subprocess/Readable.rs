@@ -2,8 +2,6 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_sys::FdExt as _;
 use bun_sys::{self, Fd};
 
 use crate::node::types::FdJsc as _;
@@ -12,32 +10,20 @@ use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
 use bun_io::max_buf;
 use bun_ptr::RefPtr;
-use bun_ptr::cow_slice::CowSlice;
 
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
-// `bun.ptr.CowString` — owned/borrowed byte slice (has
-// `init_owned` / `length` / `take_slice`).
-pub(crate) type CowString = CowSlice<u8>;
-
 pub(crate) enum Readable {
     Fd(Fd),
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
     Closed,
-    /// Eventually we will implement Readables created from blobs and array buffers.
-    /// When we do that, `buffer` will be borrowed from those objects.
-    ///
-    /// When a buffered `pipe` finishes reading from its file descriptor,
-    /// the owning `Readable` will be converted into this variant and the pipe's
-    /// buffer will be taken as an owned `CowString`.
-    Buffer(CowString),
+    /// What a buffered `pipe` read, once it has finished reading.
+    Buffer(Box<[u8]>),
     /// A buffered `pipe` whose read failed: the bytes read before the error, then the error.
-    Errored(CowString, bun_sys::Error),
+    Errored(Box<[u8]>, bun_sys::Error),
 }
 
 impl Readable {
@@ -57,7 +43,7 @@ impl Readable {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
-            Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.length(),
+            Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.len(),
             _ => 0,
         }
     }
@@ -88,15 +74,13 @@ impl Readable {
     }
 
     pub(crate) fn init(
-        stdio: Stdio,
+        stdio: &Stdio,
         event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let mut stdio = stdio;
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
@@ -104,15 +88,12 @@ impl Readable {
             }
         }
 
-        match &stdio {
+        match stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
             Stdio::Fd(fd) => Readable::Fd(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Stdio::Memfd(_) => {
-                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
-                Readable::Memfd(stdio.take_memfd().unwrap())
-            }
+            Stdio::Memfd(_) => unreachable!("Memfd at stdout/stderr"),
             Stdio::Dup2(dup2) => {
                 #[cfg(unix)]
                 {
@@ -128,7 +109,7 @@ impl Readable {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
-            Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
+            Stdio::Capture => panic!("TODO: implement capture support in Stdio readable"),
             Stdio::ReadableStream(..) => {
                 // Nothing reads it, but closing it would fail the child's writes.
                 #[cfg(unix)]
@@ -146,12 +127,6 @@ impl Readable {
 
     pub(crate) fn close(&mut self) {
         match self {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
             Readable::Fd(_) => {
                 *self = Readable::Closed;
             }
@@ -164,12 +139,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match self {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
             Readable::Fd(_) => {
                 *self = Readable::Closed;
             }
@@ -185,8 +154,6 @@ impl Readable {
                 }
             }
             Readable::Buffer(_) | Readable::Errored(..) => {
-                // Dropping the CowString (via the overwrite) frees the buffer;
-                // finalize is terminal.
                 *self = Readable::Closed;
             }
             _ => {}
@@ -195,10 +162,6 @@ impl Readable {
 
     pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
-            // should only be reachable when the entire output is buffered.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(_) => self.to_buffered_value(cx.global()),
-
             Readable::Fd(fd) => Ok(fd.to_js(cx.global())),
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
@@ -211,24 +174,21 @@ impl Readable {
                 result
             }
             Readable::Buffer(_) => {
-                let Readable::Buffer(mut buffer) = mem::replace(self, Readable::Closed) else {
+                let Readable::Buffer(buffer) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
 
-                if buffer.length() == 0 {
+                if buffer.is_empty() {
                     return ReadableStream::empty(cx.global());
                 }
 
-                let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(cx, own.into_vec(), 0)
+                ReadableStream::from_owned_slice(cx, buffer.into_vec(), 0)
             }
             Readable::Errored(..) => {
-                let Readable::Errored(mut buffer, err) = mem::replace(self, Readable::Closed)
-                else {
+                let Readable::Errored(buffer, err) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let own = buffer.take_slice()?;
-                ReadableStream::from_bytes_then_error(cx, own.into_vec(), err)
+                ReadableStream::from_bytes_then_error(cx, buffer.into_vec(), err)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -237,12 +197,6 @@ impl Readable {
     pub(crate) fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                bun_jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
-            }
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
@@ -252,15 +206,10 @@ impl Readable {
                 result
             }
             Readable::Buffer(_) => {
-                let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
+                let Readable::Buffer(buffer) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let own = match buf.take_slice() {
-                    Ok(own) => own,
-                    Err(_) => return Err(global.throw_out_of_memory()),
-                };
-
-                JSValue::create_buffer_from_box(global, own)
+                JSValue::create_buffer_from_box(global, buffer)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

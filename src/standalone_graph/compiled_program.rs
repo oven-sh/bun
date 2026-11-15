@@ -227,10 +227,8 @@ pub(crate) fn append_image(
     builder.len = offset;
     let destination = &mut builder.writable()[..image.len()];
     if place == ImagePlace::InGraph {
-        // SAFETY: `destination` is `image.len()` writable bytes of the builder's own buffer, which `image` does not overlap.
-        unsafe {
-            bun_core::copy_in_parallel(destination.as_mut_ptr(), image.as_ptr(), image.len());
-        }
+        let mut destination = bun_core::vec::BorrowedBuf::from(destination);
+        bun_core::append_in_parallel(destination.unfilled(), image);
     }
     builder.len += image.len();
     Ok(StringPointer {
@@ -2755,7 +2753,9 @@ pub(crate) mod tests {
         file_indices: &[Option<u32>],
         prefix_length: usize,
     ) -> crate::Result<Written> {
-        let mut builder = StringBuilder::init_capacity(prefix_length + capacity(input));
+        let mut builder = StringBuilder::default();
+        builder.cap = prefix_length + capacity(input);
+        builder.allocate().unwrap();
         let _ = builder.append_count(&vec![0xAA; prefix_length]);
         let image = append_image(&mut builder, input, ImagePlace::InGraph)?;
         let paths = append_entry_point_paths(&mut builder, input);

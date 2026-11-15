@@ -421,17 +421,15 @@ pub mod entry {
     }
 
     pub struct StorePathFormatter<'a> {
-        pub(crate) entry_id: Id,
-        pub(crate) store: &'a Store,
+        pub(crate) pkg_id: PackageID,
+        pub(crate) peer_hash: PeerHash,
         pub lockfile: &'a Lockfile,
     }
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
-            let pkg_id = self.store.ids(self.entry_id).pkg_id;
-
-            let pkgs = self.lockfile.packages.slice();
+            let (pkg_id, peer_hash) = (self.pkg_id, self.peer_hash);
+            let pkgs = &self.lockfile.packages;
             write!(
                 f,
                 "{}",
@@ -452,12 +450,12 @@ pub mod entry {
 
     pub(crate) fn fmt_store_path<'a>(
         entry_id: Id,
-        store: &'a Store,
+        store: &Store,
         lockfile: &'a Lockfile,
     ) -> StorePathFormatter<'a> {
         StorePathFormatter {
-            entry_id,
-            store,
+            pkg_id: store.ids(entry_id).pkg_id,
+            peer_hash: store.entries.items_peer_hash()[entry_id.get() as usize],
             lockfile,
         }
     }
@@ -479,7 +477,7 @@ pub mod entry {
     /// store (different dependency closures get different directory names).
     pub(crate) fn fmt_global_store_path<'a>(
         entry_id: Id,
-        store: &'a Store,
+        store: &Store,
         lockfile: &'a Lockfile,
     ) -> GlobalStorePathFormatter<'a> {
         GlobalStorePathFormatter {

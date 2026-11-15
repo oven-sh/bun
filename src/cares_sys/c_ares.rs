@@ -668,7 +668,7 @@ bun_opaque::opaque_ffi! {
 // gains a non-ZST field, those signatures must revert to `unsafe fn(*mut Channel)`.
 const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
-/// Implemented by the type that owns a `*mut Channel` and receives socket-
+/// Implemented by the type that holds an [`OwnedChannel`] and receives socket-
 /// state callbacks.
 ///
 /// R-2: methods take `&self`. The c-ares `sock_state_cb` re-enters the
@@ -676,7 +676,6 @@ const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 /// the implementor routes mutation through interior mutability.
 pub trait ChannelContainer: Sized {
     fn on_dns_socket_state(&self, socket: ares_socket_t, readable: bool, writable: bool);
-    fn set_channel(&self, channel: *mut Channel);
 }
 
 /// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
@@ -702,8 +701,45 @@ fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
     buf.as_ptr().cast::<c_char>()
 }
 
-impl Channel {
-    pub fn init<C: ChannelContainer>(this: &C, options: ChannelOptions) -> Option<Error> {
+/// Dropping it fails every pending query into its callback and closes its sockets.
+pub struct OwnedChannel(ptr::NonNull<Channel>);
+
+impl Drop for OwnedChannel {
+    fn drop(&mut self) {
+        // SAFETY: from `ares_init_options`, destroyed once.
+        unsafe { ares_destroy(self.as_ptr()) };
+    }
+}
+
+/// The list that `ares_get_servers_ports` allocated.
+pub struct Servers(*mut struct_ares_addr_port_node);
+
+impl Servers {
+    pub fn iter(&self) -> impl Iterator<Item = &struct_ares_addr_port_node> {
+        // SAFETY: each link is null or a node of the list, which lives as long as `self`.
+        let node = |node: *mut struct_ares_addr_port_node| unsafe { node.as_ref() };
+        core::iter::successors(node(self.0), move |current| node(current.next))
+    }
+}
+
+impl Drop for Servers {
+    fn drop(&mut self) {
+        // SAFETY: allocated by c-ares for the caller, freed once.
+        unsafe { ares_free_data(self.0.cast()) };
+    }
+}
+
+impl OwnedChannel {
+    pub fn as_ptr(&self) -> *mut Channel {
+        self.0.as_ptr()
+    }
+
+    /// # Safety
+    /// `this` stays in place and outlives the channel.
+    pub unsafe fn new<C: ChannelContainer>(
+        this: &C,
+        options: ChannelOptions,
+    ) -> Result<Self, Error> {
         let mut channel: *mut Channel = ptr::null_mut();
 
         library_init();
@@ -749,18 +785,23 @@ impl Channel {
         if let Some(err) = Error::get(rc) {
             // Don't `ares_library_cleanup()` here: `library_init()` is `run_once!`, so
             // tearing down the library on a per-channel failure would leave every later
-            // `Channel::init()` running against an uninitialized c-ares.
-            return Some(err);
+            // `OwnedChannel::new()` running against an uninitialized c-ares.
+            return Err(err);
         }
 
-        this.set_channel(channel);
-        None
+        Ok(Self(ptr::NonNull::from(Channel::opaque_mut(channel))))
     }
+}
 
-    /// FFI destroy — `ares_destroy`.
-    pub unsafe fn destroy(this: *mut Channel) {
-        // SAFETY: caller guarantees `this` is a live channel returned by `ares_init_options`.
-        unsafe { ares_destroy(this) };
+impl Channel {
+    pub fn servers(&mut self) -> Result<Servers, Error> {
+        let mut servers = ptr::null_mut();
+        // SAFETY: c-ares FFI; `servers` is a stack out-param.
+        let rc = unsafe { ares_get_servers_ports(self, &raw mut servers) };
+        match Error::get(rc) {
+            Some(err) => Err(err),
+            None => Ok(Servers(servers)),
+        }
     }
 
     /// See c-ares `ares_getaddrinfo` documentation.
@@ -961,7 +1002,7 @@ unsafe extern "C" {
         options: *mut Options,
         optmask: c_int,
     ) -> c_int;
-    pub fn ares_destroy(channel: *mut Channel);
+    fn ares_destroy(channel: *mut Channel);
     // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
     // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
     // synchronously invoke stored completion callbacks which may re-enter the
@@ -1524,7 +1565,7 @@ unsafe extern "C" {
         channel: *mut Channel,
         servers: *mut struct_ares_addr_port_node,
     ) -> c_int;
-    pub fn ares_get_servers_ports(
+    fn ares_get_servers_ports(
         channel: *mut Channel,
         servers: *mut *mut struct_ares_addr_port_node,
     ) -> c_int;

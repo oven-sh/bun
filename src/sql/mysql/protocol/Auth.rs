@@ -8,8 +8,7 @@ use bun_boringssl as boringssl;
 use bun_sha_hmac::{SHA1, SHA256};
 
 use super::new_writer::{NewWriter, WriterContext};
-use super::stack_reader::PacketReader;
-use crate::shared::Data;
+use super::packet_reader::PacketReader;
 
 bun_core::declare_scope!(Auth, hidden);
 
@@ -115,36 +114,25 @@ pub mod caching_sha2_password {
     #[derive(Default)]
     pub struct Response {
         pub status: FastAuthStatus,
-        pub(crate) data: Data,
     }
 
     impl Response {
-        // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
-        // needed here.
-
         pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
             let status: u8 = reader.int::<u8>()?;
             bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
             self.status = FastAuthStatus::from_raw(status);
-
-            self.data = reader.read(reader.peek().len())?;
             Ok(())
         }
     }
 
-    // Borrowed param-pack: caller-owned slices that live only across a single
-    // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
-    // `Deref` under the outlives-holder invariant) avoids the per-method
-    // `unsafe { &*self.field }` deref triple while keeping the struct
-    // lifetime-free per PORTING.md conventions.
-    pub struct EncryptedPassword {
-        pub password: bun_ptr::RawSlice<u8>,
-        pub public_key: bun_ptr::RawSlice<u8>,
+    pub struct EncryptedPassword<'a> {
+        pub password: &'a [u8],
+        pub public_key: &'a [u8],
         pub nonce: Nonce,
         pub sequence_id: u8,
     }
 
-    impl EncryptedPassword {
+    impl EncryptedPassword<'_> {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
@@ -152,10 +140,8 @@ pub mod caching_sha2_password {
             &self,
             writer: NewWriter<Context>,
         ) -> crate::Result<()> {
-            // `RawSlice` invariant: backing storage outlives the holder (this
-            // struct lives only for the single `write()` call its caller wraps it
-            // in), so safe `Deref` recovers `&[u8]` without an `unsafe` block.
-            let (password, public_key) = (self.password.slice(), self.public_key.slice());
+            let (password, public_key) = (self.password, self.public_key);
+
             // `&this.public_key[0]` below would index past a zero-length
             // slice if the server answered the public-key request with an
             // empty payload.
@@ -249,14 +235,12 @@ pub mod caching_sha2_password {
     }
 
     #[derive(Default)]
-    pub struct PublicKeyResponse {
-        pub data: Data,
+    pub struct PublicKeyResponse<'a> {
+        pub data: &'a [u8],
     }
 
-    impl PublicKeyResponse {
-        // `Data`'s own Drop frees `self.data`.
-
-        pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
+    impl<'a> PublicKeyResponse<'a> {
+        pub fn decode(&mut self, reader: PacketReader<'a>) -> crate::Result<()> {
             self.data = reader.read(reader.peek().len())?;
             Ok(())
         }

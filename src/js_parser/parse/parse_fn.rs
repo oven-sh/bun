@@ -1,5 +1,4 @@
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
 
 use crate::js_lexer;
 use crate::js_lexer::T;
@@ -226,10 +225,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            let mut ts_decorators = bun_alloc::AstAlloc::vec();
+            let mut ts_decorators = js_ast::StoreSlice::EMPTY;
             if opts.allow_ts_decorators {
-                ts_decorators = p.parse_type_script_decorators()?;
-                if ts_decorators.len_u32() > 0 {
+                ts_decorators = p.parse_type_script_decorators()?.into();
+                if !ts_decorators.is_empty() {
                     arg_has_decorators = true;
                 }
             }

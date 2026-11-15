@@ -1,9 +1,10 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
+use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, ZStr};
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
 // Hash is in-memory dedupe only — algorithm identity is not load-bearing.
 use bun_wyhash::Wyhash11 as Wyhash;
@@ -13,19 +14,19 @@ use bun_wyhash::Wyhash11 as Wyhash;
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
-    // `addrinfo`/`freeaddrinfo` are re-exported from the crate root below;
-    // the rest are crate-internal.
+    pub use libc::addrinfo;
     pub(crate) use libc::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, sockaddr_un,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        freeaddrinfo, getaddrinfo, sockaddr_un,
     };
-    pub use libc::{addrinfo, freeaddrinfo};
 }
 #[cfg(windows)]
 mod sock {
+    pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        freeaddrinfo, getaddrinfo,
     };
-    pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
     // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
@@ -37,9 +38,50 @@ mod sock {
     }
 }
 
-// Re-export the cfg-dispatched addrinfo type + matching free so callers don't
-// duplicate the POSIX/Windows split (see dns_jsc::dns).
-pub use sock::{addrinfo, freeaddrinfo};
+pub use sock::addrinfo;
+
+/// What `getaddrinfo` returns.
+pub struct AddrInfoList(NonNull<addrinfo>);
+
+impl AddrInfoList {
+    /// `Err` is the `EAI_*` status, or 0 for an empty list.
+    pub fn lookup(
+        host: Option<&ZStr>,
+        service: Option<&ZStr>,
+        hints: Option<&addrinfo>,
+    ) -> Result<Self, c_int> {
+        let mut list = ptr::null_mut();
+        // SAFETY: each argument is null or valid for the call.
+        let status = unsafe {
+            sock::getaddrinfo(
+                host.map_or(ptr::null(), ZStr::as_ptr),
+                service.map_or(ptr::null(), ZStr::as_ptr),
+                hints.map_or(ptr::null(), ptr::from_ref),
+                &raw mut list,
+            )
+        };
+        // `list` is unspecified on failure.
+        match NonNull::new(list) {
+            Some(list) if status == 0 => Ok(Self(list)),
+            _ => Err(status),
+        }
+    }
+}
+
+impl core::ops::Deref for AddrInfoList {
+    type Target = addrinfo;
+    fn deref(&self) -> &addrinfo {
+        // SAFETY: live until `drop`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Drop for AddrInfoList {
+    fn drop(&mut self) {
+        // SAFETY: from `getaddrinfo`.
+        unsafe { sock::freeaddrinfo(self.0.as_ptr()) }
+    }
+}
 
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
@@ -451,17 +493,10 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
-/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
-/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
+/// stat counters). `bun_install` reaches it via a link-time extern
 /// rather than a `bun_runtime` crate dep, which would cycle.
 pub mod internal {
     use core::ffi::c_void;
-
-    unsafe extern "C" {
-        // Defined in `bun_runtime::dns_jsc::internal` alongside the other
-        // `Bun__addrinfo_*` exports; resolved at link time.
-        fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
-    }
 
     unsafe extern "Rust" {
         /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
@@ -478,20 +513,5 @@ pub mod internal {
         // SAFETY: link-time extern of this signature. The macOS body dereferences
         // `loop_`, for which the one caller passes its live uws loop.
         unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname, port) }
-    }
-
-    /// Register `pc` to be notified when the addrinfo `request` resolves.
-    /// Mirrors `us_getaddrinfo_set` for the QUIC client connect path, which
-    /// has no `us_connecting_socket_t` to hang the callback on.
-    ///
-    /// SAFETY: `request` must be the live addrinfo request handle returned by
-    /// `us_quic_pending_connect_addrinfo`; `pc` must be a live
-    /// `bun_http::H3::PendingConnect` that stays valid until its
-    /// `on_dns_resolved[_threadsafe]` fires.
-    #[inline]
-    pub unsafe fn register_quic(request: *mut c_void, pc: *mut c_void) {
-        // SAFETY: forwarded to the runtime export; both pointers are opaque on
-        // this side of the crate boundary and re-typed by the callee.
-        unsafe { Bun__addrinfo_registerQuic(request, pc) }
     }
 }

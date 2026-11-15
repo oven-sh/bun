@@ -145,7 +145,7 @@ pub(crate) mod ast {
     use bun_shell_parser::parse::ast as p;
     pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
-    pub(crate) type SmolList<T, const N: usize> = bun_shell_parser::parse::SmolList<'static, T, N>;
+    pub(crate) type SmolList<T> = bun_shell_parser::parse::SmolList<'static, T>;
     pub(crate) type Script = p::Script<'static>;
     pub(crate) type Stmt = p::Stmt<'static>;
     pub(crate) type Expr = p::Expr<'static>;

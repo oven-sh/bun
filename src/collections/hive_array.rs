@@ -275,9 +275,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
         // Several `T` carry owned heap data (e.g. `NumberScope.name_counts:
         // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
-        // before recycling so the put/get cycle does not leak it. Callers that
-        // pre-clean fields (`PooledSocket::release_parked_refs`) leave only
-        // trivially-droppable residuals, so this is idempotent for them.
+        // before recycling so the put/get cycle does not leak it.
         // SAFETY: caller contract — `value` is a fully-initialized `T` in `buffer`.
         unsafe { core::ptr::drop_in_place(value) };
         asan::poison(value.cast(), size_of::<T>());
@@ -443,6 +441,11 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         unsafe { boxed.assume_init() }
     }
 
+    /// Whether a slot of the inline hive is claimed.
+    pub fn is_in_use(&self) -> bool {
+        self.hive.used.iter_set().next().is_some()
+    }
+
     /// One-shot claim + write. Preferred entry point — no uninit window.
     /// Infallible: spills to a heap `Box<T>` when the inline hive is full.
     #[inline]
@@ -563,8 +566,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
 }
 
 /// Owning handle to a refcounted [`HiveRef`] pool slot. `Clone` increments,
-/// `Drop` decrements and recycles when the count hits zero. Cross FFI with
-/// [`as_ptr`](Self::as_ptr) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
+/// `Drop` decrements and recycles when the count hits zero.
 pub struct HiveRefHandle<T, const CAP: usize> {
     ptr: NonNull<HiveRef<T, CAP>>,
 }
@@ -588,18 +590,6 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
         let ptr = unsafe { HiveRef::init(value, pool) };
         Self {
             ptr: NonNull::new(ptr).expect("Fallback::get_init returned null"),
-        }
-    }
-
-    /// Reclaim ownership of a `+1` ref previously leaked as a raw pointer
-    /// (e.g. via [`as_ptr`](Self::as_ptr) + `mem::forget`).
-    ///
-    /// # Safety
-    /// `ptr` must be a live slot whose `+1` has not already been released.
-    #[inline]
-    pub unsafe fn from_raw(ptr: *mut HiveRef<T, CAP>) -> Self {
-        Self {
-            ptr: NonNull::new(ptr).expect("HiveRefHandle::from_raw(null)"),
         }
     }
 

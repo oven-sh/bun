@@ -33,7 +33,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 // Scope: the argument expression of every `Batch::from(` call, which is the
 // one way a task enters a `ThreadPool` batch (`.schedule(Batch::from(..))`,
-// `batch.push(Batch::from(..))`, `HTTPThread::schedule(Batch::from(..))`). A
+// `batch.push(Batch::from(..))`). A
 // pointer projected the wrong way somewhere else and passed in through a local
 // is the same bug and is not caught here. This lint is about the range of the
 // pointer the pool gets; `&raw mut self.task` has the whole object's range and

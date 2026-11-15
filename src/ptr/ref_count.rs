@@ -270,7 +270,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     }
 
     /// Caller will have to call `deref()` exactly `count` times to destroy.
-    pub fn init_exact_refs(count: u32) -> Self {
+    fn init_exact_refs(count: u32) -> Self {
         debug_assert!(count > 0);
         Self {
             raw_count: AtomicU32::new(count),
@@ -463,19 +463,6 @@ pub unsafe trait CellRefCounted: Sized {
             // SAFETY: refcount reached zero; no other holders.
             unsafe { Self::destroy(this) };
         }
-    }
-
-    /// Safe [`deref`](Self::deref) for a `NonNull<Self>` handle.
-    ///
-    /// The single audited `unsafe` lives here in `bun_ptr`, beside the trait
-    /// contract that makes it sound, so callers holding a `NonNull` never
-    /// re-derive the raw-pointer provenance themselves.
-    #[inline]
-    fn deref_nn(this: NonNull<Self>) {
-        // SAFETY: `CellRefCounted` impl contract — `this` is a live,
-        // heap-allocated `Self` whose allocation `destroy` knows how to free;
-        // `NonNull` guarantees non-null. The caller owns one ref.
-        unsafe { Self::deref(this.as_ptr()) };
     }
 }
 

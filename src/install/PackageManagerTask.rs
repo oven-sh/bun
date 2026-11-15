@@ -249,7 +249,7 @@ impl Task {
                         // scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
                         scope.get(),
-                        metadata.response,
+                        metadata,
                         body.slice(),
                         &mut this.log,
                         name.slice(),
@@ -354,8 +354,7 @@ impl Task {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
                 bun_core::handle_oom(pt.apply());
                 // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                let _ = (pt.callback.apply_mut().logger)
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = (pt.callback.apply_mut().logger).print(Output::error_writer());
             }
         }
         // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it
@@ -447,7 +446,6 @@ pub(crate) struct GitCommitRequest {
     /// The clone task whose bare repository is searched.
     pub(crate) clone_id: Id,
     pub(crate) name: StringOrTinyString,
-    pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
 }
 

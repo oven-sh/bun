@@ -316,12 +316,7 @@ fn fill_map<V: Copy>(
         return Err(crate::Error::InvalidLockfile);
     }
     map.ensure_total_capacity(values.len())?;
-    // SAFETY: capacity reserved above; both columns are fully
-    // overwritten by `copy_from_slice` before `re_index` reads them.
-    unsafe { map.set_entries_len(values.len()) };
-    map.keys_mut().copy_from_slice(keys);
-    map.values_mut().copy_from_slice(values);
-    map.re_index()?;
+    map.set_entries(keys, values.iter().copied());
     Ok(())
 }
 

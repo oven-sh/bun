@@ -13,12 +13,9 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-// `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
-// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
-// that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for
-// `cow_slice::CowSlice<u8>`.
-#[path = "CowSlice.rs"]
-pub mod cow_slice;
+mod cell_ext;
+pub use cell_ext::CellExt;
+
 mod js_cell;
 pub use js_cell::JsCell;
 

@@ -1216,7 +1216,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
         &source,
         bun_js_printer::Options {
             code_coverage: true,
-            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&chunk)),
+            source_map_handler: Some(&chunk),
             ..Default::default()
         },
     )

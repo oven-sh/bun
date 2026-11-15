@@ -136,13 +136,6 @@ impl SerializedFailure {
         Packed::from_bits(raw).decode()
     }
 
-    /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
-    /// `_dev` parameter so call sites read uniformly.
-    pub(crate) fn deinit<D>(&self, _dev: &D) {
-        // Drop happens via owner; nothing to do for the borrow form used by
-        // `index_failures` (which iterates `&SerializedFailure`).
-    }
-
     /// `SerializedFailure.initFromLog`.
     pub(crate) fn init_from_log(
         owner: Owner,

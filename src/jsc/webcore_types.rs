@@ -559,7 +559,7 @@ pub mod store {
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
-        pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
+        ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: IsAllAscii,
     }
 
@@ -678,13 +678,15 @@ pub mod store {
             Self::new(Storage::Static(bytes))
         }
 
-        /// SAFETY: `mapping` is a whole read-write `mmap` region, and nothing else unmaps it.
+        /// # Safety
+        /// `mapping` is a whole read-write `mmap` region, and nothing else unmaps it.
         #[cfg(unix)]
         pub unsafe fn from_mapping(mapping: *mut [u8]) -> Bytes {
             Self::new(Storage::Mapped(Mapping(mapping)))
         }
 
-        /// SAFETY: as [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
+        /// # Safety
+        /// As [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub unsafe fn from_memfd_mapping(mapping: *mut [u8], memfd: bun_sys::File) -> Bytes {
             Bytes {
@@ -714,7 +716,7 @@ pub mod store {
         }
 
         /// The bytes of [`Self::init_static`] must not be written to.
-        pub fn as_mut_ptr(&mut self) -> *mut [u8] {
+        pub fn slice_raw(&mut self) -> *mut [u8] {
             match &mut self.storage {
                 Storage::Heap(bytes) => {
                     core::ptr::slice_from_raw_parts_mut(bytes.as_mut_ptr(), bytes.len())
@@ -852,15 +854,23 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     impl Store {
+        #[inline]
+        pub fn new(data: Data, mime_type: MimeType) -> Store {
+            Store {
+                data,
+                mime_type,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: IsAllAscii::default(),
+            }
+        }
+
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
-            RefPtr::new(Store {
-                data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
-            })
+            RefPtr::new(Store::new(
+                Data::Bytes(Bytes::init(bytes)),
+                bun_http_types::MimeType::NONE,
+            ))
         }
 
         pub fn get_path(&self) -> Option<&[u8]> {
@@ -919,7 +929,7 @@ pub mod store {
         ///
         /// # Safety
         /// `this` must point to a live `Store` originally allocated via
-        /// `Store::new` / `Box::new`, and the caller must own one outstanding
+        /// `RefPtr::new`, and the caller must own one outstanding
         /// reference being released.
         #[inline]
         pub unsafe fn deref(this: NonNull<Store>) {

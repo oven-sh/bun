@@ -1,4 +1,5 @@
 #![feature(allocator_api)]
+#![feature(core_io_borrowed_buf)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
@@ -291,21 +292,18 @@ pub(crate) fn append_mapping_to_buffer(
         vlqs[0].len as usize + vlqs[1].len as usize + vlqs[2].len as usize + vlqs[3].len as usize;
 
     // Instead of updating .len 5 times, we only need to update it once.
-    let mut writable = buffer
-        .writable_n_bytes(total_len + needs_comma as usize)
+    buffer
+        .grow_if_needed(total_len + needs_comma as usize)
         .expect("unreachable");
-
-    // Put commas in between mappings
-    if needs_comma {
-        writable[0] = b',';
-        writable = &mut writable[1..];
-    }
-
-    for item in &vlqs {
-        let n = item.len as usize;
-        writable[..n].copy_from_slice(item.slice());
-        writable = &mut writable[n..];
-    }
+    bun_core::vec::append_with(&mut buffer.list, usize::MAX, |mut out| {
+        // Put commas in between mappings
+        if needs_comma {
+            out.append(b",");
+        }
+        for item in &vlqs {
+            out.append(item.slice());
+        }
+    });
 }
 
 /// https://github.com/getsentry/rfcs/blob/main/text/0081-sourcemap-debugid.md
@@ -626,12 +624,12 @@ pub mod SerializedSourceMap {
     /// - all the `StringPointer` payload bytes
     #[repr(C)]
     #[derive(Clone, Copy)]
-    struct Header {
-        source_files_count: u32,
-        map_bytes_length: u32,
+    pub struct Header {
+        pub source_files_count: u32,
+        pub map_bytes_length: u32,
     }
 
-    bun_core::impl_any_bit_pattern!(Header);
+    bun_core::impl_pod!(Header);
 
     /// The on-disk view (`bytes` points into the standalone-graph trailer, so
     /// it lives for the process — modelled as `'static`).

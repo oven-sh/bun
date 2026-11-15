@@ -16,6 +16,7 @@ test/js/bun/css/css-loader.test.ts: css module exports > import, import(), requi
 test/js/bun/css/css-loader.test.ts: css module exports > names depend on the path relative to the working directory
 test/js/bun/css/css-loader.test.ts: css module: a composes chain too deep for the stack is an error
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?init instantiates a WebAssembly module
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline frees the module it generates
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline in import.meta.glob and static imports returns a URL that fetch() can read
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on a file that cannot be read
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on an .svg file

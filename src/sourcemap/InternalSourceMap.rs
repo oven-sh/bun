@@ -61,8 +61,8 @@
 //! ## Blob layout (single allocation, byte-addressed; no alignment assumed):
 //!
 //! ```text
-//!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
-//!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
+//!     [ 0.. 8]  total_len:         u64
+//!     [ 8..16]  mapping_count:     u64
 //!     [16..20]  unused
 //!     [20..24]  object_brace_count: u32  -- 0 from an older Bun: the high half of its u64 line count
 //!     [24..28]  sync_count:        u32
@@ -158,8 +158,7 @@ pub struct ObjectBrace {
 
 const _: () = assert!(size_of::<ObjectBrace>() == 16);
 
-bun_core::impl_any_bit_pattern!(Header);
-bun_core::impl_pod!(SyncEntry, ObjectBrace);
+bun_core::impl_pod!(Header, SyncEntry, ObjectBrace);
 
 impl SyncEntry {
     #[inline]
@@ -636,7 +635,6 @@ pub struct Builder {
     pending_source_index: [i32; SYNC_INTERVAL],
     pending_original_line: [i32; SYNC_INTERVAL],
     pending_original_column: [i32; SYNC_INTERVAL],
-    finalized: Option<MutableString>,
     object_braces: Vec<ObjectBrace>,
 }
 
@@ -654,7 +652,6 @@ impl Default for Builder {
             pending_source_index: [0; SYNC_INTERVAL],
             pending_original_line: [0; SYNC_INTERVAL],
             pending_original_column: [0; SYNC_INTERVAL],
-            finalized: None,
             object_braces: Vec::new(),
         }
     }
@@ -664,8 +661,6 @@ impl Builder {
     pub(crate) fn init() -> Builder {
         Builder::default()
     }
-
-    // `deinit` deleted: Vec/Option<MutableString> fields drop automatically.
 
     #[inline(always)]
     pub(crate) fn append_line_separator(&mut self) {
@@ -925,65 +920,31 @@ impl Builder {
         self.pending_n = 0;
     }
 
-    /// Serialize into the single-allocation blob layout. The first 16 header
-    /// bytes are left for `Chunk.Builder.generateChunk` to fill in (length,
-    /// count) so this path flows through the existing
-    /// `Chunk.buffer` plumbing unchanged.
-    pub(crate) fn finalize(&mut self) -> &mut MutableString {
-        if self.finalized.is_none() {
-            self.flush_window();
+    /// Serialize into the single-allocation blob layout.
+    pub(crate) fn finalize(&mut self) -> MutableString {
+        self.flush_window();
 
-            let sync_entries = bun_core::slice_as_bytes(&self.sync_entries);
-            let sync_bytes = sync_entries.len();
-            let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
-            let object_braces_offset = stream_offset as usize + self.win_stream.len();
-            let object_braces = bun_core::slice_as_bytes(&self.object_braces);
-            let object_braces_bytes = object_braces.len();
-            let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
+        let sync_entries = bun_core::slice_as_bytes(&self.sync_entries);
+        let object_braces = bun_core::slice_as_bytes(&self.object_braces);
+        let stream_offset = HEADER_SIZE + sync_entries.len();
+        let total = stream_offset + self.win_stream.len() + object_braces.len() + STREAM_TAIL_PAD;
 
-            let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..20] zero-filled,
-            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
-            // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
-            // [object_braces_offset..total-STREAM_TAIL_PAD] object braces memcpy,
-            // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
-            // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
-            // no uninit bytes are exposed by set_len.
-            // SAFETY: every byte in [0..total) is written below (see comment above).
-            let blob = unsafe { out.list.writable_slice_exact(total) };
-
-            blob[0..20].fill(0);
-            blob[20..24].copy_from_slice(
-                &u32::try_from(self.object_braces.len())
-                    .expect("int cast")
-                    .to_ne_bytes(),
-            );
-            blob[24..28].copy_from_slice(
-                &u32::try_from(self.sync_entries.len())
-                    .expect("int cast")
-                    .to_ne_bytes(),
-            );
-            blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
-            if sync_bytes > 0 {
-                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(sync_entries);
-            }
-            blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
-                .copy_from_slice(&self.win_stream);
-            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(object_braces);
-            blob[total - STREAM_TAIL_PAD..total].fill(0);
-
-            self.win_stream = Vec::new();
-            self.sync_entries = Vec::new();
-
-            self.finalized = Some(out);
-        }
-        self.finalized.as_mut().unwrap()
-    }
-
-    /// Move the finalized buffer out.
-    pub(crate) fn finalize_take(&mut self) -> MutableString {
-        let _ = self.finalize();
-        self.finalized.take().unwrap()
+        let mut out = MutableString::init_empty();
+        out.list.reserve_exact(total);
+        out.list.extend_from_slice(bun_core::bytes_of(&Header {
+            total_len: total as u64,
+            mapping_count: u64::from(self.count),
+            unused: 0,
+            object_brace_count: u32::try_from(self.object_braces.len()).expect("int cast"),
+            sync_count: u32::try_from(self.sync_entries.len()).expect("int cast"),
+            stream_offset: u32::try_from(stream_offset).expect("int cast"),
+        }));
+        out.list.extend_from_slice(sync_entries);
+        out.list.extend_from_slice(&self.win_stream);
+        out.list.extend_from_slice(object_braces);
+        out.list.extend_from_slice(&[0; STREAM_TAIL_PAD]);
+        debug_assert_eq!(out.list.len(), total);
+        out
     }
 }
 
@@ -1088,16 +1049,5 @@ pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
         });
     }
 
-    // reshaped for borrowck — capture `builder.count` before borrowing
-    // `builder.finalized` mutably.
-    let mapping_count: u64 = builder.count as u64;
-    let out = builder.finalize();
-    let blob = out.list.as_mut_slice();
-    let total_len: u64 = blob.len() as u64;
-    blob[0..8].copy_from_slice(&total_len.to_ne_bytes());
-    blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
-
-    let owned = core::mem::take(&mut out.list).into_boxed_slice();
-    builder.finalized = None;
-    Ok(owned)
+    Ok(builder.finalize().list.into_boxed_slice())
 }

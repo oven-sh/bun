@@ -28,8 +28,6 @@ impl RequestEnsureRouteBundledCtx<'_> {
     fn on_loaded(&mut self, dev: &mut DevServer) -> JsResult<()> {
         match self.kind {
             deferred_request::HandlerKind::ServerHandler => {
-                // The `Strong` field is move-only. Take ownership out of `self.req`
-                // (it is consumed by `on_framework_request_with_bundle`).
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
                     ReqOrSaved::Req(r) => SavedRequestUnion::Stack(r),
                     ReqOrSaved::Aborted => unreachable!(),
@@ -95,7 +93,7 @@ pub(super) fn ensure_route_is_bundled(
                 'plugin: loop {
                     match plugin {
                         PluginState::Unknown => {
-                            if dev.bundler_options.plugin.is_some() {
+                            if dev.plugins.is_some() {
                                 // Framework-provided plugin is likely going to be phased out later
                                 dev.plugin_state = PluginState::Loaded;
                             } else {
@@ -136,8 +134,8 @@ pub(super) fn ensure_route_is_bundled(
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin =
-                                            ready.map(::core::ptr::NonNull::from);
+                                        dev.plugins =
+                                            ready.map(|ready| Plugins::Borrowed(ready.into()));
                                     }
                                 }
                             }
@@ -289,8 +287,7 @@ impl DevServer {
                 else {
                     return Ok(Deferral::Answered);
                 };
-                let ctx = saved.ctx;
-                ctx.ref_();
+                let ctx = *saved.ctx;
                 let handler = Handler::ServerHandler(saved);
                 let deferred = self.queue_request(bundle_field, route_bundle_index, handler);
                 ctx.set_deferred_request(deferred.clone());

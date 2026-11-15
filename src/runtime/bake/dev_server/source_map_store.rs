@@ -14,7 +14,7 @@ use bun_sourcemap::{self as source_map, SourceMapState};
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
-use super::{ChunkKind, EventLoopTimer, TimerTag, packed_map};
+use super::{ChunkKind, EventLoopTimer, OwnedTimer, TimerTag, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
@@ -400,7 +400,7 @@ pub(crate) struct SourceMapStore {
     /// - Too many different weak references exist
     pub(crate) weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
     /// Shared
-    pub(crate) weak_ref_sweep_timer: EventLoopTimer,
+    pub(crate) weak_ref_sweep_timer: OwnedTimer,
 }
 
 bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
@@ -410,7 +410,7 @@ impl Default for SourceMapStore {
         Self {
             entries: ArrayHashMap::new(),
             weak_refs: LinearFifo::<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>::init(),
-            weak_ref_sweep_timer: EventLoopTimer::init_paused(TimerTag::DevServerSweepSourceMaps),
+            weak_ref_sweep_timer: OwnedTimer::init_paused(TimerTag::DevServerSweepSourceMaps),
         }
     }
 }
@@ -499,10 +499,8 @@ impl SourceMapStore {
             if self.weak_refs.readable_length() >= WEAK_REF_ENTRY_MAX {
                 let first = self.weak_refs.read_item().unwrap();
                 self.unref_count(first.key(), first.count);
-                if self.weak_ref_sweep_timer.state.get() == EventLoopTimerState::ACTIVE
-                    && self.weak_ref_sweep_timer.next.get().sec == first.expire
-                {
-                    crate::jsc_hooks::timer_all().remove(&self.weak_ref_sweep_timer);
+                if self.weak_ref_sweep_timer.next.get().sec == first.expire {
+                    self.weak_ref_sweep_timer.disarm();
                 }
             }
         }
@@ -517,8 +515,10 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state.get() != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            crate::jsc_hooks::timer_all()
-                .update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            crate::jsc_hooks::timer_all().update(
+                OwnedTimer::node(&raw const self.weak_ref_sweep_timer),
+                &expire,
+            );
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -602,7 +602,7 @@ impl SourceMapStore {
                     .state
                     .set(EventLoopTimerState::FIRED);
                 crate::jsc_hooks::timer_all().update(
-                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                    OwnedTimer::node(&raw const store.weak_ref_sweep_timer),
                     &Timespec {
                         sec: item.expire + 1,
                         nsec: 0,

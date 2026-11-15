@@ -11,8 +11,6 @@ pub use crate::w;
 pub mod escape_reg_exp;
 #[path = "HashedString.rs"]
 pub mod hashed_string;
-#[path = "SmolStr.rs"]
-pub mod smol_str;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "StringJoiner.rs"]
@@ -535,14 +533,6 @@ impl String {
                 wtf_string_impl: wtf,
             },
         }
-    }
-    /// `WTF::RefPtr(ptr)` — wrap a raw `*mut WTFStringImplStruct` someone else
-    /// keeps alive, taking a **new** ref for the returned `String`.
-    #[inline]
-    pub fn retain_wtf_impl(wtf: WTFStringImpl) -> Self {
-        let s = Self::adopt_wtf_impl(wtf);
-        s.ref_();
-        s
     }
     /// Extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
@@ -1695,7 +1685,6 @@ pub use crate::StringPointer;
 
 pub use hashed_string::HashedString;
 pub use mutable_string::MutableString;
-pub use smol_str::SmolStr;
 pub use string_builder::StringBuilder;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -113,8 +113,12 @@ impl HmrSocket {
                                             bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
-                                        crate::jsc_hooks::timer_all()
-                                            .update(&raw mut dev.memory_visualizer_timer, &next);
+                                        crate::jsc_hooks::timer_all().update(
+                                            OwnedTimer::node(
+                                                &raw const dev.memory_visualizer_timer,
+                                            ),
+                                            &next,
+                                        );
                                     }
                                 }
                                 _ => {}
@@ -267,16 +271,14 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_memory_visualizer_events == 0
-                    && dev.memory_visualizer_timer.state.get() == EventLoopTimerState::ACTIVE
-                {
-                    crate::jsc_hooks::timer_all().remove(&dev.memory_visualizer_timer);
+                if dev.emit_memory_visualizer_events == 0 {
+                    dev.memory_visualizer_timer.disarm();
                 }
             }
         }
     }
 
-    /// Gives back what this socket counts for in `dev`.
+    /// Drops this socket's visualizer subscriptions, `active_viewers` count and source map refs.
     pub(super) fn release(&self, dev: &mut DevServer) {
         Self::on_unsubscribe(dev, self.subscriptions);
 
@@ -387,7 +389,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
             (*this).server.unwrap()
         };
         // `upgrade` ends the HTTP connection, and a stopped server frees `this` with its last one.
-        server.on_pending_request();
+        let _pending = PendingRequest::new(server);
         // SAFETY: `res` is live for this callback (see Note above); `on_open`
         // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
         let socket = unsafe {
@@ -406,7 +408,6 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
             // SAFETY: `dw` was allocated above and nothing else owns it.
             drop(unsafe { bun_core::heap::take(dw) });
         }
-        server.on_static_request_complete();
     }
 }
 

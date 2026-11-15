@@ -1,6 +1,7 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -268,9 +269,9 @@ impl DevServer {
 
     pub(crate) fn on_plugins_resolved(
         &mut self,
-        plugins: Option<*mut crate::api::js_bundler::Plugin>,
+        plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        self.plugins = Some(Plugins::Borrowed(plugins));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -279,10 +280,7 @@ impl DevServer {
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
         // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
-        let mut server = self.server;
-        if let Some(server) = server.as_mut() {
-            server.on_pending_request();
-        }
+        let _pending = self.server.map(PendingRequest::new);
         while let Some(item) = self.next_bundle.requests.pop_first() {
             item.take_handler().fail();
         }
@@ -292,9 +290,6 @@ impl DevServer {
                 route_bundle::State::Unqueued;
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
-        if let Some(server) = server.as_mut() {
-            server.on_static_request_complete();
-        }
         // TODO: allow recovery from this state
         Ok(())
     }
@@ -351,10 +346,7 @@ impl DevServer {
 
         self.graphs.incremental_result.reset();
 
-        // Ref server to keep it from closing.
-        if let Some(server) = self.server.as_mut() {
-            server.on_pending_request();
-        }
+        let pending_request = self.server.map(PendingRequest::new);
 
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
@@ -381,15 +373,26 @@ impl DevServer {
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
-        let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
+        // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
+        // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
+        // server one on this thread (`finalize_bundle`).
+        let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
+            (
+                self.ssr_transpiler
+                    .as_mut()
+                    .map(|ssr| detach_lifetime_mut(ssr)),
+                detach_lifetime_mut(&mut self.server_transpiler),
+                detach_lifetime_mut(&mut self.client_transpiler),
+            )
+        };
+        let framework = server_transpiler.options.framework.clone();
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { &mut *server_transpiler },
+            server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
-                client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
-                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
-                plugins: self.bundler_options.plugin,
+                framework: framework.expect("set by DevServer::init"),
+                client_transpiler,
+                ssr_transpiler,
+                plugins: self.plugins.as_ref().map(Plugins::as_non_null),
             }),
             heap_ref,
             event_loop,
@@ -398,18 +401,15 @@ impl DevServer {
                 bun_threading::work_pool::WorkPool::get(),
             )),
             heap_ref,
-        )?;
+        );
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
-        let dev_handle = self.bundler_handle();
-        bv2.dev_server = Some(dev_handle);
-        bv2.linker.dev_server = Some(dev_handle);
+        bv2.dev_server = Some(self.bundler_handle());
 
         {
-            self.graph_safety_lock.lock();
+            let _g = self.graph_safety_lock.guard();
             self.graphs.client.reset();
             self.graphs.server.reset();
-            self.graph_safety_lock.unlock();
         }
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
@@ -441,6 +441,7 @@ impl DevServer {
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
+            pending_request,
         });
 
         self.next_bundle.route_queue.clear_retaining_capacity();

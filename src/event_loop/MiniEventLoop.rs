@@ -25,27 +25,12 @@ use core::ptr::NonNull;
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
-use bun_sys::{Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
-
-// ─── Upward link-time externs (LAYERING) ────────────────────────────────────
-// The bodies live in `bun_runtime` (which owns `webcore::Blob`) as
-// `#[no_mangle]` Rust-ABI fns; the linker resolves them. No `AtomicPtr`, no
-// init-order hazard.
-unsafe extern "Rust" {
-    /// Constructs a `webcore::blob::Store` for stdout/stderr/stdin.
-    /// Return value is an erased
-    /// `*mut blob::Store` with intrusive refcount = 2; re-exported for
-    /// `bun_jsc::rare_data`. Defined in `bun_runtime::webcore::blob`.
-    /// No caller-side preconditions (by-value args, allocates fresh).
-    pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
-}
-// ────────────────────────────────────────────────────────────────────────────
 
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
 type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
@@ -69,10 +54,7 @@ pub struct MiniEventLoop {
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
     file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
-    /// Mutable; callers (shell spawn,
-    /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
-    /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance.
+    /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
@@ -116,8 +98,7 @@ impl MiniEventLoop {
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
     /// a `&mut`-returning accessor is provided: the loader may be shared via
     /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
-    /// other safe paths (`EventLoopHandle::create_null_delimited_env_map`,
-    /// `interpreter.rs`) materialize `&mut DotEnvLoader` from the same
+    /// other safe paths materialize `&mut DotEnvLoader` from the same
     /// allocation via raw deref.
     /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
     /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers

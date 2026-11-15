@@ -510,7 +510,7 @@ mod tests {
                     | u32::from(input[i + 2] & 0x3F);
                 if (0xD800..=0xDFFF).contains(&cp) {
                     return SIMDUTFResult {
-                        status: Status::SURROGATE,
+                        status: Status(6), // SURROGATE
                         count: i,
                     };
                 }

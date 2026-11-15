@@ -536,13 +536,13 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
+// `.lock()` → guard (no `Result`), `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
-/// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
+/// Guard returned by [`Mutex::lock`]. Re-exported so
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
@@ -559,15 +559,6 @@ impl<T> Mutex<T> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        match self.0.try_lock() {
-            Ok(g) => Some(g),
-            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
     }
 }
 
@@ -1511,54 +1502,87 @@ pub fn kind_from_mode(mode: Mode) -> FileKind {
 }
 
 // ─── io::Writer (from bun_io) ─────────────────────────────────────────────
-// TYPE_ONLY: output.rs holds `*mut io::Writer` opaquely (erased adapter head);
-// real write/flush/print dispatch lives in bun_sys via the OutputSinkVTable.
 pub mod io {
-    /// Opaque writer interface header. bun_sys guarantees this is the first
-    /// `repr(C)` field of every concrete adapter, so `&mut Adapter as &mut Writer`
-    /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
-    #[repr(C)]
-    pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> crate::CrateResult<()>,
-        pub flush: unsafe fn(*mut Writer) -> crate::CrateResult<()>,
+    use core::cell::Cell;
+
+    use crate::Fd;
+    use crate::output::output_sink;
+
+    /// Best-effort writer. Takes `&self` because a `Display` impl can print re-entrantly.
+    pub struct Writer<Buf: ?Sized = [Cell<u8>]> {
+        fd: Cell<Fd>,
+        /// How much of `buf` is waiting to be written.
+        pos: Cell<usize>,
+        buf: Buf,
     }
-    impl Writer {
-        #[inline]
-        pub fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
-            // (see type doc); `self` was produced by upcasting `&mut Adapter`,
-            // so the vtable fn receives the same pointer it was registered with.
-            unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
+
+    /// The storage of a [`Writer`] that buffers up to `N` bytes.
+    pub type WriterStorage<const N: usize> = Writer<[Cell<u8>; N]>;
+
+    impl<const N: usize> WriterStorage<N> {
+        pub const fn new(fd: Fd) -> Self {
+            Self {
+                fd: Cell::new(fd),
+                pos: Cell::new(0),
+                buf: [const { Cell::new(0) }; N],
+            }
         }
-        #[inline]
-        pub fn flush(&mut self) -> crate::CrateResult<()> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
-            // `self` is the same pointer the adapter registered its vtable with,
-            // so the callee's downcast back to the concrete type is sound.
-            unsafe { (self.flush)(std::ptr::from_mut(self)) }
+
+        pub(crate) fn fd(&self) -> Fd {
+            self.fd.get()
+        }
+
+        pub(crate) fn reset(&self, fd: Fd) {
+            self.fd.set(fd);
+            self.pos.set(0);
+        }
+    }
+
+    impl Writer {
+        pub fn write_all(&self, bytes: &[u8]) -> crate::CrateResult<()> {
+            let mut spare = &self.buf[self.pos.get()..];
+            if bytes.len() > spare.len() {
+                self.flush()?;
+                // Large writes bypass the buffer so the next small write still coalesces.
+                if bytes.len() >= self.buf.len() {
+                    let _ = output_sink().write_all_quiet(self.fd.get(), bytes);
+                    return Ok(());
+                }
+                spare = &self.buf;
+            }
+            for (slot, &byte) in spare.iter().zip(bytes) {
+                slot.set(byte);
+            }
+            self.pos.set(self.pos.get() + bytes.len());
+            Ok(())
+        }
+        pub fn flush(&self) -> crate::CrateResult<()> {
+            let pos = self.pos.get();
+            if pos > 0 {
+                // SAFETY: `write_all` keeps `pos` within `buf`. `Self` is not `Sync` and the sink
+                // does not print, so nothing writes to `buf` while this is live.
+                let buffered =
+                    unsafe { core::slice::from_raw_parts(self.buf.as_ptr().cast(), pos) };
+                let _ = output_sink().write_all_quiet(self.fd.get(), buffered);
+                self.pos.set(0);
+            }
+            Ok(())
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
-        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
+        pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.print(args)
         }
         #[inline]
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
-            use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, crate::CrateResult<()>);
-            impl core::fmt::Write for A<'_> {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.1 = self.0.write_all(s.as_bytes());
-                    if self.1.is_err() {
-                        Err(core::fmt::Error)
-                    } else {
-                        Ok(())
-                    }
-                }
-            }
-            let mut a = A(self, Ok(()));
-            let _ = a.write_fmt(args);
-            a.1
+        pub fn print(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
+            let _ = fmt::Write::write_fmt(&mut &*self, args);
+            Ok(())
+        }
+    }
+
+    impl fmt::Write for &Writer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            Writer::write_all(self, s.as_bytes()).map_err(|_| fmt::Error)
         }
     }
 
@@ -1735,9 +1759,8 @@ pub mod io {
         }
     }
 
-    /// Bridge the type-erased vtable header into the generic `Write` trait so
-    /// printers taking `W: io::Write` accept process stdout/stderr sinks.
-    impl Write for Writer {
+    /// So printers taking `W: io::Write` accept process stdout/stderr sinks.
+    impl Write for &Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             Writer::write_all(self, buf)
@@ -2724,27 +2747,23 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+pub fn append_in_parallel(mut to: crate::vec::BorrowedCursor<'_, u8>, from: &[u8]) {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
     let threads = usize::from(get_thread_count())
-        .min(len / MIN_BYTES_PER_THREAD)
+        .min(from.len() / MIN_BYTES_PER_THREAD)
         .min(16);
     if threads < 2 {
-        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
-        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+        return to.append(from);
     }
-    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
-    let (to, from) = (to as usize, from as usize);
-    for_each_in_parallel((0..len).step_by(share), |start| {
-        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                (from + start) as *const u8,
-                (to + start) as *mut u8,
-                share.min(len - start),
-            )
-        }
-    });
+    let share = from.len().div_ceil(threads).next_multiple_of(1 << 16);
+    // SAFETY: each of the first `from.len()` bytes is in one part, and each part is written.
+    unsafe {
+        let parts = to.as_mut()[..from.len()].chunks_mut(share);
+        for_each_in_parallel(parts.zip(from.chunks(share)), |(to, from)| {
+            to.write_copy_of_slice(from);
+        });
+        to.advance(from.len());
+    }
 }
 
 /// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.
@@ -3380,6 +3399,7 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
@@ -3392,8 +3412,9 @@ pub mod base64 {
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        let mut dest = BorrowedBuf::from(dest);
+        simdutf::base64::encode(source, dest.unfilled(), false);
+        dest.len()
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.

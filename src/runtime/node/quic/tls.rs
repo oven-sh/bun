@@ -1,5 +1,4 @@
 use core::ffi::c_int;
-use core::ptr::null_mut;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
@@ -284,60 +283,35 @@ unsafe extern "C" fn alpn_select_cb(
     }
 }
 
-fn load_cert_chain(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: `pem` is a live slice; the BIO copies what it parses.
-    unsafe {
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for certificate");
-        }
-        let leaf = ssl::PEM_read_bio_X509_AUX(bio, null_mut(), None, null_mut());
-        if leaf.is_null() {
-            ssl::BIO_free(bio);
-            return Err("failed to parse certificate PEM");
-        }
-        // `use_certificate` ups the X509's refcount.
-        if ssl::SSL_CTX_use_certificate(ctx, leaf) != 1 {
-            ssl::X509_free(leaf);
-            ssl::BIO_free(bio);
-            return Err("failed to install certificate");
-        }
-        ssl::X509_free(leaf);
-        loop {
-            let extra = ssl::PEM_read_bio_X509(bio, null_mut(), None, null_mut());
-            if extra.is_null() {
-                break;
-            }
-            // `add0_chain_cert` takes ownership (no refcount bump).
-            if ssl::SSL_CTX_add0_chain_cert(ctx, extra) != 1 {
-                ssl::X509_free(extra);
-                ssl::BIO_free(bio);
-                return Err("failed to add chain certificate");
-            }
-        }
-        ssl::ERR_clear_error();
-        ssl::BIO_free(bio);
+/// SAFETY: `ctx` is not shared yet.
+unsafe fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for certificate")?;
+    let leaf = bio
+        .read_x509_aux()
+        .ok_or("failed to parse certificate PEM")?;
+    // SAFETY: fn contract.
+    if unsafe { ssl::SSL_CTX_use_certificate(ctx, &leaf) } != 1 {
+        return Err("failed to install certificate");
     }
+    while let Some(extra) = bio.read_x509() {
+        // SAFETY: fn contract.
+        if unsafe { ssl::SSL_CTX_add1_chain_cert(ctx, &extra) } != 1 {
+            return Err("failed to add chain certificate");
+        }
+    }
+    ssl::ERR_clear_error();
     Ok(())
 }
 
-fn load_private_key(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: as above.
-    unsafe {
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for key");
-        }
-        let pkey = ssl::PEM_read_bio_PrivateKey(bio, null_mut(), None, null_mut());
-        ssl::BIO_free(bio);
-        if pkey.is_null() {
-            return Err("failed to parse private key PEM");
-        }
-        let ok = ssl::SSL_CTX_use_PrivateKey(ctx, pkey);
-        ssl::EVP_PKEY_free(pkey);
-        if ok != 1 {
-            return Err("failed to install private key");
-        }
+/// SAFETY: `ctx` is not shared yet.
+unsafe fn load_private_key(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for key")?;
+    let pkey = bio
+        .read_private_key()
+        .ok_or("failed to parse private key PEM")?;
+    // SAFETY: fn contract.
+    if unsafe { ssl::SSL_CTX_use_PrivateKey(ctx, &pkey) } != 1 {
+        return Err("failed to install private key");
     }
     Ok(())
 }
@@ -349,67 +323,41 @@ const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
 /// trust set does not shadow the valid certificate for the same issuer that the peer sends.
 const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
 
-fn load_crl_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: as above.
-    unsafe {
-        let store = ssl::SSL_CTX_get_cert_store(ctx);
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for CRL");
+/// SAFETY: `ctx` is not shared yet.
+unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
+    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CRL")?;
+    let mut added = 0;
+    while let Some(crl) = bio.read_x509_crl() {
+        if ssl::X509_STORE_add_crl(store, &crl) != 1 {
+            ssl::ERR_clear_error();
+            return Err("failed to add CRL to trust store");
         }
-        let mut added = 0;
-        loop {
-            let crl = ssl::PEM_read_bio_X509_CRL(bio, null_mut(), None, null_mut());
-            if crl.is_null() {
-                break;
-            }
-            let ok = ssl::X509_STORE_add_crl(store, crl);
-            ssl::X509_CRL_free(crl);
-            if ok != 1 {
-                ssl::ERR_clear_error();
-                ssl::BIO_free(bio);
-                return Err("failed to add CRL to trust store");
-            }
-            added += 1;
-        }
-        ssl::ERR_clear_error();
-        ssl::BIO_free(bio);
-        if added == 0 {
-            return Err("CRL PEM contained no revocation lists");
-        }
-        ssl::X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+        added += 1;
     }
+    ssl::ERR_clear_error();
+    if added == 0 {
+        return Err("CRL PEM contained no revocation lists");
+    }
+    // SAFETY: fn contract.
+    unsafe { ssl::X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) };
     Ok(())
 }
 
-fn load_ca_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: as above.
-    unsafe {
-        let store = ssl::SSL_CTX_get_cert_store(ctx);
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for CA");
+fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
+    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CA")?;
+    let mut added = 0;
+    while let Some(cert) = bio.read_x509() {
+        if ssl::X509_STORE_add_cert(store, &cert) != 1 {
+            ssl::ERR_clear_error();
+            return Err("failed to add CA certificate to trust store");
         }
-        let mut added = 0;
-        loop {
-            let cert = ssl::PEM_read_bio_X509(bio, null_mut(), None, null_mut());
-            if cert.is_null() {
-                break;
-            }
-            let ok = ssl::X509_STORE_add_cert(store, cert);
-            ssl::X509_free(cert);
-            if ok != 1 {
-                ssl::ERR_clear_error();
-                ssl::BIO_free(bio);
-                return Err("failed to add CA certificate to trust store");
-            }
-            added += 1;
-        }
-        ssl::ERR_clear_error();
-        ssl::BIO_free(bio);
-        if added == 0 {
-            return Err("CA PEM contained no certificates");
-        }
+        added += 1;
+    }
+    ssl::ERR_clear_error();
+    if added == 0 {
+        return Err("CA PEM contained no certificates");
     }
     Ok(())
 }
@@ -461,21 +409,21 @@ impl TlsContext {
                 if i > 0 {
                     ssl::SSL_CTX_clear_chain_certs(ctx);
                 }
-                load_cert_chain(ctx, pem)?;
+                load_cert_chain(&this.ctx, pem)?;
                 if let Some(key) = config.keys_pem.get(i) {
-                    load_private_key(ctx, key)?;
+                    load_private_key(&this.ctx, key)?;
                 }
             }
             if config.certs_pem.is_empty() {
                 if let Some(key) = config.keys_pem.first() {
-                    load_private_key(ctx, key)?;
+                    load_private_key(&this.ctx, key)?;
                 }
             }
             for pem in &config.ca_pem {
-                load_ca_store(ctx, pem)?;
+                load_ca_store(&this.ctx, pem)?;
             }
             for pem in &config.crl_pem {
-                load_crl_store(ctx, pem)?;
+                load_crl_store(&this.ctx, pem)?;
             }
 
             ssl::SSL_CTX_set_early_data_enabled(ctx, config.enable_early_data as c_int);

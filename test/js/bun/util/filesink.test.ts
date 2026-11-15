@@ -503,7 +503,7 @@ if (isWindows) {
 }
 
 // When a write to a pollable fd returns `.pending`, FileSink takes a
-// `must_be_kept_alive_until_eof` ref on itself so it survives until the
+// `keep_alive_ref` on itself so it survives until the
 // buffered data is drained. If the write later fails (e.g. EPIPE because the
 // reader closed), neither `onError` nor `onClose` released that ref, so the
 // native FileSink (and its buffers) leaked for the rest of the process even
@@ -546,7 +546,7 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   }
 
   // Before the fix, every iteration leaked one native FileSink because the
-  // `must_be_kept_alive_until_eof` ref was never released on error/close.
+  // `keep_alive_ref` was never released on error/close.
   // One straggler whose JS wrapper has not yet been finalized is acceptable;
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
@@ -571,7 +571,7 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// Now that __doClose runs finalize(), finalize() must not tear down state an
+// close() drops the wrapper's ref, which must not tear down state an
 // in-flight write still needs: clearing `pending` here would drop the
 // backpressure promise's Strong before on_write can settle it.
 it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
@@ -591,6 +591,35 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
   await expect(p).resolves.toBeGreaterThanOrEqual(0);
   const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A worker runs its "exit" listeners with the VM already shutting down, and then releases the tasks that are queued.
+it.skipIf(!isPosix)("close() in a worker's exit listener leaves the sink to the task that it queued", async () => {
+  using dir = tempDir("filesink-worker-exit", {
+    "main.mjs": `
+      import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
+      import fs from "node:fs";
+      import { Worker, isMainThread } from "node:worker_threads";
+      const before = fileSinkInternals.liveCount();
+      const report = when => fs.writeSync(1, when + ": " + (fileSinkInternals.liveCount() - before) + "\\n");
+      if (isMainThread) {
+        new Worker(import.meta.filename).on("exit", () => report("after the worker"));
+      } else {
+        const [readFd, writeFd] = createSocketPair();
+        const writer = Bun.file(writeFd).writer();
+        process.on("exit", () => {
+          writer.write(Buffer.alloc(4 * 1024 * 1024));
+          fs.closeSync(readFd);
+          writer.close();
+          report("after close()");
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("after close(): 1\nafter the worker: 0\n");
   expect(exitCode).toBe(0);
 });
 

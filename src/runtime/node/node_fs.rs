@@ -7702,7 +7702,7 @@ impl NodeFS {
                 if let Some(error) = refuse_open_for_write(p.slice(), args.flag.as_int()) {
                     return Err(error);
                 }
-                let path = p.slice_z_with_force_copy::<true>(pathbuf);
+                let path = p.slice_z(pathbuf);
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
                 // below sets the final size. O_APPEND writes at EOF, so it keeps it.
@@ -8305,9 +8305,7 @@ impl NodeFS {
                 }
                 if paths::is_absolute(target_path) {
                     // This normalizes slashes and adds the long path prefix
-                    break 'target args
-                        .target_path
-                        .slice_z_with_force_copy::<true>(&mut self.sync_error_buf);
+                    break 'target args.target_path.slice_z(&mut self.sync_error_buf);
                 }
                 self.sync_error_buf[..target_path.len()].copy_from_slice(target_path);
                 self.sync_error_buf[target_path.len()] = 0;

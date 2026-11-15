@@ -9057,6 +9057,138 @@ String packageImportKey(Zig::GlobalObject* globalObject, const String& key, cons
     return Zig::originalModuleKey(key);
 }
 
+// Whether `importer` is `file`, with or without the query of an original, or a module that only the original of `file` has loaded, itself or through other modules.
+// `file` is one of the two files of a mock whose name require() resolves to another file than an import does, and the other file is what is asked for.
+// Read off the loader then, with nothing noted per resolve: a module object names the module whose require() made it, and the record of an ES module names what it imports.
+__attribute__((minsize)) static bool isLoadedByOriginalOfFile(Zig::GlobalObject* globalObject, const String& file, const String& importer)
+{
+    // The runner's own load of a test file has no importer.
+    if (importer.isNull())
+        return false;
+    if (Zig::withoutOriginalModuleQuery(importer) == file)
+        return true;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
+
+    // A requirer is known by its filename alone, and the mock API requires under the name of a mock's file. Under the path itself it is the original only if the file is what is loaded there.
+    std::optional<bool> isFileLoadedUnderItsPath;
+    auto isOriginal = [&](const String& key, bool isRequirer) {
+        if (Zig::withoutOriginalModuleQuery(key) != file)
+            return false;
+        if (key.length() != file.length() || !isRequirer)
+            return true;
+        if (!isFileLoadedUnderItsPath) {
+            auto* standing = Zig::registeredModuleMock(globalObject, file);
+            auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, file));
+            isFileLoadedUnderItsPath = !standing || standing->originalCommonJSExports || (entry && entry->record() && !entry->record()->hasLiveExports());
+        }
+        return *isFileLoadedUnderItsPath;
+    };
+
+    std::optional<Zig::ModuleImporters> importersOf;
+    auto importersOfModule = [&](const String& key) {
+        if (!importersOf) {
+            importersOf = Zig::ModuleImporters();
+            // After moveLoadedModule() a record's own key is not the one it is registered under.
+            UncheckedKeyHashMap<JSC::AbstractModuleRecord*, String> registeredKeys;
+            for (auto& [mapKey, entry] : loader->moduleMap()) {
+                if (auto* record = entry->record())
+                    registeredKeys.add(record, String(mapKey.first));
+            }
+            for (auto& [mapKey, entry] : loader->moduleMap()) {
+                auto* record = entry->record();
+                // The module of a mock imports the original for the mock. The file has not loaded it.
+                if (!record || record->hasLiveExports())
+                    continue;
+                // An import only shows up in loadedModules() once its own imports have loaded. Until then resolvedRequests() has it, and not after.
+                for (auto& resolved : record->resolvedRequests().values())
+                    Zig::addImporter(*importersOf, String(mapKey.first), String { resolved.get() });
+                for (auto& loaded : record->loadedModules().values()) {
+                    auto registered = registeredKeys.find(loaded.m_module.get());
+                    Zig::addImporter(*importersOf, String(mapKey.first), registered == registeredKeys.end() ? loaded.m_module->moduleKey().string() : registered->value);
+                }
+            }
+        }
+        auto importers = importersOf->find(key);
+        return importers == importersOf->end() ? Vector<String>() : importers->value;
+    };
+
+    // `importer` and the modules above it, each with what loaded it: the module whose require() made its module object, or else every module that imports it.
+    struct LoadedBy {
+        String key;
+        Vector<String> loaders;
+        bool isLoadedByOriginal { false };
+    };
+    Vector<LoadedBy> modules;
+    UncheckedKeyHashSet<String> seen;
+    modules.append(LoadedBy { importer, {}, false });
+    seen.add(importer);
+    for (size_t i = 0; i < modules.size(); ++i) {
+        JSValue entry = JSValue::decode(JSC__JSMap__get(requireMap, globalObject, JSValue::encode(jsString(vm, modules[i].key))));
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return false;
+        }
+        auto* moduleObject = entry ? dynamicDowncast<Bun::JSCommonJSModule>(entry) : nullptr;
+        JSValue requirer = moduleObject ? moduleObject->parentFilename() : JSValue();
+        bool isRequired = requirer && requirer.isString();
+        Vector<String> loaders = isRequired ? Vector<String> { asString(requirer)->tryGetValue().data } : importersOfModule(modules[i].key);
+        // The runner, import() or the mock API has loaded it, or a module that has left the loader since.
+        if (loaders.isEmpty())
+            return false;
+        for (auto& loadedBy : loaders) {
+            if (isOriginal(loadedBy, isRequired))
+                modules[i].isLoadedByOriginal = true;
+            else if (seen.add(loadedBy).isNewEntry)
+                modules.append(LoadedBy { loadedBy, {}, false });
+        }
+        modules[i].loaders = WTF::move(loaders);
+    }
+    // Each of them has to lead up to the original: modules that import one another have loaded nothing.
+    UncheckedKeyHashSet<String> loadedByOriginal;
+    for (bool grew = true; std::exchange(grew, false);) {
+        for (auto& module : modules) {
+            if (loadedByOriginal.contains(module.key))
+                continue;
+            if (module.isLoadedByOriginal || module.loaders.containsIf([&](const String& loadedBy) { return loadedByOriginal.contains(loadedBy); })) {
+                loadedByOriginal.add(module.key);
+                grew = true;
+            }
+        }
+    }
+    return loadedByOriginal.size() == modules.size();
+}
+
+__attribute__((minsize)) String keyOfModuleMockAtRequirePath(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+{
+    auto* mock = Zig::moduleMockOfRequirePath(globalObject, key);
+    if (!mock) {
+        // The other way around: what the original of the file that require() loads has loaded gets the file that an import loads as it is on disk.
+        auto* ofName = Zig::registeredModuleMock(globalObject, key);
+        if (ofName && ofName->requirePath && Zig::withoutOriginalModuleQuery(importer) != key && isLoadedByOriginalOfFile(globalObject, ofName->requirePath->tryGetValue().data, importer))
+            return Zig::originalModuleKey(key);
+        return key;
+    }
+    // The two files get each other as they are on disk, and so does what the original of the mock's own file has loaded. What the original of this file has loaded gets the mock, as with one path.
+    if (Zig::withoutOriginalModuleQuery(importer) == key || isLoadedByOriginalOfFile(globalObject, mock->specifier->tryGetValue().data, importer))
+        return key;
+    // require() cannot wait for an async factory. The file answers while nothing has called the factory, and while the factory is pending if the file is loaded.
+    if (!isESM && hasModuleMockUnsettledAsyncFactory(mock)) {
+        if (mock->state == Zig::JSModuleMock::State::NotCalled)
+            return key;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        JSValue loaded = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(mock->requirePath.get())));
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        else if (loaded && !loaded.isUndefined())
+            return key;
+    }
+    return mock->specifier->tryGetValue().data;
+}
+
 // Whether some unfinished module imports both, directly or through other modules. The factories of two loads run at the same time.
 // If a third load imports both modules, the later factory waits for the earlier one's mock, as if one load had called both.
 __attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalObject* globalObject, const String& earlier, const String& later)

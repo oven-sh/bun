@@ -1,9 +1,11 @@
+use core::borrow::Borrow;
 use core::cell::Cell;
-use core::ffi::c_void;
-use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
+use core::ops::Deref;
 
-use bun_ptr::{BackRef, OptionCellExt as _, RefCount, RefPtr};
+use bun_jsc::StrongCell;
+use bun_ptr::{
+    AliasableBox, BackRef, CellExt as _, OptionCellExt as _, RefCount, RefPtr, VecCellExt as _,
+};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
@@ -11,6 +13,7 @@ use crate::webcore::jsc::{
 };
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
+use bun_removable_features::{removable_body, removable_body_behind_value};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
@@ -22,7 +25,7 @@ use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
-// the `HTTPServerWritable<SSL>` / `NetworkSink` *types* defined below
+// the `HTTPServerWritable` / `NetworkSink` *types* defined below
 // (RequestContext was blocked on this name clash).
 bun_core::declare_scope!(HTTPServerWritableLog, visible);
 bun_core::declare_scope!(NetworkSinkLog, visible);
@@ -31,9 +34,7 @@ bun_core::declare_scope!(NetworkSinkLog, visible);
 /// `HTTPServerWritable.pooled_buffer`.
 type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 
-// NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
-// wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
-// for callers that still spell it that way.
+// For callers that still spell it `bun_s3::MultiPartUpload`.
 pub(crate) mod bun_s3 {
     pub(crate) use crate::webcore::s3::MultiPartUpload;
     pub(crate) use crate::webcore::s3::client::{S3UploadResult, s3_error_to_js};
@@ -166,6 +167,26 @@ pub enum StreamResult<'a> {
     IntoArrayAndDone(IntoArray),
 }
 
+/// Appends `text` as UTF-8, and returns how many bytes that is.
+pub(crate) fn append_latin1(buffer: &Cell<Vec<u8>>, text: &[u8]) -> usize {
+    let bytes = buffer.take();
+    let initial = bytes.len();
+    let bytes = strings::allocate_latin1_into_utf8_with_list(bytes, initial, text);
+    let written = bytes.len() - initial;
+    buffer.set(bytes);
+    written
+}
+
+/// As [`append_latin1`].
+pub(crate) fn append_utf16(buffer: &Cell<Vec<u8>>, text: &[u16]) -> usize {
+    let mut bytes = buffer.take();
+    let initial = bytes.len();
+    strings::convert_utf16_to_utf8_append(&mut bytes, text);
+    let written = bytes.len() - initial;
+    buffer.set(bytes);
+    written
+}
+
 /// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
 #[derive(Clone, Copy)]
 pub(crate) enum EncodedChunk<'a> {
@@ -236,9 +257,8 @@ impl StreamResult<'_> {
 
 // ─── Result.Writable ─────────────────────────────────────────────────────
 
-pub enum Writable {
-    // Points into the sink that returned it, which outlives this value.
-    Pending(*mut WritablePending),
+pub enum Writable<'a> {
+    Pending(&'a WritablePending),
     Err(SysError),
     Done,
     Owned(BlobSizeType),
@@ -254,94 +274,87 @@ pub enum Writable {
 }
 
 pub struct WritablePending {
-    pub(crate) future: WritableFuture,
-    pub(crate) result: Writable,
-    pub(crate) consumed: BlobSizeType,
-    pub(crate) state: PendingState,
+    future: Cell<Option<WritableFuture>>,
+    pub(crate) result: Cell<Writable<'static>>,
+    pub(crate) consumed: Cell<BlobSizeType>,
 }
 
 impl Default for WritablePending {
     fn default() -> Self {
         Self {
-            future: WritableFuture::None,
-            result: Writable::Done,
-            consumed: 0,
-            state: PendingState::None,
+            future: Cell::new(None),
+            result: Cell::new(Writable::Done),
+            consumed: Cell::new(0),
         }
     }
 }
 
-// `WritablePending` / `WritableFuture` only own the JSPromiseStrong field —
-// JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
-
-pub(crate) enum WritableFuture {
-    None,
-    Promise {
-        strong: JSPromiseStrong,
-        // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
-        global: BackRef<JSGlobalObject>,
-        /// The context whose script is writing (as `PendingRead`).
-        context: bun_jsc::ContextId,
-    },
+struct WritableFuture {
+    strong: JSPromiseStrong,
+    // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
+    global: BackRef<JSGlobalObject>,
+    /// The context whose script is writing (as `PendingRead`).
+    context: bun_jsc::ContextId,
 }
 
 impl WritablePending {
-    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
-        self.state = PendingState::Pending;
-
-        match &self.future {
-            WritableFuture::Promise { strong, .. } => strong.value(),
-            _ => {
-                let strong = JSPromiseStrong::init(cx.global());
-                let value = strong.value();
-                self.future = WritableFuture::Promise {
-                    strong,
-                    global: BackRef::new(cx.global()),
-                    context: cx.context().id(),
-                };
-                value
-            }
-        }
+    pub(crate) fn is_pending(&self) -> bool {
+        self.future.is_some()
     }
-}
 
-impl WritablePending {
+    pub(crate) fn promise(&self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
+        self.future.with_taken(|future| {
+            let future = future.get_or_insert_with(|| WritableFuture {
+                strong: JSPromiseStrong::init(cx.global()),
+                global: BackRef::new(cx.global()),
+                context: cx.context().id(),
+            });
+            future.strong.value()
+        })
+    }
+
     /// Settle the parked write (see [`PendingRead::run`] for what happens to an
     /// exception the settle leaves).
-    pub(crate) fn run(&mut self) {
-        if self.state != PendingState::Pending {
+    pub(crate) fn run(&self) {
+        let Some(mut future) = self.future.take() else {
             return;
-        }
-        self.state = PendingState::Used;
+        };
         // `consumed` belongs to the operation being settled here; the next one
         // starts from zero.
-        self.consumed = 0;
+        self.consumed.set(0);
 
-        match core::mem::replace(&mut self.future, WritableFuture::None) {
-            WritableFuture::Promise {
-                mut strong,
-                global,
-                context,
-            } => {
-                // A sink settles a write from its own completion (a libuv write callback on
-                // Windows), not from a queued task: for the script that is writing.
-                let entered = global.bun_vm().enter_context(context);
-                Writable::fulfill_promise(
-                    core::mem::replace(&mut self.result, Writable::Done),
-                    strong.swap(),
-                    &global.js_thread(entered.context()),
-                )
-            }
-            WritableFuture::None => {}
-        }
+        // A sink settles a write from its own completion, not from a queued task: for the script that is writing.
+        let entered = future.global.bun_vm().enter_context(future.context);
+        Writable::fulfill_promise(
+            self.result.replace(Writable::Done),
+            future.strong.swap(),
+            &future.global.js_thread(entered.context()),
+        )
+    }
+
+    pub(crate) fn run_done(&self) {
+        self.result.set(Writable::Done);
+        self.run();
+    }
+
+    /// The write that accepted `len` bytes waits for [`run`](Self::run).
+    pub(crate) fn park(&self, len: BlobSizeType) -> Writable<'_> {
+        self.consumed.set(len);
+        self.result.set(Writable::Owned(len));
+        Writable::Pending(self)
+    }
+
+    /// Unroots the promise without settling it.
+    pub(crate) fn clear(&self) {
+        self.future.set(None);
     }
 }
 
-impl Writable {
+impl Writable<'_> {
     /// The write side of [`StreamResult::fulfill_promise`]: terminal in the
     /// same way.
     pub(crate) fn fulfill_promise(
-        result: Writable,
+        result: Writable<'_>,
         promise: &mut JSPromise,
         cx: &bun_jsc::JsThread<'_>,
     ) {
@@ -368,11 +381,7 @@ impl Writable {
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
-            Writable::Pending(pending) => {
-                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
-                // classification; exclusive borrow scoped to the call.
-                unsafe { (*pending).promise(cx) }
-            }
+            Writable::Pending(pending) => pending.promise(cx),
         }
     }
 }
@@ -441,17 +450,9 @@ impl bun_event_loop::BoxedTask for PendingRead {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PendingState {
-    None,
-    Pending,
-    Used,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // JSC-integration: Pending::run, StreamResult::to_js/fulfill_promise, SourceHandle,
-// HTTPServerWritable<*> impl, NetworkSink impl, BufferAction, ReadResult.
+// HTTPServerWritable impl, NetworkSink impl, BufferAction, ReadResult.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PendingRead {
@@ -550,7 +551,7 @@ impl StreamResult<'_> {
 
 /// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
 #[derive(Default)]
-pub(crate) struct PipeCell(::bun_jsc::StrongCell);
+pub(crate) struct PipeCell(StrongCell);
 
 impl PipeCell {
     pub(crate) fn set(
@@ -665,7 +666,7 @@ impl UpstreamSource for crate::webcore::FileReader {
     }
     #[inline]
     fn on_close(&self, _err: Option<SysError>) {
-        self.unpipe_without_deref();
+        self.detach_sink(None);
         self.on_cancel();
     }
 }
@@ -724,32 +725,20 @@ pub enum SourceHandle {
 }
 
 impl SourceHandle {
-    #[inline]
-    pub fn clear(&mut self) {
-        *self = SourceHandle::None;
-    }
-
     /// Disconnect the upstream source: JSController → detach; ByteStream → clear its SinkHandle.
-    pub(crate) fn detach(&mut self, global: &JSGlobalObject) {
-        match *self {
+    pub(crate) fn detach(self, global: &JSGlobalObject) {
+        match self {
             SourceHandle::JSController(value) => {
-                self.clear();
                 crate::dispatch::fold(ReadableSinkController::detach(value, global));
             }
-            SourceHandle::ByteStream(bs) => {
-                bs.unpipe_without_deref();
-                self.clear();
-            }
-            SourceHandle::FileReader(fr) => {
-                fr.unpipe_without_deref();
-                self.clear();
-            }
+            SourceHandle::ByteStream(bs) => drop(bs.detach_sink(None)),
+            SourceHandle::FileReader(fr) => drop(fr.detach_sink(None)),
             _ => {}
         }
     }
 
-    pub fn close(&mut self, err: Option<SysError>) {
-        match *self {
+    pub fn close(self, err: Option<SysError>) {
+        match self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
                 let global = VirtualMachine::get().global();
@@ -769,29 +758,25 @@ impl SourceHandle {
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
             SourceHandle::Subprocess(p) => {
-                bun_removable_features::removable_body!(Spawn, Abort, { p.on_close(err) })
+                removable_body!(Spawn, Abort, { p.on_close(err) })
             }
             SourceHandle::FetchResponseBody(p) => {
-                bun_removable_features::removable_body!(HttpClient, Abort, {
-                    p.on_stream_cancelled()
-                })
+                removable_body!(HttpClient, Abort, { p.on_stream_cancelled() })
             }
             SourceHandle::S3DownloadBody(p) => {
-                bun_removable_features::removable_body!(S3Client, Abort, {
-                    p.on_stream_cancelled()
-                })
+                removable_body!(S3Client, Abort, { p.on_stream_cancelled() })
             }
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => {
-                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_close(err) })
+                removable_body!(HtmlRewriter, Abort, { p.on_close(err) })
             }
             SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
     /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
-    pub fn abort(&mut self, reason: CommonAbortReason) {
-        match *self {
+    pub fn abort(self, reason: CommonAbortReason) {
+        match self {
             SourceHandle::JSController(_) => {
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
@@ -804,8 +789,8 @@ impl SourceHandle {
     }
 
     /// [`close`](Self::close), with an arbitrary JS `reason` for the piped JS stream's cancel().
-    pub fn cancel(&mut self, reason: JSValue) {
-        match *self {
+    pub fn cancel(self, reason: JSValue) {
+        match self {
             SourceHandle::JSController(cpp) => {
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
@@ -821,8 +806,8 @@ impl SourceHandle {
         crate::dispatch::fold(ReadableSinkController::on_close(cpp, global, reason));
     }
 
-    pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
-        match *self {
+    pub fn ready(self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
+        match self {
             SourceHandle::None => {}
             SourceHandle::JSController(cpp) => {
                 let global = VirtualMachine::get().global();
@@ -834,18 +819,16 @@ impl SourceHandle {
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
             SourceHandle::FetchResponseBody(p) => {
-                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_ready() })
+                removable_body!(HttpClient, Abort, { p.on_ready() })
             }
             SourceHandle::ServerRequestBody(any) => {
-                bun_removable_features::removable_body!(Serve, Abort, {
-                    any.on_request_body_stream_drained()
-                })
+                removable_body!(Serve, Abort, { any.on_request_body_stream_drained() })
             }
             SourceHandle::HTMLRewriter(p) => {
-                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_ready() })
+                removable_body!(HtmlRewriter, Abort, { p.on_ready() })
             }
             SourceHandle::S3DownloadBody(p) => {
-                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_drained() })
+                removable_body!(S3Client, Abort, { p.on_stream_drained() })
             }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
@@ -873,8 +856,8 @@ impl SourceHandle {
         }
     }
 
-    pub fn start(&mut self) {
-        match *self {
+    pub fn start(self) {
+        match self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
             SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
             // Remaining variants leave `on_start` at the trait default (no-op).
@@ -905,43 +888,45 @@ pub(crate) enum HTTPServerWritableState {
     Aborted,
 }
 
-/// `SSL` only selects which JS sink class (`HTTPResponseSink` /
-/// `HTTPSResponseSink`) wraps this; the response itself is dispatched at
-/// runtime through `uws::AnyResponse`, so one instantiation serves HTTP/1.1,
-/// HTTP/2 and HTTP/3 alike.
-pub(crate) struct HTTPServerWritable<const SSL: bool> {
-    pub(crate) res: Option<uws::AnyResponse>,
-    pub(crate) buffer: Vec<u8>,
-    /// `finalize` or `Drop` returns it to `ByteListPool`.
-    pub(crate) pooled_buffer: ManuallyDrop<Option<Box<ByteListPoolNode>>>,
-    pub offset: BlobSizeType,
+/// Serves HTTP/1.1, HTTP/2 and HTTP/3 alike, through `uws::AnyResponse`.
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::destroy)]
+pub(crate) struct HTTPServerWritable {
+    /// [`HTTPServerWritableOwnerRef`], the controller's ref, and scoped `RefPtr`s.
+    ref_count: RefCount,
+    /// Selects the name and the `sinkId` that the controller reports.
+    pub(crate) is_ssl: bool,
+    pub(crate) res: Cell<Option<uws::AnyResponse>>,
+    buffer: Cell<Vec<u8>>,
+    /// `finalize` or [`HTTPServerWritableOwnerRef`] returns it to `ByteListPool`.
+    pooled_buffer: Cell<Option<Box<ByteListPoolNode>>>,
 
-    pub(crate) wrote: BlobSizeType,
+    pub(crate) wrote: Cell<BlobSizeType>,
 
     // allocator field dropped — global mimalloc per §Allocators
-    pub(crate) state: HTTPServerWritableState,
-    pub(crate) source: SourceHandle,
-    /// The controller cell, rooted for the sink's life; it holds the `flush(true)` / `end()` promise ([`Self::pending_flush`]).
+    state: Cell<HTTPServerWritableState>,
+    pub(crate) source: Cell<SourceHandle>,
+    /// The controller cell, rooted until [`HTTPServerWritableOwnerRef`] drops; it holds the `flush(true)` / `end()` promise ([`Self::pending_flush`]).
     pub(crate) pipe: PipeCell,
     /// Backpressure promise returned from `write()` to a JS controller (direct
     /// stream `pull` or `readStreamIntoSink`). Resolved on drain via
     /// `flush_promise()` → `pending.run()`.
-    pub(crate) pending: WritablePending,
-    pub(crate) wrote_at_start_of_flush: BlobSizeType,
+    pending: WritablePending,
+    wrote_at_start_of_flush: Cell<BlobSizeType>,
     // JSC_BORROW: process-lifetime VM global. Safe `Deref` via `BackRef`.
     pub global_this: BackRef<JSGlobalObject>,
-    pub(crate) high_water_mark: BlobSizeType,
+    high_water_mark: Cell<BlobSizeType>,
 
-    pub(crate) requested_end: bool,
+    requested_end: Cell<bool>,
 
-    pub(crate) has_backpressure: bool,
+    has_backpressure: Cell<bool>,
     /// `write()` returned `Backpressure` to the upstream source (so it is
     /// parked on the sink). `on_writable` fires `source.ready()` only when
     /// this is set; a drain that merely follows `flush()`/auto-flush must not
     /// re-invoke a direct-stream `pull`. Same pattern as
     /// `FileSink::source_pending_pull`.
-    pub(crate) source_pending_pull: bool,
-    pub(crate) end_len: usize,
+    source_pending_pull: Cell<bool>,
+    end_len: Cell<usize>,
     /// This sink fully ended the uWS response (`res.end()` / a completed
     /// `res.try_end()`). On HTTP/1 that drops `onAborted`, so the owning
     /// `RequestContext` is never told the peer went away and must not
@@ -950,55 +935,72 @@ pub(crate) struct HTTPServerWritable<const SSL: bool> {
     /// `handle_reject_stream` read this instead of the response state, and
     /// act on it only for HTTP/1. An H2/H3 `resp` is still alive there, and
     /// `on_abort` ends those requests when the transport frees the stream.
-    pub(crate) ended_response: bool,
-
-    pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,
-    pub ctx: Option<*mut c_void>,
+    pub(crate) ended_response: Cell<bool>,
 
     pub(crate) auto_flusher: AutoFlusher,
 }
 
-impl<const SSL: bool> Drop for HTTPServerWritable<SSL> {
+impl Drop for HTTPServerWritable {
     fn drop(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "drop()");
-        // A `write()` that is still parked: not every teardown goes through `flush_promise`.
-        self.pending.result = Writable::Done;
-        self.pending.run();
-        // Still checked out if `finalize` has not run (`assign_to_stream` failed).
-        self.release_pooled_buffer();
         self.unregister_auto_flusher();
     }
 }
 
-impl<const SSL: bool> HTTPServerWritable<SSL> {
+/// The `RequestContext`'s ref, dropped after it detached the controller, whose ref lasts until that is collected.
+pub(crate) struct HTTPServerWritableOwnerRef(pub(crate) RefPtr<HTTPServerWritable>);
+
+impl Deref for HTTPServerWritableOwnerRef {
+    type Target = HTTPServerWritable;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for HTTPServerWritableOwnerRef {
+    fn drop(&mut self) {
+        // A `write()` that is still parked: not every teardown goes through `flush_promise`.
+        self.pending.run_done();
+        self.mark_done();
+        // Still checked out if `finalize` has not run (`assign_to_stream` failed).
+        self.release_pooled_buffer();
+        self.buffer.take();
+        drop(self.pipe.take());
+    }
+}
+
+impl HTTPServerWritable {
     pub(crate) fn new(
         res: uws::AnyResponse,
-        on_first_write: fn(Option<*mut c_void>),
-        ctx: *mut c_void,
+        is_ssl: bool,
         global_this: &JSGlobalObject,
-    ) -> Self {
-        Self {
-            res: Some(res),
-            buffer: Vec::<u8>::default(),
-            pooled_buffer: ManuallyDrop::new(None),
-            offset: 0,
-            wrote: 0,
-            state: HTTPServerWritableState::Writing,
-            source: SourceHandle::default(),
+    ) -> RefPtr<Self> {
+        RefPtr::new(Self {
+            ref_count: RefCount::init(),
+            is_ssl,
+            res: Cell::new(Some(res)),
+            buffer: Cell::default(),
+            pooled_buffer: Cell::new(None),
+            wrote: Cell::new(0),
+            state: Cell::new(HTTPServerWritableState::Writing),
+            source: Cell::default(),
             pipe: PipeCell::default(),
             pending: WritablePending::default(),
-            wrote_at_start_of_flush: 0,
+            wrote_at_start_of_flush: Cell::new(0),
             global_this: BackRef::new(global_this),
-            high_water_mark: 2048,
-            requested_end: false,
-            has_backpressure: false,
-            source_pending_pull: false,
-            end_len: 0,
-            ended_response: false,
-            on_first_write: Some(on_first_write),
-            ctx: Some(ctx),
+            high_water_mark: Cell::new(2048),
+            requested_end: Cell::new(false),
+            has_backpressure: Cell::new(false),
+            source_pending_pull: Cell::new(false),
+            end_len: Cell::new(0),
+            ended_response: Cell::new(false),
             auto_flusher: AutoFlusher::default(),
-        }
+        })
+    }
+
+    /// Keeps the drop glue out of a build without the feature.
+    fn destroy(last: AliasableBox<Self>) {
+        removable_body_behind_value!(Serve, { drop(last) })
     }
 
     /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
@@ -1006,76 +1008,47 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // TODO: include Socket send buffer size. We can't here because we
         // don't track if it's still accessible.
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        self.buffer.capacity() as usize
+        self.buffer.capacity()
     }
 
-    pub(crate) const NAME: &'static str = if SSL {
-        "HTTPSResponseSink"
-    } else {
-        "HTTPResponseSink"
-    };
-    // associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or a trait-based dispatch.
-}
-
-impl<const SSL: bool> HTTPServerWritable<SSL> {
     #[inline]
     fn any_res(&self) -> Option<uws::AnyResponse> {
-        self.res
+        self.res.get()
     }
 
-    fn handle_wrote(&mut self, amount1: usize) {
-        let amount = amount1 as BlobSizeType;
-        self.offset += amount;
-        self.wrote += amount;
-
-        if self.offset >= self.buffer.len() as BlobSizeType {
-            self.offset = 0;
-            self.buffer.clear();
-        }
-        bun_core::scoped_log!(
-            HTTPServerWritableLog,
-            "handleWrote: {} offset: {}, {}",
-            amount1,
-            self.offset,
-            self.buffer.len()
-        );
-    }
-
-    fn handle_first_write_if_necessary(&mut self) {
-        if let Some(on_first_write) = self.on_first_write.take() {
-            let ctx = self.ctx.take();
-            on_first_write(ctx);
-        }
+    fn handle_wrote(&self, amount: usize) {
+        self.wrote.update(|wrote| wrote + amount as BlobSizeType);
+        bun_core::scoped_log!(HTTPServerWritableLog, "handleWrote: {}", amount);
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        self.state != HTTPServerWritableState::Writing
+        self.state.get() != HTTPServerWritableState::Writing
     }
 
     pub(crate) fn is_aborted(&self) -> bool {
-        self.state == HTTPServerWritableState::Aborted
+        self.state.get() == HTTPServerWritableState::Aborted
     }
 
     /// `Aborted` is already done and stays `Aborted`; callers still read
     /// `is_aborted()` afterwards.
-    pub(crate) fn set_done(&mut self) {
-        if self.state == HTTPServerWritableState::Writing {
-            self.state = HTTPServerWritableState::Done;
+    pub(crate) fn set_done(&self) {
+        if self.state.get() == HTTPServerWritableState::Writing {
+            self.state.set(HTTPServerWritableState::Done);
         }
     }
 
-    fn has_backpressure(&self) -> bool {
-        self.has_backpressure
+    pub(crate) fn has_backpressure(&self) -> bool {
+        self.has_backpressure.get()
     }
 
     fn has_backpressure_and_is_try_end(&self) -> bool {
-        self.has_backpressure && self.end_len > 0
+        self.has_backpressure.get() && self.end_len.get() > 0
     }
 
     /// uWS `end()`/`try_end()` just completed; `res` is still live here, so release the request-body pause too.
-    fn mark_response_ended(&mut self, res: uws::AnyResponse) {
-        self.has_backpressure = false;
-        self.ended_response = true;
+    fn mark_response_ended(&self, res: uws::AnyResponse) {
+        self.has_backpressure.set(false);
+        self.ended_response.set(true);
         res.resume();
     }
 
@@ -1087,23 +1060,22 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// `Backpressure` directly, so keep that variant for them. `on_writable`
     /// drains via `flush_promise()` → `pending.run()` and `source.ready()`.
     #[inline]
-    fn writable_result(&mut self, len: BlobSizeType) -> Writable {
-        if self.has_backpressure && !self.is_done() && !self.requested_end {
-            self.source_pending_pull = true;
+    fn writable_result(&self, len: BlobSizeType) -> Writable<'_> {
+        if self.has_backpressure.get() && !self.is_done() && !self.requested_end.get() {
+            self.source_pending_pull.set(true);
             if matches!(
-                self.source,
+                self.source.get(),
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
             ) {
                 return Writable::Backpressure(len);
             }
-            self.pending.consumed = len;
-            self.pending.result = Writable::Owned(len);
-            return Writable::Pending(core::ptr::from_mut(&mut self.pending));
+            return self.pending.park(len);
         }
         Writable::Owned(len)
     }
 
-    fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
+    /// `false`: what uWS did not take of `buf` has to be sent again.
+    fn send_without_auto_flusher(&self, buf: &[u8]) -> bool {
         debug_assert!(!self.is_done());
 
         let Some(res) = self.any_res() else {
@@ -1111,145 +1083,88 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 HTTPServerWritableLog,
                 "send: {} bytes (backpressure: {})",
                 buf.len(),
-                self.has_backpressure
+                self.has_backpressure()
             );
             return false;
         };
-        // `res` is held across `handleFirstWriteIfNecessary`, whose
-        // callback (RequestContext.renderMetadata) writes status/headers through
-        // the same uWS response. `AnyResponse` is `Copy` and dispatches to
-        // zero-sized opaque handles, so reusing `res` across the re-entrant
-        // `on_first_write` invocation cannot alias any Rust-visible memory.
 
-        if self.requested_end && !res.state().is_http_write_called() {
-            self.handle_first_write_if_necessary();
-            let success = res.try_end(buf, self.end_len, false);
+        if self.requested_end.get() && !res.state().is_http_write_called() {
+            let success = res.try_end(buf, self.end_len.get(), false);
             if success {
                 self.mark_response_ended(res);
-                self.handle_wrote(self.end_len);
-            } else if self.res.is_some() {
-                self.has_backpressure = true;
+            } else if self.any_res().is_some() {
+                self.has_backpressure.set(true);
             }
             bun_core::scoped_log!(
                 HTTPServerWritableLog,
                 "send: {} bytes (backpressure: {})",
                 buf.len(),
-                self.has_backpressure
+                self.has_backpressure()
             );
             return success;
         }
         // clean this so we know when its relevant or not
-        self.end_len = 0;
-        self.handle_first_write_if_necessary();
+        self.end_len.set(0);
         // uWS has no tryWrite(): write() always accepts the buffer (queuing the
         // unsent tail internally) and reports whether the socket is now backed
         // up. Track that so the JS writer can pause; the owning RequestContext
         // holds the on_writable registration and forwards the drain to
         // `on_writable()` below.
-        if self.requested_end {
+        if self.requested_end.get() {
             res.end(buf, false);
             self.mark_response_ended(res);
         } else {
-            self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
+            self.has_backpressure
+                .set(matches!(res.write(buf), uws::WriteResult::Backpressure(_)));
         }
-        self.handle_wrote(buf.len());
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",
             buf.len(),
-            self.has_backpressure
+            self.has_backpressure()
         );
         true
     }
 
-    fn send(&mut self, buf: &[u8]) -> bool {
+    /// Only while `buffer` is empty.
+    fn send(&self, buf: &[u8]) -> bool {
         self.unregister_auto_flusher();
-        self.send_without_auto_flusher(buf)
+        let success = self.send_without_auto_flusher(buf);
+        if success {
+            self.handle_wrote(buf.len());
+        }
+        success
     }
 
-    /// `self.send(&self.readable_slice()[from..])` without laundering a slice
-    /// of `self.buffer` through `from_raw_parts` to dodge the `&mut self`
-    /// borrow. Mirrors `send_without_auto_flusher` but re-slices `self.buffer`
-    /// after each `&mut self` step; `unregister_auto_flusher` and the
-    /// `on_first_write` callback (RequestContext.renderMetadata) only touch
-    /// uWS response state, never `self.buffer`/`self.offset`, so the re-slice
-    /// observes the same bytes the laundered slice would have.
-    fn send_readable(&mut self, from: usize) -> bool {
+    /// Sends `buffer` past its first `from` bytes.
+    fn send_readable(&self, from: usize) -> bool {
         self.unregister_auto_flusher();
         self.send_readable_without_auto_flusher(from)
     }
 
-    fn send_readable_without_auto_flusher(&mut self, from: usize) -> bool {
-        debug_assert!(!self.is_done());
-        let base = self.offset as usize + from;
-
-        let Some(res) = self.any_res() else {
-            bun_core::scoped_log!(
-                HTTPServerWritableLog,
-                "send: {} bytes (backpressure: {})",
-                self.buffer.len().saturating_sub(base),
-                self.has_backpressure
-            );
-            return false;
-        };
-        // `res` is `Copy` (raw uWS handle); see the note in
-        // `send_without_auto_flusher` re: holding it across `on_first_write`.
-
-        if self.requested_end && !res.state().is_http_write_called() {
-            self.handle_first_write_if_necessary();
-            let end_len = self.end_len;
-            let success = res.try_end(&self.buffer[base..], end_len, false);
+    fn send_readable_without_auto_flusher(&self, from: usize) -> bool {
+        self.buffer.with_taken(|buffer| {
+            let success = self.send_without_auto_flusher(&buffer[from..]);
             if success {
-                self.mark_response_ended(res);
-                self.handle_wrote(end_len);
-            } else if self.res.is_some() {
-                self.has_backpressure = true;
+                // uWS took the `from` bytes in an earlier partial `try_end`; it now owns the whole slice.
+                self.handle_wrote(buffer.len());
+                buffer.clear();
             }
-            bun_core::scoped_log!(
-                HTTPServerWritableLog,
-                "send: {} bytes (backpressure: {})",
-                self.buffer.len().saturating_sub(base),
-                self.has_backpressure
-            );
-            return success;
-        }
-        // clean this so we know when its relevant or not
-        self.end_len = 0;
-        self.handle_first_write_if_necessary();
-        let buf_len = self.buffer.len().saturating_sub(base);
-        // See `send_without_auto_flusher`.
-        if self.requested_end {
-            res.end(&self.buffer[base..], false);
-            self.mark_response_ended(res);
-        } else {
-            self.has_backpressure = matches!(
-                res.write(&self.buffer[base..]),
-                uws::WriteResult::Backpressure(_)
-            );
-        }
-        // uWS took the `from` bytes in an earlier partial `try_end`; it now owns the whole slice.
-        self.handle_wrote(from + buf_len);
-        bun_core::scoped_log!(
-            HTTPServerWritableLog,
-            "send: {} bytes (backpressure: {})",
-            buf_len,
-            self.has_backpressure
-        );
-        true
+            success
+        })
     }
 
-    fn readable_slice(&self) -> &[u8] {
-        // `handle_wrote` maintains `offset <= buffer.len()`.
-        &self.buffer[self.offset as usize..]
+    pub(crate) fn buffered_len(&self) -> usize {
+        self.buffer.len()
     }
 
-    pub(crate) fn on_writable(&mut self, write_offset: u64, _res: uws::AnyResponse) -> bool {
+    pub(crate) fn on_writable(&self, write_offset: u64, _res: uws::AnyResponse) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
-        self.has_backpressure = false;
+        self.has_backpressure.set(false);
         if self.is_aborted() {
-            self.source.close(None);
+            self.source.get().close(None);
             self.flush_promise();
             self.finalize();
             return false;
@@ -1265,23 +1180,23 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // was just resolved to avoid re-entering the user's pull. Handled
         // before the try_end resend bookkeeping below, which assumes a
         // non-empty buffer.
-        if self.readable_slice().is_empty() {
+        if self.buffered_len() == 0 {
             if self.is_done() {
-                self.source_pending_pull = false;
-                self.source.close(None);
+                self.source_pending_pull.set(false);
+                self.source.get().close(None);
                 self.flush_promise();
                 self.finalize();
                 return true;
             }
             let had_flush_waiter = self.pending_flush().is_some();
             self.flush_promise();
-            if core::mem::take(&mut self.source_pending_pull)
+            if self.source_pending_pull.take()
                 && !had_flush_waiter
                 && !self.is_done()
-                && !self.requested_end
+                && !self.requested_end.get()
                 && !self.has_backpressure()
             {
-                self.source.ready(None, None);
+                self.source.get().ready(None, None);
             }
             return true;
         }
@@ -1296,21 +1211,17 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         //   backpressure). uWS already owns the earlier bytes; send from 0.
         //   `write_offset` is uWS's cumulative response count here and is not a
         //   valid index into our buffer.
-        let chunk_start = if self.end_len > 0 {
+        let chunk_start = if self.end_len.get() > 0 {
             // do not write more than available
-            (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1) as usize
+            (write_offset as BlobSizeType).min(self.buffered_len() as BlobSizeType - 1) as usize
         } else {
             0
         };
-        // Capture the chunk length before send.
-        // `send_readable` re-slices the buffer at call time, which observes any
-        // mutation send's internals perform. The length is used only for
-        // `total_written` and the empty check.
-        let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
+        let chunk_len = self.buffered_len().saturating_sub(chunk_start);
         // if we have nothing to write, we are done
         if chunk_len == 0 {
             if self.is_done() {
-                self.source.close(None);
+                self.source.get().close(None);
                 self.flush_promise();
                 self.finalize();
                 return true;
@@ -1322,12 +1233,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
             total_written = chunk_len as u64;
 
-            if self.requested_end {
-                debug_assert!(self.ended_response);
+            if self.requested_end.get() {
+                debug_assert!(self.ended_response.get());
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
                 }
-                self.source.close(None);
+                self.source.get().close(None);
                 self.flush_promise();
                 self.finalize();
                 return true;
@@ -1340,73 +1251,76 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         // pending_flush or callback could have caused another send()
         // so we check again if we should report readiness
-        let had_pending_pull = core::mem::take(&mut self.source_pending_pull);
-        if !self.is_done() && !self.requested_end && !self.has_backpressure() {
+        let had_pending_pull = self.source_pending_pull.take();
+        if !self.is_done() && !self.requested_end.get() && !self.has_backpressure() {
             if (total_written > 0 || (had_pending_pull && !had_flush_waiter))
-                && self.readable_slice().is_empty()
+                && self.buffered_len() == 0
             {
-                self.source.ready(Some(total_written as BlobSizeType), None);
+                self.source
+                    .get()
+                    .ready(Some(total_written as BlobSizeType), None);
             }
         }
 
         true
     }
 
-    pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
-        if self.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded() {
+    pub(crate) fn start(&self, stream_start: &Start) -> bun_sys::Result<()> {
+        if self.is_aborted() || self.any_res().is_none_or(|res| res.has_responded()) {
             self.mark_done();
-            self.source.close(None);
+            self.source.get().close(None);
             return bun_sys::Result::Ok(());
         }
 
-        self.wrote = 0;
-        self.wrote_at_start_of_flush = 0;
+        self.wrote.set(0);
+        self.wrote_at_start_of_flush.set(0);
         self.flush_promise();
-
-        if self.buffer.capacity() == 0 {
-            debug_assert!(self.pooled_buffer.is_none());
-            if FeatureFlags::HTTP_BUFFER_POOLING {
-                if let Some(mut pooled_node) = ByteListPool::get_if_exists() {
-                    self.buffer = core::mem::take(&mut pooled_node.data);
-                    self.pooled_buffer = ManuallyDrop::new(Some(pooled_node));
-                }
-            }
-        }
-
-        self.buffer.clear();
 
         if let &Start::ChunkSize(chunk_size) = stream_start {
             if chunk_size > 0 {
-                self.high_water_mark = chunk_size;
+                self.high_water_mark.set(chunk_size);
             }
         }
 
-        self.buffer.clear_retaining_capacity();
-        if self
-            .buffer
-            .try_reserve_exact(self.high_water_mark as usize)
-            .is_err()
-        {
+        let reserved = self.buffer.with_taken(|buffer| {
+            if buffer.capacity() == 0 {
+                debug_assert!(self.pooled_buffer.is_none());
+                if FeatureFlags::HTTP_BUFFER_POOLING {
+                    if let Some(mut pooled_node) = ByteListPool::get_if_exists() {
+                        *buffer = core::mem::take(&mut pooled_node.data);
+                        self.pooled_buffer.set(Some(pooled_node));
+                    }
+                }
+            }
+
+            buffer.clear();
+            buffer.try_reserve_exact(self.high_water_mark.get() as usize)
+        });
+        if reserved.is_err() {
             return Err(SysError::oom());
         }
 
-        self.state = HTTPServerWritableState::Writing;
-        self.source.start();
-        bun_core::scoped_log!(HTTPServerWritableLog, "start({})", self.high_water_mark);
+        self.state.set(HTTPServerWritableState::Writing);
+        self.source.get().start();
+        bun_core::scoped_log!(
+            HTTPServerWritableLog,
+            "start({})",
+            self.high_water_mark.get()
+        );
         bun_sys::Result::Ok(())
     }
 
-    fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
+    fn flush_from_js_no_wait(&self) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJSNoWait");
         bun_sys::Result::Ok(JSValue::from(self.flush_no_wait()))
     }
 
-    pub(crate) fn flush_no_wait(&mut self) -> usize {
+    pub(crate) fn flush_no_wait(&self) -> usize {
         if self.has_backpressure_and_is_try_end() || self.is_done() {
             return 0;
         }
 
-        let slice_len = self.readable_slice().len();
+        let slice_len = self.buffered_len();
         if slice_len == 0 {
             return 0;
         }
@@ -1419,7 +1333,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     pub(crate) fn flush_from_js(
-        &mut self,
+        &self,
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
@@ -1434,7 +1348,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // A prior `flush(true)` is already waiting on the drain. Push any
             // data buffered since (below highWaterMark) so it reaches uWS now
             // rather than when `on_writable` fires.
-            if self.end_len == 0 && !self.is_done() && !self.readable_slice().is_empty() {
+            if self.end_len.get() == 0 && !self.is_done() && self.buffered_len() > 0 {
                 let _ = self.send_readable(0);
             }
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
@@ -1449,25 +1363,25 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
 
         if !self.has_backpressure_and_is_try_end() {
-            let slice_len = self.readable_slice().len();
+            let slice_len = self.buffered_len();
             if slice_len > 0 {
                 let _ = self.send_readable(0);
             }
             // Only resolve once the socket has actually accepted everything;
             // otherwise fall through and let on_writable resolve the promise.
-            if !self.has_backpressure {
+            if !self.has_backpressure.get() {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                     cx.global(),
                     JSValue::from(slice_len),
                 ));
             }
         }
-        self.wrote_at_start_of_flush = self.wrote;
+        self.wrote_at_start_of_flush.set(self.wrote.get());
         bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
-    pub(crate) fn write(&mut self, data: &StreamResult<'_>) -> Writable {
-        if self.is_done() || self.requested_end {
+    pub(crate) fn write(&self, data: &StreamResult<'_>) -> Writable<'_> {
+        if self.is_done() || self.requested_end.get() {
             return Writable::Owned(0);
         }
 
@@ -1475,44 +1389,35 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         let len = bytes.len() as BlobSizeType;
         bun_core::scoped_log!(HTTPServerWritableLog, "write({})", bytes.len());
 
-        if self.buffer.len() == 0 && len >= self.high_water_mark {
+        let buffered = self.buffered_len() as BlobSizeType;
+        // Otherwise queue the data until highWaterMark is reached or the auto flusher kicks in
+        let mut do_send = buffered + len >= self.high_water_mark.get();
+        if buffered == 0 && do_send {
             // fast path:
             // - large-ish chunk
             // - no backpressure
             if self.send(bytes) {
                 return self.writable_result(len);
             }
-
-            if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
-        } else if self.buffer.len() as BlobSizeType + len >= self.high_water_mark {
-            // TODO: attempt to write both in a corked buffer?
-            if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
-            if self.send_readable(0) {
-                return self.writable_result(len);
-            }
-        } else {
-            // queue the data wait until highWaterMark is reached or the auto flusher kicks in
-            if self.buffer.write(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            do_send = false;
         }
 
-        self.register_auto_flusher();
+        // TODO: attempt to write both in a corked buffer?
+        self.buffer.extend_from_slice(bytes);
+        if !(do_send && self.send_readable(0)) {
+            self.register_auto_flusher();
+        }
 
         self.writable_result(len)
     }
 
-    pub(crate) fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
-        if self.is_done() || self.requested_end {
+    pub(crate) fn write_latin1(&self, data: &StreamResult<'_>) -> Writable<'_> {
+        if self.is_done() || self.requested_end.get() {
             return Writable::Owned(0);
         }
 
-        if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(None);
+        if self.any_res().is_none_or(|res| res.has_responded()) {
+            self.source.get().close(None);
             self.mark_done();
             return Writable::Done;
         }
@@ -1521,56 +1426,32 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         let len = bytes.len() as BlobSizeType;
         bun_core::scoped_log!(HTTPServerWritableLog, "writeLatin1({})", bytes.len());
 
-        if self.buffer.len() == 0 && len >= self.high_water_mark {
-            let mut do_send = true;
-            // common case
-            if strings::is_all_ascii(bytes) {
-                // fast path:
-                // - large-ish chunk
-                // - no backpressure
-                if self.send(bytes) {
-                    return self.writable_result(len);
-                }
-                do_send = false;
-            }
-
-            if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
-
-            if do_send {
-                if self.send_readable(0) {
-                    return self.writable_result(len);
-                }
-            }
-        } else if self.buffer.len() as BlobSizeType + len >= self.high_water_mark {
-            // kinda fast path:
-            // - combined chunk is large enough to flush automatically
-            // - no backpressure
-            if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
-            if self.send_readable(0) {
+        let buffered = self.buffered_len() as BlobSizeType;
+        let mut do_send = buffered + len >= self.high_water_mark.get();
+        // common case
+        if buffered == 0 && do_send && strings::is_all_ascii(bytes) {
+            // fast path: large-ish chunk, no backpressure
+            if self.send(bytes) {
                 return self.writable_result(len);
             }
-        } else {
-            if self.buffer.write_latin1(bytes).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            do_send = false;
         }
 
-        self.register_auto_flusher();
+        append_latin1(&self.buffer, bytes);
+        if !(do_send && self.send_readable(0)) {
+            self.register_auto_flusher();
+        }
 
         self.writable_result(len)
     }
 
-    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
-        if self.is_done() || self.requested_end {
+    pub(crate) fn write_utf16(&self, text: &[u16]) -> Writable<'_> {
+        if self.is_done() || self.requested_end.get() {
             return Writable::Owned(0);
         }
 
-        if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(None);
+        if self.any_res().is_none_or(|res| res.has_responded()) {
+            self.source.get().close(None);
             self.mark_done();
             return Writable::Done;
         }
@@ -1579,70 +1460,63 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        let written = match self.buffer.write_utf16(text) {
-            Ok(n) => n,
-            Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-        };
+        let written = append_utf16(&self.buffer, text);
 
-        let readable_len = self.readable_slice().len();
-        if readable_len >= self.high_water_mark as usize || self.has_backpressure() {
-            if self.send_readable(0) {
-                return self.writable_result(written as BlobSizeType);
-            }
+        let do_send =
+            self.buffered_len() >= self.high_water_mark.get() as usize || self.has_backpressure();
+        if !(do_send && self.send_readable(0)) {
+            self.register_auto_flusher();
         }
-
-        self.register_auto_flusher();
         self.writable_result(written as BlobSizeType)
     }
 
-    pub(crate) fn mark_done(&mut self) {
+    pub(crate) fn mark_done(&self) {
         self.set_done();
         self.unregister_auto_flusher();
     }
 
     /// `controller.close()`: flush and end like `controller.end()`; the owner awaits any parked `pending_flush`.
-    pub(crate) fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
+    pub(crate) fn end(&self, _err: Option<SysError>) -> bun_sys::Result<()> {
         let global_this = self.global_this;
         self.finish(&global_this).map(|_| ())
     }
 
     /// The source failed (`close(error)`, an errored pump): drop what is buffered and finish the sink; the owner closes the response as incomplete.
-    pub(crate) fn fail(&mut self) {
+    pub(crate) fn fail(&self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
 
-        if self.requested_end {
+        if self.requested_end.get() {
             return;
         }
 
         self.buffer.clear();
-        self.offset = 0;
-        self.source.close(None);
+        self.source.get().close(None);
         self.mark_done();
         self.finalize();
     }
 
-    pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         self.finish(cx.global())
     }
 
-    fn finish(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    fn finish(&self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
-        if self.requested_end {
+        if self.requested_end.get() {
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
-        if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.requested_end = true;
-            self.source.close(None);
+        if self.is_done() || self.any_res().is_none_or(|res| res.has_responded()) {
+            self.requested_end.set(true);
+            self.source.get().close(None);
             self.mark_done();
             self.finalize();
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
-        self.requested_end = true;
-        let readable_len = self.readable_slice().len();
-        self.end_len = readable_len;
+        self.requested_end.set(true);
+        let readable_len = self.buffered_len();
+        self.end_len.set(readable_len);
 
         if readable_len > 0 {
             if !self.send_readable(0) {
@@ -1653,55 +1527,38 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             self.mark_response_ended(res);
         }
 
-        debug_assert!(self.ended_response);
+        debug_assert!(self.ended_response.get());
         self.mark_done();
         self.flush_promise();
-        self.source.close(None);
+        self.source.get().close(None);
         self.finalize();
 
-        bun_sys::Result::Ok(JSValue::from(self.wrote))
+        bun_sys::Result::Ok(JSValue::from(self.wrote.get()))
     }
 
     /// The response is gone, so this sink never writes again. [`Self::abort`] tells the source.
-    pub(crate) fn revoke_response(&mut self) {
-        self.state = HTTPServerWritableState::Aborted;
-        self.res = None;
+    pub(crate) fn revoke_response(&self) {
+        self.state.set(HTTPServerWritableState::Aborted);
+        self.res.set(None);
         self.unregister_auto_flusher();
     }
 
-    /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
-    /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
-    /// sink. A `&mut self` argument protector must not be live across that free.
-    ///
-    /// # Safety
-    /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    pub(crate) fn abort(&self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        // SAFETY: caller contract — `this` is live, and every access here is scoped
-        // so no borrow spans the signal close below, which may free `*this`.
-        unsafe { (*this).revoke_response() };
-
-        // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
-        unsafe { (*this).flush_promise() };
-        // SAFETY: as above.
-        unsafe { (*this).finalize() };
-
-        // Close the source last and through a stack copy: the close fires the JS
-        // onClose callback, and the teardown it can re-enter frees this sink, so
-        // no reference into the allocation may be live across the call.
-        // SAFETY: as above; `source` is copied out before the close.
-        let mut source = unsafe { (*this).source };
-        source.abort(CommonAbortReason::ConnectionClosed);
+        self.revoke_response();
+        self.flush_promise();
+        self.finalize();
+        self.source.get().abort(CommonAbortReason::ConnectionClosed);
     }
 
-    fn unregister_auto_flusher(&mut self) {
+    fn unregister_auto_flusher(&self) {
         if self.auto_flusher.registered.get() {
             let vm = self.global_this.bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
 
-    fn register_auto_flusher(&mut self) {
+    fn register_auto_flusher(&self) {
         let Some(res) = self.any_res() else { return };
         // Reset per-enqueue so a long stream of
         // sub-highWaterMark writes between auto-flushes still bumps the idle
@@ -1713,14 +1570,14 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
     }
 
-    pub(crate) fn on_auto_flush(&mut self) -> bool {
+    pub(crate) fn on_auto_flush(&self) -> bool {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAutoFlush()");
         if self.is_done() {
             self.auto_flusher.registered.set(false);
             return false;
         }
 
-        let readable_len = self.readable_slice().len();
+        let readable_len = self.buffered_len();
 
         if self.has_backpressure_and_is_try_end() || readable_len == 0 {
             self.auto_flusher.registered.set(false);
@@ -1733,12 +1590,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
         self.auto_flusher.registered.set(false);
 
-        if self.requested_end {
-            debug_assert!(self.ended_response);
+        if self.requested_end.get() {
+            debug_assert!(self.ended_response.get());
             if let Some(res) = self.any_res() {
                 res.clear_on_writable();
             }
-            self.source.close(None);
+            self.source.get().close(None);
             self.flush_promise();
             self.finalize();
         }
@@ -1746,22 +1603,22 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     /// Hand the pool checkout back with the (emptied) buffer; `false` when nothing was checked out.
-    fn release_pooled_buffer(&mut self) -> bool {
+    fn release_pooled_buffer(&self) -> bool {
         let Some(mut pooled) = self.pooled_buffer.take() else {
             return false;
         };
-        self.buffer.clear();
-        if self.buffer.capacity() > 64 * 1024 {
-            self.buffer.clear_and_free();
+        pooled.data = self.buffer.take();
+        pooled.data.clear();
+        if pooled.data.capacity() > 64 * 1024 {
+            pooled.data.clear_and_free();
         }
-        core::mem::swap(&mut pooled.data, &mut self.buffer);
         ByteListPool::release(pooled);
         true
     }
 
     /// This can be called _many_ times for the same instance
     /// so it must zero out state instead of make it
-    pub(crate) fn finalize(&mut self) {
+    pub(crate) fn finalize(&self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.is_done() {
             self.unregister_auto_flusher();
@@ -1781,7 +1638,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // chunk and `markDone()`d the response), `end_stream()` would
             // write a second `0\r\n\r\n` that corrupts the next response on a
             // keep-alive connection.
-            if !self.ended_response {
+            if !self.ended_response.get() {
                 if let Some(res) = self.any_res() {
                     // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
                     res.end_stream(false);
@@ -1797,10 +1654,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return;
         }
         if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
-            let buffer = core::mem::take(&mut self.buffer);
-            ByteListPool::push(buffer);
+            ByteListPool::push(self.buffer.take());
         } else {
-            // Don't release this buffer until the sink is dropped
+            // Don't release this buffer until `HTTPServerWritableOwnerRef` is dropped
             self.buffer.clear();
         }
     }
@@ -1810,17 +1666,16 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.pipe.done()
     }
 
-    pub(crate) fn take_pending_flush(&mut self) -> Option<*mut JSPromise> {
+    pub(crate) fn take_pending_flush(&self) -> Option<*mut JSPromise> {
         self.pipe.take_done()
     }
 
-    fn park_pending_flush(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    fn park_pending_flush(&self, global_this: &JSGlobalObject) -> JSValue {
         // end() while a flush(true) waits on the same drain: one promise settles both.
         if let Some(parked) = self.pending_flush() {
             return JSPromise::opaque_ref(parked).to_js();
         }
         let promise = JSPromise::create(global_this).to_js();
-        self.global_this = BackRef::new(global_this);
         self.pipe.set_done(promise);
         promise
     }
@@ -1828,7 +1683,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// Settle a parked `write()` and the pending `flush(true)`/`end()` promise.
     /// Terminal like the settle primitives (`Pending::run`): both resolve with
     /// values built here.
-    pub(crate) fn flush_promise(&mut self) {
+    pub(crate) fn flush_promise(&self) {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
         self.pending.run();
@@ -1839,174 +1694,145 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             let _keep = ::bun_jsc::EnsureStillAlive(JSPromise::opaque_ref(prom).to_js());
             let result = JSPromise::opaque_mut(prom).resolve(
                 global_this,
-                JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
+                JSValue::js_number(
+                    self.wrote
+                        .get()
+                        .saturating_sub(self.wrote_at_start_of_flush.get())
+                        as f64,
+                ),
             );
-            // `this.wrote_at_start_of_flush = this.wrote` must read `this.wrote`
-            // AFTER resolve, which may reenter JS and mutate `wrote`. Read it here,
-            // not before the call.
-            //
-            // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-            // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`
-            // and `resolve()` receives nothing derived from `self`, so LLVM is
-            // licensed to forward the `self.wrote` read used in the
-            // `js_number(...)` argument above into this assignment — defeating
-            // the very ordering the note above exists to preserve. ASM-verified
-            // PROVEN_CACHED. Launder `self` so the post-resolve `wrote` read
-            // goes through an opaque pointer.
-            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-            // SAFETY: `this` is the live heap payload (refcounted via the JS
-            // wrapper); momentary access only.
-            unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
-            // SAFETY: as above.
+            self.wrote_at_start_of_flush.set(self.wrote.get());
             crate::dispatch::fold(result);
         }
     }
 }
 
-impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SSL> {
-    const NAME: &'static str = Self::NAME;
+impl crate::webcore::sink::JsSinkType for HTTPServerWritable {
+    const NAME: &'static str = "HTTPResponseSink";
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(
-        this: &mut Self::Entered<'_>,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(this, cx)
+    fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
 }
 
-impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritable<SSL> {
-    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
-        if SSL {
-            AnyControlledSink::HTTPSResponseSink(this.cast())
-        } else {
-            AnyControlledSink::HTTPResponseSink(this.cast())
-        }
+impl crate::webcore::sink::ControlledSink for HTTPServerWritable {
+    fn to_any_sink(this: RefPtr<Self>) -> AnyControlledSink {
+        AnyControlledSink::HTTPServerWritable(this)
     }
 
-    unsafe fn controller_finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live, and only the RequestContext
-        // frees it (never the inherent `finalize`), so the `&mut`
-        // scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
+    fn controller_finalize(&self) {
+        self.finalize();
     }
 
-    unsafe fn close_with_error(
-        this: *mut Self,
-        _global: &JSGlobalObject,
-        _reason: JSValue,
-    ) -> bun_sys::Result<()> {
-        // SAFETY: caller contract; `fail` does not free the sink.
-        unsafe { (*this).fail() };
+    fn close_with_error(&self, _global: &JSGlobalObject, _reason: JSValue) -> bun_sys::Result<()> {
+        self.fail();
         bun_sys::Result::Ok(())
     }
-    fn controller_created(
-        this: &mut Self::Entered<'_>,
-        controller: JSValue,
-        global: &JSGlobalObject,
-    ) {
-        this.pipe.root(controller, global);
+    fn controller_created(&self, controller: JSValue, global: &JSGlobalObject) {
+        self.pipe.root(controller, global);
     }
-    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
-        Cell::from_mut(&mut this.source)
+    fn source(&self) -> &Cell<SourceHandle> {
+        &self.source
     }
 }
-
-pub(crate) type HTTPSResponseSink = HTTPServerWritable<true>;
-pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub(crate) struct NetworkSink {
-    /// `s3file.writer()`: the JS wrapper's ref and the upload's. Unused in `S3UploadStreamWrapper`'s box.
-    pub(crate) ref_count: RefCount,
+    ref_count: RefCount,
     /// The sink's ref on the upload.
-    pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
-    pub(crate) source: SourceHandle,
+    task: Cell<Option<RefPtr<bun_s3::MultiPartUpload>>>,
+    pub(crate) source: Cell<SourceHandle>,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
-    pub global_this: Option<BackRef<JSGlobalObject>>,
+    global_this: BackRef<JSGlobalObject>,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
     /// parks on `controller.flush(true)` (not the sink's onReady) on backpressure.
     /// Resolved by `on_writable`. The `readStreamIntoSink` pump no longer calls
     /// `flush()` — it resumes via `source.ready()` → the sink's onReady — so no promise
     /// is allocated on that path.
-    pub(crate) flush_promise: JSPromiseStrong,
+    pub(crate) flush_promise: Cell<Option<JSPromiseStrong>>,
     /// Backpressure promise returned from `write()` to a JS controller;
     /// resolved by `on_writable` → `pending.run()`.
     pub(crate) pending: WritablePending,
-    pub(crate) end_promise: JSPromiseStrong,
+    pub(crate) end_promise: Cell<Option<JSPromiseStrong>>,
     /// Upstream ByteStream error stashed by `end_from_stream` so the upload
     /// failure callback can reject with the original JS error (e.g. S3
     /// `NoSuchKey`) instead of the generic `UnknownError` passed to `fail()`.
-    pub(crate) upstream_error: jsc::strong::Optional,
-    /// Keeps the wrapper, which owns this sink, for as long as a `ByteStream` feeds it.
-    pub(crate) native_pump_ref: Option<RefPtr<crate::webcore::s3::client::S3UploadStreamWrapper>>,
-    pub(crate) ended: bool,
-    pub(crate) done: bool,
-}
-
-impl Default for NetworkSink {
-    fn default() -> Self {
-        Self {
-            ref_count: RefCount::init(),
-            task: None,
-            source: SourceHandle::default(),
-            global_this: None,
-            flush_promise: JSPromiseStrong::default(),
-            pending: WritablePending::default(),
-            end_promise: JSPromiseStrong::default(),
-            upstream_error: jsc::strong::Optional::empty(),
-            native_pump_ref: None,
-            ended: false,
-            done: false,
-        }
-    }
+    pub(crate) upstream_error: StrongCell,
+    pub(crate) ended: Cell<bool>,
+    pub(crate) done: Cell<bool>,
 }
 
 impl NetworkSink {
-    /// Borrow the JS global stored at construction.
-    ///
-    /// Invariant: `global_this` is set at construction and the VM-owned global
-    /// outlives this sink (JSC_BORROW). Never `None` once set.
-    #[inline]
-    pub(crate) fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-            .as_ref()
-            .expect("NetworkSink.global_this used before init")
-            .get()
+    pub(crate) fn new(
+        task: RefPtr<bun_s3::MultiPartUpload>,
+        global_this: &JSGlobalObject,
+    ) -> RefPtr<Self> {
+        RefPtr::new(Self {
+            ref_count: RefCount::init(),
+            task: Cell::new(Some(task)),
+            source: Cell::default(),
+            global_this: BackRef::new(global_this),
+            flush_promise: Cell::new(None),
+            pending: WritablePending::default(),
+            end_promise: Cell::new(None),
+            upstream_error: StrongCell::default(),
+            ended: Cell::new(false),
+            done: Cell::new(false),
+        })
     }
 
-    /// Shared borrow of the upload task, if attached.
-    #[inline]
-    fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
-        self.task.as_deref()
-    }
-
-    pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
-        if self.ended {
+    pub(crate) fn start(&self, _stream_start: &Start) -> bun_sys::Result<()> {
+        if self.ended.get() {
             return bun_sys::Result::Ok(());
         }
 
-        self.source.start();
+        self.source.get().start();
         bun_sys::Result::Ok(())
     }
 
-    fn detach_writable(&mut self) {
-        self.task = None;
+    /// Keeps the drop glue out of a build without the feature.
+    fn destroy(last: AliasableBox<Self>) {
+        removable_body_behind_value!(S3Client, { drop(last) })
+    }
+
+    fn task(&self) -> Option<RefPtr<bun_s3::MultiPartUpload>> {
+        self.with_task(RefPtr::clone)
+    }
+
+    /// `f` must not run script: `task` is `None` meanwhile.
+    fn with_task<R>(&self, f: impl FnOnce(&RefPtr<bun_s3::MultiPartUpload>) -> R) -> Option<R> {
+        self.task.with_taken(|task| task.as_ref().map(f))
+    }
+
+    fn detach_writable(&self) {
+        self.task.set(None);
+    }
+
+    /// The stream upload is done with the sink, which its controller holds until it is collected.
+    pub(crate) fn detach(&self) {
+        self.source.take().detach(&self.global_this);
+        self.detach_writable();
+        self.flush_promise.set(None);
+        self.pending.clear();
+        self.end_promise.set(None);
+        self.upstream_error.clear();
     }
 
     /// The `writer()` wrapper was collected before `end()`: nothing can finish the upload, so fail it.
-    fn abort_on_collect(&mut self) {
-        if self.ended {
+    fn abort_on_collect(&self) {
+        if self.ended.get() {
             return;
         }
-        self.ended = true;
-        self.done = true;
+        self.ended.set(true);
+        self.done.set(true);
         if let Some(task) = self.task.take() {
             bun_s3::MultiPartUpload::fail_writer_collected(task);
         }
@@ -2014,56 +1840,40 @@ impl NetworkSink {
 
     /// The S3 upload drained: settle the flush/write promises (terminal, like
     /// `flush_promise`) and wake the source.
-    pub(crate) fn on_writable(
-        task: &bun_s3::MultiPartUpload,
-        this: *mut NetworkSink,
-        flushed: u64,
-    ) {
+    pub(crate) fn on_writable(&self, task: &bun_s3::MultiPartUpload, flushed: u64) {
         bun_core::scoped_log!(
             NetworkSinkLog,
             "onWritable flushed: {} state: {}",
             flushed,
             task.state.get() as u8
         );
-        // SAFETY: `this` is the live sink; each access is scoped and ends
-        // before the re-entrant wake below.
-        let mut source = unsafe {
-            if (*this).flush_promise.has_value() {
-                let global = (*this)
-                    .global_this
-                    .expect("global_this set at construction");
-                let flushed = (*this)
-                    .flush_promise
-                    .resolve(&global, JSValue::js_number(flushed as f64));
-                crate::dispatch::fold(flushed);
-            }
-            (*this).pending.run();
-            (*this).source
-        };
+        if let Some(mut flush_promise) = self.flush_promise.take() {
+            let flushed =
+                flush_promise.resolve(&self.global_this, JSValue::js_number(flushed as f64));
+            crate::dispatch::fold(flushed);
+        }
+        self.pending.run();
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
-        source.ready(None, None);
+        self.source.get().ready(None, None);
     }
 
-    /// The upload of a `writer()` finished. `this.task` may already be `None`.
+    /// The upload of a `writer()` finished. `self.task` may already be `None`.
     pub(crate) fn on_finished(
-        this: &RefPtr<Self>,
+        &self,
         task: &bun_s3::MultiPartUpload,
         result: bun_s3::S3UploadResult,
     ) -> JsResult<()> {
-        // SAFETY: the ref outlives the borrow.
-        let sink = unsafe { &mut *this.as_ptr() };
         let global = &*task.global_this;
-        if sink.end_promise.has_value() || sink.flush_promise.has_value() {
+        if self.end_promise.is_some() || self.flush_promise.is_some() {
             let _exit_guard = global.bun_vm().enter_event_loop_scope();
             match result {
                 bun_s3::S3UploadResult::Success => {
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(global, JSValue::js_number(0.0))?;
+                    if let Some(mut flush_promise) = self.flush_promise.take() {
+                        flush_promise.resolve(global, JSValue::js_number(0.0))?;
                     }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.resolve(
+                    if let Some(mut end_promise) = self.end_promise.take() {
+                        end_promise.resolve(
                             global,
                             JSValue::js_number(task.uploaded_bytes.get() as f64),
                         )?;
@@ -2071,78 +1881,61 @@ impl NetworkSink {
                 }
                 bun_s3::S3UploadResult::Failure(err) => {
                     let js_err = bun_s3::s3_error_to_js(&err, global, Some(&task.path));
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(global, Ok(js_err))?;
+                    if let Some(mut flush_promise) = self.flush_promise.take() {
+                        flush_promise.reject(global, Ok(js_err))?;
                     }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.reject(global, Ok(js_err))?;
+                    if let Some(mut end_promise) = self.end_promise.take() {
+                        end_promise.reject(global, Ok(js_err))?;
                     }
-                    if !sink.done {
-                        sink.abort();
+                    if !self.done.get() {
+                        self.abort();
                     }
                 }
             }
         }
-        sink.detach_writable();
+        self.detach_writable();
         Ok(())
     }
 
     pub(crate) fn flush_from_js(
-        &mut self,
+        &self,
         cx: &bun_jsc::JsThread<'_>,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        if self.flush_promise.has_value() {
-            return bun_sys::Result::Ok(self.flush_promise.value());
-        }
-        if self.done {
-            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                cx.global(),
-                JSValue::js_number(0.0),
-            ));
-        }
-        if self.task_ref().is_some_and(|t| !t.is_queue_empty()) {
-            self.flush_promise = JSPromiseStrong::init(cx.global());
-            return bun_sys::Result::Ok(self.flush_promise.value());
-        }
-        bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-            cx.global(),
-            JSValue::js_number(0.0),
-        ))
+        let has_queued_parts = || !self.with_task(|t| t.is_queue_empty()).unwrap_or(true);
+        let promise = self.flush_promise.with_taken(|promise| {
+            if promise.is_none() && !self.done.get() && has_queued_parts() {
+                *promise = Some(JSPromiseStrong::init(cx.global()));
+            }
+            promise.as_ref().map(JSPromiseStrong::value)
+        });
+        bun_sys::Result::Ok(promise.unwrap_or_else(|| {
+            JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
+        }))
     }
 
-    pub(crate) fn abort(&mut self) {
-        self.ended = true;
-        self.done = true;
-        self.pending.result = Writable::Done;
-        self.pending.run();
-        self.source.close(None);
+    pub(crate) fn abort(&self) {
+        self.ended.set(true);
+        self.done.set(true);
+        self.pending.run_done();
+        self.source.get().close(None);
         self.detach_writable();
     }
 
-    /// The upload queue is full: a JS controller gets a pending Promise so
-    /// `await controller.write()` parks until `on_writable` → `pending.run()`.
-    fn backpressure_result(&mut self, len: BlobSizeType) -> Writable {
-        self.pending.consumed = len;
-        self.pending.result = Writable::Owned(len);
-        Writable::Pending(core::ptr::from_mut(&mut self.pending))
-    }
-
-    pub(crate) fn write(&mut self, data: &StreamResult<'_>) -> Writable {
-        if self.ended {
+    pub(crate) fn write(&self, data: &StreamResult<'_>) -> Writable<'_> {
+        if self.ended.get() {
             return Writable::Owned(0);
         }
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        let Some(task) = &self.task else {
+        let result =
+            self.with_task(|task| bun_s3::MultiPartUpload::write_bytes(task, bytes, false));
+        let Some(result) = result else {
             return Writable::Owned(len);
         };
         // Direct `.writer()` (no source) exposes `write()` as `number`; only
         // the pump paths consume `Backpressure`/`Done`.
-        match (
-            bun_s3::MultiPartUpload::write_bytes(task, bytes, false),
-            self.source,
-        ) {
+        match (result, self.source.get()) {
             (Err(_), _) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
             (Ok(bun_s3::UploadBackpressure::WantMore), _) | (_, SourceHandle::None) => {
                 Writable::Owned(len)
@@ -2151,99 +1944,83 @@ impl NetworkSink {
             (Ok(bun_s3::UploadBackpressure::Backpressure), SourceHandle::ByteStream(_)) => {
                 Writable::Backpressure(len)
             }
-            (Ok(bun_s3::UploadBackpressure::Backpressure), _) => self.backpressure_result(len),
+            (Ok(bun_s3::UploadBackpressure::Backpressure), _) => self.pending.park(len),
         }
     }
 
-    pub(crate) fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
-        if self.ended {
+    pub(crate) fn write_latin1(&self, data: &StreamResult<'_>) -> Writable<'_> {
+        if self.ended.get() {
             return Writable::Owned(0);
         }
 
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        let has_source = !matches!(self.source, SourceHandle::None);
+        let has_source = !matches!(self.source.get(), SourceHandle::None);
 
-        let result = match &self.task {
-            Some(task) => bun_s3::MultiPartUpload::write_latin1(task, bytes, false),
-            None => return Writable::Owned(len),
+        let result =
+            self.with_task(|task| bun_s3::MultiPartUpload::write_latin1(task, bytes, false));
+        let Some(result) = result else {
+            return Writable::Owned(len);
         };
         match result {
-            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                self.backpressure_result(len)
-            }
+            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => self.pending.park(len),
             Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
             Ok(_) => Writable::Owned(len),
             Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         }
     }
 
-    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
-        if self.ended {
+    pub(crate) fn write_utf16(&self, text: &[u16]) -> Writable<'_> {
+        if self.ended.get() {
             return Writable::Owned(0);
         }
         let len = size_of_val(text) as BlobSizeType;
-        let has_source = !matches!(self.source, SourceHandle::None);
+        let has_source = !matches!(self.source.get(), SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        let result = match &self.task {
-            Some(task) => bun_s3::MultiPartUpload::write_utf16(task, text, false),
-            None => return Writable::Owned(len),
+        let result = self.with_task(|task| bun_s3::MultiPartUpload::write_utf16(task, text, false));
+        let Some(result) = result else {
+            return Writable::Owned(len);
         };
         match result {
-            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                self.backpressure_result(len)
-            }
+            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => self.pending.park(len),
             Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
             Ok(_) => Writable::Owned(len),
             Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         }
     }
 
-    pub(crate) fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        if self.ended {
+    pub(crate) fn end(&self, err: Option<SysError>) -> bun_sys::Result<()> {
+        if self.ended.get() {
             return bun_sys::Result::Ok(());
         }
 
         // send EOF
-        self.ended = true;
-        self.pending.result = Writable::Done;
-        self.pending.run();
+        self.ended.set(true);
+        self.pending.run_done();
         // flush everything and send EOF
-        if let Some(task) = &self.task {
-            let _ = bun_s3::MultiPartUpload::write_bytes(task, b"", true);
+        if let Some(task) = self.task() {
+            let _ = bun_s3::MultiPartUpload::write_bytes(&task, b"", true);
             // bun.handleOom → Rust aborts on OOM
         }
 
-        self.source.close(err);
+        self.source.get().close(err);
         bun_sys::Result::Ok(())
     }
 
     /// JS-pump terminator for a source that failed. Unlike `end()`, the upload
     /// is aborted, not committed; the stashed reason becomes the caller's
-    /// rejection. The pump's reject reaction still releases the pump ref, so
-    /// no wrapper deref here.
-    ///
-    /// Raw `*mut Self`: `task.fail()` synchronously fires
-    /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
-    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
-        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
-        // borrow ends before `fail` re-enters.
-        let task_ref = unsafe {
-            if (*this).ended {
-                return;
-            }
-            (*this).ended = true;
-            (*this).done = true;
-            (*this).pending.result = Writable::Done;
-            (*this).pending.run();
-            if !reason.is_empty_or_undefined_or_null() {
-                (*this).upstream_error.set(global, reason);
-            }
-            // Our own ref: `fail` re-enters and may clear `(*this).task`.
-            (*this).task.clone()
-        };
-        let Some(task) = task_ref else {
+    /// rejection.
+    pub(crate) fn fail_from_js_pump(&self, global: &JSGlobalObject, reason: JSValue) {
+        if self.ended.replace(true) {
+            return;
+        }
+        self.done.set(true);
+        self.pending.run_done();
+        if !reason.is_empty_or_undefined_or_null() {
+            self.upstream_error.set(global, reason);
+        }
+        let Some(task) = self.task() else {
             return;
         };
         let _ = task.fail(bun_s3_signing::error::S3Error {
@@ -2255,52 +2032,30 @@ impl NetworkSink {
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
-    ///
-    /// Raw `*mut Self` because `task.fail()` will synchronously
-    /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
-    /// releasing the pump's ref may free `*this` via `detach_sink`.
-    pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
-        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
-        // reborrows below do not span the re-entrant `fail` call.
-        let (ended, is_bytestream) = unsafe {
-            (
-                (*this).ended,
-                matches!((*this).source, SourceHandle::ByteStream(_)),
-            )
-        };
-        if ended {
+    pub(crate) fn end_from_stream(&self, err: Option<StreamError>) {
+        if self.ended.get() {
             return;
         }
-        if !is_bytestream {
+        if !matches!(self.source.get(), SourceHandle::ByteStream(_)) {
             let sys_err = match err {
                 Some(StreamError::Error(e)) => Some(e),
                 _ => None,
             };
-            // SAFETY: `end()` does not free `*this` or re-enter the sink;
-            // exclusive borrow scoped to the call.
-            let _ = unsafe { (*this).end(sys_err) };
+            let _ = self.end(sys_err);
             return;
         }
-        // SAFETY: scoped accesses for field writes; no re-entry in this block.
-        let (task, _pump_ref) = unsafe {
-            (*this).ended = true;
-            (*this).source.clear();
-            // Our own ref: `fail` re-enters and may clear `(*this).task`.
-            let Some(task) = (*this).task.clone() else {
-                return;
-            };
-            if let Some(err) = &err {
-                (*this).done = true;
-                let global = (*this)
-                    .global_this
-                    .expect("NetworkSink.global_this set at construction");
-                let js_err = err.to_js(&global);
-                if !js_err.is_empty_or_undefined_or_null() {
-                    (*this).upstream_error.set(&global, js_err);
-                }
-            }
-            (task, (*this).native_pump_ref.take())
+        self.ended.set(true);
+        self.source.set(SourceHandle::None);
+        let Some(task) = self.task() else {
+            return;
         };
+        if let Some(err) = &err {
+            self.done.set(true);
+            let js_err = err.to_js(&self.global_this);
+            if !js_err.is_empty_or_undefined_or_null() {
+                self.upstream_error.set(&self.global_this, js_err);
+            }
+        }
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",
@@ -2311,19 +2066,17 @@ impl NetworkSink {
         }
     }
 
-    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
-        if self.end_promise.has_value() {
-            // we are already waiting for the end
-            return bun_sys::Result::Ok(self.end_promise.value());
-        }
-        if self.task.is_some() && !self.done {
-            // we need to wait for the task to end
-            self.end_promise = JSPromiseStrong::init(self.global_this());
-            return bun_sys::Result::Ok(self.end_promise.value());
-        }
-        // task already detached
-        bun_sys::Result::Ok(JSValue::js_number(0.0))
+        let promise = self.end_promise.with_taken(|promise| {
+            if promise.is_none() && self.task.is_some() && !self.done.get() {
+                // we need to wait for the task to end
+                *promise = Some(JSPromiseStrong::init(&self.global_this));
+            }
+            promise.as_ref().map(JSPromiseStrong::value)
+        });
+        // `None`: task already detached
+        bun_sys::Result::Ok(promise.unwrap_or_else(|| JSValue::js_number(0.0)))
     }
 
     pub(crate) fn to_js(this: RefPtr<Self>, global_this: &JSGlobalObject) -> JSValue {
@@ -2332,11 +2085,9 @@ impl NetworkSink {
 
     pub(crate) fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        if let Some(task) = self.task_ref() {
-            //TODO: we could do better here
-            return task.buffered.get().memory_cost();
-        }
-        0
+        //TODO: we could do better here
+        self.with_task(|task| task.buffered.get().memory_cost())
+            .unwrap_or(0)
     }
 
     pub(crate) const NAME: &'static str = "NetworkSink";
@@ -2345,19 +2096,23 @@ impl NetworkSink {
 /// The JS wrapper's ref.
 pub(crate) struct NetworkSinkWrapperRef(RefPtr<NetworkSink>);
 
+impl Borrow<NetworkSink> for NetworkSinkWrapperRef {
+    fn borrow(&self) -> &NetworkSink {
+        &self.0
+    }
+}
+
 impl Drop for NetworkSinkWrapperRef {
     fn drop(&mut self) {
-        // SAFETY: the ref outlives the borrow, and neither call runs script.
-        let sink = unsafe { &mut *self.0.as_ptr() };
-        sink.abort_on_collect();
-        sink.detach_writable();
+        self.0.abort_on_collect();
+        self.0.detach_writable();
     }
 }
 
 impl crate::webcore::sink::WrappedSink for NetworkSink {
     type Wrapped = NetworkSinkWrapperRef;
-    fn as_non_null(wrapped: &NetworkSinkWrapperRef) -> NonNull<Self> {
-        wrapped.0.as_non_null()
+    fn wrapper_closed(&self) {
+        self.detach_writable();
     }
 }
 
@@ -2366,34 +2121,26 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(
-        this: &mut Self::Entered<'_>,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(this, cx)
+    fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
 }
 
 impl crate::webcore::sink::ControlledSink for NetworkSink {
-    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
+    fn to_any_sink(this: RefPtr<Self>) -> AnyControlledSink {
         AnyControlledSink::NetworkSink(this)
     }
 
-    unsafe fn controller_finalize(this: *mut Self) {
-        // SAFETY: trait contract.
-        unsafe { (*this).detach_writable() }
+    fn controller_finalize(&self) {
+        self.detach_writable();
     }
 
-    unsafe fn close_with_error(
-        this: *mut Self,
-        global: &JSGlobalObject,
-        reason: JSValue,
-    ) -> bun_sys::Result<()> {
-        Self::fail_from_js_pump(this, global, reason);
+    fn close_with_error(&self, global: &JSGlobalObject, reason: JSValue) -> bun_sys::Result<()> {
+        self.fail_from_js_pump(global, reason);
         bun_sys::Result::Ok(())
     }
-    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
-        Cell::from_mut(&mut this.source)
+    fn source(&self) -> &Cell<SourceHandle> {
+        &self.source
     }
 }
 

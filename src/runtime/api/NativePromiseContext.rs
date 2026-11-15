@@ -287,8 +287,7 @@ impl DeferredDerefTask {
                 Tag::HTMLRewriterSuspension => unsafe {
                     RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()).abandon_suspension()
                 },
-                // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
-                // trailing `controller_finalize` is a no-op for this sink).
+                // SAFETY: a `PipePin` handed over the pipe's last ref.
                 Tag::HTMLRewriterPipeFree => unsafe {
                     RefPtr::decrement_strong_count(ctx.cast::<html_rewriter::RewriterPipe>())
                 },

@@ -19,10 +19,10 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, HeadersRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
-    WeakGlobalRef,
+    self as jsc, GlobalRef, HeadersRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongCell,
+    StrongOptional, WeakGlobalRef,
 };
-use bun_ptr::{AliasableBox, RefPtr};
+use bun_ptr::RefPtr;
 use bun_threading::{Mutex, MutexGuard};
 use bun_url::URL as ZigURL;
 
@@ -133,8 +133,7 @@ use http::signals::BodyReceiveMode;
 
 #[derive(bun_ptr::RefCounted)]
 pub struct FetchTasklet {
-    /// The JS controller holds a detachable back-pointer into it.
-    sink: Option<AliasableBox<FetchRequestBodySink>>,
+    sink: Option<RefPtr<FetchRequestBodySink>>,
     /// `None` before the request is built and in `drop`.
     async_http_id: Option<u32>,
     method: Method,
@@ -162,9 +161,9 @@ pub struct FetchTasklet {
     pub(crate) request_headers: Headers,
     /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
     pub(crate) declared_request_body_len: Option<u64>,
-    pub(crate) request_body_len_written: u64,
+    pub(crate) request_body_len_written: Cell<u64>,
     /// The count missed and `WriteMessageType::LengthMismatch` was sent.
-    pub(crate) request_body_mismatched: bool,
+    pub(crate) request_body_mismatched: Cell<bool>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
@@ -188,7 +187,7 @@ pub struct FetchTasklet {
     pub(crate) has_schedule_callback: AtomicBool,
 
     // must be stored because AbortSignal stores reason weakly
-    pub(crate) abort_reason: StrongOptional,
+    abort_reason: StrongCell,
 
     // custom checkServerIdentity
     pub(crate) check_server_identity: StrongOptional,
@@ -202,7 +201,7 @@ pub struct FetchTasklet {
     pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) is_waiting_body: bool,
     pub(crate) is_waiting_abort: bool,
-    pub(crate) is_waiting_request_stream_start: bool,
+    pub(crate) is_waiting_request_stream_start: Cell<bool>,
     pub(crate) mutex: Mutex,
 
     pub(crate) tracker: AsyncTaskTracker,
@@ -327,16 +326,15 @@ impl HTTPRequestBody {
 
 jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live; JS thread.
-    unsafe {
-        match cause {
-            jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
-            jsc::AbortCause::ContextStopped(jsc::StopReason::VmTeardown) => {
-                (*this).abort_task();
-                drop((*this).detach_native_request_body_sink());
-            }
-            // The VM keeps running, so the final progress update cancels the request body sink.
-            jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
+    let this = unsafe { RefPtr::init_ref(this) };
+    match cause {
+        jsc::AbortCause::Signal(reason) => this.abort_listener(reason),
+        jsc::AbortCause::ContextStopped(jsc::StopReason::VmTeardown) => {
+            this.abort_task();
+            this.detach_native_request_body_sink();
         }
+        // The VM keeps running, so the final progress update cancels the request body sink.
+        jsc::AbortCause::ContextStopped(_) => this.abort_task(),
     }
 });
 
@@ -372,8 +370,7 @@ impl FetchTasklet {
     /// Recover `&mut Self` from a `*mut FetchTasklet` callback arg.
     ///
     /// INVARIANT: every `*mut FetchTasklet` threaded through the HTTP-thread
-    /// callback (`callback`), the drain hook (`on_write_request_data_drain` /
-    /// `resume_request_data_stream`), and the JS-thread enqueue
+    /// callback (`callback`), the drain hook (`on_write_request_data_drain`), and the JS-thread enqueue
     /// (`queue` → `node`) was produced by `heap::into_raw(Box<FetchTasklet>)`
     /// in `get()` and is kept alive by the intrusive `ref_count` until
     /// `drop`. Access on either thread is serialised: HTTP-thread writes
@@ -392,16 +389,8 @@ impl FetchTasklet {
 
     /// True iff an attached AbortSignal has fired.
     #[inline]
-    pub(crate) fn signal_aborted(&mut self) -> bool {
-        self.abort_handle.signal().is_some_and(|s| s.aborted())
-    }
-
-    /// Mutable access to the request-body sink while `self.sink` is `Some`
-    /// (owned allocation from `start_request_stream` until `clear_sink`).
-    #[inline]
-    pub(crate) fn sink_mut(&mut self) -> Option<&mut FetchRequestBodySink> {
-        // SAFETY: owned by `self`, and JS-thread-only.
-        self.sink.as_ref().map(|p| unsafe { &mut *p.as_ptr() })
+    pub(crate) fn signal_aborted(&self) -> bool {
+        self.abort_handle.signal_aborted()
     }
 
     /// HTTP thread only.
@@ -409,18 +398,13 @@ impl FetchTasklet {
         &self.http_ref.as_ref().expect(Self::HOLDS_REF).ticket
     }
 
-    fn take_request_stream_ref(&mut self) -> Option<RefPtr<Self>> {
-        self.sink_mut()?.task.take()
+    fn take_request_stream_ref(&self) -> Option<RefPtr<Self>> {
+        self.sink.as_ref()?.task.take()
     }
 
     fn clear_sink(&mut self) {
-        if let Some(owned) = self.sink.take() {
-            // SAFETY: JS thread; the controller's back-pointer is cleared by `detach` below.
-            let sink = unsafe { &mut *owned.as_ptr() };
-            let _stream_ref = sink.task.take();
-            // `detach` may fire the controller's onClose; every terminal path
-            // here has already cleared it, so this just detaches the controller.
-            sink.source.detach(VirtualMachine::get().global());
+        if let Some(sink) = self.sink.take() {
+            sink.detach(VirtualMachine::get().global());
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`
@@ -474,7 +458,7 @@ impl FetchTasklet {
     }
 
     fn start_request_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        self.is_waiting_request_stream_start = false;
+        self.is_waiting_request_stream_start.set(false);
         debug_assert!(matches!(
             self.request_body,
             HTTPRequestBody::ReadableStream(_)
@@ -504,26 +488,21 @@ impl FetchTasklet {
         }
 
         let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
-        let owned = self.sink.insert(AliasableBox::new(FetchRequestBodySink {
-            // SAFETY: `self` is the live heap tasklet.
-            task: Some(unsafe { RefPtr::init_ref(self_ptr) }),
-            high_water_mark: 16384,
-            ..Default::default()
-        }));
-        // SAFETY: just allocated, and freed by `clear_sink` after its last use here.
-        let sink = unsafe { &mut *owned.as_ptr() };
-        let sink_handle = SinkHandle::FetchRequestBody(bun_ptr::BackRef::new_mut(sink));
+        // SAFETY: `self` is the live heap tasklet.
+        let sink = FetchRequestBodySink::new(unsafe { RefPtr::init_ref(self_ptr) });
+        self.sink = Some(sink.clone());
+        let sink_handle = SinkHandle::FetchRequestBody(sink.clone());
 
         // Native ByteStream/FileReader fast-path: wire the SinkHandle
         // directly, skipping the JS pump.
-        match stream.wire_native_sink(global_this, sink_handle, JSValue::UNDEFINED, |src| {
-            sink.source = src;
+        match stream.wire_native_sink(global_this, &sink_handle, JSValue::UNDEFINED, |src| {
+            sink.source.set(src);
         }) {
             crate::webcore::readable_stream::NativeWireResult::Wired => return Ok(()),
             crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
                 // The state that `end_from_stream` leaves it in.
-                sink.ended = true;
-                sink.source.clear();
+                sink.ended.set(true);
+                sink.source.set(SourceHandle::None);
                 let _stream_ref = sink.task.take();
                 let err_js = err.map(|err| {
                     let err_js = err.to_js(global_this);
@@ -536,11 +515,8 @@ impl FetchTasklet {
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
 
-        let assignment_result = ReadableSinkController::assign_to_stream(
-            global_this,
-            stream.value,
-            core::ptr::NonNull::from(&mut *sink),
-        );
+        let assignment_result =
+            ReadableSinkController::assign_to_stream(global_this, stream.value, &sink);
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
@@ -629,7 +605,7 @@ impl FetchTasklet {
             // leave a buffered `arrayBuffer()`/`text()` promise pending
             // forever when a fetch with an in-flight streaming request body
             // was aborted mid-response.
-            if self.sink_mut().is_some() && js_err.is_empty() {
+            if self.sink.is_some() && js_err.is_empty() {
                 js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
             }
@@ -786,7 +762,7 @@ impl FetchTasklet {
             return Ok(());
         };
 
-        if self.is_waiting_request_stream_start && self.result.can_stream {
+        if self.is_waiting_request_stream_start.get() && self.result.can_stream {
             // Fails only if the VM is being stopped.
             self.start_request_stream(&global_this)?;
             // Makes wpt-h2 number-chunk test deterministic.
@@ -948,7 +924,7 @@ impl FetchTasklet {
         // via writeEndRequest while the HTTP result is still a success — server HEADERS
         // raced ahead of the scheduled shutdown. Reject with that reason instead of
         // resolving a 200 Response. Makes wpt-h2 number-chunk test deterministic.
-        if success && self.abort_reason.has() {
+        if success && self.abort_reason.is_some() {
             let promise = promise_value.as_any_promise().unwrap();
             let tracker = self.tracker;
             // get_abort_error consumes abort_reason and clears the signal handler.
@@ -973,7 +949,7 @@ impl FetchTasklet {
             // Cancel the request-body sink last (as on_body_received does):
             // closing the sink signal runs the user's cancel callback
             // synchronously, so the body error must already be stored.
-            if self.result.fail.is_some() && self.sink_mut().is_some() {
+            if self.result.fail.is_some() && self.sink.is_some() {
                 let mut err = self.on_reject(global_this);
                 let err_js = err.to_js(global_this);
                 err_js.ensure_still_alive();
@@ -1104,8 +1080,8 @@ impl FetchTasklet {
     }
 
     fn get_abort_error(&mut self, global_this: &JSGlobalObject) -> Option<BodyValueError> {
-        if self.abort_reason.has() {
-            let out = core::mem::replace(&mut self.abort_reason, StrongOptional::empty());
+        if self.abort_reason.is_some() {
+            let out = self.abort_reason.take().into();
             self.clear_abort_signal();
             return Some(BodyValueError::JSValue(out));
         }
@@ -1164,7 +1140,7 @@ impl FetchTasklet {
         if fail == http::Error::RequestBodyLengthMismatch
             && let Some(declared) = self.declared_request_body_len
         {
-            let written = self.request_body_len_written;
+            let written = self.request_body_len_written.get();
             let err = global_this
                 .err(
                     jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
@@ -1779,8 +1755,8 @@ impl FetchTasklet {
             response_stream: Default::default(),
             request_headers: fetch_options.headers,
             declared_request_body_len: None,
-            request_body_len_written: 0,
-            request_body_mismatched: false,
+            request_body_len_written: Cell::new(0),
+            request_body_mismatched: Cell::new(false),
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: KeepAlive::default(),
@@ -1792,7 +1768,7 @@ impl FetchTasklet {
             signals: Signals::default(),
             signal_store: http::signals::Store::unclaimed(),
             has_schedule_callback: AtomicBool::new(false),
-            abort_reason: StrongOptional::empty(),
+            abort_reason: StrongCell::default(),
             check_server_identity: fetch_options.check_server_identity,
             fetch_session: fetch_options.fetch_session,
             session_check_server_identity: fetch_options.session_check_server_identity,
@@ -1801,7 +1777,7 @@ impl FetchTasklet {
             unix_socket_path: fetch_options.unix_socket_path,
             is_waiting_body: false,
             is_waiting_abort: false,
-            is_waiting_request_stream_start: false,
+            is_waiting_request_stream_start: Cell::new(false),
             mutex: Mutex::new(),
             tracker: AsyncTaskTracker::init(cx.vm()),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -1914,7 +1890,7 @@ impl FetchTasklet {
         http.client.flags.is_streaming_request_body = is_stream;
         http.client.flags.forced_protocol = fetch_options.forced_protocol;
         http.client.flags.is_node_http_client = fetch_options.is_node_http_client;
-        fetch_tasklet.is_waiting_request_stream_start = is_stream;
+        fetch_tasklet.is_waiting_request_stream_start.set(is_stream);
         if is_stream {
             // An upgraded connection tunnels its "body", so those bytes are not counted.
             let framing = fetch_options.stream_framing;
@@ -1957,14 +1933,14 @@ impl FetchTasklet {
         Ok((fetch_tasklet_ptr, http))
     }
 
-    pub(crate) fn abort_listener(&mut self, reason: JSValue) {
+    pub(crate) fn abort_listener(&self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
         reason.ensure_still_alive();
         this.abort_reason
             .set(VirtualMachine::get().global(), reason);
         this.abort_task();
-        if this.sink_mut().is_some() {
+        if this.sink.is_some() {
             this.cancel_request_body_sink(reason);
             return;
         }
@@ -1972,9 +1948,9 @@ impl FetchTasklet {
         // ReadableStream was never wired into a sink. Cancel it directly so
         // the underlying source's cancel(reason) callback still observes the
         // signal's reason (https://fetch.spec.whatwg.org/#abort-fetch step 5).
-        if this.is_waiting_request_stream_start {
+        if this.is_waiting_request_stream_start.get() {
             if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
-                this.is_waiting_request_stream_start = false;
+                this.is_waiting_request_stream_start.set(false);
                 if let Some(stream) = stream_ref.get()
                     && let Some(global_this) = this.global_this.get()
                 {
@@ -1994,10 +1970,9 @@ impl FetchTasklet {
 
     /// This is ALWAYS called from the main thread
     pub(crate) fn resume_request_data_stream(this: &RefPtr<FetchTasklet>) {
-        let this_ref = Self::from_raw_mut(this.as_ptr());
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
-        if !this_ref.signal_aborted() {
-            if let Some(sink) = this_ref.sink_mut() {
+        if !this.signal_aborted() {
+            if let Some(sink) = this.sink.clone() {
                 sink.on_drain();
             }
         }
@@ -2009,9 +1984,9 @@ impl FetchTasklet {
     }
 
     /// The HTTP thread decides: only it knows whether a followed redirect already dropped the body.
-    fn report_content_length_mismatch(&mut self, written: u64) {
-        self.request_body_len_written = written;
-        self.request_body_mismatched = true;
+    fn report_content_length_mismatch(&self, written: u64) {
+        self.request_body_len_written.set(written);
+        self.request_body_mismatched.set(true);
         if let Some(id) = self.async_http_id {
             http::HTTPThread::schedule_request_write(
                 id,
@@ -2024,11 +1999,11 @@ impl FetchTasklet {
     /// sink's configured HWM so the backpressure threshold tracks
     /// `start({ highWaterMark })`.
     pub(crate) fn write_request_data(
-        &mut self,
+        &self,
         data: EncodedChunk<'_>,
         high_water_mark: usize,
-    ) -> Writable {
-        if self.signal_aborted() || self.request_body_mismatched {
+    ) -> Writable<'static> {
+        if self.signal_aborted() || self.request_body_mismatched.get() {
             return Writable::Done;
         }
         // An empty chunk is a no-op on every framing path. It must not reach
@@ -2046,6 +2021,7 @@ impl FetchTasklet {
         if let Some(declared) = self.declared_request_body_len {
             let written = self
                 .request_body_len_written
+                .get()
                 .saturating_add(utf8_len as u64);
             if written > declared {
                 self.report_content_length_mismatch(written);
@@ -2054,7 +2030,7 @@ impl FetchTasklet {
                     bun_sys::Tag::write,
                 ));
             }
-            self.request_body_len_written = written;
+            self.request_body_len_written.set(written);
         }
         let len = utf8_len as BlobSizeType;
         let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer.as_deref() else {
@@ -2103,14 +2079,14 @@ impl FetchTasklet {
         result
     }
 
-    pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
+    pub(crate) fn write_end_request(&self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
-        if self.request_body_mismatched {
+        if self.request_body_mismatched.get() {
             // The pump ending on the `Writable::Err` the mismatch gave it; already reported.
             return;
         }
         if let Some(js_error) = err {
-            if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
+            if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.is_some() {
                 return;
             }
             if !js_error.is_undefined_or_null() {
@@ -2123,7 +2099,7 @@ impl FetchTasklet {
                 return;
             }
             // Short of the announced length, the peer would wait for the rest forever.
-            let written = self.request_body_len_written;
+            let written = self.request_body_len_written.get();
             if let Some(declared) = self.declared_request_body_len
                 && written < declared
             {
@@ -2175,52 +2151,49 @@ impl FetchTasklet {
     /// Cancel an in-flight request-body sink: stores the abort reason, aborts
     /// the HTTP task, marks the sink ended/done, and fires the controller's
     /// onClose (which cancels the upstream ReadableStream reader).
-    pub(crate) fn cancel_request_body_sink(&mut self, reason: JSValue) {
-        let Some(sink) = self.sink_mut() else {
+    pub(crate) fn cancel_request_body_sink(&self, reason: JSValue) {
+        let Some(sink) = self.sink.clone() else {
             return;
         };
-        if sink.ended {
+        if sink.ended.get() {
             return;
         }
-        sink.ended = true;
-        sink.done = true;
+        sink.ended.set(true);
+        sink.done.set(true);
         let is_native = matches!(
-            sink.source,
+            sink.source.get(),
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
         );
-        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
+        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.is_some() {
             self.abort_reason
                 .set(VirtualMachine::get().global(), reason);
         }
         self.abort_task();
-        if let Some(sink) = self.sink_mut() {
-            sink.pending.result = Writable::Done;
-            sink.pending.run();
-            sink.source.close(None);
-            if is_native {
-                // No pump promise will settle. This may be the last ref.
-                drop(sink.task.take());
-            }
+        sink.pending.run_done();
+        sink.source.get().close(None);
+        if is_native {
+            // No pump promise will settle.
+            sink.task.set(None);
         }
     }
 
     /// Ends a request body sink that's wired to a native source. VM teardown drops the progress
     /// update without running it and destroys the source without ending its sink. A sink fed by
     /// a JS pump is finalized by its controller cell instead.
-    fn detach_native_request_body_sink(&mut self) -> Option<RefPtr<Self>> {
-        let sink = self.sink_mut()?;
-        if sink.ended
+    fn detach_native_request_body_sink(&self) {
+        let Some(sink) = &self.sink else { return };
+        if sink.ended.get()
             || !matches!(
-                sink.source,
+                sink.source.get(),
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
             )
         {
-            return None;
+            return;
         }
-        sink.ended = true;
-        sink.done = true;
-        sink.source.detach(VirtualMachine::get().global());
-        sink.task.take()
+        sink.ended.set(true);
+        sink.done.set(true);
+        sink.source.take().detach(VirtualMachine::get().global());
+        sink.task.set(None);
     }
 
     pub(crate) fn queue(

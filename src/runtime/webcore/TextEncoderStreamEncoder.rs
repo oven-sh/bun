@@ -6,7 +6,6 @@ use bun_jsc::{ArrayBuffer, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 
 use crate::webcore::sink::ReadableSinkController;
-use crate::webcore::streams;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
@@ -285,14 +284,11 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         return JSValue::UNDEFINED;
     }
     // The sink copies what it needs.
-    let handle = controller.sink_handle();
-    if handle.is_none() {
+    let Some(wrote) = controller.write_native(&buf) else {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
-    }
-    let wrote = handle
-        .write(&streams::Result::Temporary(&buf))
-        .to_js(&global.js_thread_of_caller());
+    };
+    let wrote = wrote.to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -310,11 +306,9 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
-    let handle = controller.sink_handle();
-    if handle.is_none() {
-        return JSValue::UNDEFINED;
-    }
-    handle
-        .write(&streams::Result::Temporary(&REPLACEMENT))
-        .to_js(&global.js_thread_of_caller())
+    controller
+        .write_native(&REPLACEMENT)
+        .map_or(JSValue::UNDEFINED, |wrote| {
+            wrote.to_js(&global.js_thread_of_caller())
+        })
 }

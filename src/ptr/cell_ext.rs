@@ -60,6 +60,10 @@ pub trait VecCellExt<T> {
     fn extend_from_slice(&self, values: &[T])
     where
         T: Copy;
+
+    fn clear(&self)
+    where
+        T: Copy;
 }
 
 impl<T> VecCellExt<T> for Cell<Vec<T>> {
@@ -104,6 +108,14 @@ impl<T> VecCellExt<T> for Cell<Vec<T>> {
             }
             reserve_vec(self, values.len());
         }
+    }
+
+    fn clear(&self)
+    where
+        T: Copy,
+    {
+        // SAFETY: as in `len`, and a `Copy` `T` has no drop glue.
+        unsafe { &mut *self.as_ptr() }.clear();
     }
 }
 
@@ -237,6 +249,14 @@ mod tests {
         assert_eq!(cell.len(), 2);
         assert!(cell.capacity() >= 3);
         assert_eq!(cell.take(), [1, 2]);
+    }
+
+    #[test]
+    fn clear_keeps_the_capacity() {
+        let cell = Cell::new(vec![1u8, 2, 3]);
+        cell.clear();
+        assert!(cell.is_empty());
+        assert!(cell.capacity() >= 3);
     }
 
     #[test]

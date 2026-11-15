@@ -5733,3 +5733,110 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
     socket.destroy();
   }
 });
+
+describe("a handler that runs the event loop", () => {
+  // Bun.build() runs the event loop until an async setup() settles.
+  const runLoop = (setup: () => Promise<void>) =>
+    Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+
+  // The round trip leaves nothing of the handshake in flight.
+  async function open(port: number, secure: boolean) {
+    const options = { port, host: "127.0.0.1", ca: tls.cert };
+    const socket = secure ? nodeTls.connect(options) : connect(options);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", chunk => (received += chunk).endsWith("\r\n\r\nready") && resolve());
+    socket.on("error", reject).on("close", reject);
+    socket.write("GET /ready HTTP/1.1\r\nHost: x\r\n\r\n");
+    await promise;
+    return socket;
+  }
+
+  it.each([false, true])("keeps the bytes of its own read (tls: %p)", async secure => {
+    const seen: string[] = [];
+    const nested = Promise.withResolvers<void>();
+    let built: Promise<unknown> | undefined;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req) {
+        if (req.method === "PUT") {
+          built = runLoop(() => {
+            other.write(`GET /other HTTP/1.1\r\nHost: x\r\nCookie: ${Buffer.alloc(200, "o")}\r\n\r\n`);
+            return nested.promise;
+          });
+        }
+        const { pathname } = new URL(req.url);
+        if (pathname === "/ready") return new Response("ready");
+        if (pathname === "/other" && req.method === "GET") return (nested.resolve(), new Response());
+        const head = `${req.method} ${pathname} ${req.headers.get("cookie")}`;
+        if (req.method === "PUT") return (seen.push(head), new Response());
+        return req.text().then(body => (seen.push(`${head} ${body}`), new Response()));
+      },
+    });
+    const [first, other] = [await open(server.port!, secure), await open(server.port!, secure)];
+    other.on("close", nested.reject);
+    try {
+      first.write(
+        "PUT /1 HTTP/1.1\r\nHost: x\r\nCookie: a\r\n\r\n" +
+          "POST /2 HTTP/1.1\r\nHost: x\r\nCookie: b\r\nConnection: close\r\nContent-Length: 4\r\n\r\nbody",
+      );
+      await once(first, "close");
+      expect(seen).toEqual(["PUT /1 a", "POST /2 b body"]);
+      await built;
+    } finally {
+      first.destroy();
+      other.destroy();
+    }
+  });
+
+  it.each(["before", "inside", "after"])("upgrades its own socket %s a nested request", async when => {
+    const seen: unknown[] = [];
+    const nested = Promise.withResolvers<void>();
+    let built: Promise<unknown> | undefined;
+    let outer: Request;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 1,
+      fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/ready") return new Response("ready");
+        if (pathname === "/other") {
+          if (when === "inside") seen.push(server.upgrade(outer));
+          return req
+            .text()
+            .then(body => (seen.push(body), new Response()))
+            .finally(nested.resolve);
+        }
+        outer = req;
+        if (when === "before") seen.push(server.upgrade(req));
+        built = runLoop(() => {
+          other.write("POST /other HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nbody");
+          return nested.promise;
+        });
+        if (when === "after") seen.push(server.upgrade(req));
+      },
+      websocket: {
+        message(ws, message) {
+          seen.push(message);
+          ws.close();
+        },
+      },
+    });
+    const [first, other] = [await open(server.port!, false), await open(server.port!, false)];
+    try {
+      const head =
+        "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+      first.write(Buffer.concat([Buffer.from(head), Buffer.from([0x81, 0x82, 0, 0, 0, 0]), Buffer.from("hi")]));
+      await once(first, "close");
+      expect(seen).toEqual(when === "after" ? ["body", true, "hi"] : [true, "body", "hi"]);
+      await built;
+    } finally {
+      first.destroy();
+      other.destroy();
+    }
+  });
+});

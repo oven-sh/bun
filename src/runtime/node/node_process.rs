@@ -1,10 +1,8 @@
 //! Process information and control APIs (`globalThis.process` / `node:process`)
 
-use core::ffi::c_char;
-
 use bun_core::EncodedSlice;
 use bun_core::env_var;
-use bun_core::{self, Environment, Global, WTFStringImplStruct};
+use bun_core::{self, CStrRef, Environment, Global, WTFStringImplStruct};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
 // Both materialize the array on first access through `Bun__Process__createArgv`
@@ -172,33 +170,17 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
     disabled.len()
 }
 
-// Raw-pointer statics are `!Sync`; wrap in a
-// `#[repr(transparent)]` newtype so the C++ side still sees a single
-// `const char*`-sized symbol.
-#[repr(transparent)]
-struct CStrPtr(*const c_char);
-// SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
-// rodata literal produced by `concatcp!`; it is never written through.
-unsafe impl Sync for CStrPtr {}
-
 #[unsafe(no_mangle)]
-static Bun__version: CStrPtr = CStrPtr(
-    const_format::concatcp!("v", Global::package_json_version, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
+static Bun__version: CStrRef<'static> = CStrRef::from_slice_with_nul(
+    const_format::concatcp!("v", Global::package_json_version, "\0").as_bytes(),
 );
 #[unsafe(no_mangle)]
-static Bun__version_with_sha: CStrPtr = CStrPtr(
-    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
+static Bun__version_with_sha: CStrRef<'static> = CStrRef::from_slice_with_nul(
+    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0").as_bytes(),
 );
 #[unsafe(no_mangle)]
-static Bun__version_sha: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
+static Bun__version_sha: CStrRef<'static> =
+    CStrRef::from_slice_with_nul(const_format::concatcp!(Environment::GIT_SHA, "\0").as_bytes());
 
 mod _impl {
     use bun_core::env_var;

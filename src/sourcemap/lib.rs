@@ -29,9 +29,6 @@ pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::Mapping;
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
-// SAFETY: only `mappings` is not `Sync`, for its `MultiArrayList`. `&mapping::List` only reads it.
-unsafe impl Sync for ParsedSourceMap {}
-
 // `bun.Ordinal = OrdinalT(c_int)` lives in bun_core (lower tier). Re-export so
 // `bun_sourcemap::Ordinal` and `bun_core::Ordinal` are the same type — callers
 // in higher tiers (bun_jsc) pass values straight through without conversion.

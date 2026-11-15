@@ -124,11 +124,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
     JSValue bufferValue = callFrame->argument(0);
 
     if (auto* buffer = dynamicDowncast<JSArrayBufferView>(bufferValue)) {
-        if (buffer->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         RefPtr<ArrayBuffer> backingBuffer = buffer->possiblySharedBuffer();
         if (!backingBuffer) {
             throwOutOfMemoryError(globalObject, scope);
@@ -136,6 +131,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
         }
 
         std::span<const uint8_t> input = buffer->span();
+        // HTTPParser::execute reads null data as finish(), and a detached view is an empty chunk, as in Node.
+        if (!input.data())
+            input = byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
 
         // A pin stops transfer(), not resize() or a WebAssembly.Memory grow(), which a callback can call.
         WTF::Vector<uint8_t> owned;

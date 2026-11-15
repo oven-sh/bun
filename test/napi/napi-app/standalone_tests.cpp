@@ -2477,6 +2477,17 @@ test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// What an addon returns for a result of no bytes. Node and Bun both hand this
+// Buffer to JavaScript with its ArrayBuffer detached.
+static napi_value
+create_empty_external_buffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value buffer;
+  NODE_API_CALL(env, napi_create_external_buffer(env, 0, nullptr, nullptr,
+                                                 nullptr, &buffer));
+  return buffer;
+}
+
 static int empty_external_string_finalized = 0;
 
 static void empty_external_string_finalizer(napi_env env, void *data,
@@ -4846,6 +4857,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_object_coercion);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, create_empty_external_buffer);
   REGISTER_FUNCTION(env, exports, test_napi_v10_surface);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);

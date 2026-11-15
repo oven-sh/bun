@@ -395,6 +395,7 @@ JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);
 
+// A detached view is a zero-length chunk, as in Node. write() and end() do not read a zero-length input.
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -406,7 +407,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
-    if (!view || view->isDetached()) [[unlikely]] {
+    if (!view) [[unlikely]] {
         // What node does:
         // StringDecoder.prototype.write = function write(buf) {
         // if (typeof buf === 'string')
@@ -434,7 +435,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
-    if (!view || view->isDetached()) [[unlikely]] {
+    if (!view) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }

@@ -2,7 +2,6 @@
 
 #include <limits>
 
-#include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapIterator.h"
@@ -184,10 +183,7 @@ static int noPasswordCallback(char*, int, int, void*)
 // in a CString (the WTF string's backing is not guaranteed UTF-8).
 // ArrayBufferView inputs hold the view pointer so pass 2 can read
 // vector()/byteLength() without copying; the MarkedArgumentBuffer below roots
-// the view against GC, and pass 2 re-checks isDetached() before reading
-// because forEachInIterable drives the iterator protocol and a tampered
-// %ArrayIteratorPrototype%.next can detach an earlier element between pass-1
-// callbacks.
+// the view against GC. A detached view is an empty input, as in Node.
 using CACertInput = std::variant<WTF::UTF8CString, JSC::JSArrayBufferView*>;
 
 JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -196,8 +192,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
-    JSValue certs = callFrame->argument(0);
-    if (!certs.isObject()) {
+    // tls.ts passes a new array: an index walk runs no user code between here and pass 2, and forEachInIterable can.
+    auto* certs = dynamicDowncast<JSC::JSArray>(callFrame->argument(0));
+    if (!certs) {
         return throwVMTypeError(globalObject, scope, "expected an array of certificates"_s);
     }
 
@@ -206,30 +203,26 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     JSC::MarkedArgumentBuffer keepAlive;
     WTF::Vector<CACertInput, 8> inputs;
 
-    forEachInIterable(globalObject, certs, [&](VM&, JSGlobalObject* g, JSValue element) {
-        auto innerScope = DECLARE_THROW_SCOPE(vm);
+    for (unsigned index = 0; index < certs->length(); index++) {
+        JSValue element = certs->getIndex(globalObject, index);
+        RETURN_IF_EXCEPTION(scope, {});
         keepAlive.append(element);
         if (keepAlive.hasOverflowed()) {
-            throwOutOfMemoryError(g, innerScope);
-            return;
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
         if (element.isString()) {
-            auto string = element.toWTFString(g);
-            RETURN_IF_EXCEPTION(innerScope, );
+            auto string = element.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             inputs.append(string.utf8());
-            return;
+            continue;
         }
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(element)) {
-            if (view->isDetached()) {
-                throwVMTypeError(g, innerScope, "certificate buffer is detached"_s);
-                return;
-            }
             inputs.append(view);
-            return;
+            continue;
         }
-        throwVMTypeError(g, innerScope, "expected a string or ArrayBufferView"_s);
-    });
-    RETURN_IF_EXCEPTION(scope, {});
+        return throwVMTypeError(globalObject, scope, "expected a string or ArrayBufferView"_s);
+    }
 
     // Pass 2: PEM_read_bio_X509 over each span. ncrypto's RAII pointers own
     // the BIO/X509 so no manual cleanup is interleaved with error checks; any
@@ -247,9 +240,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             bytes = { reinterpret_cast<const uint8_t*>(utf8->data()), utf8->length() };
         } else {
             auto* view = std::get<JSC::JSArrayBufferView*>(in);
-            if (view->isDetached()) {
-                return throwVMTypeError(globalObject, scope, "certificate buffer is detached"_s);
-            }
             bytes = { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() };
         }
         if (bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {

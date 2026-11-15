@@ -27,9 +27,7 @@ use bun_core::{String as BunString, StringView};
 // ──────────────────────────────────────────────────────────────────────────────
 bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 
-/// Handle to a `JSGlobalObject`, stored as a raw pointer. It roots nothing, and the global of a
-/// `ShadowRealm` or of a finished test file is collected with the last object of its realm: a holder
-/// that can outlive them all needs a [`StrongGlobal`].
+/// Roots nothing: a holder that can outlive every object of its realm needs a [`StrongGlobal`].
 ///
 /// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via
 /// `BackRef<JSGlobalObject>` (since `JSGlobalObject: !Sync`), matching

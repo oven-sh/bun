@@ -899,7 +899,7 @@ function adoptTLSPair(
   raw.connecting = false;
   self._handle = pair[1];
 }
-// A second connect() has replaced the fd that was to be adopted.
+// readyState 2: a second connect() is pending, and has replaced the fd that was to be adopted.
 function destroyIfReconnecting(connection: $Node.Socket, handle: SocketHandle) {
   if (!connection.connecting || handle.readyState !== 2) return false;
   connection.destroy(new ErrnoException(uv().UV_EISCONN, "connect"));

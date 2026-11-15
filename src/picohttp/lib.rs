@@ -8,10 +8,7 @@ use bun_core::fmt::{EscapeControlChars, escape_control_chars, for_terminal, quot
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-// `Header::clone` / `Response::clone` need the unbound-lifetime `append_raw`
-// so they can interleave appends and stash the raw ptr/len pairs. The buffer
-// is heap-owned; callers keep the builder (or its moved-out buffer) alive
-// while the returned slices are in use.
+// `Header::clone` uses `append_raw`: callers keep the builder, or its moved-out buffer, alive.
 pub use bun_core::StringBuilder;
 
 // FFI surface over vendor/picohttpparser. Hand-written rather than
@@ -140,8 +137,8 @@ impl Header {
     }
 
     pub(crate) fn clone(&self, builder: &mut StringBuilder) -> Header {
-        // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
-        // outer `clone` keeps the builder (or its moved-out buffer) alive for
+        // SAFETY: returned slices alias `builder`'s heap buffer; caller of
+        // `clone_headers` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see the comment on `StringBuilder`).
         let name = unsafe { builder.append_raw(self.name()) };
         // SAFETY: same buffer-lifetime invariant as `name` above.
@@ -246,7 +243,7 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 // Header::List
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct HeaderList<'a> {
     pub list: &'a [Header],
 }
@@ -424,7 +421,6 @@ pub enum ParseResponseError {
 }
 bun_core::impl_tag_error!(ParseResponseError);
 
-#[derive(Clone, Copy)]
 pub struct Response<'a> {
     pub minor_version: usize,
     pub status_code: u32,
@@ -442,24 +438,10 @@ impl<'a> Response<'a> {
         }
     }
 
-    pub fn clone<'out>(
-        &self,
-        headers: &'out mut [Header],
-        builder: &mut StringBuilder,
-    ) -> Response<'out> {
-        for (i, header) in self.headers.list.iter().enumerate() {
-            headers[i] = header.clone(builder);
-        }
-        Response {
-            minor_version: self.minor_version,
-            status_code: self.status_code,
-            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
-            status: unsafe { builder.append_raw(self.status) },
-            headers: HeaderList {
-                list: &headers[0..self.headers.list.len()],
-            },
-            bytes_read: self.bytes_read,
-        }
+    /// The headers point into `builder`'s buffer.
+    pub fn clone_headers(&self, builder: &mut StringBuilder) -> Box<[Header]> {
+        let headers = self.headers.list.iter();
+        headers.map(|header| header.clone(builder)).collect()
     }
 
     pub fn parse_parts(

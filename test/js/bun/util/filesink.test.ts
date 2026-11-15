@@ -571,7 +571,7 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// Now that __doClose runs finalize(), finalize() must not tear down state an
+// close() drops the wrapper's ref, which must not tear down state an
 // in-flight write still needs: clearing `pending` here would drop the
 // backpressure promise's Strong before on_write can settle it.
 it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {

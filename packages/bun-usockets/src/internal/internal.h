@@ -199,10 +199,10 @@ void *sni_find(void *sni, const char *hostname);
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
 extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
-extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
+extern void Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+extern struct addrinfo_result Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
 
 /* Loop related */

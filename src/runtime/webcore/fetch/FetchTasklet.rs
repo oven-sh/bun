@@ -1208,7 +1208,7 @@ impl FetchTasklet {
         if fail == http::Error::ProxyConnectFailed {
             if let Some(metadata) = &self.result.proxy_connect_response {
                 let global_this = self.global_this;
-                let error = Self::proxy_connect_error(&global_this, &metadata.response)
+                let error = Self::proxy_connect_error(&global_this, metadata)
                     .unwrap_or_else(|e| global_this.take_exception(e));
                 return BodyValueError::JSValue(StrongOptional::create(error, &global_this));
             }
@@ -1240,7 +1240,7 @@ impl FetchTasklet {
         // some times we don't have metadata so we also check the request's URL
         // Without the URL's userinfo: errors get logged.
         let href = match &self.metadata {
-            Some(metadata) => metadata.url.slice(),
+            Some(metadata) => metadata.url(),
             None => &self.url_proxy_buffer[..self.url_len],
         };
         let path = BunString::clone_utf8(&ZigURL::parse(href).href_without_userinfo());
@@ -1535,32 +1535,32 @@ impl FetchTasklet {
     /// proxy's reply to CONNECT.
     fn proxy_connect_error(
         global_this: &JSGlobalObject,
-        response: &bun_picohttp::Response<'_>,
+        response: &HTTPResponseMetadata,
     ) -> JsResult<JSValue> {
         let error = global_this
             .err(
                 jsc::ErrorCode::PROXY_TUNNEL,
                 format_args!(
                     "Proxy refused to open a tunnel: {} {}",
-                    response.status_code,
-                    bstr::BStr::new(response.status),
+                    response.status_code(),
+                    bstr::BStr::new(response.status_text()),
                 ),
             )
             .to_js();
         error.put(
             global_this,
             b"status".as_slice(),
-            JSValue::js_number_from_int32(response.status_code as i32),
+            JSValue::js_number_from_int32(response.status_code() as i32),
         );
         error.put(
             global_this,
             b"statusText".as_slice(),
-            bun_string_jsc::create_utf8_for_js(global_this, response.status)?,
+            bun_string_jsc::create_utf8_for_js(global_this, response.status_text())?,
         );
         // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
         let mut headers = unsafe {
             HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers.list,
+                response.headers().list,
             ))
         };
         error.put(
@@ -1788,28 +1788,27 @@ impl FetchTasklet {
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
-        let http_response = &metadata.response;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
         let mut headers = unsafe {
             HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                http_response.headers.list,
+                metadata.headers().list,
             ))
         };
         if self.result.decoded_from.is_compressed() {
             headers.set_body_facts(BodyFacts::decoded_from(self.result.decoded_from));
         }
-        let status_code = http_response.status_code as u16;
+        let status_code = metadata.status_code() as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
-            .filter(|canon| *canon == http_response.status)
+            .filter(|canon| *canon == metadata.status_text())
         {
             Some(canon) => BunString::static_(canon),
-            None => BunString::clone_utf8(http_response.status),
+            None => BunString::clone_utf8(metadata.status_text()),
         };
-        let url = BunString::clone_utf8(metadata.url.slice());
+        let url = BunString::clone_utf8(metadata.url());
         let redirected = self.result.redirected;
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value()

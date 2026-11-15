@@ -1283,10 +1283,10 @@ test(
 
 // A worker that ends while a stream is still being piped into a FileSink (Bun.write(file, body), a
 // Bun.spawn() stdin). The pipe's controller cell holds no ref on the sink and dies attached only in
-// the VM's last sweep, where its destructor ran the JS wrapper's FileSink::finalize: that releases
+// the VM's last sweep, where its destructor ran the JS wrapper's teardown: that releases
 // the keep-alive ref and then a ref of its own. For a native source (a fetch() body, a child's
-// stdout) the keep-alive ref was the last one, so the rest of finalize ran on the freed sink (ASAN
-// heap-use-after-free in FileSink::finalize), and for every source the freed sink's Drop detached
+// stdout) the keep-alive ref was the last one, so the rest of it ran on the freed sink (ASAN
+// heap-use-after-free), and for every source the freed sink's Drop detached
 // the cell being destroyed (debug JSC "ASSERTION FAILED: decontaminate()").
 test(
   "a worker ends while a stream is still being piped into a FileSink",

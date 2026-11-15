@@ -1178,7 +1178,7 @@ impl SourceProvider for BundlerServices {
     }
 
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
-        components::compile_components(&self.context, file, observer, None, &mut Log::init())
+        components::compile_components(&self.context, file, observer, &mut Log::init())
     }
 
     fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {

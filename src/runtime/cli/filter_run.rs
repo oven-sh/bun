@@ -181,8 +181,8 @@ impl<'a> ProcessHandle<'a> {
                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &handle.output.config.package_json_path,
                 ),
-                |env| env.map.create_null_delimited_env_map(),
-            )?;
+                |env| env.map.to_envp(),
+            );
             break 'brk spawn::spawn_process(
                 &handle.options,
                 argv.as_list(),

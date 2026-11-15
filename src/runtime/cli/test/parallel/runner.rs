@@ -89,7 +89,7 @@ pub(crate) fn run_as_coordinator(
         for name in WORKER_ID_VARIABLES {
             let _ = env.map.put(name, &id);
         }
-        envps.push(env.map.create_null_delimited_env_map()?);
+        envps.push(env.map.to_envp());
     }
     let argv = build_worker_argv(ctx)?;
 
@@ -498,7 +498,6 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[Option<CS
     }
 
     argv.push(None);
-    // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())
 }
 

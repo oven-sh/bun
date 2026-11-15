@@ -35,8 +35,7 @@ pub(crate) struct Coordinator<'a> {
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
     pub(crate) cwd: &'a [u8],
-    // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
-    // backing storage has a null at [len] for execve-style consumers.
+    /// Ends with `None`.
     pub(crate) argv: Box<[Option<bun_core::CStrRef<'static>>]>,
     /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
     pub(crate) envps: Vec<bun_core::CStringList>,

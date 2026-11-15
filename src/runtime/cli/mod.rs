@@ -310,7 +310,7 @@ fn cli_dupe_z(s: &[u8]) -> bun_core::CStrRef<'static> {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
-    bun_core::CStrRef::from_bytes_with_nul(buf)
+    bun_core::CStrRef::from_slice_with_nul(buf)
 }
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going

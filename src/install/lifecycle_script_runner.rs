@@ -648,8 +648,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         ]
         .concat();
         let script_envp = [&lifecycle_event, &lifecycle_script]
-            .map(|variable| Some(CStrRef::from_bytes_with_nul(variable)));
-        let envp = [self.envp.entries(), &script_envp, &[None]].concat();
+            .map(|variable| Some(CStrRef::from_slice_with_nul(variable)));
+        let envp = [self.envp.unterminated(), &script_envp, &[None]].concat();
         let envp = Some(CStrList::new(&envp));
         Ok(bun_spawn::spawn_process(
             &spawn_options,

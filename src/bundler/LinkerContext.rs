@@ -139,7 +139,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
             let client = self.bundle.client_transpiler_ref();
-            &client.expect("it parsed the chunk's files").options
+            &client
+                .expect("infallible: the client transpiler parsed this chunk")
+                .options
         } else {
             &self.bundle.transpiler.options
         }
@@ -391,11 +393,14 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         debug_assert!(self.options.source_maps != SourceMapOption::None);
         let reachable: &[Index] = &self.graph.reachable_files;
         // line offsets block sooner and are faster to compute, so we should schedule those first
-        let mut batch = self.source_maps.line_offsets.batch(self.bundle, reachable);
+        let mut batch = self
+            .source_maps
+            .line_offsets
+            .create_batch(self.bundle, reachable);
         batch.push(
             self.source_maps
                 .quoted_contents
-                .batch(self.bundle, reachable),
+                .create_batch(self.bundle, reachable),
         );
         self.worker_pool().schedule(batch);
     }
@@ -1063,10 +1068,10 @@ type QuotedContents = Option<bun_alloc::AstVec<u8>>;
 /// One task per file. They run while the link goes on, so each keeps its result to itself.
 pub(crate) struct SourceMapTasks<'l, 'a, T> {
     wait_group: &'l WaitGroup,
-    tasks: Vec<SourceMapDataTask<'l, 'a, T>>,
+    tasks: Vec<SourceMapTask<'l, 'a, T>>,
 }
 
-struct SourceMapDataTask<'l, 'a, T> {
+struct SourceMapTask<'l, 'a, T> {
     task: ThreadPoolLib::CountedTask,
     bundle: &'l BundleV2<'a>,
     source_index: crate::IndexInt,
@@ -1079,7 +1084,7 @@ impl<T> Drop for SourceMapTasks<'_, '_, T> {
     }
 }
 
-impl<'l, 'a, T: ComputedFromSource> SourceMapTasks<'l, 'a, T> {
+impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
     fn new(wait_group: &'l WaitGroup) -> Self {
         Self {
             wait_group,
@@ -1087,12 +1092,16 @@ impl<'l, 'a, T: ComputedFromSource> SourceMapTasks<'l, 'a, T> {
         }
     }
 
-    fn batch(&mut self, bundle: &'l BundleV2<'a>, reachable: &[Index]) -> ThreadPoolLib::Batch {
+    fn create_batch(
+        &mut self,
+        bundle: &'l BundleV2<'a>,
+        reachable: &[Index],
+    ) -> ThreadPoolLib::Batch {
         assert!(self.tasks.is_empty());
         self.wait_group.add(reachable.len());
         self.tasks = reachable
             .iter()
-            .map(|source_index| SourceMapDataTask {
+            .map(|source_index| SourceMapTask {
                 task: ThreadPoolLib::CountedTask::new(Self::run, self.wait_group),
                 bundle,
                 source_index: source_index.get(),
@@ -1109,8 +1118,7 @@ impl<'l, 'a, T: ComputedFromSource> SourceMapTasks<'l, 'a, T> {
     unsafe fn run(task: *mut ThreadPoolLib::Task) {
         // SAFETY: `task` is the field of an element of `tasks`, and nothing else touches an element
         // before the wait group is done.
-        let task =
-            unsafe { &mut *bun_core::from_field_ptr!(SourceMapDataTask<'l, 'a, T>, task, task) };
+        let task = unsafe { &mut *bun_core::from_field_ptr!(SourceMapTask<'l, 'a, T>, task, task) };
         // What `compute` allocates with `AstAlloc` lands in this worker's heap, which dropping the pool frees.
         let _worker = crate::thread_pool::Worker::get(task.bundle);
         task.result = T::compute(&task.bundle.graph, task.source_index);
@@ -1129,11 +1137,11 @@ impl<'l, 'a, T: ComputedFromSource> SourceMapTasks<'l, 'a, T> {
     }
 }
 
-pub(crate) trait ComputedFromSource: Default {
+pub(crate) trait SourceMapColumn: Default {
     fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self;
 }
 
-impl ComputedFromSource for LineOffsets {
+impl SourceMapColumn for LineOffsets {
     fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
         debug!("Computing LineOffsetTable: {}", source_index);
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
@@ -1156,7 +1164,7 @@ impl ComputedFromSource for LineOffsets {
     }
 }
 
-impl ComputedFromSource for QuotedContents {
+impl SourceMapColumn for QuotedContents {
     fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
         debug!("Computing Quoted Source Contents: {}", source_index);
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
@@ -3635,7 +3643,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
             )
             .expect("unreachable");
         if result.kind == MatchImportKind::NormalAndNamespace {
-            self.symbols.get_mut(import_ref).unwrap().namespace_alias =
+            self.symbol_mut(import_ref).namespace_alias =
                 Some(bun_alloc::ast_box(G::NamespaceAlias {
                     namespace_ref: result.namespace_ref,
                     alias: result.alias,
@@ -3738,7 +3746,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
             member_resolutions.insert(key, resolved);
         }
 
-        // The printer treats every `X.name` of the file alike, so one call keeps them all.
+        // The printer substitutes every `X.name` of the file, so one call that needs `X` as `this` keeps them all.
         let mut keeps_this: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
         for access in &accesses {
             if access.is_call_target

@@ -11,7 +11,7 @@ use crate::bun_css::css_rules::{PreviousRule, import, layer};
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, PrintErr, Printer, PrinterOptions, Targets};
 
 use crate::bun_fs::Path;
-use crate::chunk::{Content, CssImportCondition, CssImportOrder, CssImportOrderKind};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind, ImportConditionsRef};
 use crate::linker_context_mod::LinkerContext;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index};
@@ -72,12 +72,12 @@ pub(crate) fn generate_compile_result_for_css_chunk(
 
     let source_index = match &css_import.kind {
         CssImportOrderKind::Layers(layers) => {
-            let names = layers.inner();
+            let names = layers.names();
             indent_first_line(&mut allocating_writer, !names.is_empty());
             let options = printer_options(c.options.minify_whitespace);
             let mut printer = new_printer(c, arena, &mut allocating_writer, &options, None);
             let printed = if names.is_empty() {
-                no_rules_to_css(conditions, &mut printer)
+                empty_blocks_to_css(conditions, &mut printer)
             } else {
                 blocks_to_css(conditions, &mut printer, &|d| {
                     layer::statement_to_css(names, d)
@@ -129,7 +129,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
                             .map(drop)
                     })
                 } else {
-                    no_rules_to_css(conditions, &mut printer)
+                    empty_blocks_to_css(conditions, &mut printer)
                 }
             });
             if printer.finish(printed).is_err() {
@@ -177,7 +177,7 @@ fn new_printer<'p>(
     )
 }
 
-/// An "@import" is in the order, and so are the "@layer" statements ahead of the first one.
+/// The rules without the `@import`s and the `@layer` statements before the first one, which have their own `CssImportOrder` entries.
 fn rules_to_bundle<'r, 'a>(
     sheet: &'r BundlerStyleSheet<'a>,
 ) -> impl Iterator<Item = &'r [BundlerCssRule<'a>]> + Clone {
@@ -195,7 +195,7 @@ fn rules_to_bundle<'r, 'a>(
 }
 
 fn blocks_to_css<'p>(
-    conditions: &[CssImportCondition],
+    conditions: &[ImportConditionsRef],
     dest: &mut Printer<'p>,
     body: &dyn Fn(&mut Printer<'p>) -> Result<(), PrintErr>,
 ) -> Result<(), PrintErr> {
@@ -206,7 +206,10 @@ fn blocks_to_css<'p>(
 }
 
 /// Empty blocks have no effect, but the name of a layer still sets the layer order.
-fn no_rules_to_css(conditions: &[CssImportCondition], dest: &mut Printer) -> Result<(), PrintErr> {
+fn empty_blocks_to_css(
+    conditions: &[ImportConditionsRef],
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
     let mut outer = conditions;
     while let [rest @ .., last] = outer {
         outer = rest;
@@ -279,7 +282,9 @@ fn shared_anonymous_conditions<'a>(
         a.conditions
             .iter()
             .zip(b.conditions)
-            .rposition(|(a, b)| a.anonymous_layer != 0 && a.anonymous_layer == b.anonymous_layer)
+            .rposition(|(a, b)| {
+                a.anonymous_layer_id.is_some() && a.anonymous_layer_id == b.anonymous_layer_id
+            })
             .map_or(0, |last| last + 1)
     };
     SharedAnonymousConditions {
@@ -312,7 +317,7 @@ impl SharedBlockEdges {
 /// and every rule printer writes a block the same way.
 fn shared_block_edges(
     c: &LinkerContext,
-    conditions: &[CssImportCondition],
+    conditions: &[ImportConditionsRef],
     SharedAnonymousConditions { before, after }: SharedAnonymousConditions,
     arena: &Arena,
 ) -> Result<SharedBlockEdges, ()> {
@@ -320,7 +325,7 @@ fn shared_block_edges(
     if inner == 0 {
         return Ok(SharedBlockEdges::default());
     }
-    let indent_of = |conditions: &[CssImportCondition]| -> u32 {
+    let indent_of = |conditions: &[ImportConditionsRef]| -> u32 {
         conditions
             .iter()
             .map(|c| {

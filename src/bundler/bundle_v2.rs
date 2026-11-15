@@ -58,7 +58,7 @@ pub struct PendingImport {
 
 pub struct BundleV2<'a> {
     pub transpiler: &'a mut Transpiler<'a>,
-    pub(crate) other_transpilers: OtherTranspilers<'a>,
+    pub(crate) target_transpilers: TargetTranspilers<'a>,
     /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
     pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
@@ -130,7 +130,7 @@ pub struct BundleV2<'a> {
 
 /// For the files whose target is not the one of `BundleV2::transpiler`.
 #[derive(Default)]
-pub(crate) struct OtherTranspilers<'a> {
+pub(crate) struct TargetTranspilers<'a> {
     /// For the browser's files of a server-side build.
     client: Option<ClientTranspiler<'a>>,
     /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
@@ -138,14 +138,14 @@ pub(crate) struct OtherTranspilers<'a> {
 }
 
 enum ClientTranspiler<'a> {
-    FromBake(&'a mut Transpiler<'a>),
+    Borrowed(&'a mut Transpiler<'a>),
     Owned(Box<Transpiler<'a>>),
 }
 
-impl<'a> OtherTranspilers<'a> {
+impl<'a> TargetTranspilers<'a> {
     fn client(&self) -> Option<&Transpiler<'a>> {
         self.client.as_ref().map(|client| match client {
-            ClientTranspiler::FromBake(client) => &**client,
+            ClientTranspiler::Borrowed(client) => &**client,
             ClientTranspiler::Owned(client) => &**client,
         })
     }
@@ -162,12 +162,12 @@ impl<'a> OtherTranspilers<'a> {
             }
         });
         match client {
-            ClientTranspiler::FromBake(client) => client,
+            ClientTranspiler::Borrowed(client) => client,
             ClientTranspiler::Owned(client) => client,
         }
     }
 
-    /// `BundleV2::transpiler_for_target`, for callers that use the rest of the bundle meanwhile.
+    /// `BundleV2::transpiler_for_target`, borrowing only these fields.
     fn for_target<'t>(
         &'t mut self,
         main: &'t mut Transpiler<'a>,
@@ -219,7 +219,7 @@ impl<'a> BundleV2<'a> {
 
     #[inline]
     pub(crate) fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
-        self.other_transpilers.client()
+        self.target_transpilers.client()
     }
 
     /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
@@ -264,7 +264,7 @@ impl<'a> BundleV2<'a> {
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
-        self.other_transpilers
+        self.target_transpilers
             .for_target(self.transpiler, self.graph.heap, target)
     }
 }
@@ -1871,7 +1871,7 @@ pub mod bv2_impl {
         }
 
         fn ensure_client_transpiler(&mut self) {
-            self.other_transpilers
+            self.target_transpilers
                 .ensure_client(self.transpiler, self.graph.heap);
         }
 
@@ -1955,7 +1955,7 @@ pub mod bv2_impl {
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> &mut bun_ast::Log {
-            Self::resolution_log(
+            Self::log_for_resolution_failures_impl(
                 &mut self.dev_server,
                 &mut self.transpiler,
                 abs_path,
@@ -1963,8 +1963,8 @@ pub mod bv2_impl {
             )
         }
 
-        /// `log_for_resolution_failures`, for callers that use the rest of the bundle meanwhile.
-        fn resolution_log<'s>(
+        /// `log_for_resolution_failures`, borrowing only these fields.
+        fn log_for_resolution_failures_impl<'s>(
             dev_server: &'s mut Option<dispatch::DevServerHandle>,
             transpiler: &'s mut &mut Transpiler<'_>,
             abs_path: &[u8],
@@ -2519,7 +2519,7 @@ pub mod bv2_impl {
         ) {
             let heap = self.graph.heap;
             let transpiler = self
-                .other_transpilers
+                .target_transpilers
                 .for_target(self.transpiler, heap, target);
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
@@ -2631,7 +2631,7 @@ pub mod bv2_impl {
                         let handles_import_errors;
                         let ignore_module_resolution_errors =
                             self.transpiler.options.ignore_module_resolution_errors;
-                        let log = Self::resolution_log(
+                        let log = Self::log_for_resolution_failures_impl(
                             &mut self.dev_server,
                             &mut self.transpiler,
                             &import_record.source_file,
@@ -3059,7 +3059,7 @@ pub mod bv2_impl {
 
             let mut this = Box::new(BundleV2 {
                 transpiler,
-                other_transpilers: Default::default(),
+                target_transpilers: Default::default(),
                 framework: None,
                 graph: Graph::new(heap, ThreadPool::init(thread_pool)),
                 r#loop: event_loop,
@@ -3100,8 +3100,8 @@ pub mod bv2_impl {
                             .chain(&bo.ssr_transpiler)
                             .all(|other| other.options.server_components)
                 );
-                this.other_transpilers = super::OtherTranspilers {
-                    client: Some(super::ClientTranspiler::FromBake(bo.client_transpiler)),
+                this.target_transpilers = super::TargetTranspilers {
+                    client: Some(super::ClientTranspiler::Borrowed(bo.client_transpiler)),
                     ssr: bo.ssr_transpiler,
                 };
                 this.framework = Some(bo.framework);
@@ -3484,7 +3484,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub(crate) fn clone_ast(&mut self) -> Result<LinkerGraph<'a>, Error> {
+        pub(crate) fn create_linker_graph(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             let mut linker_graph = LinkerGraph::new(self.graph.heap);
             linker_graph.ast = self.graph.ast.clone()?;
@@ -4072,7 +4072,7 @@ pub mod bv2_impl {
 
                 this.add_server_component_boundaries_as_extra_entry_points()?;
 
-                let mut linker_graph = this.clone_ast()?;
+                let mut linker_graph = this.create_linker_graph()?;
                 linker_graph.additional_output_files = additional_output_files;
 
                 let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
@@ -4212,7 +4212,7 @@ pub mod bv2_impl {
 
             this.add_server_component_boundaries_as_extra_entry_points()?;
 
-            let mut linker_graph = this.clone_ast()?;
+            let mut linker_graph = this.create_linker_graph()?;
             linker_graph.additional_output_files = additional_output_files;
 
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
@@ -4300,7 +4300,7 @@ pub mod bv2_impl {
                                 };
 
                             let asset_naming = &self
-                                .other_transpilers
+                                .target_transpilers
                                 .for_target(self.transpiler, self.graph.heap, target)
                                 .options
                                 .asset_naming;
@@ -4806,7 +4806,7 @@ pub mod bv2_impl {
                         return;
                     }
 
-                    let log = Self::resolution_log(
+                    let log = Self::log_for_resolution_failures_impl(
                         &mut this.dev_server,
                         &mut this.transpiler,
                         &resolve.import_record.source_file,
@@ -5108,7 +5108,7 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            let mut linker_graph = self.clone_ast()?;
+            let mut linker_graph = self.create_linker_graph()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -5456,7 +5456,7 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            let linker_graph = self.clone_ast().map_err(|_| AllocError)?;
+            let linker_graph = self.create_linker_graph().map_err(|_| AllocError)?;
             let mut linker = LinkerContext::load(self, linker_graph, js_reachable_files)
                 .map_err(|_| AllocError)?;
 
@@ -6199,7 +6199,7 @@ pub mod bv2_impl {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let transpiler =
-                            self.other_transpilers
+                            self.target_transpilers
                                 .for_target(self.transpiler, heap, target);
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
@@ -6560,7 +6560,7 @@ pub mod bv2_impl {
                 }
 
                 let transpiler = self
-                    .other_transpilers
+                    .target_transpilers
                     .for_target(self.transpiler, heap, target);
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {

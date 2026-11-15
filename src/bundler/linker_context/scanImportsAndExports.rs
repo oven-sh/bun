@@ -16,7 +16,7 @@ use bun_ast::{Dependency, ExportsKind, Ref};
 
 use crate::linker_context_mod::LinkerCtx;
 use crate::linker_graph::{
-    SymbolUses, add_part_to_file, is_external_dynamic_import, top_level_symbol_to_parts,
+    SymbolUseColumns, add_part_to_file, is_external_dynamic_import, top_level_symbol_to_parts,
 };
 
 type AstFlags = bundled_ast::Flags;
@@ -654,7 +654,7 @@ pub(crate) fn scan_imports_and_exports(
         let meta = this.graph.meta.split_mut();
         let entry_point_kinds = this.graph.files.items_entry_point_kind();
         let (exports_refs, module_refs) = (&*ast.exports_ref, &*ast.module_ref);
-        let mut uses = SymbolUses {
+        let mut uses = SymbolUseColumns {
             parts: ast.parts,
             ast_flags: ast.flags,
             exports_ref: exports_refs,

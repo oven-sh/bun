@@ -7,9 +7,9 @@
 // An LD_PRELOAD shim fails the Nth recv()/send() on each AF_UNIX socket (the
 // parent's end of a stdio socketpair) with EIO/ENOBUFS. The children write
 // with write(2), so only bun's side of the pair is affected.
+import { dlopen, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -804,18 +804,37 @@ describe.skipIf(!isLinux || !cc)("a Node stream over subprocess stdio whose poll
 // more than the 256 KiB of one read, which a socket takes only with the largest send buffer that the system gives.
 describe.skipIf(!isLinux || !cc)("the read before the report of an exit", () => {
   const lastBlock = 300000;
-  // A send buffer is at most twice net.core.wmem_max, and one write queues two buffers of half that size less 64
-  // bytes. On a host with a smaller limit the writer would wait for a reader that waits for the writer.
-  const socketTakesTheBlock = (() => {
-    try {
-      return 2 * (Number(readFileSync("/proc/sys/net/core/wmem_max", "utf8")) - 64) >= lastBlock;
-    } catch {
-      // The host does not show the limit. The default of 212992 is enough.
-      return true;
-    }
-  })();
+  const sendBuffer = 1 << 20;
 
-  test.skipIf(!socketTakesTheBlock)(
+  // Whether a socket pair that asks for `sendBuffer` queues the last block in one write. The system caps the
+  // request at net.core.wmem_max. Under too small a cap the writer would wait for a reader that waits for the writer.
+  function socketTakesTheBlock() {
+    const [AF_UNIX, SOCK_STREAM, SOL_SOCKET, SO_SNDBUF, MSG_DONTWAIT] = [1, 1, 1, 7, 0x40];
+    let libc;
+    try {
+      libc = dlopen(libcPathForDlopen(), {
+        socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
+        setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+        send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
+        close: { args: ["i32"], returns: "i32" },
+      });
+    } catch {
+      return false;
+    }
+    try {
+      const fds = new Int32Array(2);
+      if (libc.symbols.socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds)) !== 0) return false;
+      const size = new Int32Array([sendBuffer]);
+      for (const fd of fds) libc.symbols.setsockopt(fd, SOL_SOCKET, SO_SNDBUF, ptr(size), size.byteLength);
+      const queued = libc.symbols.send(fds[0], ptr(new Uint8Array(lastBlock)), lastBlock, MSG_DONTWAIT);
+      for (const fd of fds) libc.symbols.close(fd);
+      return Number(queued) === lastBlock;
+    } finally {
+      libc.close();
+    }
+  }
+
+  test.skipIf(!isLinux || !socketTakesTheBlock())(
     "node:child_process: 'exit' comes behind more bytes than one read takes",
     async () => {
       using handshake = tempDir("spawn-stdio-exit-read", {});
@@ -823,7 +842,7 @@ describe.skipIf(!isLinux || !cc)("the read before the report of an exit", () => 
       expect(
         await runWithFault(
           HANDSHAKE_READER,
-          { SPAWN_SNDBUF: String(1 << 20), BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+          { SPAWN_SNDBUF: String(sendBuffer), BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
           ["child.stdout", "exit-bytes", String(handshake), "2", `block=${lastBlock}`],
         ),
       ).toEqual({

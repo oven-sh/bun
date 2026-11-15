@@ -52,10 +52,6 @@ pub struct Transpiler<'a> {
     pub(crate) resolve_queue: ResolveQueue,
     pub(crate) elapsed: u64,
 
-    // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) calls
-    // `transpiler.linker.link()`. `linker.log` is set
-    // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
-    pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
 }
@@ -63,7 +59,6 @@ pub struct Transpiler<'a> {
 impl<'a> Transpiler<'a> {
     pub fn set_log(&mut self, log: *const bun_ast::Log) {
         self.log = log;
-        self.linker.log = log;
         // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
         // arena-allocated `Log`, which outlives this `Transpiler<'a>`.
         self.resolver.log =
@@ -74,7 +69,6 @@ impl<'a> Transpiler<'a> {
     // TODO: remove this method. it does not make sense
     pub fn set_arena(&mut self, arena: &'a Arena) {
         self.arena = arena;
-        // `crate::Linker` is the unit stub — no `.arena` field.
         // `Resolver` dropped its `arena` field (global mimalloc; see
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
@@ -178,7 +172,6 @@ impl<'a> Transpiler<'a> {
             resolve_results: Box::new(ResolveResults::default()),
             resolve_queue: ResolveQueue::default(),
             elapsed: 0,
-            linker: crate::linker::Linker::init(log),
             env: from.env,
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
@@ -186,18 +179,10 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Wire the aliases of `log` and the self-referential `macro_context`
+    /// Wire the self-referential `macro_context`
     /// after this `Transpiler` has reached its final address (post-move into
     /// `WorkerData` / arena slot).
     pub(crate) fn wire_after_move(&mut self) {
-        // `self.log` was already set inside `for_worker` via direct field
-        // init; re-thread into `options.log` / `resolver.log` /
-        // `linker.log` here so all four aliases agree.
-        let log = self.log;
-        self.options.log = log;
-        self.resolver.log =
-            core::ptr::NonNull::new(log.cast_mut()).expect("wire_after_move: log is non-null");
-        self.linker.log = log;
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
@@ -446,7 +431,9 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        let log = self.log();
+        self.options
+            .load_defines(log, self.arena, Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -485,7 +472,7 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// `configure_linker*` / `run_env_loader` — used by
+// `configure_linker` / `run_env_loader` — used by
 // `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
 // `JSBundleCompletionTask`,
 // `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
@@ -511,25 +498,20 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 }
 
 impl<'a> Transpiler<'a> {
-    /// Initialize `self.linker` with the log of this `Transpiler`,
-    /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
-    pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        self.linker = crate::linker::Linker::init(self.log);
-
-        if auto_jsx {
-            // Most of the time, this will already be cached
-            let top_level_dir = Fs::FileSystem::get().top_level_dir();
-            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = self.resolver.tsconfig_json(root_dir) {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
-                        self.options.use_define_for_class_fields = v;
-                    }
+    /// Configures JSX and decorators from the nearest `tsconfig.json`.
+    pub fn configure_linker(&mut self) {
+        // Most of the time, this will already be cached
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+            if let Some(tsconfig) = self.resolver.tsconfig_json(root_dir) {
+                // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                if self.options.transform_options.jsx.is_none() {
+                    self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                }
+                self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                self.options.experimental_decorators = tsconfig.experimental_decorators;
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    self.options.use_define_for_class_fields = v;
                 }
             }
         }
@@ -546,12 +528,6 @@ impl<'a> Transpiler<'a> {
             true => self.resolver.aot_package_config(path),
             false => None,
         }
-    }
-
-    /// [`Self::configure_linker_with_auto_jsx`] with `auto_jsx = true`.
-    #[inline]
-    pub fn configure_linker(&mut self) {
-        self.configure_linker_with_auto_jsx(true);
     }
 
     /// Load `.env` files into the env loader according to
@@ -957,7 +933,7 @@ impl<'a> Transpiler<'a> {
     ///
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
     /// match the struct field types — the same `*Log` is aliased into
-    /// `linker.log` / `resolver.log` (see `set_log`).
+    /// `resolver.log` (see `set_log`).
     pub fn init(
         arena: &'a Arena,
         log: *const bun_ast::Log,
@@ -1026,20 +1002,16 @@ impl<'a> Transpiler<'a> {
         // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
         // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
-        unsafe {
+        let log = unsafe {
             (*env_loader).quiet = !log_nn.as_ref().level.get().at_least(bun_ast::Level::Info);
-        }
+            log_nn.as_ref()
+        };
 
         // var pool = try arena.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .arena = arena,
         // });
 
-        // `log` stays raw — `from_api` stores it in `BundleOptions.log: *mut`
-        // and the same pointer is aliased into `Resolver::init1` / `Linker`
-        // / the struct field below. No `&'a
-        // mut Log` is materialized here, so the sibling raw pointers don't
-        // invalidate a long-lived unique borrow under stacked borrows.
         let bundle_options = options::BundleOptions::from_api(log, opts)?;
 
         // `Resolver.opts` is the resolver-crate subset
@@ -1066,7 +1038,6 @@ impl<'a> Transpiler<'a> {
             resolve_queue: ResolveQueue::default(),
             elapsed: 0,
             // .thread_pool = pool,
-            linker: crate::linker::Linker::init(log),
             env: env_loader,
             macro_context: None,
         })
@@ -2411,7 +2382,7 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Returns only the count and lets
-    /// `Linker::enqueue_resolve_result` push directly onto `resolve_queue`.
+    /// `linker::enqueue_resolve_result` push directly onto `resolve_queue`.
     fn enqueue_entry_points(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
@@ -2449,7 +2420,7 @@ impl<'a> Transpiler<'a> {
                 continue;
             }
 
-            if crate::linker::Linker::enqueue_resolve_result(
+            if crate::linker::enqueue_resolve_result(
                 &mut self.resolve_results,
                 &mut self.resolve_queue,
                 result,
@@ -2465,14 +2436,10 @@ impl<'a> Transpiler<'a> {
 
     pub fn transform(
         &mut self,
-        log: *const bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
         let _ = self.enqueue_entry_points();
 
-        // `log` is the same pointer stored on `self.log`; caller
-        // (`BuildCommand::exec`) holds it for the process lifetime.
-        let _ = log;
         if self.log().level.get().at_least(bun_ast::Level::Debug) {
             self.resolver.debug_logs = Some(resolver::DebugLogs::init()?);
         }
@@ -2491,13 +2458,7 @@ impl<'a> Transpiler<'a> {
         };
         self.process_resolve_queue(self.options.import_path_format, outstream)?;
 
-        if bun_core::FeatureFlags::TRACING
-            && self
-                .options
-                .log()
-                .level
-                .get()
-                .at_least(bun_ast::Level::Info)
+        if bun_core::FeatureFlags::TRACING && self.log().level.get().at_least(bun_ast::Level::Info)
         {
             bun_core::pretty_errorln!(
                 "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",
@@ -2731,9 +2692,11 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if !self.options.transform_only {
+                    let log = self.log();
                     let origin = self.options.origin.url();
                     if !self.options.target.is_bun() {
-                        self.linker.link::<false, false>(
+                        crate::linker::link::<false, false>(
+                            log,
                             &self.options,
                             &file_path,
                             &mut result,
@@ -2741,7 +2704,8 @@ impl<'a> Transpiler<'a> {
                             import_path_format,
                         )?;
                     } else {
-                        self.linker.link::<false, true>(
+                        crate::linker::link::<false, true>(
+                            log,
                             &self.options,
                             &file_path,
                             &mut result,
@@ -2980,9 +2944,8 @@ impl<'a> Transpiler<'a> {
         file_path_text: &'static [u8],
         file_path_ext: &[u8],
     ) -> crate::Result<crate::output_file::Value> {
-        let hashed_name = self
-            .linker
-            .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
+        let hashed_name =
+            crate::linker::get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
         let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
         pathname.extend_from_slice(hashed_name);
         pathname.extend_from_slice(file_path_ext);

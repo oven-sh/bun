@@ -102,7 +102,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &Log) -> bool {
         fold_chunks: _, module_preload: _, react_fast_refresh: _, emit_dce_annotations: _,
         tree_shaking: _, tree_shaking_override: _, dead_code_elimination: _, inlining: _,
         optimize_imports: _, out_extensions: _, compile_mode: _, production: _, env: _,
-        log: _, origin: _, output_dir: _, output_dir_handle: _, write: _, preserve_extensions: _,
+        origin: _, output_dir: _, output_dir_handle: _, write: _, preserve_extensions: _,
         entry_points: _, import_path_format: _, defines_loaded: _, mark_builtins_as_external: _,
         polyfill_node_globals: _, load_tsconfig_json: _, load_package_json: _, conditions: _,
         extra_cjs_extensions: _, global_cache: _, install_preference: _, install: _,

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, Utf8Bytes};
+use bun_core::{self, EncodedUnits, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_paths::resolve_path::{SpillBuf, relative_spill};
 use bun_sourcemap::{InternalSourceMap, Ordinal, ParsedSourceMap};
@@ -1121,10 +1121,11 @@ impl ByteRangeMapping {
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
-        let (line_starts, executable_units) = if source.is_utf16() {
-            scan(source.utf16().iter().copied())
-        } else {
-            scan(source.latin1().iter().map(|&unit| unit as u16))
+        let (line_starts, executable_units) = match source.encoded_units() {
+            EncodedUnits::Utf16(units) => scan(units.iter().copied()),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                scan(bytes.iter().map(|&unit| unit as u16))
+            }
         };
         ByteRangeMapping {
             executable_units,

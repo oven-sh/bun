@@ -12,7 +12,7 @@
 
 use bun_collections::HashMap;
 use bun_core::String as BunString;
-use bun_core::{StackCheck, strings};
+use bun_core::{EncodedUnits, StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
@@ -54,12 +54,14 @@ pub(crate) fn parse<'a>(
         }
         StringOrJsBytes::String(string) => {
             text = string;
-            if text.is_8bit() {
-                (text.latin1(), xml::InputEncoding::Latin1)
-            } else {
-                let units = text.utf16();
-                utf16 = Some(units);
-                (bun_core::slice_as_bytes(units), xml::InputEncoding::Text)
+            match text.encoded_units() {
+                EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                    (bytes, xml::InputEncoding::Latin1)
+                }
+                EncodedUnits::Utf16(units) => {
+                    utf16 = Some(units);
+                    (bun_core::slice_as_bytes(units), xml::InputEncoding::Text)
+                }
             }
         }
     };

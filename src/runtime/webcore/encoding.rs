@@ -3,8 +3,9 @@
 
 use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_core::String as BunString;
 use bun_core::strings;
+use bun_core::vec::BorrowedBuf;
+use bun_core::{EncodedUnits, String as BunString};
 use bun_simdutf_sys::simdutf as bun_simdutf;
 use core::mem::MaybeUninit;
 
@@ -338,13 +339,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
                 return create_external_globally_allocated_latin1(input);
             }
 
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len());
-            // `input` dropped at end of scope (was: defer allocator.free(input))
-            if str.is_dead() {
-                return str;
-            }
-            strings::copy_latin1_into_ascii(chars, &input);
-            str
+            to_bun_string_comptime::<{ enc::ASCII }>(&input)
         }
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => BunString::from_owned_utf8(input),
@@ -378,23 +373,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             create_external_globally_allocated_utf16(as_u16)
         }
 
-        Encoding::Hex => {
-            // input dropped at end of scope
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
-
-            if str.is_dead() {
-                return str;
-            }
-
-            let wrote = strings::encode_bytes_to_hex(chars, &input);
-
-            // Return an empty string in this case, just like node.
-            if wrote < chars.len() {
-                return BunString::EMPTY;
-            }
-
-            str
-        }
+        Encoding::Hex => to_bun_string_comptime::<{ Encoding::Hex as u8 }>(&input),
 
         // The output is strictly larger than the input, so the owned
         // allocation cannot be reused; drop it at end of scope.
@@ -443,22 +422,10 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     }
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Ascii => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len());
-            if str.is_dead() {
-                return str;
-            }
-            strings::copy_latin1_into_ascii(chars, input);
-            str
-        }
-        Encoding::Latin1 => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len());
-            if str.is_dead() {
-                return str;
-            }
-            chars.copy_from_slice(input);
-            str
-        }
+        Encoding::Ascii => BunString::create_latin1_with(input.len(), |chars| {
+            strings::copy_latin1_into_ascii(chars, input)
+        }),
+        Encoding::Latin1 => BunString::clone_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
             to_bun_string_from_converted_utf8(input, strings::to_utf16_alloc(input, false, false))
         }
@@ -469,24 +436,14 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             }
 
             let chars_len = input.len() / 2;
-            let (str, chars) = BunString::create_uninitialized_utf16(chars_len);
-            if str.is_dead() {
-                return str;
-            }
-            bun_core::slice_as_bytes_mut(chars).copy_from_slice(&input[..chars_len * 2]);
-            str
+            BunString::create_utf16_with(chars_len, |mut bytes| {
+                bytes.append(&input[..chars_len * 2])
+            })
         }
 
-        Encoding::Hex => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
-            if str.is_dead() {
-                return str;
-            }
-
-            let wrote = strings::encode_bytes_to_hex(chars, input);
-            debug_assert!(wrote == chars.len());
-            str
-        }
+        Encoding::Hex => BunString::create_latin1_with(input.len() * 2, |chars| {
+            strings::encode_bytes_to_hex(chars, input)
+        }),
 
         Encoding::Base64url => encode_base64_to_bun_string(input, true),
 
@@ -512,17 +469,9 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     };
 
     if to_len < EXTERNAL_MIN_LEN {
-        let (str, chars) = BunString::create_uninitialized_latin1(to_len);
-        if str.is_dead() {
-            return str;
-        }
-        let wrote = if url_safe {
-            bun_base64::encode_url_safe(chars, input)
-        } else {
-            bun_base64::encode(chars, input)
-        };
-        debug_assert_eq!(wrote, to_len);
-        return str;
+        return BunString::create_latin1_with(to_len, |chars| {
+            bun_simdutf::base64::encode(input, chars, url_safe)
+        });
     }
 
     // `create_external_globally_allocated_latin1` would reject this length
@@ -570,7 +519,7 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             if bun_simdutf::validate::ascii(remain) {
                 to.copy_from_slice(remain);
             } else {
-                strings::copy_latin1_into_ascii(to, remain);
+                strings::copy_latin1_into_ascii(BorrowedBuf::from(to).unfilled(), remain);
             }
 
             Ok(written)
@@ -909,10 +858,11 @@ pub(crate) trait EncodedSliceEncode {
 
 impl EncodedSliceEncode for bun_core::EncodedSlice<'_> {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
-        if self.is_16bit() {
-            construct_from_u16_dyn(self.utf16_slice(), enc)
-        } else {
-            construct_from_u8_dyn(self.slice(), enc)
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => construct_from_u16_dyn(units, enc),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                construct_from_u8_dyn(bytes, enc)
+            }
         }
     }
 }

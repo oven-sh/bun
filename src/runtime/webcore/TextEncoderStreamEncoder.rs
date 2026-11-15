@@ -1,7 +1,7 @@
 use core::cell::Cell;
 
 use bun_alloc::AllocError;
-use bun_core::strings;
+use bun_core::{EncodedUnits, strings};
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 
@@ -230,10 +230,11 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
-    let encoded = if str.is_utf16() {
-        this.encode_utf16(global, str.utf16())
-    } else {
-        this.encode_latin1(global, str.latin1())
+    let encoded = match str.encoded_units() {
+        EncodedUnits::Utf16(units) => this.encode_utf16(global, units),
+        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+            this.encode_latin1(global, bytes)
+        }
     };
     bun_jsc::to_js_host_fn_result(global, encoded)
 }
@@ -271,10 +272,11 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
     let mut buf = this.scratch.take();
     buf.clear();
-    let encoded = if str.is_utf16() {
-        this.encode_utf16_into(str.utf16(), &mut buf)
-    } else {
-        this.encode_latin1_into(str.latin1(), &mut buf)
+    let encoded = match str.encoded_units() {
+        EncodedUnits::Utf16(units) => this.encode_utf16_into(units, &mut buf),
+        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+            this.encode_latin1_into(bytes, &mut buf)
+        }
     };
     if encoded.is_err() {
         return global.throw_out_of_memory_value();

@@ -2,7 +2,7 @@ use crate::string::Utf8Bytes;
 use crate::strings;
 
 // The struct layout lives in `bun_alloc` (lowest-tier crate).
-pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
+pub use bun_alloc::{WTFStringImpl, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
 /// [`crate::external_shared::ExternalSharedDescriptor`] impl lives alongside
@@ -29,28 +29,26 @@ impl WTFStringImplExt for WTFStringImplStruct {
     /// transcodes otherwise.
     #[inline]
     fn to_utf8(&self) -> Utf8Bytes<'_> {
-        if self.is_8bit() {
-            if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
-                return Utf8Bytes::Owned(utf8);
-            }
-
-            return Utf8Bytes::Borrowed(self.latin1_slice());
+        if let Some(utf16) = self.as_utf16() {
+            return Utf8Bytes::Owned(strings::to_utf8_alloc(utf16));
         }
-
-        Utf8Bytes::Owned(strings::to_utf8_alloc(self.utf16_slice()))
+        if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
+            return Utf8Bytes::Owned(utf8);
+        }
+        Utf8Bytes::Borrowed(self.latin1_slice())
     }
 
     /// Allocates a NUL-terminated UTF-8 copy.
     /// `.len()` excludes the sentinel.
     fn to_owned_slice_z(&self) -> crate::ZBox {
-        if self.is_8bit() {
-            if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
-                return utf8;
-            }
-            // ASCII: copy bytes; ZBox appends the NUL.
-            return crate::ZBox::from_vec_with_nul(self.latin1_slice().to_vec());
+        if let Some(utf16) = self.as_utf16() {
+            return strings::to_utf8_alloc_z(utf16);
         }
-        strings::to_utf8_alloc_z(self.utf16_slice())
+        if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
+            return utf8;
+        }
+        // ASCII: copy bytes; ZBox appends the NUL.
+        crate::ZBox::from_vec_with_nul(self.latin1_slice().to_vec())
     }
 
     /// Avoid using this in code paths that are about to get the string as
@@ -60,21 +58,13 @@ impl WTFStringImplExt for WTFStringImplStruct {
     }
 
     fn utf8_byte_length(&self) -> usize {
-        if self.is_8bit() {
-            let input = self.latin1_slice();
-            if !input.is_empty() {
-                // latin1→utf8 length: each high byte becomes 2 utf8 bytes.
-                strings::element_length_latin1_into_utf8(input)
-            } else {
-                0
-            }
-        } else {
-            let input = self.utf16_slice();
-            if !input.is_empty() {
-                strings::element_length_utf16_into_utf8(input)
-            } else {
-                0
-            }
+        if self.length() == 0 {
+            return 0;
+        }
+        match self.as_utf16() {
+            Some(utf16) => strings::element_length_utf16_into_utf8(utf16),
+            // latin1→utf8 length: each high byte becomes 2 utf8 bytes.
+            None => strings::element_length_latin1_into_utf8(self.latin1_slice()),
         }
     }
 
@@ -82,7 +72,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     #[inline]
     fn utf8_slice(&self) -> &[u8] {
         debug_assert!(self.can_use_as_utf8());
-        self.raw_bytes(self.length() as usize)
+        self.latin1_slice()
     }
 }
 

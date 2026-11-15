@@ -120,16 +120,7 @@ impl JSString {
         }
         // SAFETY: the fiber of a string that is no rope is its StringImpl, never null.
         let text = unsafe { &*(fiber as *const bun_core::WTFStringImplStruct) };
-        if !text.is_8bit() {
-            return None;
-        }
-        // SAFETY: an 8-bit StringImpl has that many Latin-1 characters there, and the pointer is not null, which spares
-        // the caller of an inlined `Option<&[u8]>` the test for it.
-        Some(unsafe {
-            let characters = text.m_ptr.latin1;
-            core::hint::assert_unchecked(!characters.is_null());
-            core::slice::from_raw_parts(characters, text.length() as usize)
-        })
+        text.is_8bit().then(|| text.latin1_slice())
     }
 
     /// The characters, read in place: no call, nothing resolved, nothing thrown.

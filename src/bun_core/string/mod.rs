@@ -37,7 +37,11 @@ use crate::strings;
 #[path = "identifier.rs"]
 pub mod identifier;
 
+use crate::vec::{BorrowedBuf, BorrowedCursor};
+use bun_alloc::AllocError;
+use core::convert::Infallible;
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
@@ -100,8 +104,8 @@ unsafe extern "C" {
     fn BunString__fromLatin1(bytes: *const u8, len: usize) -> String;
     fn BunString__fromUTF16(bytes: *const u16, len: usize) -> String;
     fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> String;
-    safe fn BunString__fromLatin1Unitialized(len: usize) -> String;
-    safe fn BunString__fromUTF16Unitialized(len: usize) -> String;
+    fn BunString__fromLatin1Unitialized(len: usize) -> String;
+    fn BunString__fromUTF16Unitialized(len: usize) -> String;
     // `&mut String` / `&String` are ABI-identical to the C++ `BunString*`
     // (thin non-null pointer to a `#[repr(C)]` struct, asserted by
     // `assert_ffi_layout!` above). C++ reads/writes only the `tag`/`value`
@@ -406,38 +410,73 @@ impl String {
         let _ = buf.write_fmt(args);
         Self::clone_utf8(buf.as_bytes())
     }
-    /// Returns `(String, ptr)` where `ptr` is `len` writable bytes — or
-    /// `(DEAD, [])` when `len` is over the maximum string length and
-    /// `(OUT_OF_MEMORY, [])` when WTF could not allocate (check `is_dead()`
-    /// before using the buffer).
-    pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
-        let s = BunString__fromLatin1Unitialized(len);
-        if s.tag != Tag::WTFStringImpl {
-            return (s, &mut []);
-        }
-        debug_assert_eq!(s.as_wtf().ref_count(), 1);
-        // SAFETY: WTF tag verified above; impl has a writable latin1 buffer of
-        // `len`. `ptr` points at `len` writable bytes owned by the new WTF
-        // impl; the `'static` lifetime is actually tied to `s` — caller must
-        // not outlive it.
-        let buf = unsafe {
-            let ptr = (*s.value.wtf_string_impl).m_ptr.latin1.cast_mut();
-            core::slice::from_raw_parts_mut(ptr, len)
-        };
-        (s, buf)
+    /// The `len` bytes that `fill` writes, or a dead string if they cannot be allocated. Panics unless `fill` writes them all.
+    pub fn create_latin1_with(len: usize, fill: impl FnOnce(BorrowedCursor<'_, u8>)) -> Self {
+        let Ok(string) = Self::create_with::<false, Infallible>(len, |bytes| {
+            fill(bytes);
+            Ok(())
+        });
+        string
     }
-    pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
-        let s = BunString__fromUTF16Unitialized(len);
-        if s.tag != Tag::WTFStringImpl {
-            return (s, &mut []);
+    /// As [`Self::create_latin1_with`], of `len` code units: `fill` writes `2 * len` bytes.
+    pub fn create_utf16_with(len: usize, fill: impl FnOnce(BorrowedCursor<'_, u8>)) -> Self {
+        let Ok(string) = Self::create_with::<true, Infallible>(len, |bytes| {
+            fill(bytes);
+            Ok(())
+        });
+        string
+    }
+    /// As [`Self::create_latin1_with`], `Err` when the bytes cannot be allocated or `fill` fails.
+    pub fn try_create_latin1_with<E: From<AllocError>>(
+        len: usize,
+        fill: impl FnOnce(BorrowedCursor<'_, u8>) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        Ok(Self::create_with::<false, E>(len, fill)?.ok_or_alloc_error()?)
+    }
+    /// As [`Self::create_utf16_with`], `Err` when the bytes cannot be allocated or `fill` fails.
+    pub fn try_create_utf16_with<E: From<AllocError>>(
+        len: usize,
+        fill: impl FnOnce(BorrowedCursor<'_, u8>) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        Ok(Self::create_with::<true, E>(len, fill)?.ok_or_alloc_error()?)
+    }
+    fn ok_or_alloc_error(self) -> Result<Self, AllocError> {
+        if self.is_dead() {
+            return Err(AllocError);
         }
-        debug_assert_eq!(s.as_wtf().ref_count(), 1);
-        // SAFETY: see `create_uninitialized_latin1`.
-        let buf = unsafe {
-            let ptr = (*s.value.wtf_string_impl).m_ptr.utf16.cast_mut();
-            core::slice::from_raw_parts_mut(ptr, len)
+        Ok(self)
+    }
+    /// Does not call `fill` for an empty or a dead string.
+    fn create_with<const UTF16: bool, E>(
+        len: usize,
+        fill: impl FnOnce(BorrowedCursor<'_, u8>) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        // SAFETY: a WTF-backed result is a new impl of `len` code units. Only `string` refers to
+        // it, and `string` is not read until `bytes` is full.
+        let (string, bytes) = unsafe {
+            let string = if UTF16 {
+                BunString__fromUTF16Unitialized(len)
+            } else {
+                BunString__fromLatin1Unitialized(len)
+            };
+            if string.tag != Tag::WTFStringImpl {
+                return Ok(string);
+            }
+            debug_assert_eq!(string.as_wtf().ref_count(), 1);
+            let bytes = core::slice::from_raw_parts_mut(
+                string
+                    .as_wtf()
+                    .as_ptr()
+                    .cast_mut()
+                    .cast::<MaybeUninit<u8>>(),
+                if UTF16 { len * 2 } else { len },
+            );
+            (string, bytes)
         };
-        (s, buf)
+        let mut bytes = BorrowedBuf::from(bytes);
+        fill(bytes.unfilled())?;
+        assert!(bytes.len() == bytes.capacity());
+        Ok(string)
     }
 
     /// Takes ownership of a globally-allocated (mimalloc-backed) Latin-1
@@ -520,20 +559,6 @@ impl String {
             Self::clone_utf16(os_path)
         }
     }
-    /// `WTF::adoptRef` — wrap a raw `*mut WTFStringImplStruct`, **adopting**
-    /// an existing +1 ref (no inc). Inverse of [`leak_wtf_impl`]. Null → `EMPTY`.
-    #[inline]
-    pub fn adopt_wtf_impl(wtf: WTFStringImpl) -> Self {
-        if wtf.is_null() {
-            return Self::EMPTY;
-        }
-        Self {
-            tag: Tag::WTFStringImpl,
-            value: StringImpl {
-                wtf_string_impl: wtf,
-            },
-        }
-    }
     /// Extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
     /// null for non-WTF tags.
@@ -594,12 +619,6 @@ impl String {
             self.as_wtf().r#ref()
         }
     }
-    #[inline]
-    fn deref(&self) {
-        if self.tag == Tag::WTFStringImpl {
-            self.as_wtf().deref()
-        }
-    }
 
     #[inline]
     pub fn length(&self) -> usize {
@@ -638,21 +657,18 @@ impl String {
             _ => &[],
         }
     }
-    /// Latin-1 byte view; debug-asserts `is_8bit()`.
-    pub fn latin1(&self) -> &[u8] {
-        debug_assert!(self.is_8bit());
+    #[inline]
+    pub fn encoded_units(&self) -> EncodedUnits<'_> {
         match self.tag {
-            Tag::WTFStringImpl => self.as_wtf().latin1_slice(),
-            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().slice(),
-            _ => &[],
-        }
-    }
-    pub fn utf16(&self) -> &[u16] {
-        debug_assert!(self.is_utf16());
-        match self.tag {
-            Tag::WTFStringImpl => self.as_wtf().utf16_slice(),
-            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().utf16_slice(),
-            _ => &[],
+            Tag::WTFStringImpl => {
+                let w = self.as_wtf();
+                match w.as_utf16() {
+                    Some(units) => EncodedUnits::Utf16(units),
+                    None => EncodedUnits::Latin1(w.latin1_slice()),
+                }
+            }
+            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().encoded_units(),
+            _ => EncodedUnits::Latin1(&[]),
         }
     }
     pub fn ensure_hash(&self) {
@@ -670,16 +686,16 @@ impl String {
         if len == 0 || len > dst.len() {
             return None;
         }
-        if self.is_utf16() {
-            crate::strings::narrow_ascii_u16(self.utf16(), dst)
-        } else {
-            let src = self.byte_slice();
-            if strings::first_non_ascii(src).is_some() {
-                return None;
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => crate::strings::narrow_ascii_u16(units, dst),
+            EncodedUnits::Latin1(src) | EncodedUnits::Utf8(src) => {
+                if strings::first_non_ascii(src).is_some() {
+                    return None;
+                }
+                let dst = &mut dst[..len];
+                dst.copy_from_slice(src);
+                Some(dst)
             }
-            let dst = &mut dst[..len];
-            dst.copy_from_slice(src);
-            Some(dst)
         }
     }
 
@@ -727,15 +743,10 @@ impl String {
             }
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
-                if w.is_8bit() {
-                    StringView::from_encoded(EncodedSlice::latin1(
-                        &w.latin1_slice()[start_index..end_index],
-                    ))
-                } else {
-                    StringView::from_encoded(EncodedSlice::utf16(
-                        &w.utf16_slice()[start_index..end_index],
-                    ))
-                }
+                StringView::from_encoded(match w.as_utf16() {
+                    Some(units) => EncodedSlice::utf16(&units[start_index..end_index]),
+                    None => EncodedSlice::latin1(&w.latin1_slice()[start_index..end_index]),
+                })
             }
             _ => StringView::new(self),
         }
@@ -761,13 +772,13 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => {
                 let wtf = self.as_wtf();
-                if !wtf.is_8bit() {
-                    return Utf8Bytes::Owned(strings::to_utf8_alloc(wtf.utf16_slice()));
+                if let Some(utf16) = wtf.as_utf16() {
+                    return Utf8Bytes::Owned(strings::to_utf8_alloc(utf16));
                 }
                 if let Some(utf8) = strings::to_utf8_from_latin1(wtf.latin1_slice()) {
                     return Utf8Bytes::Owned(utf8);
                 }
-                Utf8Bytes::Shared(self)
+                Utf8Bytes::Shared(SharedAscii(self))
             }
             Tag::EncodedSlice => self.encoded().to_utf8().into_owned(),
             Tag::StaticEncodedSlice => Utf8Bytes::Borrowed(self.static_bytes()),
@@ -842,10 +853,9 @@ impl String {
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded(),
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
-                if w.is_8bit() {
-                    EncodedSlice::latin1(w.latin1_slice())
-                } else {
-                    EncodedSlice::utf16(w.utf16_slice())
+                match w.as_utf16() {
+                    Some(units) => EncodedSlice::utf16(units),
+                    None => EncodedSlice::latin1(w.latin1_slice()),
                 }
             }
             _ => EncodedSlice::EMPTY,
@@ -885,23 +895,10 @@ impl String {
     /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].
     pub fn visible_width_exclude_ansi_colors(&self, ambiguous_as_wide: bool) -> usize {
         use crate::strings::visible::width::exclude_ansi_colors as w;
-        if self.is_utf16() {
-            return w::utf16(self.utf16(), ambiguous_as_wide);
-        }
-        if self.is_utf8() {
-            return w::utf8(self.encoded().slice());
-        }
-        w::latin1(self.latin1(), ambiguous_as_wide)
-    }
-
-    /// Coarse encoding classifier.
-    pub fn encoding(&self) -> strings::EncodingNonAscii {
-        if self.is_utf16() {
-            strings::EncodingNonAscii::Utf16
-        } else if self.is_utf8() {
-            strings::EncodingNonAscii::Utf8
-        } else {
-            strings::EncodingNonAscii::Latin1
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => w::utf16(units, ambiguous_as_wide),
+            EncodedUnits::Utf8(bytes) => w::utf8(bytes),
+            EncodedUnits::Latin1(bytes) => w::latin1(bytes, ambiguous_as_wide),
         }
     }
 
@@ -911,20 +908,18 @@ impl String {
     /// caller owns mapping `None` to an error (e.g. `ENAMETOOLONG`).
     pub fn encode_into_utf16_buf_z(&self, buf: &mut [u16]) -> Option<usize> {
         let cap = buf.len().checked_sub(1)?;
-        let len = match self.encoding() {
-            strings::EncodingNonAscii::Utf8 => {
-                strings::try_convert_utf8_to_utf16_in_buffer(&mut buf[..cap], self.utf8())?.len()
+        let len = match self.encoded_units() {
+            EncodedUnits::Utf8(src) => {
+                strings::try_convert_utf8_to_utf16_in_buffer(&mut buf[..cap], src)?.len()
             }
-            strings::EncodingNonAscii::Utf16 => {
-                let src = self.utf16();
+            EncodedUnits::Utf16(src) => {
                 if src.len() > cap {
                     return None;
                 }
                 buf[..src.len()].copy_from_slice(src);
                 src.len()
             }
-            strings::EncodingNonAscii::Latin1 => {
-                let src = self.latin1();
+            EncodedUnits::Latin1(src) => {
                 if src.len() > cap {
                     return None;
                 }
@@ -934,19 +929,6 @@ impl String {
         };
         buf[len] = 0;
         Some(len)
-    }
-
-    /// Raw UTF-8 byte slice. Debug-asserts `self` is a UTF-8-safe
-    /// `EncodedSlice`/`StaticEncodedSlice` (use [`as_utf8`] for the checked
-    /// variant).
-    #[inline]
-    pub(crate) fn utf8(&self) -> &[u8] {
-        debug_assert!(matches!(
-            self.tag,
-            Tag::EncodedSlice | Tag::StaticEncodedSlice
-        ));
-        debug_assert!(self.as_utf8().is_some());
-        self.encoded().slice()
     }
 
     /// Consume `self` into a [`Utf8WithString`].
@@ -978,10 +960,11 @@ impl String {
 
     pub fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
         debug_assert!(chr < 128);
-        if self.is_utf16() {
-            self.utf16().iter().position(|&c| c == chr as u16)
-        } else {
-            strings::index_of_char_usize(self.byte_slice(), chr)
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => units.iter().position(|&c| c == chr as u16),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                strings::index_of_char_usize(bytes, chr)
+            }
         }
     }
 
@@ -1012,6 +995,17 @@ impl Default for String {
         Self::EMPTY
     }
 }
+impl From<crate::WTFString> for String {
+    #[inline]
+    fn from(wtf: crate::WTFString) -> Self {
+        Self {
+            tag: Tag::WTFStringImpl,
+            value: StringImpl {
+                wtf_string_impl: wtf.into_raw(),
+            },
+        }
+    }
+}
 // SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or a borrowed
 // `EncodedSlice` slice / static / dead sentinel). All non-WTF tags are trivially
 // `Send + Sync` (no interior mutability, no refcount). A `WTF::StringImpl`'s
@@ -1034,7 +1028,10 @@ unsafe impl Sync for String {}
 impl Drop for String {
     #[inline]
     fn drop(&mut self) {
-        self.deref();
+        if self.tag == Tag::WTFStringImpl {
+            // SAFETY: tag checked; `self` owns one ref.
+            unsafe { WTFStringImplStruct::deref(self.value.wtf_string_impl) }
+        }
     }
 }
 impl Clone for String {
@@ -1189,14 +1186,20 @@ impl core::fmt::Display for String {
 
 impl core::fmt::Display for EncodedSlice<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.is_utf8() {
-            return write!(f, "{}", crate::fmt::s(self.slice()));
+        match self.encoded_units() {
+            EncodedUnits::Utf8(bytes) => write!(f, "{}", crate::fmt::s(bytes)),
+            EncodedUnits::Utf16(units) => crate::fmt::format_utf16_type(units, f),
+            EncodedUnits::Latin1(bytes) => crate::fmt::format_latin1(bytes, f),
         }
-        if self.is_16bit() {
-            return crate::fmt::format_utf16_type(self.utf16_slice(), f);
-        }
-        crate::fmt::format_latin1(self.slice(), f)
     }
+}
+
+/// The contents of a [`String`] or an [`EncodedSlice`], in the encoding that it stores.
+#[derive(Clone, Copy)]
+pub enum EncodedUnits<'a> {
+    Latin1(&'a [u8]),
+    Utf8(&'a [u8]),
+    Utf16(&'a [u16]),
 }
 
 // `EncodedSlice` pointer-tag scheme. Flag bits live in the pointer's high
@@ -1224,7 +1227,7 @@ impl<'a> EncodedSlice<'a> {
     /// Construct from an already-tagged pointer + length pair. `ptr` is stored
     /// verbatim — tag bits are not touched. Caller vouches for `'a`.
     #[inline]
-    pub(crate) const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
+    const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
         Self {
             _unsafe_ptr_do_not_use: ptr,
             len,
@@ -1316,17 +1319,24 @@ impl<'a> EncodedSlice<'a> {
         // stripped.
         unsafe { core::slice::from_raw_parts(self.untagged_ptr(), self.len) }
     }
-    /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
     #[inline]
-    pub fn utf16_slice(self) -> &'a [u16] {
-        if self.len == 0 {
-            return &[];
+    pub fn encoded_units(self) -> EncodedUnits<'a> {
+        if !self.is_16bit() {
+            return if self.is_utf8() {
+                EncodedUnits::Utf8(self.slice())
+            } else {
+                EncodedUnits::Latin1(self.slice())
+            };
         }
-        debug_assert!(self.is_16bit());
+        if self.len == 0 {
+            return EncodedUnits::Utf16(&[]);
+        }
         // SAFETY: a 16-bit-tagged constructor stored a 2-byte-aligned ptr
         // valid for `len` u16 units for `'a`; flag bits stripped (the cast
         // goes `usize → *const u16` directly to keep the alignment lint quiet).
-        unsafe { core::slice::from_raw_parts(self.untagged_ptr() as usize as *const u16, self.len) }
+        EncodedUnits::Utf16(unsafe {
+            core::slice::from_raw_parts(self.untagged_ptr() as usize as *const u16, self.len)
+        })
     }
     /// Raw bytes regardless of encoding (`len * 2` for UTF-16).
     pub fn byte_slice(self) -> &'a [u8] {
@@ -1346,15 +1356,14 @@ impl<'a> EncodedSlice<'a> {
 
     /// Exact UTF-8 byte length needed to encode this string.
     pub(crate) fn utf8_byte_length(self) -> usize {
-        if self.is_utf8() {
-            return self.len;
+        match self.encoded_units() {
+            EncodedUnits::Utf8(bytes) => bytes.len(),
+            EncodedUnits::Utf16(units) => crate::strings::element_length_utf16_into_utf8(units),
+            // SAFETY: s describes a valid byte slice.
+            EncodedUnits::Latin1(s) => unsafe {
+                bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len())
+            },
         }
-        if self.is_16bit() {
-            return crate::strings::element_length_utf16_into_utf8(self.utf16_slice());
-        }
-        let s = self.slice();
-        // SAFETY: s describes a valid byte slice.
-        unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
     }
 
     /// Number of bytes the UTF-16LE encoding of this string would occupy.
@@ -1375,15 +1384,12 @@ impl<'a> EncodedSlice<'a> {
 
     /// Allocate a NUL-terminated UTF-8 copy.
     pub fn to_owned_slice_z(self) -> crate::ZBox {
-        if self.is_utf8() {
-            let mut v = self.slice().to_vec();
-            v.push(0);
-            return crate::ZBox::from_vec_with_nul(v);
-        }
-        let mut list = if self.is_16bit() {
-            crate::strings::to_utf8_alloc(self.utf16_slice())
-        } else {
-            crate::strings::allocate_latin1_into_utf8_with_list(Vec::new(), 0, self.slice())
+        let mut list = match self.encoded_units() {
+            EncodedUnits::Utf8(bytes) => bytes.to_vec(),
+            EncodedUnits::Utf16(units) => crate::strings::to_utf8_alloc(units),
+            EncodedUnits::Latin1(bytes) => {
+                crate::strings::allocate_latin1_into_utf8_with_list(Vec::new(), 0, bytes)
+            }
         };
         list.push(0);
         crate::ZBox::from_vec_with_nul(list)
@@ -1392,12 +1398,13 @@ impl<'a> EncodedSlice<'a> {
     /// First index whose code unit matches any byte in `chars`. The 16-bit
     /// branch narrows each unit to the Latin-1 range before comparing.
     pub fn index_of_any(self, chars: &[u8]) -> Option<usize> {
-        if self.is_16bit() {
-            self.utf16_slice()
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => units
                 .iter()
-                .position(|&c| c < 256 && chars.contains(&(c as u8)))
-        } else {
-            crate::strings::index_of_any(self.slice(), chars)
+                .position(|&c| c < 256 && chars.contains(&(c as u8))),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                crate::strings::index_of_any(bytes, chars)
+            }
         }
     }
 
@@ -1406,30 +1413,30 @@ impl<'a> EncodedSlice<'a> {
     #[inline]
     pub fn char_at(self, i: usize) -> u16 {
         debug_assert!(i < self.len);
-        if self.is_16bit() {
-            self.utf16_slice()[i]
-        } else {
-            self.slice()[i] as u16
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => units[i],
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => bytes[i] as u16,
         }
     }
 
     /// Encoding-aware equality against ASCII bytes.
     pub fn eq_ascii(self, ascii: &[u8]) -> bool {
         debug_assert!(ascii.is_ascii(), "eq_ascii expects ASCII");
-        if self.is_16bit() {
-            return strings::eql_comptime_utf16(self.utf16_slice(), ascii);
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => strings::eql_comptime_utf16(units, ascii),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => bytes == ascii,
         }
-        self.slice() == ascii
     }
 
     /// Encoding-aware ASCII prefix check.
     pub fn starts_with_ascii(self, ascii: &[u8]) -> bool {
         debug_assert!(ascii.is_ascii(), "starts_with_ascii expects ASCII");
-        if self.is_16bit() {
-            let s = self.utf16_slice();
-            return s.len() >= ascii.len() && s.iter().zip(ascii).all(|(&c, &a)| c == u16::from(a));
+        match self.encoded_units() {
+            EncodedUnits::Utf16(s) => {
+                s.len() >= ascii.len() && s.iter().zip(ascii).all(|(&c, &a)| c == u16::from(a))
+            }
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => bytes.starts_with(ascii),
         }
-        self.slice().starts_with(ascii)
     }
 
     /// Encoding-aware equality.
@@ -1437,16 +1444,13 @@ impl<'a> EncodedSlice<'a> {
         if self.len == 0 || other.len == 0 {
             return self.len == other.len;
         }
-        let l16 = self.is_16bit();
-        let r16 = other.is_16bit();
-        if l16 && r16 {
-            return self.utf16_slice() == other.utf16_slice();
+        use EncodedUnits::{Latin1, Utf8, Utf16};
+        match (self.encoded_units(), other.encoded_units()) {
+            (Utf16(l), Utf16(r)) => l == r,
+            (Latin1(l) | Utf8(l), Latin1(r) | Utf8(r)) => l == r,
+            // Mixed encoding — go through the UTF-8 view.
+            _ => self.to_utf8().slice() == other.to_utf8().slice(),
         }
-        if !l16 && !r16 {
-            return self.slice() == other.slice();
-        }
-        // Mixed encoding — go through the UTF-8 view.
-        self.to_utf8().slice() == other.to_utf8().slice()
     }
 
     /// `Display`-format into `buf`, NUL-terminate, and return the borrowed
@@ -1467,14 +1471,11 @@ impl<'a> EncodedSlice<'a> {
     /// Re-wrap a sub-range of the underlying storage, preserving the
     /// UTF-8/16-bit tag bits.
     pub fn substring_with_len(self, start_index: usize, end_index: usize) -> Self {
-        if self.is_16bit() {
-            return Self::utf16(&self.utf16_slice()[start_index..end_index]);
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => Self::utf16(&units[start_index..end_index]),
+            EncodedUnits::Utf8(bytes) => Self::utf8(&bytes[start_index..end_index]),
+            EncodedUnits::Latin1(bytes) => Self::latin1(&bytes[start_index..end_index]),
         }
-        let mut out = Self::latin1(&self.slice()[start_index..end_index]);
-        if self.is_utf8() {
-            out.mark(TAG_UTF8_BIT);
-        }
-        out
     }
     #[inline]
     pub fn substring(self, start_index: usize) -> Self {
@@ -1492,17 +1493,12 @@ impl<'a> EncodedSlice<'a> {
         if self.len == 0 {
             return Utf8Bytes::EMPTY;
         }
-        if self.is_16bit() {
-            return Utf8Bytes::Owned(crate::strings::to_utf8_alloc(self.utf16_slice()));
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => Utf8Bytes::Owned(crate::strings::to_utf8_alloc(units)),
+            EncodedUnits::Utf8(bytes) => Utf8Bytes::Borrowed(bytes),
+            EncodedUnits::Latin1(bytes) => crate::strings::to_utf8_from_latin1(bytes)
+                .map_or(Utf8Bytes::Borrowed(bytes), Utf8Bytes::Owned),
         }
-        let bytes = self.slice();
-        if !self.is_utf8() {
-            // Non-UTF-8 = Latin-1; transcode if any byte ≥ 0x80.
-            if let Some(v) = crate::strings::to_utf8_from_latin1(bytes) {
-                return Utf8Bytes::Owned(v);
-            }
-        }
-        Utf8Bytes::Borrowed(bytes)
     }
 
     /// Allocate a fresh UTF-8 `Vec<u8>` regardless of the source encoding.
@@ -1512,12 +1508,10 @@ impl<'a> EncodedSlice<'a> {
 
     /// Copies the bytes into a fresh `WTF::StringImpl`.
     fn to_owned_string(self) -> String {
-        if self.is_16bit() {
-            String::clone_utf16(self.utf16_slice())
-        } else if self.is_utf8() {
-            String::clone_utf8(self.slice())
-        } else {
-            String::clone_latin1(self.slice())
+        match self.encoded_units() {
+            EncodedUnits::Utf16(units) => String::clone_utf16(units),
+            EncodedUnits::Utf8(bytes) => String::clone_utf8(bytes),
+            EncodedUnits::Latin1(bytes) => String::clone_latin1(bytes),
         }
     }
 }
@@ -1529,9 +1523,13 @@ impl<'a> EncodedSlice<'a> {
 pub enum Utf8Bytes<'a> {
     Borrowed(&'a [u8]),
     Owned(Vec<u8>),
-    /// 8-bit all-ASCII `Tag::WTFStringImpl` string; the bytes are its buffer.
-    Shared(String),
+    Shared(SharedAscii),
 }
+
+/// 8-bit all-ASCII `Tag::WTFStringImpl` string; the bytes are its buffer.
+#[derive(Clone)]
+pub struct SharedAscii(String);
+
 impl Default for Utf8Bytes<'_> {
     #[inline]
     fn default() -> Self {
@@ -1555,7 +1553,7 @@ impl<'a> Utf8Bytes<'a> {
         match self {
             Self::Borrowed(b) => b,
             Self::Owned(v) => v,
-            Self::Shared(s) => s.as_wtf().latin1_slice(),
+            Self::Shared(s) => s.0.as_wtf().latin1_slice(),
         }
     }
     /// Consume into an owned `Vec<u8>` — moves out the buffer if `Owned`,

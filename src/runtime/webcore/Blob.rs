@@ -4733,7 +4733,7 @@ impl Any {
     /// Moves the string out of the `WTFStringImpl` arm and leaves an empty `Blob`.
     fn take_string(&mut self) -> BunString {
         match core::mem::replace(self, Any::Blob(Blob::default())) {
-            Any::WTFStringImpl(string) => BunString::adopt_wtf_impl(string.into_raw()),
+            Any::WTFStringImpl(string) => string.into(),
             _ => unreachable!("Any::take_string on a variant that is not a string"),
         }
     }

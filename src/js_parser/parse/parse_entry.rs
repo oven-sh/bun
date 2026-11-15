@@ -191,7 +191,7 @@ impl<'a> Options<'a> {
     /// take this snapshot *before* moving `opts` into `parse()`.
     ///
     /// Intentionally NOT carried over (lazy-export / `into_lazy_export_ast` does
-    /// not consult them; carrying them would alias or double-own):
+    /// not consult them):
     /// - `macro_context`, `macro_remap` — macro evaluation runs only on the full
     ///   parse path.
     /// - `features.replace_exports` — visit-pass-only; the lazy stub has no
@@ -337,7 +337,6 @@ impl<'a> Options<'a> {
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // Callers must assign `Some(_)` before any read site `.unwrap()`s it.
             macro_context: None,
             macro_remap: None,
             warn_about_unbundled_modules: true,

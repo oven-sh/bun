@@ -1211,9 +1211,9 @@ describe("XML.stringify", () => {
   });
 
   test("deep values are a catchable error", () => {
-    // Must overflow on every build: release frames are far smaller than
-    // debug/ASAN ones, so use a depth no native stack survives.
-    const depth = 1_000_000;
+    // Must overflow on every build. A release build on an 18 MB stack (the
+    // darwin and Windows main thread) overflows below 65_000 levels.
+    const depth = 200_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);

@@ -10,7 +10,7 @@ use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::{RESETS_BEFORE_EACH_TEST, TestEnvironment};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, OwnedRegularExpression,
     StringJsc as _,
 };
 use bun_ptr::CellExt as _;
@@ -130,7 +130,7 @@ pub(crate) struct TestRunner {
     pub(crate) vi_config_of_preload: Cell<vi_utils::Config>,
 
     /// Used for --test-name-pattern to reduce allocations.
-    pub(crate) filter_regex: Option<&'static RegularExpression>,
+    pub(crate) filter_regex: Option<OwnedRegularExpression>,
 
     pub(crate) unhandled_errors_between_tests: Cell<u32>,
     pub(crate) summary: Cell<Summary>,

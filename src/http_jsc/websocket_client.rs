@@ -1505,7 +1505,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
 
         // fast path: small frame, no backpressure, attempt to send without allocating
-        if !str.is_16bit() && str.len < STACK_FRAME_SIZE {
+        if !str.is_16bit() && str.len() < STACK_FRAME_SIZE {
             let bytes = Copy::Latin1(str.slice());
             let (frame_size, byte_len) = bytes.frame_and_content_len(kind.masked);
             if frame_size < STACK_FRAME_SIZE && this.can_send_inline(kind) {
@@ -1513,7 +1513,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 return;
             }
             // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
-        } else if (str.len * 4) < STACK_FRAME_SIZE && this.can_send_inline(kind) {
+        } else if (str.len() * 4) < STACK_FRAME_SIZE && this.can_send_inline(kind) {
             let bytes = Copy::Utf16(str.utf16_slice());
             let (frame_size, byte_len) = bytes.frame_and_content_len(kind.masked);
             this.send_inline_frame(bytes, byte_len, frame_size, kind);

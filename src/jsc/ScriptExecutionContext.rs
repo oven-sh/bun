@@ -378,12 +378,11 @@ impl AbortHandle {
         handle.unfollow();
         let raw = signal.get();
         handle.signal.set(Some(signal));
-        // `AbortSignal` is an `opaque_ffi!` handle; the ref just stored keeps it live.
-        let signal = AbortSignal::opaque_ref(raw);
-        signal.add_listener(this.cast(), Self::signal_fired);
+        // SAFETY: fn contract; `unfollow` removes the listener. The ref just stored keeps `raw` live.
+        unsafe { (*raw).add_listener(this.cast(), Self::signal_fired) };
     }
 
-    extern "C" fn signal_fired(this: *mut core::ffi::c_void, reason: JSValue) {
+    unsafe extern "C" fn signal_fired(this: *mut core::ffi::c_void, reason: JSValue) {
         let this = this.cast::<AbortHandle>();
         // SAFETY: registered in `follow` with the handle's address; the
         // listener is removed (`unfollow`) before the handle moves or drops.

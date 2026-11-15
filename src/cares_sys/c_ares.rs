@@ -654,7 +654,7 @@ pub struct ChannelOptions {
     pub tries: Option<i32>,
 }
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque c-ares channel handle. `UnsafeCell` makes the type `!Freeze` so a
     /// `&Channel` does not assert immutability of the C-owned state (c-ares
     /// mutates the channel on every dispatch/process call).
@@ -694,23 +694,10 @@ fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
     buf.as_ptr().cast::<c_char>()
 }
 
-/// Dropping it fails every pending query into its callback and closes its sockets.
-#[repr(transparent)]
-pub struct OwnedChannel(ptr::NonNull<Channel>);
-
-impl core::ops::Deref for OwnedChannel {
-    type Target = Channel;
-    fn deref(&self) -> &Channel {
-        // SAFETY: the channel that `self` owns.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl Drop for OwnedChannel {
-    fn drop(&mut self) {
-        // SAFETY: from `ares_init_options`, destroyed once. A call into the channel borrows `self`.
-        unsafe { ares_destroy(self.0.as_ptr()) };
-    }
+// SAFETY: only `ares_init_options` makes one, and a call into the channel borrows it.
+bun_opaque::owned_handle! {
+    /// Dropping it fails every pending query into its callback and closes its sockets.
+    pub struct OwnedChannel(Channel) => unsafe ares_destroy;
 }
 
 /// The list that `ares_get_servers_ports` allocated.

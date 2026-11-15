@@ -1,7 +1,6 @@
 //! Prints DOM nodes and collections like pretty-format's `DOMElement` and `DOMCollection` plugins.
 
 use core::cmp::Ordering;
-use core::ffi::c_void;
 
 use bun_core::{StackCheck, String, strings};
 use bun_jsc::{
@@ -267,10 +266,10 @@ fn is_list_name(name: &[u8]) -> bool {
 /// Same order as `Array.prototype.sort()` with no comparator.
 fn compare_code_units(a: &String, b: &String) -> Ordering {
     let (a, b) = (a.to_encoded_slice(), b.to_encoded_slice());
-    (0..a.len.min(b.len))
+    (0..a.len().min(b.len()))
         .map(|i| a.char_at(i).cmp(&b.char_at(i)))
         .find(|order| order.is_ne())
-        .unwrap_or_else(|| a.len.cmp(&b.len))
+        .unwrap_or_else(|| a.len().cmp(&b.len()))
 }
 
 fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
@@ -290,9 +289,7 @@ fn for_each_item(
         each: &'a mut dyn FnMut(JSValue) -> JsResult<()>,
         result: JsResult<()>,
     }
-    extern "C" fn next(_: *mut VM, _: &JSGlobalObject, iteration: *mut c_void, item: JSValue) {
-        // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
-        let iteration = unsafe { &mut *iteration.cast::<Iteration<'_>>() };
+    extern "C" fn next(_: &VM, _: &JSGlobalObject, iteration: &mut Iteration<'_>, item: JSValue) {
         if iteration.result.is_ok() {
             iteration.result = (iteration.each)(item);
         }
@@ -306,7 +303,7 @@ fn for_each_item(
             each,
             result: Ok(()),
         };
-        list.for_each(global, (&raw mut iteration).cast::<c_void>(), next)?;
+        list.for_each(global, &mut iteration, next)?;
         return iteration.result;
     }
     for i in 0..length_of(global, list)? {

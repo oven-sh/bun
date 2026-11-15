@@ -9,6 +9,8 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
+use bun_ptr::cast_fn_ptr;
+
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
@@ -133,7 +135,7 @@ impl JSValue {
     /// Like [`then`] but the context is a `JSValue` (not a raw pointer encoded
     /// as a JS number). Wraps in a `TopExceptionScope` and surfaces only
     /// termination; every current call site discards the error, so this returns `()`.
-    pub fn then2(
+    pub fn then_with_value(
         self,
         global: &JSGlobalObject,
         ctx: JSValue,
@@ -153,26 +155,6 @@ impl JSValue {
         crate::top_scope!(scope, global);
         JSC__JSValue___then(self, global, ctx, resolve, reject);
         let _ = scope.assert_no_exception_except_termination();
-    }
-
-    /// Like [`then`], but the context is a `JSValue` instead of a raw pointer.
-    /// Use this when the context should be GC-managed (e.g. a JSCell that gets
-    /// collected with the Promise's reaction if the Promise is GC'd without
-    /// settling).
-    ///
-    /// Wraps in a `TopExceptionScope` and surfaces only
-    /// termination; every current call site discards the error, so this returns
-    /// `()` and lets the caller's surrounding scope (or none) observe a
-    /// termination on its next check.
-    #[inline]
-    pub fn then_with_value(
-        self,
-        global: &JSGlobalObject,
-        ctx: JSValue,
-        resolve: host_fn::JSHostFn,
-        reject: host_fn::JSHostFn,
-    ) {
-        self.then2(global, ctx, resolve, reject)
     }
 }
 
@@ -365,17 +347,15 @@ impl JSValue {
     /// `JSValue.isException(vm)` — true if this value is a
     /// `JSC::Exception` cell.
     #[inline]
-    pub fn is_exception(self, vm: *mut crate::VM) -> bool {
-        // `VM` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
-        // zero-byte deref proof, so no `unsafe` is needed at this call site.
-        JSC__JSValue__isException(self, crate::VM::opaque_ref(vm))
+    pub fn is_exception(self, vm: &crate::VM) -> bool {
+        JSC__JSValue__isException(self, vm)
     }
     /// `JSValue.asException(vm)` — cast to `*mut Exception`
     /// if `is_exception`, else null. The returned pointer borrows the GC cell;
     /// callers must keep `self` alive (the only callsite —
     /// `runErrorHandler` — holds it on the stack).
     #[inline]
-    pub fn as_exception(self, vm: *mut crate::VM) -> Option<*mut crate::Exception> {
+    pub fn as_exception(self, vm: &crate::VM) -> Option<*mut crate::Exception> {
         if self.is_exception(vm) {
             // SAFETY: `is_exception` proved the cell is a `JSC::Exception`;
             // the encoded value is the cell pointer.
@@ -849,26 +829,6 @@ impl JSValue {
             None
         }
     }
-    /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
-    /// cannot be detached. The pin does not prevent collection.
-    ///
-    /// While pinned, a JS `transfer()`, `structuredClone(v, { transfer: [ab] })`
-    /// or `postMessage(v, [ab])` hands the destination a copy and leaves the
-    /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
-    /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
-    pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let kind = JSC__JSValue__pinArrayBuffer(self);
-        if kind == 0 {
-            return None;
-        }
-        let mut buffer = self.as_array_buffer(global);
-        match &mut buffer {
-            Some(buffer) => buffer.pinned = kind == 1,
-            None if kind == 1 => self.unpin_array_buffer(),
-            None => {}
-        }
-        buffer
-    }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
     pub fn as_<T: JsClass>(self) -> Option<*mut T> {
@@ -1009,7 +969,7 @@ impl JSValue {
     ) -> JsResult<Option<JSValue>> {
         debug_assert!(self.is_object());
         let v = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__fastGet(self, global, builtin_name as u8)
+            JSC__JSValue__fastGet(self, global, builtin_name)
         })?;
         // `.property_does_not_exist_on_object` (0x4) and
         // `.js_undefined` map to None; `.zero` ⇒ exception (handled above).
@@ -1667,11 +1627,16 @@ impl JSValue {
 /// on drop. JSC's `gcProtect` is refcounted, so this composes with nested
 /// protect/unprotect pairs.
 #[must_use = "dropping immediately unprotects; bind to a local"]
+#[repr(transparent)]
 pub struct Protected(JSValue);
 impl Protected {
     #[inline]
     pub fn value(&self) -> JSValue {
         self.0
+    }
+    pub fn as_values(slice: &[Protected]) -> &[JSValue] {
+        // SAFETY: `Protected` is a transparent `JSValue`.
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
     }
 }
 impl Drop for Protected {
@@ -1942,7 +1907,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__isCallable(this: JSValue) -> bool;
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
-    safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
+    safe fn JSC__JSValue__fastGet(
+        this: JSValue,
+        global: &JSGlobalObject,
+        builtin: BuiltinName,
+    ) -> JSValue;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2040,8 +2009,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(
@@ -2141,16 +2108,16 @@ struct SerializedScriptValueExternal {
     handle: *mut c_void,
 }
 
-/// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`].
-pub type ForEachCallback =
-    extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
+/// Callback signature for [`JSValue::for_each`].
+pub type ForEachCallback<C> =
+    extern "C" fn(vm: &crate::VM, global: &JSGlobalObject, ctx: &mut C, next: JSValue);
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
 /// C++ passes the address of a stack `EncodedSlice` as `key`.
-pub(crate) type ForEachPropertyCallback = extern "C" fn(
+pub(crate) type ForEachPropertyCallback<C> = extern "C" fn(
     global: &JSGlobalObject,
-    ctx: *mut c_void,
+    ctx: &mut C,
     key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
@@ -2360,26 +2327,37 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
-    pub fn for_each(
+    pub fn for_each<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
+        ctx: &mut C,
+        callback: ForEachCallback<C>,
     ) -> JsResult<()> {
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__forEach(self, global, ctx, callback)
+        let ctx = core::ptr::from_mut(ctx).cast();
+        // SAFETY: C++ only hands `ctx` back to `callback`, one call at a time, until it returns.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__forEach(self, global, ctx, cast_fn_ptr(callback))
         })
     }
-    /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
-    /// `*mut c_void` directly).
-    #[inline]
-    pub(crate) fn for_each_with_context(
+    /// `import` is one of the `JSC__JSValue__forEachProperty*` functions.
+    #[inline(always)]
+    fn for_each_property_with<C, R>(
         self,
+        import: unsafe extern "C" fn(
+            JSValue,
+            &JSGlobalObject,
+            *mut c_void,
+            ForEachPropertyCallback<c_void>,
+        ) -> R,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
-    ) -> JsResult<()> {
-        self.for_each(global, ctx, callback)
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
+    ) -> JsResult<R> {
+        let ctx = core::ptr::from_mut(ctx).cast();
+        crate::top_scope!(scope, global);
+        // SAFETY: as in `for_each`.
+        let result = unsafe { import(self, global, ctx, cast_fn_ptr(callback)) };
+        scope.return_if_exception().map(|()| result)
     }
     /// `JSValue.forEachProperty` — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
@@ -2387,138 +2365,136 @@ impl JSValue {
     /// Seats the exception scope and calls the FFI directly so the deep
     /// `print_as` recursion does not pay an extra closure frame per object level.
     #[inline(always)]
-    pub(crate) fn for_each_property(
+    pub(crate) fn for_each_property<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle
-            // (`&` is ABI-identical to non-null `*const`); `ctx` is an opaque
-            // round-trip pointer C++ only forwards to `callback` (same contract
-            // as `JSC__JSValue__forEach` above).
-            safe fn JSC__JSValue__forEachProperty(
+            fn JSC__JSValue__forEachProperty(
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
+                callback: ForEachPropertyCallback<c_void>,
             );
         }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachProperty(self, global, ctx, callback);
-        scope.return_if_exception()
+        self.for_each_property_with(JSC__JSValue__forEachProperty, global, ctx, callback)
     }
     /// Like `for_each_property`, but passes what an own getter returns, or the accessor itself if the getter throws.
     #[inline(always)]
-    pub(crate) fn for_each_property_calling_own_getters(
+    pub(crate) fn for_each_property_calling_own_getters<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyCallingOwnGetters(
+            fn JSC__JSValue__forEachPropertyCallingOwnGetters(
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
+                callback: ForEachPropertyCallback<c_void>,
             );
         }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyCallingOwnGetters(self, global, ctx, callback);
-        scope.return_if_exception()
+        self.for_each_property_with(
+            JSC__JSValue__forEachPropertyCallingOwnGetters,
+            global,
+            ctx,
+            callback,
+        )
     }
     /// `JSValue.forEachPropertyNonIndexed` — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
     /// keys.
-    pub(crate) fn for_each_property_non_indexed(
+    pub(crate) fn for_each_property_non_indexed<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyNonIndexed(
+            fn JSC__JSValue__forEachPropertyNonIndexed(
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
+                callback: ForEachPropertyCallback<c_void>,
             );
         }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
-        scope.return_if_exception()
+        self.for_each_property_with(
+            JSC__JSValue__forEachPropertyNonIndexed,
+            global,
+            ctx,
+            callback,
+        )
     }
     /// `JSValue.forEachPropertyOrdered` — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
     /// stable enumeration order (used by `console.log` with
     /// `ordered_properties`).
     #[inline(always)]
-    pub(crate) fn for_each_property_ordered(
+    pub(crate) fn for_each_property_ordered<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrdered(
+            fn JSC__JSValue__forEachPropertyOrdered(
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
+                callback: ForEachPropertyCallback<c_void>,
             );
         }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        scope.return_if_exception()
+        self.for_each_property_with(JSC__JSValue__forEachPropertyOrdered, global, ctx, callback)
     }
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
     #[inline(always)]
-    pub fn for_each_property_ordered_calling_getters(
+    pub fn for_each_property_ordered_calling_getters<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
     ) -> JsResult<bool> {
         unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
+            fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
+                callback: ForEachPropertyCallback<c_void>,
             ) -> bool;
         }
-        crate::top_scope!(scope, global);
-        let is_same =
-            JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
-        scope.return_if_exception().map(|()| is_same)
+        self.for_each_property_with(
+            JSC__JSValue__forEachPropertyOrderedCallingGetters,
+            global,
+            ctx,
+            callback,
+        )
     }
     /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
     #[inline(always)]
-    pub fn for_each_property_ordered_with_non_enumerable(
+    pub fn for_each_property_ordered_with_non_enumerable<C>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
+        ctx: &mut C,
+        callback: ForEachPropertyCallback<C>,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(
+            fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
+                callback: ForEachPropertyCallback<c_void>,
             );
         }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
-        scope.return_if_exception()
+        self.for_each_property_with(
+            JSC__JSValue__forEachPropertyOrderedWithNonEnumerable,
+            global,
+            ctx,
+            callback,
+        )
     }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
@@ -2577,7 +2553,7 @@ impl JSValue {
     /// Asserts `self` is a `Proxy`.
     pub(crate) fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
         debug_assert!(self.is_cell() && self.js_type() == JSType::ProxyObject);
-        Bun__ProxyObject__getInternalField(self, field as u32)
+        Bun__ProxyObject__getInternalField(self, field)
     }
 
     /// Returns the wrapped target of a `JSGlobalProxy` or `ProxyObject`, or
@@ -2711,13 +2687,13 @@ unsafe extern "C" {
         name: &bun_core::String,
     ) -> JSValue;
     safe fn JSC__JSValue__isIterable(this: JSValue, global: &JSGlobalObject) -> bool;
-    safe fn JSC__JSValue__forEach(
+    fn JSC__JSValue__forEach(
         this: JSValue,
         global: &JSGlobalObject,
         ctx: *mut c_void,
-        callback: ForEachCallback,
+        callback: ForEachCallback<c_void>,
     );
-    safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
+    safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: ProxyField) -> JSValue;
     safe fn Bun__JSValue__getProxyTarget(this: JSValue) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewBuffer(
         this: JSValue,

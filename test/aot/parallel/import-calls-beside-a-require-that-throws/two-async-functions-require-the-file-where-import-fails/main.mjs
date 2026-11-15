@@ -13,6 +13,6 @@ async function load() {
     }
   }
 }
-await new Promise((resolve) => setTimeout(resolve, 1));
+await new Promise((resolve) => setImmediate(resolve));
 console.log((await Promise.all([load(), load()])).sort().join("\n"));
 console.log("runs", globalThis.runs);

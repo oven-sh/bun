@@ -1676,14 +1676,11 @@ impl RunTestsTask {
     }
 }
 
-impl bun_event_loop::Taskable for RunTestsTask {
+impl bun_event_loop::BoxedTask for RunTestsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `run_next_tick`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

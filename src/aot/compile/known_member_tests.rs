@@ -386,7 +386,7 @@ fn whoever_gets_hold_of_an_enum_spoils_the_enums_that_are_made_of_it() {
         ),
         (
             "import { Base } from './base'; import { Made } from './made'; (Base as any).One = 9; console.log(Made.Three);",
-            [true, false, false],
+            [true, true, false],
         ),
     ] {
         assert_eq!(

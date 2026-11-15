@@ -156,17 +156,16 @@ pub(crate) mod lib_uv_backend {
             self.query.complete_native(Ok(list));
         }
     }
-    impl bun_event_loop::Taskable for LibuvRequest {
+    impl bun_event_loop::BoxedTask for LibuvRequest {
         const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
         /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
         /// its completion is what frees the request and its cache slot, and it
         /// only settles promises (no callback runs; script is forbidden), so run it.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — the box `on_raw_libuv_complete` queued.
-            unsafe { bun_core::heap::take(this) }.run();
+        fn release_unrun(self: Box<Self>) {
+            self.run();
         }
         /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
-        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        fn context(&self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
         }
     }
@@ -177,7 +176,9 @@ pub(crate) mod lib_uv_backend {
         _res: *mut libuv::addrinfo,
     ) {
         // TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        VirtualMachine::get().enqueue_task(jsc::Task::init(uv_info.cast::<LibuvRequest>()));
+        // SAFETY: `uv_info` is the first field of the box that `start` left to libuv. The task keeps it in place for `pending_uv_requests`.
+        let request = unsafe { bun_core::heap::take(uv_info.cast::<LibuvRequest>()) };
+        VirtualMachine::get().enqueue_task(jsc::Task::from_boxed(request));
     }
 
     pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) {

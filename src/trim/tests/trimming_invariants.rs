@@ -700,7 +700,11 @@ fn check_plan(
         }
         seed.union_with(&entered_by_programs);
     }
-    let retained = close_over_followed_edges(table, seed);
+    let mut retained = close_over_followed_edges(table, seed);
+    if retained.contains(Feature::AotCompiler) {
+        retained.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+        retained = close_over_followed_edges(table, retained);
+    }
     for feature in Feature::ALL.iter().copied() {
         let is_forced = request.remove_internal.contains(&feature);
         let is_unused = (request.removes_unused || is_compiled) && !retained.contains(feature);

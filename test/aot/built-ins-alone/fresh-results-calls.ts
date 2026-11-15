@@ -80,6 +80,10 @@ const callsOfFileSystem: Record<string, string[]> = {
     'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })',
   ],
   readFileSync: ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
+  fstatSync: [
+    'import { fstatSync } from "node:fs";\nfstatSync(0)',
+    'import { fstatSync } from "node:fs";\nfstatSync(0, { bigint: true })',
+  ],
 };
 const observed = [
   "const { promise, resolve } = Promise.withResolvers();",
@@ -101,7 +105,6 @@ export const calls: Record<string, string[]> = {
       [`native:Bindgen:node_fs_binding.bind.ts:${name}`, texts],
     ]),
   ),
-  "%NodeJSFS%.prototype.fstatSync": ['import { fstatSync } from "node:fs";\nfstatSync(0)'],
   "%NodeJSFS%.prototype.realpathSync": ['import { realpathSync } from "node:fs";\nrealpathSync("/", "buffer")'],
   ...Object.fromEntries(
     ["atime", "birthtime", "ctime", "mtime"].flatMap(name => [

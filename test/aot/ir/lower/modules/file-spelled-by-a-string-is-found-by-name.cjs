@@ -1,8 +1,8 @@
-// `require` goes into a list, so a call that the build does not follow may load a file. A file whose path a string spells outside the resolved loads is marked, with or without its extension, and no other file.
+// `require` goes into a list, so a call that the build does not follow may load a file, also one that threw before. A file whose path a string spells outside the resolved loads is marked, with or without its extension, and no other file.
 // RUN: link
 // CHECK: path="{{*}}/found-by-name/other.cjs"{{*}}flags=[CachesEvaluationError]
-// CHECK: path="{{*}}/found-by-name/spelled.cjs"{{*}}flags=[CachesEvaluationError, IsFoundByName]
-// CHECK: path="{{*}}/found-by-name/short.cjs"{{*}}flags=[CachesEvaluationError, IsFoundByName]
+// CHECK: path="{{*}}/found-by-name/spelled.cjs"{{*}}flags=[CachesEvaluationError, IsFoundByName, MayBeReevaluated]
+// CHECK: path="{{*}}/found-by-name/short.cjs"{{*}}flags=[CachesEvaluationError, IsFoundByName, MayBeReevaluated]
 
 const load = [require][0];
 require("./imports/found-by-name/other.cjs");

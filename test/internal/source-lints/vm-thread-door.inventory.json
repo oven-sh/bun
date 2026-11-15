@@ -65,14 +65,12 @@
   "src/runtime/api/bun/Terminal.rs": {
     "thread spawn": 1
   },
+  "src/runtime/api/bundle_thread.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/api/glob.rs": {
     "unsafe impl Send": [
       "WalkTask"
-    ]
-  },
-  "src/runtime/api/js_bundle_completion_task.rs": {
-    "unsafe impl Send": [
-      "JSBundleCompletionTask"
     ]
   },
   "src/runtime/bake/production/mod.rs": {
@@ -153,6 +151,7 @@
     "WorkPool::schedule*": 4,
     "owned_task!": [
       "AsyncMkdirp",
+      "CpSingleTask",
       "ReaddirSubtask"
     ],
     "unsafe impl Send": [

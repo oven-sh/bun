@@ -1,8 +1,8 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
@@ -185,15 +185,14 @@ pub(crate) struct RefusedRequest {
     context: bun_jsc::ContextId,
 }
 
-impl Taskable for RefusedRequest {
+impl BoxedTask for RefusedRequest {
     const TAG: TaskTag = task_tag::S3RefusedRequest;
     /// As `S3HttpSimpleTask`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `Callback::refuse`.
-        let _ = unsafe { bun_core::heap::take(this) }.run();
+    fn release_unrun(self: Box<Self>) {
+        let _ = self.run();
     }
     /// As `S3HttpSimpleTask`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -223,7 +222,7 @@ impl Callback {
                     error,
                     context: context.id(),
                 };
-                let task = ConcurrentTask::create(Task::from_boxed(Box::new(refused)));
+                let task = ConcurrentTask::create_boxed(Box::new(refused));
                 // Not `enqueue_task`: it wakes no loop, and fails the request on arrival in teardown.
                 VirtualMachine::get().ticket().post(task);
                 Ok(())
@@ -376,9 +375,8 @@ impl S3HttpSimpleTask {
         let _context = vm.enter_context(unsafe { (*this).context });
         // SAFETY: fn contract — `this` is live.
         unsafe { (*this).abort_handle.leave() };
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
-        // `this` is dropped at scope exit.
+        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc), and its task is
+        // posted once.
         let mut this = unsafe { bun_core::heap::take(this) };
 
         let callback = this.callback.take().expect("a request is answered once");
@@ -493,10 +491,8 @@ impl S3HttpSimpleTask {
             // JS thread may free `this` the moment it is queued.
             unsafe {
                 let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-                let queued = core::ptr::NonNull::from(
-                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
-                ticket.post(queued);
+                let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
+                ticket.post_intrusive(queued);
             }
         }
     }
@@ -514,10 +510,8 @@ impl S3HttpSimpleTask {
             (*this).result.fail = Some(bun_http::Error::Aborted);
             (*this).result.has_more = false;
             let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-            let queued = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
-            ticket.post(queued);
+            let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
+            ticket.post_intrusive(queued);
         }
     }
 }

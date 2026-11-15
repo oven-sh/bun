@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_core::MutableString;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{HTTPClientResult, Headers};
 use bun_io::JsKeepAlive;
@@ -293,13 +293,11 @@ impl S3HttpDownloadStreamingTask {
             // this heap request and the queue takes ownership of its `next` link. Not done ⇒
             // `this` (and the ticket in it) outlives the post.
             unsafe {
-                let task = core::ptr::NonNull::from(
-                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
+                let task = core::ptr::NonNull::from((*this).concurrent_task.from(this));
                 done_ticket
                     .as_ref()
                     .unwrap_or_else(|| (*this).http_ticket.as_ref().expect(Self::HOLDS_TICKET))
-                    .post(task);
+                    .post_intrusive(task);
             }
         }
         drop(done_ticket);
@@ -331,10 +329,8 @@ impl S3HttpDownloadStreamingTask {
                     .is_ok()
             };
             if should_enqueue {
-                let task = core::ptr::NonNull::from(
-                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
-                ticket.post(task);
+                let task = core::ptr::NonNull::from((*this).concurrent_task.from(this));
+                ticket.post_intrusive(task);
             }
             drop(ticket);
         }

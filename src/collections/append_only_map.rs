@@ -4,9 +4,7 @@ use bun_ptr::AliasableBox;
 
 use crate::HashMap;
 
-/// Boxed values by id. A shared borrow can add values and only an exclusive one can remove them,
-/// so a `&V` stays valid while the map grows. The key is a `u32` because hashing it runs no code
-/// that could reach the map.
+/// Boxed values by id. Only `&mut self` removes one, so a `&V` stays valid while the map grows.
 pub struct AppendOnlyMap<V> {
     /// A method's borrow of this ends before it returns or runs code it was given.
     map: UnsafeCell<HashMap<u32, AliasableBox<V>>>,
@@ -27,12 +25,13 @@ impl<V> AppendOnlyMap<V> {
     }
 
     pub fn contains_key(&self, id: u32) -> bool {
-        // SAFETY: as in `len`.
+        // SAFETY: as in `len`. Hashing a `u32` runs no code that could reach `map`.
         unsafe { &*self.map.get() }.contains_key(&id)
     }
 
     pub fn get(&self, id: u32) -> Option<&V> {
-        // SAFETY: as in `len`. The box does not move with its slot, and only `&mut self` drops it.
+        // SAFETY: as in `contains_key`. The value does not move with its slot, and only
+        // `&mut self` drops it.
         unsafe { (*self.map.get()).get(&id).map(|value| &*value.as_ptr()) }
     }
 

@@ -1410,8 +1410,11 @@ impl Stream {
     }
 
     pub(crate) fn flush_queue(&self, client: &H2FrameParser, written: &mut usize) -> FlushState {
-        if !self.can_send_data() || !self.has_queued_data() {
-            // empty or cannot send data
+        if client.foreign_cork_runs_js() && self.has_queued_data() {
+            // The JS of the handover can flush this queue, so it runs before a frame is taken out.
+            client.cork();
+        }
+        if !self.can_send_data() {
             return FlushState::NoAction;
         }
         let window = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
@@ -1543,13 +1546,14 @@ impl Stream {
         }
     }
 
+    /// Returns the write callback that has nothing left to wait for.
     pub(crate) fn queue_data(
         &self,
         client: &H2FrameParser,
         bytes: &[u8],
         callback: JSValue,
         end_stream: bool,
-    ) {
+    ) -> StrongOptional {
         bun_output::scoped_log!(
             H2FrameParser,
             "{} queued {} {}",
@@ -1561,17 +1565,16 @@ impl Stream {
             bytes.len(),
             end_stream
         );
-        if self.state.get() == StreamState::CLOSED {
-            // The queue of a closed stream is never flushed.
-            client.dispatch_write_callback(callback);
-            return;
-        }
         let global_this = client.global_this;
         let callback = if callback.is_callable() {
             StrongOptional::create(callback, &global_this)
         } else {
             StrongOptional::empty()
         };
+        if self.state.get() == StreamState::CLOSED {
+            // The queue of a closed stream is never flushed.
+            return callback;
+        }
 
         let mut queue = self.data_frame_queue.take();
         let queued_frames = queue.len;
@@ -1602,9 +1605,7 @@ impl Stream {
                 .vm()
                 .deprecated_report_extra_memory(more_data.len());
         }
-        if let Some(old_callback_value) = old_callback.get() {
-            client.dispatch_write_callback(old_callback_value);
-        }
+        old_callback
     }
 
     fn has_queued_data(&self) -> bool {
@@ -2144,9 +2145,8 @@ impl H2FrameParser {
         let Some(ctx_value) = js::context_get_cached(this_value) else {
             return;
         };
-        let _ = self
-            .handlers
-            .call_event_handler(event, this_value, ctx_value, &[ctx_value, value]);
+        let handlers = &self.handlers;
+        let _ = handlers.call_event_handler(event, this_value, ctx_value, &[ctx_value, value]);
     }
 
     /// `onWrite(context, bytes, transportClosed)`. The flag is true once the native socket closed.
@@ -2254,11 +2254,8 @@ impl H2FrameParser {
         Self::with_corked(|corked| corked.is_some_and(|corked| std::ptr::eq(corked, self)))
     }
 
+    /// Takes the slot from whoever holds it, which is not `self`.
     fn cork(&self) {
-        if self.holds_cork() {
-            // already corked
-            return;
-        }
         // force uncork; JS that runs under the write can take the slot again
         while let Some(corked) = Self::set_corked(None) {
             corked.write_uncorked();
@@ -2271,6 +2268,22 @@ impl H2FrameParser {
         self.register_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
         CORK_OFFSET.with(|c| c.set(0));
+    }
+
+    fn foreign_cork_runs_js(&self) -> bool {
+        Self::with_corked(|corked| match corked {
+            Some(other) if !std::ptr::eq(other, self) => {
+                CORK_OFFSET.with(|c| c.get()) > 0 && other.transport_write_runs_js()
+            }
+            _ => false,
+        })
+    }
+
+    /// Runs the JS of a handover before the caller encodes a header block that it could overtake.
+    fn cork_ahead(&self) {
+        if self.foreign_cork_runs_js() {
+            self.cork();
+        }
     }
 
     /// Bytes in `write_buffer` that were not handed to the transport yet.
@@ -2552,15 +2565,7 @@ impl H2FrameParser {
     /// `resize()` the buffer: under this session's own transport writes, or when taking the
     /// cork slot first flushes another such session's corked bytes through its transport.
     fn stable_payload<'a>(&self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
-        let foreign_cork_runs_js = || {
-            Self::with_corked(|corked| match corked {
-                Some(other) if !std::ptr::eq(other, self) => {
-                    CORK_OFFSET.with(|c| c.get()) > 0 && other.transport_write_runs_js()
-                }
-                _ => false,
-            })
-        };
-        if !bytes.is_empty() && (self.transport_write_runs_js() || foreign_cork_runs_js()) {
+        if !bytes.is_empty() && (self.transport_write_runs_js() || self.foreign_cork_runs_js()) {
             Cow::Owned(bytes.to_vec())
         } else {
             Cow::Borrowed(bytes)
@@ -2758,7 +2763,7 @@ impl H2FrameParser {
         // CORK_BUFFER is thread-local across every session: only drain bytes we corked.
         // send_data()'s multi-frame path reaches here without having called cork(), and
         // prepending another session's corked frames to this one's batch sends them to
-        // the wrong peer. The slot is empty under write_uncorked(), so None passes.
+        // the wrong peer. None passes: a session drains right after it left the slot.
         if Self::with_corked(|corked| corked.is_some_and(|corked| !std::ptr::eq(corked, self))) {
             return;
         }
@@ -2895,7 +2900,9 @@ impl H2FrameParser {
         if !ENABLE_AUTO_CORK {
             return self._write(bytes);
         }
-        self.cork();
+        if !self.holds_cork() {
+            self.cork();
+        }
         if self.transport_write_runs_js() {
             return self.write_to_js_transport(bytes);
         }
@@ -2927,7 +2934,9 @@ impl H2FrameParser {
             ok = self.flush_cork_buffer() && ok;
             // A close inside the flush's _write runs JS, which can re-cork a different parser;
             // re-assert ownership before touching the shared cork state again.
-            self.cork();
+            if !self.holds_cork() {
+                self.cork();
+            }
             bytes = &bytes[avail..];
         }
     }
@@ -4757,6 +4766,7 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
+        let mut concluded = StrongOptional::empty();
 
         let can_close = close && !stream.wait_for_trailers.get();
         if payload.is_empty() {
@@ -4773,7 +4783,7 @@ impl H2FrameParser {
             };
             if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
                 enqueued = true;
-                stream.queue_data(self, b"", callback, close);
+                concluded = stream.queue_data(self, b"", callback, close);
             } else {
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
@@ -4901,14 +4911,16 @@ impl H2FrameParser {
                     });
                 }
             }
-            // Preserve wire order: anything already batched goes out before the
-            // queued remainder is flushed later by the drain path.
-            self.flush_batch_buffer();
             if !rest.is_empty() {
                 enqueued = true;
                 // the callback will only be called after the last frame is sended
-                stream.queue_data(self, rest, callback, close);
+                concluded = stream.queue_data(self, rest, callback, close);
             }
+            // After queueing: a WINDOW_UPDATE that is read under this write flushes the queue.
+            self.flush_batch_buffer();
+        }
+        if let Some(concluded) = concluded.get() {
+            self.dispatch_write_callback(concluded);
         }
 
         let mut settled_state: u8 = 0;
@@ -5129,6 +5141,7 @@ impl H2FrameParser {
             );
         }
 
+        self.cork_ahead();
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -5541,8 +5554,10 @@ impl H2FrameParser {
     }
 
     pub(crate) fn get_next_stream(&self, _: &mut JsScope<'_>) -> i32 {
+        self.cork_ahead();
         let id = self.get_next_stream_id();
-        if id > MAX_STREAM_ID {
+        // No encoder: the JS of the handover destroyed the session.
+        if id > MAX_STREAM_ID || self.hpack.with_taken(|hpack| hpack.is_none()) {
             return -1;
         }
         let streams = self.streams.borrow();
@@ -5591,6 +5606,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
+        self.cork_ahead();
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -5974,6 +5990,7 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
+        self.cork_ahead();
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -7156,9 +7173,7 @@ impl H2FrameParser {
         self.hpack.set(None);
     }
 
-    /// Once the VM shuts down, nothing aborts a stream, uncorks or runs the auto-flush task any
-    /// more, so their refs would keep `Drop` from running. The socket's `+1`
-    /// (`attach_native_callback`) has a live owner that releases it in `NewSocket::finalize`.
+    /// Releases the refs that wait for the event loop, so that `Drop` can run without it.
     fn release_refs_stranded_by_exit(&self) {
         for stream in self.streams.borrow().values() {
             drop(stream.signal.take());

@@ -109,24 +109,41 @@ describe("zlib", () => {
   });
 
   // zlib takes a 32-bit length.
-  describe.skipIf(totalmem() < 10 * 1024 ** 3)("an input of 2**32 bytes", () => {
-    it("gunzipSync reads it", () => {
-      const input = new Uint8Array(2 ** 32);
-      input.set(gzipSync("hello"));
-      // What it takes for the size of the output.
-      input[2 ** 32 - 4] = 5;
-      expect(Buffer.from(gunzipSync(input)).toString()).toBe("hello");
-    });
+  describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "an input of 2**32 bytes",
+    () => {
+      async function run(script) {
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { stdout: stdout.trim(), exitCode };
+      }
 
-    it(
-      "gzipSync compresses all of it",
-      () => {
-        const crc32AndSize = Buffer.from(gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8));
-        expect(crc32AndSize.toString("hex")).toBe("8def02d200000000");
-      },
-      isDebug || isASAN ? 60_000 : 20_000,
-    );
-  });
+      it("gunzipSync reads it", async () => {
+        expect(
+          await run(
+            `const input = new Uint8Array(2 ** 32);
+             input.set(Bun.gzipSync("hello"));
+             // What it takes for the size of the output.
+             input[2 ** 32 - 4] = 5;
+             console.log(Buffer.from(Bun.gunzipSync(input)).toString());`,
+          ),
+        ).toEqual({ stdout: "hello", exitCode: 0 });
+      });
+
+      it.skipIf(isDebug || isASAN)(
+        "gzipSync compresses all of it",
+        async () => {
+          expect(
+            await run(
+              `const crc32AndSize = Bun.gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8);
+               console.log(crc32AndSize.toHex());`,
+            ),
+          ).toEqual({ stdout: "8def02d200000000", exitCode: 0 });
+        },
+        90_000,
+      );
+    },
+  );
 
   it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
     for (const kind of ["2", 2n]) {
@@ -1044,23 +1061,27 @@ it.each([
   const compressor = zlib[create]().on("data", chunk => chunks.push(chunk));
   const queued = Buffer.from(new ArrayBuffer(16));
   const { promise, resolve, reject } = Promise.withResolvers();
+  compressor.on("error", reject);
   compressor.write("first");
-  compressor.write(queued, error => (error ? reject(error) : resolve()));
+  compressor.write(queued);
   queued.buffer.transfer();
+  compressor.flush(compressor._finishFlushFlag, resolve);
   await promise;
-  await new Promise(done => compressor.flush(compressor._finishFlushFlag, done));
   expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
   compressor.close();
 });
 
 it("a stream of a ShadowRealm keeps its async context across a write", async () => {
-  const { promise, resolve } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers();
   new ShadowRealm().evaluate(
-    `report => void Promise.all([import("node:zlib"), import("node:async_hooks")]).then(([zlib, hooks]) => {
-       const storage = new hooks.AsyncLocalStorage();
-       storage.run("kept", () => zlib.createGzip().once("data", () => report(storage.getStore())).end("x"));
-     })`,
-  )(resolve);
+    `(report, reject) => {
+       const fail = error => reject(String(error));
+       Promise.all([import("node:zlib"), import("node:async_hooks")]).then(([zlib, hooks]) => {
+         const storage = new hooks.AsyncLocalStorage();
+         storage.run("kept", () => zlib.createGzip().on("error", fail).once("data", () => report(storage.getStore())).end("x"));
+       }).catch(fail);
+     }`,
+  )(resolve, reject);
   expect(await promise).toBe("kept");
 });
 

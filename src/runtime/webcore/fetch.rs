@@ -1431,7 +1431,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
-                match &store.data.as_file().pathlike {
+                match &store.data.as_file().pathlike() {
                     PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
                     PathOrFileDescriptor::Path(path) => {
                         let zpath = path.slice_z(&mut open_path_buf);

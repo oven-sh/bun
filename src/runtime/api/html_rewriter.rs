@@ -464,8 +464,8 @@ impl HTMLRewriter {
                 .use_as_any_blob_allow_non_utf8_string();
 
             return match kind {
-                ResponseKind::String => blob.to_string(&cx, webcore::Lifetime::Transfer),
-                ResponseKind::ArrayBuffer => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
+                ResponseKind::String => blob.to_string_transfer(&cx),
+                ResponseKind::ArrayBuffer => blob.to_array_buffer_transfer(&cx),
                 ResponseKind::Other => unreachable!(),
             };
         }

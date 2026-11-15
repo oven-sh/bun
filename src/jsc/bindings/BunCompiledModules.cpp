@@ -584,9 +584,10 @@ static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* 
 
 static String typeAttributeOf(const ScriptFetchParameters& attributes)
 {
-    // The path does not show what another attribute selects. The engine requests a statement that the loader links by type.
-    if (attributes.attributes().size() > 1)
-        return {};
+    for (auto& name : attributes.attributes().keys()) {
+        if (StringView(name.get()) == "embed"_s || StringView(name.get()) == "bunBakeGraph"_s)
+            return {};
+    }
     switch (attributes.type()) {
     case ScriptFetchParameters::Type::JSON:
         return "json"_s;

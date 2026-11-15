@@ -1,6 +1,8 @@
 // The last property of a name counts, and a spread, a computed key or an accessor may stand behind the one that is written out.
 const text = { type: "text" };
 const key = String("type");
+const other = { mode: "strict" };
+const otherKey = String("mode");
 
 const show = (label, module) => console.log(label, JSON.stringify(module.default));
 show("a spread behind", await import("./a.txt", { with: { type: "json5", ...text } }));
@@ -12,3 +14,5 @@ show("a computed key behind", await import("./f.txt", { with: { type: "json5", [
 show("options spread behind", await import("./g.txt", { with: { type: "json5" }, ...{ with: text } }));
 const options = { with: { type: "json5", ...text } };
 show("a constant", await import("./h.txt", options));
+show("another name spread behind", await import("./i.txt", { with: { type: "json5", ...other } }));
+show("another computed key behind", await import("./j.txt", { with: { type: "json5", [otherKey]: "strict" } }));

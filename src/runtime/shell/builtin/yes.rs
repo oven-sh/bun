@@ -4,7 +4,7 @@ use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, Shel
 use crate::shell::io::OutFd;
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::{Cmd, Exec};
-use crate::shell::yield_::{Action, Yield};
+use crate::shell::yield_::{ReentrantAction, Yield};
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
@@ -120,7 +120,7 @@ impl Yes {
         }
         // Bounce back via the event loop so we don't block the main thread.
         if let EventLoopHandle::Mini(_) = interp.event_loop {
-            return Yield::Action(Action::TickMiniLoop(cmd));
+            return Yield::Action(ReentrantAction::TickMiniLoop(cmd));
         }
         Self::enqueue_task(interp, cmd)
     }

@@ -202,27 +202,27 @@ impl IOReader<'_> {
         }
     }
 
-    /// Passes `chunk` to `readers[i]`. Past the last listener, breaks with whether to read on.
+    /// Passes `chunk` to `readers[reader_idx]`. Past the last listener, breaks with whether to read on.
     fn on_read_chunk(
         interp: &mut Interpreter<'_>,
         id: IOReaderId,
-        i: usize,
+        reader_idx: usize,
         chunk: &[u8],
         has_more: bun_io::ReadState,
     ) -> ControlFlow<bool, Yield> {
         let Some(me) = interp.io_readers.get_mut(id) else {
             return ControlFlow::Break(false);
         };
-        if i == 0 {
+        if reader_idx == 0 {
             me.set_reading(false);
         }
-        match me.readers.get(i) {
+        match me.readers.get(reader_idx) {
             Some(reader) => ControlFlow::Continue(dispatch_read_chunk(reader.ptr, chunk, interp)),
-            None => ControlFlow::Break(Self::should_continue(interp, id, has_more)),
+            None => ControlFlow::Break(Self::after_read_chunk(interp, id, has_more)),
         }
     }
 
-    fn should_continue(
+    fn after_read_chunk(
         interp: &mut Interpreter<'_>,
         id: IOReaderId,
         has_more: bun_io::ReadState,
@@ -298,16 +298,16 @@ impl ShellInterpreter {
             .reader
             .read_chunks(evtloop, Some(event), |chunk, has_more| {
                 // A listener may add or remove listeners, remove the `IOReader` or finish the script.
-                let mut i = 0usize;
+                let mut reader_idx = 0usize;
                 loop {
                     match self.with_interp(|interp| {
-                        IOReader::on_read_chunk(interp, id, i, &chunk, has_more)
+                        IOReader::on_read_chunk(interp, id, reader_idx, &chunk, has_more)
                     }) {
                         Some(ControlFlow::Continue(y)) => self.run_yield(y, DeferredStack::new()),
                         Some(ControlFlow::Break(should_continue)) => return should_continue,
                         None => return false,
                     }
-                    i += 1;
+                    reader_idx += 1;
                 }
             });
         // So that removing the `IOReader` below closes the fd.

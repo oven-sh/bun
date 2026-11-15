@@ -335,7 +335,7 @@ impl<'a> Pipeline<'a> {
             exit_code
         );
         // Find the child in `cmds` and replace with its result.
-        Self::record_result(interp, this, child, exit_code);
+        Self::record_result_and_deinit(interp, this, child, exit_code);
         if interp.failed() {
             Self::release_unstarted(interp, this);
         }
@@ -366,8 +366,7 @@ impl<'a> Pipeline<'a> {
         Yield::Next(this)
     }
 
-    /// Frees `child`.
-    fn record_result(
+    fn record_result_and_deinit(
         interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
@@ -402,7 +401,7 @@ impl<'a> Pipeline<'a> {
             .unwrap_or_default();
         for child in unstarted {
             log!("Pipeline {} release unstarted child {}", this, child);
-            Self::record_result(interp, this, child, 1);
+            Self::record_result_and_deinit(interp, this, child, 1);
         }
         interp.as_pipeline_mut(this).state = PipelineState::Pending;
     }

@@ -85,7 +85,7 @@ struct Writer {
     ptr: ChildPtr,
     len: usize,
     written: usize,
-    bytelist: Option<BufioId>,
+    captured: Option<BufioId>,
 }
 
 impl Writer {
@@ -104,8 +104,8 @@ impl Writer {
     /// Tee `chunk` into the optional capture buffer.
     #[inline]
     fn tee(&self, shells: &mut ShellExecEnvs<'_>, chunk: &[u8]) {
-        if let Some(bl) = self.bytelist {
-            shells.captured_mut(bl).append_slice(chunk);
+        if let Some(captured) = self.captured {
+            shells.captured_mut(captured).append_slice(chunk);
         }
     }
 }
@@ -653,7 +653,7 @@ impl IOWriter<'_> {
         &mut self,
         shells: &mut ShellExecEnvs<'_>,
         child: ChildPtr,
-        bytelist: Option<BufioId>,
+        captured: Option<BufioId>,
         buf: &[u8],
     ) -> Yield {
         if let Some(y) = self.handle_dead_writer(child) {
@@ -671,7 +671,7 @@ impl IOWriter<'_> {
             ptr: child,
             len: buf.len(),
             written: 0,
-            bytelist,
+            captured,
         });
         self.enqueue_internal(shells)
     }
@@ -681,7 +681,7 @@ impl IOWriter<'_> {
         &mut self,
         shells: &mut ShellExecEnvs<'_>,
         child: ChildPtr,
-        bytelist: Option<BufioId>,
+        captured: Option<BufioId>,
         kind: Option<crate::shell::builtin::Kind>,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -699,7 +699,7 @@ impl IOWriter<'_> {
             ptr: child,
             len: end - start,
             written: 0,
-            bytelist,
+            captured,
         });
         self.enqueue_internal(shells)
     }
@@ -879,7 +879,7 @@ pub(crate) fn on_io_writer_chunk(
             pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)
         }
         WriterTag::Subproc(kind) => {
-            PipeReader::on_iowriter_chunk(interp, child.node, kind, written, err)
+            PipeReader::on_io_writer_chunk(interp, child.node, kind, written, err)
         }
     }
 }

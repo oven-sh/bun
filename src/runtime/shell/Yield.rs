@@ -46,16 +46,15 @@ pub(crate) enum Yield {
     Suspended,
     /// The node's JS exception was taken; `Interpreter::fail` winds the script down.
     Failed(NodeId),
-    Action(Action),
+    Action(ReentrantAction),
     Done,
 }
 
 /// Can run JS or I/O callbacks: `ShellInterpreter::run_yield` does it with no borrow of the `Interpreter`.
-pub(crate) enum Action {
+pub(crate) enum ReentrantAction {
     /// The node holds nothing in flight.
     Throw(NodeId, Box<ShellErr>),
-    /// For a builtin with a `JsBuf` redirect.
-    StartBuiltin(NodeId, ast::JSBuf, ast::RedirectFlags),
+    StartBuiltinWithJsBuf(NodeId, ast::JSBuf, ast::RedirectFlags),
     Spawn(NodeId),
     TickMiniLoop(NodeId),
     Finish(ExitCode),
@@ -71,7 +70,7 @@ impl Yield {
         Yield::Done
     }
     pub(crate) fn throw(node: NodeId, err: ShellErr) -> Yield {
-        Yield::Action(Action::Throw(node, Box::new(err)))
+        Yield::Action(ReentrantAction::Throw(node, Box::new(err)))
     }
 }
 
@@ -88,12 +87,12 @@ pub(crate) enum Deferred {
 pub(crate) type DeferredStack = SmallVec<[Deferred; 4]>;
 
 impl Yield {
-    /// Trampoline: drive the interpreter until it suspends (`None`) or needs an `Action`.
+    /// Trampoline: drive the interpreter until it suspends (`None`) or needs a `ReentrantAction`.
     pub(crate) fn run(
         self,
         interp: &mut Interpreter<'_>,
         stack: &mut DeferredStack,
-    ) -> Option<Action> {
+    ) -> Option<ReentrantAction> {
         // Tail-call trampoline: `loop { state = match state { ... } }`.
         let mut state = self;
         loop {

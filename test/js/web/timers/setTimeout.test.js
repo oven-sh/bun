@@ -860,6 +860,22 @@ it("timer heap clock is monotonic, not wall-clock", () => {
   expect(t1).toBeLessThan(wallNow / 2);
 });
 
+it("a timer that a timer callback arms fires inside the nested event loop of Bun.build in that callback", async () => {
+  // A plugin's async setup runs the event loop from inside the timer callback. The sleep it waits for is a
+  // timer armed by this drain. The nested loop has to fire it, or the build never completes.
+  const dir = tempDirWithFiles("nested-timer-drain", { "entry.js": "export default 1;" });
+  const built = await new Promise(resolve =>
+    setTimeout(async () => {
+      const result = await Bun.build({
+        entrypoints: [path.join(dir, "entry.js")],
+        plugins: [{ name: "sleep", setup: async () => await Bun.sleep(5) }],
+      });
+      resolve(result.success);
+    }, 1),
+  );
+  expect(built).toBe(true);
+});
+
 describe("a delay of 0", () => {
   it("does not wait for Node's minimum of 1 ms in bun test", async () => {
     let fired = false;

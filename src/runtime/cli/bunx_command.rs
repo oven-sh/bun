@@ -422,9 +422,14 @@ impl BunxCommand {
             && !dir_name.is_empty()
             && !bun_install::bin::bin_target_escapes_package_dir(dir_name)
         {
-            use bun_paths::{platform::Auto, resolve_path::dirname, resolve_path::join_z};
+            use bun_paths::platform::Auto;
+            use bun_paths::resolve_path::{SpillBuf, dirname, join_z_spill};
             // `directories.bin` is relative to the package, not to `dir_fd`.
-            let path = join_z::<Auto>(&[dirname::<Auto>(subpath_z.as_bytes()), dir_name]);
+            let mut path_buf = SpillBuf::default();
+            let path = join_z_spill::<Auto>(
+                &mut path_buf,
+                &[dirname::<Auto>(subpath_z.as_bytes()), dir_name],
+            );
             let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)
                 .map(bun_sys::Dir::from_fd)?;
             let mut iterator = bun_sys::dir_iterator::iterate(bin_dir.fd());
@@ -1319,8 +1324,10 @@ impl BunxCommand {
 
         // `bun add` runs in another directory.
         let cafile = opts.cafile.map(|path| {
-            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(top_level_dir, path)
-                .to_vec()
+            bun_paths::resolve_path::join_abs_string_vec::<bun_paths::platform::Auto>(
+                top_level_dir,
+                &[path],
+            )
         });
         let flags_with_value: Vec<Vec<u8>> = [
             (

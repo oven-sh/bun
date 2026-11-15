@@ -8,6 +8,13 @@
 
 use bun_core::strings;
 
+mod sealed {
+    /// `join_string_buf_t` reads as many units as `write_u8_part` returns.
+    pub trait Sealed {}
+    impl Sealed for u8 {}
+    impl Sealed for u16 {}
+}
+
 /// A path code unit: `u8` (UTF-8/WTF-8) or `u16` (WTF-16, Windows).
 ///
 /// Supertrait `PathByte` provides `Eq + Pod`, `from_u8` and `units`. This
@@ -16,7 +23,7 @@ use bun_core::strings;
 /// `bun.strings.literal(T, "...")` const-widened static, and the one
 /// transcoding write (`write_u8_part`) that lets `u16` call sites memcpy a
 /// UTF-8 part without an `if T::IS_U16` branch.
-pub trait PathChar: strings::PathByte + Ord {
+pub trait PathChar: strings::PathByte + Ord + sealed::Sealed {
     /// `true` iff `Self == u16` (WTF-16).
     const IS_U16: bool;
 

@@ -11,6 +11,7 @@ use bun_ast::AstArena;
 use bun_collections::HashMap;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
+use bun_paths::resolve_path::SpillBuf;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 
@@ -2205,7 +2206,8 @@ impl<'a> Transpiler<'a> {
 
     fn normalize_entry_point_path(_entry: &[u8]) -> &'static [u8] {
         let fs = Fs::FileSystem::get();
-        let entry = fs.abs(&[_entry]);
+        let mut abs_buf = SpillBuf::default();
+        let entry = fs.abs_spill(&[_entry], &mut abs_buf);
 
         // If the absolutized path does not exist on disk, return the original
         // input unchanged so bare specifiers (`react`) and URLs are left alone.
@@ -2213,27 +2215,29 @@ impl<'a> Transpiler<'a> {
             return crate::linker::dupe(_entry);
         }
 
-        let entry = fs.relative_to(entry);
+        SpillBuf::with_scratch(|buf| {
+            let entry = bun_paths::resolve_path::relative_spill(buf, fs.top_level_dir(), entry);
 
-        if !strings::starts_with(entry, b"./") {
-            // Entry point paths without a leading "./" are interpreted as package
-            // paths. This happens because they go through general path resolution
-            // like all other import paths so that plugins can run on them. Requiring
-            // a leading "./" for a relative path simplifies writing plugins because
-            // entry points aren't a special case.
-            //
-            // However, requiring a leading "./" also breaks backward compatibility
-            // and makes working with the CLI more difficult. So attempt to insert
-            // "./" automatically when needed. We don't want to unconditionally insert
-            // a leading "./" because the path may not be a file system path. For
-            // example, it may be a URL. So only insert a leading "./" when the path
-            // is an exact match for an existing file.
-            let mut __entry = Vec::with_capacity(2 + entry.len());
-            __entry.extend_from_slice(b"./");
-            __entry.extend_from_slice(entry);
-            return crate::linker::dupe(&__entry);
-        }
-        crate::linker::dupe(entry)
+            if !strings::starts_with(entry, b"./") {
+                // Entry point paths without a leading "./" are interpreted as package
+                // paths. This happens because they go through general path resolution
+                // like all other import paths so that plugins can run on them. Requiring
+                // a leading "./" for a relative path simplifies writing plugins because
+                // entry points aren't a special case.
+                //
+                // However, requiring a leading "./" also breaks backward compatibility
+                // and makes working with the CLI more difficult. So attempt to insert
+                // "./" automatically when needed. We don't want to unconditionally insert
+                // a leading "./" because the path may not be a file system path. For
+                // example, it may be a URL. So only insert a leading "./" when the path
+                // is an exact match for an existing file.
+                let mut __entry = Vec::with_capacity(2 + entry.len());
+                __entry.extend_from_slice(b"./");
+                __entry.extend_from_slice(entry);
+                return crate::linker::dupe(&__entry);
+            }
+            crate::linker::dupe(entry)
+        })
     }
 
     /// Returns only the count and lets
@@ -2402,11 +2406,11 @@ impl<'a> Transpiler<'a> {
             }
             writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
             for &index in indices {
-                let input = bun_paths::resolve_path::relative(
+                let input = bun_paths::resolve_path::fmt_relative(
                     Fs::FileSystem::get().top_level_dir(),
                     &self.output_files[index].src_path,
                 );
-                writeln!(&mut msg, "    from input {}", bstr::BStr::new(input))?;
+                writeln!(&mut msg, "    from input {}", input)?;
             }
         }
 
@@ -2452,8 +2456,13 @@ impl<'a> Transpiler<'a> {
         let mut file_path = Fs::Path::init(file_path_text);
 
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
-        file_path.pretty = crate::linker::dupe(rel);
+        file_path.pretty = SpillBuf::with_scratch(|buf| {
+            crate::linker::dupe(bun_paths::resolve_path::relative_spill(
+                buf,
+                top_level_dir,
+                file_path_text,
+            ))
+        });
 
         let mut output_file = options::OutputFile::zero_value();
         output_file.src_path = file_path_text.into();
@@ -2631,12 +2640,6 @@ impl<'a> Transpiler<'a> {
         loader: options::Loader,
         output: &[u8],
     ) -> Box<[u8]> {
-        let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Auto,
-            false,
-        >(&self.options.root_dir, file_path_text);
-        let pathname = Fs::PathName::init(rel_to_root);
-
         let ext: &[u8] = if loader == options::Loader::Css {
             b"css"
         } else {
@@ -2644,8 +2647,15 @@ impl<'a> Transpiler<'a> {
         };
 
         let mut template = self.entry_naming_template();
-        template.placeholder.dir = pathname.dir.into();
-        template.placeholder.name = pathname.base.into();
+        SpillBuf::with_scratch(|buf| {
+            let pathname = Fs::PathName::init(bun_paths::resolve_path::relative_spill(
+                buf,
+                &self.options.root_dir,
+                file_path_text,
+            ));
+            template.placeholder.dir = pathname.dir.into();
+            template.placeholder.name = pathname.base.into();
+        });
         template.placeholder.ext = ext.into();
         if template.needs(options::PlaceholderField::Target) {
             template.placeholder.target = self.options.target.naming_placeholder().into();

@@ -1747,12 +1747,15 @@ fn run_one(
         let moves = !files.options.declaration_dir.is_empty() || !out_dir.is_empty();
         let looked_up = match common.filter(|it| moves && !it.is_empty()) {
             Some(common) => {
-                use bun_paths::{platform::Posix, resolve_path::relative_normalized};
+                use bun_paths::platform::Posix;
+                use bun_paths::resolve_path::{SpillBuf, relative_normalized_spill};
                 let dir = match out_dir.is_empty() {
                     true => cwd.as_bytes(),
                     false => &out_dir[..],
                 };
-                join(dir, relative_normalized::<Posix, true>(common, path))
+                SpillBuf::with_scratch(|buf| {
+                    join(dir, relative_normalized_spill::<Posix>(buf, common, path))
+                })
             }
             None => path.to_vec(),
         };

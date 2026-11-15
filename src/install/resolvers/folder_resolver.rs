@@ -2,6 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
@@ -44,10 +45,12 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         let search_path = self.manager.lockfile.str(str_to_use);
 
         let mut joined = bun_paths::path_buffer_pool::get();
+        let mut relative_buf = SpillBuf::default();
         let mut dot_slash_rel = Vec::new();
         let rel: &[u8] = match normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
             &mut joined,
+            &mut relative_buf,
             search_path,
         ) {
             Some(paths)
@@ -146,13 +149,15 @@ struct Paths<'a> {
     rel: &'a [u8],
 }
 
-/// Returns `None` when the `package.json` path does not fit `joined`.
-fn normalize_package_json_path<'a>(
+const PACKAGE_JSON_LEN: usize = "/package.json".len();
+
+/// Returns the length of the `package.json` path, or `None` when it does not fit `joined`.
+fn join_package_json_path(
     global_or_relative: GlobalOrRelative<'_>,
-    joined: &'a mut PathBuffer,
+    joined: &mut PathBuffer,
+    normalize_buf: &mut SpillBuf<'_>,
     non_normalized_path: &[u8],
-) -> Option<Paths<'a>> {
-    let mut normalize_spill = Vec::new();
+) -> Option<usize> {
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path == b"." {
         non_normalized_path
@@ -161,14 +166,12 @@ fn normalize_package_json_path<'a>(
     } else {
         strings::trim_right(
             resolve_path::normalize_string_spill::<true, bun_paths::platform::Auto>(
-                &mut normalize_spill,
+                normalize_buf,
                 non_normalized_path,
             ),
             SEP_STR.as_bytes(),
         )
     };
-
-    const PACKAGE_JSON_LEN: usize = "/package.json".len();
 
     // The last byte of `joined` is reserved for the NUL terminator.
     let capacity = joined.len() - 1;
@@ -206,9 +209,25 @@ fn normalize_package_json_path<'a>(
         joined[len + 1..len + PACKAGE_JSON_LEN].copy_from_slice(b"package.json");
         abs_len
     };
+    Some(abs_len)
+}
 
+/// Returns `None` when the `package.json` path does not fit `joined`.
+fn normalize_package_json_path<'a>(
+    global_or_relative: GlobalOrRelative<'_>,
+    joined: &'a mut PathBuffer,
+    relative_buf: &'a mut SpillBuf<'a>,
+    non_normalized_path: &[u8],
+) -> Option<Paths<'a>> {
+    let abs_len = SpillBuf::with_scratch(|buf| {
+        join_package_json_path(global_or_relative, joined, buf, non_normalized_path)
+    })?;
+
+    let (joined, rest) = joined.split_at_mut(abs_len + 1);
+    *relative_buf = SpillBuf::new(rest);
     // We store the folder name without package.json
-    let rel = FileSystem::get().relative(
+    let rel = resolve_path::relative_spill(
+        relative_buf,
         FileSystem::get().top_level_dir(),
         &joined[..abs_len - PACKAGE_JSON_LEN],
     );
@@ -320,7 +339,13 @@ pub(crate) fn listed_dependencies(
 ) -> Option<ListedDependencies> {
     let mut joined = bun_paths::path_buffer_pool::get();
     let relative = GlobalOrRelative::Relative(tag);
-    let paths = normalize_package_json_path(relative, &mut joined, non_normalized_path)?;
+    let mut relative_buf = SpillBuf::default();
+    let paths = normalize_package_json_path(
+        relative,
+        &mut joined,
+        &mut relative_buf,
+        non_normalized_path,
+    )?;
     let log = bun_ast::Log::init();
     // `bun add` in a workspace edits the copy in this cache before it writes the file.
     let entry = (manager.workspace_package_json_cache)
@@ -350,9 +375,13 @@ pub(crate) fn get_or_put(
     let mut joined = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let mut rel_buf = bun_paths::path_buffer_pool::get();
-    let Some(paths) =
-        normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path)
-    else {
+    let mut relative_buf = SpillBuf::default();
+    let Some(paths) = normalize_package_json_path(
+        global_or_relative,
+        &mut joined,
+        &mut relative_buf,
+        non_normalized_path,
+    ) else {
         return FolderResolution::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
 
@@ -372,8 +401,7 @@ pub(crate) fn get_or_put(
         //
         // Instead: capture lengths, let the shared borrows of `joined` die,
         // then take a fresh `&mut joined[..abs_len]` (write provenance) and
-        // mutate that. `rel` points into FileSystem's thread-local relative
-        // buffer which we only ever see as `&[u8]`, so copy it into a local
+        // mutate that. We only ever see `rel` as `&[u8]`, so copy it into a local
         // we own and convert the copy — same pattern as
         // WorkspacePackageJSONCache::get_with_path.
         let abs_len = paths.abs.len();

@@ -1,8 +1,7 @@
 use bun_ast::Expr;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string_checked;
 
 use super::is_inside;
+use crate::cli::compile_command::entry_points::find_file;
 
 const TYPESCRIPT_EXTENSIONS: [&[u8]; 3] = [b".ts", b".tsx", b".mts"];
 const DECLARATION_EXTENSIONS: [&[u8]; 2] = [b".d.ts", b".d.mts"];
@@ -72,16 +71,4 @@ fn collect_export_targets(exports: &Expr, targets: &mut Vec<Vec<u8>>) {
 fn is_typescript(path: &[u8]) -> bool {
     let has_one_of = |extensions: &[&[u8]]| extensions.iter().any(|it| path.ends_with(it));
     has_one_of(&TYPESCRIPT_EXTENSIONS) && !has_one_of(&DECLARATION_EXTENSIONS)
-}
-
-fn find_file(directory: &[u8], written: &[u8]) -> Option<Box<[u8]>> {
-    let absolute_path = join_abs_string_checked::<Auto>(directory, &[written])?;
-    if bun_core::strings::contains_char(absolute_path, 0) {
-        return None;
-    }
-    let absolute_path = bun_core::ZBox::from_bytes(absolute_path);
-    match bun_sys::exists_at_type(bun_core::Fd::cwd(), &absolute_path) {
-        Ok(bun_sys::ExistsAtType::File) => Some(absolute_path.as_bytes().into()),
-        Ok(bun_sys::ExistsAtType::Directory) | Err(_) => None,
-    }
 }

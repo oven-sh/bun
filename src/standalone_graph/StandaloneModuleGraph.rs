@@ -3108,10 +3108,15 @@ pub fn to_executable(
                 )));
             }
         };
+        let mut dest_buf = path::resolve_path::SpillBuf::default();
         let dest_path = if bun_paths::is_absolute(outfile) {
             outfile
         } else {
-            path::resolve_path::join_abs_string::<path::platform::Auto>(cwd_path, &[outfile])
+            path::resolve_path::join_abs_string_spill::<path::platform::Auto>(
+                cwd_path,
+                &mut dest_buf,
+                &[outfile],
+            )
         };
 
         // Convert paths to Windows UTF-16

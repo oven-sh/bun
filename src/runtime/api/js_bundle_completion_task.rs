@@ -21,7 +21,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsPtr, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, platform};
+use bun_paths::resolve_path::{SpillBuf, join_abs_string_spill, join_abs_string_vec, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::BackRef;
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -222,13 +222,18 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
+    let mut buf = SpillBuf::default();
     let joined: &[u8] = if !outdir_slice.is_empty() {
-        join_abs_string::<platform::Auto>(top_level_dir, &[outdir_slice, outfile_slice])
+        join_abs_string_spill::<platform::Auto>(
+            top_level_dir,
+            &mut buf,
+            &[outdir_slice, outfile_slice],
+        )
     } else if paths::is_absolute(outfile_slice) {
         outfile_slice
     } else {
         // For relative paths, ensure we make them absolute relative to the current working directory
-        join_abs_string::<platform::Auto>(top_level_dir, &[outfile_slice])
+        join_abs_string_spill::<platform::Auto>(top_level_dir, &mut buf, &[outfile_slice])
     };
     if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
         let mut v = Vec::with_capacity(joined.len() + 4);
@@ -305,11 +310,10 @@ impl JSBundleCompletionTask {
                 check_command::warn_about_skipped_typed_files(option, &self.log);
             }
             let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
-            let outdir = join_abs_string::<platform::Auto>(
+            let outdir = join_abs_string_vec::<platform::Auto>(
                 working_directory,
                 &[&config.dir.list, &config.outdir.list],
-            )
-            .to_vec();
+            );
             if declarations.writes_typed_files {
                 let tsconfig = &config.tsconfig_override.list;
                 let request = compile_command::TypedOutputs {
@@ -752,17 +756,20 @@ impl JSBundleCompletionTask {
                 let dir = self.config.dir.list.clone();
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
+                let mut path_buf = SpillBuf::default();
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !outdir.is_empty() {
                         if outdir_is_abs {
-                            Box::from(join_abs_string::<platform::Auto>(
+                            Box::from(join_abs_string_spill::<platform::Auto>(
                                 &outdir,
+                                &mut path_buf,
                                 &[&output_file.dest_path],
                             ))
                         } else {
-                            Box::from(join_abs_string::<platform::Auto>(
+                            Box::from(join_abs_string_spill::<platform::Auto>(
                                 top_level_dir,
+                                &mut path_buf,
                                 &[&dir, &outdir, &output_file.dest_path],
                             ))
                         }
@@ -1181,10 +1188,7 @@ impl JSBundleCompletionTask {
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();
-                let mut spill = Vec::new();
-                Box::from(bun_paths::resolve_path::join_abs_string_spill::<
-                    bun_paths::platform::Auto,
-                >(cwd, &mut spill, &[path]))
+                join_abs_string_vec::<platform::Auto>(cwd, &[path]).into()
             }),
             ..Default::default()
         }

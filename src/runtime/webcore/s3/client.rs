@@ -1,6 +1,7 @@
 use core::cell::{Cell, OnceCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
@@ -394,7 +395,7 @@ pub(crate) fn upload(
 /// `credentials` is moved into the `MultiPartUpload`.
 #[inline(never)]
 pub(crate) fn writable_stream(
-    credentials: bun_ptr::RefPtr<S3Credentials>,
+    credentials: Arc<S3Credentials>,
     path: &[u8],
     cx: &bun_jsc::JsThread<'_>,
     options: MultiPartUploadOptions,
@@ -405,7 +406,6 @@ pub(crate) fn writable_stream(
     request_payer: bool,
 ) -> JsResult<JSValue> {
     bun_removable_features::removable_definition!(S3Client, writable_stream);
-    // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
     // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
     // MultiPartUpload.
@@ -629,7 +629,7 @@ impl Drop for S3UploadStreamWrapper {
 /// `credentials` is moved into the `MultiPartUpload`.
 #[inline(never)]
 pub(crate) fn upload_stream(
-    credentials: bun_ptr::RefPtr<S3Credentials>,
+    credentials: Arc<S3Credentials>,
     path: &[u8],
     readable_stream: ReadableStream,
     cx: &bun_jsc::JsThread<'_>,

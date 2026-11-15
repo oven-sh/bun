@@ -9,7 +9,7 @@ use crate::resolution::Tag as ResolutionTag;
 /// The linkers only visit the names in the new lockfile, so the link of a workspace that's no
 /// longer in it is removed here.
 pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfile) {
-    let previous_packages = previous.packages.slice();
+    let previous_packages = &previous.packages;
     let resolutions = previous_packages.items_resolution();
     let name_hashes = previous_packages.items_name_hash();
 

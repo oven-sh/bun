@@ -2053,7 +2053,7 @@ pub mod bv2_impl {
         pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
-        pub(crate) scb_list: server_component_boundary::Slice<'a>,
+        pub(crate) scb_list: &'a server_component_boundary::List,
 
         /// Files inlined in CSS whose output path a JS or HTML importer or their own entry point chunk prints
         pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
@@ -2286,7 +2286,6 @@ pub mod bv2_impl {
                 Some(
                     self.graph
                         .server_component_boundaries
-                        .slice()
                         .bit_set(self.graph.input_files.len())?,
                 )
             } else {
@@ -2303,39 +2302,22 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 
-            // reshaped for borrowck — hoist the values that would
-            // otherwise re-borrow `self`/`self.graph` while the visitor holds
-            // disjoint column refs.
-            // Always materialize a valid slice; when the boundary list is empty
-            // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
-            // null `&Map` via `mem::zeroed()` (UB even though it was never read
-            // when `scb_bitset` is `None`).
-            let scb_list = self.graph.server_component_boundaries.slice();
-
-            // reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`), so
-            // `split_mut()` on the local can coexist with the shared borrows
-            // below. The slab does not resize for the duration of this function.
-            let mut ast_slice = self.graph.ast.slice();
-            let all_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
-            let all_urls_for_css = self.graph.ast.items_url_for_css();
-            let all_exports_kinds = self.graph.ast.items_exports_kind();
-            let all_targets = self.graph.ast.items_target();
+            let ast = self.graph.ast.split_mut();
+            let all_urls_for_css = &*ast.url_for_css;
 
             let mut visitor = ReachableFileVisitor {
                 reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
                 visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
-                redirects: self.graph.ast.items_redirect_import_record_index(),
-                all_import_records,
+                redirects: ast.redirect_import_record_index,
+                all_import_records: ast.import_records,
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 split_require: self.transpiler.options.split_require,
-                all_exports_kinds,
-                all_targets,
+                all_exports_kinds: ast.exports_kind,
+                all_targets: ast.target,
                 scb_bitset,
-                scb_list,
+                scb_list: &self.graph.server_component_boundaries,
                 additional_files_needed_outside_css: &mut additional_files_needed_outside_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
@@ -2364,7 +2346,7 @@ pub mod bv2_impl {
                     self.graph.input_files.len()
                 );
                 let sources = self.graph.input_files.items_source();
-                let targets = self.graph.ast.items_target();
+                let targets = visitor.all_targets;
                 for idx in visitor.reachable.iter() {
                     let source = &sources[idx.get() as usize];
                     bun_core::scoped_log!(
@@ -2383,10 +2365,7 @@ pub mod bv2_impl {
             // cleanup loop reads them.
             let ReachableFileVisitor { reachable, .. } = visitor;
 
-            // reshaped for borrowck — three disjoint mutable SoA
-            // columns via `split_mut()` on a value-type `Slice` snapshot.
-            let mut input_files_slice = self.graph.input_files.slice();
-            let input_files_cols = input_files_slice.split_mut();
+            let input_files_cols = self.graph.input_files.split_mut();
             let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
                 input_files_cols.additional_files;
             let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
@@ -2561,16 +2540,8 @@ pub mod bv2_impl {
             // version and exports a non-object in CommonJS (often a function). If we
             // pick the "module" field and the package is imported with "require" then
             // code expecting a function will crash.
-            //
-            // reshaped for borrowck — the mutable `import_records` column is
-            // needed alongside shared columns. `split_mut()` on a
-            // value-type `Slice` snapshot yields the one mutable column without
-            // borrowing `self.graph.ast`; read the per-target map through the
-            // disjoint `build_graphs` field instead of the `&mut self` accessor.
-            let mut ast_slice = self.graph.ast.slice();
-            let ast_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
-            let targets = self.graph.ast.items_target();
+            let ast = self.graph.ast.split_mut();
+            let (ast_import_records, targets) = (ast.import_records, ast.target);
             let max_valid_source_index = Index::init(self.graph.input_files.len());
             let secondary_paths = self.graph.input_files.items_secondary_path();
             let sources = self.graph.input_files.items_source();
@@ -3629,7 +3600,7 @@ pub mod bv2_impl {
             let mut server_manifest_props: Vec<G::Property> = Vec::new();
             let mut client_manifest_props: Vec<G::Property> = Vec::new();
 
-            let scbs = self.graph.server_component_boundaries.list.slice();
+            let scbs = &self.graph.server_component_boundaries.list;
             let named_exports_array = self.graph.ast.items_named_exports();
 
             let id_string = server.new_expr(E::EString {
@@ -3670,9 +3641,8 @@ pub mod bv2_impl {
                     // "production build" part of Bake.
 
                     let keys = named_exports_array[*source_id as usize].keys();
-                    // `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
                     let mut client_manifest_items: Box<[G::Property]> =
-                        (0..keys.len()).map(|_| G::Property::default()).collect();
+                        vec![G::Property::default(); keys.len()].into();
 
                     if !sc.separate_ssr_graph {
                         bun_core::todo_panic!("separate_ssr_graph=false");
@@ -4337,7 +4307,7 @@ pub mod bv2_impl {
             // entry points. This way, using two component files in a route does not
             // create two separate chunks. (note: bake passes each route as an entrypoint)
             {
-                let scbs = self.graph.server_component_boundaries.slice();
+                let scbs = &self.graph.server_component_boundaries;
                 self.graph.entry_points.reserve(scbs.list.len() * 2);
                 debug_assert_eq!(
                     scbs.list.items_source_index().len(),
@@ -5432,36 +5402,18 @@ pub mod bv2_impl {
                 let mut js_files: Vec<Index> =
                     Vec::with_capacity(self.graph.ast.len() - self.graph.css_file_count - 1);
 
-                let asts = self.graph.ast.slice();
-                let css_asts = asts.items_css();
-                // SoA columns are physically disjoint slabs but rustc cannot
-                // see that through `&Slice`. Route the two columns we mutate (`parts`,
-                // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
-                // no `&mut` intermediate) so the per-index `&mut` does not conflict
-                // with the `&asts` reads (`css`, `target`). Mirrors the pattern at
-                // `find_reachable_files` (~L1457). The slab does not resize for the
-                // duration of this loop and no other `&mut` to these columns exists.
-                let ast_raw = asts.split_raw();
-                let parts_col: *mut bun_ast::PartList = ast_raw.parts.cast::<bun_ast::PartList>();
-                let import_records_col: *mut import_record::List =
-                    ast_raw.import_records.cast::<import_record::List>();
-
-                let input_files = self.graph.input_files.slice();
-                let loaders = input_files.items_loader();
-                let sources = input_files.items_source();
                 for index in 1..self.graph.ast.len() {
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let part_list = unsafe { &mut *parts_col.add(index) };
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let import_records = unsafe { &mut *import_records_col.add(index) };
-                    let maybe_css = &css_asts[index];
-                    let target = asts.items_target()[index];
+                    let ast = self.graph.ast.split_mut();
+                    let loaders = self.graph.input_files.items_loader();
+                    let sources = self.graph.input_files.items_source();
+                    let import_records = &mut ast.import_records[index];
+                    let target = ast.target[index];
                     // Dev Server proceeds even with failed files.
                     // These files are filtered out via the lack of any parts.
                     //
                     // Actual empty files will contain a part exporting an empty object.
-                    if part_list.len() != 0 {
-                        if maybe_css.is_some() {
+                    if ast.parts[index].len() != 0 {
+                        if ast.css[index].is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after
                             // resolution, which is not usually the case.
@@ -5471,7 +5423,7 @@ pub mod bv2_impl {
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                css_asts,
+                                ast.css,
                                 sources,
                                 loaders,
                                 &mut log,
@@ -5519,13 +5471,7 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
-                                // SAFETY: `source_index < ast.len()` (validated above); read
-                                // via the raw column ptr so we don't reborrow `asts.parts()`
-                                // while `import_records` (a sibling column) is held `&mut`.
-                                if unsafe {
-                                    (*parts_col.add(record.source_index.get() as usize)).len()
-                                } == 0
-                                {
+                                if ast.parts[record.source_index.get() as usize].len() == 0 {
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
@@ -5559,7 +5505,7 @@ pub mod bv2_impl {
                 // Find CSS entry points. Originally, this was computed up front, but
                 // failed files do not remember their loader, and plugins can
                 // asynchronously decide a file is CSS.
-                let css = asts.items_css();
+                let css = self.graph.ast.items_css();
                 for entry_point in &self.graph.entry_points {
                     if css[entry_point.get() as usize].is_some() {
                         start.css_entry_points.put(
@@ -5698,7 +5644,7 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            // It points into `linker`.
+            // Nothing reads it after printing.
             chunks[0].renamer = Default::default();
             let linker_graph = linker.into_graph();
 
@@ -7837,30 +7783,22 @@ pub mod bv2_impl {
         ProbablyTypescriptType,
     }
 
-    /// `import_data` is a raw slice into
-    /// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`.
-    /// The graph SoA is never reallocated during `match_import_with_export`, so
-    /// the pointer stays valid for the iterator's lifetime; the caller only reads
-    /// `.data` from each entry.
-    pub struct ImportTrackerIterator {
+    pub struct ImportTrackerIterator<'a> {
         pub(crate) status: ImportTrackerStatus,
         pub(crate) value: crate::ImportTracker,
-        /// Backref into the link-graph SoA (`graph.meta[..].resolved_exports[..].
-        /// potentially_ambiguous_export_star_refs`). `BackRef` (not `*const [T]`)
-        /// so the single read site in `match_import_with_export` is a safe `Deref`;
-        /// the pointee slab is never reallocated while the iterator is live.
-        pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        /// `potentially_ambiguous_export_star_refs` of the export that was found.
+        pub(crate) import_data: &'a [crate::ImportData],
         /// `Found` an `export default X` where `X` is an import in that file
         /// (`Ast::export_default_alias_of_import`).
         pub(crate) default_alias_of: bun_ast::Ref,
     }
 
-    impl Default for ImportTrackerIterator {
+    impl Default for ImportTrackerIterator<'_> {
         fn default() -> Self {
             Self {
                 status: ImportTrackerStatus::default(),
                 value: crate::ImportTracker::default(),
-                import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
+                import_data: &[],
                 default_alias_of: bun_ast::Ref::NONE,
             }
         }

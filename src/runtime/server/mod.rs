@@ -2460,7 +2460,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Idempotent, so re-running set_routes on reload() is fine.
         if self.config.get().is_node_http_server {
-            ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
+            let queues_pipelined_responses = has_node_http
+                && self.config.get().static_routes.is_empty()
+                && user_routes.is_empty()
+                && websocket_ptr.is_none()
+                && !has_dev_server;
+            ffi::NodeHTTP_assignOnNodeJSCompat(
+                SSL,
+                std::ptr::from_mut(app).cast::<c_void>(),
+                queues_pipelined_responses,
+            );
         }
 
         route_list_value
@@ -3112,17 +3121,18 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         // What leaves with the route alone is about as much as the smallest group of the trimmable link. Below that it leaves with the command line, under that name, or stays.
-        if bun_removable_features::is_removed(bun_removable_features::Feature::BunInfo) {
+        // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
+        let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
+        if bun_removable_features::is_removed(bun_removable_features::Feature::BunInfo)
+            || resp.is_node_pipelined_dispatch()
+        {
             bun_opaque::opaque_deref_mut(req).set_yield(true);
             return;
         }
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
-        // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
         unsafe {
-            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_bun_info_request(
-                bun_opaque::opaque_deref_mut(req),
-                bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
-            )
+            (*user_data.cast::<NewServer<SSL, DEBUG>>())
+                .on_bun_info_request(bun_opaque::opaque_deref_mut(req), resp)
         };
     }
 
@@ -3198,7 +3208,11 @@ mod ffi {
             app: *mut c_void,
             value: bool,
         );
-        pub(super) safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
+        pub(super) safe fn NodeHTTP_assignOnNodeJSCompat(
+            ssl: bool,
+            app: *mut c_void,
+            queues_pipelined_responses: bool,
+        );
 
         /// `src/jsc/bindings/NodeHTTP.cpp` — constructs the JS
         /// `IncomingMessage`/`ServerResponse` pair, allocates a

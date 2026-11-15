@@ -348,9 +348,9 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
 extern "C" void NodeHTTPResponse__adoptRawRequestHeaders(void* nodeHttpResponse, const uint8_t* data, size_t length);
 
 template<bool isSSL>
-static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
+static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app, bool queuesPipelinedResponses)
 {
-    app->enableNodeHttpCompat();
+    app->enableNodeHttpCompat(queuesPipelinedResponses);
     app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, int readError, bool peerEnded) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
@@ -373,12 +373,12 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
     });
 }
 
-extern "C" void NodeHTTP_assignOnNodeJSCompat(bool is_ssl, void* uws_app)
+extern "C" void NodeHTTP_assignOnNodeJSCompat(bool is_ssl, void* uws_app, bool queuesPipelinedResponses)
 {
     if (is_ssl) {
-        assignOnNodeJSCompat<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
+        assignOnNodeJSCompat<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app), queuesPipelinedResponses);
     } else {
-        assignOnNodeJSCompat<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
+        assignOnNodeJSCompat<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app), queuesPipelinedResponses);
     }
 }
 
@@ -417,6 +417,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
+    httpResponseData->state &= ~uWS::HttpResponseData<isSSL>::HTTP_NODE_OTHER_HANDLER;
     // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
     const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;

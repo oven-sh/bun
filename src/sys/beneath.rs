@@ -3,7 +3,7 @@
 use bun_core::{ZStr, strings};
 use bun_paths::path_buffer_pool;
 
-use crate::{CloseOnDrop, E, Error, Fd, Maybe, Mode, O, Tag};
+use crate::{Dir, E, Error, Fd, Maybe, Mode, O, Tag};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Symlinks {
@@ -177,9 +177,8 @@ fn in_parent<T>(
         return f(dir, z(path, &mut buf.0, tag)?);
     };
     let parent = z(&path[..slash], &mut buf.0, tag)?;
-    let parent = openat(dir, parent, SEARCH, 0, symlinks)?;
-    let _close = CloseOnDrop::new(parent);
-    f(parent, z(&path[slash + 1..], &mut buf.0, tag)?).map_err(|e| e.with_path(path))
+    let parent = Dir::from_fd(openat(dir, parent, SEARCH, 0, symlinks)?);
+    f(parent.fd(), z(&path[slash + 1..], &mut buf.0, tag)?).map_err(|e| e.with_path(path))
 }
 
 /// `O_NOFOLLOW` covers only the last component, so each one is opened by a call of its own.
@@ -189,9 +188,9 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
     let mut names = strings::split(path.as_bytes(), b"/")
         .filter(|name| !name.is_empty())
         .peekable();
-    let mut current = dir;
-    let mut _close = None;
+    let mut opened: Option<Dir> = None;
     while let Some(name) = names.next() {
+        let current = opened.as_ref().map_or(dir, Dir::fd);
         if names.peek().is_none() {
             // `names` drops a last `/`, which the kernel takes to name a directory.
             let flags = match path.as_bytes().last() {
@@ -203,8 +202,8 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
             };
             return crate::openat_a(current, name, flags | O::NOFOLLOW, mode).map_err(with_path);
         }
-        current = crate::openat_a(current, name, SEARCH | O::NOFOLLOW, 0).map_err(with_path)?;
-        _close = Some(CloseOnDrop::new(current));
+        let next = crate::openat_a(current, name, SEARCH | O::NOFOLLOW, 0).map_err(with_path)?;
+        opened = Some(Dir::from_fd(next));
     }
     Err(with_path(Error::from_code(E::ENOENT, Tag::open)))
 }

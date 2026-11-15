@@ -11,7 +11,7 @@ use bun_sys::{self as sys, Dir, EntryKind, Fd, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
-use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
+use bun_threading::{IntrusiveWorkTask, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
@@ -787,7 +787,6 @@ fn lay_link(
 
 #[cfg(windows)]
 pub(crate) struct NewTaskQueue<TaskType> {
-    pub(crate) thread_pool: &'static ThreadPool,
     /// One-shot, first-write-wins handoff of the failed task from a worker
     /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
     /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
@@ -809,9 +808,11 @@ impl<TaskType> NewTaskQueue<TaskType> {
     {
         self.wait_group.add_one();
         // SAFETY: `into_raw` yields a live allocation, and projecting through it keeps its provenance.
-        self.thread_pool.schedule(Batch::from(unsafe {
-            TaskType::field_of(bun_core::heap::into_raw(task))
-        }));
+        PackageManager::get()
+            .thread_pool
+            .schedule(Batch::from(unsafe {
+                TaskType::field_of(bun_core::heap::into_raw(task))
+            }));
     }
 
     pub(crate) fn wait(&self) {
@@ -840,51 +841,17 @@ bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
 #[cfg(windows)]
 type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
 
-// PORTING.md §Global mutable state: written once on the main thread by
-// `init_queue()` before any worker `run_from_thread_pool` reads it; workers
-// only ever take `&HardLinkQueue` (all queue methods are `&self`).
 #[cfg(windows)]
-static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+static HARDLINK_QUEUE: HardLinkQueue = HardLinkQueue {
+    errored_task: bun_threading::Guarded::new(None),
+    wait_group: WaitGroup::init(),
+};
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    fn init_queue() -> &'static HardLinkQueue {
-        // SAFETY: called once per install batch on the install main thread before any
-        // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
-        // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
-        // &self.
-        //
-        // `INITIALIZED` is *not* the cross-thread publication edge — it is read and
-        // written only here, on the main thread, so `Relaxed` is sufficient. Workers
-        // never observe HARDLINK_QUEUE until after `push()` → `ThreadPool::schedule()`,
-        // whose internal Release/Acquire on the task queue is what publishes the
-        // first-call `MaybeUninit::write` below.
-        //
-        // On re-init we only drain `errored_task` through its own mutex instead of
-        // re-assigning the whole struct: `wait_group`'s counter is already 0 and
-        // `thread_pool` points at the process-wide `PackageManager` singleton that
-        // never changes, so a fresh write would be a no-op anyway.
-        static INITIALIZED: core::sync::atomic::AtomicBool =
-            core::sync::atomic::AtomicBool::new(false);
-        unsafe {
-            if INITIALIZED.swap(true, Ordering::Relaxed) {
-                let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
-                *q.errored_task.lock() = None;
-                debug_assert_eq!(
-                    q.thread_pool as *const ThreadPool,
-                    core::ptr::from_ref(&PackageManager::get().thread_pool),
-                    "PackageManager singleton changed between install batches",
-                );
-            } else {
-                (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
-                    thread_pool: &PackageManager::get().thread_pool,
-                    errored_task: bun_threading::Guarded::new(None),
-                    wait_group: WaitGroup::init(),
-                });
-            }
-            (*HARDLINK_QUEUE.get()).assume_init_ref()
-        }
+    fn reset_queue() -> &'static HardLinkQueue {
+        *HARDLINK_QUEUE.errored_task.lock() = None;
+        &HARDLINK_QUEUE
     }
 
     fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> Box<Self> {
@@ -910,8 +877,7 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
-        let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
+        let queue = &HARDLINK_QUEUE;
         scopeguard::defer! { queue.complete_one(); }
 
         // SAFETY: `task` is the `task` field of the `Box` that `NewTaskQueue::push` handed over,
@@ -1140,7 +1106,7 @@ impl LinkBatch {
                     wake_main_thread();
                 }
             },
-            &mut vec![(); threads],
+            &vec![(); threads],
             || {
                 // The threads spend much of their time waiting on the disk, so when there are only
                 // a few of them, this thread links packages too.
@@ -1732,8 +1698,8 @@ impl PackageFiles<'_> {
                     continue;
                 }
 
-                let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
-                let _close_in = sys::CloseOnDrop::new(in_file);
+                let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)
+                    .map(sys::CloseOnDrop::new)?;
 
                 bun_output::scoped_log!(
                     install,
@@ -1750,6 +1716,7 @@ impl PackageFiles<'_> {
                             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
                             0o666,
                         )
+                        .map(sys::CloseOnDrop::new)
                     };
                     match open() {
                         Err(err) if err.get_errno() == sys::E::EEXIST => {
@@ -1776,14 +1743,17 @@ impl PackageFiles<'_> {
                         })?
                     }
                 };
-                let _close_out = sys::CloseOnDrop::new(outfile);
 
-                let stat = sys::fstat(in_file)?;
+                let stat = in_file.stat()?;
                 // Best effort: filesystems without permission bits reject fchmod.
-                let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
+                let _ = sys::fchmod(outfile.fd(), stat.st_mode as bun_sys::Mode);
 
-                bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
-                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
+                bun_sys::copy_file::copy_file_with_state(
+                    in_file.fd(),
+                    outfile.fd(),
+                    &mut copy_file_state,
+                )
+                .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
             }
 
             Ok(())
@@ -1860,7 +1830,7 @@ impl PackageFiles<'_> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
             #[cfg(windows)]
-            let queue = HardLinkWindowsInstallTask::init_queue();
+            let queue = HardLinkWindowsInstallTask::reset_queue();
             // Workers are already running the tasks that were pushed, so remember any loop error
             // and always reach `queue.wait()`.
             #[cfg(windows)]

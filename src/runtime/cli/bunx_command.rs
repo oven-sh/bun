@@ -426,9 +426,9 @@ impl BunxCommand {
             use bun_paths::{platform::Auto, resolve_path::dirname, resolve_path::join_z};
             // `directories.bin` is relative to the package, not to `dir_fd`.
             let path = join_z::<Auto>(&[dirname::<Auto>(subpath_z.as_bytes()), dir_name]);
-            let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)?;
-            let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
-            let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
+            let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)
+                .map(bun_sys::Dir::from_fd)?;
+            let mut iterator = bun_sys::dir_iterator::iterate(bin_dir.fd());
             let bin_in_dir = |name: &[u8]| package_bin(name, &[dir_name, b"/", name].concat());
             let mut first: Option<PackageBin> = None;
             while let Ok(Some(current)) = iterator.next() {
@@ -941,7 +941,7 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
-        let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let mut this_transpiler_slot = None;
 
         let (this_transpiler, root_dir_info) = Run::configure_env_for_run(
             ctx,
@@ -1389,7 +1389,7 @@ impl BunxCommand {
             .map
             .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)?;
 
-        let envp = env_loader.map.create_null_delimited_env_map()?;
+        let envp = env_loader.map.to_envp();
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

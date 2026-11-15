@@ -7,11 +7,11 @@ use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_s
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{Interpreter, Node, NodeId, OwnedFd, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, OwnedFd, StateKind, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
@@ -21,14 +21,13 @@ use bun_collections::VecExt;
 pub(crate) struct Cmd {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
-    /// Before `io`: closed by the time a reader of our pipe sees EOF.
-    pub(crate) redirection_fd: Option<OwnedFd>,
     pub(crate) io: IO,
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    pub(crate) shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -143,7 +142,7 @@ impl BufferedIoClosed {
         if io_is_pipe && !redirects_elsewhere && !shell_buf.is_null() {
             let the_slice = pipe.slice();
             // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
-            // which the owning Cmd's `base.shell` keeps live for the duration
+            // which the owning Cmd's `shell` keeps live for the duration
             // of the command. Single-threaded.
             unsafe { (*shell_buf).append_slice(the_slice) };
         }
@@ -153,19 +152,19 @@ impl BufferedIoClosed {
 impl Cmd {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: Env,
         node: &ast::Cmd,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Cmd(Cmd {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: CmdState::Idle,
             args: Vec::new(),
             redirection_file: Vec::new(),
-            redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
         }))
@@ -179,7 +178,7 @@ impl Cmd {
         loop {
             let (shell, node) = {
                 let me = interp.as_cmd(this);
-                (me.base.shell, me.node)
+                (me.shell.as_ptr(), me.node)
             };
             let n = node.get();
             log!(
@@ -416,11 +415,11 @@ impl Cmd {
 
         let arena = bun_alloc::Arena::new();
         let mut spawn_args = SpawnArgs::default::<false>(&arena, event_loop);
-        spawn_args.cwd = interp.as_cmd(this).base.shell().cwd();
+        spawn_args.cwd = interp.as_cmd(this).shell.cwd();
 
         // Fill env from export_env + cmd_local_env.
         {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
+            let env = &mut *interp.as_cmd_mut(this).shell;
             let mut iter = env.export_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
             let mut iter = env.cmd_local_env.iterator();
@@ -488,12 +487,14 @@ impl Cmd {
 
         // Apply file/jsbuf/`2>&1` redirects on
         // top of the IO-derived stdio.
+        let mut redirection_fd = None;
         match Self::init_subproc_redirections(
             interp,
             this,
             &mut spawn_args.stdio,
             &mut spawn_args.redirect_stdout,
             &mut spawn_args.redirect_stderr,
+            &mut redirection_fd,
         ) {
             Ok(None) => {}
             Ok(Some(y)) => {
@@ -545,7 +546,7 @@ impl Cmd {
             args = core::mem::take(&mut cmd.args);
             spawn_args.argv.reserve_exact(args.len() + 1);
             for arg in &args {
-                let arg = bun_core::CStrRef::from_bytes_with_nul(arg);
+                let arg = bun_core::CStrRef::from_slice_with_nul(arg);
                 spawn_args.argv.push(Some(arg));
             }
             match &mut cmd.exec {
@@ -572,7 +573,7 @@ impl Cmd {
             child_out,
             &mut did_exit_immediately,
         );
-        drop(shellio);
+        drop((shellio, redirection_fd));
 
         if let Err(e) = spawn_result {
             drop(arena);
@@ -630,6 +631,7 @@ impl Cmd {
         stdio: &mut [Stdio; 3],
         redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
         redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
+        redirection_fd: &mut Option<OwnedFd>,
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
@@ -761,7 +763,7 @@ impl Cmd {
                 };
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let shell = interp.as_cmd(this).base.shell();
+                let shell = &*interp.as_cmd(this).shell;
                 let cwd_fd = shell.cwd_fd.fd();
                 let refused = refuse_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
                 let opened = refused.and_then(|()| {
@@ -779,7 +781,7 @@ impl Cmd {
                     )
                 });
                 let redirfd = match opened {
-                    Ok(f) => f,
+                    Ok(fd) => redirection_fd.insert(OwnedFd(fd)),
                     Err(e) => {
                         let sys_err = e.to_shell_system_error();
                         return Ok(Some(Builtin::cmd_write_failing_error(
@@ -793,8 +795,7 @@ impl Cmd {
                         )));
                     }
                 };
-                interp.as_cmd_mut(this).redirection_fd = Some(OwnedFd(redirfd));
-                set_stdio_from_redirect(stdio, flags, redirfd);
+                set_stdio_from_redirect(stdio, flags, redirfd.fd());
             }
         }
         Ok(None)
@@ -981,7 +982,7 @@ impl Cmd {
             &child.stdout,
             matches!(self.io.stdout, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stdout),
-            self.base.shell_mut().buffered_stdout(),
+            self.shell.buffered_stdout(),
         );
         child.close_io(StdioKind::Stdout);
     }
@@ -1015,7 +1016,7 @@ impl Cmd {
             &child.stderr,
             matches!(self.io.stderr, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stderr),
-            self.base.shell_mut().buffered_stderr(),
+            self.shell.buffered_stderr(),
         );
         child.close_io(StdioKind::Stderr);
     }

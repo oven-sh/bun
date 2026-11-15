@@ -693,9 +693,7 @@ impl<'bump> Font<'bump> {
             None
         };
 
-        let family = input
-            .parse_comma_separated(FontFamily::parse)
-            .map(Vec::<FontFamily>::move_from_list)?;
+        let family = input.parse_comma_separated(FontFamily::parse)?;
 
         Ok(Font {
             family,

@@ -35,6 +35,7 @@ type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // for callers that still spell it that way.
 pub(crate) mod bun_s3 {
     pub(crate) use crate::webcore::s3::MultiPartUpload;
+    pub(crate) use crate::webcore::s3::client::{S3UploadResult, s3_error_to_js};
     pub(crate) use crate::webcore::s3::multipart::UploadBackpressure;
 }
 
@@ -445,33 +446,18 @@ impl Pending {
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
-        // `Task::from_boxed` owns the `Box → *mut` leak; the matching
-        // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
         vm.event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
-
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned pointer previously produced by
-    /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    pub(crate) fn run_from_js_thread(this: *mut Pending) {
-        // SAFETY: this was heap-allocated in run_on_next_tick
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.run();
-    }
 }
 
-impl bun_event_loop::Taskable for Pending {
+impl bun_event_loop::BoxedTask for Pending {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
-    /// Deferred out of a finalizer or a late completion: do the script-free
-    /// part of what the dispatch would have done.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `run_on_next_tick` queued.
-        unsafe { bun_core::heap::destroy(this) };
-    }
+    /// Nobody awaits the read any more.
+    fn release_unrun(self: Box<Self>) {}
     /// `Pending::run` checks the context whose script is reading: most sources call it from their
     /// own completion, not through this task.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -825,11 +811,6 @@ pub enum SourceHandle {
 
 impl SourceHandle {
     #[inline]
-    pub fn is_dead(&self) -> bool {
-        matches!(self, SourceHandle::None)
-    }
-
-    #[inline]
     pub fn clear(&mut self) {
         *self = SourceHandle::None;
     }
@@ -1025,7 +1006,7 @@ pub(crate) enum HTTPServerWritableState {
 pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
-    /// `destroy` hands it back.
+    /// `finalize` or `Drop` returns it to `ByteListPool`.
     pub(crate) pooled_buffer: ManuallyDrop<Option<Box<ByteListPoolNode>>>,
     pub offset: BlobSizeType,
 
@@ -1981,12 +1962,6 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live, and only the RequestContext
-        // frees it (never the inherent `finalize`), so the `&mut`
-        // scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
@@ -1999,6 +1974,13 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
         } else {
             AnyControlledSink::HTTPResponseSink(this.cast())
         }
+    }
+
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: trait contract — `this` is live, and only the RequestContext
+        // frees it (never the inherent `finalize`), so the `&mut`
+        // scoped to this call stays valid throughout.
+        unsafe { (*this).finalize() }
     }
 
     unsafe fn close_with_error(
@@ -2025,7 +2007,10 @@ pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct NetworkSink {
+    /// `s3file.writer()`: the JS wrapper's ref and the upload's. Unused in `S3UploadStreamWrapper`'s box.
+    pub(crate) ref_count: core::cell::Cell<u32>,
     /// The sink's ref on the upload.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
@@ -2050,15 +2035,12 @@ pub struct NetworkSink {
     pub(crate) native_pump_ref: Option<RefPtr<crate::webcore::s3::client::S3UploadStreamWrapper>>,
     pub(crate) ended: bool,
     pub(crate) done: bool,
-    /// `s3file.writer()`: the box is referenced by the JS wrapper (`finalize`) and by the upload's
-    /// completion callback; whichever lets go last frees it. 0 = owned elsewhere
-    /// (`S3UploadStreamWrapper`).
-    pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
 impl Default for NetworkSink {
     fn default() -> Self {
         Self {
+            ref_count: core::cell::Cell::new(1),
             task: None,
             source: SourceHandle::default(),
             global_this: None,
@@ -2069,7 +2051,6 @@ impl Default for NetworkSink {
             native_pump_ref: None,
             ended: false,
             done: false,
-            writer_holders: core::cell::Cell::new(0),
         }
     }
 }
@@ -2093,10 +2074,6 @@ impl NetworkSink {
         self.task.as_deref()
     }
 
-    pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
-        Box::new(init)
-    }
-
     pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
@@ -2106,35 +2083,13 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub fn finalize(&mut self) {
-        self.detach_writable();
-    }
-
-    /// One of the `writer_holders` is done with the box.
-    ///
-    /// # Safety
-    /// `this` is the live heap box from `writable()`; not used by the caller afterwards.
-    pub(crate) unsafe fn release_writer_holder(this: *mut NetworkSink) {
-        // SAFETY: fn contract.
-        unsafe {
-            let holders = (*this).writer_holders.get();
-            if holders == 0 {
-                return;
-            }
-            (*this).writer_holders.set(holders - 1);
-            if holders == 1 {
-                drop(bun_core::heap::take(this));
-            }
-        }
-    }
-
     fn detach_writable(&mut self) {
         self.task = None;
     }
 
     /// The `writer()` wrapper was collected before `end()`: nothing can finish the upload, so fail it.
     fn abort_on_collect(&mut self) {
-        if self.ended || self.writer_holders.get() == 0 {
+        if self.ended {
             return;
         }
         self.ended = true;
@@ -2177,6 +2132,48 @@ impl NetworkSink {
         source.ready(None, None);
     }
 
+    /// The upload of a `writer()` finished. `this.task` may already be `None`.
+    pub(crate) fn on_finished(
+        this: &RefPtr<Self>,
+        task: &bun_s3::MultiPartUpload,
+        result: bun_s3::S3UploadResult,
+    ) -> JsResult<()> {
+        // SAFETY: the ref outlives the borrow.
+        let sink = unsafe { &mut *this.as_ptr() };
+        let global = &*task.global_this;
+        if sink.end_promise.has_value() || sink.flush_promise.has_value() {
+            let _exit_guard = global.bun_vm().enter_event_loop_scope();
+            match result {
+                bun_s3::S3UploadResult::Success => {
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise
+                            .resolve(global, JSValue::js_number(0.0))?;
+                    }
+                    if sink.end_promise.has_value() {
+                        sink.end_promise.resolve(
+                            global,
+                            JSValue::js_number(task.uploaded_bytes.get() as f64),
+                        )?;
+                    }
+                }
+                bun_s3::S3UploadResult::Failure(err) => {
+                    let js_err = bun_s3::s3_error_to_js(&err, global, Some(&task.path));
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise.reject(global, Ok(js_err))?;
+                    }
+                    if sink.end_promise.has_value() {
+                        sink.end_promise.reject(global, Ok(js_err))?;
+                    }
+                    if !sink.done {
+                        sink.abort();
+                    }
+                }
+            }
+        }
+        sink.detach_writable();
+        Ok(())
+    }
+
     pub(crate) fn flush_from_js(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
@@ -2207,7 +2204,7 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         self.source.close(None);
-        self.finalize();
+        self.detach_writable();
     }
 
     /// The upload queue is full: a JS controller gets a pending Promise so
@@ -2416,8 +2413,8 @@ impl NetworkSink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, NonNull::from(self), None)
+    pub fn to_js(this: RefPtr<Self>, global_this: &JSGlobalObject) -> JSValue {
+        NetworkSinkJSSink::create_object(global_this, NetworkSinkWrapperRef(this), None)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -2432,19 +2429,30 @@ impl NetworkSink {
     pub(crate) const NAME: &'static str = "NetworkSink";
 }
 
+/// The JS wrapper's ref.
+pub(crate) struct NetworkSinkWrapperRef(RefPtr<NetworkSink>);
+
+impl Drop for NetworkSinkWrapperRef {
+    fn drop(&mut self) {
+        // SAFETY: the ref outlives the borrow, and neither call runs script.
+        let sink = unsafe { &mut *self.0.as_ptr() };
+        sink.abort_on_collect();
+        sink.detach_writable();
+    }
+}
+
+impl crate::webcore::sink::WrappedSink for NetworkSink {
+    type Wrapped = NetworkSinkWrapperRef;
+    fn as_non_null(wrapped: &NetworkSinkWrapperRef) -> NonNull<Self> {
+        wrapped.0.as_non_null()
+    }
+}
+
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live and not used after this call.
-        unsafe {
-            (*this).abort_on_collect();
-            (*this).finalize();
-            Self::release_writer_holder(this);
-        }
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
@@ -2453,6 +2461,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 impl crate::webcore::sink::ControlledSink for NetworkSink {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::NetworkSink(this)
+    }
+
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: trait contract.
+        unsafe { (*this).detach_writable() }
     }
 
     unsafe fn close_with_error(

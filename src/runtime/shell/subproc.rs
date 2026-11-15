@@ -20,7 +20,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, SystemError};
+use bun_sys::{self, SystemError};
 use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -553,8 +553,8 @@ impl ShellSubprocess {
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
         // completion.
         let interp = cmd_parent.interp;
-        let argv = CStrList::terminate(&mut spawn_args.argv);
-        let envp = CStrList::terminate(&mut spawn_args.env_array);
+        let argv = CStrList::from_unterminated(&mut spawn_args.argv);
+        let envp = CStrList::from_unterminated(&mut spawn_args.env_array);
 
         let foreground = !interp.in_background(cmd_parent.id);
         let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
@@ -570,10 +570,7 @@ impl ShellSubprocess {
             Ok(Ok(result)) => result,
         };
 
-        // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
-        let stdio1 = core::mem::replace(&mut spawn_args.stdio[1], Stdio::Ignore);
-        let stdio2 = core::mem::replace(&mut spawn_args.stdio[2], Stdio::Ignore);
 
         // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
@@ -602,7 +599,7 @@ impl ShellSubprocess {
         };
         let stdout = Readable::init(
             OutKind::Stdout,
-            stdio1,
+            &spawn_args.stdio[1],
             spawn_args.redirect_stdout.take(),
             shellio.stdout.clone(),
             event_loop,
@@ -614,7 +611,7 @@ impl ShellSubprocess {
         );
         let stderr = Readable::init(
             OutKind::Stderr,
-            stdio2,
+            &spawn_args.stdio[2],
             spawn_args.redirect_stderr.take(),
             shellio.stderr.clone(),
             event_loop,
@@ -791,7 +788,7 @@ pub enum WritableInitError {
 
 pub enum Writable {
     Pipe(RefPtr<FileSink>),
-    Fd(Fd),
+    Fd,
     Buffer(RefPtr<StaticPipeWriter>),
     Inherit,
     Ignore,
@@ -818,13 +815,9 @@ impl Writable {
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Result<Writable, WritableInitError> {
-        // Note: `Stdio` impls Drop, so we cannot partially move out via
-        // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
-        // non-Copy payloads.
-        let mut stdio = stdio;
         #[cfg(windows)]
         {
-            match &mut stdio {
+            match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buf) = result {
                         let pipe = FileSink::create_with_pipe(event_loop, buf);
@@ -843,28 +836,13 @@ impl Writable {
                     return Ok(Writable::Inherit);
                 }
 
-                Stdio::Blob(_) => {
-                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
-                    // destructure-moved out. Take ownership via ManuallyDrop +
-                    // ptr::read; the wrapper suppresses the Stdio destructor so
-                    // the blob is moved exactly once.
-                    let old =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    // SAFETY: `old` is Blob (matched above) and ManuallyDrop
-                    // prevents its Drop from running, so this is the sole move.
-                    let blob = match &*old {
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
+                Stdio::Blob(blob) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         event_loop, subprocess, result, blob,
                     )));
                 }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
+                Stdio::Fd(_) | Stdio::Dup2(_) => {
+                    return Ok(Writable::Fd);
                 }
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
@@ -872,7 +850,7 @@ impl Writable {
                 Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
-                Stdio::Ipc | Stdio::Capture(_) => {
+                Stdio::Ipc | Stdio::Capture => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::SocketFd => {
@@ -883,7 +861,7 @@ impl Writable {
         }
         #[cfg(not(windows))]
         {
-            match &mut stdio {
+            match stdio {
                 Stdio::Dup2(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin dup2");
@@ -893,29 +871,15 @@ impl Writable {
                     panic!("Unimplemented stdin pipe");
                 }
 
-                Stdio::Blob(_) => {
-                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
-                    // destructure-moved out. Take ownership via ManuallyDrop +
-                    // ptr::read; the wrapper suppresses the Stdio destructor so
-                    // the blob is moved exactly once.
-                    let old =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    let blob = match &*old {
-                        // SAFETY: `old` is Blob (matched above) and ManuallyDrop
-                        // prevents its Drop from running, so this is the sole move.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop, subprocess, result, blob,
-                    )))
-                }
+                Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                    event_loop, subprocess, result, blob,
+                ))),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
-                Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
+                Stdio::Fd(_) => Ok(Writable::Fd),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-                Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+                Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
@@ -947,7 +911,7 @@ impl Writable {
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
             Writable::Ignore => {}
-            Writable::Fd(_) | Writable::Inherit => {}
+            Writable::Fd | Writable::Inherit => {}
         }
     }
 }
@@ -1032,7 +996,7 @@ impl Readable {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn init(
         out_type: OutKind,
-        stdio: Stdio,
+        stdio: &Stdio,
         redirect_buf: Option<jsc::PinnedArrayBuffer>,
         shellio: Option<Rc<IOWriter>>,
         event_loop: EventLoopHandle,
@@ -1042,16 +1006,14 @@ impl Readable {
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
-        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
+        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture));
         let buffered_output = match redirect_buf {
             Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
             None => BufferedOutput::default(),
         };
-        // Note: `Stdio` impls Drop, so dispatch on `&mut` instead of partial moves (E0509).
-        let mut stdio = stdio;
         #[cfg(windows)]
         {
-            return match &mut stdio {
+            return match stdio {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
@@ -1068,7 +1030,7 @@ impl Readable {
                     out_type,
                     interp,
                 )),
-                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
+                Stdio::Capture => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
                     result,
@@ -1085,7 +1047,7 @@ impl Readable {
 
         #[cfg(not(windows))]
         {
-            match &mut stdio {
+            match stdio {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
@@ -1104,7 +1066,7 @@ impl Readable {
                     out_type,
                     interp,
                 )),
-                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
+                Stdio::Capture => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
                     result,
@@ -1122,8 +1084,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
-            // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
-            // the `Cmd`'s `redirection_fd`; the owner closes it.
             Readable::Fd => {
                 *self = Readable::Closed;
             }
@@ -1245,7 +1205,7 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            (self.env_array).push(Some(CStrRef::from_bytes_with_nul(line)));
+            (self.env_array).push(Some(CStrRef::from_slice_with_nul(line)));
         }
     }
 }

@@ -196,3 +196,26 @@ test("Bun.inspect shows async frames whether or not the stack of the error has b
   expect(shown[0].match(/at async later /g)).toHaveLength(2);
   expect(shown[1]).toBe(shown[0]);
 });
+
+test("Bun.inspect shows functions without a name whether or not the stack of the error has been read", () => {
+  function throwsInside() {
+    (() => {
+      throw new Error("no name");
+    })();
+  }
+
+  for (const colors of [false, true]) {
+    const shown: string[] = [];
+    for (const reads of [false, true]) {
+      try {
+        throwsInside();
+      } catch (error) {
+        if (reads) expect((error as Error).stack).toContain("at <anonymous> (");
+        shown.push(Bun.inspect(error, { colors }));
+      }
+    }
+
+    expect(Bun.stripANSI(shown[0])).toMatch(/at <anonymous> \(.*\n +at throwsInside \(.*\n +at <anonymous> \(/);
+    expect(shown[1]).toBe(shown[0]);
+  }
+});

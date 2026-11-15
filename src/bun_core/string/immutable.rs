@@ -2,6 +2,8 @@
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
+use core::mem::MaybeUninit;
+use core::num::NonZeroU8;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
@@ -741,136 +743,60 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
 
 // 31 character string or a slice
 //
-// PERF NOTE: `remainder_buf` is `MaybeUninit` because `init`/`init_lower_case`
-// only write `[0..len]` (or `[0..16]` for the slice case) and `slice()` only
-// reads `[0..remainder_len]`. Zeroing `[0; 31]` on every call showed up as
+// PERF NOTE: `buf` is `MaybeUninit`. Zeroing `[0; 31]` on every call showed up as
 // ~0.45% of cycles in the next-lint profile (~6M calls × ~24B avg waste).
 // Tail bytes have no validity requirement, so we leave them uninit.
-#[repr(C)]
 #[derive(Copy, Clone)]
-pub struct StringOrTinyString {
-    remainder_buf: core::mem::MaybeUninit<[u8; StringOrTinyString::MAX]>,
-    meta: StringOrTinyStringMeta,
-}
+pub struct StringOrTinyString(StringOrTinyStringRepr);
 
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-struct StringOrTinyStringMeta(u8);
-
-impl StringOrTinyStringMeta {
-    #[inline]
-    fn remainder_len(self) -> u8 {
-        self.0 & 0x7f
-    }
-    #[inline]
-    fn is_tiny_string(self) -> u8 {
-        self.0 >> 7
-    }
-    #[inline]
-    fn new(remainder_len: u8, is_tiny_string: u8) -> Self {
-        Self((remainder_len & 0x7f) | (is_tiny_string << 7))
-    }
+#[derive(Copy, Clone)]
+enum StringOrTinyStringRepr {
+    Tiny {
+        buf: [MaybeUninit<u8>; StringOrTinyString::MAX],
+        /// The length, with the top bit set so that zero is free to be the tag of `Static`.
+        tagged_len: NonZeroU8,
+    },
+    Static(&'static [u8]),
 }
 
 const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 
 impl StringOrTinyString {
-    pub(crate) const MAX: usize = 31;
+    const MAX: usize = 31;
+    const TINY_TAG: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
+    pub const EMPTY: Self = Self(StringOrTinyStringRepr::Static(b""));
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        let buf = self.remainder_buf.as_ptr().cast::<u8>();
-        // This is a switch expression instead of a statement to make sure it uses the faster assembly
-        match self.meta.is_tiny_string() {
-            1 => {
-                // SAFETY: init()/init_lower_case() wrote exactly remainder_len bytes
-                // into the start of remainder_buf; tail bytes are uninit but unread.
-                unsafe { core::slice::from_raw_parts(buf, self.meta.remainder_len() as usize) }
+        match &self.0 {
+            StringOrTinyStringRepr::Tiny { buf, tagged_len } => {
+                let len = tagged_len.get() as usize & Self::MAX;
+                // SAFETY: `init_append_if_needed` wrote `buf[..len]`.
+                unsafe { buf[..len].assume_init_ref() }
             }
-            0 => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let mut ptr_bytes = [0u8; USZ];
-                let mut len_bytes = [0u8; USZ];
-                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
-                unsafe {
-                    core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
-                    core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
-                }
-                let ptr = usize::from_le_bytes(ptr_bytes) as *const u8;
-                let len = usize::from_le_bytes(len_bytes);
-                // SAFETY: ptr/len were stored from a live &[u8] in init(); caller keeps it alive.
-                unsafe { core::slice::from_raw_parts(ptr, len) }
-            }
-            _ => unreachable!(),
+            StringOrTinyStringRepr::Static(slice) => slice,
         }
     }
 
-    // plain `#[inline]` (not `#[inline(always)]`). These are tiny
-    // generic delegators: a length check plus a tail call into the non-generic
-    // `init`/`init_lower_case` or the `Appender` method. `#[inline]` lets the
-    // small fast path fold into callers (and lets duplicate `A` instantiations
-    // be ICF'd at link time / clustered by the symbol-ordering file) without
-    // forcing the cold `append*` arm into every call site.
     #[inline]
     pub fn init_append_if_needed<A: Appender>(
         stringy: &[u8],
         appendy: &mut A,
     ) -> Result<StringOrTinyString, AllocError> {
-        if stringy.len() <= StringOrTinyString::MAX {
-            return Ok(StringOrTinyString::init(stringy));
+        if stringy.len() > Self::MAX {
+            let appended = appendy.append(stringy)?;
+            return Ok(Self(StringOrTinyStringRepr::Static(appended)));
         }
-        Ok(StringOrTinyString::init(appendy.append(stringy)?))
-    }
-
-    pub fn init(stringy: &[u8]) -> StringOrTinyString {
-        let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
-        match stringy.len() {
-            0 => StringOrTinyString {
-                remainder_buf: buf,
-                meta: StringOrTinyStringMeta::new(0, 1),
-            },
-            1..=Self::MAX => {
-                // SAFETY: stringy.len() ∈ 1..=31, fits in buf; src/dst can't overlap (dst is local).
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        stringy.as_ptr(),
-                        buf.as_mut_ptr().cast::<u8>(),
-                        stringy.len(),
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(stringy.len() as u8, 1),
-                }
-            }
-            _ => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr().cast::<u8>();
-                // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
-                        dst,
-                        USZ,
-                    );
-                    core::ptr::copy_nonoverlapping(
-                        stringy.len().to_le_bytes().as_ptr(),
-                        dst.add(USZ),
-                        USZ,
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(0, 0),
-                }
-            }
-        }
+        let mut buf = [MaybeUninit::uninit(); Self::MAX];
+        buf[..stringy.len()].write_copy_of_slice(stringy);
+        let tagged_len = Self::TINY_TAG | stringy.len() as u8;
+        Ok(Self(StringOrTinyStringRepr::Tiny { buf, tagged_len }))
     }
 }
 
-/// Trait for the `Appender` parameter on `StringOrTinyString::init*_append_if_needed`.
+/// Trait for the `Appender` parameter on `StringOrTinyString::init_append_if_needed`.
 pub trait Appender {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
+    fn append(&mut self, s: &[u8]) -> Result<&'static [u8], AllocError>;
 }
 
 pub use crate::strings_impl::{ascii_lowercase_buf, copy_lowercase};

@@ -217,8 +217,8 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     }
 }
 
-/// Creates a VM for this thread.
-fn start_vm() -> Result<(), Vec<u8>> {
+/// Creates a VM for this thread. `log` outlives it.
+fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
     bun_core::scoped_log!(lint_js, "a VM begins");
     let failed = |what: &str| {
         [
@@ -230,12 +230,12 @@ fn start_vm() -> Result<(), Vec<u8>> {
     bun_ast::initialize_store();
     static ARGV: std::sync::LazyLock<Vec<Box<[u8]>>> =
         std::sync::LazyLock::new(|| bun_core::argv().iter().skip(1).map(Box::from).collect());
-    let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+    let options = jsc::VirtualMachineInitOptions {
         argv: &ARGV,
         is_main_thread: false,
         ..Default::default()
-    })
-    .map_err(|error| failed(error.name()))?;
+    };
+    let vm = VirtualMachine::init(log, options).map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled.set(false);
     vm.transpiler
@@ -423,8 +423,8 @@ impl Start {
         *self.memory.get_or_init(memory_for_engines)
     }
 
-    /// Creates a VM for this thread.
-    fn start_vm(&self) -> Result<(), Vec<u8>> {
+    /// As [`start_vm`].
+    fn start_vm(&self, log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
@@ -434,12 +434,12 @@ impl Start {
             }
             // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from
             // several threads at once. So the others wait here until it's up.
-            first = Some(start_vm().and_then(|()| {
+            first = Some(start_vm(log).and_then(|()| {
                 let vm = VirtualMachine::get();
                 vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
             }));
         });
-        first.unwrap_or_else(start_vm)
+        first.unwrap_or_else(|| start_vm(log))
     }
 
     /// [`Engine::expect`]
@@ -816,7 +816,8 @@ impl Crew {
     fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
-        let failure = crew.start.start_vm().err();
+        let mut log = bun_ast::Log::default();
+        let failure = crew.start.start_vm(&raw mut log).err();
         {
             let mut state = crew.state.lock();
             state.all[at].thread = Some(std::thread::current().id());
@@ -851,6 +852,10 @@ impl Crew {
                     break;
                 }
             }
+        }
+        // This frame never returns, and a VM that `end_vm` kept still points at `log`.
+        if !VirtualMachine::is_loaded() {
+            drop(log);
         }
         let (nothing, never) = (Guarded::new(()), Condition::new());
         let mut nothing = nothing.lock();

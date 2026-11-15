@@ -586,30 +586,28 @@ pub fn cached_git_folder_name_print<'a>(
     w.finish_z()
 }
 
-pub fn cached_git_folder_name(
+pub fn cached_git_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_git_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&repository.resolved),
-        patch_hash,
-    )
+) -> &'a ZStr {
+    cached_git_folder_name_print(buf, this.lockfile.str(&repository.resolved), patch_hash)
 }
 
-pub fn cached_git_folder_name_print_auto(
+pub fn cached_git_folder_name_print_auto<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
+) -> &'a ZStr {
     if !repository.resolved.is_empty() {
-        return cached_git_folder_name(this, repository, patch_hash);
+        return cached_git_folder_name(this, buf, repository, patch_hash);
     }
 
     if !repository.repo.is_empty() && !repository.committish.is_empty() {
         let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-        let mut w = ByteCursor::new(cached_package_folder_name_buf());
+        let mut w = ByteCursor::new(buf);
         w.put(b"@G@");
         w.put(repository.committish.slice(string_buf));
         w.put_cache_version(Some(CacheVersion::CURRENT));
@@ -633,25 +631,23 @@ pub fn cached_github_folder_name_print<'a>(
     w.finish_z()
 }
 
-pub fn cached_github_folder_name(
+pub fn cached_github_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_github_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&repository.resolved),
-        patch_hash,
-    )
+) -> &'a ZStr {
+    cached_github_folder_name_print(buf, this.lockfile.str(&repository.resolved), patch_hash)
 }
 
-pub fn cached_github_folder_name_print_auto(
+pub fn cached_github_folder_name_print_auto<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
+) -> &'a ZStr {
     if !repository.resolved.is_empty() {
-        return cached_github_folder_name(this, repository, patch_hash);
+        return cached_github_folder_name(this, buf, repository, patch_hash);
     }
 
     if !repository.owner.is_empty()
@@ -659,7 +655,7 @@ pub fn cached_github_folder_name_print_auto(
         && !repository.committish.is_empty()
     {
         return cached_github_folder_name_print_guess(
-            cached_package_folder_name_buf(),
+            buf,
             this.lockfile.buffers.string_bytes.as_slice(),
             repository,
             patch_hash,
@@ -743,21 +739,6 @@ fn cached_github_folder_name_print_guess<'a>(
     w.finish_z()
 }
 
-pub fn cached_npm_package_folder_name(
-    this: &PackageManager,
-    name: &[u8],
-    version: Semver::Version,
-    patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_npm_package_folder_name_print(
-        this,
-        cached_package_folder_name_buf(),
-        name,
-        version,
-        patch_hash,
-    )
-}
-
 // TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_print_basename<'a>(
     buf: &'a mut [u8],
@@ -830,12 +811,13 @@ pub fn cached_tarball_folder_name_print<'a>(
 
 /// Returns an empty name, which callers treat as a cache miss, for a dependency that only gets its
 /// integrity during this run.
-pub fn cached_tarball_folder_name(
+pub fn cached_tarball_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     integrity: &Integrity,
     resolution: &Resolution,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
+) -> &'a ZStr {
     if !integrity.tag.is_supported() && this.pins_tarballs() {
         return ZStr::EMPTY;
     }
@@ -843,23 +825,14 @@ pub fn cached_tarball_folder_name(
         ResolutionTag::LocalTarball => resolution.local_tarball(),
         _ => resolution.remote_tarball(),
     };
-    let print = |skips_verify: bool, patch_hash: Option<u64>| {
-        cached_tarball_folder_name_print(
-            cached_package_folder_name_buf(),
-            integrity,
-            skips_verify,
-            resolution.tag,
-            this.lockfile.str(url),
-            patch_hash,
-        )
-    };
-    if !this.skips_verify(resolution.tag) {
-        return print(false, patch_hash);
-    }
+    let (tag, url) = (resolution.tag, this.lockfile.str(url));
     // Verified bytes are good for every install, so `--no-verify` prefers them. A patched entry is made from its base.
-    let has_verified_base = (this.cache_directory.as_ref())
-        .is_some_and(|dir| is_package_in_cache_at(dir.fd(), print(false, None), resolution.tag));
-    print(!has_verified_base, patch_hash)
+    let skips_verify = this.skips_verify(tag)
+        && !this.cache_directory.as_ref().is_some_and(|dir| {
+            let base = cached_tarball_folder_name_print(buf, integrity, false, tag, url, None);
+            is_package_in_cache_at(dir.fd(), base, tag)
+        });
+    cached_tarball_folder_name_print(buf, integrity, skips_verify, tag, url, patch_hash)
 }
 
 impl PackageManager {
@@ -1061,12 +1034,16 @@ pub fn path_for_resolution<'a>(
             path_for_cached_npm_path(this, buf, &package_name, npm.version)
         }
         ResolutionTag::Github => {
-            let folder_name = cached_github_folder_name(this, resolution.github(), None);
+            let mut name_buf = bun_paths::path_buffer_pool::get();
+            let folder_name =
+                cached_github_folder_name(this, &mut name_buf, resolution.github(), None);
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
-            let folder_name = cached_tarball_folder_name(this, &integrity, resolution, None);
+            let mut name_buf = bun_paths::path_buffer_pool::get();
+            let folder_name =
+                cached_tarball_folder_name(this, &mut name_buf, &integrity, resolution, None);
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         _ => Ok(&mut buf.0[..0]),
@@ -1097,17 +1074,24 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
-            cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
+            cache_dir_subpath = cached_npm_package_folder_name_print(
+                manager,
+                folder_path_buf,
+                name,
+                version,
+                patch_hash,
+            );
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {
             let git = resolution.git();
-            cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
+            cache_dir_subpath = cached_git_folder_name(manager, folder_path_buf, git, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Github => {
             let github = resolution.github();
-            cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
+            cache_dir_subpath =
+                cached_github_folder_name(manager, folder_path_buf, github, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Folder => {
@@ -1128,8 +1112,13 @@ pub fn compute_cache_dir_and_subpath<'a>(
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             // Open it first, because with `--no-verify` the name depends on what's in the cache.
             cache_dir = get_cache_directory(manager);
-            cache_dir_subpath =
-                cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
+            cache_dir_subpath = cached_tarball_folder_name(
+                manager,
+                folder_path_buf,
+                integrity,
+                resolution,
+                patch_hash,
+            );
             if cache_dir_subpath.is_empty() {
                 Output::err_generic(
                     "no integrity in lockfile for <b>{}@{}<r>, run <cyan>bun install<r> first",
@@ -1395,20 +1384,6 @@ fn verbose_install() -> bool {
     // SAFETY: `VERBOSE_INSTALL` is set once during single-threaded CLI startup
     // (PackageManagerOptions.load) and only read on the main thread.
     PackageManager::verbose_install()
-}
-
-/// Thread-local cached folder-name buffer accessor.
-/// Single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
-/// is the unique live borrow at every call site. Callers must not hold the
-/// result across a call that re-enters this accessor (per-statement reborrow
-/// shape — same contract the prior `*mut [u8]` API imposed, now centralized
-/// here so the 6 call sites drop their `unsafe` block).
-#[inline]
-fn cached_package_folder_name_buf() -> &'static mut [u8] {
-    // SAFETY: single-threaded usage (install runs on one thread); the
-    // thread-local cell outlives all callers and only one `&mut` is taken at a
-    // time per call site (the buffer is reused non-reentrantly).
-    unsafe { (*super::cached_package_folder_name_buf()).as_mut_slice() }
 }
 
 /// `&'static ZStr` from a NUL-terminated literal.

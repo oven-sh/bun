@@ -1,6 +1,6 @@
 //! take Collection phase output and convert to Execution phase input
 
-use super::bun_test::{BunTest, DescribeScope, EntryId, Hooks, Only, ScopeId, StepId, TestScheduleEntry};
+use super::bun_test::{BunTest, DescribeScope, EntryId, Hooks, Only, ScopeId, SequenceEntryId, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
 pub(crate) struct Order<'a> {
@@ -32,15 +32,15 @@ impl<'a> Order<'a> {
             if !runs_a_test && self.buntest.entry(entry).calling.is_vitest() {
                 continue;
             }
-            self.append_group_of(self.buntest.push_step(entry));
+            self.append_group_of(self.buntest.push_sequence_entry(entry));
         }
         let end = self.groups.len();
         AllOrderResult { start, end }
     }
 
-    pub(crate) fn append_group_of(&mut self, step: StepId) {
+    pub(crate) fn append_group_of(&mut self, entry: SequenceEntryId) {
         let sequences_start = self.sequences.len();
-        self.sequences.push(ExecutionSequence::init(Some(step), None, 0, 0)); // add sequence to concurrentgroup
+        self.sequences.push(ExecutionSequence::init(Some(entry), None, 0, 0)); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
         let failure_skip_to = self.groups.len() + 1;
         self.groups
@@ -191,8 +191,8 @@ impl<'a> Order<'a> {
 
         // set skip_to values
         let mut failure_skip_past = Some(current);
-        for (id, step) in buntest.steps_from(list.first) {
-            step.failure_skip_past.set(if buntest.entry(step.entry).around.is_some() {
+        for (id, sequence_entry) in buntest.sequence_entries_from(list.first) {
+            sequence_entry.failure_skip_past.set(if buntest.entry(sequence_entry.entry).around.is_some() {
                 // Nothing inside an aroundEach that fails before `runTest()` runs, afterEach included.
                 list.last
             } else {
@@ -325,24 +325,24 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
 
 struct EntryList<'a> {
     buntest: &'a BunTest,
-    first: Option<StepId>,
-    last: Option<StepId>,
+    first: Option<SequenceEntryId>,
+    last: Option<SequenceEntryId>,
 }
 
 impl EntryList<'_> {
     fn prepend(&mut self, entry: EntryId) {
-        let current = self.buntest.push_step(entry);
-        self.buntest.step(current).next.set(self.first);
+        let current = self.buntest.push_sequence_entry(entry);
+        self.buntest.sequence_entry(current).next.set(self.first);
         self.first = Some(current);
         if self.last.is_none() {
             self.last = Some(current);
         }
     }
 
-    fn append(&mut self, entry: EntryId) -> StepId {
-        let current = self.buntest.push_step(entry);
+    fn append(&mut self, entry: EntryId) -> SequenceEntryId {
+        let current = self.buntest.push_sequence_entry(entry);
         match self.last {
-            Some(last) => self.buntest.step(last).next.set(Some(current)),
+            Some(last) => self.buntest.sequence_entry(last).next.set(Some(current)),
             None => self.first = Some(current),
         }
         self.last = Some(current);

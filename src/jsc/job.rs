@@ -160,6 +160,10 @@ impl<T: ?Sized> JsPtr<T> {
     pub fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
     }
+    #[inline]
+    pub fn as_non_null(self) -> NonNull<T> {
+        self.0
+    }
     /// # Safety
     /// No other live reference aliases the pointee for `'b`.
     #[inline]
@@ -227,7 +231,8 @@ pub struct JobHeader {
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
-/// zero-valid), so its stop phase can [`cancel`](JobContext::cancel) them.
+/// empty by default), so its stop phase can [`cancel`](JobContext::cancel) them.
+#[derive(Default)]
 pub struct JobList {
     head: *mut JobHeader,
 }

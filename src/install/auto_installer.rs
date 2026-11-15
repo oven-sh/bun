@@ -216,10 +216,6 @@ impl hooks::AutoInstaller for PackageManager {
 
     // ── PackageManager ops ────────────────────────────────────────────────
 
-    fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
-        self.on_wake = handler;
-    }
-
     fn project_folder<'b>(
         &mut self,
         name: &[u8],

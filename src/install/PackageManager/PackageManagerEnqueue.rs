@@ -2269,8 +2269,7 @@ fn bind_row_without_manifest(
                             return Ok(());
                         }
 
-                        let task =
-                            enqueue_git_commit(this, commit_id, clone_id, alias, url, committish);
+                        let task = enqueue_git_commit(this, commit_id, clone_id, alias, committish);
                         this.enqueue_git_task(task);
                         return Ok(());
                     }
@@ -2838,14 +2837,12 @@ fn enqueue_git_commit(
     task_id: Task::Id,
     clone_id: Task::Id,
     name: &[u8],
-    url: &[u8],
     committish: &[u8],
 ) -> NonNull<Task::Task> {
     let job = Task::Job::GitCommit {
         request: Task::GitCommitRequest {
             clone_id,
             name: stored_string(name),
-            url: stored_string(url),
             committish: stored_string(committish),
         },
         sha: Vec::new(),
@@ -2939,7 +2936,7 @@ fn enqueue_local_tarball(
             url: stored_string(path),
             skip_verify: false,
             in_trusted_dependencies: false,
-            github_resolved: StringOrTinyString::init(b""),
+            github_resolved: StringOrTinyString::EMPTY,
         },
         source: Task::TarballSource::Local {
             path: tarball_path,
@@ -4760,10 +4757,5 @@ impl PackageManager {
                 ),
             );
         }
-    }
-
-    #[inline]
-    pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
-        enqueue_dependency_list(self, dependencies_list)
     }
 }

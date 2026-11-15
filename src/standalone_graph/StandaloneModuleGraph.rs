@@ -2631,10 +2631,10 @@ pub(crate) fn inject<'a>(
         #[cfg(not(windows))]
         let copy = UnfinishedCopy::new(fd, zname);
         #[cfg(not(windows))]
-        let self_fd: Fd = 'brk2: {
+        let template = 'brk2: {
             for retry in 0..3 {
                 match Syscall::open(self_exe, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0) {
-                    Ok(res) => break 'brk2 res,
+                    Ok(res) => break 'brk2 Syscall::CloseOnDrop::new(res),
                     Err(err) => {
                         if retry < 2 {
                             match err.get_errno() {
@@ -2659,8 +2659,6 @@ pub(crate) fn inject<'a>(
 
         #[cfg(not(windows))]
         {
-            let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
-
             // A trimmed executable is written whole, from the template's bytes: an ELF one where it has compiled code.
             let is_written_whole = additions.trims()
                 && match target.os {
@@ -2668,7 +2666,7 @@ pub(crate) fn inject<'a>(
                     CompileTargetOs::Mac => true,
                     _ => false,
                 };
-            if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
+            if !is_written_whole && let Err(e) = bun_sys::copy_file(template.fd(), fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e
@@ -3910,15 +3908,15 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
-    let map_blob_len_u32 =
-        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
-    let sources_len_u32 =
-        u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
-    header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
-    header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
+    let header = SourceMap::SerializedSourceMap::Header {
+        source_files_count: u32::try_from(sources_paths.items().len())
+            .map_err(|_| crate::Error::SourceMapTooLarge)?,
+        map_bytes_length: u32::try_from(map_blob.len())
+            .map_err(|_| crate::Error::SourceMapTooLarge)?,
+    };
+    header_list.extend_from_slice(bun_core::bytes_of(&header));
 
-    let string_payload_start_location = size_of::<u32>()
-        + size_of::<u32>()
+    let string_payload_start_location = size_of_val(&header)
         + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 

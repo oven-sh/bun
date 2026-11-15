@@ -41,10 +41,10 @@ pub use services::FileFinder;
 pub use services::FilesForFileSystem;
 use services::{BundlerServices, NamesWanted, is_at_or_below};
 
-pub struct PluginSetup {
+pub struct PluginSetup<'a> {
     pub plugins: NonNull<JSBundlerPlugin>,
     pub context: bun_event_loop::ContextId,
-    pub completion: dispatch::CompletionHandle,
+    pub completion: dispatch::CompletionHandle<'a>,
 }
 
 pub struct AotBuildRequest<'r, 'a> {
@@ -65,7 +65,7 @@ pub struct AotBuildRequest<'r, 'a> {
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
-    pub plugins: Option<PluginSetup>,
+    pub plugins: Option<PluginSetup<'a>>,
     pub file_map: Option<&'a FileMap>,
     pub typescript_libs: Libs<'r>,
 }
@@ -298,7 +298,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let is_source_replaced = replaced_file.is_some_and(|replaced| {
                 let mut sources = compilation.program_files.iter();
                 sources.any(|source| source.source_path == replaced)
-                    || embedded.iter().any(|file| file.src_path.text == replaced)
+                    || embedded.iter().any(|file| &*file.src_path == replaced)
             });
             let mut build = output::finish_build(compilation, &names, embedded);
             build.is_source_replaced = is_source_replaced;

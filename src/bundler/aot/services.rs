@@ -59,13 +59,9 @@ impl BuildContext {
         &self.bundle().transpiler().options
     }
 
-    pub(crate) fn with_worker<R>(
-        &self,
-        work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
-    ) -> R {
+    pub(crate) fn with_worker<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
         let mut worker = Worker::get(self.bundle());
-        let data = worker.data.as_mut().expect("Worker::get creates it");
-        with_ast_scope(|arena| work(&mut data.transpiler, arena))
+        with_ast_scope(|_| work(&mut worker.transpiler))
     }
 }
 
@@ -88,7 +84,7 @@ impl FileFinder {
     ///
     /// # Safety
     /// `transpiler` outlives what is returned and is not written in the meantime.
-    pub unsafe fn new(transpiler: &Transpiler<'_>, conditions: &[Vec<u8>]) -> FileFinder {
+    pub unsafe fn new(transpiler: &Transpiler<'static>, conditions: &[Vec<u8>]) -> FileFinder {
         let mut options = crate::transpiler::resolver_bundle_options_subset(&transpiler.options);
         // Whoever asks has taken out what is external and the modules of Bun's own that it has.
         options.mark_builtins_as_external = false;
@@ -106,8 +102,7 @@ impl FileFinder {
             options.conditions.require.insert(condition, ());
         }
         let resolver = &transpiler.resolver;
-        // SAFETY: the caller's.
-        FileFinder(unsafe { Resolver::for_worker(resolver, resolver.log, options) })
+        FileFinder(Resolver::for_worker(resolver, resolver.log, options))
     }
 
     pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {
@@ -142,7 +137,7 @@ impl FileFinder {
         let failure = resolver.esm_failure.take();
         let result = match result {
             ResultUnion::Success(result) => result,
-            ResultUnion::Failure(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
+            ResultUnion::Failure(_) | ResultUnion::NotFound => {
                 return failure.map_or_else(FoundCode::not_found, describe_failure);
             }
         };
@@ -1179,7 +1174,7 @@ impl SourceProvider for BundlerServices {
     }
 
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
-        components::compile_components(&self.context, file, observer, None, &mut Log::init())
+        components::compile_components(&self.context, file, observer, &mut Log::init())
     }
 
     fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {

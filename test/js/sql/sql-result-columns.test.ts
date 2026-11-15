@@ -230,8 +230,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   });
 });
 
-// A server hands out OIDs from 16384 upwards: 2^31 takes two thousand million objects.
-test.each([0, 3])("postgres: the column transform runs the event loop with %p bytes left of its read", async behind => {
+test.each([0, 3])("postgres: the column transform runs the event loop with %p bytes left of its read", async extra => {
   const description = pgRowDescription([{ name: "owner", typeOid: 25 }]);
   const rows = ["A", "B"].map(owner => pgDataRow([Buffer.from(owner)]));
   const reply = Buffer.concat([description, ...rows, pgCommandComplete("SELECT 2"), pgReadyForQuery()]);
@@ -247,7 +246,7 @@ test.each([0, 3])("postgres: the column transform runs the event loop with %p by
       transform: {
         column: name => {
           // Bun.build() runs the event loop until an async setup() settles.
-          const setup = () => write(socket, reply.subarray(description.length + behind));
+          const setup = () => write(socket, reply.subarray(description.length + extra));
           built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
           return name.toUpperCase();
         },
@@ -256,7 +255,8 @@ test.each([0, 3])("postgres: the column transform runs the event loop with %p by
     const result = sql.unsafe("A").simple().execute();
     socket = await asked.promise;
     await write(socket, reply.subarray(0, 7));
-    await write(socket, reply.subarray(7, description.length + behind));
+    // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
+    socket.write(reply.subarray(7, description.length + extra));
     expect(await result).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
     await built;
   } finally {
@@ -264,6 +264,7 @@ test.each([0, 3])("postgres: the column transform runs the event loop with %p by
   }
 });
 
+// A server hands out OIDs from 16384 upwards: 2^31 takes two thousand million objects.
 test("postgres: an OID over 2^31 is not negative", async () => {
   const { port, server } = await pgMockServer(type => {
     if (type !== "Q") return;

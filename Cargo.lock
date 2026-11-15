@@ -748,7 +748,6 @@ dependencies = [
  "bun_brotli",
  "bun_collections",
  "bun_core",
- "bun_dns",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
@@ -864,7 +863,6 @@ dependencies = [
  "bun_patch",
  "bun_paths",
  "bun_perf",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolver",
@@ -874,7 +872,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_which",
@@ -964,7 +961,6 @@ dependencies = [
  "criterion",
  "enumset",
  "regex",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
@@ -1484,7 +1480,6 @@ name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_core_macros",
 ]
@@ -1792,7 +1787,7 @@ dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
  "bun_core",
- "bun_js_parser",
+ "bun_crash_handler",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
@@ -1951,7 +1946,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_boringssl",
  "bun_collections",
  "bun_core",
@@ -2105,13 +2099,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_transpiler"
-version = "0.0.0"
-dependencies = [
- "bun_bundler",
-]
-
-[[package]]
 name = "bun_trim"
 version = "0.0.0"
 dependencies = [
@@ -2230,7 +2217,6 @@ name = "bun_zlib"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_zlib_sys",
  "strum",

@@ -179,9 +179,7 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    // Built twice, because `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) can't
-    // be the same value.
-    let node_modules_path = || match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
+    let mut node_modules_path = match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -190,30 +188,27 @@ pub(crate) fn link_global_bins(
             Global::crash();
         }
     };
-    let target_node_modules_path = node_modules_path();
-    let mut node_modules_path = node_modules_path();
 
     let mut bin_linker = bin::Linker {
         bin: package.bin,
         node_modules_path: &mut node_modules_path,
         global_bin_path: manager.options.bin_path,
-        target_node_modules_path: &raw const target_node_modules_path,
-        target_package_name: strings::StringOrTinyString::init(name),
-        package_name: strings::StringOrTinyString::init(name),
+        target_node_modules_path: None,
+        target_package_name: name,
+        package_name: name,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         seen: None,
         abs_target_buf: link_target_buf.as_mut_slice(),
-        abs_dest_buf: link_dest_buf.as_mut_slice(),
         rel_buf: link_rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     };
     if unlink {
-        bin_linker.unlink(true);
+        bin_linker.unlink(true, link_dest_buf.as_mut_slice());
     } else {
-        bin_linker.link(true);
+        bin_linker.link(true, link_dest_buf.as_mut_slice());
     }
     bin_linker.err
 }
@@ -223,6 +218,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
     if manager.options.positionals.len() == 1 {
         // bun link
+        drop(original_cwd); // `Global::exit` below runs no destructors.
         let (lockfile, package) = load_package_for_link(manager, "linking")?;
         let name = lockfile.str(&package.name);
 

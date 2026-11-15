@@ -722,7 +722,6 @@ pub fn install_with_manager(
                 && load_result.migrated_from().is_none();
             run_security_scanner(
                 manager,
-                ctx,
                 original_cwd,
                 &lockfile_before_clean,
                 &named.moved,
@@ -931,7 +930,6 @@ pub fn install_with_manager(
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
-                ctx,
                 install_root_dependencies,
                 &workspace_filters,
                 None,
@@ -940,7 +938,6 @@ pub fn install_with_manager(
         } else {
             install_hoisted_packages(
                 manager,
-                ctx,
                 &workspace_filters,
                 install_root_dependencies,
                 log_level,
@@ -1071,7 +1068,7 @@ pub fn install_with_manager(
     }
 
     if runs_root_scripts {
-        run_root_lifecycle_scripts(manager, ctx, log_level)?;
+        run_root_lifecycle_scripts(manager, log_level)?;
     }
 
     if log_level != Options::LogLevel::Silent {
@@ -2537,7 +2534,6 @@ fn reresolve_rows_outside_overrides(
 #[inline(never)]
 fn run_security_scanner(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     original_cwd: &[u8],
     before_clean: &Lockfile,
     moved: &[(DependencyID, PackageID)],
@@ -2551,7 +2547,6 @@ fn run_security_scanner(
     ));
     match security_scanner::perform_security_scan_after_resolution(
         manager,
-        ctx,
         original_cwd,
         &seeds,
         loaded_bun_lockfile,
@@ -2734,7 +2729,6 @@ fn write_yarn_lock_with_progress(
 #[inline(never)]
 fn run_root_lifecycle_scripts(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
@@ -2754,13 +2748,7 @@ fn run_root_lifecycle_scripts(
         let output_in_foreground = true;
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (`package_name` is owned by the List and drops with it).
-        manager.spawn_package_lifecycle_scripts(
-            ctx,
-            scripts,
-            optional,
-            output_in_foreground,
-            None,
-        )?;
+        manager.spawn_package_lifecycle_scripts(scripts, optional, output_in_foreground, None)?;
 
         // .monotonic is okay because at this point, this value is only accessed from this
         // thread.

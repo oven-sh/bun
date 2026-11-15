@@ -16,13 +16,9 @@ use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
-// Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
-// impl lives in `bun_resolver`, which this crate can't reach without a cycle).
-pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
+struct FilenameStoreAppender<'a>(&'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+    fn append(&mut self, s: &[u8]) -> Result<&'static [u8], bun_alloc::AllocError> {
         self.0.append(s)
     }
 }
@@ -143,7 +139,11 @@ pub(crate) type DedupeMap = HashMap<
 >;
 
 impl NetworkTask {
-    fn notify(this: *mut NetworkTask, finished: http::Finished, mut result: HTTPClientResult<'_>) {
+    fn notify(
+        this: *mut NetworkTask,
+        finished: Option<http::FinishedRequest>,
+        mut result: HTTPClientResult<'_>,
+    ) {
         // `this` is the NetworkTask erased into the callback ctx in
         // `get_completion_callback`; the HTTP thread is the sole writer for
         // this call. It stays a raw receiver: both exits below (`on_chunk(..,
@@ -173,7 +173,7 @@ impl NetworkTask {
             if let Some(m) = result.metadata.take() {
                 // SAFETY: `stream` is the live heap-allocated `TarballStream`.
                 unsafe {
-                    (*stream).status_code = m.response.status_code;
+                    (*stream).status_code = m.status_code();
                     if let http::BodySize::ContentLength(len) = result.body_size {
                         (*stream).content_length = Some(len);
                     }
@@ -786,7 +786,7 @@ impl NetworkTask {
             let version = tarball_.resolution.npm().version;
             Box::from(extract_tarball::build_url(
                 scope.url.href(),
-                &tarball_.name,
+                tarball_.name.slice(),
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
             )?)

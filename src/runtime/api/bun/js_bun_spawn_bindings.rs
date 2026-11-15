@@ -12,8 +12,8 @@ use bun_io::max_buf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::spawn_sync_event_loop::TickState;
 use bun_jsc::{
-    self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
-    JsResult, SystemError,
+    self as jsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError, JsResult,
+    SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
@@ -879,16 +879,15 @@ fn spawn_maybe_sync(
     let mut env_array = match &env_override {
         Some(lines) => borrow_c_strings(lines),
         None => {
-            inherited_env = (jsc_vm.env_loader().map.create_null_delimited_env_map())
-                .map_err(|_| cx.global().throw_out_of_memory())?;
-            let entries = inherited_env.entries();
-            let mut env_array = Vec::with_capacity(entries.len() + 3);
+            inherited_env = jsc_vm.env_loader().map.to_envp();
+            let entries = inherited_env.unterminated();
+            let mut env_array = Vec::with_capacity(entries.len() + SPARE_SLOTS);
             env_array.extend_from_slice(entries);
             env_array
         }
     };
 
-    // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
+    // A memfd left in `stdio` at any return is closed with it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd() && stdio[fd_index].use_memfd(fd_index as u32) {
@@ -1000,7 +999,7 @@ fn spawn_maybe_sync(
         None => jsc_vm.event_loop(),
     };
 
-    let loop_handle = EventLoopHandle::init(event_loop.as_erased_ptr());
+    let loop_handle = event_loop.as_handle();
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
@@ -1076,8 +1075,8 @@ fn spawn_maybe_sync(
     crate::node::fs::note_process_start();
     let mut spawned = match spawn::spawn_process(
         &spawn_options,
-        CStrList::terminate(&mut borrow_c_strings(&argv.args)),
-        Some(CStrList::terminate(&mut env_array)),
+        CStrList::from_unterminated(&mut borrow_c_strings(&argv.args)),
+        Some(CStrList::from_unterminated(&mut env_array)),
     ) {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
@@ -1245,9 +1244,14 @@ fn spawn_maybe_sync(
     }
 
     let mut promise_for_stream: JSValue = JSValue::ZERO;
+    let [stdin, stdout, stderr] = stdio;
+    let stdin_stream = match &stdin {
+        Stdio::ReadableStream(stream) => Some(stream.value),
+        _ => None,
+    };
 
     match Writable::init(
-        &mut stdio[0],
+        stdin,
         event_loop,
         subprocess,
         spawned_stdin,
@@ -1279,7 +1283,7 @@ fn spawn_maybe_sync(
     }
 
     subprocess.stdout.set(Readable::init(
-        &stdio[1],
+        &stdout,
         event_loop,
         subprocess_nn,
         spawned_stdout,
@@ -1287,7 +1291,7 @@ fn spawn_maybe_sync(
         is_sync,
     ));
     subprocess.stderr.set(Readable::init(
-        &stdio[2],
+        &stderr,
         event_loop,
         subprocess_nn,
         spawned_stderr,
@@ -1454,8 +1458,8 @@ fn spawn_maybe_sync(
             Subprocess::js::ipc_callback_set_cached(out, cx.global(), ipc_callback);
         }
 
-        if let Stdio::ReadableStream(rs) = &stdio[0] {
-            Subprocess::js::stdin_set_cached(out, cx.global(), rs.value);
+        if let Some(stream) = stdin_stream {
+            Subprocess::js::stdin_set_cached(out, cx.global(), stream);
         }
 
         // Cache the terminal JS value if a terminal was created
@@ -1836,9 +1840,11 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
-/// With room for the terminator and for the two variables of an IPC channel.
+/// Two IPC variables and the terminator.
+const SPARE_SLOTS: usize = 3;
+
 fn borrow_c_strings(strings: &[ZBox]) -> Vec<Option<CStrRef<'_>>> {
-    let mut list = Vec::with_capacity(strings.len() + 3);
+    let mut list = Vec::with_capacity(strings.len() + SPARE_SLOTS);
     list.extend(strings.iter().map(|string| Some(string.as_zstr().into())));
     list
 }

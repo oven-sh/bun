@@ -14,6 +14,7 @@
 pub mod hive_array;
 pub mod index_sort;
 mod multi_array_list;
+mod once_map;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
 // `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
@@ -34,9 +35,10 @@ pub use bounded_array::BoundedArray;
 pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveRefHandle, HiveSlot};
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
+pub use once_map::OnceMap;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
-pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
+pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
 
 pub use bit_set::{
     AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,

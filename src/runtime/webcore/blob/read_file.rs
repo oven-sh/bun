@@ -829,7 +829,7 @@ impl ReadFileUV {
             jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         if let PathOrFileDescriptor::Fd(fd) = this.file_store.pathlike {
             this.opened_fd = fd;
-            this.on_file_open();
+            this.queue_stat();
         } else {
             this.open();
         }
@@ -861,7 +861,7 @@ impl ReadFileUV {
 
     extern "C" fn on_open(req: *mut libuv::fs_t) {
         // SAFETY: `req` is that of the box that `open` left to libuv.
-        let mut this = unsafe { bun_core::heap::take(Self::from_uv_fs(req)) };
+        let mut this = unsafe { Self::take_from_uv_fs(req) };
 
         let result = this.req.result;
         if let Some(errno) = result.errno() {
@@ -870,7 +870,7 @@ impl ReadFileUV {
         }
 
         this.opened_fd = Fd::from_uv(result.to_fd());
-        this.on_file_open();
+        this.queue_stat();
     }
 
     fn on_open_error(mut self: Box<Self>, errno: bun_sys::E) {
@@ -923,8 +923,8 @@ impl ReadFileUV {
         self.on_finish();
     }
 
-    fn on_file_open(mut self: Box<Self>) {
-        log!("ReadFileUV.onFileOpen");
+    fn queue_stat(mut self: Box<Self>) {
+        log!("ReadFileUV.queueStat");
         self.req.deinit();
 
         let (loop_, fd) = (self.loop_, self.opened_fd.uv());
@@ -947,8 +947,8 @@ impl ReadFileUV {
 
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
         log!("ReadFileUV.onFileInitialStat");
-        // SAFETY: `req` is that of the box that `on_file_open` left to libuv.
-        let mut this = unsafe { bun_core::heap::take(Self::from_uv_fs(req)) };
+        // SAFETY: `req` is that of the box that `queue_stat` left to libuv.
+        let mut this = unsafe { Self::take_from_uv_fs(req) };
 
         if let Some(errno) = this.req.result.errno() {
             this.on_error(errno, bun_sys::Tag::fstat);
@@ -1100,7 +1100,7 @@ impl ReadFileUV {
 
     extern "C" fn on_read(req: *mut libuv::fs_t) {
         // SAFETY: `req` is that of the box that `queue_read` left to libuv.
-        let mut this = unsafe { bun_core::heap::take(Self::from_uv_fs(req)) };
+        let mut this = unsafe { Self::take_from_uv_fs(req) };
 
         let result = this.req.result;
 

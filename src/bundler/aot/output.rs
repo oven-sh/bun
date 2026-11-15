@@ -82,7 +82,7 @@ impl AotEntryPoint {
         let is_same = |(&left, &right): (&u8, &u8)| {
             left == right || (is_windows && is_sep_any(left) && is_sep_any(right))
         };
-        let (entry, copy) = (&self.source_path[..], embedded.src_path.text);
+        let (entry, copy) = (&self.source_path[..], &*embedded.src_path);
         entry.len() == copy.len() && entry.iter().zip(copy).all(is_same)
     }
 }

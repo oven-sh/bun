@@ -616,10 +616,7 @@ pub(crate) fn write_output_files_to_disk(
                 &bytes,
             ) {
                 Err(e) => {
-                    log.add_sys_error(
-                        &e,
-                        format_args!("writing file {}", quote(src.src_path.text)),
-                    );
+                    log.add_sys_error(&e, format_args!("writing file {}", quote(&src.src_path)));
                     return Err(crate::Error::WriteFailed);
                 }
                 Ok(_) => {}

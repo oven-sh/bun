@@ -34,8 +34,7 @@ use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, process_fetch_log};
 use crate::{
-    ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
-    ResolvedSource,
+    ErrorableResolvedSource, JSGlobalObject, JSPromise, JSValue, JsError, JsResult, ResolvedSource,
 };
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
@@ -295,7 +294,7 @@ impl RuntimeTranspilerStore {
         module_loader: JSValue,
     ) -> *mut c_void {
         let path_text = Box::<[u8]>::from(path.text);
-        let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
+        let promise = JSPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
@@ -312,7 +311,7 @@ impl RuntimeTranspilerStore {
         }
 
         // Build the job by value and `get_init` it into the hive — the `Box`
-        // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
+        // alloc, `JSPromise::create`, and `StrongOptional::create`
         // above all happen *before* the slot is claimed, so an OOM/throw on
         // that path no longer leaves a claimed-but-uninit `TranspilerJob` (which
         // carries `Log`/`String`/`StrongOptional` drop glue) for the next
@@ -329,7 +328,7 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 aot_package_config,
-                promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
+                promise: StrongOptional::create(promise.to_js(), global_object),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
                 } else {
@@ -361,7 +360,7 @@ impl RuntimeTranspilerStore {
         self.jobs_scheduled.update(|n| n + 1);
         // SAFETY: a new slot, which is released after the job comes back through `queue`.
         unsafe { WorkPool::schedule(&raw mut (*job).work_task) };
-        promise.cast::<c_void>()
+        promise.as_mut_ptr().cast::<c_void>()
     }
 }
 

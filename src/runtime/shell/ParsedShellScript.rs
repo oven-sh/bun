@@ -76,7 +76,8 @@ impl ParsedShellScript {
 
     pub(crate) fn set_env(&self, cx: &mut JsScope<'_>, env: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
-        let Some(value1) = env.to_js().get_object() else {
+        let env = env.to_js();
+        let Some(value1) = env.get_object() else {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };
 

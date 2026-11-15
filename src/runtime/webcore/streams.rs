@@ -327,7 +327,7 @@ impl WritablePending {
         let entered = future.global.bun_vm().enter_context(future.context);
         Writable::fulfill_promise(
             self.result.replace(Writable::Done),
-            future.strong.swap(),
+            &future.strong.swap(&future.global),
             &future.global.js_thread(entered.context()),
         )
     }
@@ -355,7 +355,7 @@ impl Writable<'_> {
     /// same way.
     pub(crate) fn fulfill_promise(
         result: Writable<'_>,
-        promise: &mut JSPromise,
+        promise: &JSPromise,
         cx: &bun_jsc::JsThread<'_>,
     ) {
         let settled = match result {
@@ -610,8 +610,8 @@ impl PipeCell {
     }
 
     /// The promise the sink's owner or source awaits, until it is taken to be settled.
-    pub(crate) fn done(&self) -> Option<*mut JSPromise> {
-        js::pipe_done(self.0.get()?).as_promise()
+    pub(crate) fn done(&self) -> Option<JSValue> {
+        Some(js::pipe_done(self.0.get()?)).filter(|done| done.as_promise().is_some())
     }
 
     pub(crate) fn set_done(&self, done: JSValue) {
@@ -621,8 +621,8 @@ impl PipeCell {
         }
     }
 
-    pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
-        js::take_pipe_done(self.0.get()?).as_promise()
+    pub(crate) fn take_done(&self) -> Option<JSValue> {
+        self.0.get().map(js::take_pipe_done)
     }
 
     pub(crate) fn set_error(&self, error: JSValue) {
@@ -1420,8 +1420,7 @@ impl HTTPServerWritable {
             if self.end_len.get() == 0 && !self.is_done() && self.buffered_len() > 0 {
                 let _ = self.send_readable(0);
             }
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(prom).to_js());
+            return bun_sys::Result::Ok(prom);
         }
 
         if self.is_done() {
@@ -1731,18 +1730,18 @@ impl HTTPServerWritable {
     }
 
     /// The unsettled `flush(true)` / `end()` promise, held by the controller cell.
-    pub(crate) fn pending_flush(&self) -> Option<*mut JSPromise> {
+    pub(crate) fn pending_flush(&self) -> Option<JSValue> {
         self.pipe.done()
     }
 
-    pub(crate) fn take_pending_flush(&self) -> Option<*mut JSPromise> {
+    pub(crate) fn take_pending_flush(&self) -> Option<JSValue> {
         self.pipe.take_done()
     }
 
     fn park_pending_flush(&self, global_this: &JSGlobalObject) -> JSValue {
         // end() while a flush(true) waits on the same drain: one promise settles both.
         if let Some(parked) = self.pending_flush() {
-            return JSPromise::opaque_ref(parked).to_js();
+            return parked;
         }
         let promise = JSPromise::create(global_this).to_js();
         self.pipe.set_done(promise);
@@ -1756,12 +1755,14 @@ impl HTTPServerWritable {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
         self.pending.run();
-        if let Some(prom) = self.take_pending_flush() {
+        if let Some(flush) = self.take_pending_flush()
+            && let Some(prom) = flush.as_promise()
+        {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             let global_this = self.global_this.get();
-            let _keep = ::bun_jsc::EnsureStillAlive(JSPromise::opaque_ref(prom).to_js());
-            let result = JSPromise::opaque_mut(prom).resolve(
+            let _keep = ::bun_jsc::EnsureStillAlive(flush);
+            let result = prom.resolve(
                 global_this,
                 JSValue::js_number(
                     self.wrote
@@ -2258,7 +2259,7 @@ impl BufferAction {
     pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) {
         let entered = global.bun_vm().enter_context(self.context);
         let settled = blob.wrap(
-            jsc::AnyPromise::Normal(self.swap()),
+            &self.promise.swap(global),
             &global.js_thread(entered.context()),
             self.tag(),
         );
@@ -2268,17 +2269,12 @@ impl BufferAction {
     /// Terminal like [`fulfill`](Self::fulfill).
     pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) {
         let _context = global.bun_vm().enter_context(self.context);
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
+        let settled = self.promise.reject(global, Ok(err.to_js(global)));
         crate::dispatch::fold(settled);
     }
 
     pub(crate) fn value(&self) -> JSValue {
         self.promise.value()
-    }
-
-    pub(crate) fn swap(&mut self) -> *mut JSPromise {
-        std::ptr::from_mut(self.promise.swap())
     }
 }
 

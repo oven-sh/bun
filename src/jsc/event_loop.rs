@@ -1105,7 +1105,7 @@ impl EventLoop {
     /// that run, not tick on over it). Nothing is thrown for it; a caller inside a
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
-    pub fn wait_for_promise(&self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+    pub fn wait_for_promise(&self, promise: &jsc::JSPromise) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
@@ -1337,7 +1337,7 @@ impl EventLoop {
     /// the promise settled, or termination was requested. Parks in `auto_tick`
     /// while imports are still being read/transpiled off-thread; does not wait
     /// for a top-level await.
-    pub fn wait_for_worker_entry_evaluation(&self, promise: jsc::AnyPromise) {
+    pub fn wait_for_worker_entry_evaluation(&self, promise: &jsc::JSPromise) {
         loop {
             let vm = self.vm_ref();
             let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());

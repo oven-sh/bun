@@ -258,10 +258,10 @@ impl ViWait {
             return Ok(());
         }
         self.finish();
-        let Some(promise) = js::promise_get_cached(this_value).and_then(JSValue::as_promise) else {
+        let promise = js::promise_get_cached(this_value);
+        let Some(promise) = promise.as_ref().and_then(JSValue::as_promise) else {
             return Ok(());
         };
-        let promise = JSPromise::opaque_mut(promise);
         match outcome {
             Ok(value) => promise.resolve(global, value),
             Err(error) => promise.reject(global, Ok(error)),

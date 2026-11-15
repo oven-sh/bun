@@ -1,10 +1,11 @@
 use core::ffi::c_void;
 
+use crate::bindgen::JsLocal;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` collides with this module's own `Strong`, so import it under an alias.
 use crate::strong::Optional as JscStrong;
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
     /// constructed or owned on the Rust side (GC-managed).
     pub struct JSPromise;
@@ -22,20 +23,19 @@ pub enum Status {
 // `JSPromise` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles
 // (so `&T` is ABI-identical to non-null `*const T` and C++ mutating through
 // the pointer is interior mutation invisible to Rust). The shims that take
-// only such handles + scalars are declared `safe fn`. `JSC__JSPromise__wrap`'s
+// only such handles + scalars are declared `safe fn`.
 // `ctx` is an opaque round-trip pointer C++ only forwards to `call` (never
-// dereferenced as Rust data); the `*mut JSPromise`-returning constructors stay
-// raw (caller derefs).
+// dereferenced as Rust data).
 unsafe extern "C" {
-    safe fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> *mut JSPromise;
+    safe fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> Option<&JSPromise>;
     safe fn JSC__JSPromise__rejectedPromise(
         arg0: &JSGlobalObject,
         js_value1: JSValue,
-    ) -> *mut JSPromise;
+    ) -> Option<&JSPromise>;
     safe fn JSC__JSPromise__resolvedPromise(
         arg0: &JSGlobalObject,
         js_value1: JSValue,
-    ) -> *mut JSPromise;
+    ) -> Option<&JSPromise>;
     safe fn JSC__JSPromise__resolvedPromiseValue(
         arg0: &JSGlobalObject,
         js_value1: JSValue,
@@ -43,12 +43,18 @@ unsafe extern "C" {
     safe fn JSC__JSPromise__wrap(
         arg0: &JSGlobalObject,
         ctx: *mut c_void,
-        call: extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue,
+        call: extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,
     ) -> JSValue;
+    safe fn JSC__JSPromise__settleWith(
+        this: &JSPromise,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        call: extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,
+    );
 
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
-    safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
-    safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
+    safe fn JSC__JSPromise__result(this: &JSPromise, vm: &VM) -> JSValue;
+    safe fn JSC__JSPromise__setHandled(this: &JSPromise);
     // The resolve/reject/rejectAsHandled shims are `void` on the C side
     // (bindings.cpp) — there is no bool sentinel on the wire; a pending
     // exception is surfaced by checking `global.has_exception()` after the
@@ -70,7 +76,7 @@ impl Strong {
     }
 
     pub fn reject(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
-        self.swap().reject(global, val)
+        self.swap(global).reject(global, val)
     }
 
     /// The one way native code hands a conversion outcome to script: `Ok`
@@ -78,7 +84,7 @@ impl Strong {
     /// pending (see [`JSPromise::resolve`]). Prefer this over
     /// `resolve(v.unwrap_or(..))`.
     pub fn settle(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
-        self.swap().settle(global, val)
+        self.swap(global).settle(global, val)
     }
 
     /// Like `reject` but first attaches async stack frames from this promise's
@@ -94,11 +100,11 @@ impl Strong {
             Err(_) => return self.reject(global, val),
         };
         err.attach_async_stack_from_promise(global, self.get());
-        self.swap().reject(global, Ok(err))
+        self.swap(global).reject(global, Ok(err))
     }
 
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> JsResult<()> {
-        self.swap().resolve(global, val)
+        self.swap(global).resolve(global, val)
     }
 
     pub fn init(global: &JSGlobalObject) -> Self {
@@ -117,14 +123,11 @@ impl Strong {
 
     /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
     /// empty (use [`has_value`] to check first).
-    ///
-    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
-    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
-    /// so the resolver-style accessor cannot alias any Rust-visible memory.
-    /// The pointer is the JSValue payload (not derived from `&self`) and the
-    /// `Strong` root keeps the cell alive for the borrow's lifetime.
-    pub fn get(&self) -> &mut JSPromise {
-        JSPromise::opaque_mut(self.strong.get().unwrap().as_promise().unwrap())
+    pub fn get(&self) -> &JSPromise {
+        let value = self.value();
+        let promise: *const JSPromise = value.as_promise().unwrap();
+        // SAFETY: the slot roots it, and only `&mut self` changes the slot.
+        unsafe { &*promise }
     }
 
     pub fn value(&self) -> JSValue {
@@ -139,13 +142,12 @@ impl Strong {
         self.strong.has()
     }
 
-    pub fn swap(&mut self) -> &mut JSPromise {
-        let prom = self.strong.swap().as_promise().unwrap();
+    /// Releases the root: from here on the result is what keeps the promise alive.
+    pub fn swap<'a>(&mut self, global: &'a JSGlobalObject) -> JsLocal<'a, JSPromise> {
+        let promise = self.strong.swap().as_promise().unwrap().to_local(global);
         // Release the handle slot now.
         self.strong = JscStrong::empty();
-        // `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
-        // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
-        JSPromise::opaque_mut(prom)
+        promise
     }
 
     pub fn take(&mut self) -> Self {
@@ -157,12 +159,18 @@ impl Strong {
 
 // ───────────────────────────── JSPromise methods ─────────────────────────────
 
-impl JSPromise {
-    #[inline]
-    pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(self)
-    }
+extern "C" fn call_once<F>(ctx: *mut c_void, global: &JSGlobalObject) -> JSValue
+where
+    F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
+{
+    // SAFETY: `wrap` and `settle_with` pass an `Option<F>` on their stack, which outlives the call into C++.
+    let f = unsafe { bun_ptr::callback_ctx::<Option<F>>(ctx) }
+        .take()
+        .unwrap();
+    crate::to_js_host_call(global, move || f(global))
+}
 
+impl JSPromise {
     /// Wrap a fallible host call in a Promise: if `f` throws, the promise is
     /// rejected; otherwise it resolves with the returned value.
     //
@@ -173,28 +181,10 @@ impl JSPromise {
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
-        struct Wrapper<F> {
-            f: Option<F>,
-        }
-
-        extern "C" fn call<F>(this: *mut c_void, g: *mut JSGlobalObject) -> JSValue
-        where
-            F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
-        {
-            // SAFETY: `this` is `&mut Wrapper<F>` passed below.
-            let this = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(this) };
-            // `g` is a live JSGlobalObject; safe ZST-handle deref (panics on null).
-            let g = JSGlobalObject::opaque_ref(g);
-            let f = this.f.take().unwrap();
-            crate::to_js_host_call(g, move || f(g))
-        }
-
         crate::top_scope!(scope, global);
 
-        let mut ctx = Wrapper { f: Some(f) };
-        // `ctx` outlives the synchronous FFI call; `call::<F>` matches the expected
-        // `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
-        let promise = JSC__JSPromise__wrap(global, (&raw mut ctx).cast::<c_void>(), call::<F>);
+        let mut f = Some(f);
+        let promise = JSC__JSPromise__wrap(global, (&raw mut f).cast::<c_void>(), call_once::<F>);
         // JSC__JSPromise__wrap converts any thrown exception into a rejected promise, so the only
         // exception that can be pending here is the termination; it stays pending and unwinds.
         scope.assert_no_exception_except_termination()?;
@@ -228,33 +218,21 @@ impl JSPromise {
         }
     }
 
-    /// Safe `status()` for the common `*mut JSPromise`-stored case
-    /// (`vm.pending_internal_promise` etc.). `JSPromise` is a GC-managed JSC
-    /// heap cell; pointers to it are kept alive by the VM's strong-ref slots,
-    /// not by Rust ownership. Centralizes the per-call-site
-    /// `unsafe { (*p).status() }` deref so callers don't open-code it.
-    #[inline]
-    pub(crate) fn status_ptr(p: *mut JSPromise) -> Status {
-        // `p` is a non-null GC-managed cell tracked by the VM (caller obtained
-        // it from a strong-ref VM field or a fresh
-        // `JSInternalPromise__resolvedPromise` return value).
-        JSPromise::opaque_ref(p).status()
-    }
-
-    pub fn result(&mut self, vm: &VM) -> JSValue {
+    pub fn result(&self, vm: &VM) -> JSValue {
         JSC__JSPromise__result(self, vm)
     }
 
-    pub fn set_handled(&mut self) {
+    pub fn set_handled(&self) {
         JSC__JSPromise__setHandled(self)
     }
 
     /// Create a new resolved promise resolving to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.
-    pub fn resolved_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
-        // FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        JSPromise::opaque_mut(JSC__JSPromise__resolvedPromise(global, value))
+    pub fn resolved_promise(global: &JSGlobalObject, value: JSValue) -> JsLocal<'_, JSPromise> {
+        JSC__JSPromise__resolvedPromise(global, value)
+            .unwrap()
+            .to_local(global)
     }
 
     /// Create a new promise with an already fulfilled value.
@@ -266,9 +244,10 @@ impl JSPromise {
     /// Create a new rejected promise rejecting to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `rejected_promise().to_js()` instead.
-    pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
-        // FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
+    pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> JsLocal<'_, JSPromise> {
+        JSC__JSPromise__rejectedPromise(global, value)
+            .unwrap()
+            .to_local(global)
     }
 
     /// Create a new promise rejected with the exception `err` proves is pending,
@@ -277,7 +256,7 @@ impl JSPromise {
     pub fn rejected_promise_with_caught_exception(
         global: &JSGlobalObject,
         err: JsError,
-    ) -> JsResult<&mut JSPromise> {
+    ) -> JsResult<JsLocal<'_, JSPromise>> {
         let promise = Self::create(global);
         promise.reject(global, Err(err))?;
         Ok(promise)
@@ -298,7 +277,7 @@ impl JSPromise {
     // conversion threw and left the exception pending; it becomes "reject with that exception",
     // except a pending termination, which is not an outcome to record: it stays pending and unwinds.
 
-    pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             debug_assert!(
                 global.has_exception(),
@@ -314,14 +293,31 @@ impl JSPromise {
     }
 
     /// See [`Strong::settle`].
-    pub fn settle(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
+    pub fn settle(&self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
         match value {
             Ok(v) => self.resolve(global, v),
             Err(e) => self.reject(global, Err(e)),
         }
     }
 
-    pub fn reject(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
+    /// Settles with what `f` returns. A throw or an `ErrorInstance` rejects.
+    pub fn settle_with<F>(&self, global: &JSGlobalObject, f: F) -> JsResult<()>
+    where
+        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
+    {
+        // As `JSPromise::resolve`: nothing is settled for a `Bun.ModuleGraph` that was disposed.
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
+        }
+        crate::top_scope!(scope, global);
+
+        let mut f = Some(f);
+        JSC__JSPromise__settleWith(self, global, (&raw mut f).cast::<c_void>(), call_once::<F>);
+        // C++ rejects with what was thrown, so only the termination can be pending: it unwinds.
+        scope.assert_no_exception_except_termination()
+    }
+
+    pub fn reject(&self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
         let err = match value {
             Ok(v) if v.is_empty() => {
                 debug_assert!(
@@ -353,7 +349,7 @@ impl JSPromise {
         crate::cpp::JSC__JSPromise__reject(self, global, err)
     }
 
-    pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub fn reject_as_handled(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));
@@ -370,7 +366,7 @@ impl JSPromise {
     /// of the event loop (threadpool callback) where the error would otherwise
     /// have an empty stack trace.
     pub fn reject_with_async_stack(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         value: JsResult<JSValue>,
     ) -> JsResult<()> {
@@ -386,17 +382,11 @@ impl JSPromise {
     ///
     /// Note: You should use `resolved_promise` or `rejected_promise` if you want
     /// to create a promise that is already resolved or rejected.
-    pub fn create(global: &JSGlobalObject) -> &mut JSPromise {
-        // FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        JSPromise::opaque_mut(JSC__JSPromise__create(global))
+    pub fn create(global: &JSGlobalObject) -> JsLocal<'_, JSPromise> {
+        JSC__JSPromise__create(global).unwrap().to_local(global)
     }
 
-    /// **DEPRECATED** use `to_js` instead.
-    pub fn as_value(&self, _global: &JSGlobalObject) -> JSValue {
-        self.to_js()
-    }
-
-    pub fn unwrap(&mut self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
+    pub fn unwrap(&self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
         match self.status() {
             Status::Pending => Unwrapped::Pending,
             Status::Fulfilled => Unwrapped::Fulfilled(self.result(vm)),

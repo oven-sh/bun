@@ -1128,7 +1128,7 @@ impl RewriterPipe {
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
-            if let Some(promise) = assignment_result.as_any_promise() {
+            if let Some(promise) = assignment_result.as_promise() {
                 match promise.status() {
                     jsc::js_promise::Status::Pending => {
                         this.js_pump_reaction_pending.set(true);
@@ -1145,7 +1145,7 @@ impl RewriterPipe {
                         return;
                     }
                     jsc::js_promise::Status::Rejected => {
-                        promise.set_handled(cx.global().vm());
+                        promise.set_handled();
                         let result = promise.result(cx.global().vm());
                         this.end_from_stream(Some(StreamError::JSValue(
                             jsc::strong::Optional::create(result, cx.global()),
@@ -2091,8 +2091,7 @@ macro_rules! impl_wrapper_like {
 /// `JSPromise::reject` asserts, and a `Locked` body can now reject with any
 /// handler error, so unwrap at the point of capture. `to_error` falls back to
 /// the cell for a non-`Exception` (it cannot happen here).
-fn exception_value(exc: NonNull<jsc::Exception>) -> JSValue {
-    let cell = JSValue::from_cell(exc.as_ptr());
+fn exception_value(cell: JSValue) -> JSValue {
     cell.to_error().unwrap_or(cell)
 }
 
@@ -2191,7 +2190,7 @@ where
             // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
             // error: it stays pending to unwind whatever drives the rewriter.
             if let Some(exc) = scope.exception()
-                && !JSValue::from_cell(exc.as_ptr()).is_termination_exception()
+                && !exc.is_termination_exception()
             {
                 record_handler_error(&sink, exception_value(exc));
             }
@@ -2201,7 +2200,7 @@ where
     };
 
     if let Some(exc) = scope.exception() {
-        if !JSValue::from_cell(exc.as_ptr()).is_termination_exception() {
+        if !exc.is_termination_exception() {
             record_handler_error(&sink, exception_value(exc));
         }
         scope.clear_exception_except_termination();
@@ -2221,7 +2220,7 @@ where
         return HandlerOutcome::Stop;
     }
 
-    let Some(promise) = result.as_any_promise() else {
+    let Some(promise) = result.as_promise() else {
         return HandlerOutcome::Continue;
     };
 
@@ -2241,7 +2240,7 @@ where
     match promise.status() {
         jsc::js_promise::Status::Fulfilled => HandlerOutcome::Continue,
         jsc::js_promise::Status::Rejected => {
-            promise.set_handled(global.vm());
+            promise.set_handled();
             record_handler_error(&sink, promise.result(global.vm()));
             HandlerOutcome::Stop
         }

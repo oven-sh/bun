@@ -1424,8 +1424,8 @@ impl Run<'_> {
                 let Some(connect_fn) = sql_object.get(global, "connect")? else {
                     return Ok(());
                 };
-                if let Some(promise) = connect_fn.call(global, sql_object, &[])?.as_any_promise() {
-                    promise.set_handled(global.vm());
+                if let Some(promise) = connect_fn.call(global, sql_object, &[])?.as_promise() {
+                    promise.set_handled();
                 }
                 Ok(())
             };
@@ -1486,8 +1486,6 @@ impl Run<'_> {
         match loaded {
             None => {}
             Some(Ok(promise)) => {
-                // SAFETY: `promise` is a live GC cell returned by the module loader.
-                let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
                     let result = promise.result(vm.jsc_vm());
                     // A CJS entry runs synchronously in Node, so its top-level
@@ -1572,7 +1570,7 @@ impl Run<'_> {
                         .value
                         .get()
                         .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
+                    if let Some(promise) = result.as_promise() {
                         match promise.status() {
                             PromiseStatus::Pending => {
                                 result.then_with_value(

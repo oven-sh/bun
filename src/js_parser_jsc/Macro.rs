@@ -176,7 +176,8 @@ fn call_macro<'a>(
                 caller,
                 source,
                 hash,
-                JSValue::from_encoded(ctx.javascript_object.0 as usize),
+                // SAFETY: the contract of `MacroJSCtx::from_encoded`.
+                unsafe { JSValue::from_encoded(ctx.javascript_object.encoded()) },
             )
         })
     });
@@ -290,16 +291,10 @@ fn load_macro(
         Ok(vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?)
     })?;
 
-    // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
-    // returned by `loadAndEvaluateModule`.
-    let unwrapped =
-        unsafe { (*loaded_result).unwrap(vm.jsc_vm(), jsc::PromiseUnwrapMode::LeaveUnhandled) };
+    let unwrapped = loaded_result.unwrap(vm.jsc_vm(), jsc::PromiseUnwrapMode::LeaveUnhandled);
     if let jsc::PromiseResult::Rejected(result) = unwrapped {
         vm.run_with_api_lock(|| {
-            // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
-            // is a live promise cell.
-            let (global, promise) = unsafe { (&*vm.global.get(), (*loaded_result).to_js()) };
-            vm.unhandled_rejection(global, result, promise);
+            vm.unhandled_rejection(vm.global(), result, loaded_result.to_js());
         });
         return Err(crate::Error::MacroLoadError);
     }
@@ -615,14 +610,10 @@ impl<'ast> Run<'_, 'ast> {
                 );
                 *_entry.value_ptr = expr;
 
-                // SAFETY: tag ensures `value` is an object.
                 let obj = value.get_object().expect("unreachable");
-                // SAFETY: `obj` is a live JSC heap cell; `'a` is bounded by the
-                // surrounding stack frame.
-                let obj_ref = unsafe { &*obj };
                 let object_iter = JSPropertyIterator::init(
                     self.global,
-                    obj_ref,
+                    obj,
                     JSPropertyIteratorOptions::new(false, true),
                 )?;
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
@@ -695,7 +686,7 @@ impl<'ast> Run<'_, 'ast> {
                     return Ok(*cached);
                 }
 
-                let promise = value.as_any_promise().expect("Unexpected promise type");
+                let promise = value.as_promise().expect("Unexpected promise type");
 
                 let vm = self.vm;
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
@@ -715,7 +706,7 @@ impl<'ast> Run<'_, 'ast> {
                     || promise_result.is_aggregate_error(self.global)
                     || promise_result.is_exception(self.global.vm())
                 {
-                    vm.unhandled_rejection(self.global, promise_result, promise.as_value());
+                    vm.unhandled_rejection(self.global, promise_result, value);
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;

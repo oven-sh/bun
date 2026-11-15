@@ -3611,7 +3611,7 @@ pub(crate) fn write_file_internal(
                         destination_blob.pipe_readable_stream_to_blob(cx, readable, &options)?;
                     // The destination could not be opened: the stream is untouched and still the body's.
                     let failed = promise
-                        .as_any_promise()
+                        .as_promise()
                         .is_some_and(|p| matches!(p.status(), jsc::js_promise::Status::Rejected));
                     if !failed {
                         body.set(BodyValue::Used);
@@ -4772,13 +4772,13 @@ impl Any {
 
     pub(crate) fn wrap(
         &mut self,
-        promise: jsc::AnyPromise,
+        promise: &jsc::JSPromise,
         cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> JsResult<()> {
-        // Must route through `AnyPromise::wrap` (NOT open-coded resolve/reject):
+        // Must route through `JSPromise::settle_with` (NOT open-coded resolve/reject):
         // it opens a `top_scope!` and calls `to_action_value` via
-        // `JSC__AnyPromise__wrap` → `to_js_host_call`, so the C++ ThrowScope inside
+        // `JSC__JSPromise__settleWith` → `to_js_host_call`, so the C++ ThrowScope inside
         // `JSGenericTypedArrayView::create` (reached unscoped via
         // `JSUint8Array__fromDefaultAllocator` on the `InternalBlob` →
         // `from_default_allocator` path) has a parent that observes its
@@ -4787,7 +4787,7 @@ impl Any {
         // path, then constructed the `cpp::JSC__JSPromise__resolve` `top_scope!`
         // — whose ctor asserted (`verifyExceptionCheckNeedIsSatisfied`) on the
         // unchecked simulated throw under `BUN_JSC_validateExceptionChecks=1`.
-        promise.wrap(cx.global(), |_| self.to_action_value(cx, action))
+        promise.settle_with(cx.global(), |_| self.to_action_value(cx, action))
     }
 
     /// Whether `json()` answers null and parses nothing: the body is empty and no Blob holds it.

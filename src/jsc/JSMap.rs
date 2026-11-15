@@ -1,8 +1,7 @@
-use core::ptr::NonNull;
-
+use crate::bindgen::JsLocal;
 use crate::{JSGlobalObject, JSValue, JsResult};
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque type for working with JavaScript `Map` objects.
     pub struct JSMap;
 }
@@ -15,9 +14,11 @@ unsafe extern "C" {
 }
 
 impl JSMap {
-    pub fn create(global: &JSGlobalObject) -> JSValue {
+    pub fn create(global: &JSGlobalObject) -> JsLocal<'_, JSMap> {
         // `create` is `nothrow` in the codegen (raw `extern fn`, no error wrapper).
-        JSC__JSMap__create(global)
+        Self::from_js(&JSC__JSMap__create(global))
+            .unwrap()
+            .to_local(global)
     }
 
     #[track_caller]
@@ -51,19 +52,10 @@ impl JSMap {
         crate::cpp::JSC__JSMap__size(self)
     }
 
-    /// Attempt to convert a `JSValue` to a `*JSMap`.
-    ///
     /// Returns `None` if the value is not a Map.
-    ///
-    /// Returns a raw `NonNull<JSMap>`. The pointee is a
-    /// GC-heap cell; callers must dereference unsafely at use-site and ensure the
-    /// underlying `JSValue` is kept alive across GC.
-    pub fn from_js(value: JSValue) -> Option<NonNull<JSMap>> {
-        if value.is_cell() && value.js_type() == crate::JSType::Map {
-            // SAFETY: value is a Map cell; its encoded pointer is a valid,
-            // non-null *JSMap on the GC heap.
-            return NonNull::new(value.encoded() as *mut JSMap);
-        }
-        None
+    #[inline]
+    pub fn from_js(value: &JSValue) -> Option<&JSMap> {
+        // SAFETY: just checked.
+        (value.js_type() == crate::JSType::Map).then(|| unsafe { value.as_cell_unchecked() })
     }
 }

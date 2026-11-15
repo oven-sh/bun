@@ -438,11 +438,10 @@ impl FileSink {
     }
 
     fn settle_stream_done(&self) {
-        let Some(promise) = self.pipe.take_done() else {
+        let done = self.pipe.take_done();
+        let Some(promise) = done.as_ref().and_then(JSValue::as_promise) else {
             return;
         };
-        // SAFETY: `take_done` returned a live `JSPromise` cell; the stack keeps it alive for this call.
-        let promise = unsafe { &mut *promise };
         let _keep = bun_jsc::EnsureStillAlive(promise.to_js());
         let Some(global) = self.js_global() else {
             return;
@@ -1467,9 +1466,9 @@ impl FileSink {
                         done_promise.set_handled();
                     })?;
                 // A pump that already failed reports through the done-promise.
-                if let Some(pump) = result.as_any_promise() {
+                if let Some(pump) = result.as_promise() {
                     if pump.status() == bun_jsc::js_promise::Status::Rejected {
-                        pump.set_handled(global_this.vm());
+                        pump.set_handled();
                     }
                 }
                 Ok(promise)
@@ -1551,7 +1550,7 @@ impl FileSink {
             });
         }
 
-        let Some(promise) = promise_result.as_any_promise() else {
+        let Some(promise) = promise_result.as_promise() else {
             // The pump ran to the end inside `assign_to_stream`.
             this.handle_resolve_stream(global_this);
             return Ok(promise_result);

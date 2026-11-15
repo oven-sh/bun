@@ -1375,10 +1375,7 @@ pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
         && global
             .bun_vm()
             .pending_internal_promise()
-            .is_some_and(|load| {
-                bun_jsc::JSInternalPromise::opaque_mut(load).status()
-                    != bun_jsc::js_promise::Status::Pending
-            })
+            .is_some_and(|load| load.status() != bun_jsc::js_promise::Status::Pending)
 }
 
 /// BunCompiledModules.cpp. Immediates that were set have yet to run.

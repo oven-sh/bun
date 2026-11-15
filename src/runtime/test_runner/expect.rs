@@ -454,16 +454,11 @@ impl Expect {
             self.flags.get(),
             global_this,
             value,
-            Self::settled_promise(this_value),
+            super::expect::js::result_value_get_cached(this_value).as_ref().and_then(JSValue::as_promise),
             bstr::BStr::new(matcher_name),
             matcher_params,
             false,
         )
-    }
-
-    /// The promise `call_matcher_on_promise` stored in `resultValue`. `None` if the received value wasn't a promise.
-    fn settled_promise(this_value: JSValue) -> Option<bun_jsc::AnyPromise> {
-        super::expect::js::result_value_get_cached(this_value)?.as_any_promise()
     }
 
     /// Shared failure path for the three `.resolves`/`.rejects` mismatch cases
@@ -502,21 +497,21 @@ impl Expect {
 
     /// A promise that settles the way `await value` would, or `None` if `value` isn't thenable.
     #[optimize(size)]
-    fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
-        if let Some(promise) = value.as_any_promise() {
-            promise.set_handled(global_this.vm());
+    fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<JsLocal<'_, bun_jsc::JSPromise>>> {
+        if let Some(promise) = value.as_promise() {
+            promise.set_handled();
             if promise.status() != js_promise::Status::Pending {
-                return Ok(Some(promise));
+                return Ok(Some(promise.to_local(global_this)));
             }
         }
         let adopted = bun_jsc::JSPromise::create(global_this);
         adopted.set_handled();
         adopted.resolve(global_this, value)?;
         // A thenable's `then` only runs in a microtask, so `adopted` is already fulfilled only if `value` isn't thenable.
-        Ok((adopted.status() != js_promise::Status::Fulfilled).then_some(bun_jsc::AnyPromise::Normal(adopted)))
+        Ok((adopted.status() != js_promise::Status::Fulfilled).then_some(adopted))
     }
 
-    fn received_promise(global_this: &JSGlobalObject, received: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
+    fn received_promise(global_this: &JSGlobalObject, received: JSValue) -> JsResult<Option<JsLocal<'_, bun_jsc::JSPromise>>> {
         match Self::promise_to_await(global_this, received)? {
             None if received.is_callable() => {
                 Self::promise_to_await(global_this, received.call(global_this, JSValue::UNDEFINED, &[])?)
@@ -534,7 +529,7 @@ impl Expect {
         flags: Flags,
         global_this: &JSGlobalObject,
         value: JSValue,
-        promise: Option<bun_jsc::AnyPromise>,
+        promise: Option<&bun_jsc::JSPromise>,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         silent: bool,
@@ -647,13 +642,13 @@ impl Expect {
         let promise = match flags.promise() {
             Promise::None => None,
             _ => match Pass::settled(global_this, Question { asked: Asked::Promise, who: JSValue::UNDEFINED, what: v }, &mut || {
-                Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
+                Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, JsLocal::to_js))
             }) {
                 Ok(promise) => promise,
                 Err(_) => return false,
             },
         };
-        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, promise, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, promise.as_deref(), "", "", true) {
             Ok(new) => {
                 *value = new;
                 true
@@ -940,7 +935,7 @@ impl Expect {
             Ok(if reported.value.is_empty() { return_value_from_function } else { reported.value })
         })?;
 
-        if let Some(promise) = return_value.as_any_promise() {
+        if let Some(promise) = return_value.as_promise() {
             return match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => Ok((None, return_value_from_function)),
                 // since we know for sure it rejected, we should always return the error
@@ -949,15 +944,15 @@ impl Expect {
                 }
                 // A Promise subclass can start its work in `then()`, as a `Bun.sql` query does.
                 js_promise::Unwrapped::Pending => {
-                    let awaited = Self::promise_to_await(global_this, return_value)?.unwrap_or(promise);
-                    Err(Pass::wait_for(global_this, awaited))
+                    let awaited = Self::promise_to_await(global_this, return_value)?;
+                    Err(Pass::wait_for(global_this, awaited.as_deref().unwrap_or(promise)))
                 }
             };
         }
 
         if return_value != return_value_from_function {
-            if let Some(existing) = return_value_from_function.as_any_promise() {
-                existing.set_handled(global_this.vm());
+            if let Some(existing) = return_value_from_function.as_promise() {
+                existing.set_handled();
             }
         }
 
@@ -1497,7 +1492,8 @@ impl Expect {
     pub(crate) fn extend(cx: &mut JsScope<'_>, matchers: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
 
-        let Some(matchers_to_register) = matchers.to_js().get_object() else {
+        let matchers = matchers.to_js();
+        let Some(matchers_to_register) = matchers.get_object() else {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n",
@@ -1642,13 +1638,14 @@ impl Expect {
     ) -> JsResult<bool> {
         // call the custom matcher implementation
         let what = args.first().copied().unwrap_or(JSValue::UNDEFINED);
-        let mut result = Pass::once_inline(global_this, Question { asked: Asked::Matcher, who, what }, || {
+        let returned = Pass::once_inline(global_this, Question { asked: Asked::Matcher, who, what }, || {
             matcher_fn.call(global_this, ExpectMatcherContext { flags, parent: parent.cloned() }.to_js(global_this), args)
         })?;
+        let mut result = returned;
         // support for async matcher results
-        if let Some(promise) = result.as_any_promise() {
+        if let Some(promise) = returned.as_promise() {
             let vm = global_this.vm();
-            promise.set_handled(vm);
+            promise.set_handled();
             if promise.status() == js_promise::Status::Pending {
                 return Err(Pass::wait_for(global_this, promise));
             }
@@ -1775,7 +1772,7 @@ impl Expect {
             expect.flags.get(),
             global_this,
             value,
-            Self::settled_promise(this_value),
+            super::expect::js::result_value_get_cached(this_value).as_ref().and_then(JSValue::as_promise),
             &matcher_name,
             &matcher_params,
             false,

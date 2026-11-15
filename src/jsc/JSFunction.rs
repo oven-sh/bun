@@ -2,7 +2,7 @@ use bun_core::String as BunString;
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque FFI handle for `JSC::JSFunction`.
     pub struct JSFunction;
 }

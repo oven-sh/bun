@@ -484,7 +484,7 @@ impl FetchTasklet {
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
-            if let Some(promise) = assignment_result.as_any_promise() {
+            if let Some(promise) = assignment_result.as_promise() {
                 match promise.status() {
                     bun_jsc::js_promise::Status::Pending => {
                         assignment_result.then(
@@ -499,7 +499,7 @@ impl FetchTasklet {
                         self.write_end_request(None);
                     }
                     bun_jsc::js_promise::Status::Rejected => {
-                        promise.set_handled(global_this.vm());
+                        promise.set_handled();
                         let result = promise.result(global_this.vm());
                         let _stream_ref = sink.task.take();
                         self.write_end_request(Some(result));
@@ -813,12 +813,12 @@ impl FetchTasklet {
                     return Ok(());
                 }
                 // we need to abort the request
-                let promise = promise_value.as_any_promise().unwrap();
+                let promise = promise_value.as_promise().unwrap();
                 let tracker = self.tracker;
                 let mut result = self.on_reject(global_this);
 
                 promise_value.ensure_still_alive();
-                let r = promise.reject_with_async_stack(global_this, result.to_js(global_this));
+                let r = promise.reject_with_async_stack(global_this, Ok(result.to_js(global_this)));
                 drop(result);
 
                 tracker.did_dispatch(global_this);
@@ -870,12 +870,12 @@ impl FetchTasklet {
         // raced ahead of the scheduled shutdown. Reject with that reason instead of
         // resolving a 200 Response. Makes wpt-h2 number-chunk test deterministic.
         if success && self.abort_reason.is_some() {
-            let promise = promise_value.as_any_promise().unwrap();
+            let promise = promise_value.as_promise().unwrap();
             let tracker = self.tracker;
             // get_abort_error consumes abort_reason and clears the signal handler.
             let mut err = self.get_abort_error(global_this).unwrap();
             promise_value.ensure_still_alive();
-            let r = promise.reject_with_async_stack(global_this, err.to_js(global_this));
+            let r = promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)));
             drop(err);
             tracker.did_dispatch(global_this);
             self.promise = jsc::JSPromiseStrong::empty();
@@ -965,7 +965,7 @@ impl FetchTasklet {
 
         // > Returns <Error> object [...] on failure
         // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
-        if check_result.is_object() && check_result.as_any_promise().is_none() {
+        if check_result.is_object() && check_result.as_promise().is_none() {
             return Err(Some(check_result));
         }
         // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
@@ -2391,13 +2391,13 @@ pub(crate) struct FetchTaskletPromiseSettle {
 impl FetchTaskletPromiseSettle {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(mut self: Box<Self>) -> JsResult<()> {
-        let prom = self.promise.value_or_empty().as_any_promise().unwrap();
+        let prom = self.promise.get();
         let res = self.held.swap();
         res.ensure_still_alive();
         if self.success {
             prom.resolve(&self.global_object, res)
         } else {
-            prom.reject_with_async_stack(&self.global_object, res)
+            prom.reject_with_async_stack(&self.global_object, Ok(res))
         }
     }
 }

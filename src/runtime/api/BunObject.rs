@@ -1931,7 +1931,7 @@ pub(crate) mod JSZstd {
             cx: &jsc::JsThread<'_>,
         ) -> JsResult<()> {
             let global_this = cx.global();
-            let promise = promise.swap();
+            let promise = promise.swap(global_this);
 
             match this.result {
                 Ok(output) => promise.settle(

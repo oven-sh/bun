@@ -1053,18 +1053,15 @@ impl FFI {
         let symbols_object: JSValue = object
             .get_own(global_this, &bun_core::StringView::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
-        if symbols_object.is_empty() || !symbols_object.is_object() {
+        let Some(symbols) = symbols_object.get_object() else {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"symbols",
                 b"object",
                 symbols_object,
             ));
-        }
+        };
 
-        // SAFETY: already checked that symbols_object is an object
-        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, unsafe {
-            &*symbols_object.get_object().unwrap()
-        })? {
+        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, symbols)? {
             return Err(global_this.throw_value(val));
         }
 
@@ -1432,8 +1429,6 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
-        let obj = unsafe { &*obj };
         if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
@@ -1581,8 +1576,7 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
+        if let Some(val) = generate_symbols(global, &mut symbols, object)? {
             // an error while validating symbols
             return Ok(val);
         }
@@ -1714,8 +1708,7 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
+        if let Some(val) = generate_symbols(global, &mut symbols, object)? {
             // an error while validating symbols
             return Ok(val);
         }

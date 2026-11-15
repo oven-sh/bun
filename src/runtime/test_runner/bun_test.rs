@@ -1279,11 +1279,8 @@ impl BunTest {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if !result.is_empty() {
                 if let Some(promise) = result.as_promise() {
-                    // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
-                    unsafe {
-                        if (*promise).status() == PromiseStatus::Rejected {
-                            (*promise).set_handled();
-                        }
+                    if promise.status() == PromiseStatus::Rejected {
+                        promise.set_handled();
                     }
                 }
             }
@@ -1315,8 +1312,7 @@ impl BunTest {
 
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
-                // S012: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-                match bun_jsc::JSPromise::opaque_mut(promise).status() {
+                match promise.status() {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefPtr<RefData> = uncalled_done
@@ -1337,12 +1333,12 @@ impl BunTest {
                     }
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
-                        let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
+                        let value = promise.result(global_this.vm());
                         this.adopt_teardown(&cfg_data, value);
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
-                        let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
+                        let value = promise.result(global_this.vm());
                         this.on_uncaught_exception(global_this, Some(value), true, &cfg_data);
 
                         // We previously marked it as handled above.

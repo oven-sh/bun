@@ -1,6 +1,6 @@
 use crate::{ArrayBuffer, JSGlobalObject, JSValue, JsResult};
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque FFI handle for a JSC `JSUint8Array` cell.
     pub struct JSUint8Array;
 }

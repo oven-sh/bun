@@ -86,13 +86,6 @@ fn send_err_to_js(global: &JSGlobalObject, message: &str, err: &crate::Error) ->
     Ok(protocol::valkey_error_to_js(global, message, redis_err))
 }
 
-/// `JSValkeyClient::send` returns a `*mut JSPromise`; route through the
-/// `opaque_ffi!` ZST accessor instead of an open-coded raw deref.
-#[inline]
-fn promise_to_js(p: *mut JSPromise) -> JSValue {
-    JSPromise::opaque_ref(p).to_js()
-}
-
 /// Shared epilog for every Valkey prototype method: build a `Command`,
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
@@ -113,7 +106,7 @@ fn send_cmd(
     meta: CommandMeta,
     err_msg: &str,
 ) -> JsResult<JSValue> {
-    match this.send(
+    this.send(
         global,
         this_js,
         &Command {
@@ -121,10 +114,8 @@ fn send_cmd(
             args,
             meta,
         },
-    ) {
-        Ok(p) => Ok(promise_to_js(p)),
-        Err(err) => send_err_to_js(global, err_msg, &err),
-    }
+    )
+    .or_else(|err| send_err_to_js(global, err_msg, &err))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -375,13 +366,8 @@ impl JSValkeyClient {
         let checked_meta = cmd.meta.check(&cmd);
         cmd.meta = checked_meta;
         // Send command with slices directly
-        let promise = match self.send(global, this_value.to_js(), &cmd) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send command", &err);
-            }
-        };
-        Ok(promise_to_js(promise))
+        self.send(global, this_value.to_js(), &cmd)
+            .or_else(|err| send_err_to_js(global, "Failed to send command", &err))
     }
 
     pub(crate) fn get(
@@ -1646,7 +1632,7 @@ impl JSValkeyClient {
             }
         };
 
-        Ok(promise_to_js(promise))
+        Ok(promise)
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.

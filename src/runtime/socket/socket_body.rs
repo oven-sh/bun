@@ -13,7 +13,7 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_ptr::RefPtr;
+use bun_ptr::{RefPtr, WithTaken as _};
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
@@ -331,7 +331,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) local_binding: JsCell<Option<(Box<[u8]>, u16)>>,
     pub(crate) protos: JsCell<Option<Box<[u8]>>>,
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
-    pub(crate) buffered_data_for_node_net: JsCell<Vec<u8>>,
+    pub(crate) buffered_data_for_node_net: Cell<Vec<u8>>,
     pub(crate) bytes_written: Cell<u64>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
@@ -537,7 +537,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             0
         };
-        self.buffered_data_for_node_net.get().capacity() as usize + ssl_cost
+        self.buffered_data_for_node_net.with_taken(|b| b.capacity()) + ssl_cost
+    }
+
+    fn buffered_len(&self) -> usize {
+        self.buffered_data_for_node_net.with_taken(|b| b.len())
     }
 
     /// On `false` the rejected `callback` (and the ref it holds) is dropped.
@@ -893,10 +897,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         log!(
             "onWritable buffered_data_for_node_net {}",
-            this.buffered_data_for_node_net.get().len()
+            this.buffered_len()
         );
         // is not writable if we have buffered data or if we are already detached
-        if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
+        if this.buffered_len() > 0 || this.socket.get().is_detached() {
             return Ok(());
         }
 
@@ -1033,8 +1037,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             errno,
             this.ref_count.get()
         );
-        this.buffered_data_for_node_net
-            .with_mut(|b| b.clear_and_free());
+        this.buffered_data_for_node_net.set(Vec::new());
 
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
@@ -1233,8 +1236,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
         let socket = self.socket.get();
-        self.buffered_data_for_node_net
-            .with_mut(|b| b.clear_and_free());
+        self.buffered_data_for_node_net.set(Vec::new());
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
@@ -1263,8 +1265,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: the slot of our own socket, which is never a losing candidate.
         let _native_ref = unsafe { slot.take() };
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.buffered_data_for_node_net
-            .with_mut(|b| b.clear_and_free());
+        self.buffered_data_for_node_net.set(Vec::new());
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.unref(js_loop_ctx());
@@ -1512,7 +1513,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !SSL
             && !global.has_exception()
             && !this.socket.get().is_detached()
-            && this.buffered_data_for_node_net.get().len() > 0
+            && this.buffered_len() > 0
         {
             // A write issued from inside the open/'connection' callback (a
             // server answering the moment a connection arrives) can be
@@ -1526,7 +1527,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the do_socket_write backpressure arms the normal writable
             // subscription.
             let _ = this.internal_flush();
-            if this.buffered_data_for_node_net.get().len() == 0 {
+            if this.buffered_len() == 0 {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
@@ -2516,8 +2517,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.socket.get().is_detached() {
-            self.buffered_data_for_node_net
-                .with_mut(|b| b.clear_and_free());
+            self.buffered_data_for_node_net.set(Vec::new());
             return Ok(JSValue::FALSE);
         }
 
@@ -2548,8 +2548,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.socket.get().is_detached() {
-            self.buffered_data_for_node_net
-                .with_mut(|b| b.clear_and_free());
+            self.buffered_data_for_node_net.set(Vec::new());
             return Ok(JSValue::FALSE);
         }
 
@@ -2575,7 +2574,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         data_value: JSValue,
         encoding_value: JSValue,
     ) -> WriteResult {
-        if self.buffered_data_for_node_net.get().len() == 0 {
+        if self.buffered_len() == 0 {
             return self.write_or_end::<IS_END>(
                 global,
                 data_value,
@@ -2619,12 +2618,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_shutdown() || socket.is_closed() {
             return WriteResult::Success {
                 wrote: -1,
-                total: buffer.slice().len() + self.buffered_data_for_node_net.get().len() as usize,
+                total: buffer.slice().len() + self.buffered_len(),
             };
         }
 
-        let total_to_write: usize =
-            buffer.slice().len() + self.buffered_data_for_node_net.get().len() as usize;
+        let total_to_write: usize = buffer.slice().len() + self.buffered_len();
         if total_to_write == 0 {
             if SSL {
                 log!("total_to_write == 0");
@@ -2653,38 +2651,26 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // fast-ish path: use writev() to avoid cloning to another buffer.
                 if let uws::InternalSocket::Connected(connected) = socket.socket {
                     if !buffer.slice().is_empty() {
+                        let mut buffered = self.buffered_data_for_node_net.take();
                         // SAFETY: `connected` is a live `*mut us_socket_t` (guard above).
-                        let rc = unsafe {
-                            (*connected).write2(
-                                self.buffered_data_for_node_net.get().slice(),
-                                buffer.slice(),
-                            )
-                        };
+                        let rc = unsafe { (*connected).write2(&buffered, buffer.slice()) };
                         let written: usize = usize::try_from(rc.max(0)).expect("int cast");
                         self.bytes_written
                             .set(self.bytes_written.get() + written as u64);
                         let leftover = total_to_write.saturating_sub(written);
                         if leftover == 0 {
-                            self.buffered_data_for_node_net
-                                .with_mut(|b| b.clear_and_free());
                             break 'brk rc;
                         }
 
                         // writev order: buffered data first, then `buffer`.
-                        let buf_len = self.buffered_data_for_node_net.get().len();
+                        let buf_len = buffered.len();
                         let input_written =
                             written.saturating_sub(buf_len).min(buffer.slice().len());
                         let remaining_in_input_data = &buffer.slice()[input_written..];
 
-                        self.buffered_data_for_node_net
-                            .with_mut(|b| b.drain_front(written));
-
-                        if !remaining_in_input_data.is_empty() {
-                            // Result intentionally discarded
-                            let _ = self
-                                .buffered_data_for_node_net
-                                .with_mut(|b| b.append_slice(remaining_in_input_data));
-                        }
+                        buffered.drain_front(written);
+                        buffered.append_slice(remaining_in_input_data);
+                        self.buffered_data_for_node_net.set(buffered);
 
                         break 'brk rc;
                     }
@@ -2692,37 +2678,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // slower-path: clone the data, do one write.
-            // Result intentionally discarded
-            let _ = self
-                .buffered_data_for_node_net
-                .with_mut(|b| b.append_slice(buffer.slice()));
-            // R-2: `write_maybe_corked` takes `&self` and does not touch
-            // `buffered_data_for_node_net`, so a `JsCell::get()` projection
-            // is valid for the duration of the call.
-            let rc = self.write_maybe_corked(self.buffered_data_for_node_net.get().slice());
-            if rc < 0 {
-                // Fatal write error (or the socket is already shut down/closed):
-                // the buffered bytes can never be delivered - drop them now that
-                // the borrow of their slice has ended.
-                self.buffered_data_for_node_net
-                    .with_mut(|b| b.clear_and_free());
-            } else if rc > 0 {
-                let wrote_u: usize = usize::try_from(rc.max(0)).expect("int cast");
-                self.buffered_data_for_node_net.with_mut(|b| {
-                    // did we write everything?
-                    // we can free this temporary buffer.
-                    if wrote_u == b.len() as usize {
-                        b.clear_and_free();
-                    } else {
-                        // Otherwise, let's move the temporary buffer back.
-                        let len = b.len() as usize - wrote_u;
-                        debug_assert!(len <= b.len() as usize);
-                        debug_assert!(len <= b.capacity() as usize);
-                        // `wrote_u < b.len()` (else branch) — safe overlapping memmove.
-                        b.copy_within(wrote_u.., 0);
-                        b.truncate(len);
-                    }
-                });
+            let mut buffered = self.buffered_data_for_node_net.take();
+            buffered.append_slice(buffer.slice());
+            let rc = self.write_maybe_corked(&buffered);
+            // After a fatal write error (or on a socket that is already shut
+            // down/closed) the buffered bytes can never be delivered.
+            if let Ok(wrote) = usize::try_from(rc) {
+                self.keep_unwritten(socket, buffered, wrote);
             }
 
             rc
@@ -2732,6 +2694,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             wrote,
             total: total_to_write,
         }
+    }
+
+    /// A write to a JS stream runs script, which can close this socket or write behind `sent`.
+    fn keep_unwritten(&self, socket: SocketHandler<SSL>, mut sent: Vec<u8>, written: usize) {
+        if written >= sent.len() || self.socket.get().socket != socket.socket {
+            return;
+        }
+        sent.drain_front(written);
+        sent.append_slice(&self.buffered_data_for_node_net.take());
+        self.buffered_data_for_node_net.set(sent);
     }
 
     fn write_or_end<const IS_END: bool>(
@@ -2751,7 +2723,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        debug_assert!(self.buffered_data_for_node_net.get().len() == 0);
+        debug_assert!(self.buffered_len() == 0);
         let (offset_value, length_value, encoding_value) = if byte_length.is_string() {
             (byte_offset, JSValue::UNDEFINED, byte_length)
         } else if byte_offset.is_string() {
@@ -2914,27 +2886,29 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
-            let remaining = &bytes[uwrote..];
-            if !remaining.is_empty() {
-                let _ = self
-                    .buffered_data_for_node_net
-                    .with_mut(|b| b.append_slice(remaining)); // OOM/capacity: fire-and-forget
-            }
+        if buffer_unwritten_data && uwrote < byte_length {
+            // A write to a JS stream runs script, which can detach or shrink `data`.
+            let current = data.as_array_buffer(global);
+            let remaining = match &current {
+                Some(current) => (current.byte_slice())
+                    .get(byte_offset + uwrote..byte_offset + byte_length)
+                    .unwrap_or_default(),
+                None => &bytes[uwrote..],
+            };
+            self.buffered_data_for_node_net
+                .with_taken(|b| b.append_slice(remaining));
         }
 
         WriteResult::Success {
             wrote,
-            total: bytes.len(),
+            total: byte_length,
         }
     }
 
     fn try_write_empty_packet(&self) -> bool {
         if SSL {
             // just mimic the side-effect dont actually write empty non-TLS data onto the socket, we just wanna to have same behavior of node.js
-            if !self.flags.get().contains(Flags::HANDSHAKE_COMPLETE)
-                || self.buffered_data_for_node_net.get().len() > 0
-            {
+            if !self.flags.get().contains(Flags::HANDSHAKE_COMPLETE) || self.buffered_len() > 0 {
                 return false;
             }
 
@@ -2949,7 +2923,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         flags.contains(Flags::IS_ACTIVE)
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
-            && self.buffered_data_for_node_net.get().len() == 0
+            && self.buffered_len() == 0
     }
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
@@ -2967,33 +2941,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL && self.flags.get().contains(Flags::REJECTED) {
             return 0;
         }
-        // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
-        // `noalias` for them and the previous `black_box` launder (which
-        // mitigated ASM-verified PROVEN_CACHED stale loads of
-        // `bytes_written`/`flags`/`buffered_data_for_node_net` across the
-        // re-entrant `do_socket_write`) is no longer needed.
-        if self.buffered_data_for_node_net.get().len() > 0 {
-            // Neither write call touches `buffered_data_for_node_net`, so a
-            // `JsCell::get()` projection is valid for the duration of the call.
+        if self.buffered_len() > 0 {
+            let socket = self.socket.get();
+            let buffered = self.buffered_data_for_node_net.take();
             // The drain-driven retry must detect a fatal send error the same way
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
             // kept this buffer parked forever (the FIN-terminated-response hang).
             // BYPASS_TLS twins keep the raw write path.
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
-                self.do_socket_write(self.buffered_data_for_node_net.get().slice())
+                self.do_socket_write(&buffered)
             } else {
-                let (res, fatal_errno) = self
-                    .socket
-                    .get()
-                    .write_check_error(self.buffered_data_for_node_net.get().slice());
+                let (res, fatal_errno) = socket.write_check_error(&buffered);
                 if fatal_errno != 0 {
                     // Same rule as write_maybe_corked: drop the undeliverable
                     // buffer, stop re-arming the writable retry, and report the
                     // errno so the event-loop caller surfaces it (the data was
                     // already acknowledged to JS, so only an 'error' can).
-                    self.buffered_data_for_node_net
-                        .with_mut(|b| b.clear_and_free());
                     return fatal_errno;
                 }
                 res
@@ -3001,18 +2965,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let written: usize = usize::try_from(res.max(0)).unwrap();
             self.bytes_written
                 .set(self.bytes_written.get() + written as u64);
-            if written > 0 {
-                self.buffered_data_for_node_net.with_mut(|b| {
-                    if b.len() as usize > written {
-                        let remaining_len = b.len() as usize - written;
-                        // `written < b.len()` — safe overlapping memmove.
-                        b.copy_within(written.., 0);
-                        b.truncate(remaining_len);
-                    } else {
-                        b.clear_and_free();
-                    }
-                });
-            }
+            self.keep_unwritten(socket, buffered, written);
         }
 
         let _ = self.try_write_empty_packet();
@@ -3177,7 +3130,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_bytes_written(&self) -> f64 {
-        (self.bytes_written.get() + self.buffered_data_for_node_net.get().len() as u64) as f64
+        (self.bytes_written.get() + self.buffered_len() as u64) as f64
     }
 
     /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is
@@ -3368,7 +3321,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
-            buffered_data_for_node_net: JsCell::new(Vec::new()),
+            buffered_data_for_node_net: Cell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
@@ -3483,7 +3436,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
-            buffered_data_for_node_net: JsCell::new(Vec::new()),
+            buffered_data_for_node_net: Cell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
@@ -4327,7 +4280,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsKeepAlive::default(),
         ref_pollref_on_connect: Cell::new(true),
-        buffered_data_for_node_net: JsCell::new(Vec::new()),
+        buffered_data_for_node_net: Cell::new(Vec::new()),
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
@@ -4477,8 +4430,8 @@ pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
 
 pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     match socket {
-        SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
-        SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Tcp(this) => this.buffered_len(),
+        SocketHandle::Tls(this) => this.buffered_len(),
         SocketHandle::Ignored(_) => 0,
     }
 }

@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
@@ -1883,8 +1884,8 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
     }
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(this: &mut Self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -1906,11 +1907,11 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
         unsafe { (*this).fail() };
         bun_sys::Result::Ok(())
     }
-    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
-        self.pipe = PipeCell::root(controller, global);
+    fn controller_created(this: &mut Self, controller: JSValue, global: &JSGlobalObject) {
+        this.pipe = PipeCell::root(controller, global);
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source(this: &mut Self) -> &Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }
 
@@ -2341,8 +2342,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
             Self::release_writer_holder(this);
         }
     }
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(this: &mut Self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -2359,8 +2360,8 @@ impl crate::webcore::sink::ControlledSink for NetworkSink {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source(this: &mut Self) -> &Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }
 

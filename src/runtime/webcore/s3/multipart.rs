@@ -6,7 +6,7 @@
 // Each part maintains a reference to MultiPartUpload until completion.
 // If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
 // If all parts succeed, a complete request is sent.
-// If any part fails, a rollback request deletes the uploaded parts. The first rollback or commit request takes the reference in `unfinished`. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
+// If any part fails, a rollback request deletes the uploaded parts. The first rollback or commit request takes the reference in `self_ref`. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
 
 //                Start Upload
 //                       │
@@ -124,8 +124,8 @@ declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
-    /// Keeps the upload alive until it finishes. A commit or a rollback takes it along.
-    pub(crate) unfinished: Cell<Option<RefPtr<MultiPartUpload>>>,
+    /// Held until `State::Finished`, then moved into the commit or rollback request, if there is one.
+    pub(crate) self_ref: Cell<Option<RefPtr<MultiPartUpload>>>,
     pub(crate) queue: OnceCell<Box<[UploadPart]>>,
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,
 
@@ -398,15 +398,15 @@ impl MultiPartUpload {
     }
 
     pub(crate) fn single_send_upload_response(
-        self_: &RefPtr<Self>,
+        this: &RefPtr<Self>,
         result: S3UploadResult,
     ) -> bun_jsc::JsResult<()> {
-        if self_.state.get() == State::Finished {
+        if this.state.get() == State::Finished {
             return Ok(());
         }
         match result {
             S3UploadResult::Failure(err) => {
-                let mut options = self_.options.get();
+                let mut options = this.options.get();
                 if options.retry > 0 {
                     scoped_log!(
                         S3MultiPartUpload,
@@ -414,24 +414,24 @@ impl MultiPartUpload {
                         options.retry
                     );
                     options.retry -= 1;
-                    self_.options.set(options);
-                    Self::send_single(self_)
+                    this.options.set(options);
+                    Self::send_single(this)
                 } else {
                     scoped_log!(S3MultiPartUpload, "singleSendUploadResponse failed");
-                    self_.fail(err)
+                    this.fail(err)
                 }
             }
             S3UploadResult::Success => {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
 
-                if let Some(callback) = self_.on_writable {
+                if let Some(callback) = this.on_writable {
                     callback(
-                        self_,
-                        self_.callback_context.get(),
-                        self_.buffered.get().size() as u64,
+                        this,
+                        this.callback_context.get(),
+                        this.buffered.get().size() as u64,
                     );
                 }
-                self_.done()
+                this.done()
             }
         }
     }
@@ -540,7 +540,7 @@ impl MultiPartUpload {
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
             self.abort_handle.leave();
-            let unfinished = self.finish();
+            let self_ref = self.take_self_ref();
             (self.callback)(
                 self,
                 S3UploadResult::Failure(err),
@@ -552,7 +552,7 @@ impl MultiPartUpload {
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
-                self.rollback_multi_part_request(unfinished)?;
+                self.rollback_multi_part_request(self_ref)?;
             }
         }
         Ok(())
@@ -566,8 +566,8 @@ impl MultiPartUpload {
         ));
     }
 
-    fn finish(&self) -> RefPtr<Self> {
-        self.unfinished.take().expect("an upload finishes once")
+    fn take_self_ref(&self) -> RefPtr<Self> {
+        self.self_ref.take().expect("an upload finishes once")
     }
 
     fn done(&self) -> bun_jsc::JsResult<()> {
@@ -597,11 +597,11 @@ impl MultiPartUpload {
                 list.extend_from_slice(b"</CompleteMultipartUpload>");
             });
             self.multipart_etags.set(Vec::new());
-            self.commit_multi_part_request(self.finish())
+            self.commit_multi_part_request(self.take_self_ref())
         } else if state == State::SinglefileStarted {
             self.state.set(State::Finished);
             // single file upload no need to commit
-            let _unfinished = self.finish();
+            let _self_ref = self.take_self_ref();
             (self.callback)(self, S3UploadResult::Success, self.callback_context.get())
         } else {
             Ok(())
@@ -610,11 +610,11 @@ impl MultiPartUpload {
 
     /// Result of the Multipart request, after this we can start draining the parts
     pub(crate) fn start_multi_part_request_result(
-        self_: &RefPtr<Self>,
+        this: &RefPtr<Self>,
         result: S3DownloadResult,
     ) -> bun_jsc::JsResult<()> {
         // `fail` ran while this request was in flight: an upload the server created is still open.
-        let failed = self_.state.get() == State::Finished;
+        let failed = this.state.get() == State::Finished;
         match result {
             S3DownloadResult::Failure(err) => {
                 if failed {
@@ -623,11 +623,11 @@ impl MultiPartUpload {
                 scoped_log!(
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} failed {}: {}",
-                    BStr::new(&self_.path),
+                    BStr::new(&this.path),
                     BStr::new(err.message),
                     BStr::new(err.message)
                 );
-                self_.fail(err)
+                this.fail(err)
             }
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
@@ -650,17 +650,17 @@ impl MultiPartUpload {
                 });
                 let valid = upload_id.is_some();
                 if let Some(upload_id) = upload_id {
-                    self_.upload_id.set(upload_id);
+                    this.upload_id.set(upload_id);
                 }
                 if failed {
                     if valid {
                         scoped_log!(
                             S3MultiPartUpload,
                             "startMultiPartRequestResult {} aborting after fail id: {}",
-                            BStr::new(&self_.path),
-                            BStr::new(self_.upload_id.get())
+                            BStr::new(&this.path),
+                            BStr::new(this.upload_id.get())
                         );
-                        self_.rollback_multi_part_request(self_.clone())?;
+                        this.rollback_multi_part_request(this.clone())?;
                     }
                     return Ok(());
                 }
@@ -669,9 +669,9 @@ impl MultiPartUpload {
                     scoped_log!(
                         S3MultiPartUpload,
                         "startMultiPartRequestResult {} failed invalid id",
-                        BStr::new(&self_.path)
+                        BStr::new(&this.path)
                     );
-                    self_.fail(S3Error {
+                    this.fail(S3Error {
                         code: b"UnknownError",
                         message: b"Failed to initiate multipart upload",
                     })?;
@@ -680,19 +680,19 @@ impl MultiPartUpload {
                 scoped_log!(
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} success id: {}",
-                    BStr::new(&self_.path),
-                    BStr::new(self_.upload_id.get())
+                    BStr::new(&this.path),
+                    BStr::new(this.upload_id.get())
                 );
-                self_.state.set(State::MultipartCompleted);
+                this.state.set(State::MultipartCompleted);
                 // start draining the parts
-                Self::drain_enqueued_parts(self_, 0)
+                Self::drain_enqueued_parts(this, 0)
             }
             // this is "unreachable" but we cover in case AWS returns 404
             S3DownloadResult::NotFound(_) => {
                 if failed {
                     return Ok(());
                 }
-                self_.fail(S3Error {
+                this.fail(S3Error {
                     code: b"UnknownError",
                     message: b"Failed to initiate multipart upload",
                 })
@@ -702,61 +702,61 @@ impl MultiPartUpload {
 
     /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
     pub(crate) fn on_commit_multi_part_request(
-        self_: &RefPtr<Self>,
+        this: &RefPtr<Self>,
         result: S3CommitResult,
     ) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "onCommitMultiPartRequest {}",
-            BStr::new(self_.upload_id.get())
+            BStr::new(this.upload_id.get())
         );
 
         match result {
             S3CommitResult::Failure(err) => {
-                let mut options = self_.options.get();
+                let mut options = this.options.get();
                 // (Retried in the context of the script that uploads: once that has stopped the
                 // request would only be aborted again.)
-                if options.retry > 0 && !self_.context().is_stopped() {
+                if options.retry > 0 && !this.context().is_stopped() {
                     options.retry -= 1;
-                    self_.options.set(options);
+                    this.options.set(options);
                     // retry commit
-                    return self_.commit_multi_part_request(self_.clone());
+                    return this.commit_multi_part_request(this.clone());
                 }
-                self_.state.set(State::Finished);
-                let r = (self_.callback)(
-                    self_,
+                this.state.set(State::Finished);
+                let r = (this.callback)(
+                    this,
                     S3UploadResult::Failure(err),
-                    self_.callback_context.get(),
+                    this.callback_context.get(),
                 );
                 // The store still holds the parts.
-                let rolled_back = self_.rollback_multi_part_request(self_.clone());
+                let rolled_back = this.rollback_multi_part_request(this.clone());
                 r.and(rolled_back)
             }
             S3CommitResult::Success => {
-                self_.state.set(State::Finished);
-                (self_.callback)(self_, S3UploadResult::Success, self_.callback_context.get())
+                this.state.set(State::Finished);
+                (this.callback)(this, S3UploadResult::Success, this.callback_context.get())
             }
         }
     }
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub(crate) fn on_rollback_multi_part_request(
-        self_: &RefPtr<Self>,
+        this: &RefPtr<Self>,
         result: S3DeleteResult,
     ) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "onRollbackMultiPartRequest {}",
-            BStr::new(self_.upload_id.get())
+            BStr::new(this.upload_id.get())
         );
         match result {
             S3DeleteResult::Failure(_err) => {
-                let mut options = self_.options.get();
+                let mut options = this.options.get();
                 if options.retry > 0 {
                     options.retry -= 1;
-                    self_.options.set(options);
+                    this.options.set(options);
                     // retry rollback
-                    return self_.rollback_multi_part_request(self_.clone());
+                    return this.rollback_multi_part_request(this.clone());
                 }
                 Ok(())
             }
@@ -765,7 +765,7 @@ impl MultiPartUpload {
         }
     }
 
-    fn commit_multi_part_request(&self, keep_alive: RefPtr<Self>) -> bun_jsc::JsResult<()> {
+    fn commit_multi_part_request(&self, self_ref: RefPtr<Self>) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "commitMultiPartRequest {}",
@@ -791,11 +791,11 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Commit(keep_alive),
+            s3_simple_request::S3Callback::Commit(self_ref),
         )
     }
 
-    fn rollback_multi_part_request(&self, keep_alive: RefPtr<Self>) -> bun_jsc::JsResult<()> {
+    fn rollback_multi_part_request(&self, self_ref: RefPtr<Self>) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "rollbackMultiPartRequest {}",
@@ -823,7 +823,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Rollback(keep_alive),
+            s3_simple_request::S3Callback::Rollback(self_ref),
         )
     }
 

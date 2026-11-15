@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -449,19 +450,20 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
     ).toEqual({ stdout: "ZSTD_error_checksum_wrong\nZSTD_error_checksum_wrong\nhello", exitCode: 0 });
   });
 
-  // The length is rejected before the copy, so the Uint8Array stays virtual.
-  test.concurrent.each(["brotliCompressSync", "brotliDecompressSync"])(
-    "brotli: %s refuses a dictionary above 2**30 bytes, whose length brotli adds to in an int",
-    async method => {
+  test.concurrent.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "brotli: refuses a dictionary above 2**30 bytes, whose length brotli adds to in an int",
+    async () => {
       expect(
         await run(
           `const usesBuiltInWords = zlib.brotliCompressSync("information about the government of the international development");
-           for (const length of [2 ** 31, 2 ** 30 + 1]) {
-             try { zlib.${method}(usesBuiltInWords, { dictionary: new Uint8Array(length) }); console.log("handled"); }
-             catch (e) { console.log(e.code); }
-           }`,
+           const bytes = new Uint8Array(2 ** 31);
+           for (const method of ["brotliDecompressSync", "brotliCompressSync"])
+             for (const dictionary of [bytes, bytes.subarray(0, 2 ** 30 + 1)]) {
+               try { zlib[method](usesBuiltInWords, { dictionary }); console.log("handled"); }
+               catch (e) { console.log(e.code); }
+             }`,
         ),
-      ).toEqual({ stdout: "ERR_ZLIB_INITIALIZATION_FAILED\nERR_ZLIB_INITIALIZATION_FAILED", exitCode: 0 });
+      ).toEqual({ stdout: Array(4).fill("ERR_ZLIB_INITIALIZATION_FAILED").join("\n"), exitCode: 0 });
     },
   );
 });

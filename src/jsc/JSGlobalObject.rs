@@ -27,15 +27,9 @@ use bun_core::{String as BunString, StringView};
 // ──────────────────────────────────────────────────────────────────────────────
 bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 
-/// VM-lifetime handle to a `JSGlobalObject`, stored as a raw pointer.
-///
-/// Replaces the `&'static`-lifetime `JSGlobalObject` borrows scattered across
-/// heap structs. `'static` was a lie — the global lives as long as its
-/// `VirtualMachine`, not the process — and the lie forced every constructor to
-/// erase a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
-/// centralises that one `unsafe` inside [`Deref`] (the global outlives any
-/// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
-/// `From<&JSGlobalObject>` impl makes construction safe at every call site.
+/// Handle to a `JSGlobalObject`, stored as a raw pointer. It roots nothing, and the global of a
+/// `ShadowRealm` or of a finished test file is collected with the last object of its realm: a holder
+/// that can outlive them all needs a [`StrongGlobal`].
 ///
 /// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via
 /// `BackRef<JSGlobalObject>` (since `JSGlobalObject: !Sync`), matching
@@ -61,10 +55,6 @@ impl core::ops::Deref for GlobalRef {
     type Target = JSGlobalObject;
     #[inline(always)]
     fn deref(&self) -> &JSGlobalObject {
-        // Constructed only from a live `&JSGlobalObject`; the global is owned
-        // by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
-        // `BackRef::get` encapsulates the single deref for what was previously
-        // ~90 lifetime erasures to `'static`.
         self.0.get()
     }
 }
@@ -73,6 +63,32 @@ impl From<&JSGlobalObject> for GlobalRef {
     #[inline(always)]
     fn from(g: &JSGlobalObject) -> Self {
         Self::new(g)
+    }
+}
+
+/// Keeps the global from being collected.
+pub struct StrongGlobal {
+    global: GlobalRef,
+    _root: crate::Strong,
+}
+
+impl StrongGlobal {
+    pub fn new(global: &JSGlobalObject) -> Self {
+        Self {
+            global: GlobalRef::new(global),
+            _root: crate::Strong::create(global.to_js_value(), global),
+        }
+    }
+
+    pub fn get(&self) -> GlobalRef {
+        self.global
+    }
+}
+
+impl core::ops::Deref for StrongGlobal {
+    type Target = JSGlobalObject;
+    fn deref(&self) -> &JSGlobalObject {
+        &self.global
     }
 }
 

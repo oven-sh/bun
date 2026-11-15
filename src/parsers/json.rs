@@ -685,7 +685,6 @@ impl<'a> PackageJSONVersionChecker<'a> {
         }
     }
 
-    /// Whether the checker's exclusively-borrowed `Log` recorded any errors.
     #[inline]
     pub fn has_errors(&self) -> bool {
         self.log.errors.get() > 0

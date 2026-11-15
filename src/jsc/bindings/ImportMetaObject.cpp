@@ -376,7 +376,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                     WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                     if (!prefixed.isNull()) {
-                        // "imports" of a package.json can give require() a builtin for a name that an import resolves to a file. A mock of that name answers require() of the builtin.
+                        // A builtin is no key of OnLoad::moduleMockKeysByRequirePath. It is a value of it where "imports" of a package.json give an import the builtin for a name
+                        // that require() resolves to a file: the key of the mock of that name. What the original of that file has loaded gets the builtin itself.
                         RELEASE_AND_RETURN(scope, keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, jsString(vm, prefixed), from));
                     }
                     // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.

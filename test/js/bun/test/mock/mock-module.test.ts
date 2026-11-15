@@ -4528,6 +4528,82 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  // "imports" of a package.json can give require() a builtin module for a name that an import resolves to a file. A builtin module is no second file of the name:
+  // the mock is of the ES module alone, as for a name with one file, and whatever asks for the builtin module gets it.
+  test("a name whose file for require() is a builtin module", async () => {
+    // Tells the mock, the ES module ("real esm") and the builtin module apart.
+    const which = `const which = os => os.which ?? (os.platform() === process.platform && "builtin");`;
+    await expectFixturesToPass(
+      {
+        "package.json": JSON.stringify({
+          name: "project",
+          imports: { "#os": { import: "./os.mjs", require: "node:os" } },
+        }),
+        "os.mjs": esm("#os"),
+        "helper.cjs": `module.exports = { read: () => require("os"), viaName: () => require("#os"), viaModule: () => module.require("#os") };`,
+        // The functions whose mock answers require() of a name with two files.
+        ...Object.fromEntries(
+          forms
+            .filter(([, , , ofRequire]) => ofRequire === "mock")
+            .map(([mock, api, from]) => [
+              `${mock}.test.js`,
+              `
+              import { expect, test, ${api} } from "${from}";
+              ${which}
+              ${mock}("#os", () => ({ which: "mock" }));
+              test("require() of the name gets the builtin module, and an import the mock", async () => {
+                expect([which(require("#os")), which(await import("#os"))]).toEqual(["builtin", "mock"]);
+                expect(require("#os")).toBe(require("node:os"));
+              });
+            `,
+            ]),
+        ),
+        "builtin.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          import Module, { createRequire } from "node:module";
+          import { read, viaName, viaModule } from "./helper.cjs";
+          ${which}
+          mock.module("#os", () => ({ which: "mock" }));
+          test("whoever calls require(), and however it is spelled", () => {
+            const required = [
+              require("#os"),
+              require("node:os"),
+              require("os"),
+              createRequire(import.meta.url)("#os"),
+              import.meta.require("#os"),
+              require("#os", { paths: [import.meta.dir] }),
+              read(),
+              viaName(),
+              viaModule(),
+            ];
+            expect(required.map(which)).toEqual(required.map(() => "builtin"));
+          });
+          test("with Module._resolveFilename replaced", () => {
+            const resolveFilename = Module._resolveFilename;
+            Module._resolveFilename = (...args) => resolveFilename.apply(Module, args);
+            try {
+              // The replacement answers the last as "os", without the "node:" that it answers the other two with.
+              expect([require("#os"), require("node:os"), require("os")].map(which)).toEqual(["builtin", "builtin", "builtin"]);
+            } finally {
+              Module._resolveFilename = resolveFilename;
+            }
+          });
+          test("an import of the builtin module", async () => {
+            expect([which(await import("node:os")), which(await import("os"))]).toEqual(["builtin", "builtin"]);
+          });
+          // The mock functions take the name for one with a single file, the ES module.
+          test("jest.requireActual() gives the ES module, and a factory that requires its name gets the builtin module", async () => {
+            expect([jest.requireActual("#os").which, jest.requireMock("#os").which]).toEqual(["real esm", "mock"]);
+            jest.doMock("#os", () => ({ which: which(require("#os")) + " for the factory" }));
+            expect((await import("#os")).which).toBe("builtin for the factory");
+            expect(globalThis.loaded).toEqual(["#os esm"]);
+          });
+        `,
+      },
+      7,
+    );
+  });
+
   // Test files wrote the second mock to reach require(). It still works, and it is no longer needed.
   test("a mock of the name with a mock of the path of require() beside it, in both orders", async () => {
     const head = `

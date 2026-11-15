@@ -5444,7 +5444,7 @@ impl VirtualMachine {
         )
     }
 
-    /// Resolves `specifier` as an `import` does and, with `also_for_require`, as `require()` does: the second path is `None` if it is the first one or a miss. An `onResolve` plugin is asked once, as an `import` asks it.
+    /// Resolves `specifier` as an `import` does and, with `also_for_require`, as `require()` does: the second path is `None` if it is the first one, a miss or a builtin module. An `onResolve` plugin is asked once, as an `import` asks it.
     pub fn resolve_for_import_and_require(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -5494,8 +5494,11 @@ impl VirtualMachine {
         transpiler.with_mut(|t| t.resolver.miss_is_an_answer = true);
         let for_require = resolve(&mut query_for_require, ResolveMode::Require, false);
         transpiler.with_mut(|t| t.resolver.miss_is_an_answer = false);
+        // "imports" of a package.json can map a name to a builtin module for `require()` alone. A module mock that took it for the second file of the name would answer whatever asks for that builtin module.
+        let is_builtin =
+            |path: &bun_core::String| ModuleLoader::bun_aliases_get(&path.to_utf8()).is_some();
         let mut for_require = match for_require? {
-            Ok(path) if !path.eql(&for_import) => path,
+            Ok(path) if !path.eql(&for_import) && !is_builtin(&path) => path,
             _ => return Ok(Ok((for_import, None))),
         };
         // The caller appends `query_string` to both paths. If only one of them is an `onResolve` answer that stands with its own query, each path takes its query here.

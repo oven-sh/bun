@@ -256,7 +256,8 @@ test.each([0, 3])("postgres: the column transform runs the event loop with %p by
     const result = sql.unsafe("A").simple().execute();
     socket = await asked.promise;
     await write(socket, reply.subarray(0, 7));
-    await write(socket, reply.subarray(7, description.length + behind));
+    // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
+    socket.write(reply.subarray(7, description.length + behind));
     expect(await result).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
     await built;
   } finally {

@@ -23,23 +23,18 @@ impl Default for AnyTaskWithExtraContext {
 }
 
 impl AnyTaskWithExtraContext {
-    /// Heap-allocates a wrapper around `ptr`, returns a pointer to the embedded
-    /// `AnyTaskWithExtraContext`. When the task runs, it calls `callback(ptr, extra)`
-    /// and then frees the wrapper.
-    pub fn from_callback_auto_deinit<T>(
-        ptr: *mut T,
-        callback: fn(*mut T, *mut c_void),
+    /// Boxes `wrapped` with the returned task. Running it calls `callback(wrapped, extra)` and frees the box.
+    pub fn from_callback_auto_deinit<T: 'static>(
+        wrapped: T,
+        callback: fn(T, *mut c_void),
     ) -> *mut AnyTaskWithExtraContext {
         #[repr(C)]
         struct Wrapper<T> {
             any_task: AnyTaskWithExtraContext,
-            // Raw on purpose: Wrapper is Box'd and escapes the call frame, so
-            // a borrow lifetime cannot be expressed. Caller guarantees `ptr`
-            // outlives the task.
-            wrapped: *mut T,
+            wrapped: T,
             // Stable Rust has no const fn-pointer generics,
             // so the callback is stored here instead.
-            callback: fn(*mut T, *mut c_void),
+            callback: fn(T, *mut c_void),
         }
 
         fn function<T>(this: *mut (), extra: *mut ()) {
@@ -47,9 +42,7 @@ impl AnyTaskWithExtraContext {
             // pointer. `any_task` is the first field of a `#[repr(C)]` struct, so the
             // address is also valid as `*mut Wrapper<T>`.
             let that: Box<Wrapper<T>> = unsafe { bun_core::heap::take(this.cast::<Wrapper<T>>()) };
-            // `defer bun.default_allocator.destroy(that)` — Box drops at end of scope.
-            let ctx = that.wrapped;
-            (that.callback)(ctx, extra.cast::<c_void>());
+            (that.callback)(that.wrapped, extra.cast::<c_void>());
         }
 
         let task = bun_core::heap::into_raw(Box::new(Wrapper::<T> {
@@ -58,7 +51,7 @@ impl AnyTaskWithExtraContext {
                 ctx: None, // patched below to point at the Box itself
                 next: bun_threading::Link::new(),
             },
-            wrapped: ptr,
+            wrapped,
             callback,
         }));
         // SAFETY: `task` was just produced by heap::alloc; valid and exclusive.

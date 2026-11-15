@@ -602,7 +602,7 @@ impl Builtin {
                         }
                         Ok(f) => {
                             note_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
-                            f
+                            f.into_raw()
                         }
                     }
                 };

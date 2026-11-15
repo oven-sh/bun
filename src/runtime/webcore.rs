@@ -353,8 +353,7 @@ impl SinkHandle {
         !self.is_none()
     }
 
-    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
-    /// as this handle is installed.
+    /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
@@ -365,9 +364,8 @@ impl SinkHandle {
                 // SAFETY: live backref; ByteStream clears sink before free.
                 unsafe { p.get_mut() }.write(data)
             }),
-            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
-                // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data)
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
+                streams::NetworkSink::write(p.as_ptr(), data)
             }),
             SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),

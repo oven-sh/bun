@@ -91,7 +91,7 @@ use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
+use crate::webcore::file_sink::FileSink;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -232,9 +232,8 @@ pub(crate) fn run_task(
             unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
-            // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
-            // the task owns a ref for its duration; `run_deferred` releases it.
-            unsafe { crate::ipc::SendQueue::run_deferred(queue) };
+            // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+            unsafe { bun_ptr::RefPtr::from_raw(queue) }.run_deferred();
         }),
         task_tag::AsyncModule => feature_arm!(
             [Install],
@@ -396,11 +395,11 @@ pub(crate) fn run_task(
         }
         task_tag::HTMLRewriterBackgroundPull => feature_arm!(
             [HtmlRewriter],
-            |pipe: crate::api::html_rewriter::RewriterPipe| -> JsResult<()> {
-                crate::api::html_rewriter::RewriterPipe::run_background_pull(pipe)?;
-                Ok(())
+            |pipe: crate::api::html_rewriter::RewriterPipe| {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                unsafe { bun_ptr::RefPtr::from_raw(pipe) }.run_background_pull();
             }
-        )?,
+        ),
         task_tag::RunTestsTask => feature_arm!(
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> {
@@ -761,13 +760,10 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!(
-                [FileSink, Spawn, Shell],
-                |flush: FlushPendingFileSinkTask| {
-                    // SAFETY: the payload is the heap-allocated task; sole owner.
-                    unsafe { FlushPendingFileSinkTask::run_from_js_thread(flush) };
-                }
-            )
+            feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                FileSink::run_pending_if_armed(&unsafe { bun_ptr::RefPtr::from_raw(sink) });
+            })
         }
         // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => feature_arm!([WebStreams], |pending: StreamPending| {
@@ -1723,7 +1719,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FlushPendingFileSinkTask)
+            release_in!([FileSink, Spawn, Shell], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)

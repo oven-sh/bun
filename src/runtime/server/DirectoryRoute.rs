@@ -241,8 +241,7 @@ impl DirectoryRoute {
 
         let server = this.server.get().unwrap();
         FileResponseStream::start(FileResponseStreamOptions {
-            fd: file.into_raw(),
-            auto_close: true,
+            fd: file.into(),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type: FileType::File,

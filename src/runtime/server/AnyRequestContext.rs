@@ -78,6 +78,8 @@ const fn ctx_tag_for(ssl: bool, dbg: bool, mux: bool) -> CtxTag {
 // without callers having to spell the eight concrete types.
 impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> CtxKind
     for RequestContext<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: super::ServerLike + 'static,
 {
     const TAG: CtxTag = ctx_tag_for(SSL, DBG, MUX);
 }
@@ -125,8 +127,7 @@ macro_rules! dispatch {
         }
     }};
     // Raw-pointer variant: hands the typed `*mut T` to `$body`. For `end_chunk`,
-    // which adopts the pipe's ref through that pointer and may release the
-    // context in its own frame.
+    // which may release the context in its own frame.
     ($self:expr, $default:expr, ptr |$T:ident, $ptr:ident| $body:expr) => {{
         let this = $self;
         macro_rules! arm {
@@ -233,6 +234,11 @@ impl AnyRequestContext {
 
     pub fn deref(self) {
         dispatch!(self, (), |_T, ctx| ctx.deref())
+    }
+
+    /// For a caller that answers the request by itself.
+    pub(crate) fn detach_response(self) {
+        dispatch!(self, (), |_T, ctx| drop(ctx.detach_response()))
     }
 
     pub(crate) fn end_with_internal_server_error(self) {

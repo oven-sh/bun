@@ -84,6 +84,7 @@ trait RequestCtx: super::any_request_context::CtxKind {
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
     for NewRequestContext<ThisServer, SSL, DBG, false>
 where
+    ThisServer: super::ServerLike + 'static,
     NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::Request;
@@ -92,6 +93,7 @@ where
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
     for NewRequestContext<ThisServer, SSL, DBG, true>
 where
+    ThisServer: super::ServerLike + 'static,
     NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::h3::Request;
@@ -1659,7 +1661,7 @@ where
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
-        let _upgrader_ref = super::request_context::RequestContextRef::retain(upgrader);
+        let _upgrader_ref = upgrader.ref_guard();
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -1740,7 +1742,7 @@ where
             // See https://github.com/oven-sh/bun/issues/1339
             upgrader.upgrade_context.set(UpgradeState::Upgraded);
             let signal = upgrader.signal.take();
-            upgrader.resp.set(None);
+            let detached = upgrader.resp.take();
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
             // SAFETY: re-derived after the JS-running option getters above; still
@@ -1773,7 +1775,7 @@ where
             // on_abort nor an end path can reclaim a parked handler promise's
             // claim later. Reclaim it here.
             upgrader.reclaim_promise_cell();
-            upgrader.deref();
+            drop(detached);
 
             if resp
                 .upgrade(

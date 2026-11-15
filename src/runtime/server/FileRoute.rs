@@ -5,7 +5,6 @@ use bun_core::{StringView, strings};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
-use bun_io::Closer;
 use bun_io::FileType;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
@@ -13,7 +12,9 @@ use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamFd, StreamOwner,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
@@ -64,7 +65,7 @@ fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
 
 /// What `FileRoute::serve` left for `on()` to do with the open fd.
 enum Serve {
-    /// The response is finished; close the fd and complete.
+    /// The response is finished.
     Done,
     /// Hand the fd to a `FileResponseStream`.
     Stream {
@@ -292,20 +293,15 @@ impl FileRoute {
             route.on_response_complete(resp);
             return;
         };
+        let fd = StreamFd::Owned(fd);
 
         // Every non-streaming outcome — bodiless status codes
         // (304/204/205/307/308), HEAD, non-streamable files, and the JS-exception
         // early returns — is `Serve::Done`, so neither the fd nor the route ref
         // (or the server's pending_requests counter) can leak regardless of
         // which branch ran.
-        match route.serve(fd, path, &mut req, resp, method) {
-            Serve::Done => {
-                #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                #[cfg(not(windows))]
-                Closer::close(fd, ());
-                route.on_response_complete(resp);
-            }
+        match route.serve(fd.get(), path, &mut req, resp, method) {
+            Serve::Done => route.on_response_complete(resp),
             Serve::Stream {
                 file_type,
                 pollable,
@@ -315,7 +311,6 @@ impl FileRoute {
                 let server = route.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
                     fd,
-                    auto_close: true,
                     resp,
                     vm: bun_ptr::BackRef::new(server.vm()),
                     file_type,

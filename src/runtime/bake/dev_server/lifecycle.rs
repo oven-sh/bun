@@ -25,7 +25,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `Transpiler<'a>` carries `&'a Arena`), so use
     // `Box::new_uninit()` + per-field `addr_of_mut!().write()`, leaving those
     // fields uninitialized until their real values are computed against
-    // the stable `*mut DevServer`, then `assume_init()` once every field is written.
+    // the stable `*mut DevServer`, then `assume_init()` once every field is valid.
     use ::core::mem::MaybeUninit;
     use ::core::ptr::addr_of_mut;
 
@@ -45,7 +45,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `p` is a freshly-allocated, properly-aligned `*mut DevServer`; each
     // `addr_of_mut!((*p).field)` computes an in-bounds field address without
     // creating a reference to the (partially-uninit) whole. Every field is written
-    // exactly once before `assume_init()` below.
+    // at most once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
         w!(vm, bun_ptr::BackRef::new(options.vm));
@@ -146,7 +146,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
     // not dereference it until `start()` spawns the watcher thread, by which point
-    // every `DevServer` field is initialized (`assume_init` below precedes
+    // `*p` is a valid `DevServer` (`assume_init` below precedes
     // `bun_watcher.start()`).
     let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
         Ok(w) => w,
@@ -228,20 +228,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 Ok((_, view)) => bundler_framework_views.push(view),
                 Err(err) => return Err(global.throw_error(err, generic_action)),
             }
-        } else {
-            // Note: when `!separate_ssr_graph`, `ssr_transpiler` is never
-            // read, but a valid value must still be written before
-            // `assume_init()`. Bitwise-alias the server
-            // transpiler. This is sound only because `Drop for DevServer` gates
-            // `ssr_transpiler.assume_init_drop()` behind the same
-            // `separate_ssr_graph` check (see Drop impl): in the `!separate`
-            // branch the alias is never independently dropped, so there is no
-            // double-free. Do not remove that gate.
-            ::core::ptr::copy_nonoverlapping(
-                addr_of_mut!((*p).server_transpiler).cast_const().cast(),
-                addr_of_mut!((*p).ssr_transpiler),
-                1,
-            );
         }
 
         w!(bundler_framework_views, bundler_framework_views);
@@ -249,9 +235,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(bundler_options, options.bundler_options);
     }
 
-    // ── every field is now written ───────────────────────────────────────────
-    // SAFETY: all fields of `*p` were written exactly once above via
-    // `addr_of_mut!().write()` / `copy_nonoverlapping`; no field remains uninit.
+    // SAFETY: all fields of `*p` were written exactly once above, except perhaps
+    // `ssr_transpiler`, which is a `MaybeUninit`.
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &raw mut *dev;
 
@@ -273,9 +258,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     dev.client_transpiler.options.dev_server = dev_ptr as *const ();
     dev.client_transpiler.resolver.watcher = Some(resolve_watcher);
 
-    if separate_ssr_graph {
-        dev.ssr_transpiler_mut().options.dev_server = dev_ptr as *const ();
-        dev.ssr_transpiler_mut().resolver.watcher = Some(resolve_watcher);
+    if let Some(ssr_transpiler) = dev.ssr_transpiler_mut() {
+        ssr_transpiler.options.dev_server = dev_ptr as *const ();
+        ssr_transpiler.resolver.watcher = Some(resolve_watcher);
     }
 
     debug_assert!(dev.server_transpiler.resolver.opts.target != bun_ast::Target::Browser);
@@ -310,8 +295,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         let resolved_view: &'static bun_bundler::bake_types::Framework = resolved_view;
         dev.server_transpiler.options.framework = Some(resolved_view);
         dev.client_transpiler.options.framework = Some(resolved_view);
-        if separate_ssr_graph {
-            dev.ssr_transpiler_mut().options.framework = Some(resolved_view);
+        if let Some(ssr_transpiler) = dev.ssr_transpiler_mut() {
+            ssr_transpiler.options.framework = Some(resolved_view);
         }
     }
 
@@ -665,8 +650,8 @@ impl Drop for DevServer {
             .server_components
             .as_ref()
             .is_some_and(|sc| sc.separate_ssr_graph);
-        // SAFETY: this is `Drop`, so none of them is used again. `init()` wrote a
-        // value of its own to `ssr_transpiler` only with a separate SSR graph.
+        // SAFETY: this is `Drop`, so none of them is used again. `init()` wrote
+        // `ssr_transpiler` if the SSR graph is separate.
         unsafe {
             ::core::mem::ManuallyDrop::drop(&mut self.server_transpiler);
             ::core::mem::ManuallyDrop::drop(&mut self.client_transpiler);

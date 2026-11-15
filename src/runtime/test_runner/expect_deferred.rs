@@ -16,7 +16,7 @@ use bun_jsc::{
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
-    BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, StepResult,
+    BunTest, BunTestPtrWeak, Phase, RefDataValue, StepResult,
 };
 use crate::test_runner::cells::CellExt as _;
 use crate::test_runner::execution::ExecutionSequence;
@@ -164,7 +164,7 @@ impl RunningEntry {
     }
 
     fn sequence<'a>(&self, buntest: &'a BunTest) -> Option<&'a ExecutionSequence> {
-        if buntest.phase != Phase::Execution {
+        if buntest.phase.get() != Phase::Execution {
             return None;
         }
         let (sequence, _) = buntest
@@ -183,14 +183,14 @@ impl RunningEntry {
                 group_index,
                 entry_data: None,
             } => {
-                if buntest.phase != Phase::Execution
+                if buntest.phase.get() != Phase::Execution
                     || buntest.execution.group_index.get() != group_index
                 {
                     return None;
                 }
                 Some(&buntest.execution.active_group()?.pending_matchers)
             }
-            _ => (buntest.phase != Phase::Done).then_some(&buntest.unclaimed.of_file),
+            _ => (buntest.phase.get() != Phase::Done).then_some(&buntest.unclaimed.of_file),
         }
     }
 
@@ -239,9 +239,7 @@ impl RunningEntry {
             buntest.unclaimed.remove(index);
         }
         if let Some(failure) = failure {
-            buntest
-                .get()
-                .on_uncaught_exception(global, Some(failure), true, &self.entry);
+            buntest.on_uncaught_exception(global, Some(failure), true, &self.entry);
         }
         let Some(pending_matchers) = self.pending_matchers(&buntest) else {
             return;
@@ -254,10 +252,10 @@ impl RunningEntry {
                 && sequence.callback_done.take())
             .then_some(self.entry),
             // During collection the runner isn't waiting on these yet, so there's nothing to wake.
-            None => (none_left && buntest.phase == Phase::Execution).then_some(RefDataValue::Start),
+            None => (none_left && buntest.phase.get() == Phase::Execution).then_some(RefDataValue::Start),
         };
         if let Some(next) = next {
-            buntest.get().add_result(next);
+            buntest.add_result(next);
             BunTest::run_next_tick(&self.buntest, global, next);
         }
     }
@@ -651,7 +649,7 @@ impl ExpectDeferred {
             let has_timed_out = is_running && held.has_timed_out();
             this.held.set(Some(held));
             if !is_running {
-                return this.abandon(global, deferred, buntest.as_ref());
+                return this.abandon(global, deferred, buntest.as_deref());
             }
             // The runner is about to time the entry out, and `settle_ended` will then abandon this call.
             if has_timed_out {
@@ -732,7 +730,7 @@ impl ExpectDeferred {
     /// Abandons the calls still held by the group (or by the file, if `group_index` is `None`) and reports the unhandled ones.
     #[optimize(size)]
     fn give_up(
-        buntest: &BunTestPtr,
+        buntest: &BunTest,
         global: &JSGlobalObject,
         group_index: Option<usize>,
         message: core::fmt::Arguments<'_>,
@@ -770,9 +768,7 @@ impl ExpectDeferred {
             if let Some(call_site) = js::call_site_get_cached(deferred) {
                 ExpectDeferred__continueStackAt(global, error, call_site);
             }
-            buntest
-                .get()
-                .on_uncaught_exception(global, Some(error), false, &RefDataValue::Start);
+            buntest.on_uncaught_exception(global, Some(error), false, &RefDataValue::Start);
         }
     }
 
@@ -781,7 +777,7 @@ impl ExpectDeferred {
         &self,
         global: &JSGlobalObject,
         deferred: JSValue,
-        buntest: Option<&BunTestPtr>,
+        buntest: Option<&BunTest>,
     ) -> JsResult<()> {
         self.is_abandoned.set(true);
         let held = self.held.take();
@@ -798,7 +794,7 @@ impl ExpectDeferred {
         JSPromise::opaque_mut(promise).reject_as_handled(global, error)
     }
 
-    pub(crate) fn settle_ended(buntest: &BunTestPtr, global: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn settle_ended(buntest: &BunTest, global: &JSGlobalObject) -> JsResult<()> {
         let mut index = 0;
         while let Some(deferred) = buntest.unclaimed.next_call(&mut index) {
             let Some(this) = Self::from_js(deferred) else {
@@ -815,7 +811,7 @@ impl ExpectDeferred {
     }
 
     pub(crate) fn group_timed_out(
-        buntest: &BunTestPtr,
+        buntest: &BunTest,
         global: &JSGlobalObject,
         group_index: usize,
     ) {
@@ -831,7 +827,7 @@ impl ExpectDeferred {
 
     /// After a file's tests have run, keeps the file open until the calls it holds finish or time out.
     pub(crate) fn step_file_end(
-        buntest: &BunTestPtr,
+        buntest: &BunTest,
         global: &JSGlobalObject,
         now: &Timespec,
     ) -> StepResult {
@@ -1016,9 +1012,7 @@ impl Expect {
             ExpectDeferred__continueStackAt(global, error, call_site);
         }
         let maybe_skip = sequence.maybe_skip.get();
-        buntest
-            .get()
-            .on_uncaught_exception(global, Some(error), false, &test.entry);
+        buntest.on_uncaught_exception(global, Some(error), false, &test.entry);
         sequence.maybe_skip.set(maybe_skip);
         Ok(match self.flags.get().promise() {
             Promise::None => JSValue::UNDEFINED,

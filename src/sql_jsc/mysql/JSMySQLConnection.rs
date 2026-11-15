@@ -43,6 +43,8 @@ pub struct JSMySQLConnection {
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
     poll_ref: KeepAlive,
+    /// Held from the socket's open to its close.
+    socket_ref: Cell<Option<RefPtr<Self>>>,
 
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
@@ -328,6 +330,7 @@ impl JSMySQLConnection {
                 !path.is_empty(),
                 found_rows,
             )),
+            socket_ref: Cell::new(None),
             auto_flush_registered: Cell::new(false),
             timers: ConnectionTimers::new(
                 args.idle_timeout_ms,
@@ -725,7 +728,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // This handshake is not TLS handleshake is actually the MySQL handshake
             // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
             this.connection_mut().status = my_sql_connection::Status::Handshaking;
-            this.ref_(); // keep a ref for the socket
+            this.socket_ref.set(Some(this.ref_guard()));
             // The bound on a query whose peer is gone: no timer runs while one is in flight.
             if !this.connection.get().is_unix_socket() {
                 let _ = s.set_keep_alive(true, 60);
@@ -778,9 +781,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: i32,
         _: Option<*mut c_void>,
     ) {
-        // Takes over the socket ref taken in on_open.
-        // SAFETY: `this` is live and that ref is outstanding.
-        let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
+        let _guard = this.socket_ref.take();
         // usockets frees this socket at end-of-tick; drop the stored pointer
         // now so nothing (timer callbacks, close) dereferences it after
         // the free.

@@ -30,6 +30,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::ThreadId;
 
+use super::repl_command::evaluate;
+
 bun_core::declare_scope!(lint_js, hidden);
 
 /// One call into the program: its message, and the callback that answers the program's queries while it runs.
@@ -74,14 +76,6 @@ impl Drop for CallGuard<'_> {
 }
 
 unsafe extern "C" {
-    fn Bun__REPL__evaluate(
-        global: *const JSGlobalObject,
-        source: *const u8,
-        source_len: usize,
-        filename: *const u8,
-        filename_len: usize,
-        exception: *mut JSValue,
-    ) -> JSValue;
     /// src/jsc/bindings/LintNodes.cpp
     safe fn Bun__Lint__nodeFunctions(global: &JSGlobalObject) -> JSValue;
     /// src/jsc/bindings/LintHost.cpp. Drops every span that native code holds.
@@ -183,23 +177,8 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
         .to_vec();
     program().for_each(|part| source.extend_from_slice(part));
     source.extend_from_slice(b"\n})");
-    let name = b"bun-lint-plugins.js";
-    let mut exception = JSValue::UNDEFINED;
-    // SAFETY: `global` belongs to this thread's VM, whose lock is held, and the slices and `exception` outlive the
-    // call.
-    let program = unsafe {
-        Bun__REPL__evaluate(
-            global,
-            source.as_ptr(),
-            source.len(),
-            name.as_ptr(),
-            name.len(),
-            &raw mut exception,
-        )
-    };
-    if !exception.is_undefined() {
-        return Err(message_of(global, exception));
-    }
+    let program = evaluate(global, &source, b"bun-lint-plugins.js")
+        .map_err(|exception| message_of(global, exception))?;
     match program.call(
         global,
         JSValue::UNDEFINED,

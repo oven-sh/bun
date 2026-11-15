@@ -138,6 +138,18 @@ unsafe extern "C" {
     safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
 }
 
+fn create_uint8_array_for_copy(
+    global: &JSGlobalObject,
+    bytes: &[u8],
+    is_buffer: bool,
+) -> JsResult<JSValue> {
+    // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
+    // come from a live slice, copied by callee.
+    crate::host_fn::from_js_host_call(global, || unsafe {
+        Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), is_buffer)
+    })
+}
+
 impl JSValue {
     /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value whose pin actually pinned a buffer; prefer [`ArrayBuffer::unpin`], which knows.
     pub fn unpin_array_buffer(self) {
@@ -274,11 +286,7 @@ impl ArrayBuffer {
     pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {
-            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
-            // ptr/len come from a live slice, copied by callee.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
-            }),
+            JSType::Uint8Array => create_uint8_array_for_copy(global, bytes, false),
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
             // ptr/len come from a live slice, copied by callee.
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
@@ -290,20 +298,12 @@ impl ArrayBuffer {
 
     pub fn create_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
-        // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), true)
-        })
+        create_uint8_array_for_copy(global, bytes, true)
     }
 
     pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
-        // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
-        })
+        create_uint8_array_for_copy(global, bytes, false)
     }
 
     pub fn alloc<'a, const KIND: JSType>(
@@ -957,9 +957,9 @@ impl TypedArrayType {
 #[derive(Default)]
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
-    pub owns_buffer: bool,
+    owns_buffer: bool,
     /// The bytes are from [`bun_sys::private_copy::map`].
-    pub is_private_copy: bool,
+    is_private_copy: bool,
 }
 
 /// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
@@ -971,10 +971,13 @@ impl Drop for MarkedArrayBuffer {
             return;
         }
         if self.is_private_copy {
-            bun_sys::private_copy::unmap(
-                self.buffer.ptr.cast(),
-                core::ptr::without_provenance_mut(self.buffer.byte_len),
-            );
+            // SAFETY: set by `from_private_copy`, and not handed to JSC.
+            unsafe {
+                bun_sys::private_copy::unmap(
+                    self.buffer.ptr.cast(),
+                    core::ptr::without_provenance_mut(self.buffer.byte_len),
+                );
+            }
             return;
         }
         // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
@@ -983,12 +986,17 @@ impl Drop for MarkedArrayBuffer {
 }
 
 impl MarkedArrayBuffer {
-    pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
+    /// Does not free the bytes.
+    pub const fn unowned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
             is_private_copy: false,
-            buffer: ArrayBuffer::from_array_buffer(ctx, value),
+            buffer,
         }
+    }
+
+    pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
+        MarkedArrayBuffer::unowned(ArrayBuffer::from_array_buffer(ctx, value))
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
@@ -1008,26 +1016,22 @@ impl MarkedArrayBuffer {
         }
     }
 
-    /// `copy` is what [`bun_sys::private_copy::map`] returned for `len` bytes.
-    pub fn from_private_copy(copy: core::ptr::NonNull<u8>, len: usize) -> MarkedArrayBuffer {
+    pub fn from_private_copy(copy: bun_sys::private_copy::PrivateCopy) -> MarkedArrayBuffer {
+        let bytes = copy.into_raw();
         MarkedArrayBuffer {
             owns_buffer: true,
             is_private_copy: true,
             buffer: ArrayBuffer {
-                len,
-                byte_len: len,
+                len: bytes.len(),
+                byte_len: bytes.len(),
                 typed_array_type: JSType::Uint8Array,
-                ptr: copy.as_ptr(),
+                ptr: bytes.cast(),
                 ..Default::default()
             },
         }
     }
 
-    pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
-        owns_buffer: false,
-        is_private_copy: false,
-        buffer: ArrayBuffer::EMPTY,
-    };
+    pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer::unowned(ArrayBuffer::EMPTY);
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
@@ -1039,7 +1043,7 @@ impl MarkedArrayBuffer {
         // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
         // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
         // copy the descriptor and project a mutable slice.
-        self.owns_buffer = false;
+        assert!(core::mem::take(&mut self.owns_buffer) || self.buffer.byte_len == 0);
         let mut buf = self.buffer;
         if self.is_private_copy {
             let len = buf.byte_len;

@@ -263,16 +263,6 @@ use bun_sys as Syscall;
 #[cfg(windows)]
 use bun_sys::sys_uv as Syscall;
 
-// Kernel limit on iovec count for a single readv(2)/writev(2). libuv's
-// `uv__getiovmax()` prefers compile-time `IOV_MAX`; Linux headers spell it
-// `UIO_MAXIOV`. Windows has no kernel iovec limit (sys_uv chunks internally).
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const IOV_MAX: usize = libc::UIO_MAXIOV as usize;
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-const IOV_MAX: usize = libc::IOV_MAX as usize;
-#[cfg(windows)]
-const IOV_MAX: usize = core::ffi::c_uint::MAX as usize;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Local cross-crate shims
 //
@@ -774,7 +764,7 @@ fn embedded_file_buffer(graph: &bun_standalone_graph::Graph, contents: &[u8]) ->
         && contents.len() >= sys::private_copy::MIN_MAPPED_BYTES
         && let Some(copy) = sys::private_copy::map(contents)
     {
-        return Buffer::from_private_copy(copy, contents.len());
+        return Buffer::from_private_copy(copy);
     }
     Buffer::from_bytes(
         contents.to_vec().into_boxed_slice(),
@@ -3343,10 +3333,7 @@ pub(crate) mod args {
         }
     }
 
-    /// Shared layout for `fs.writev` / `fs.readv` arguments. We re-export both
-    /// names as type aliases so every `args::Writev` / `args::Readv` caller
-    /// (UVFSRequest params, `readv`/`writev`/`preadv_inner`/`pwritev_inner`,
-    /// uv dispatch arms) is untouched.
+    /// Arguments of `fs.writev` and `fs.readv`.
     pub(crate) struct FdVectorIo<const READ: bool> {
         pub(crate) fd: FD,
         pub(crate) buffers: VectorArrayBuffer,
@@ -6684,25 +6671,26 @@ impl NodeFS {
     }
 
     pub(crate) fn readv(&mut self, args: &args::Readv, _: Flavor) -> Maybe<ret::Readv> {
-        if args.buffers.buffers.is_empty() {
+        if args.buffers.is_empty() {
             return Ok(ret::Readv { bytes_read: 0 });
         }
-        if args.position.is_some() {
-            self.preadv_inner(args)
-        } else {
-            self.readv_inner(args)
-        }
+        let amt = match args.position {
+            #[cfg(not(windows))]
+            None => bun_standalone_graph::read_descriptor(args.fd, || {
+                args.buffers.read_from(args.fd, None)
+            }),
+            position => args.buffers.read_from(args.fd, position.map(|p| p as i64)),
+        }?;
+        Ok(ret::Readv {
+            bytes_read: amt as u64,
+        })
     }
 
     pub(crate) fn writev(&mut self, args: &args::Writev, _: Flavor) -> Maybe<ret::Writev> {
-        if args.buffers.buffers.is_empty() {
-            return Ok(ret::Writev { bytes_written: 0 });
-        }
-        if args.position.is_some() {
-            self.pwritev_inner(args)
-        } else {
-            self.writev_inner(args)
-        }
+        let position = args.position.map(|p| p as i64);
+        Ok(ret::Writev {
+            bytes_written: args.buffers.write_to(args.fd, position)?,
+        })
     }
 
     pub(crate) fn write(&mut self, args: &args::Write, _: Flavor) -> Maybe<ret::Write> {
@@ -6773,110 +6761,6 @@ impl NodeFS {
                 bytes_written: amt as u64,
             }),
         }
-    }
-
-    fn preadv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
-        let position = args.position.unwrap();
-        let bufs = args.buffers.buffers.as_slice();
-        // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
-        let bufs = &bufs[..bufs.len().min(IOV_MAX)];
-        match Syscall::preadv(args.fd, bufs, position as i64) {
-            Err(err) => Err(err),
-            Ok(amt) => Ok(ret::Readv {
-                bytes_read: amt as u64,
-            }),
-        }
-    }
-
-    fn readv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
-        let bufs = args.buffers.buffers.as_slice();
-        // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
-        let bufs = &bufs[..bufs.len().min(IOV_MAX)];
-        #[cfg(not(windows))]
-        let read = bun_standalone_graph::read_descriptor(args.fd, || Syscall::readv(args.fd, bufs));
-        #[cfg(windows)]
-        let read = Syscall::readv(args.fd, bufs);
-        match read {
-            Err(err) => Err(err),
-            Ok(amt) => Ok(ret::Readv {
-                bytes_read: amt as u64,
-            }),
-        }
-    }
-
-    fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        let mut position = args.position.unwrap() as i64;
-        // `PlatformIoVec`
-        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
-        // kernel never writes through `iov_base` for pwritev(2).
-        // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
-        let vecs: &[sys::PlatformIoVecConst] = unsafe {
-            core::slice::from_raw_parts(
-                args.buffers
-                    .buffers
-                    .as_ptr()
-                    .cast::<sys::PlatformIoVecConst>(),
-                args.buffers.buffers.len(),
-            )
-        };
-        // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
-        // buffer is written; an error after the first batch returns the
-        // accumulated total instead of the error.
-        let mut remaining = vecs;
-        let mut total: u64 = 0;
-        while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(IOV_MAX);
-            let chunk = &remaining[..chunk_len];
-            match Syscall::pwritev(args.fd, chunk, position) {
-                Err(err) if total == 0 => return Err(err),
-                Err(_) => break,
-                Ok(0) => break,
-                Ok(amt) => {
-                    total += amt as u64;
-                    position = position.wrapping_add(amt as i64);
-                    let chunk_capacity: usize = chunk.iter().map(|b| b.len as usize).sum();
-                    if amt < chunk_capacity {
-                        break;
-                    }
-                    remaining = &remaining[chunk_len..];
-                }
-            }
-        }
-        Ok(ret::Write {
-            bytes_written: total,
-        })
-    }
-
-    fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        // The mutable iovec slice doubles as `iovec_const` for writev(2); the kernel
-        // never writes through `iov_base`. `PlatformIoVec` and
-        // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
-        // pass the slice through `Syscall::writev` as-is.
-        // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
-        // buffer is written; an error after the first batch returns the
-        // accumulated total instead of the error.
-        let mut remaining = args.buffers.buffers.as_slice();
-        let mut total: u64 = 0;
-        while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(IOV_MAX);
-            let chunk = &remaining[..chunk_len];
-            match Syscall::writev(args.fd, chunk) {
-                Err(err) if total == 0 => return Err(err),
-                Err(_) => break,
-                Ok(0) => break,
-                Ok(amt) => {
-                    total += amt as u64;
-                    let chunk_capacity: usize = chunk.iter().map(sys::platform_iovec_len).sum();
-                    if amt < chunk_capacity {
-                        break;
-                    }
-                    remaining = &remaining[chunk_len..];
-                }
-            }
-        }
-        Ok(ret::Write {
-            bytes_written: total,
-        })
     }
 
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
@@ -7655,11 +7539,7 @@ impl NodeFS {
                             array_buffer.ensure_still_alive();
                             return match array_buffer.as_array_buffer(global) {
                                 Some(buffer) => Ok(ret::ReadFileWithOptions::Buffer(
-                                    bun_jsc::MarkedArrayBuffer {
-                                        buffer,
-                                        owns_buffer: false,
-                                        is_private_copy: false,
-                                    },
+                                    bun_jsc::MarkedArrayBuffer::unowned(buffer),
                                 )),
                                 // This case shouldn't really happen.
                                 None => Err(with_path_like(

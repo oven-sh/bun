@@ -226,6 +226,50 @@ pub(crate) struct Decoded {
     pub(crate) icc_profile: Option<Vec<u8>>,
 }
 
+impl Decoded {
+    pub(crate) fn as_image(&self) -> RgbaImage<'_> {
+        RgbaImage::new(&self.rgba, self.width, self.height)
+    }
+}
+
+/// Exactly `width * height` RGBA8 pixels, and at least one.
+#[derive(Copy, Clone)]
+pub(crate) struct RgbaImage<'a> {
+    bytes: &'a [u8],
+    width: u32,
+    height: u32,
+}
+
+impl<'a> RgbaImage<'a> {
+    fn new(bytes: &'a [u8], width: u32, height: u32) -> Self {
+        assert!(!bytes.is_empty());
+        assert_eq!(
+            bytes.len(),
+            (width as usize * height as usize).strict_mul(4)
+        );
+        Self {
+            bytes,
+            width,
+            height,
+        }
+    }
+
+    pub(crate) fn width(self) -> u32 {
+        self.width
+    }
+
+    pub(crate) fn height(self) -> u32 {
+        self.height
+    }
+}
+
+impl core::ops::Deref for RgbaImage<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.bytes
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum Error {
     #[error("UnknownFormat")]
@@ -360,18 +404,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
-            let mut cw: c_int = 0;
-            let mut ch: c_int = 0;
-            // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
-                == 0
-                || cw <= 0
-                || ch <= 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(cw).expect("int cast");
-            h = u32::try_from(ch).expect("int cast");
+            (w, h) = webp::read_header(bytes)?;
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
@@ -548,14 +581,19 @@ impl Encoded {
 /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
 /// re-encode.
 pub(crate) fn encode(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
+    rgba: RgbaImage<'_>,
     opts: EncodeOptions,
     icc: Option<&[u8]>,
 ) -> Result<Encoded, Error> {
     match opts.format {
-        Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
+        Format::Jpeg => jpeg::encode(
+            &rgba,
+            rgba.width,
+            rgba.height,
+            opts.quality,
+            opts.progressive,
+            icc,
+        ),
         // PNG carries iCCP on both truecolour and indexed images — quantise
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the
@@ -563,19 +601,19 @@ pub(crate) fn encode(
         Format::Png => {
             if opts.palette {
                 png::encode_indexed(
-                    rgba,
-                    width,
-                    height,
+                    &rgba,
+                    rgba.width,
+                    rgba.height,
                     opts.compression_level,
                     opts.colors,
                     opts.dither,
                     icc,
                 )
             } else {
-                png::encode(rgba, width, height, opts.compression_level, icc)
+                png::encode(&rgba, rgba.width, rgba.height, opts.compression_level, icc)
             }
         }
-        Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
+        Format::Webp => webp::encode(rgba, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
         // libjpeg-turbo's, and it can't honour compressionLevel/palette/
@@ -585,7 +623,7 @@ pub(crate) fn encode(
             #[cfg(any(target_os = "macos", windows))]
             if use_system() {
                 return match system_backend::BackendError::split(system_backend::encode(
-                    rgba, width, height, &opts,
+                    rgba, &opts,
                 )) {
                     Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
                     // BackendUnavailable collapses into UnsupportedOnPlatform.
@@ -674,24 +712,22 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
-pub(crate) fn resize(
-    src: &[u8],
-    sw: u32,
-    sh: u32,
-    dw: u32,
-    dh: u32,
-    f: Filter,
-) -> Result<Vec<u8>, Error> {
+/// The output size, the scratch size and their sum do not overflow below this.
+const MAX_RESIZE_PIXELS: u64 = u64::MAX / 32;
+
+pub(crate) fn resize(src: RgbaImage<'_>, dw: u32, dh: u32, f: Filter) -> Result<Vec<u8>, Error> {
     // Only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::scale(src, sw, sh, dw, dh, f)) {
+        match system_backend::BackendError::split(system_backend::scale(src, dw, dh, f)) {
             Ok(Some(out)) => return Ok(out),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
     }
+    let (sw, sh) = (src.width, src.height);
+    guard(dw, dh.max(sh), MAX_RESIZE_PIXELS)?;
     // ONE allocation for output + the kernel's scratch arena (intermediate
     // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
     // C++; mimalloc here is faster than libc, and the over-allocation rounds
@@ -705,7 +741,8 @@ pub(crate) fn resize(
         f as i32,
     );
     let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
-    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
+    // SAFETY: src has sw*sh*4 bytes; capacity = dst [0..out_sz) + scratch; the kernel fills
+    // scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
@@ -730,7 +767,8 @@ pub(crate) fn resize(
     Ok(block)
 }
 
-pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
+pub(crate) fn rotate(src: RgbaImage<'_>, degrees: u32) -> Result<Decoded, Error> {
+    let (w, h) = (src.width, src.height);
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 {
         (h, w)
     } else {
@@ -738,7 +776,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     };
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
+        match system_backend::BackendError::split(system_backend::rotate(src, degrees / 90)) {
             Ok(Some(out)) => {
                 return Ok(Decoded {
                     rgba: out,
@@ -751,9 +789,8 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             Err(e) => return Err(e),
         }
     }
-    let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
-    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
+    // SAFETY: src has w*h*4 bytes and is not empty; out has as many bytes of capacity.
     unsafe {
         bun_image_rotate_rgba8(
             src.as_ptr(),
@@ -764,7 +801,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
         )
     };
     // SAFETY: the rotate kernel is a permutation that stores every one of the dw*dh dst pixels.
-    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
+    unsafe { bun_core::vec::commit_spare(&mut out, src.len()) };
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -773,28 +810,27 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     })
 }
 
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
+pub(crate) fn flip(src: RgbaImage<'_>, horizontal: bool) -> Result<Vec<u8>, Error> {
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {
+        match system_backend::BackendError::split(system_backend::flip(src, horizontal)) {
             Ok(Some(out)) => return Ok(out),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
     }
-    let out_len = (w as usize) * (h as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
-    // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
+    // SAFETY: src has w*h*4 bytes and is not empty; out has as many bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(
             src.as_ptr(),
-            i32::try_from(w).expect("int cast"),
-            i32::try_from(h).expect("int cast"),
+            i32::try_from(src.width).expect("int cast"),
+            i32::try_from(src.height).expect("int cast"),
             out.as_mut_ptr(),
             horizontal as i32,
         )
     };
     // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
-    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
+    unsafe { bun_core::vec::commit_spare(&mut out, src.len()) };
     Ok(out)
 }

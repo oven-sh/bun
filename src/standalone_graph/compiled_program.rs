@@ -1147,18 +1147,9 @@ const ALIGNMENT_OF_PROGRAMS: usize = 64 * 1024;
 #[cfg(unix)]
 fn reserve_range_of_programs(size: usize) -> Option<usize> {
     let size = size + ALIGNMENT_OF_PROGRAMS;
-    // SAFETY: a new mapping, which nothing else refers to.
-    let range = unsafe {
-        libc::mmap(
-            core::ptr::null_mut(),
-            size,
-            libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANON,
-            -1,
-            0,
-        )
-    };
-    (range != libc::MAP_FAILED).then(|| (range as usize).next_multiple_of(ALIGNMENT_OF_PROGRAMS))
+    let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+    let range = bun_sys::Mmap::new(size, libc::PROT_NONE, flags, Fd::from_native(-1), 0).ok()?;
+    Some((range.into_raw().cast::<u8>() as usize).next_multiple_of(ALIGNMENT_OF_PROGRAMS))
 }
 
 #[cfg(unix)]
@@ -1169,7 +1160,8 @@ fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) ->
         libc::MAP_PRIVATE | libc::MAP_FIXED,
     );
     let address = address as *mut u8;
-    bun_sys::mmap(address, size, access, flags, descriptor, offset as _).ok()
+    // SAFETY: the `size` bytes at `address` were just reserved.
+    unsafe { bun_sys::mmap(address, size, access, flags, descriptor, offset as _) }.ok()
 }
 
 #[cfg(windows)]

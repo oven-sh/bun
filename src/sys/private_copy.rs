@@ -2,14 +2,31 @@
 
 use core::ffi::c_void;
 
+use crate::Mmap;
+
 /// Smaller files are copied.
 pub const MIN_MAPPED_BYTES: usize = 1 << 20;
 /// What an allocator gives a buffer. `Atomics` on a typed array over the bytes needs it.
 pub const ALIGNMENT: usize = 16;
 
+/// The copy starts `delta` bytes into the first of `pages`.
+pub struct PrivateCopy {
+    pages: Mmap,
+    delta: usize,
+}
+
+impl PrivateCopy {
+    /// The bytes stay mapped until [`unmap`].
+    pub fn into_raw(self) -> *mut [u8] {
+        let pages = self.pages.into_raw();
+        let bytes = pages.cast::<u8>().wrapping_add(self.delta);
+        core::ptr::slice_from_raw_parts_mut(bytes, pages.len() - self.delta)
+    }
+}
+
 /// `None` if the bytes have to be copied instead.
 #[cfg(target_os = "linux")]
-pub fn map(bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
+pub fn map(bytes: &[u8]) -> Option<PrivateCopy> {
     use crate::{CloseOnDrop, O};
 
     // The writer aligns a file of `MIN_MAPPED_BYTES`. Another writer or an older layout may not have.
@@ -18,8 +35,7 @@ pub fn map(bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
         .map(CloseOnDrop::new)
         .ok()?;
     let delta = offset % bun_alloc::page_size();
-    let base = crate::mmap(
-        core::ptr::null_mut(),
+    let pages = Mmap::new(
         bytes.len() + delta,
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_PRIVATE,
@@ -27,11 +43,11 @@ pub fn map(bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
         i64::try_from(offset - delta).ok()?,
     )
     .ok()?;
-    core::ptr::NonNull::new(base.wrapping_add(delta))
+    Some(PrivateCopy { pages, delta })
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn map(_bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
+pub fn map(_bytes: &[u8]) -> Option<PrivateCopy> {
     None
 }
 
@@ -86,8 +102,12 @@ fn parse_hex(digits: &[u8]) -> Option<usize> {
     usize::from_str_radix(core::str::from_utf8(digits).ok()?, 16).ok()
 }
 
-/// `bytes` is what [`map`] returned for `len` bytes.
-pub extern "C" fn unmap(bytes: *mut c_void, len: *mut c_void) {
+/// # Safety
+/// `bytes` and `len` are what [`PrivateCopy::into_raw`] returned, and nothing refers to the bytes.
+pub unsafe extern "C" fn unmap(bytes: *mut c_void, len: *mut c_void) {
     let delta = bytes.addr() % bun_alloc::page_size();
-    let _ = crate::munmap(bytes.cast::<u8>().wrapping_sub(delta), len.addr() + delta);
+    let pages = bytes.cast::<u8>().wrapping_sub(delta);
+    let pages = core::ptr::slice_from_raw_parts_mut(pages, len.addr() + delta);
+    // SAFETY: caller contract; `map` mapped from the start of that page.
+    drop(unsafe { Mmap::from_raw(pages) });
 }

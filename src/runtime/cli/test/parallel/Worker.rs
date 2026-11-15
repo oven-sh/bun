@@ -23,6 +23,9 @@ use super::channel::Channel;
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 
+/// `EX_IOERR`. The one thing that a worker can still tell the coordinator without its channel.
+pub(crate) const EXIT_CODE_OF_LOST_CHANNEL: u8 = 74;
+
 pub(crate) struct Worker {
     pub(crate) event_loop: bun_jsc::EventLoopHandle,
     pub(crate) idx: u32,
@@ -314,6 +317,7 @@ impl Worker {
         file: &[u8],
         is_growth_written: bool,
     ) {
+        debug_assert!(self.reached_ready && self.inflight.is_none());
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);

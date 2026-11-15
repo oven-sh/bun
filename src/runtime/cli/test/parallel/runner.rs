@@ -18,7 +18,7 @@ use super::channel::Channel;
 use super::coordinator::{Coordinator, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::worker::Worker;
+use super::worker::{EXIT_CODE_OF_LOST_CHANNEL, Worker};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
@@ -551,6 +551,8 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel,
+    /// `file_behind_ipc_fd` before any test ran. A test can close fd 3, and the number is then handed out again.
+    file_of_channel: Option<(u64, u64)>,
     /// Reused across all worker → coordinator emits.
     frame: Frame,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
@@ -573,12 +575,31 @@ struct RunningFile {
     resident_at_start: Option<ResidentAtStart>,
 }
 
+const IPC_FD: Fd = Fd::from_uv(3);
+
+fn file_behind_ipc_fd() -> Option<(u64, u64)> {
+    let stat = bun_sys::fstat(IPC_FD).ok()?;
+    Some((stat.st_dev as u64, stat.st_ino as u64))
+}
+
 impl WorkerCommands {
     /// Sends one frame of `kind`; `fill` writes its payload.
     fn emit(&mut self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
+        if self.has_lost_channel() {
+            // A failed send polls fd 3 for the channel, in place of whatever polls it now.
+            return;
+        }
         self.frame.begin(kind);
         fill(&mut self.frame);
         self.channel.send(self.frame.finish());
+    }
+
+    /// No event reports a closed fd 3 here, and the coordinator can't kill on EOF: that would mask the status of a worker that is exiting.
+    fn has_lost_channel(&self) -> bool {
+        if file_behind_ipc_fd() != self.file_of_channel {
+            self.channel.done.set(true);
+        }
+        self.channel.done.get()
     }
 
     /// False as long as there is no file to run and one may still come.
@@ -600,7 +621,11 @@ impl WorkerCommands {
             }
             self.channel.keep_unread(received);
         }
-        self.pending_idx.is_some() || self.shutdown || self.channel.done.get()
+        if self.has_lost_channel() {
+            self.pending_idx = None;
+            return true;
+        }
+        self.pending_idx.is_some() || self.shutdown
     }
 
     /// Says what the file that runs has counted.
@@ -656,7 +681,7 @@ struct WorkerLoop<'a> {
 
 impl<'a> WorkerLoop<'a> {
     fn begin(&mut self, vm: &VirtualMachine) {
-        if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
+        if !self.cmds.channel.adopt(vm, IPC_FD) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
@@ -878,6 +903,7 @@ pub(crate) fn run_as_worker(
         reporter,
         cmds: WorkerCommands {
             channel: Channel::default(),
+            file_of_channel: file_behind_ipc_fd(),
             frame: Frame::default(),
             pending_idx: None,
             pending_path: Vec::new(),
@@ -911,19 +937,28 @@ pub(crate) fn run_as_worker(
         &mut wloop.cmds,
     );
     // Drain backpressure-buffered frames so the coordinator sees repeat_bufs / coverage_file.
-    let channel = &wloop.cmds.channel;
+    let cmds = &wloop.cmds;
     vm.run_with_api_lock(|| {
-        while channel.has_pending_writes() && !channel.done.get() {
+        while cmds.channel.has_pending_writes() && !cmds.has_lost_channel() {
             vm.event_loop().tick();
-            if !channel.has_pending_writes() || channel.done.get() {
+            if !cmds.channel.has_pending_writes() || cmds.has_lost_channel() {
                 break;
             }
             vm.event_loop().auto_tick();
         }
     });
+    let exit_code = if cmds.has_lost_channel() {
+        bun_core::pretty_errorln!(
+            "<red>error<r>: test worker lost its IPC channel, something closed fd 3"
+        );
+        Output::flush();
+        EXIT_CODE_OF_LOST_CHANNEL
+    } else {
+        0
+    };
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm.exit_handler.exit_code.set(0);
+    vm.exit_handler.exit_code.set(exit_code);
     vm.exit_handler
         .skip_exit_listeners
         .set(test_command::skip_exit_listeners(wloop.reporter));

@@ -1,8 +1,24 @@
-import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { open } from "fs/promises";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
+import { unsupported as withoutCompiler } from "../../aot/harness/compiler";
+import { endChildren, longLimit, spawn } from "../children";
+
+afterAll(endChildren);
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -1281,10 +1297,124 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("--parallel: the run ends", () => {
+  const lostChannel = "error: test worker lost its IPC channel, something closed fd 3\n";
+  const file = (name: string, body = "", from = "bun:test") =>
+    `import {test} from "${from}"; import {closeSync, openSync, writeSync} from "fs"; test("${name}", () => { ${body} });`;
+  async function run(a: string, b: string, flags: string[] = [], env = {}) {
+    using dir = tempDir("parallel-fd3", { "a.test.js": a, "b.test.js": b });
+    await using proc = spawn({
+      // One worker at a time, so the order is a, b.
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...flags],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test.each([
+    ["closes fd 3", `closeSync(3);`, ""],
+    ["closes fd 3, and the number is handed out again", `closeSync(3); while (openSync(import.meta.path) !== 3);`, ""],
+    [
+      // On Linux the number goes to the pidfd, and the result of the first test is sent in between.
+      "closes fd 3, and the next one waits for a child process",
+      `closeSync(3);
+      globalThis.child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1e6)"], {stdio: ["ignore", "ignore", "ignore"]});`,
+      `test("waits without a limit", async () => { child.kill(); await child.exited; }, 0);`,
+    ],
+  ])("when a test %s", async (_, body, nextTest) => {
+    const { stderr, exitCode } = await run(file("a", body) + nextTest, file("b"));
+    // Windows can reap a worker ahead of its last output.
+    if (!isWindows) expect(stderr).toContain(lostChannel);
+    expect(stderr).toContain("a.test.js (worker crashed: exit code 74)");
+    expect(stderr).toContain("(pass) b");
+    expect(stderr).toContain("\n 1 pass\n 1 fail\n");
+    expect(exitCode).toBe(1);
+  });
+
+  // The first timer runs after the file, and returns once the next command is there. The next turn of the loop reads the command and
+  // then runs the second timer.
+  const onceTheNextCommandIsRead = (code: string) => `
+    const libc = require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, {
+      poll: {args: ["ptr", "u64", "i32"], returns: "i32"},
+    });
+    process.kill(process.ppid, "SIGSTOP");
+    setTimeout(() => {
+      process.kill(process.ppid, "SIGCONT");
+      const POLLIN = 1;
+      while (libc.symbols.poll(new Int32Array([3, POLLIN]), 1, -1) < 1);
+      libc.close();
+      setTimeout(() => { ${code} });
+      Bun.sleepSync(2);
+    });`;
+
+  test.skipIf(isWindows)("without running a file whose worker has lost fd 3 before it begins", async () => {
+    const a = file("a", onceTheNextCommandIsRead(`closeSync(3);`));
+    const { stderr, exitCode } = await run(a, file("b", `console.log("b runs");`), ["--no-isolate"]);
+    expect(stderr).toContain(lostChannel);
+    expect(stderr).toContain("b.test.js (worker crashed: exit code 74)");
+    expect(stderr).not.toContain("b runs");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows)("when fd 3 is closed while a worker still sends its last report", async () => {
+    // The report repeats this line, which the socket has no room for as long as the coordinator is stopped.
+    const a = `import {test} from "bun:test"; test.todo(Buffer.alloc(4 << 20, "t").toString());`;
+    const closesDuringTheReport = onceTheNextCommandIsRead(`
+      process.kill(process.ppid, "SIGSTOP");
+      setTimeout(() => { closeSync(3); process.kill(process.ppid, "SIGCONT"); });`);
+    const { stderr, exitCode } = await run(a, file("b", closesDuringTheReport), ["--no-isolate"]);
+    expect(stderr.slice(-300)).toContain(lostChannel);
+    expect(stderr.slice(-300)).toContain("\n 1 pass\n 1 todo\n 0 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows)("and says why, when an exit listener kills a worker that has lost fd 3", async () => {
+    const body = `process.on("exit", () => process.kill(process.pid, "SIGKILL")); closeSync(3);`;
+    // Exit listeners run where node:test is used.
+    const { stderr, exitCode } = await run(file("a", body, "node:test"), file("b"), ["--no-isolate"]);
+    expect(stderr).toContain(lostChannel);
+    expect(stderr).toContain("a.test.js (worker crashed: SIGKILL)");
+    expect(exitCode).toBe(1);
+  });
+
+  // On Windows the bytes break the framing of libuv, like any other garbage.
+  test.skipIf(isWindows)("when a test writes a Ready frame to fd 3", async () => {
+    const { stderr, exitCode } = await run(file("a", `writeSync(3, Buffer.alloc(5));`), file("b"));
+    expect(stderr).toContain("\n 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // These two fail if the coordinator kills a worker whose channel has ended.
+  test("with the exit code of a worker whose teardown closes fd 3", async () => {
+    const env = { BUN_DESTRUCT_VM_ON_EXIT: "1" };
+    const { stderr, exitCode } = await run(file("a", `process.exit(7);`), file("b"), [], env);
+    expect(stderr).toContain("a.test.js (worker crashed: exit code 7)");
+    expect(exitCode).toBe(1);
+  });
+
+  test("with the crash of a worker that closes fd 3 while it shuts down", async () => {
+    // Nothing shows that the coordinator has seen the end of the channel, so it gets a moment.
+    const crashesAtExit = `process.on("exit", () => {
+      closeSync(3);
+      Bun.sleepSync(20);
+      require("bun:internal-for-testing").crash_handler.fastfail();
+    });`;
+    const { stderr, exitCode } = await run(file("a"), file("b", crashesAtExit, "node:test"), ["--no-isolate"]);
+    const status = isWindows ? "exit code 0xC0000409" : "SIGABRT";
+    expect(stderr).toContain(`crashed with ${status} while it was not running a test file`);
+    expect(stderr).toContain("\n 2 pass\n 0 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
+  });
+});
+
 // The coordinator is stopped meanwhile, so it finds a worker's last frame and its end together.
 describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", () => {
-  const states = (pid: number) =>
-    readdirSync(`/proc/${pid}/task`).map(tid => {
+  function states(pid: number) {
+    const listed = readdirSync(`/proc/${pid}/task`).map(tid => {
       try {
         const stat = readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
         return stat[stat.lastIndexOf(")") + 2];
@@ -1292,15 +1422,63 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
         return "X";
       }
     });
-  async function untilEveryThreadIs(state: string, pid: number) {
+    // A thread that ends while the directory is read can hide the ones behind it.
+    const count = Number(/^Threads:\t(\d+)$/m.exec(readFileSync(`/proc/${pid}/status`, "utf8"))![1]);
+    return listed.length < count ? [...listed, "?"] : listed;
+  }
+  async function until<T>(find: () => T | undefined | false, whatIsSeen: () => string) {
     const deadline = performance.now() + 30_000;
-    while (states(pid).some(other => other !== state)) {
-      if (performance.now() > deadline) throw new Error(`threads of ${pid}: ${states(pid)}`);
+    let found: T | undefined | false;
+    while (!(found = find())) {
+      if (performance.now() > deadline) throw new Error(whatIsSeen());
       await Bun.sleep(1);
     }
+    return found;
   }
+  const untilEveryThreadIs = (state: string, pid: number) =>
+    until(
+      () => states(pid).every(other => other === state),
+      () => `threads of ${pid}: ${states(pid)}`,
+    );
+  async function whileStopped(proc: Bun.Subprocess, meanwhile: () => Promise<void>) {
+    proc.kill("SIGSTOP");
+    try {
+      await untilEveryThreadIs("T", proc.pid);
+      await meanwhile();
+    } finally {
+      proc.kill("SIGCONT");
+    }
+  }
+  /** All of `stream`. Calls `then` once, as soon as `printsPid` matches. */
+  async function readAnd(stream: ReadableStream<Uint8Array>, printsPid: RegExp, then: (pid: number) => Promise<void>) {
+    let text = "";
+    let done: Promise<void> | undefined;
+    for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
+      text += chunk;
+      const pid = Number(printsPid.exec(text)?.[1]);
+      if (pid) done ??= then(pid);
+    }
+    await done;
+    return text;
+  }
+  const workersOf = (pid: number) =>
+    readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").split(" ").filter(Boolean).map(Number);
   const exitAfterTheFile = `setTimeout(() => process.exit(0));`;
   const exitAfterReady = `writeSync(3, Buffer.alloc(5)); process.exit(0);`;
+  const files = (exit: string) => ({
+    "a.test.js": `import {test} from "bun:test"; import {closeSync, existsSync, writeSync} from "fs";
+      test("pid " + process.pid, () => {});
+      test("last", () => { while (!existsSync("go")) Bun.sleepSync(1); ${exit} });`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+  });
+  const start = (dir: string, flags: string[], env = {}) =>
+    spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--no-isolate", "--timeout=60000", ...flags],
+      env: { ...bunEnv, ...env },
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
 
   test.concurrent.each([
     ["after its file", exitAfterTheFile, {}, "3 pass\n 0 fail", 0],
@@ -1311,44 +1489,92 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
       "3 pass\n 0 fail",
       0,
     ],
+    ["after its file, because a timer closed fd 3", `setTimeout(closeSync, 0, 3);`, {}, "3 pass\n 0 fail\n 1 error", 1],
+    [
+      // The loop goes to sleep behind an immediate, until a timer of the runtime wakes it.
+      "after its file, because an immediate closed fd 3",
+      `setTimeout(setImmediate, 0, closeSync, 3);`,
+      {},
+      "3 pass\n 0 fail\n 1 error",
+      1,
+    ],
     ["after a Ready frame", exitAfterReady, {}, "1 fail", 1],
   ])("%s", async (_, exit, env, summary, expectedExitCode) => {
-    using dir = tempDir("parallel-exited-worker", {
-      "a.test.js": `import {test} from "bun:test"; import {existsSync, writeSync} from "fs";
-        test("pid " + process.pid, () => {});
-        test("last", () => { while (!existsSync("go")) Bun.sleepSync(1); ${exit} });`,
-      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", "--no-isolate"],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "ignore",
-    });
-    let stderr = "";
-    let resumed: Promise<void> | undefined;
-    for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
-      stderr += chunk;
-      const worker = Number(/\(pass\) pid (\d+)/.exec(stderr)?.[1]);
-      if (!worker) continue;
-      resumed ??= (async () => {
-        proc.kill("SIGSTOP");
-        try {
-          await untilEveryThreadIs("T", proc.pid);
-          writeFileSync(path.join(String(dir), "go"), "");
-          await untilEveryThreadIs("Z", worker);
-        } finally {
-          proc.kill("SIGCONT");
-        }
-      })();
-    }
-    await resumed;
+    using dir = tempDir("parallel-exited-worker", files(exit));
+    await using proc = start(String(dir), ["--parallel-delay=1000000"], env);
+    const stderr = await readAnd(proc.stderr, /\(pass\) pid (\d+)/, worker =>
+      whileStopped(proc, async () => {
+        writeFileSync(path.join(String(dir), "go"), "");
+        await untilEveryThreadIs("Z", worker);
+      }),
+    );
     expect(stderr).not.toContain("b.test.js (worker crashed");
     expect(stderr).toContain("(pass) b");
     expect(stderr).toContain(summary);
     expect(await proc.exited).toBe(expectedExitCode);
   });
+
+  test.concurrent("after its first Ready frame", async () => {
+    using dir = tempDir("parallel-exited-worker", files(`process.exit(0);`));
+    await using proc = start(String(dir), ["--parallel-delay=1000000"]);
+    const stderr = await readAnd(proc.stderr, /\(pass\) pid (\d+)/, async firstWorker => {
+      // The next worker opens this as it starts, and gets no further until there is a writer.
+      const config = path.join(String(dir), "bunfig.toml");
+      mkfifo(config);
+      writeFileSync(path.join(String(dir), "go"), "");
+      const worker = await until(
+        () => workersOf(proc.pid).find(pid => pid !== firstWorker),
+        () => `workers: ${workersOf(proc.pid)}`,
+      );
+      await whileStopped(proc, async () => {
+        await (await open(config, "w")).close();
+        unlinkSync(config);
+        // Asleep: it has sent the frame and waits for a file.
+        await untilEveryThreadIs("S", worker);
+        process.kill(worker, "SIGKILL");
+        await untilEveryThreadIs("Z", worker);
+      });
+    });
+    expect(stderr).toContain("exited during startup (SIGKILL), retrying");
+    expect(stderr).toContain("(pass) b");
+    expect(stderr).toContain("\n 1 pass\n 1 fail\n");
+    expect(await proc.exited).toBe(1);
+  });
+
+  test.concurrent.skipIf(!!withoutCompiler)(
+    "while it waited for a heavy file to end, and the next one gets one file at a time",
+    async () => {
+      // There is no room for these beside the largest file, and room for all of them once it has ended. None ends before two have
+      // started, so one is left when the second worker is ready.
+      const heavy = ["h1.test.js", "h2.test.js", "h3.test.js", "h4.test.js"];
+      const forEach = <T>(ofLargest: T, ofLight: T, ofHeavy: T) => ({
+        "largest.test.js": ofLargest,
+        "light.test.js": ofLight,
+        ...Object.fromEntries(heavy.map(name => [name, ofHeavy])),
+      });
+      using dir = tempDir("parallel-exited-waiting-worker", {
+        ...forEach(
+          files(exitAfterTheFile)["a.test.js"],
+          // It has no test, so this is printed when the file is done, which is when its worker begins to wait.
+          `console.log("waits " + process.pid);`,
+          `import {test} from "bun:test"; import {appendFileSync, statSync} from "fs";
+            test("heavy", () => { appendFileSync("started", "."); while (statSync("started").size < 2) Bun.sleepSync(1); });`,
+        ),
+        "timings.json": JSON.stringify({ version: 1, files: forEach(2, 1, 1), memory: forEach(5000, 0, 1100) }),
+      });
+      await using proc = start(String(dir), ["--aot", "--timings=timings.json", "--parallel-delay=0"]);
+      const stderr = await readAnd(proc.stderr, /waits (\d+)\n/, waitingWorker =>
+        whileStopped(proc, async () => {
+          process.kill(waitingWorker, "SIGKILL");
+          writeFileSync(path.join(String(dir), "go"), "");
+          for (const worker of workersOf(proc.pid)) await untilEveryThreadIs("Z", worker);
+        }),
+      );
+      expect(stderr).toContain("\n 6 pass\n 0 fail\nRan 6 tests across 6 files.");
+      expect(await proc.exited).toBe(0);
+    },
+    longLimit,
+  );
 });
 
 // About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its

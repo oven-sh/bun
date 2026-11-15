@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
-use super::worker::{SpawnContext, Worker};
+use super::worker::{EXIT_CODE_OF_LOST_CHANNEL, SpawnContext, Worker};
 use crate::cli::run_compiled::log_first_time_in_test_run;
 use crate::test_command::CommandLineReporter;
 
@@ -638,6 +638,10 @@ impl<'a> Coordinator<'a> {
             frame::Kind::Ready => {
                 log_first_time_in_test_run("the first worker is ready");
                 let w = &mut self.workers[slot];
+                if w.reached_ready {
+                    // fd 3 is writable from test JS, and five zero bytes are this frame.
+                    return;
+                }
                 if !w.can_take_work() {
                     // Left as an exit during startup, which is what bounds the respawns.
                     return;
@@ -898,6 +902,9 @@ impl<'a> Coordinator<'a> {
             }
         } else if is_panic_status(status) && self.stop_reason != Some(StopReason::WorkerPanicked) {
             self.abort_on_idle_worker_panic(status);
+        } else if matches!(status, SpawnStatus::Exited(e) if e.code == EXIT_CODE_OF_LOST_CHANNEL) {
+            // No file to blame, but the coverage of the files that it ran is gone.
+            self.reporter.jest.unhandled_errors_between_tests += 1;
         }
 
         let w = &mut self.workers[slot];
@@ -942,6 +949,7 @@ impl<'a> Coordinator<'a> {
             let w = &mut self.workers[slot];
             w.reset_pipes();
             w.reached_ready = false;
+            w.waits_for_heavy_file_to_end = false;
             match w.start(&SpawnContext {
                 vm: self.vm,
                 cwd: self.cwd,

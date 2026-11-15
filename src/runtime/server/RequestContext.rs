@@ -2871,7 +2871,7 @@ where
             return false;
         }
         let server = self.server();
-        if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
+        if !DEBUG_MODE || !resp_writable || !server.has_dev_server() {
             server.vm().run_error_handler(err, None);
             return false;
         }

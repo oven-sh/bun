@@ -277,13 +277,9 @@ impl DevServer {
         Ok(())
     }
 
-    pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+    /// Returns the requests that waited for the plugins. Failing them runs JS, so that is left to the caller.
+    pub(crate) fn on_plugins_rejected(&mut self) -> deferred_request::FailOnDrop {
         self.plugin_state = PluginState::Err;
-        // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
-        let _pending = self.server.map(PendingRequest::new);
-        while let Some(item) = self.next_bundle.requests.pop_first() {
-            item.take_handler().fail();
-        }
         // Reset these routes so their next request gets the plugin error.
         for &route_bundle_index in self.next_bundle.route_queue.keys() {
             self.route_bundles[route_bundle_index.get() as usize].server_state =
@@ -291,7 +287,10 @@ impl DevServer {
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
         // TODO: allow recovery from this state
-        Ok(())
+        deferred_request::FailOnDrop {
+            requests: ::core::mem::take(&mut self.next_bundle.requests),
+            _pending: self.server.map(PendingRequest::new),
+        }
     }
 }
 

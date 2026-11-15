@@ -620,7 +620,7 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -666,7 +666,7 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -1026,6 +1026,7 @@ impl Listener {
                     let tls = if let Some(prev) = prev_maybe_tls {
                         let prev = prev.ref_guard();
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1062,7 +1063,7 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             latest_session: JsCell::new(None),
                         })
@@ -1117,6 +1118,7 @@ impl Listener {
                     let tcp = if let Some(prev) = prev_maybe_tcp {
                         let prev = prev.ref_guard();
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1148,7 +1150,7 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             latest_session: JsCell::new(None),
                         })
@@ -1407,7 +1409,7 @@ fn connect_finish<const IS_SSL: bool>(
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         })

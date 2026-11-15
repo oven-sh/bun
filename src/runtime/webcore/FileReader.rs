@@ -674,7 +674,6 @@ impl FileReader {
             .and_then(|view| view.as_array_buffer(global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
-        let borrowed;
         let (result, ret) = if chunk.is_empty() {
             let buffered = self.buffered.replace(Vec::new());
             let result = if buffered.is_empty() {
@@ -709,8 +708,7 @@ impl FileReader {
                     streams::Result::Owned(owned)
                 }
             } else {
-                borrowed = chunk;
-                streams::Result::Temporary(&borrowed)
+                streams::Result::Temporary(&chunk)
             };
             (result, !was_done)
         };

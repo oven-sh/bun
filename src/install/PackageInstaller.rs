@@ -1503,7 +1503,9 @@ impl<'a> PackageInstaller<'a> {
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
         let len = self.lockfile().packages.len();
         if self.successfully_installed.bit_length() < len {
-            (self.successfully_installed.resize(len, false)).unwrap_or_oom();
+            self.successfully_installed
+                .resize(len, false)
+                .unwrap_or_oom();
         }
     }
 

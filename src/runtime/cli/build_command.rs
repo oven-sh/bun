@@ -644,7 +644,7 @@ impl BuildCommand {
                 this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                let result = this_transpiler.transform(log, ctx.args.clone())?;
+                let result = this_transpiler.transform(ctx.args.clone())?;
 
                 if log.has_errors() {
                     log.print(Output::error_writer())?;

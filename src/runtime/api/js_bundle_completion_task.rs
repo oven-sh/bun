@@ -669,7 +669,7 @@ impl JSBundleCompletionTask {
                 ..
             } => {
                 if deliver {
-                    route.on_complete(self.result, self.log, *started_at_ns);
+                    route.on_complete(self.result, &self.log, *started_at_ns);
                 } else {
                     route.on_build_abandoned();
                 }

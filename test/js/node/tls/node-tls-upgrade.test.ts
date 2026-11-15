@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -534,5 +534,49 @@ describe.concurrent("the write() of the Duplex under a TLS socket", () => {
       };
       socket = tls.connect({ socket: duplex, session: "session" });`);
     expect(result).toEqual({ stdout: "0 0\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent("one half of an upgraded socket connects again", () => {
+  test.each([
+    ["raw", "secure"],
+    ["secure", "raw"],
+  ])("the handle of the %s half closes the %s half and speaks TLS", async (reused, other) => {
+    const result = await run(`
+      const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).pipe(peer));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+      const handlers = name => ({ data() {}, handshake() {}, close: () => console.log(name, "closed") });
+      const plain = await Bun.connect({ hostname: "127.0.0.1", port, socket: handlers("raw") });
+      const [raw, secure] = plain.upgradeTLS({ tls: { rejectUnauthorized: false }, socket: handlers("secure") });
+
+      const socket = new tls.TLSSocket(undefined, { rejectUnauthorized: false });
+      socket._handle = ${reused};
+      socket.connect(port, "127.0.0.1");
+      socket.on("secureConnect", () => socket.write("hello"));
+      socket.on("data", data => {
+        console.log(String(data), ${other}.write("x"));
+        socket.destroy();
+        server.close();
+      });`);
+    expect(result).toEqual({ stdout: `${other} closed\nhello -1\n`, stderr: "", exitCode: 0 });
+  });
+
+  test("a TLS socket that wraps a socket while it dials closes that socket", async () => {
+    const result = await run(`
+      const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).resume());
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address();
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+          socket.once("connectionAttempt", () => socket.connect({ socket: raw }));
+          socket.once("secureConnect", () => {
+            raw.on("error", () => {}).write("x", error => console.log(error.code));
+            socket.destroy();
+            server.close();
+          });
+        });
+      });`);
+    expect(result).toEqual({ stdout: isWindows ? "EPIPE\n" : "EBADF\n", stderr: "", exitCode: 0 });
   });
 });

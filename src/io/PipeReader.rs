@@ -113,17 +113,8 @@ impl BufferedReader {
         self.start(ev, fd, poll)
     }
 
-    pub fn buffer(&mut self) -> &mut Vec<u8> {
-        self.buffer.get_mut()
-    }
-
     pub fn take_buffer(&self) -> Vec<u8> {
         self.buffer.take()
-    }
-
-    pub fn final_buffer(&mut self) -> &mut Vec<u8> {
-        self.read_memfd();
-        self.buffer()
     }
 
     pub fn take_final_buffer(&self) -> Vec<u8> {

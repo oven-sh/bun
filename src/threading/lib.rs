@@ -18,6 +18,7 @@ pub mod work_pool;
 
 pub mod guarded;
 pub mod io_thread_pool;
+pub mod scoped_tasks;
 pub mod signal_ring;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
@@ -36,10 +37,10 @@ pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
-pub use unbounded_queue::{Link, Linked, UnboundedQueue};
+pub use unbounded_queue::{Link, Linked, OwnedQueue, UnboundedQueue};
 pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;
-pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
+pub use work_pool::{IntrusiveWorkTask, OwnedTask, OwnedTaskIn, WorkPool};
 
 /// Returns a non-zero OS thread id.
 /// Used by `Mutex` debug deadlock detection and `Condition` (Windows).

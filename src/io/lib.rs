@@ -1700,10 +1700,7 @@ pub mod closer {
             debug_assert!(fd.is_valid());
             WorkPool::schedule_owned(Box::new(Closer {
                 fd,
-                task: WorkPoolTask {
-                    node: Default::default(),
-                    callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
-                },
+                task: WorkPoolTask::default(),
             }));
         }
     }

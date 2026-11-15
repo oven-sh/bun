@@ -16,6 +16,10 @@ pub enum Error {
     SecurityScannerConfigured,
     #[error("UnreadableConfig")]
     UnreadableConfig,
+    #[error("NotMainThread")]
+    NotMainThread,
+    #[error("PackageManagerTaken")]
+    PackageManagerTaken,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -38,6 +42,8 @@ impl Error {
             Self::ParseErrorAlreadyLogged => "ParseErrorAlreadyLogged",
             Self::SecurityScannerConfigured => "SecurityScannerConfigured",
             Self::UnreadableConfig => "UnreadableConfig",
+            Self::NotMainThread => "NotMainThread",
+            Self::PackageManagerTaken => "PackageManagerTaken",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

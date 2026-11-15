@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -9,7 +9,8 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
+use bun_threading::scoped_tasks::{ScopedTasks, TaskRunner};
+use bun_threading::thread_pool;
 
 use bun_sys::{FdDirExt as _, FdExt as _};
 
@@ -24,22 +25,22 @@ use crate::bin_real;
 use crate::bun_fs;
 use crate::bun_progress::NodeId;
 use crate::cache_publish::{RenameError, RenameRetry};
-use crate::lockfile::package;
+use crate::lockfile::{TrustedDependenciesSet, package};
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_install::{
     BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
     rename_staging_into_place,
 };
 use crate::package_manager_real::directories;
-use crate::package_manager_real::package_manager_options::{Do, Enable};
-use crate::package_manager_real::{INBOX, THREAD_POOL};
+use crate::package_manager_real::package_manager_options::Do;
+use crate::package_manager_real::{INBOX, InstallFields, Options, THREAD_POOL};
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::prune::LinkedNodeModules;
 use crate::resolution;
 use crate::{
-    self as install, Lockfile, PackageID, PackageManager, Resolution, TaskCallbackContext,
-    TruncatedPackageNameHash, bin, invalid_dependency_id,
+    self as install, Lockfile, PackageID, PackageManager, PackageNameAndVersionHash, Resolution,
+    TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
 
 /// The enum lives at module level in `crate::resolution`.
@@ -79,33 +80,28 @@ fn name_too_long(_: paths::path_options::Error) -> sys::Error {
     sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::symlink)
 }
 
-pub struct Installer<'a> {
-    /// BACKREF, as `manager`.
-    pub lockfile: *mut Lockfile,
+/// Read by the tasks on the thread pool and by the main thread.
+pub(crate) struct SharedInstaller<'a> {
+    pub(crate) lockfile: &'a Lockfile,
+    pub(crate) options: &'a Options,
+    pub(crate) postinstall_optimizer: &'a postinstall_optimizer::List,
+    pub(crate) patched_dependencies_to_remove: &'a ArrayHashMap<PackageNameAndVersionHash, ()>,
+    /// Empty without `--global`.
+    pub(crate) update_request_package_ids: Vec<PackageID>,
 
-    pub(crate) summary: InstallSummary,
-    pub(crate) installed: Bitset,
     pub(crate) is_new_bun_modules: bool,
     /// Set when the project's root `node_modules` is a symlink.
     pub(crate) linked: Option<LinkedNodeModules>,
     /// Taken by the first task that links a project-local package.
     pub(crate) staging_lock: std::sync::OnceLock<StagingLock>,
 
-    /// BACKREF, never null; not `&'a mut`: the tasks on the thread pool all read through it.
-    pub(crate) manager: *mut PackageManager,
-
     pub(crate) store: &'a Store,
-
-    pub(crate) task_queue: UnboundedQueue<Task>, // intrusive via .next
-    pub(crate) tasks: Box<[Task]>,
-    /// Counts the tasks on the thread pool. `start_task` adds one, and `Task::task` removes itself
-    /// when it's done.
-    pub(crate) tasks_in_flight: &'a WaitGroup,
+    /// Indexed by entry id.
+    pub(crate) entry_states: Box<[EntryState]>,
 
     /// An `InstallMethod`.
     pub(crate) supported_backend: AtomicU8,
 
-    /// Built before tasks spawn and only read concurrently afterwards.
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
     /// `<cache_dir>/links`: the global virtual store; `node_modules/.bun/<storepath>` links to it.
@@ -113,114 +109,111 @@ pub struct Installer<'a> {
 
     /// An entry is built in `<cache>/links/<storepath>-<hash>.tmp-<this>/`, renamed when complete.
     pub(crate) global_store_tmp_suffix: u64,
+}
 
-    /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
+/// What changes about a store entry while the tasks run.
+#[derive(Default)]
+pub(crate) struct EntryState {
+    /// A `Step`.
+    pub(crate) step: AtomicU32,
+    /// The entry exists from an earlier install. Set before its task starts.
+    was_installed: AtomicBool,
+}
+
+/// Main thread only.
+pub struct Installer<'a> {
+    pub(crate) shared: &'a SharedInstaller<'a>,
+    pub(crate) manager: InstallFields<'a>,
+    pub(crate) added_trusted_dependencies: &'a TrustedDependenciesSet,
+
+    pub(crate) summary: InstallSummary,
+    pub(crate) installed: Bitset,
+
+    pub(crate) tasks: ScopedTasks<'a, Task>,
+
+    /// `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
 
-    /// Main-thread only: see `release_members`.
+    /// See `release_members`.
     pub(crate) held_members: Option<Vec<StoreEntryId>>,
 
-    /// Main-thread only: see `leave_out_entry`.
+    /// See `leave_out_entry`.
     pub(crate) left_out_entries: Vec<StoreEntryId>,
 
-    /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
+    /// Entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
 }
 
-/// A task on the pool reads `self` and the store through `Task::installer`.
-impl Drop for Installer<'_> {
-    fn drop(&mut self) {
-        self.tasks_in_flight.wait();
-    }
-}
-
-impl<'a> Installer<'a> {
-    // BACKREF accessors — `manager` points outside `Self`; see field doc.
-    #[inline]
-    pub(crate) fn manager(&self) -> &'a PackageManager {
-        // SAFETY: BACKREF — never null; pointee outlives `'a`.
-        unsafe { &*self.manager }
-    }
-    #[inline]
-    pub(crate) fn manager_mut(&mut self) -> &'a mut PackageManager {
-        // SAFETY: BACKREF — never null; disjoint from `*self`. Main thread only.
-        unsafe { &mut *self.manager }
-    }
-    #[inline]
-    pub fn lockfile(&self) -> &'a Lockfile {
-        // SAFETY: BACKREF — never null; pointee outlives `'a`. Never aliased by
-        // a *whole-struct* `&mut Lockfile` while a task runs.
-        unsafe { &*self.lockfile }
-    }
-
+impl<'a> SharedInstaller<'a> {
     fn resolution(&self, entry_id: StoreEntryId) -> &'a Resolution {
-        &self.lockfile().packages.items_resolution()[self.store.ids(entry_id).pkg_id as usize]
+        &self.lockfile.packages.items_resolution()[self.store.ids(entry_id).pkg_id as usize]
     }
 
     fn pkg_name(&self, entry_id: StoreEntryId) -> &'a [u8] {
         let pkg_id = self.store.ids(entry_id).pkg_id;
-        self.lockfile()
-            .str(&self.lockfile().packages.items_name()[pkg_id as usize])
+        self.lockfile
+            .str(&self.lockfile.packages.items_name()[pkg_id as usize])
+    }
+
+    pub(crate) fn step(&self, entry_id: StoreEntryId) -> &AtomicU32 {
+        &self.entry_states[entry_id.get() as usize].step
     }
 
     /// Only called on the main thread while the entry's task isn't running, so relaxed ordering is
     /// enough.
     pub(crate) fn set_step(&self, entry_id: StoreEntryId, step: Step) {
-        self.store.entries.items_step()[entry_id.get() as usize]
-            .store(step as u32, Ordering::Relaxed);
+        self.step(entry_id).store(step as u32, Ordering::Relaxed);
     }
+}
 
+impl Installer<'_> {
     /// Called from main thread
     pub(crate) fn start_task(&mut self, entry_id: StoreEntryId) {
-        let task = &mut self.tasks[entry_id.get() as usize];
-        debug_assert!(matches!(
-            task.result,
-            // first time starting the task
-            Result::None
-            // the task returned to the main thread because it was blocked
-            | Result::Blocked
-            // the task returned to the main thread to spawn some scripts
-            | Result::RunScripts
-        ));
-
-        task.result = Result::None;
-        self.tasks_in_flight.add_one();
-        THREAD_POOL.schedule(thread_pool::Batch::from(&raw mut task.task.task));
+        self.tasks.schedule(entry_id.get() as usize);
     }
 
     /// Called from main thread, for an existing project-local store entry.
     pub(crate) fn start_relink_task(&mut self, entry_id: StoreEntryId) {
         let newly_trusted = self.is_newly_trusted(entry_id);
-        let task = &mut self.tasks[entry_id.get() as usize];
-        task.relink = Relink::Pending;
-        task.newly_trusted = newly_trusted;
-        self.set_step(entry_id, Step::SymlinkDependencies);
+        self.mark_installed(entry_id, Relink::Pending).newly_trusted = newly_trusted;
+        self.shared.set_step(entry_id, Step::SymlinkDependencies);
         self.start_task(entry_id);
+    }
+
+    fn mark_installed(&mut self, entry_id: StoreEntryId, relink: Relink) -> &mut Task {
+        self.shared.entry_states[entry_id.get() as usize]
+            .was_installed
+            .store(true, Ordering::Relaxed);
+        let task = &mut self.tasks[entry_id.get() as usize];
+        task.relink = relink;
+        task
     }
 
     /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to
     /// `target` yet. Call this before the dependents' tasks start, because they create those links.
     pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
-        let linked = !self.manager().options.enable.force_install()
-            && self.has_link_from_dependent(entry_id, target);
+        let linked = !self.shared.options.enable.force_install()
+            && self.shared.has_link_from_dependent(entry_id, target);
         if linked && !self.is_newly_trusted(entry_id) {
-            self.set_step(entry_id, Step::Done);
+            self.shared.set_step(entry_id, Step::Done);
             self.on_task_complete(entry_id, CompleteState::Skipped);
             return;
         }
         if linked {
-            self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
+            self.mark_installed(entry_id, Relink::Unchanged);
         }
-        self.set_step(entry_id, Step::RunPreinstall);
+        self.shared.set_step(entry_id, Step::RunPreinstall);
         self.start_task(entry_id);
     }
+}
 
+impl<'a> SharedInstaller<'a> {
     fn has_link_from_dependent(&self, entry_id: StoreEntryId, target: &ZStr) -> bool {
         let Ok(target) = sys::stat(target) else {
             return false;
         };
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
         let entry_dependencies = self.store.entries.items_dependencies();
         let dependents = &self.store.entries.items_parents()[entry_id.get() as usize];
         dependents.iter().any(|&dependent| {
@@ -242,23 +235,26 @@ impl<'a> Installer<'a> {
                 })
         })
     }
+}
 
+impl Installer<'_> {
     /// Returns true if an earlier install blocked the entry's scripts and the package may be
     /// trusted now. `Step::RunPreinstall` checks the trust and runs them.
     fn is_newly_trusted(&self, entry_id: StoreEntryId) -> bool {
-        let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
+        let store::Ids { dep_id, pkg_id } = self.shared.store.ids(entry_id);
         if self
+            .shared
             .trusted_dependencies_from_update_requests
             .contains(&pkg_id)
         {
             return true;
         }
 
-        let added = &self.manager().summary.added_trusted_dependencies;
+        let added = self.added_trusted_dependencies;
         if added.count() == 0 || dep_id == invalid_dependency_id {
             return false;
         }
-        let lockfile = self.lockfile();
+        let lockfile = self.shared.lockfile;
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
         let pkgs = &lockfile.packages;
         let (name, name_hash) = pkgs.items_resolution()[pkg_id as usize].trusted_name(
@@ -278,7 +274,7 @@ impl<'a> Installer<'a> {
         task_id: crate::package_manager_task::Id,
         data: &install::ExtractData,
     ) {
-        let Some(removed) = self.manager_mut().task_queue.remove(&task_id) else {
+        let Some(removed) = self.manager.state.task_queue.remove(&task_id) else {
             return;
         };
         for install_ctx in removed.as_slice() {
@@ -286,12 +282,20 @@ impl<'a> Installer<'a> {
                 continue;
             };
 
-            let pkg_id = self.store.ids(entry_id).pkg_id;
-            if data.integrity.tag.is_supported() {
-                self.record_extracted_integrity(pkg_id, &data.integrity);
+            let pkg_id = self.shared.store.ids(entry_id).pkg_id;
+            self.manager
+                .record_extracted_integrity(pkg_id, &data.integrity);
+            let locked = &self.shared.lockfile.packages.items_meta()[pkg_id as usize].integrity;
+            let integrity = self.manager.integrity(pkg_id);
+            if self.shared.resolution(entry_id).tag.is_tarball()
+                && !locked.tag.is_supported()
+                && integrity.tag.is_supported()
+            {
+                self.tasks[entry_id.get() as usize].integrity = Some(Box::new(*integrity));
             }
 
             let patched = self
+                .shared
                 .package_patch_info(pkg_id)
                 .and_then(|patch_info| self.apply_package_patch(entry_id, &patch_info));
             match patched {
@@ -299,34 +303,6 @@ impl<'a> Installer<'a> {
                 Err(err) => self.on_task_fail(entry_id, &err),
             }
         }
-    }
-
-    /// Called on the main thread before the package's tasks start, because they use the integrity
-    /// to name a tarball's cache entry.
-    fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
-        let pkgs = &self.lockfile().packages;
-        assert!((pkg_id as usize) < pkgs.len());
-        // SAFETY: in bounds; raw column pointer, so no `&mut Lockfile` is formed. Only this
-        // package's tasks read its `integrity` and none has started; other tasks' `&[Meta]`
-        // borrows never touch these bytes.
-        let recorded = unsafe {
-            core::ptr::addr_of_mut!(
-                (*pkgs
-                    .items_raw::<"meta", package::Meta>()
-                    .add(pkg_id as usize))
-                .integrity
-            )
-        };
-        // SAFETY: see above.
-        if unsafe { (*recorded).tag.is_supported() } {
-            return;
-        }
-        // SAFETY: see above.
-        unsafe { recorded.write(*integrity) };
-        self.manager_mut()
-            .options
-            .enable
-            .set(Enable::FORCE_SAVE_LOCKFILE, true);
     }
 
     /// Called from main thread when a tarball download or extraction fails.
@@ -341,9 +317,9 @@ impl<'a> Installer<'a> {
         err: crate::Error,
         url: &[u8],
     ) {
-        let Some(callbacks) = self.manager_mut().task_queue.remove(&task_id) else {
+        let Some(callbacks) = self.manager.state.task_queue.remove(&task_id) else {
             // No waiting entry — still surface the error so it isn't lost.
-            let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+            let string_buf = self.shared.lockfile.buffers.string_bytes.as_slice();
             Output::err_generic(
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                 (
@@ -370,7 +346,7 @@ impl<'a> Installer<'a> {
         &mut self,
         task_id: crate::package_manager_task::Id,
     ) {
-        let Some(callbacks) = self.manager_mut().task_queue.remove(&task_id) else {
+        let Some(callbacks) = self.manager.state.task_queue.remove(&task_id) else {
             return;
         };
         for install_ctx in callbacks.as_slice() {
@@ -382,17 +358,17 @@ impl<'a> Installer<'a> {
 
     /// Main thread. Reported by whoever saw the download fail, or by `report_offline_misses`.
     pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId) {
-        let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
-        let offline = self.manager().options.offline
+        let store::Ids { dep_id, pkg_id } = self.shared.store.ids(entry_id);
+        let offline = self.shared.options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
         if offline {
             self.summary.offline_misses.push(pkg_id);
         }
-        if !self.manager().is_package_required(dep_id, pkg_id) {
+        if !self.manager.is_package_required(dep_id, pkg_id) {
             self.leave_out_entry(entry_id);
             return;
         }
-        self.set_step(entry_id, Step::Done);
+        self.shared.set_step(entry_id, Step::Done);
         self.on_task_complete(
             entry_id,
             if offline {
@@ -412,8 +388,8 @@ impl<'a> Installer<'a> {
             return Ok(());
         };
         let mut patch_task = install::PatchTask::new_apply_patch_hash(
-            self.manager_mut(),
-            self.store.ids(entry_id).pkg_id,
+            &self.manager,
+            self.shared.store.ids(entry_id).pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
@@ -431,7 +407,9 @@ impl<'a> Installer<'a> {
 
         if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
             if apply.logger.has_errors() {
-                return Err(TaskError::patching(&apply.logger));
+                let log = Log::init();
+                apply.logger.append_to(&log);
+                return Err(TaskError::Patching(log));
             }
             let _ = apply.logger.print(Output::error_writer());
         }
@@ -440,11 +418,11 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
-        self.set_step(entry_id, Step::Done);
+        self.shared.set_step(entry_id, Step::Done);
 
-        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-        let pkg_res = self.resolution(entry_id);
-        let pkg_name = bun_core::fmt::escape_control_chars(self.pkg_name(entry_id));
+        let string_buf = self.shared.lockfile.buffers.string_bytes.as_slice();
+        let pkg_res = self.shared.resolution(entry_id);
+        let pkg_name = bun_core::fmt::escape_control_chars(self.shared.pkg_name(entry_id));
         let pkg_res_fmt =
             bun_core::fmt::for_terminal(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto));
         let pkg = (&pkg_name, &pkg_res_fmt);
@@ -460,9 +438,9 @@ impl<'a> Installer<'a> {
                     pkg,
                 );
             }
-            TaskError::Patching(printed_log) => {
+            TaskError::Patching(patch_log) => {
                 Output::err_generic("failed to patch package: {}@{}", pkg);
-                let _ = Output::error_writer().write_all(printed_log.as_bytes());
+                let _ = patch_log.print(Output::error_writer());
             }
             TaskError::Binaries(err) => {
                 Output::err(*err, "failed to link binaries for package: {}@{}", pkg);
@@ -473,9 +451,10 @@ impl<'a> Installer<'a> {
                         dep_err,
                         "failed to link binaries of dependency {}@{} for package: {}@{}",
                         (
-                            bstr::BStr::new(self.pkg_name(dep_entry_id)),
+                            bstr::BStr::new(self.shared.pkg_name(dep_entry_id)),
                             bun_core::fmt::for_terminal(
-                                self.resolution(dep_entry_id)
+                                self.shared
+                                    .resolution(dep_entry_id)
                                     .fmt(string_buf, bun_core::fmt::PathSep::Auto),
                             ),
                             &pkg_name,
@@ -503,7 +482,7 @@ impl<'a> Installer<'a> {
                 );
                 // The package is at its final path, so the next install would treat it as
                 // installed.
-                self.delete_store_copy(entry_id);
+                self.shared.delete_store_copy(entry_id);
             }
         }
         Output::flush();
@@ -511,29 +490,31 @@ impl<'a> Installer<'a> {
         // Clean up the staging directory so a half-built global-store entry
         // doesn't leak in the cache (it would never be reused — the suffix is
         // random — but it's wasted disk).
-        if self.entry_uses_global_store(entry_id) {
+        if self.shared.entry_uses_global_store(entry_id) {
             let mut staging = AutoAbsPath::init();
             let _ = self
+                .shared
                 .append_global_store_entry_path(&mut staging, entry_id, Which::Staging)
                 .and_then(|()| Fd::cwd().delete_tree(staging.slice()));
-        } else if let Some(lock) = self.staging_lock.get()
+        } else if let Some(lock) = self.shared.staging_lock.get()
             && pkg_res.can_enqueue_install_task()
         {
             // A staged link that failed only wrote to the staging directory.
             let mut staging = AutoPath::init();
             let _ = self
+                .shared
                 .append_local_staging_path(&mut staging, entry_id, lock.mode)
                 .and_then(|()| Fd::cwd().delete_tree(staging.slice()));
         }
 
         // Like the hoisted linker, exit without saving the lockfile when a patch does not apply.
-        if self.manager().options.enable.fail_early() || matches!(err, TaskError::Patching(_)) {
+        if self.shared.options.enable.fail_early() || matches!(err, TaskError::Patching(_)) {
             Global::exit(1);
         }
 
         // Remove the symlinks to this `link:` dependency. Otherwise `start_link_task` in the next
         // install would consider it already linked and never run its scripts.
-        if pkg_res.tag == ResolutionTag::Symlink && self.is_trusted(entry_id) {
+        if pkg_res.tag == ResolutionTag::Symlink && self.shared.is_trusted(entry_id) {
             self.left_out_entries.push(entry_id);
         }
 
@@ -553,21 +534,25 @@ impl<'a> Installer<'a> {
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
 
-        if self.is_member(entry_id)
+        if self.shared.is_member(entry_id)
             && let Some(held) = self.held_members.as_mut()
         {
             held.push(entry_id);
-            self.set_step(entry_id, Step::Blocked);
+            self.shared.set_step(entry_id, Step::Blocked);
             return;
         }
 
-        match self.is_task_blocked(entry_id, &mut ArrayHashMap::default()) {
+        match self
+            .shared
+            .is_task_blocked(entry_id, &mut ArrayHashMap::default())
+        {
             None => {
-                self.set_step(entry_id, Step::SymlinkDependencyBinaries);
+                self.shared
+                    .set_step(entry_id, Step::SymlinkDependencyBinaries);
                 self.start_task(entry_id);
             }
             Some(blocked_on) => {
-                self.set_step(entry_id, Step::Blocked);
+                self.shared.set_step(entry_id, Step::Blocked);
                 self.push_waiter(blocked_on, entry_id);
             }
         }
@@ -576,7 +561,7 @@ impl<'a> Installer<'a> {
     /// Called on the main thread. Resumes the workspaces once they're the only tasks left, so that
     /// their scripts see the finished install.
     pub(crate) fn release_members(&mut self) {
-        let pending = self.manager().pending_task_count() as usize;
+        let pending = self.manager.state.pending_task_count() as usize;
         if self
             .held_members
             .as_ref()
@@ -587,21 +572,25 @@ impl<'a> Installer<'a> {
             }
         }
     }
+}
 
+impl<'a> SharedInstaller<'a> {
     fn is_member(&self, entry_id: StoreEntryId) -> bool {
         self.resolution(entry_id).tag == ResolutionTag::Workspace
     }
+}
 
+impl Installer<'_> {
     /// Main thread, once every task is done. A member's scripts can write the files of its bins.
     pub(crate) fn relink_bins_of_members_with_scripts(&mut self) {
-        let store = self.store;
-        let pkg_bins = self.lockfile().packages.items_bin();
+        let store = self.shared.store;
+        let pkg_bins = self.shared.lockfile.packages.items_bin();
 
         let mut members: Vec<PackageID> = Vec::new();
-        for task in &self.tasks {
+        for task in self.tasks.iter() {
             let entry_id = task.entry_id;
             if task.scripts.is_some()
-                && self.is_member(entry_id)
+                && self.shared.is_member(entry_id)
                 && pkg_bins[store.ids(entry_id).pkg_id as usize].tag != bin::Tag::None
                 && !self.left_out_entries.contains(&entry_id)
             {
@@ -622,9 +611,9 @@ impl<'a> Installer<'a> {
             .collect();
         for dependent in dependents {
             // It depends on a workspace, so its `Which::Staging` is where it is.
-            debug_assert!(!self.entry_uses_global_store(dependent));
-            if let Err(err) = self.link_dependency_bins(dependent) {
-                self.manager().increment_pending_tasks(1);
+            debug_assert!(!self.shared.entry_uses_global_store(dependent));
+            if let Err(err) = self.shared.link_dependency_bins(dependent) {
+                self.manager.state.increment_pending_tasks(1);
                 self.on_task_fail(dependent, &err);
             }
         }
@@ -636,7 +625,9 @@ impl<'a> Installer<'a> {
         self.next_waiter[waiter.get() as usize] = *head;
         *head = waiter;
     }
+}
 
+impl<'a> SharedInstaller<'a> {
     /// Returns the first unfinished non-cyclic dependency; runs on main and task threads, so `parent_dedupe` must not be shared.
     fn is_task_blocked(
         &self,
@@ -645,12 +636,10 @@ impl<'a> Installer<'a> {
     ) -> Option<StoreEntryId> {
         let entries = &self.store.entries;
         let entry_deps = entries.items_dependencies();
-        let entry_steps = entries.items_step();
 
         let deps = &entry_deps[entry_id.get() as usize];
         for dep in deps.slice() {
-            if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32
-            {
+            if self.step(dep.entry_id).load(Ordering::Acquire) != Step::Done as u32 {
                 // See `release_members`.
                 if self.is_member(dep.entry_id) && !self.is_member(entry_id) {
                     continue;
@@ -664,25 +653,26 @@ impl<'a> Installer<'a> {
         }
         None
     }
+}
 
+impl Installer<'_> {
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         INBOX.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
-        let manager = self.manager();
-        if manager.options.log_level.show_progress() {
-            manager.progress.complete_one(NodeId::Install);
+        if self.shared.options.log_level.show_progress() {
+            self.manager.state.progress.complete_one(NodeId::Install);
         }
 
-        let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
-        let dependencies = self.lockfile().buffers.dependencies.as_slice();
+        let store::Ids { dep_id, pkg_id } = self.shared.store.ids(entry_id);
+        let dependencies = self.shared.lockfile.buffers.dependencies.as_slice();
         let relink = self.tasks[entry_id.get() as usize].relink;
 
         let state = if matches!(relink, Relink::Unchanged | Relink::ChangedOptional)
             || dep_id == invalid_dependency_id
             || dependencies[dep_id as usize].behavior.is_workspace()
-            || self.is_member(entry_id)
+            || self.shared.is_member(entry_id)
         {
             CompleteState::Skipped
         } else {
@@ -718,14 +708,17 @@ impl<'a> Installer<'a> {
     /// Called from main thread; dependents finish without the entry. Returns `delete_store_copy`.
     pub(crate) fn leave_out_entry(&mut self, entry_id: StoreEntryId) -> bool {
         // Delete it first, so that the dependents that resume don't link its binaries.
-        let deleted = self.delete_store_copy(entry_id);
+        let deleted = self.shared.delete_store_copy(entry_id);
         self.left_out_entries.push(entry_id);
-        self.store.entries.items_step()[entry_id.get() as usize]
+        self.shared
+            .step(entry_id)
             .store(Step::Done as u32, Ordering::Release);
         self.on_task_complete(entry_id, CompleteState::Skipped);
         deleted
     }
+}
 
+impl<'a> SharedInstaller<'a> {
     /// False without a copy in this project's store: other entries are the user's own folders.
     pub(crate) fn delete_store_copy(&self, entry_id: StoreEntryId) -> bool {
         let tag = self.resolution(entry_id).tag;
@@ -803,31 +796,35 @@ impl<'a> Installer<'a> {
             node_modules_len,
         )
     }
+}
 
+impl Installer<'_> {
     /// Called on the main thread. An entry that stays at its final path counts as installed, so its
     /// scripts would never run.
     pub(crate) fn discard_entries_with_unfinished_scripts(&mut self, failed: StoreEntryId) {
         // A task that still runs would put its entry in place after this has looked at it.
-        self.tasks_in_flight.wait();
-        let store = self.store;
-        for (index, step) in store.entries.items_step().iter().enumerate() {
+        self.tasks.wait();
+        for (index, EntryState { step, .. }) in self.shared.entry_states.iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
             // Every unfinished trusted entry is discarded, because it is not known yet whether it
             // has scripts: a bun.lock written by an older Bun does not record that.
             if entry_id == failed
-                || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
+                || (step.load(Ordering::Acquire) != Step::Done as u32
+                    && self.shared.is_trusted(entry_id))
             {
-                self.delete_store_copy(entry_id);
+                self.shared.delete_store_copy(entry_id);
                 // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
                 // them to mean that its scripts already ran.
-                if self.resolution(entry_id).tag == ResolutionTag::Symlink {
+                if self.shared.resolution(entry_id).tag == ResolutionTag::Symlink {
                     self.left_out_entries.push(entry_id);
                 }
             }
         }
         self.unlink_left_out_entries();
     }
+}
 
+impl<'a> SharedInstaller<'a> {
     /// Returns true if the scripts of a dependency's entry may run. Called on the main thread and
     /// on task threads.
     fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
@@ -835,72 +832,59 @@ impl<'a> Installer<'a> {
         if dep_id == invalid_dependency_id {
             return false;
         }
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
         self.trusted_dependencies_from_update_requests
             .contains(&pkg_id)
             || lockfile.has_trusted_dependency(
-                &self.manager().options,
+                self.options,
                 lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
                 self.pkg_name(entry_id),
                 self.resolution(entry_id),
             )
     }
+}
 
-    /// Main thread, once no task runs: tasks read `lockfile.trusted_dependencies` without a lock.
+impl Installer<'_> {
+    /// Call once every task is done.
     pub(crate) fn record_update_request_trust(&mut self) {
-        if self.trusted_dependencies_from_update_requests.is_empty() {
+        if self
+            .shared
+            .trusted_dependencies_from_update_requests
+            .is_empty()
+        {
             return;
         }
-        let lockfile = self.lockfile();
+        let lockfile = self.shared.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_names = lockfile.packages.items_name();
         let pkg_resolutions = lockfile.packages.items_resolution();
-        let entries = &self.store.entries;
+        let entries = &self.shared.store.entries;
 
-        let mut names: Vec<Box<[u8]>> = Vec::new();
         for (task, node_id) in self.tasks.iter().zip(entries.items_node_id()) {
-            let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+            let pkg_id = self.shared.store.nodes.items_pkg_id()[node_id.get() as usize];
             if task.scripts.is_none()
                 || !self
+                    .shared
                     .trusted_dependencies_from_update_requests
                     .contains(&pkg_id)
             {
                 continue;
             }
-            let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+            let dep_id = self.shared.store.nodes.items_dep_id()[node_id.get() as usize];
             let name = pkg_resolutions[pkg_id as usize].trusted_name(
                 lockfile.buffers.dependencies[dep_id as usize].name,
                 pkg_names[pkg_id as usize],
             );
-            names.push(Box::from(name.slice(string_buf)));
+            let name = name.slice(string_buf);
+            let name_hash = bun_semver::semver_string::Builder::string_hash(name);
+            (self.manager).add_trusted_dependency(name_hash as TruncatedPackageNameHash, name);
         }
-        if names.is_empty() {
-            return;
-        }
-
-        let manager = self.manager_mut();
-        let trusted = manager
-            .lockfile
-            .trusted_dependencies
-            .get_or_insert_with(Default::default);
-        for name in &names {
-            trusted.insert(
-                bun_semver::semver_string::Builder::string_hash(name) as TruncatedPackageNameHash,
-                name.clone(),
-            );
-        }
-        manager
-            .trusted_deps_to_add_to_package_json
-            .append(&mut names);
     }
 
     /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
     pub(crate) fn resume_unblocked_tasks(&mut self, completed: StoreEntryId) {
-        let entry_steps = self.store.entries.items_step();
         if Environment::CI_ASSERT {
-            assert!(
-                entry_steps[completed.get() as usize].load(Ordering::Relaxed) == Step::Done as u32
-            );
+            assert!(self.shared.step(completed).load(Ordering::Relaxed) == Step::Done as u32);
         }
 
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
@@ -916,18 +900,16 @@ impl<'a> Installer<'a> {
                 StoreEntryId::INVALID,
             );
             if Environment::CI_ASSERT {
-                assert!(
-                    entry_steps[entry_id.get() as usize].load(Ordering::Relaxed)
-                        == Step::Blocked as u32
-                );
+                assert!(self.shared.step(entry_id).load(Ordering::Relaxed) == Step::Blocked as u32);
             }
 
-            if let Some(blocked_on) = self.is_task_blocked(entry_id, &mut parent_dedupe) {
+            if let Some(blocked_on) = self.shared.is_task_blocked(entry_id, &mut parent_dedupe) {
                 self.push_waiter(blocked_on, entry_id);
                 continue;
             }
 
-            self.set_step(entry_id, Step::SymlinkDependencyBinaries);
+            self.shared
+                .set_step(entry_id, Step::SymlinkDependencyBinaries);
             self.start_task(entry_id);
         }
     }
@@ -972,16 +954,6 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
 
 pub struct Task {
     pub(crate) entry_id: StoreEntryId,
-    /// BACKREF: `Installer` owns `tasks[]` and outlives every `Task`. Stored as
-    /// `BackRef` so worker-thread read sites use safe `Deref`/`get()` instead of
-    /// per-site raw-pointer derefs. Constructed with a `NonNull::dangling()`
-    /// placeholder (never dereferenced) and patched to the real address before
-    /// any `start_task` call — see `isolated_install.rs`.
-    pub(crate) installer: bun_ptr::BackRef<Installer<'static>>,
-
-    pub(crate) task: thread_pool::CountedTask,
-    pub(crate) next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
-
     pub(crate) result: Result,
     pub(crate) relink: Relink,
     /// The relink task continues with the lifecycle script steps. See
@@ -993,15 +965,8 @@ pub struct Task {
     pub(crate) scripts: Option<Box<package::scripts::List>>,
     /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
-}
-
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
-unsafe impl bun_threading::Linked for Task {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
+    /// Set for a tarball whose integrity is not in the lockfile yet.
+    pub(crate) integrity: Option<Box<install::Integrity>>,
 }
 
 pub enum Result {
@@ -1020,20 +985,11 @@ pub enum TaskError {
     Binaries(crate::Error),
     /// (dependency entry, error)
     DependencyBinaries(Box<[(StoreEntryId, crate::Error)]>),
-    /// Not a `Log`: task threads share `Installer::tasks`.
-    Patching(String),
+    Patching(Log),
     Download {
         err: crate::Error,
         url: Box<[u8]>,
     },
-}
-
-impl TaskError {
-    fn patching(log: &Log) -> Self {
-        let mut printed = String::new();
-        let _ = log.print(&mut printed);
-        TaskError::Patching(printed)
-    }
 }
 
 type TaskResult<T> = core::result::Result<T, TaskError>;
@@ -1086,7 +1042,7 @@ impl Step {
 
 impl Task {
     /// Called from task thread
-    fn next_step(&self, current_step: Step) -> Step {
+    fn next_step(&self, installer: &SharedInstaller<'_>, current_step: Step) -> Step {
         let next_step: Step = match current_step {
             Step::LinkPackage => Step::SymlinkDependencies,
             Step::SymlinkDependencies => Step::CheckIfBlocked,
@@ -1105,36 +1061,20 @@ impl Task {
             Step::Done | Step::Blocked => unreachable!("unexpected step"),
         };
 
-        // SAFETY: `installer` is a BACKREF — the `Installer` owns `tasks[]` and
-        // outlives every `Task` it schedules; the pointer is never null.
-        //
-        // We deliberately do **not** materialize `&Installer` here: this runs on
-        // a thread-pool worker while the main thread may concurrently hold
-        // `&mut Installer` (e.g. `start_task` writing `tasks[i].result`, or
-        // `on_package_extracted`). A worker-side `&Installer` would alias that
-        // `&mut` under Stacked Borrows. Instead, raw-read the `store: &Store`
-        // field by value via `addr_of!` so no `&Installer` is formed — `Store`
-        // lives outside the `Installer` allocation and `items_step()` is atomic.
-        // This also avoids leaking the erased `'static` from
-        // `*mut Installer<'static>` into a whole-struct borrow.
-        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_const_ptr()).store) };
-        store.entries.items_step()[self.entry_id.get() as usize]
+        installer
+            .step(self.entry_id)
             .store(next_step as u32, Ordering::Release);
 
         next_step
     }
 
     /// Called from task thread
-    fn run(&mut self) -> TaskResult<Result> {
-        // Many `Task`s on the thread pool share one `Installer`, so only form `&Installer`.
-        let installer_ptr = self.installer;
-        let installer = installer_ptr.get();
+    fn run(&mut self, installer: &SharedInstaller<'_>) -> TaskResult<Result> {
         let entry_id = self.entry_id;
         let pkg_id = installer.store.ids(entry_id).pkg_id;
         let pkg_res = installer.resolution(entry_id);
-        let pkgs = &installer.lockfile().packages;
-        let entries = &installer.store.entries;
-        let entry_step = &entries.items_step()[entry_id.get() as usize];
+        let pkgs = &installer.lockfile.packages;
+        let entry_step = installer.step(entry_id);
 
         let mut step = Step::from_u32(entry_step.load(Ordering::Acquire));
         // There was no directory of the entry before `Step::LinkPackage`.
@@ -1147,7 +1087,8 @@ impl Task {
                             .link_folder(entry_id)
                             .map_err(TaskError::LinkPackage)?;
                     } else {
-                        made_entry = installer.link_cached_package(entry_id)?;
+                        made_entry =
+                            installer.link_cached_package(entry_id, self.integrity.as_deref())?;
                     }
                 }
 
@@ -1184,7 +1125,7 @@ impl Task {
                     // `release_members`.
                     let scripts = &pkgs.items_scripts()[pkg_id as usize];
                     let is_held = pkg_res.tag == ResolutionTag::Workspace
-                        && installer.manager().options.do_.contains(Do::RUN_SCRIPTS)
+                        && installer.options.do_.contains(Do::RUN_SCRIPTS)
                         && (scripts.has_any() || !scripts.filled);
 
                     if is_held
@@ -1200,7 +1141,7 @@ impl Task {
                     // `Step::LinkPackage` was skipped, so this check hasn't run yet.
                     if self.relink != Relink::Off {
                         installer
-                            .remove_planted_links_in(entry_id, Installer::store_path_len())
+                            .remove_planted_links_in(entry_id, SharedInstaller::store_path_len())
                             .map_err(|err| TaskError::Binaries(err.into()))?;
                     }
                     installer.link_dependency_bins(entry_id)?;
@@ -1262,13 +1203,13 @@ impl Task {
                     return Ok(Result::None);
                 }
             }
-            step = self.next_step(step);
+            step = self.next_step(installer, step);
         }
     }
 
     /// Task thread: `Step::RunPreinstall`. True: the entry has a preinstall script to run now.
-    fn prepare_scripts(&mut self, installer: &Installer<'_>) -> TaskResult<bool> {
-        let (manager, lockfile) = (installer.manager(), installer.lockfile());
+    fn prepare_scripts(&mut self, installer: &SharedInstaller<'_>) -> TaskResult<bool> {
+        let (options, lockfile) = (installer.options, installer.lockfile);
         let store::Ids { dep_id, pkg_id } = installer.store.ids(self.entry_id);
         let pkg_res = installer.resolution(self.entry_id);
         if dep_id == invalid_dependency_id {
@@ -1291,14 +1232,14 @@ impl Task {
         }
 
         // Trusted entries are never global-store eligible; never run in the shared dir.
-        if !manager.options.do_.contains(Do::RUN_SCRIPTS)
+        if !options.do_.contains(Do::RUN_SCRIPTS)
             || installer.entry_uses_global_store(self.entry_id)
         {
             return Ok(false);
         }
 
         if is_trusted
-            && manager
+            && installer
                 .postinstall_optimizer
                 .should_ignore_lifecycle_scripts(
                     &postinstall_optimizer::PkgInfo {
@@ -1313,9 +1254,9 @@ impl Task {
                     pkgs.items_resolutions()[pkg_id as usize]
                         .get(lockfile.buffers.resolutions.as_slice()),
                     pkg_metas,
-                    manager.options.cpu,
-                    manager.options.os,
-                    manager.options.libc,
+                    options.cpu,
+                    options.os,
+                    options.libc,
                 )
         {
             return Ok(false);
@@ -1341,11 +1282,11 @@ impl Task {
     /// Returns how many lifecycle scripts of an untrusted dependency were blocked. It counts the
     /// scripts of the installed package, because `hasInstallScript` alone can be a false positive.
     pub(crate) fn count_blocked_scripts(
-        installer: &Installer<'_>,
+        installer: &SharedInstaller<'_>,
         entry_id: StoreEntryId,
         which: Which,
     ) -> u8 {
-        let (manager, lockfile) = (installer.manager(), installer.lockfile());
+        let (options, lockfile) = (installer.options, installer.lockfile);
         let store::Ids { dep_id, pkg_id } = installer.store.ids(entry_id);
         let pkgs = &lockfile.packages;
         if !pkgs.items_meta()[pkg_id as usize].has_install_script() {
@@ -1364,7 +1305,7 @@ impl Task {
             .and_then(|()| pkg_scripts.get_list(&log, &mut pkg_dir, dep_name, pkg_res, true));
         match list {
             Ok(Some(list)) => {
-                if manager.options.log_level.is_verbose() {
+                if options.log_level.is_verbose() {
                     bun_core::pretty_error!(
                         "Blocked {} scripts for: {}@{}\n",
                         list.total,
@@ -1381,7 +1322,7 @@ impl Task {
             }
             Ok(None) => 0,
             Err(err) => {
-                if !manager.options.log_level.is_silent() {
+                if !options.log_level.is_silent() {
                     Output::err_generic(
                         "failed to fill lifecycle scripts for <b>{}<r>: {}",
                         (bstr::BStr::new(dep_name), err.name()),
@@ -1392,18 +1333,17 @@ impl Task {
             }
         }
     }
+}
 
-    /// Called from task thread
-    pub(crate) unsafe fn callback(task: *mut thread_pool::Task) {
-        // SAFETY: task points to Task.task field
-        let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
+impl TaskRunner<Task> for SharedInstaller<'_> {
+    fn schedule(batch: thread_pool::Batch) {
+        THREAD_POOL.schedule(batch);
+    }
 
-        // Many `Task`s on the thread pool share one `Installer`, so never form `&mut Installer`.
-        let installer_ptr = this.installer;
-        let installer = installer_ptr.get();
-        let entry_step = &installer.store.entries.items_step()[this.entry_id.get() as usize];
+    fn run(&self, task: &mut Task) {
+        let entry_step = self.step(task.entry_id);
 
-        let result = this.run();
+        let result = task.run(self);
         if Environment::CI_ASSERT {
             // .monotonic is okay because this should have been set by this thread.
             let step = Step::from_u32(entry_step.load(Ordering::Relaxed));
@@ -1414,15 +1354,13 @@ impl Task {
                 Err(_) => step != Step::Done,
             });
         }
-        this.result = match result {
-            Ok(Result::None) => return,
-            Ok(result) => result,
-            Err(err) => {
-                entry_step.store(Step::Done as u32, Ordering::Release);
-                Result::Err(err)
-            }
-        };
-        installer.task_queue.push(core::ptr::NonNull::from(this));
+        task.result = result.unwrap_or_else(|err| {
+            entry_step.store(Step::Done as u32, Ordering::Release);
+            Result::Err(err)
+        });
+    }
+
+    fn on_finished(&self) {
         INBOX.wake();
     }
 }
@@ -1458,12 +1396,12 @@ impl PatchInfo {
     }
 }
 
-impl<'a> Installer<'a> {
+impl<'a> SharedInstaller<'a> {
     /// A patch entry without a hash is an error, not `PatchInfo::None`.
     pub(crate) fn package_patch_info(&self, pkg_id: PackageID) -> TaskResult<PatchInfo> {
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
         if lockfile.patched_dependencies.len() == 0
-            && self.manager().patched_dependencies_to_remove.len() == 0
+            && self.patched_dependencies_to_remove.len() == 0
         {
             return Ok(PatchInfo::None);
         }
@@ -1507,7 +1445,7 @@ impl<'a> Installer<'a> {
                     ),
                     Default::default(),
                 );
-                return Err(TaskError::patching(&log));
+                return Err(TaskError::Patching(log));
             };
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
@@ -1516,7 +1454,6 @@ impl<'a> Installer<'a> {
         }
 
         if self
-            .manager()
             .patched_dependencies_to_remove
             .contains_key(&name_and_version_hash)
         {
@@ -1526,36 +1463,40 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
-    /// Returns the name of the entry's folder in the cache. It's empty for a tarball whose
-    /// integrity isn't known yet.
+    /// Returns the name of the entry's folder in the cache. `extracted`: see `Task::integrity`.
     pub(crate) fn cached_folder_name<'b>(
         &self,
         buf: &'b mut [u8],
         entry_id: StoreEntryId,
+        extracted: Option<&install::Integrity>,
         patch_hash: Option<u64>,
     ) -> &'b ZStr {
-        let manager = self.manager();
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
             ResolutionTag::Npm => directories::cached_npm_package_folder_name(
-                manager,
+                self.options,
                 buf,
                 self.pkg_name(entry_id),
                 pkg_res.npm().version,
                 patch_hash,
             ),
             ResolutionTag::Git => {
-                directories::cached_git_folder_name(manager, buf, pkg_res.git(), patch_hash)
+                directories::cached_git_folder_name(self.lockfile, buf, pkg_res.git(), patch_hash)
             }
-            ResolutionTag::Github => {
-                directories::cached_github_folder_name(manager, buf, pkg_res.github(), patch_hash)
-            }
+            ResolutionTag::Github => directories::cached_github_folder_name(
+                self.lockfile,
+                buf,
+                pkg_res.github(),
+                patch_hash,
+            ),
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let pkg_id = self.store.ids(entry_id).pkg_id;
+                let locked = &self.lockfile.packages.items_meta()[pkg_id as usize].integrity;
                 directories::cached_tarball_folder_name(
-                    manager,
+                    self.options,
+                    self.lockfile,
                     buf,
-                    &self.lockfile().packages.items_meta()[pkg_id as usize].integrity,
+                    extracted.unwrap_or(locked),
                     pkg_res,
                     patch_hash,
                 )
@@ -1568,7 +1509,7 @@ impl<'a> Installer<'a> {
     /// store in `Task::left_out_links`.
     fn link_folder(&self, entry_id: StoreEntryId) -> sys::Result<Vec<Box<[u8]>>> {
         let skip_dirnames: &[&paths::OSPathSlice] = &[bun_paths::os_path_literal!("node_modules")];
-        let path: &[u8] = self.lockfile().str(self.resolution(entry_id).folder());
+        let path: &[u8] = self.lockfile.str(self.resolution(entry_id).folder());
         // The folder isn't in the cache, so whether it's on another device is checked for each
         // folder dependency.
         let folder_dir = sys::Dir::open(path)?;
@@ -1648,7 +1589,7 @@ impl<'a> Installer<'a> {
         }
 
         let pkg_id = self.store.ids(entry_id).pkg_id;
-        if self.lockfile().is_trusted_folder_package(pkg_id)
+        if self.lockfile.is_trusted_folder_package(pkg_id)
             && let Ok(dest) = sys::Dir::open(copy.slice())
         {
             return Ok(crate::package_install::lay_folder_links(path, &dest));
@@ -1664,11 +1605,16 @@ impl<'a> Installer<'a> {
     }
 
     /// Task thread. True: the entry had no directory before.
-    fn link_cached_package(&self, entry_id: StoreEntryId) -> TaskResult<bool> {
+    fn link_cached_package(
+        &self,
+        entry_id: StoreEntryId,
+        extracted: Option<&install::Integrity>,
+    ) -> TaskResult<bool> {
         let patch_info = self.package_patch_info(self.store.ids(entry_id).pkg_id)?;
         let subpath = {
             let mut buf = paths::path_buffer_pool::get();
-            let name = self.cached_folder_name(&mut buf, entry_id, patch_info.contents_hash());
+            let name =
+                self.cached_folder_name(&mut buf, entry_id, extracted, patch_info.contents_hash());
             AutoRelPath::from(name).assume_ok()
         };
         #[cfg(target_os = "macos")]
@@ -1739,7 +1685,7 @@ impl<'a> Installer<'a> {
                         }
                         #[cfg(target_os = "macos")]
                         {
-                            if self.manager().options.log_level.is_verbose() {
+                            if self.options.log_level.is_verbose() {
                                 bun_core::pretty_errorln!(
                                     "Cloning {} to {}",
                                     os_path(subpath.slice_z()),
@@ -1874,7 +1820,7 @@ impl<'a> Installer<'a> {
 
     /// `build_store` assigns each name to one entry, so only one thread writes each link.
     fn hidden_hoist_names(&self, entry_id: StoreEntryId) -> impl Iterator<Item = &'a [u8]> {
-        let (store, lockfile) = (self.store, self.lockfile());
+        let (store, lockfile) = (self.store, self.lockfile);
         (store.entries.items_hoisted()[entry_id.get() as usize])
             .then(|| store.ids(entry_id).dep_id)
             .into_iter()
@@ -1888,7 +1834,7 @@ impl<'a> Installer<'a> {
 
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         for name in self.hidden_hoist_names(entry_id) {
-            let (store, lockfile) = (self.store, self.lockfile());
+            let (store, lockfile) = (self.store, self.lockfile);
             Self::link_hidden_name(store, lockfile, entry_id, name, self.is_new_bun_modules);
         }
     }
@@ -1957,8 +1903,8 @@ impl<'a> Installer<'a> {
     }
 
     fn maybe_replace_node_modules_path(&self, pkg_id: PackageID) -> Option<StoreEntryId> {
-        let (manager, lockfile) = (self.manager(), self.lockfile());
-        if !manager.postinstall_optimizer.is_native_binlink_enabled() {
+        let (options, lockfile) = (self.options, self.lockfile);
+        if !self.postinstall_optimizer.is_native_binlink_enabled() {
             return None;
         }
         let pkgs = &lockfile.packages;
@@ -1966,17 +1912,16 @@ impl<'a> Installer<'a> {
             name_hash: pkgs.items_name_hash()[pkg_id as usize],
             ..postinstall_optimizer::PkgInfo::default()
         };
-        let Some(PostinstallOptimizer::NativeBinlink) =
-            manager.postinstall_optimizer.get(&pkg_info)
+        let Some(PostinstallOptimizer::NativeBinlink) = self.postinstall_optimizer.get(&pkg_info)
         else {
             return None;
         };
         let replacement_pkg_id = PostinstallOptimizer::get_native_binlink_replacement_package_id(
             pkgs.items_resolutions()[pkg_id as usize].get(lockfile.buffers.resolutions.as_slice()),
             pkgs.items_meta(),
-            manager.options.cpu,
-            manager.options.os,
-            manager.options.libc,
+            options.cpu,
+            options.os,
+            options.libc,
         )?;
         let node_pkg_ids = self.store.nodes.items_pkg_id();
         let new_entry_id = (self.store.entries.items_node_id().iter())
@@ -2018,7 +1963,7 @@ impl<'a> Installer<'a> {
         strategy: symlinker::Strategy,
         made_entry: bool,
     ) -> TaskResult<Relink> {
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let pkg_resolutions = lockfile.packages.items_resolution();
@@ -2199,33 +2144,42 @@ impl<'a> Installer<'a> {
 
         Ok(changed)
     }
+}
 
+impl Installer<'_> {
     /// Main thread, once every task is done: dependents may still be linking while a script fails.
     pub(crate) fn unlink_left_out_entries(&self) {
         if self.left_out_entries.is_empty() {
             return;
         }
-        let lockfile = self.lockfile();
+        let lockfile = self.shared.lockfile;
 
         // Not `parents`: public hoisting adds root dependencies without recording a parent.
-        for (entry_index, entry_deps) in self.store.entries.items_dependencies().iter().enumerate()
+        for (entry_index, entry_deps) in self
+            .shared
+            .store
+            .entries
+            .items_dependencies()
+            .iter()
+            .enumerate()
         {
             let entry_id = StoreEntryId::from(entry_index as u32);
             for dep in entry_deps.slice() {
                 // Other projects share a dependent in the global store.
                 if !self.left_out_entries.contains(&dep.entry_id)
-                    || self.entry_uses_global_store(entry_id)
+                    || self.shared.entry_uses_global_store(entry_id)
                 {
                     continue;
                 }
                 let mut dest = AutoPath::init_top_level_dir();
                 let fits = self
+                    .shared
                     .append_real_store_node_modules_path(&mut dest, entry_id, Which::Final)
                     .and_then(|()| {
                         append_dependency_link_name(
                             &mut dest,
                             lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
-                            self.entry_store_node_modules_package_name(entry_id),
+                            self.shared.entry_store_node_modules_package_name(entry_id),
                         )
                     });
                 if fits.is_ok() && is_link(dest.slice_z()) == Some(true) {
@@ -2235,7 +2189,7 @@ impl<'a> Installer<'a> {
         }
 
         for &entry_id in &self.left_out_entries {
-            for name in self.hidden_hoist_names(entry_id) {
+            for name in self.shared.hidden_hoist_names(entry_id) {
                 let mut hidden = AutoPath::init();
                 let _ = hidden.append(b"node_modules/.bun/node_modules");
                 let real_len = hidden.len();
@@ -2250,7 +2204,8 @@ impl<'a> Installer<'a> {
 
     /// Call on the main thread once every task is done. The warnings are logged in entry order, so
     /// the output does not depend on which task finished first.
-    pub(crate) fn warn_left_out_links(&self, log: &bun_ast::Log) {
+    pub(crate) fn warn_left_out_links(&self) {
+        let log = self.manager.state.log();
         for text in self.tasks.iter().flat_map(|task| &task.left_out_links) {
             log.add_warning_fmt(
                 None,
@@ -2259,9 +2214,11 @@ impl<'a> Installer<'a> {
             );
         }
     }
+}
 
+impl<'a> SharedInstaller<'a> {
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> TaskResult<()> {
-        let (lockfile, store) = (self.lockfile(), self.store);
+        let (lockfile, store) = (self.lockfile, self.store);
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let entry_deps = store.entries.items_dependencies();
@@ -2320,10 +2277,15 @@ impl<'a> Installer<'a> {
 
         for dep in deps_with_bins {
             let pkg_id = store.ids(dep.entry_id).pkg_id;
-            let global = parent_entry_id == StoreEntryId::ROOT && self.manager().options.global;
-            // A relink task: the package was installed before this run.
-            let installed = self.tasks[dep.entry_id.get() as usize].relink == Relink::Off;
-            if global && !self.manager().links_bins_globally(pkg_id, installed) {
+            let global = parent_entry_id == StoreEntryId::ROOT && self.options.global;
+            let was_installed = &self.entry_states[dep.entry_id.get() as usize].was_installed;
+            if global
+                && !lockfile.links_bins_globally(
+                    self.update_request_package_ids.iter().copied(),
+                    pkg_id,
+                    !was_installed.load(Ordering::Relaxed),
+                )
+            {
                 continue;
             }
 
@@ -2366,7 +2328,7 @@ impl<'a> Installer<'a> {
         package_name: &[u8],
         global: bool,
     ) -> crate::Result<()> {
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
 
         let replacement = self
             .maybe_replace_node_modules_path(pkg_id)
@@ -2394,7 +2356,7 @@ impl<'a> Installer<'a> {
         };
         let mut bin_linker = bin_real::Linker {
             bin: lockfile.packages.items_bin()[pkg_id as usize],
-            global_bin_path: self.manager().options.bin_path,
+            global_bin_path: self.options.bin_path,
             package_name,
             target_package_name,
             string_buf: lockfile.buffers.string_bytes.as_slice(),
@@ -2419,7 +2381,7 @@ impl<'a> Installer<'a> {
             bin_linker.err = None;
             bin_linker.skipped_due_to_missing_bin = false;
 
-            if self.manager().options.log_level.is_verbose() {
+            if self.options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                     bstr::BStr::new(package_name),
@@ -2462,11 +2424,11 @@ impl<'a> Installer<'a> {
         match which {
             Which::Final => buf.append_fmt(format_args!(
                 "{}",
-                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
             )),
             Which::Staging => buf.append_fmt(format_args!(
                 "{}.tmp-{:x}",
-                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
                 self.global_store_tmp_suffix,
             )),
         }
@@ -2496,7 +2458,7 @@ impl<'a> Installer<'a> {
             let _ = Fd::cwd().delete_tree(staging.slice());
             return Err(global_store_publish_error(err, &final_));
         }
-        if !self.manager().options.enable.force_install() {
+        if !self.options.enable.force_install() {
             // A concurrent install renamed first; its content-addressed bytes are as good as ours.
             let _ = Fd::cwd().delete_tree(staging.slice());
             return Ok(());
@@ -2529,7 +2491,7 @@ impl<'a> Installer<'a> {
                 &mut old,
                 format_args!(
                     "{}.old-{:x}",
-                    store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
+                    store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
                     bun_core::fast_random(),
                 ),
             )
@@ -2642,7 +2604,7 @@ impl<'a> Installer<'a> {
     ) -> sys::Result<()> {
         buf.append_fmt(format_args!(
             "node_modules/.bun/{}",
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
+            store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
         ))
     }
 
@@ -2751,7 +2713,7 @@ impl<'a> Installer<'a> {
         match pkg_res.tag {
             ResolutionTag::Root => {}
             ResolutionTag::Workspace => {
-                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()))?;
+                append_workspace_path(buf, self.lockfile.str(pkg_res.workspace()))?;
             }
             _ => self.append_local_store_entry_path(buf, entry_id)?,
         }
@@ -2796,9 +2758,10 @@ impl<'a> Installer<'a> {
         let base: &[u8] = if crate::dependency::is_link_path(target) {
             bun_fs::FileSystem::get().top_level_dir()
         } else {
-            self.manager().global_link_dir_path
+            (directories::global_link_dir_if_open())
+                .expect("`check_link_entries` opened the global link directory")
+                .path
         };
-        debug_assert!(!base.is_empty());
         let len = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
             base,
             &mut buf[..],
@@ -2816,13 +2779,13 @@ impl<'a> Installer<'a> {
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
             ResolutionTag::Workspace => {
-                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()))
+                append_workspace_path(buf, self.lockfile.str(pkg_res.workspace()))
             }
             ResolutionTag::Symlink => {
                 let mut join_buf = paths::path_buffer_pool::get();
                 buf.clear();
                 buf.append(
-                    self.link_target_path(self.lockfile().str(pkg_res.symlink()), &mut join_buf),
+                    self.link_target_path(self.lockfile.str(pkg_res.symlink()), &mut join_buf),
                 )
             }
             _ => {

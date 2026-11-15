@@ -412,8 +412,7 @@ impl IOWriter {
             if s.flags.nonblock {
                 handle.set_poll_flag(FilePollFlag::Nonblocking);
             }
-            // On macOS `sendto` with MSG_DONTWAIT can still block, so
-            // only mark as socket there if the fd is already O_NONBLOCK.
+            // On macOS `sendto` with MSG_DONTWAIT can still block, unless the fd is O_NONBLOCK.
             let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
             if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
                 handle.set_poll_flag(FilePollFlag::Socket);
@@ -477,11 +476,7 @@ impl IOWriter {
         #[cfg(not(windows))]
         {
             debug_assert!(s.writer.handle.has_poll());
-            // `is_watching()` = `is_registered() && !needs_rearm`.
-            // NOT `is_registered()`: after a one-shot fire that drains
-            // everything (no `register_poll()`), `PollWritable` stays set
-            // but `NeedsRearm` is set → `is_registered()` would return
-            // Suspended without re-arming and stall the queue forever.
+            // Not `is_registered()`: a one-shot poll that fired is still registered, and has to be re-armed.
             if s.writer.handle.is_watching() {
                 return WriteOutcome::Suspended;
             }

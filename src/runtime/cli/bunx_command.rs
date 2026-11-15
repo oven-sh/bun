@@ -1393,7 +1393,7 @@ impl BunxCommand {
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+            envp: Some(envp.as_list()),
             cwd: Box::<[u8]>::from(bunx_cache_dir),
             stderr: proc_sync::SyncStdio::Inherit,
             stdout: proc_sync::SyncStdio::Inherit,

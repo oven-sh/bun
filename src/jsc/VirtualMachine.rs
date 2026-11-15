@@ -166,7 +166,7 @@ pub struct VirtualMachine {
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
     /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
     pub bun_watcher: Cell<*mut crate::hot_reloader::ImportWatcher>,
-    pub(crate) console: AliasableBox<crate::console_object::ConsoleObject>,
+    pub(crate) console: Box<crate::console_object::ConsoleObject>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Cell<Option<NonNull<bun_ast::Log>>>,
@@ -350,10 +350,8 @@ pub struct VirtualMachine {
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
-    /// formatter. Installed by `bun test --reporter=junit` around
-    /// `run_error_handler`.
-    pub on_print_error_zig_exception: Cell<Option<fn(*mut c_void, &ZigException<'_>)>>,
-    pub on_print_error_zig_exception_ctx: Cell<*mut c_void>,
+    /// formatter. Installed by `bun test --reporter=junit`.
+    pub on_print_error_zig_exception: Cell<Option<fn(&ZigException<'_>)>>,
     pub(crate) is_handling_uncaught_exception: Cell<bool>,
     pub(crate) exit_on_uncaught_exception: Cell<bool>,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
@@ -3069,14 +3067,10 @@ impl VirtualMachine {
         let origin_timer = std::time::Instant::now();
         let origin_timestamp = get_origin_timestamp();
 
-        let mut console = Box::new_uninit();
-        crate::console_object::ConsoleObject::init_in_place(
-            &mut console,
+        let console = crate::console_object::ConsoleObject::new(
             bun_core::Output::raw_error_writer(),
             bun_core::Output::raw_writer(),
         );
-        // SAFETY: just initialized.
-        let console = AliasableBox::from(unsafe { console.assume_init() });
 
         let context_id = opts
             .context_id
@@ -3259,7 +3253,7 @@ impl VirtualMachine {
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
         let global = Zig__GlobalObject__create(
-            vm.console.as_ptr().cast(),
+            vm.console.as_client_ptr(),
             context_id,
             opts.mini_mode,
             opts.eval_mode,
@@ -4826,7 +4820,7 @@ impl VirtualMachine {
         // swap the global.
         let vm = Self::init(log, init_opts)?;
         // `console` is the opaque round-trip pointer C++ stores into the new global.
-        let new_global = BakeCreateProdGlobal(vm.console.as_ptr().cast());
+        let new_global = BakeCreateProdGlobal(vm.console.as_client_ptr());
         vm.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
         vm.regular_event_loop.global.set(NonNull::new(new_global));
@@ -5581,14 +5575,11 @@ impl VirtualMachine {
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
 
-    /// Note: takes the concrete
-    /// `bun_core::io::Writer` since every call site passes
-    /// `Output.errorWriterBuffered()`.
     pub fn print_exception(
         &self,
         exception: &Exception,
         exception_list: Option<&mut ExceptionList>,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_side_effects: bool,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
@@ -5989,7 +5980,7 @@ impl VirtualMachine {
         // `console` is the live per-VM ConsoleObject.
         let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
             JSGlobalObject::opaque_ref(old_global),
-            self.console.as_ptr().cast(),
+            self.console.as_client_ptr(),
         );
         self.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
@@ -6078,14 +6069,13 @@ impl VirtualMachine {
         self.run_error_handler(value, None);
     }
 
-    /// Note: takes runtime bools and the concrete `bun_core::io::Writer`.
     pub fn print_errorlike_object(
         &self,
         value: JSValue,
         exception: Option<&Exception>,
         mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
@@ -6122,7 +6112,7 @@ impl VirtualMachine {
             // pointer + erased ctx, so thread the captures through a struct.
             struct AggCtx<'c, 'a> {
                 formatter: &'c mut crate::console_object::Formatter<'a>,
-                writer: &'c mut bun_core::io::Writer,
+                writer: &'c mut dyn bun_io::Write,
                 exception_list: Option<&'c mut ExceptionList>,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
@@ -6229,7 +6219,7 @@ impl VirtualMachine {
         value: JSValue,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> bool {
@@ -6313,9 +6303,8 @@ impl VirtualMachine {
         false
     }
 
-    /// Note: takes a runtime bool + concrete writer.
     pub(crate) fn print_stack_trace(
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         trace: &crate::ZigStackTrace<'_>,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
@@ -6765,7 +6754,7 @@ impl VirtualMachine {
         &self,
         zig_exception: &mut ZigException<'_>,
         formatter: Option<&mut crate::console_object::Formatter>,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_side_effects: bool,
         allow_ansi_color: bool,
     ) -> crate::CrateResult<()> {
@@ -6792,7 +6781,7 @@ impl VirtualMachine {
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
@@ -6888,7 +6877,7 @@ impl VirtualMachine {
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_ansi_color: bool,
         allow_side_effects: bool,
         recorded: &mut bool,
@@ -6905,7 +6894,7 @@ impl VirtualMachine {
                 debugger.lifecycle_reporter_agent.report_error(exception);
             }
             if let Some(cb) = self.on_print_error_zig_exception.get() {
-                cb(self.on_print_error_zig_exception_ctx.get(), exception);
+                cb(exception);
             }
         }
 
@@ -6937,10 +6926,8 @@ impl VirtualMachine {
                 }
             };
         }
-        // `writer.splatByteAll(' ', n)` — `bun_core::io::Writer` has no native
-        // `splat`, so emit in chunks.
         #[inline]
-        fn splat_space(w: &mut bun_core::io::Writer, mut n: u64) -> crate::CrateResult<()> {
+        fn splat_space(w: &mut dyn bun_io::Write, mut n: u64) -> crate::CrateResult<()> {
             const SPACES: &[u8; 32] = b"                                ";
             while n > 0 {
                 let chunk = n.min(32) as usize;
@@ -7386,7 +7373,7 @@ impl VirtualMachine {
         message: &bun_core::String,
         is_browser_error: bool,
         optional_code: Option<&[u8]>,
-        writer: &mut bun_core::io::Writer,
+        writer: &mut dyn bun_io::Write,
         allow_ansi_color: bool,
         error_display_level: crate::console_object::ErrorDisplayLevel,
     ) -> crate::CrateResult<()> {

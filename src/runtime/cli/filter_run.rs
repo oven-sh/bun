@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_char;
 #[cfg(unix)]
 use core::ffi::c_void;
 use std::io::Write as _;
@@ -132,7 +131,7 @@ pub(crate) struct ProcessHandle<'a> {
     finished: bool,
 
     process: Option<ProcessInfo>,
-    options: SpawnOptions,
+    options: SpawnOptions<'static>,
 
     remaining_dependencies: usize,
     /// Indices into `State::handles`.
@@ -184,15 +183,11 @@ impl<'a> ProcessHandle<'a> {
                 ),
                 |env| env.map.create_null_delimited_env_map(),
             )?;
-            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
-            // with argv[0] non-null; valid for this call.
-            break 'brk unsafe {
-                spawn::spawn_process(
-                    &handle.options,
-                    argv.as_ptr(),
-                    envp.as_ptr().cast::<*const c_char>(),
-                )
-            }??;
+            break 'brk spawn::spawn_process(
+                &handle.options,
+                argv.as_list(),
+                Some(envp.as_list()),
+            )??;
             // `env` drops here (or on `?` above), restoring PATH.
         };
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());

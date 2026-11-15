@@ -141,6 +141,56 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
+test.skipIf(!isASAN)(
+  'dev server frees the task that generates the proxy of a "use client" module',
+  async () => {
+    // Several, one at a time: a stale pointer in the pool's queues can hide a task from LSan.
+    const names = ["a", "b", "c", "d", "e", "f"];
+    using dir = tempDir("bake-client-reference-task", {
+      ...Object.fromEntries(
+        names.flatMap(name => [
+          [`${name}.ts`, `"use client"; export function ${name}() {}`],
+          [
+            `routes/${name}.ts`,
+            `import { ${name} } from "../${name}"; export default () => new Response(${name}.uid);`,
+          ],
+        ]),
+      ),
+      "fixture.ts": `
+        const serverEntryPoint = ${JSON.stringify(path.join(import.meta.dir, "minimal.server.ts"))};
+        const framework = {
+          fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint }],
+          serverComponents: {
+            separateSSRGraph: true,
+            serverRuntimeImportSource: serverEntryPoint,
+            serverRegisterClientReferenceExport: "registerClientReference",
+          },
+        };
+        using server = Bun.serve({ port: 0, app: { framework } });
+        for (const name of ${JSON.stringify(names)}) console.log(await (await fetch(server.url + name)).text());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe(names.join("\n") + "\n");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
+
 test.skipIf(isWindows)(
   "dev server closes the descriptor it opens to bundle an edited file again",
   async () => {

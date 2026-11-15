@@ -401,15 +401,12 @@ impl DevServer {
         );
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
-        let dev_handle = self.bundler_handle();
-        bv2.dev_server = Some(dev_handle);
-        bv2.linker.dev_server = Some(dev_handle);
+        bv2.dev_server = Some(self.bundler_handle());
 
         {
-            self.graph_safety_lock.lock();
+            let _g = self.graph_safety_lock.guard();
             self.graphs.client.reset();
             self.graphs.server.reset();
-            self.graph_safety_lock.unlock();
         }
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY

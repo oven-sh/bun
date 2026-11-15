@@ -43,7 +43,7 @@ use bun_ast::Index as AstIndex;
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
-    this: &LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     temp_arena: &Arena,
     entry_points: &[Index],
 ) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
@@ -822,7 +822,7 @@ impl CssOrderDebugStep {
 }
 
 fn debug_css_order<'a>(
-    this: &LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     order: &Vec<CssImportOrder<'a>>,
     step: CssOrderDebugStep,
 ) {
@@ -850,7 +850,7 @@ fn debug_css_order<'a>(
 
 #[cfg(debug_assertions)]
 fn debug_css_order_impl<'a>(
-    this: &LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     order: &Vec<CssImportOrder<'a>>,
     step: CssOrderDebugStep,
 ) {

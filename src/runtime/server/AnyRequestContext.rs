@@ -54,6 +54,9 @@ impl AnyRequestContext {
     };
 }
 
+/// A ref on the context.
+pub(crate) struct AnyRequestContextRef(AnyRequestContext);
+
 /// Internal: maps each `RequestContext` monomorphization to its tag so
 /// `AnyRequestContext::init` is generic over the eight types without `TypeList`.
 pub trait CtxKind {
@@ -151,6 +154,26 @@ macro_rules! dispatch {
     }};
 }
 
+impl AnyRequestContextRef {
+    pub(super) fn new(ctx: AnyRequestContext) -> Self {
+        dispatch!(ctx, (), |_T, ctx| ctx.ref_());
+        Self(ctx)
+    }
+}
+
+impl core::ops::Deref for AnyRequestContextRef {
+    type Target = AnyRequestContext;
+    fn deref(&self) -> &AnyRequestContext {
+        &self.0
+    }
+}
+
+impl Drop for AnyRequestContextRef {
+    fn drop(&mut self) {
+        dispatch!(self.0, (), |_T, ctx| ctx.deref())
+    }
+}
+
 impl AnyRequestContext {
     pub(crate) fn set_deferred_request(
         self,
@@ -215,10 +238,6 @@ impl AnyRequestContext {
         })
     }
 
-    pub fn ref_(self) {
-        dispatch!(self, (), |_T, ctx| ctx.ref_())
-    }
-
     pub(crate) fn set_signal_aborted(self, reason: crate::server::jsc::CommonAbortReason) {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
@@ -230,10 +249,6 @@ impl AnyRequestContext {
                 .get()
                 .map(|server| server.as_const_ptr().cast::<()>())
         })
-    }
-
-    pub fn deref(self) {
-        dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
     /// For a caller that answers the request by itself.

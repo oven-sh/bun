@@ -16,7 +16,7 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
 // by per-task `i`), `chunk.files_with_parts_in_chunk[source].counter`
-// (atomic RMW). Reads `c.graph`/`c.parse_graph` SoA columns shared. Never
+// (atomic RMW). Reads `c.graph`/`c.parse_graph()` SoA columns shared. Never
 // forms `&mut LinkerContext` or `&mut Chunk`.
 // `PendingPartRange` is `Send` because its only non-auto-`Send` field is
 // `&GenerateChunkCtx` whose pointee is `Send + Sync`.
@@ -35,7 +35,7 @@ pub(crate) unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolL
 
     let result = generate_compile_result_for_js_chunk_impl(
         &mut worker,
-        ctx.c.get(),
+        ctx.c,
         ctx.chunk.get(),
         part_range.part_range,
     );

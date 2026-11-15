@@ -351,7 +351,7 @@ impl EventLoop {
     /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)
     /// runs at the outermost level. See [`Self::enter_scope_without_checkpoint`].
     #[inline]
-    pub fn exit_without_checkpoint(&self) {
+    fn exit_without_checkpoint(&self) {
         let count = self.entered_event_loop_count.get() - 1;
         bun_core::scoped_log!(EventLoop, "exit_without_checkpoint() = {}", count);
         self.entered_event_loop_count.set(count);
@@ -544,13 +544,12 @@ impl EventLoop {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return;
         };
-        self.enter();
+        let _entered = self.enter_scope();
         if let Err(err) = callback.call(global_object, this_value, arguments) {
             // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
             // the gate, not a pending exception, to know the VM has stopped.
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }
-        self.exit();
     }
 
     /// `context`: as for [`run_callback`](Self::run_callback).
@@ -565,16 +564,14 @@ impl EventLoop {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return JSValue::ZERO;
         };
-        self.enter();
-        let result = match callback.call(global_object, this_value, arguments) {
+        let _entered = self.enter_scope();
+        match callback.call(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
                 let _ = crate::task::report_error_or_terminate(global_object, err);
                 JSValue::ZERO
             }
-        };
-        self.exit();
-        result
+        }
     }
 
     /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
@@ -995,15 +992,24 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&self) {
         self.closed_for_tasks.set(true);
-        // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.
-        let (tasks, plugin_requests) =
-            unsafe { (&mut *self.tasks.get(), &mut *self.plugin_requests.get()) };
-        Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
-        Self::take_concurrent_tasks(plugin_requests, self.concurrent_plugin_requests.pop_batch());
-        let _ = self.promote_yield_tasks();
-        while let Some(task) = self.next_task() {
-            // SAFETY: JS thread, heap alive; `task` just left the queue.
-            unsafe { self.release_task_unrun(task) };
+        loop {
+            // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.
+            let (tasks, plugin_requests) =
+                unsafe { (&mut *self.tasks.get(), &mut *self.plugin_requests.get()) };
+            Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
+            Self::take_concurrent_tasks(
+                plugin_requests,
+                self.concurrent_plugin_requests.pop_batch(),
+            );
+            let _ = self.promote_yield_tasks();
+            while let Some(task) = self.next_task() {
+                // SAFETY: JS thread, heap alive; `task` just left the queue.
+                unsafe { self.release_task_unrun(task) };
+            }
+            // Releasing a task can post another.
+            if self.concurrent_tasks.is_empty() {
+                break;
+            }
         }
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.
@@ -1329,9 +1335,10 @@ impl EventLoop {
             // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
             return Err(crate::JsError::Thrown);
         };
-        self.enter();
-        let result = callback.call(global_object, this_value, arguments);
-        self.exit_without_checkpoint();
+        let result = {
+            let _entered = self.enter_scope_without_checkpoint();
+            callback.call(global_object, this_value, arguments)
+        };
         after_call();
         let result = result?;
         result.ensure_still_alive();
@@ -1512,15 +1519,6 @@ bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         iteration_number() => (*this).usockets_loop().iteration_number()
             + (*this).task_drains.load(Ordering::Relaxed),
-        // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM.
-        file_polls() => (*this).vm_ref().rare_data().file_polls_ptr(),
-        put_file_poll(poll, was_ever_registered) => {
-            let store = (*this).vm_ref().rare_data().file_polls_ptr();
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
         uws_loop() => (*this).usockets_loop(),
         event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),

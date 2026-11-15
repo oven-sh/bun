@@ -305,9 +305,7 @@ impl Rm {
                     };
                     if !started {
                         let cwd = Builtin::cwd(interp, cmd);
-                        let evtloop = Builtin::event_loop(interp, cmd);
                         let opts = Self::state_mut(interp, cmd).opts;
-                        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                         let (args_start, argc) = {
                             let me = Self::state_mut(interp, cmd);
                             let RmState::Exec(e) = &mut me.state else {
@@ -325,11 +323,7 @@ impl Rm {
                         };
                         for i in args_start..argc {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
-                            let task = ShellRmTask::create(
-                                cmd, opts, root, cwd, sig, out_count, evtloop, interp_ptr,
-                            );
-                            // SAFETY: freshly heap-allocated.
-                            unsafe { ShellRmTask::schedule(task) };
+                            ShellRmTask::schedule(interp, cmd, opts, root, cwd, sig, out_count);
                         }
                     }
                     return Yield::suspended();
@@ -387,7 +381,7 @@ impl Rm {
         }
     }
 
-    fn on_shell_rm_task_done(interp: &Interpreter, task: &RefPtr<ShellRmTask>) {
+    fn on_shell_rm_task_done(interp: &Interpreter, task: RefPtr<ShellRmTask>) {
         let cmd = task.cmd;
         // SAFETY: the pool is done with the task.
         let task_err = unsafe { (*task.as_ptr()).err.get_mut().take() };
@@ -399,6 +393,7 @@ impl Rm {
         if task_err.is_none() {
             forget_shell_operand(cwd, operand, was_on_disk);
         }
+        drop(task);
         // Format the error string before
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
@@ -631,17 +626,18 @@ pub(crate) struct DirTask {
 }
 
 impl ShellRmTask {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create(
+    /// Not a `PoolTask`: the `DirTask` tree posts it back, in [`finish_concurrently`].
+    fn schedule(
+        interp: &Interpreter,
         cmd: NodeId,
         opts: Opts,
         root_path: &[u8],
         cwd: bun_sys::Fd,
         error_signal: bun_ptr::BackRef<AtomicBool>,
         output_count: bun_ptr::BackRef<AtomicUsize>,
-        evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
-    ) -> *mut ShellRmTask {
+    ) {
+        use bun_threading::work_pool::WorkPool;
+        let evtloop = interp.event_loop;
         let join_style = JoinStyle::from_path(root_path);
         // Separate allocation — see the comment on `root_task`.
         let root_task = AliasableBox::new(DirTask {
@@ -662,7 +658,7 @@ impl ShellRmTask {
                 callback: DirTask::work_pool_callback,
             },
         });
-        let mut boxed = Box::new(ShellRmTask {
+        let this = bun_core::heap::alloc(ShellRmTask {
             cmd,
             opts,
             cwd,
@@ -674,28 +670,12 @@ impl ShellRmTask {
             join_style,
             was_on_disk: is_on_disk_at(cwd, root_path),
             event_loop: evtloop,
-            task: ShellTask::new(evtloop),
+            task: ShellTask::new(interp),
         });
-        boxed.task.interp = interp;
-        let raw = bun_core::heap::into_raw(boxed);
-        // SAFETY: both freshly allocated; exclusive.
-        unsafe { (*(*raw).root_task.as_ptr()).task_manager = raw };
-        raw
-    }
-
-    /// Unlike most shell builtins this does NOT use the generic
-    /// [`ShellTask::schedule`] trampoline (which auto-enqueues back to main
-    /// on return): the recursive
-    /// DirTask tree owns the bounce-back via [`finish_concurrently`].
-    ///
-    /// # Safety
-    /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    pub(crate) unsafe fn schedule(this: *mut ShellRmTask) {
-        use bun_threading::work_pool::WorkPool;
-        // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
-        // raw pointers — once `WorkPool::schedule` returns the worker thread
-        // may already be running.
+        // SAFETY: both freshly allocated. Stay on raw pointers: once
+        // `WorkPool::schedule` returns the worker thread may already be running.
         unsafe {
+            (*(*this).root_task.as_ptr()).task_manager = this;
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
@@ -1446,7 +1426,7 @@ impl DirTask {
     pub(crate) fn run_from_main_thread(this: *mut DirTask) {
         // SAFETY: caller contract.
         let (rm, deleted_entries) = unsafe { Self::take_queued(this) };
-        // SAFETY: both set at create. No `&ShellRmTask`: the pool may be writing `task.poster`.
+        // SAFETY: both set by `schedule`. No `&ShellRmTask`: the pool may be writing `task.poster`.
         let (interp, cmd) = unsafe { (&*(*rm.as_ptr()).task.interp, (*rm.as_ptr()).cmd) };
         let next = Rm::write_verbose(interp, cmd, &deleted_entries);
         drop((rm, deleted_entries));
@@ -1629,13 +1609,9 @@ impl RemoveFileHandler for RemoveFileParent {
 
 impl bun_event_loop::Taskable for ShellRmTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmTask;
-    /// The rm's own completion hop: drop the keep-alive and the hop's ref.
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(RefPtr::from_raw(this));
-        }
+        // SAFETY: fn contract — the ref of the rm's own completion hop.
+        drop(unsafe { RefPtr::from_raw(this) });
     }
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -1666,7 +1642,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
         );
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: the ref `create` made, which `finish_concurrently` posted.
-        Rm::on_shell_rm_task_done(interp, &unsafe { RefPtr::from_raw(this) })
+        // SAFETY: the ref `schedule` made, which `finish_concurrently` posted.
+        Rm::on_shell_rm_task_done(interp, unsafe { RefPtr::from_raw(this) })
     }
 }

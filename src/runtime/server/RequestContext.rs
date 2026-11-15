@@ -113,9 +113,7 @@ pub(crate) struct RequestContext<
 > where
     ThisServer: ServerLike + 'static,
 {
-    /// BACKREF to the embedding `Server` — the server owns this request
-    /// context (allocated from its `HiveArray` pool) and outlives it, so the
-    /// pointee is live for the holder's entire lifetime. `None` once detached.
+    /// BACKREF to the `Server`, which outlives its requests. `None` once detached.
     pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer>>>,
     pub(crate) resp: AttachedResponse<Self>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
@@ -321,7 +319,7 @@ where
 /// `WeakPtr<Response>`, which outlives any reborrow and is read again after
 /// the Response has been written through other pointers.
 ///
-/// Callers must keep `value` GC-rooted (ensure_still_alive / protect()) for as
+/// Callers must keep `value` GC-rooted for as
 /// long as they use the pointer, so the JSC-owned allocation outlives it, and
 /// must not form two overlapping `&mut Response` from it.
 #[inline]
@@ -339,11 +337,21 @@ fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, val
     }
 }
 
+/// Not to be held across script or a JS allocation unless the wrapper is rooted.
+fn live_response<'r>(weak: &JsCell<response::WeakRef>) -> Option<&'r mut Response> {
+    // SAFETY: the weak handle just reported the value live.
+    weak.with_mut(|w| w.get())
+        .map(|mut p| unsafe { p.as_mut() })
+}
+
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
 #[inline(never)]
-fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+fn release_body_stream(weak: &JsCell<response::WeakRef>, global_this: &JSGlobalObject) {
+    let Some(mut response) = live_response(weak) else {
+        return;
+    };
     if let Body::Value::Locked(locked) = response.get_body_value()
         && locked.has_consumer()
     {
@@ -353,6 +361,11 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
         stream.value.ensure_still_alive();
         response.detach_readable_stream(global_this);
         stream.done();
+        // Settling a pending read allocates, which can collect the Response.
+        let Some(live) = live_response(weak) else {
+            return;
+        };
+        response = live;
     }
     // Read after the stream calls: the check observes the post-detach state.
     let body_value = response.get_body_value();
@@ -436,20 +449,11 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: boo
 where
     ThisServer: ServerLike + 'static,
 {
-    /// Reborrow the owning server. `server` is a BACKREF (LIFETIMES.tsv): set
-    /// at construction in `init()` from the `NewServer` that owns the request
-    /// pool, never null while the `RequestContext` is live, and the server
-    /// outlives every `RequestContext` it allocates. Centralises the
-    /// per-call-site backref deref behind the `bun_ptr::BackRef` field.
-    ///
-    /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
-    /// server is not a sub-field of `RequestContext` (it owns the pool the
-    /// context lives in), so callers may hold `&ThisServer` past calls that
-    /// end or recycle this context.
+    /// The lifetime is decoupled from `&self`: the server outlives calls that recycle this context.
     #[inline]
     pub(crate) fn server<'r>(&self) -> &'r ThisServer {
         // SAFETY: BACKREF — `server` is `Some(non-null)` after `init()` and
-        // the pointee `NewServer` outlives this context (it owns the pool).
+        // the pointee `NewServer` outlives this context.
         // `'r` may exceed `&self` because the server is not borrowed from
         // `*self`; it lives independently and outlives every context.
         unsafe {
@@ -505,22 +509,15 @@ where
     ///
     #[inline]
     fn response_mut<'r>(&self) -> Option<&'r mut Response> {
-        let ptr = self
-            .response_weakref
-            .with_mut(|w| w.get().map(std::ptr::from_mut::<Response>));
-        // SAFETY: weak handle just reported the allocation live; the pointee
-        // is disjoint from `*self`.
-        ptr.map(|p| unsafe { &mut *p })
+        live_response(&self.response_weakref)
     }
 
     #[inline]
-    fn request_mut<'r>(&self) -> Option<&'r mut Request> {
-        let ptr = self
-            .request_weakref
-            .with_mut(|w| w.get().map(std::ptr::from_mut::<Request>));
-        // SAFETY: weak handle just reported the allocation live; the pointee
-        // is disjoint from `*self`.
-        ptr.map(|p| unsafe { &mut *p })
+    fn request<'r>(&self) -> Option<&'r Request> {
+        let request = self.request_weakref.with_mut(|w| w.get());
+        // SAFETY: the weak handle just reported the value live, and no caller
+        // holds it across script unless the wrapper is rooted.
+        request.map(|p| unsafe { p.as_ref() })
     }
 
     /// Take the pooled request-body slot out of `self`; the handle's `Drop`
@@ -563,7 +560,7 @@ where
         self.flags.set_has_abort_handler(true);
         if resp.is_closed() {
             // `req` is still set only while the dispatch is on the stack: snapshot as `to_async` would have.
-            if let (Some(req), Some(request)) = (self.req.get(), self.request_mut()) {
+            if let (Some(req), Some(request)) = (self.req.get(), self.request()) {
                 self.to_async_without_abort_handler(req, request);
             }
             Self::on_abort(self.as_ctx_ptr(), resp);
@@ -744,7 +741,7 @@ where
             return;
         };
         // SAFETY: `response` is the live cell pointer; `value` is rooted by the
-        // caller's frame and protect()'d below.
+        // caller's frame.
         if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
             return;
         }
@@ -761,7 +758,7 @@ where
             return;
         }
 
-        // SAFETY: `response` is the live, protect()'d cell pointer.
+        // SAFETY: `response` is the live, rooted cell pointer.
         unsafe { self.render(response) };
     }
 
@@ -1463,8 +1460,8 @@ where
             }
         }
 
-        if let Some(request) = this.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
+        if let Some(request) = this.request() {
+            request.request_context.set(AnyRequestContext::NULL);
             this.request_weakref.set(request::WeakRef::EMPTY);
         }
         // if signal is not aborted, abort the signal
@@ -1538,9 +1535,7 @@ where
         // A stream pump that settles after this point finds no context
         // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
         // runs: release the body's hold on the stream here.
-        if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
-        }
+        release_body_stream(&self.response_weakref, global_this);
 
         self.response_root.clear();
         self.response_weakref.set(response::WeakRef::EMPTY);
@@ -1551,8 +1546,8 @@ where
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
 
-        if let Some(request) = self.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
+        if let Some(request) = self.request() {
+            request.request_context.set(AnyRequestContext::NULL);
             self.request_weakref.set(request::WeakRef::EMPTY);
         }
 
@@ -2238,7 +2233,7 @@ where
     fn to_async_without_abort_handler(
         &self,
         req: *mut Req<SSL_ENABLED, MUX>,
-        request_object: &mut Request,
+        request_object: &Request,
     ) {
         debug_assert!(self.server.get().is_some());
 
@@ -2250,6 +2245,7 @@ where
             // type is `uws::Request`, so the cast is nominal.
             request_object
                 .request_context
+                .get()
                 .set_request(req.cast::<uws::Request>());
         }
 
@@ -2267,10 +2263,10 @@ where
 
         // This object dies after the stack frame is popped
         // so we have to clear it in here too
-        request_object.request_context.detach_request();
+        request_object.request_context.get().detach_request();
     }
 
-    pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &mut Request) {
+    pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &Request) {
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
@@ -2540,7 +2536,8 @@ where
     ) {
         let ctx = self;
         request_value.ensure_still_alive();
-        response_value.ensure_still_alive();
+        // For a promise, this also roots what it settled with.
+        let _keep = jsc::EnsureStillAlive(response_value);
         if ctx.drain_microtasks().is_err() {
             return;
         }
@@ -2571,15 +2568,12 @@ where
             return;
         }
 
-        // `response_value` is rooted via ensure_still_alive() / protect() below
-        // for as long as `response` is used.
         if let Some(response) = as_response(response_value) {
             // SAFETY: `response` is the live, rooted cell pointer.
             if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
                 return;
             }
             ctx.response_root.clear();
-            response_value.ensure_still_alive();
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp.get() {
                     let pair = HeaderResponsePair {
@@ -2624,8 +2618,6 @@ where
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     }
-                    // `fulfilled_value` is rooted via ensure_still_alive() /
-                    // protect() below for as long as `response` is used.
                     let Some(response) = as_response(fulfilled_value) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
@@ -2637,7 +2629,6 @@ where
                     }
 
                     ctx.response_root.clear();
-                    fulfilled_value.ensure_still_alive();
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp.get() {
                             let pair = HeaderResponsePair {
@@ -2726,8 +2717,8 @@ where
         // server is a BACKREF; `global_this()` returns a lifetime decoupled
         // from `&self`.
         let global_this = self.server().global_this();
+        release_body_stream(&self.response_weakref, global_this);
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
             // Unlike the reject path: used whatever it held, not only when `Locked`.
             *resp.get_body_value() = Body::Value::Used;
         }
@@ -2804,9 +2795,7 @@ where
             sink.source.detach(&sink.global_this);
         }
 
-        if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
-        }
+        release_body_stream(&self.response_weakref, global_this);
 
         // aborted so call finalizeForAbort
         if self.is_aborted_or_ended() {
@@ -2966,7 +2955,6 @@ where
                             ),
                             ..Default::default()
                         };
-                        stream.value.unprotect();
                         let js_err = err.to_error_instance(global_this);
                         this.run_error_handler(js_err);
                         return;
@@ -3635,14 +3623,8 @@ where
             blob.size()
         };
 
-        let (content_type, needs_content_type, content_type_needs_free) =
+        let (content_type, needs_content_type) =
             get_content_type(response.get_init_headers_mut(), blob);
-        // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
-        // Hold the value past all reads below, then let it drop at scope end.
-        let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
-            // Drop of `content_type` (moved into closure capture below would
-            // change borrow lifetimes); rely on natural end-of-scope drop.
-        });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(mut headers_) = response.swap_init_headers() {
@@ -3813,11 +3795,7 @@ where
     /// [`as_response`]), carrying the allocation's provenance — `WeakPtr` keeps
     /// it past any reborrow.
     unsafe fn set_response(&self, response: *mut Response) {
-        if self
-            .response_weakref
-            .with_mut(|weak| weak.get().map(std::ptr::from_mut::<Response>))
-            == Some(response)
-        {
+        if self.response_weakref.with_mut(|weak| weak.get()) == NonNull::new(response) {
             return;
         }
         // SAFETY: caller contract — `response` is live and root-provenanced.
@@ -4570,30 +4548,20 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
+fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool) {
     let mut needs_content_type = true;
-    let mut content_type_needs_free = false;
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
-                let content_slice = content.to_utf8();
-                // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = content_slice.is_owned();
-                let mt = MimeType::init(
-                    content_slice.slice(),
-                    dupe,
-                    Some(&mut content_type_needs_free),
-                );
-                drop(content_slice);
-                break 'brk mt;
+                break 'brk MimeType::init(content.to_utf8().slice());
             }
         }
 
         if !blob.content_type().is_empty() {
-            bun_http_types::MimeType::by_name(blob.content_type())
+            MimeType::init(blob.content_type())
         } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
             content
         } else if blob.was_string() {
@@ -4605,7 +4573,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
         }
     };
 
-    (content_type, needs_content_type, content_type_needs_free)
+    (content_type, needs_content_type)
 }
 
 // `ServerLike` lives in `crate::server` (mod.rs) and is impl'd for the four

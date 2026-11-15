@@ -37,6 +37,8 @@ pub(crate) struct FileResponseStream {
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: Cell<EventLoopHandle>,
+    reader: JsCell<BufferedReader>,
+    /// After `reader`, whose poll goes first.
     fd: StreamFd,
     idle_timeout: Cell<u8>,
 
@@ -44,7 +46,6 @@ pub(crate) struct FileResponseStream {
     owner: Cell<Option<StreamOwner>>,
 
     mode: Cell<Mode>,
-    reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
@@ -629,15 +630,6 @@ bun_io::impl_buffered_reader_parent! {
     // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
     ref_            = |this| (*this).ref_();
     deref           = |this| Self::deref(this);
-}
-
-impl Drop for FileResponseStream {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `start()` cleared CLOSE_HANDLE, so the reader's `Drop` doesn't unregister the poll.
-        #[cfg(unix)]
-        self.reader_mut().handle.close_without_closing_fd();
-    }
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {

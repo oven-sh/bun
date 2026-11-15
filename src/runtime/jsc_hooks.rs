@@ -319,13 +319,7 @@ unsafe fn init_runtime_state(
     // the low tier (`VirtualMachine::init` writes it immediately before calling
     // this hook), so no uws wiring is repeated here.
 
-    // Note: `heap::alloc` is paired with `heap::take` in
-    // [`deinit_runtime_state`] below — called from `VirtualMachine::deinit` /
-    // worker `destroy()` via the `RuntimeHooks::deinit_runtime_state` slot.
-    // PORTING.md §Forbidden permits
-    // `into_raw`-without-reclaim only for true process-lifetime singletons via
-    // `OnceLock`, which this is not (per-VM / per-Worker-thread).
-    let state = bun_core::heap::into_raw(Box::new(RuntimeState {
+    let owned = bun_ptr::AliasableBox::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
@@ -369,7 +363,8 @@ unsafe fn init_runtime_state(
         uv_loop: unsafe {
             crate::napi::uv_posix::UvLoop::new(ptr::NonNull::new_unchecked(vm), (*vm).handle())
         },
-    }));
+    });
+    let state = owned.as_ptr();
     RUNTIME_STATE.set(state);
 
     // `Timespec::now_allow_mocked_time` reads `bun_core::mock_time` directly;
@@ -488,10 +483,7 @@ unsafe fn init_runtime_state(
                 // Mirrors `deinit_runtime_state`, which is the teardown the
                 // `Ok` path would otherwise reach.
                 RUNTIME_STATE.set(ptr::null_mut());
-                // SAFETY: `state` is the unique `heap::into_raw` result from the
-                // top of this fn; the TLS slot was just nulled so no other live
-                // alias exists on this thread.
-                drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
+                drop(owned);
                 bun_ast::expr::data::Store::deinit();
                 bun_ast::stmt::data::Store::deinit();
                 return Err(e.into());
@@ -516,7 +508,7 @@ unsafe fn init_runtime_state(
         configure_debugger(unsafe { &*vm }, &opts.debugger);
     }
 
-    Ok(state.cast())
+    Ok(owned.into_raw().cast())
 }
 
 /// Translate the CLI flag /
@@ -1372,7 +1364,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
-    stop_cron_for_vm_teardown,
+    stop_watches_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
@@ -1464,14 +1456,18 @@ unsafe fn parse_worker_exec_argv_flags(
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
 /// stops every in-process `Bun.cron()` job registered on
 /// this VM and releases the pending-promise ref so the struct frees (the event
-/// loop is dying; settle callbacks will never run).
-fn stop_cron_for_vm_teardown(vm: &VirtualMachine) {
+/// loop is dying; settle callbacks will never run). Drops the memory pressure watcher too.
+fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
+    if let Some(state) = try_runtime_state() {
+        // Its poll is a slot of `RareData`, which is freed before the runtime state.
+        state.memory_pressure_watcher.set(None);
+    }
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —
-/// same impl as [`stop_cron_for_vm_teardown`] but skips
+/// the cron half of [`stop_watches_for_vm_teardown`], but skips
 /// the pending-promise force-release (the event loop survives a hot reload, so
 /// settle callbacks will still run).
 fn cron_clear_all_reload(vm: &VirtualMachine) {

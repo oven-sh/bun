@@ -57,7 +57,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, crate::Strong>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
 /// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
@@ -2383,7 +2383,7 @@ impl VirtualMachine {
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
-    ///  B. release — cron, user timers and GC-controller timers cancelled; child
+    ///  B. release — cron, memory pressure watch, user and GC-controller timers cancelled; child
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
@@ -2447,7 +2447,7 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.stop_cron_for_vm_teardown)(vm);
+            (hooks.stop_watches_for_vm_teardown)(vm);
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
@@ -2877,12 +2877,10 @@ pub struct RuntimeHooks {
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
-    /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
-    /// `bun_runtime::api::cron`.
-    pub stop_cron_for_vm_teardown: fn(vm: &VirtualMachine),
+    /// Cron jobs and the memory pressure watcher, while the loop and `RareData` are alive.
+    pub stop_watches_for_vm_teardown: fn(vm: &VirtualMachine),
     /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// Same impl as `stop_cron_for_vm_teardown` but
-    /// the `.reload` mode preserves the next-fire schedule across the new
+    /// The `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &VirtualMachine),
     /// Standalone-graph sourcemap load.
@@ -4675,9 +4673,8 @@ impl VirtualMachine {
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
         if should_clear_terminal {
             bun_core::Output::flush();
-            bun_core::Output::disable_buffering();
+            let _unbuffered = bun_core::Output::disable_buffering_scope();
             bun_core::Output::reset_terminal_all();
-            bun_core::Output::enable_buffering();
         }
 
         if let Some(hooks) = runtime_hooks() {
@@ -5636,7 +5633,7 @@ impl VirtualMachine {
             drop(core::mem::take(&mut (*this).source_mappings));
 
             if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_cron_for_vm_teardown)(&*this);
+                (hooks.stop_watches_for_vm_teardown)(&*this);
             }
             if let Some(rare) = (*this).rare_data.take() {
                 // Paired with `rare_data()`'s `register_root_region`.
@@ -6079,9 +6076,6 @@ impl VirtualMachine {
 
         // Loaded macros are functions of the outgoing realm. The macro context
         // remembers which ones are loaded, so the next file loads its own.
-        for callback in self.macros.get().values() {
-            callback.unprotect();
-        }
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
         drop(self.transpiler.with_mut(|t| t.macro_context.take()));
 
@@ -6492,7 +6486,7 @@ impl VirtualMachine {
             return;
         }
         // **Warning** this method can be called in the heap collector thread!!
-        self.remap_stack_frames_mutex.lock();
+        let _guard = self.remap_stack_frames_mutex.lock_guard();
 
         // Note: a last-`(hash → InternalSourceMap)` cache across the loop
         // would be purely a perf optimization (most stacks repeat the same
@@ -6536,8 +6530,6 @@ impl VirtualMachine {
                 frame.remapped = true;
             }
         }
-
-        self.remap_stack_frames_mutex.unlock();
     }
 
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.

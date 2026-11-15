@@ -510,7 +510,7 @@ impl TimerObjectInternals {
         let timers = timer_all();
         let fake_clock = timers.fake_timers.installs();
 
-        vm.event_loop().enter();
+        let _entered = vm.enter_event_loop_scope();
 
         // SAFETY: `thrown` per fn contract; `popped` pins the parent across re-entrancy.
         let _ = unsafe {
@@ -572,8 +572,6 @@ impl TimerObjectInternals {
                 drop(popped);
             }
         }
-
-        vm.event_loop().exit();
     }
 
     pub(crate) fn call_catching(

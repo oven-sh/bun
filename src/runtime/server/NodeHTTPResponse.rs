@@ -2634,9 +2634,6 @@ impl Drop for NodeHTTPResponse {
                 // A tunneled response can be finalized while its socket lives.
                 || flags.contains(Flags::TUNNELED)
         );
-
-        self.poll_ref.unref(VirtualMachine::get());
-        self.body_read_ref.unref(VirtualMachine::get());
     }
 }
 

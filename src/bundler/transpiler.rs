@@ -518,7 +518,7 @@ impl<'a> Transpiler<'a> {
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler` mutates
-    /// `self.options` so the resolver sees the same conditions/target/public_path.
+    /// `self.options` so the resolver sees the same conditions/target.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
     }
@@ -1037,7 +1037,6 @@ pub(crate) fn resolver_bundle_options_subset(
         // the bundler configured.
         output_dir: src.output_dir.clone(),
         root_dir: src.root_dir.clone(),
-        public_path: src.public_path.clone(),
         compile: src.compile_mode.is_executable(),
         supports_multiple_outputs: src.supports_multiple_outputs,
         tree_shaking: src.tree_shaking,
@@ -1243,11 +1242,11 @@ impl<'a> Transpiler<'a> {
 
         let source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
-                break 'brk virtual_source.clone();
+                break 'brk virtual_source.clone_in(arena);
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
-                break 'brk client_entry_point.source.clone();
+                break 'brk client_entry_point.source.clone_in(arena);
             }
 
             if !DATA_ONLY && path.namespace == b"node" {

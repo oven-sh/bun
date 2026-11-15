@@ -4,7 +4,7 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
 use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -294,7 +294,7 @@ pub(crate) struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
     pub this_value: JsCell<JsRef>,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
 
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
@@ -389,7 +389,6 @@ impl Drop for JSValkeyClient {
         debug_assert!(self.timer.held_ref.get().is_none());
         debug_assert!(self.reconnect_timer.held_ref.get().is_none());
         self.client_mut().shutdown(None);
-        self.poll_ref.disable();
         self.stop_timers();
         self.ref_count.assert_no_refs();
     }
@@ -709,7 +708,7 @@ impl JSValkeyClient {
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::default(),
+            poll_ref: JsKeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -801,7 +800,7 @@ impl JSValkeyClient {
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::default(),
+            poll_ref: JsKeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),

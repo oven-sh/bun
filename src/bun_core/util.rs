@@ -1914,7 +1914,7 @@ impl<T: Default> Default for RacyCell<T> {
 // Debug-only re-entrancy guard. Release builds compile to a ZST.
 //
 // `locked_at` is `Cell` so `lock()`/`lock_or_assert()` can take `&self`
-// (callers like `RefCount::assert_single_threaded` only have `&self`). The
+// (callers like `RefCount::has_one_ref` only have `&self`). The
 // whole point of ThreadLock is asserting single-threaded access, so the
 // unsynchronized write to `locked_at` is fine — if two
 // threads race here, the `owning_thread.swap` panic fires first.
@@ -1945,11 +1945,6 @@ impl ThreadLock {
         let s = Self::init_unlocked();
         s.lock();
         s
-    }
-    /// Same as [`Self::init_locked`]; kept under the legacy name.
-    #[inline]
-    pub fn init_locked_if_non_comptime() -> Self {
-        Self::init_locked()
     }
     /// RAII spelling of `lock()` + `defer unlock()`. Returns a guard that
     /// `unlock()`s on `Drop`. The guard stores a raw pointer (not a borrow)

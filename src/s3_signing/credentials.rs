@@ -156,7 +156,7 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
-    ref_count: RefCount<S3Credentials>,
+    ref_count: RefCount,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
     pub region: Box<[u8]>,

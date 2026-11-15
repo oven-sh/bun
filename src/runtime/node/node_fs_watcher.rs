@@ -44,7 +44,7 @@ use super::win_watcher as path_watcher;
 // dance in the old `emit_abort`/`emit_error` was a manual workaround for
 // exactly that. With `Cell`/`JsCell` (UnsafeCell-backed) the miscompile is
 // structurally impossible and those methods are now plain `&self`.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct FSWatcher {
     /// JS-thread uses only.
     ctx: bun_ptr::BackRef<VirtualMachine>,
@@ -73,7 +73,7 @@ pub(crate) struct FSWatcher {
     closed: Cell<bool>,
 
     /// The JS wrapper holds one ref, and so does each task queued for the JS thread.
-    ref_count: ThreadSafeRefCount<FSWatcher>,
+    ref_count: ThreadSafeRefCount,
     /// What the next task delivers. Under the lock of `PathWatcherManager`.
     #[cfg(not(windows))]
     pending_events: JsCell<Events>,

@@ -6,7 +6,7 @@ use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_ptr::{AliasableBox, AnyRefCounted, RefPtr};
+use bun_ptr::{AliasableBox, RefCount, RefCounted, RefPtr};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -83,9 +83,9 @@ impl ResponseRoot {
 }
 
 /// The response until it ends, aborts or upgrades, with the base ref: what keeps the context alive for uWS.
-pub(crate) struct AttachedResponse<T: AnyRefCounted>(JsCell<Option<(uws::AnyResponse, RefPtr<T>)>>);
+pub(crate) struct AttachedResponse<T: RefCounted>(JsCell<Option<(uws::AnyResponse, RefPtr<T>)>>);
 
-impl<T: AnyRefCounted> AttachedResponse<T> {
+impl<T: RefCounted> AttachedResponse<T> {
     pub(crate) fn get(&self) -> Option<uws::AnyResponse> {
         self.0.get().as_ref().map(|(resp, _)| *resp)
     }
@@ -98,6 +98,8 @@ impl<T: AnyRefCounted> AttachedResponse<T> {
 
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
+#[derive(RefCounted)]
+#[ref_count(destroy = Self::deinit)]
 #[repr(align(16))]
 pub(crate) struct RequestContext<
     ThisServer,
@@ -110,7 +112,7 @@ pub(crate) struct RequestContext<
     /// BACKREF to the `Server`, which outlives its requests. `None` once detached.
     server: JsCell<Option<PendingRequest<bun_ptr::BackRef<ThisServer>>>>,
     pub(crate) resp: AttachedResponse<Self>,
-    pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
+    pub(crate) req: Cell<Option<NonNull<Req<SSL_ENABLED, MUX>>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
     pub(crate) signal: JsCell<Option<jsc::PendingAbortSignal>>,
     pub method: Method,
@@ -126,10 +128,12 @@ pub(crate) struct RequestContext<
     /// and the response is rejected
     pub(crate) response_root: ResponseRoot,
     root: Cell<*mut Self>,
-    pub(crate) ref_count: Cell<u8>,
+    ref_count: RefCount,
     pub(crate) pin_count: Cell<u8>,
     /// The [`Dispatch`]es on the stack.
     dispatch_count: Cell<u8>,
+    /// The last ref, from `complete` until the outermost [`Dispatch`] is dropped.
+    dispatch_ref: Cell<Option<RefPtr<Self>>>,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
     /// not protected (hot path), so GC may finalize it while we're parked
@@ -234,7 +238,7 @@ use std::io::Write as _;
 
 /// A ref on a [`RequestContext`] for the frame of a callback.
 ///
-/// Every uWS handler that can reach a `deref()` constructs one of these from its raw entry
+/// Every uWS handler that can release a ref constructs one of these from its raw entry
 /// pointer as the first statement: the guard's ref keeps the pooled context
 /// alive for the whole frame even if the body drops the base ref, and the
 /// actual pool release happens here at drop.
@@ -313,28 +317,9 @@ where
 {
     fn drop(&mut self) {
         self.dispatch_count.update(|count| count - 1);
-        if self.flags.has_marked_complete() {
-            self.deinit();
+        if self.flags.has_marked_complete() && self.is_async() {
+            drop(self.dispatch_ref.take());
         }
-    }
-}
-
-impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> AnyRefCounted
-    for RequestContext<ThisServer, SSL, DBG, MUX>
-where
-    ThisServer: ServerLike + 'static,
-{
-    unsafe fn rc_ref(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { (*this).ref_() }
-    }
-    unsafe fn rc_deref(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { (*this).deref() }
-    }
-    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-        // SAFETY: caller contract.
-        unsafe { (*this).ref_count.get() == 1 }
     }
 }
 
@@ -594,7 +579,7 @@ where
         if resp.is_closed() {
             // `req` is still set only while the dispatch is on the stack: snapshot as `to_async` would have.
             if let (Some(req), Some(request)) = (self.req.get(), self.request()) {
-                self.to_async_without_abort_handler(req, request);
+                self.to_async_without_abort_handler(req.as_ptr(), request);
             }
             Self::on_abort(self.as_ctx_ptr(), resp);
             return;
@@ -796,8 +781,8 @@ where
     }
 
     #[inline]
-    fn unpinned_ref_count(&self) -> u8 {
-        self.ref_count.get() - self.pin_count.get()
+    fn unpinned_ref_count(&self) -> u32 {
+        self.ref_count.get() - u32::from(self.pin_count.get())
     }
 
     fn should_render_missing(&self) -> bool {
@@ -873,27 +858,35 @@ where
         true
     }
 
-    fn deinit(&self) {
-        ctx_log!("deinit");
-        debug_assert!(self.resp.get().is_none());
-        debug_assert_eq!(self.ref_count.get(), 0);
-        self.end_request_streaming_and_drain();
-        self.flags.set_has_marked_complete(true);
+    /// Takes a ref because it runs JS. Releasing it calls `deinit` again, which frees the slot.
+    fn complete(this: RefPtr<Self>) {
+        ctx_log!("complete");
+        this.finalize_without_deinit();
+        debug_assert!(this.resp.get().is_none());
+        this.end_request_streaming_and_drain();
+        this.flags.set_has_marked_complete(true);
 
-        if !self.is_async() {
-            ctx_log!("deferred deinit <d> ({:p})<r>", self);
-            return;
+        if !this.is_async() {
+            ctx_log!("deferred deinit <d> ({:p})<r>", this.as_ptr());
+            // SAFETY: `this` is moved, not dropped, so the context outlives the call.
+            unsafe { (*this.as_ptr()).dispatch_ref.set(Some(this)) };
+        }
+    }
+
+    fn deinit(last: AliasableBox<Self>) {
+        if !last.flags.has_marked_complete() {
+            return Self::complete(RefPtr::from(last));
         }
 
-        ctx_log!("deinit<d> ({:p})<r>", self);
-        debug_assert!(self.flags.has_finalized());
+        ctx_log!("deinit<d> ({:p})<r>", last.as_ptr());
+        debug_assert!(last.flags.has_finalized());
 
         // A client abort while the body stream is in flight reclaims the claim of the promise
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
         // so a client abort in that state reaches deinit with the sink still owned here.
         // This is the owner's last exit: release it exactly like the settle paths do.
-        if let Some(owned_sink) = self.sink.take() {
-            // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
+        if let Some(owned_sink) = last.sink.take() {
+            // SAFETY: this runs once, after `detach_response()` removed the uWS callbacks;
             // the context is the sink's sole owner (see the `sink` field's doc comment).
             let sink = unsafe { &mut *owned_sink.as_ptr() };
             sink.finalize();
@@ -901,26 +894,12 @@ where
         }
 
         // Taken out to drop last: it can free the dev server, which `deferred_request` points into.
-        if let Some(server) = self.server.take() {
-            server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
+        let server = last.server.take();
+        let slot = last.into_raw();
+        if let Some(server) = server {
+            // SAFETY: `slot` is the pool slot passed to `create`, and `last` was its only owner.
+            unsafe { server.release_request_context(slot.cast::<c_void>(), MUX) };
         }
-    }
-
-    pub(crate) fn deref(&self) {
-        let ref_count = self.ref_count.get();
-        stream_log!("deref {} -> {}", ref_count, ref_count - 1);
-        debug_assert!(ref_count > 0);
-        self.ref_count.set(ref_count - 1);
-        if ref_count == 1 {
-            self.finalize_without_deinit();
-            self.deinit();
-        }
-    }
-
-    pub(crate) fn ref_(&self) {
-        let ref_count = self.ref_count.get();
-        stream_log!("ref {} -> {}", ref_count, ref_count + 1);
-        self.ref_count.set(ref_count + 1);
     }
 
     pub(super) fn ref_guard(&self) -> RefPtr<Self> {
@@ -1383,8 +1362,10 @@ where
         }
     }
 
-    pub(crate) fn create(
-        this: &mut core::mem::MaybeUninit<Self>,
+    /// # Safety
+    /// `slot` was just claimed from the pool that `server.release_request_context` returns it to.
+    pub(crate) unsafe fn create(
+        slot: *mut Self,
         server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
@@ -1396,13 +1377,12 @@ where
         let any_req = Self::any_request(req);
         let range = RangeRequest::raw_from_request(&any_req);
         let if_range = RangeRequest::if_range_from_request(&any_req, range);
-        let slot: *mut Self = this.as_mut_ptr();
-        // SAFETY: writing to MaybeUninit slot. `resp` adopts its first ref, which does not read the slot.
+        // SAFETY: fn contract. `resp` adopts the first ref.
         unsafe {
             slot.write(Self {
                 root: Cell::new(slot),
-                resp: AttachedResponse(JsCell::new(Some((resp, RefPtr::from_raw(slot))))),
-                req: Cell::new(Some(req)),
+                resp: AttachedResponse(JsCell::new(None)),
+                req: Cell::new(NonNull::new(req)),
                 method: resolved_method,
                 server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
                 range,
@@ -1413,9 +1393,10 @@ where
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: Cell::new(UpgradeState::None),
                 response_root: ResponseRoot::default(),
-                ref_count: Cell::new(1),
+                ref_count: RefCount::init(),
                 pin_count: Cell::new(0),
                 dispatch_count: Cell::new(0),
+                dispatch_ref: Cell::new(None),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
                 blob: JsCell::new(AnyBlob::Blob(Blob::default())),
                 sendfile: Cell::new(SendfileContext::default()),
@@ -1432,9 +1413,10 @@ where
                 deferred_request: Cell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
             });
+            (*slot).resp.0.set(Some((resp, RefPtr::from_raw(slot))));
         }
 
-        ctx_log!("create<d> ({:p})<r>", this.as_ptr());
+        ctx_log!("create<d> ({:p})<r>", slot);
     }
 
     fn on_close(this: *mut Self, resp: uws::AnyResponse) {
@@ -3141,11 +3123,10 @@ where
                 // No stream and no other consumer: wait for `Value::resolve`.
                 // The registered callback owns a +1 on `this`, released by
                 // `do_render_with_body_locked`.
-                this.ref_();
                 this.flags.set_has_marked_pending(true);
                 lock.on_receive_value =
                     Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
-                lock.task = Some(NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap());
+                lock.task = Some(this.ref_guard().into_non_null().cast::<c_void>());
 
                 return;
             }
@@ -4429,7 +4410,7 @@ where
         }
 
         if !this.flags.has_abort_handler() {
-            if let Some(req) = this.req.get() {
+            if let Some(req) = this.req.get().map(NonNull::as_ptr) {
                 // Inlined `req_url` body to avoid carrying the
                 // `Transport`/`NativePromiseContextType` bounds onto this
                 // formatter impl.

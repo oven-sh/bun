@@ -17,7 +17,7 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
-use bun_ptr::{AsCtxPtr as _, RefPtr};
+use bun_ptr::{AsCtxPtr as _, RefCount, RefPtr, ThreadSafeRefCount};
 
 // This example should be kept in sync with bindgen's documentation
 pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
@@ -543,9 +543,10 @@ thread_local! {
 }
 
 /// `TestRefCounted`, declared in `bindgen_test.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct TestRefCounted {
-    ref_count: Cell<u32>,
+    // Atomic: a debug `RefCount` is 272 bytes, and bindgen.test.ts asserts this size.
+    ref_count: ThreadSafeRefCount,
     value: Cell<i32>,
     finalized: Cell<bool>,
 }
@@ -564,7 +565,7 @@ impl TestRefCounted {
     pub(crate) fn constructor(value: i32) -> *mut Self {
         REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
         bun_core::heap::into_raw(Box::new(TestRefCounted {
-            ref_count: Cell::new(1),
+            ref_count: ThreadSafeRefCount::init(),
             value: Cell::new(value),
             finalized: Cell::new(false),
         }))
@@ -688,9 +689,10 @@ impl TestNote {
     }
 }
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct TestRefCountedNote {
-    ref_count: Cell<u32>,
+    // Atomic, as in `TestRefCounted`.
+    ref_count: ThreadSafeRefCount,
     size: usize,
 }
 
@@ -704,7 +706,7 @@ impl TestRefCountedNote {
         if text.is_undefined() {
             return Err(heap.type_error(format_args!("text is required")));
         }
-        let ref_count = Cell::new(1);
+        let ref_count = ThreadSafeRefCount::init();
         let this_value = structure.create(heap, RefPtr::new(Self { ref_count, size }));
         // SAFETY: storing a value runs no JavaScript.
         let global = unsafe { heap.global() };
@@ -821,9 +823,9 @@ impl TestCallable {
     }
 }
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct TestNonFinal {
-    ref_count: Cell<u32>,
+    ref_count: RefCount,
     value: i32,
 }
 
@@ -835,7 +837,7 @@ pub(crate) trait TestNonFinalExt {
 
 impl TestNonFinalExt for TestNonFinal {
     fn constructor(value: i32) -> *mut Self {
-        let ref_count = Cell::new(1);
+        let ref_count = RefCount::init();
         RefPtr::new(Self { ref_count, value }).into_raw()
     }
 
@@ -844,7 +846,7 @@ impl TestNonFinalExt for TestNonFinal {
     }
 
     fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a> {
-        let ref_count = Cell::new(1);
+        let ref_count = RefCount::init();
         // SAFETY: making the object runs no JavaScript.
         JsLocal::new(
             heap,

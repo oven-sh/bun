@@ -2,7 +2,9 @@
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
 
 use core::ffi::{c_uint, c_void};
+use core::ptr::NonNull;
 
+use bun_ptr::{RefCounted, RefPtr};
 use bun_uws as uws;
 
 use crate::webcore::CookieMap;
@@ -129,7 +131,7 @@ macro_rules! dispatch {
             CtxTag::DebugHttpsMux => arm!(DebugHttpsMuxCtx),
         }
     }};
-    // Raw-pointer variant: hands the typed `*mut T` to `$body`. For `end_chunk`,
+    // Raw-pointer variant: hands the typed `*mut T` to `$body`. For a `$body`
     // which may release the context in its own frame.
     ($self:expr, $default:expr, ptr |$T:ident, $ptr:ident| $body:expr) => {{
         let this = $self;
@@ -155,9 +157,8 @@ macro_rules! dispatch {
 }
 
 impl AnyRequestContextRef {
-    pub(super) fn new(ctx: AnyRequestContext) -> Self {
-        dispatch!(ctx, (), |_T, ctx| ctx.ref_());
-        Self(ctx)
+    pub(super) fn new<T: CtxKind + RefCounted>(ctx: RefPtr<T>) -> Self {
+        Self(AnyRequestContext::init(ctx.into_raw()))
     }
 }
 
@@ -170,7 +171,15 @@ impl core::ops::Deref for AnyRequestContextRef {
 
 impl Drop for AnyRequestContextRef {
     fn drop(&mut self) {
-        dispatch!(self.0, (), |_T, ctx| ctx.deref())
+        dispatch!(
+            self.0,
+            (),
+            ptr | _T,
+            ptr | {
+                // SAFETY: `ptr` is from `into_raw` in `new`.
+                unsafe { RefPtr::decrement_strong_count(ptr) }
+            }
+        )
     }
 }
 
@@ -224,7 +233,7 @@ impl AnyRequestContext {
             }
             // `Req<_,_> = c_void` (erased handle). For non-mux the underlying
             // type is always `uws::Request`, so the cast is purely nominal.
-            ctx.req.set(Some(req.cast::<c_void>()));
+            ctx.req.set(NonNull::new(req.cast::<c_void>()));
         })
     }
 
@@ -234,7 +243,7 @@ impl AnyRequestContext {
                 // url/headers already on the Request
                 return None;
             }
-            ctx.req.get().map(|p| p.cast::<uws::Request>())
+            ctx.req.get().map(|p| p.as_ptr().cast::<uws::Request>())
         })
     }
 

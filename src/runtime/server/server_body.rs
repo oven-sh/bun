@@ -108,7 +108,9 @@ where
 trait RequestCtxOps: RequestCtx {
     type Server;
     type Dispatch;
-    fn create_in(
+    /// # Safety
+    /// As [`NewRequestContext::create`].
+    unsafe fn create_in(
         slot: *mut Self,
         server: &Self::Server,
         req: &mut Self::Req,
@@ -158,22 +160,16 @@ where
     type Server = ThisServer;
     type Dispatch = Dispatch<ThisServer, SSL, DBG, MUX>;
     #[inline]
-    fn create_in(
+    unsafe fn create_in(
         slot: *mut Self,
         server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
         method: Option<http::Method>,
     ) {
-        // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
-        // MaybeUninit for in-place construction — `&mut` scoped to this call.
-        Self::create(
-            unsafe { &mut *slot.cast::<core::mem::MaybeUninit<Self>>() },
-            server,
-            std::ptr::from_mut(req).cast(),
-            any_resp,
-            method,
-        );
+        let req = std::ptr::from_mut(req).cast();
+        // SAFETY: fn contract.
+        unsafe { Self::create(slot, server, req, any_resp, method) };
     }
     #[inline]
     fn dispatch(&self) -> Self::Dispatch {
@@ -890,7 +886,7 @@ pub(crate) struct ServerInitContext<'a> {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct ServePlugins {
     names: Box<[Box<[u8]>]>,
     state: Cell<ServePluginsState>,
@@ -901,7 +897,7 @@ pub(crate) struct ServePlugins {
     html_bundle_routes: Cell<Vec<html_bundle::PendingBuild>>,
     /// Server whose DevServer is waiting for the plugins to load.
     dev_server: Cell<Option<super::AnyServer>>,
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
 }
 
 struct PendingLoad {
@@ -945,7 +941,7 @@ impl ServePlugins {
             pending: Cell::new(None),
             html_bundle_routes: Cell::new(Vec::new()),
             dev_server: Cell::new(None),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
         })
     }
 
@@ -2491,7 +2487,7 @@ where
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
         //
         // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
-        // `MaybeUninit::write` placement-new through the slot's stable
+        // placement-new through the slot's stable
         // address, after which `assume_init()` consumes the token.
         // `RequestContext` carries the heaviest drop glue in the codebase, so
         // a panic inside `create_in` now releases the slot via
@@ -2504,12 +2500,12 @@ where
                 );
                 let slot = (*self.mux_request_pool.get()).claim();
                 Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+                // SAFETY: `create_in` fully initialized the slot.
                 slot.assume_init().as_ptr().cast()
             } else {
                 let slot = self.request_pool.claim();
                 Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+                // SAFETY: `create_in` fully initialized the slot.
                 slot.assume_init().as_ptr().cast()
             }
         };
@@ -2737,15 +2733,17 @@ where
         req.set_yield(false);
         // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
         let ctx_slot = this.request_pool.claim();
-        <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot.addr().as_ptr(),
-            this,
-            req,
-            RespLike::to_any_response(resp),
-            None,
-        );
-        // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-        let ctx = Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+        // SAFETY: just claimed, and fully initialized by `create_in`.
+        let ctx = Dispatch::new(unsafe {
+            <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
+                ctx_slot.addr().as_ptr(),
+                this,
+                req,
+                RespLike::to_any_response(resp),
+                None,
+            );
+            ctx_slot.assume_init().as_ref()
+        });
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);

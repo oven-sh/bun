@@ -44,7 +44,7 @@ macro_rules! impl_timer_object {
     ($T:ident) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
-            pub ref_count: ::bun_ptr::RefCount<Self>,
+            pub ref_count: ::bun_ptr::RefCount,
             pub event_loop_timer: super::OwnedTimer,
             pub internals: super::TimerObjectInternals,
         }
@@ -66,30 +66,6 @@ macro_rules! impl_timer_object {
         }
 
         impl $T {
-            // Re-export the refcount mixin's ops as inherent fns so
-            // `TimerObjectInternals`'s `container_of` dispatch resolves.
-
-            /// Increment the intrusive refcount.
-            ///
-            /// # Safety
-            /// `this` must point to a live, `heap::alloc`-allocated `Self`.
-            #[inline]
-            pub(crate) unsafe fn ref_(this: *mut Self) {
-                // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::ref_(this) }
-            }
-
-            /// Decrement the intrusive refcount; on zero drops the `Box`.
-            /// After this returns `this` may dangle.
-            ///
-            /// # Safety
-            /// `this` must point to a live, `heap::alloc`-allocated `Self`.
-            #[inline]
-            pub(crate) unsafe fn deref(this: *mut Self) {
-                // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::deref(this) }
-            }
-
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
             /// heap-allocate → `to_js_ptr` → `internals.init` →
             /// inspector `did_schedule_async_call`. The per-type `init` fn

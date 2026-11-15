@@ -1,7 +1,9 @@
 //! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0).
 
+mod aliased_struct;
 pub(crate) mod endpoint;
-pub(crate) mod ffi;
+mod engine;
+mod roots;
 pub(crate) mod session;
 pub(crate) mod stream;
 pub(crate) mod tls;

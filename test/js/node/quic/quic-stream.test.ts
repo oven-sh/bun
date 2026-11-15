@@ -740,3 +740,91 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+async function runWithServerKeys(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { createPrivateKey } from "node:crypto";
+       import { readFileSync } from "node:fs";
+       import { connect, listen } from "node:quic";
+       const keys = [createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}))];
+       const certs = [readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))})];
+       const transportParams = { maxIdleTimeout: 2 };
+       const serverOptions = { sni: { "*": { keys, certs } }, alpn: "x", transportParams };
+       const clientOptions = { alpn: "x", verifyPeer: "manual", transportParams };
+       ${script}`,
+    ],
+    env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("a deferred abort doesn't use a stream that lsquic has freed", async () => {
+  const result = await runWithServerKeys(`
+    const remote = Promise.withResolvers(), dropped = Promise.withResolvers();
+    const server = await listen(session => {
+      session.closed.catch(() => {});
+      session.ondatagram = () => session.sendDatagram("pong");
+      session.onstream = stream => {
+        stream.closed.catch(() => {});
+        remote.resolve(stream);
+      };
+    }, serverOptions);
+    let dropping = false, clientPort, pong;
+    const relay = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket, data, port) {
+          if (port !== server.address.port) {
+            clientPort = port;
+            socket.send(data, server.address.port, "127.0.0.1");
+          } else if (!dropping || data.length < 400) {
+            socket.send(data, clientPort, "127.0.0.1");
+          } else {
+            dropped.resolve();
+            // The dropped packet may carry the pong.
+            if (pong) session.sendDatagram("ping");
+          }
+        },
+      },
+    });
+    const session = await connect(
+      { address: "127.0.0.1", port: relay.port },
+      { ...clientOptions, ondatagram: () => pong?.resolve() },
+    );
+    async function roundTrip() {
+      pong = Promise.withResolvers();
+      session.sendDatagram("ping");
+      await pong.promise;
+      pong = undefined;
+    }
+    await session.opened;
+
+    // Nothing is written, so an abort is deferred. The send side ends here.
+    const stream = await session.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.resetStream(1n);
+    const { writer } = await remote.promise;
+    await roundTrip();
+
+    // The final size is known, and the read side stays open.
+    dropping = true;
+    writer.writeSync(new Uint8Array(1000));
+    await dropped.promise;
+    writer.writeSync(new Uint8Array(1));
+    writer.endSync();
+    await roundTrip();
+
+    stream.onerror = () => stream.stopSending();
+    stream.destroy(new Error("destroyed"));
+    await roundTrip();
+    console.log(stream.destroyed);
+    process.exit(0);
+  `);
+  expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});

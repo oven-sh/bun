@@ -378,6 +378,8 @@ pub struct VirtualMachine {
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: crate::VmHandle,
+    /// `handle.closed()`, without the atomic load.
+    pub(crate) closed: Cell<bool>,
     pub pending_ipc: Cell<Option<PendingIpc>>,
     pub hot_reload_counter: Cell<u32>,
 
@@ -2383,6 +2385,8 @@ impl VirtualMachine {
         // something new (a multipart upload's next part); sweep again so it is
         // cancelled rather than waited out.
         vm.handle.close_and_wait(|| {
+            // The last call follows the close.
+            vm.closed.set(vm.handle.closed());
             vm.release_queued_work();
             // SAFETY: fn contract.
             let _ = unsafe { Self::stop_phase_sweep(this, kind) };
@@ -3132,6 +3136,7 @@ impl VirtualMachine {
             child_workers: JsCell::default(),
             jobs: JsCell::default(),
             handle: crate::VmHandle::new(this.as_ptr()),
+            closed: Cell::new(false),
             pending_ipc: Cell::new(None),
             hot_reload_counter: Cell::new(0),
             debugger: Cell::new(None),

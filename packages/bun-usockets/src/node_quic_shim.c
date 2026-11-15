@@ -5,184 +5,45 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct us_nq_vtable {
-    void *owner;
-    void *(*on_new_conn)(void *owner, lsquic_conn_t *c);
-    void (*on_hsk_done)(void *conn_ctx, int status);
-    void (*on_hsk_confirmed)(void *conn_ctx);
-    void (*on_goaway_received)(void *conn_ctx);
-    void (*on_conn_closed)(void *conn_ctx);
-    void (*on_conncloseframe)(void *conn_ctx, int app_error, uint64_t code,
-                              const char *reason, int reason_len);
-    void (*on_new_token)(void *conn_ctx, const unsigned char *token,
-                         size_t token_size);
-    void (*on_sess_resume)(void *conn_ctx, const unsigned char *blob,
-                           size_t blob_size);
-    void *(*on_new_stream)(void *owner, lsquic_stream_t *s);
-    void (*on_stream_read)(void *stream_ctx, lsquic_stream_t *s);
-    void (*on_stream_write)(void *stream_ctx, lsquic_stream_t *s);
-    void (*on_stream_close)(void *stream_ctx, lsquic_stream_t *s);
-    void (*on_stream_reset)(void *stream_ctx, int how, uint64_t error_code);
-    ssize_t (*on_dg_write)(void *conn_ctx, void *buf, size_t buf_sz);
-    void (*on_datagram)(void *conn_ctx, const void *buf, size_t sz);
-    void (*on_datagram_status)(void *conn_ctx, unsigned count, int acked);
-    void (*on_early_data_failed)(void *conn_ctx);
-    void (*on_path_switch)(void *conn_ctx, int validated, int is_preferred,
-                           const struct sockaddr *new_local,
-                           const struct sockaddr *new_peer,
-                           const struct sockaddr *old_local,
-                           const struct sockaddr *old_peer);
-    void (*on_origin)(void *conn_ctx, const unsigned char *chunk, size_t len,
-                      int fin);
-    SSL_CTX *(*get_ssl_ctx)(void *owner, const struct sockaddr *local);
-    SSL_CTX *(*get_client_ssl_ctx)(void *owner, const struct sockaddr *local);
-    SSL_CTX *(*lookup_cert)(void *owner, const struct sockaddr *local,
-                            const char *sni);
-    int (*packets_out)(void *owner, const struct lsquic_out_spec *specs,
-                       unsigned n);
-    void (*on_mini_conn_failed)(void *owner, const struct sockaddr *peer_sa,
-                                uint64_t error_code);
-};
+/* src/runtime/node/quic/engine.rs */
+extern lsquic_conn_ctx_t *Bun__nodeQuic__onNewConn(void *ctx, lsquic_conn_t *c);
+extern void Bun__nodeQuic__onConnClosed(lsquic_conn_t *c);
+extern lsquic_stream_ctx_t *Bun__nodeQuic__onNewStream(void *ctx, lsquic_stream_t *s);
+extern void Bun__nodeQuic__onStreamRead(lsquic_stream_t *s, lsquic_stream_ctx_t *h);
+extern void Bun__nodeQuic__onStreamWrite(lsquic_stream_t *s, lsquic_stream_ctx_t *h);
+extern void Bun__nodeQuic__onStreamClose(lsquic_stream_t *s, lsquic_stream_ctx_t *h);
+extern void Bun__nodeQuic__onStreamReset(lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how);
+extern void Bun__nodeQuic__onHskDone(lsquic_conn_t *c, enum lsquic_hsk_status status);
+extern void Bun__nodeQuic__onHskConfirmed(lsquic_conn_t *c);
+extern void Bun__nodeQuic__onMiniConnFailed(void *ctx, const struct sockaddr *peer_sa, uint64_t error_code);
+extern void Bun__nodeQuic__onGoawayReceived(lsquic_conn_t *c);
+extern void Bun__nodeQuic__onNewToken(lsquic_conn_t *c, const unsigned char *token, size_t len);
+extern void Bun__nodeQuic__onSessResume(lsquic_conn_t *c, const unsigned char *blob, size_t len);
+extern void Bun__nodeQuic__onConnCloseFrame(lsquic_conn_t *c, int app_error, uint64_t code,
+                                            const char *reason, int reason_len);
+extern ssize_t Bun__nodeQuic__onDgWrite(lsquic_conn_t *c, void *buf, size_t len);
+extern void Bun__nodeQuic__onDatagram(lsquic_conn_t *c, const void *buf, size_t len);
+extern void Bun__nodeQuic__onDatagramStatus(lsquic_conn_t *c, unsigned count, int acked);
+extern void Bun__nodeQuic__onEarlyDataFailed(lsquic_conn_t *c);
+extern void Bun__nodeQuic__onPathSwitch(lsquic_conn_t *c, int validated, int is_preferred,
+                                        const struct sockaddr *new_local, const struct sockaddr *new_peer,
+                                        const struct sockaddr *old_local, const struct sockaddr *old_peer);
+extern void Bun__nodeQuic__onOrigin(lsquic_conn_t *c, const unsigned char *chunk, size_t len, int fin);
+extern SSL_CTX *Bun__nodeQuic__getSslCtx(void *ctx, const struct sockaddr *local);
+extern SSL_CTX *Bun__nodeQuic__lookupCert(void *ctx, const struct sockaddr *local, const char *sni);
+extern int Bun__nodeQuic__packetsOut(void *ctx, const struct lsquic_out_spec *specs, unsigned n);
 
-static lsquic_conn_ctx_t *nq_on_new_conn(void *if_ctx, lsquic_conn_t *c) {
-    void *existing = (void *) lsquic_conn_get_ctx(c);
-    if (existing) return (lsquic_conn_ctx_t *) existing;
-    struct us_nq_vtable *vt = if_ctx;
-    return (lsquic_conn_ctx_t *) vt->on_new_conn(vt->owner, c);
-}
-static void nq_on_conn_closed(lsquic_conn_t *c) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    lsquic_conn_set_ctx(c, NULL);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_conn_closed(ctx);
-    }
-}
-static void nq_on_hsk_done(lsquic_conn_t *c, enum lsquic_hsk_status s) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_hsk_done(ctx, (int) s);
-    }
-}
-static void nq_on_mini_conn_failed(void *if_ctx, const struct sockaddr *peer_sa,
-                                   uint64_t error_code) {
-    struct us_nq_vtable *vt = if_ctx;
-    vt->on_mini_conn_failed(vt->owner, peer_sa, error_code);
-}
-static void nq_on_hsk_confirmed(lsquic_conn_t *c) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_hsk_confirmed(ctx);
-    }
-}
-static void nq_on_goaway_received(lsquic_conn_t *c) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_goaway_received(ctx);
-    }
-}
-static void nq_on_conncloseframe(lsquic_conn_t *c, int app_error, uint64_t code,
-                                 const char *reason, int reason_len) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_conncloseframe(ctx, app_error, code, reason, reason_len);
-    }
-}
-static void nq_on_new_token(lsquic_conn_t *c, const unsigned char *t, size_t n) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_new_token(ctx, t, n);
-    }
-}
-static void nq_on_sess_resume(lsquic_conn_t *c, const unsigned char *b, size_t n) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_sess_resume(ctx, b, n);
-    }
-}
-static lsquic_stream_ctx_t *nq_on_new_stream(void *if_ctx, lsquic_stream_t *s) {
-    struct us_nq_vtable *vt = if_ctx;
-    return (lsquic_stream_ctx_t *) vt->on_new_stream(vt->owner, s);
-}
-static void nq_on_read(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
-    if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_read(h, s);
-    }
-}
-static void nq_on_write(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
-    if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_write(h, s);
-    }
-}
-static void nq_on_stream_close(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
-    if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_close(h, s);
-    }
-}
-static void nq_on_reset(lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how) {
-    if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_reset(h, how, lsquic_stream_get_error_code(s));
-    }
-}
-static ssize_t nq_on_dg_write(lsquic_conn_t *c, void *buf, size_t sz) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    /* -1 is "nothing written": lsquic frames any return >= 0, so 0 would put
-     * an empty DATAGRAM frame on the wire. */
-    if (!ctx) return -1;
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-    return vt->on_dg_write(ctx, buf, sz);
-}
-static void nq_on_datagram(lsquic_conn_t *c, const void *buf, size_t sz) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_datagram(ctx, buf, sz);
-    }
-}
-static void nq_on_datagram_status(lsquic_conn_t *c, unsigned count, int acked) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_datagram_status(ctx, count, acked);
-    }
-}
-static void nq_on_early_data_failed(lsquic_conn_t *c) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_early_data_failed(ctx);
-    }
-}
-static void nq_on_origin(lsquic_conn_t *c, const unsigned char *chunk,
-                         size_t len, int fin) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_origin(ctx, chunk, len, fin);
-    }
-}
-static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
-                              const struct sockaddr *new_local,
-                              const struct sockaddr *new_peer,
-                              const struct sockaddr *old_local,
-                              const struct sockaddr *old_peer) {
-    void *ctx = (void *) lsquic_conn_get_ctx(c);
-    if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_path_switch(ctx, validated, is_preferred, new_local, new_peer,
-                           old_local, old_peer);
-    }
-}
+/* engine.rs and lsquic_sys assert the same numbers. */
+_Static_assert(sizeof(struct lsquic_out_spec) == 56
+    && offsetof(struct lsquic_out_spec, iov) == 0
+    && offsetof(struct lsquic_out_spec, iovlen) == 8
+    && offsetof(struct lsquic_out_spec, local_sa) == 16
+    && offsetof(struct lsquic_out_spec, dest_sa) == 24,
+    "OutSpec mirrors struct lsquic_out_spec");
+_Static_assert(sizeof(struct iovec) == 16
+    && offsetof(struct iovec, iov_base) == 0
+    && offsetof(struct iovec, iov_len) == 8,
+    "lsquic_sys::iovec mirrors struct iovec");
 
 /* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
 _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
@@ -343,46 +204,27 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
 }
 
 static const struct lsquic_stream_if nq_stream_if = {
-    .on_new_conn = nq_on_new_conn,
-    .on_conn_closed = nq_on_conn_closed,
-    .on_new_stream = nq_on_new_stream,
-    .on_read = nq_on_read,
-    .on_write = nq_on_write,
-    .on_close = nq_on_stream_close,
-    .on_hsk_done = nq_on_hsk_done,
-    .on_hsk_confirmed = nq_on_hsk_confirmed,
-    .on_mini_conn_failed = nq_on_mini_conn_failed,
-    .on_goaway_received = nq_on_goaway_received,
-    .on_new_token = nq_on_new_token,
-    .on_sess_resume_info = nq_on_sess_resume,
-    .on_reset = nq_on_reset,
-    .on_conncloseframe_received = nq_on_conncloseframe,
-    .on_dg_write = nq_on_dg_write,
-    .on_datagram = nq_on_datagram,
-    .on_datagram_status = nq_on_datagram_status,
-    .on_early_data_failed = nq_on_early_data_failed,
-    .on_path_switch = nq_on_path_switch,
-    .on_origin = nq_on_origin,
+    .on_new_conn = Bun__nodeQuic__onNewConn,
+    .on_conn_closed = Bun__nodeQuic__onConnClosed,
+    .on_new_stream = Bun__nodeQuic__onNewStream,
+    .on_read = Bun__nodeQuic__onStreamRead,
+    .on_write = Bun__nodeQuic__onStreamWrite,
+    .on_close = Bun__nodeQuic__onStreamClose,
+    .on_hsk_done = Bun__nodeQuic__onHskDone,
+    .on_hsk_confirmed = Bun__nodeQuic__onHskConfirmed,
+    .on_mini_conn_failed = Bun__nodeQuic__onMiniConnFailed,
+    .on_goaway_received = Bun__nodeQuic__onGoawayReceived,
+    .on_new_token = Bun__nodeQuic__onNewToken,
+    .on_sess_resume_info = Bun__nodeQuic__onSessResume,
+    .on_reset = Bun__nodeQuic__onStreamReset,
+    .on_conncloseframe_received = Bun__nodeQuic__onConnCloseFrame,
+    .on_dg_write = Bun__nodeQuic__onDgWrite,
+    .on_datagram = Bun__nodeQuic__onDatagram,
+    .on_datagram_status = Bun__nodeQuic__onDatagramStatus,
+    .on_early_data_failed = Bun__nodeQuic__onEarlyDataFailed,
+    .on_path_switch = Bun__nodeQuic__onPathSwitch,
+    .on_origin = Bun__nodeQuic__onOrigin,
 };
-
-static SSL_CTX *nq_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
-    return vt->get_ssl_ctx(vt->owner, local);
-}
-static SSL_CTX *nq_get_client_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
-    return vt->get_client_ssl_ctx(vt->owner, local);
-}
-static SSL_CTX *nq_lookup_cert(void *cert_ctx, const struct sockaddr *local,
-                               const char *sni) {
-    struct us_nq_vtable *vt = cert_ctx;
-    return vt->lookup_cert(vt->owner, local, sni);
-}
-static int nq_packets_out(void *out_ctx, const struct lsquic_out_spec *specs,
-                          unsigned n) {
-    struct us_nq_vtable *vt = out_ctx;
-    return vt->packets_out(vt->owner, specs, n);
-}
 
 static int nq_log_buf(void *ctx, const char *buf, size_t len) {
     (void) ctx;
@@ -396,8 +238,6 @@ void us_nq_enable_logging(const char *level) {
     lsquic_logger_init(&nq_logger, NULL, LLTS_HHMMSSUS);
     lsquic_set_log_level(level);
 }
-
-size_t us_nq_vtable_size(void) { return sizeof(struct us_nq_vtable); }
 
 struct us_nq_tp {
     uint64_t initial_max_stream_data_bidi_local;
@@ -477,7 +317,7 @@ void us_nq_settings_set_preferred_address(
     memcpy(s->es_preferred_address, addr, US_NQ_PREFERRED_ADDRESS_LEN);
 }
 /* The blob is NOT copied — the caller keeps it alive for the engine's
- * lifetime (it lives on the Rust QuicEndpoint). */
+ * lifetime (it lives on the Rust Engine). */
 void us_nq_settings_set_origin_blob(struct lsquic_engine_settings *s,
                                     const unsigned char *blob, size_t len) {
     s->es_origin_blob = blob;
@@ -508,24 +348,22 @@ NQ_GET(datagrams, int)
 NQ_GET(max_datagram_frame_size, unsigned short)
 #undef NQ_SET
 
-/* `vt` must outlive the engine; `settings` is copied by lsquic. */
+/* `ctx` must outlive the engine; `settings` is copied by lsquic. */
 lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
-                                  struct us_nq_vtable *vt,
-                                  const struct lsquic_engine_settings *settings,
-                                  const char *alpn) {
+                                  void *ctx,
+                                  const struct lsquic_engine_settings *settings) {
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = settings;
     api.ea_stream_if = &nq_stream_if;
-    api.ea_stream_if_ctx = vt;
-    api.ea_packets_out = nq_packets_out;
-    api.ea_packets_out_ctx = vt;
-    api.ea_get_ssl_ctx = is_server ? nq_get_ssl_ctx : nq_get_client_ssl_ctx;
+    api.ea_stream_if_ctx = ctx;
+    api.ea_packets_out = Bun__nodeQuic__packetsOut;
+    api.ea_packets_out_ctx = ctx;
+    api.ea_get_ssl_ctx = Bun__nodeQuic__getSslCtx;
     if (is_server) {
-        api.ea_lookup_cert = nq_lookup_cert;
-        api.ea_cert_lu_ctx = vt;
+        api.ea_lookup_cert = Bun__nodeQuic__lookupCert;
+        api.ea_cert_lu_ctx = ctx;
     }
-    api.ea_alpn = alpn;
     unsigned flags = is_server ? LSENG_SERVER : 0;
     if (is_http) {
         flags |= LSENG_HTTP;
@@ -535,15 +373,6 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
     }
     return lsquic_engine_new(flags, &api);
 }
-
-const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }
-const struct sockaddr *us_nq_spec_local(const struct lsquic_out_spec *s) { return s->local_sa; }
-void *us_nq_spec_peer_ctx(const struct lsquic_out_spec *s) { return s->peer_ctx; }
-const struct iovec *us_nq_spec_iov(const struct lsquic_out_spec *s, size_t *n) {
-    *n = s->iovlen;
-    return s->iov;
-}
-size_t us_nq_spec_stride(void) { return sizeof(struct lsquic_out_spec); }
 
 void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     /* RFC 9000 §3.1 allows RST in Data Sent state. */

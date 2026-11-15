@@ -86,14 +86,13 @@ enum ConfigFile {
 }
 
 struct RestoreLogLevel {
-    log: *const bun_ast::Log,
+    log: &'static bun_ast::Log,
     level: bun_ast::Level,
 }
 
 impl Drop for RestoreLogLevel {
     fn drop(&mut self) {
-        // SAFETY: see `load_bunfig`; runs on the same thread.
-        unsafe { (*self.log).level.set(self.level) };
+        self.log.level.set(self.level);
     }
 }
 
@@ -121,22 +120,13 @@ fn load_bunfig(
     bun_ast::expr::data::Store::create();
     let _store_reset = bun_ast::StoreResetGuard::new();
 
-    // A drop-guard borrowing `&mut *ctx.log` would conflict with the
-    // `Bunfig::parse(.., ctx)` reborrow.
-    // Route through the raw `*mut Log` (process-lifetime, set in
-    // `create_context_data()`); the guard restores `level` on unwind/return.
-    let log_ptr: *const bun_ast::Log = ctx.log;
-    debug_assert!(!log_ptr.is_null());
-    // SAFETY: `ctx.log` is the process-global Log written once during
-    // single-threaded CLI startup; no other `&mut` to it is live here.
-    let original_level = unsafe { (*log_ptr).level.get() };
-    // SAFETY: see above.
-    unsafe { (*log_ptr).level.set(bun_ast::Level::Warn) };
+    let log = ctx.log();
     let _restore = RestoreLogLevel {
-        log: log_ptr,
-        level: original_level,
+        log,
+        level: log.level.replace(bun_ast::Level::Warn),
     };
-    Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)
+    let is_project_file = file == ConfigFile::Project;
+    Bunfig::parse(cmd, &source, is_project_file, ctx, log, tool, counts)
 }
 
 /// The user's own file, once.
@@ -149,7 +139,7 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
         if let Err(err) = load_bunfig(cmd, ConfigFile::User, path, ctx, None, Counts::Everything) {
-            report_bunfig_load_failure(cmd, ctx.log, err);
+            report_bunfig_load_failure(cmd, ctx.log(), err);
         }
     }
 }
@@ -241,7 +231,7 @@ fn load_config_path_for_tool(
 }
 
 #[cold]
-fn report_bunfig_load_failure(cmd: CommandTag, log: *const bun_ast::Log, err: crate::Error) -> ! {
+fn report_bunfig_load_failure(cmd: CommandTag, log: &bun_ast::Log, err: crate::Error) -> ! {
     report_bunfig_load_failure_as(cmd, log, err, None)
 }
 
@@ -249,12 +239,10 @@ fn report_bunfig_load_failure(cmd: CommandTag, log: *const bun_ast::Log, err: cr
 #[cold]
 fn report_bunfig_load_failure_as(
     cmd: CommandTag,
-    log: *const bun_ast::Log,
+    log: &bun_ast::Log,
     err: crate::Error,
     shown: Option<&[u8]>,
 ) -> ! {
-    // SAFETY: process-global Log; see `load_bunfig` note.
-    let log = unsafe { &*log };
     let is_of_tool = matches!(cmd, CommandTag::LintCommand | CommandTag::FormatCommand);
     if log.has_any() {
         // `bun lint` and `bun fmt` print relative paths everywhere else, so do that here too.
@@ -372,7 +360,7 @@ pub fn load_config_for_tool(
         ctx.test_options.config_file = Some(config_path.as_bytes().into());
     }
     if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, tool) {
-        report_bunfig_load_failure(cmd, ctx.log, err);
+        report_bunfig_load_failure(cmd, ctx.log(), err);
     }
     Ok(())
 }
@@ -416,8 +404,8 @@ pub fn load_config_above_for_tool(
             above = tool(file, &shown)?;
             Ok(())
         };
-        // SAFETY: process-global Log; see `load_bunfig` note.
-        let said = unsafe { &*ctx.log }.msgs_len();
+        let log = ctx.log();
+        let said = log.msgs_len();
         let counts = Counts::OnlyForTheTool;
         if let Err(err) = load_bunfig(
             cmd,
@@ -428,10 +416,8 @@ pub fn load_config_above_for_tool(
             counts,
         ) {
             if !is_optional {
-                report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
+                report_bunfig_load_failure_as(cmd, log, err, Some(&shown));
             }
-            // SAFETY: as above.
-            let log = unsafe { &*ctx.log };
             for it in log.with_msgs(|msgs| msgs.split_off(said)) {
                 match it.kind {
                     bun_ast::Kind::Err => log.errors.update(|n| n - 1),

@@ -113,6 +113,11 @@
       "AddonData"
     ]
   },
+  "src/runtime/napi/uv_posix.rs": {
+    "unsafe impl Send": [
+      "QueuedWork"
+    ]
+  },
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

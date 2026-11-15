@@ -1,0 +1,228 @@
+//! The five prefix codes that a pixel is read with, and which five are for which tile of the image.
+
+use super::Rgba;
+use super::bit_reader::BitReader;
+use super::huffman::{Code, CodeLengths, Entry};
+use super::pixels;
+use crate::array::At;
+use crate::error::{Error, Result};
+use crate::lossless::{
+    DISTANCE_CODES, LENGTH_CODES, LITERAL_CODES, MIN_TILE_BITS, TILE_BITS_BITS, subsampled,
+};
+use crate::vec;
+
+/// Up to how many bits all of a pixel is looked up at once.
+const PACKED_BITS: u32 = 6;
+
+pub(super) struct Group {
+    /// Also has the lengths of copies and the keys of the color cache.
+    pub(super) green: Code,
+    pub(super) red: Code,
+    pub(super) blue: Code,
+    pub(super) alpha: Code,
+    pub(super) distance: Code,
+    pub(super) shortcut: Shortcut,
+    /// With the channels that have one symbol, and zeros for the others.
+    pub(super) constant: Rgba,
+    packed: [Packed; 1 << PACKED_BITS],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Shortcut {
+    None,
+    ConstantAlpha,
+    /// All but green are constant.
+    GreenOnly,
+    /// See `Group::packed()`.
+    Packed,
+    /// Every pixel is `Group::constant`, at no cost in bits.
+    Constant,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Packed {
+    pub(super) pixel: Rgba,
+    /// Green's symbol if that is not a literal, and then there is no `pixel`. Otherwise 0.
+    pub(super) symbol: u16,
+    pub(super) len: u8,
+}
+
+impl Group {
+    const EMPTY: Self = Self {
+        green: Code::EMPTY,
+        red: Code::EMPTY,
+        blue: Code::EMPTY,
+        alpha: Code::EMPTY,
+        distance: Code::EMPTY,
+        shortcut: Shortcut::None,
+        constant: [0; 4],
+        packed: [Packed {
+            pixel: [0; 4],
+            symbol: 0,
+            len: 0,
+        }; 1 << PACKED_BITS],
+    };
+
+    fn codes_mut(&mut self) -> [&mut Code; 5] {
+        [
+            &mut self.green,
+            &mut self.red,
+            &mut self.blue,
+            &mut self.alpha,
+            &mut self.distance,
+        ]
+    }
+
+    fn find_shortcut(&mut self) {
+        let channels = [&self.red, &self.green, &self.blue, &self.alpha];
+        let [red, green, blue, alpha] = channels.map(|code| code.max_len);
+        self.constant = channels.map(|code| match code.max_len {
+            0 => code.short(0).value() as u8,
+            _ => 0,
+        });
+        let total = red + green + blue + alpha;
+        self.shortcut = if total == 0 && self.green.short(0).value() < LITERAL_CODES {
+            Shortcut::Constant
+        } else if total == green {
+            Shortcut::GreenOnly
+        } else if total <= PACKED_BITS {
+            Shortcut::Packed
+        } else if alpha == 0 {
+            Shortcut::ConstantAlpha
+        } else {
+            Shortcut::None
+        };
+        if self.shortcut == Shortcut::Packed {
+            for (bits, packed) in self.packed.iter_mut().enumerate() {
+                let green = self.green.short(bits);
+                let mut len = green.len();
+                if green.value() >= LITERAL_CODES {
+                    packed.symbol = green.value() as u16;
+                } else {
+                    let [red, blue, alpha] = [&self.red, &self.blue, &self.alpha].map(|code| {
+                        let entry = code.short(bits >> len);
+                        len += entry.len();
+                        entry.value() as u8
+                    });
+                    packed.pixel = [red, green.value() as u8, blue, alpha];
+                }
+                packed.len = len as u8;
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn packed(&self, bits: usize) -> Packed {
+        *self.packed.at(bits % self.packed.len())
+    }
+}
+
+pub(super) struct Groups {
+    groups: Vec<Group>,
+    pub(super) second_tables: Vec<Entry>,
+    /// For each tile the index of its group.
+    tiles: Vec<u16>,
+    tiles_per_row: usize,
+    tile_bits: u32,
+}
+
+impl Groups {
+    /// One for all of the image.
+    pub(super) fn read_one(reader: &mut BitReader, cache_bits: u32) -> Result<Self> {
+        let mut tiles = vec::filled(0, 1)?;
+        let (groups, second_tables) = read_groups(reader, cache_bits, &mut tiles)?;
+        Ok(Self {
+            groups,
+            second_tables,
+            tiles,
+            tiles_per_row: 1,
+            tile_bits: usize::BITS - 2,
+        })
+    }
+
+    /// Those of the entropy image, which comes first.
+    pub(super) fn read_many(
+        reader: &mut BitReader,
+        cache_bits: u32,
+        width: usize,
+        height: usize,
+    ) -> Result<Self> {
+        let tile_bits = MIN_TILE_BITS + reader.read(TILE_BITS_BITS);
+        let tiles_per_row = subsampled(width, tile_bits);
+        let image = pixels::read_subimage(reader, tiles_per_row, subsampled(height, tile_bits))?;
+        let mut tiles = vec::with_room(image.len())?;
+        tiles.extend(image.iter().map(|&[r, g, ..]| u16::from_be_bytes([r, g])));
+        drop(image);
+        let (groups, second_tables) = read_groups(reader, cache_bits, &mut tiles)?;
+        Ok(Self {
+            groups,
+            second_tables,
+            tiles,
+            tiles_per_row,
+            tile_bits,
+        })
+    }
+
+    /// The group of the pixel, and where in the row its tile ends if the image does not end before.
+    #[inline(always)]
+    pub(super) fn at(&self, x: usize, y: usize) -> Result<(&Group, usize)> {
+        let column = x >> self.tile_bits;
+        let tile = (y >> self.tile_bits) * self.tiles_per_row + column;
+        let index = self.tiles.get(tile).ok_or(Error::Internal)?;
+        let group = self.groups.get(usize::from(*index));
+        Ok((
+            group.ok_or(Error::Internal)?,
+            (column + 1) << self.tile_bits,
+        ))
+    }
+}
+
+/// Keeps the groups that a tile refers to, and changes `tiles` to their indices among those.
+fn read_groups(
+    reader: &mut BitReader,
+    cache_bits: u32,
+    tiles: &mut [u16],
+) -> Result<(Vec<Group>, Vec<Entry>)> {
+    let stored = tiles.iter().max().map_or(0, |&max| usize::from(max) + 1);
+    let mut kept_index: Vec<Option<u16>> = vec::filled(None, stored)?;
+    for &tile in &*tiles {
+        *kept_index
+            .get_mut(usize::from(tile))
+            .ok_or(Error::Internal)? = Some(0);
+    }
+    for (index, kept) in (0..=u16::MAX).zip(kept_index.iter_mut().flatten()) {
+        *kept = index;
+    }
+    for tile in tiles {
+        let index = kept_index.get(usize::from(*tile)).copied().flatten();
+        *tile = index.ok_or(Error::Internal)?;
+    }
+
+    let cache_len = if cache_bits > 0 { 1 << cache_bits } else { 0 };
+    let alphabet_lens = [
+        LITERAL_CODES + LENGTH_CODES + cache_len,
+        LITERAL_CODES,
+        LITERAL_CODES,
+        LITERAL_CODES,
+        DISTANCE_CODES,
+    ];
+    let mut lengths = CodeLengths::new(alphabet_lens[0])?;
+    let mut groups = Vec::new();
+    let mut second_tables = Vec::new();
+    for kept in kept_index {
+        if kept.is_none() {
+            for alphabet_len in alphabet_lens {
+                lengths.read(reader, alphabet_len)?;
+            }
+            continue;
+        }
+        groups.try_reserve(1)?;
+        let group = groups.push_mut(Group::EMPTY);
+        for (code, alphabet_len) in group.codes_mut().into_iter().zip(alphabet_lens) {
+            lengths.read(reader, alphabet_len)?;
+            lengths.build(code, &mut second_tables)?;
+        }
+        group.find_shortcut();
+    }
+    Ok((groups, second_tables))
+}

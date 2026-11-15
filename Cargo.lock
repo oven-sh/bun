@@ -1678,6 +1678,7 @@ dependencies = [
  "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
+ "bun_webp",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -2188,6 +2189,15 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_webp"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_highway",
  "thiserror",
 ]
 

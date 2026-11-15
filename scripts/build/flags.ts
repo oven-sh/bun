@@ -23,7 +23,6 @@ export const safeStackDependencies: readonly DepName[] = [
   "brotli",
   "libdeflate",
   "libjpeg-turbo",
-  "libwebp",
   "lshpack",
   "zlib",
   "zstd",
@@ -1989,6 +1988,18 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_decoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_encoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

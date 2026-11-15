@@ -83,6 +83,7 @@ members = [
   "src/ast_jsc",
   "src/picohttp",
   "src/png",
+  "src/webp",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -510,11 +511,15 @@ bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
+bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
+# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp and highway_webp_*.cpp.
 [profile.dev.package.bun_png]
+opt-level = 3
+
+[profile.dev.package.bun_webp]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

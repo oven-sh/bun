@@ -660,11 +660,6 @@ bun_opaque::opaque_ffi! {
     /// mutates the channel on every dispatch/process call).
     pub struct Channel;
 }
-// Load-bearing: `ares_cancel`/`ares_process_fd` are declared `safe fn(&mut Channel)`
-// on the basis that re-entrant callbacks re-deriving `&mut Channel` from a raw
-// pointer cannot conflict because `Channel` claims zero bytes. If this type ever
-// gains a non-ZST field, those signatures must revert to `unsafe fn(*mut Channel)`.
-const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
 /// Implemented by the type that holds an [`OwnedChannel`] and receives socket-
 /// state callbacks.
@@ -700,12 +695,21 @@ fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
 }
 
 /// Dropping it fails every pending query into its callback and closes its sockets.
+#[repr(transparent)]
 pub struct OwnedChannel(ptr::NonNull<Channel>);
+
+impl core::ops::Deref for OwnedChannel {
+    type Target = Channel;
+    fn deref(&self) -> &Channel {
+        // SAFETY: the channel that `self` owns.
+        unsafe { self.0.as_ref() }
+    }
+}
 
 impl Drop for OwnedChannel {
     fn drop(&mut self) {
-        // SAFETY: from `ares_init_options`, destroyed once.
-        unsafe { ares_destroy(self.as_ptr()) };
+        // SAFETY: from `ares_init_options`, destroyed once. A call into the channel borrows `self`.
+        unsafe { ares_destroy(self.0.as_ptr()) };
     }
 }
 
@@ -728,17 +732,13 @@ impl Drop for Servers {
 }
 
 impl OwnedChannel {
-    pub fn as_ptr(&self) -> *mut Channel {
-        self.0.as_ptr()
-    }
-
     /// # Safety
     /// `this` stays in place and outlives the channel.
     pub unsafe fn new<C: ChannelContainer>(
         this: &C,
         options: ChannelOptions,
     ) -> Result<Self, Error> {
-        let mut channel: *mut Channel = ptr::null_mut();
+        let mut channel = None;
 
         library_init();
 
@@ -779,7 +779,7 @@ impl OwnedChannel {
         #[cfg(windows)]
         bun_libuv_sys::uv__winsock_ensure();
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
-        let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
+        let rc = unsafe { ares_init_options(&mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
             // Don't `ares_library_cleanup()` here: `library_init()` is `run_once!`, so
             // tearing down the library on a per-channel failure would leave every later
@@ -787,12 +787,12 @@ impl OwnedChannel {
             return Err(err);
         }
 
-        Ok(Self(ptr::NonNull::from(Channel::opaque_mut(channel))))
+        channel.ok_or(Error::ENOMEM)
     }
 }
 
 impl Channel {
-    pub fn servers(&mut self) -> Result<Servers, Error> {
+    pub fn servers(&self) -> Result<Servers, Error> {
         let mut servers = ptr::null_mut();
         // SAFETY: c-ares FFI; `servers` is a stack out-param.
         let rc = unsafe { ares_get_servers_ports(self, &raw mut servers) };
@@ -804,7 +804,7 @@ impl Channel {
 
     /// See c-ares `ares_getaddrinfo` documentation.
     pub fn get_addr_info<T: AddrInfoHandler>(
-        &mut self,
+        &self,
         host: &[u8],
         port: u16,
         hints: &[AddrInfo_hints],
@@ -842,7 +842,7 @@ impl Channel {
         }
     }
 
-    pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: Box<T>) {
+    pub fn resolve<T: ResolveHandler>(&self, name: &[u8], ctx: Box<T>) {
         if name.len() >= 1023
             || bun_core::strings::contains_char(name, 0)
             || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
@@ -876,7 +876,7 @@ impl Channel {
         }
     }
 
-    pub fn get_host_by_addr<T: HostentHandler>(&mut self, ip_addr: &[u8], ctx: Box<T>) {
+    pub fn get_host_by_addr<T: HostentHandler>(&self, ip_addr: &[u8], ctx: Box<T>) {
         // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
         const BUF_SIZE: usize = 46;
         let mut addr_buf = [0u8; BUF_SIZE];
@@ -907,7 +907,7 @@ impl Channel {
     }
 
     /// https://c-ares.org/ares_getnameinfo.html
-    pub fn get_name_info<T: NameinfoHandler>(&mut self, sa: &sockaddr_storage, ctx: Box<T>) {
+    pub fn get_name_info<T: NameinfoHandler>(&self, sa: &sockaddr_storage, ctx: Box<T>) {
         let salen: ares_socklen_t = if sa.ss_family == AF::INET as _ {
             core::mem::size_of::<sockaddr_in>() as ares_socklen_t
         } else {
@@ -929,7 +929,7 @@ impl Channel {
     }
 
     #[inline]
-    pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool) {
+    pub fn process(&self, fd: ares_socket_t, readable: bool, writable: bool) {
         ares_process_fd(
             self,
             if readable { fd } else { ARES_SOCKET_BAD },
@@ -971,24 +971,17 @@ unsafe extern "C" {
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
-    pub fn ares_init_options(
-        channelptr: *mut *mut Channel,
+    fn ares_init_options(
+        channelptr: &mut Option<OwnedChannel>,
         options: *mut Options,
         optmask: c_int,
     ) -> c_int;
     fn ares_destroy(channel: *mut Channel);
-    // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
-    // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
-    // synchronously invoke stored completion callbacks which may re-enter the
-    // resolver and re-derive a `&mut Channel` from a raw pointer; this is sound
-    // because `Channel` is a ZST (`UnsafeCell<[u8;0]>`), so `&mut Channel`
-    // claims zero bytes and overlapping `&mut` do not conflict under Stacked
-    // Borrows — the borrow checker does NOT gate the raw-pointer callbacks.
-    pub safe fn ares_cancel(channel: &mut Channel);
-    pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
-    pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
+    pub safe fn ares_cancel(channel: &Channel);
+    pub safe fn ares_set_local_ip4(channel: &Channel, local_ip: c_uint);
+    pub fn ares_set_local_ip6(channel: &Channel, local_ip6: *const u8);
     pub fn ares_getaddrinfo(
-        channel: *mut Channel,
+        channel: &Channel,
         node: *const c_char,
         service: *const c_char,
         hints: *const AddrInfo_hints,
@@ -1000,7 +993,7 @@ unsafe extern "C" {
 
 unsafe extern "C" {
     pub fn ares_query(
-        channel: *mut Channel,
+        channel: &Channel,
         name: *const c_char,
         dnsclass: NSClass,
         type_: NSType,
@@ -1008,7 +1001,7 @@ unsafe extern "C" {
         arg: *mut c_void,
     );
     pub fn ares_gethostbyaddr(
-        channel: *mut Channel,
+        channel: &Channel,
         addr: *const c_void,
         addrlen: c_int,
         family: c_int,
@@ -1016,19 +1009,14 @@ unsafe extern "C" {
         arg: *mut c_void,
     );
     pub fn ares_getnameinfo(
-        channel: *mut Channel,
+        channel: &Channel,
         sa: *const sockaddr,
         salen: ares_socklen_t,
         flags: c_int,
         callback: ares_nameinfo_callback,
         arg: *mut c_void,
     );
-    // Opaque handle by exclusive reference + scalars only.
-    pub safe fn ares_process_fd(
-        channel: &mut Channel,
-        read_fd: ares_socket_t,
-        write_fd: ares_socket_t,
-    );
+    pub safe fn ares_process_fd(channel: &Channel, read_fd: ares_socket_t, write_fd: ares_socket_t);
     // Pure read of opaque `!Sync` handle.
     pub safe fn ares_queue_active_queries(channel: &Channel) -> usize;
 }
@@ -1513,11 +1501,11 @@ unsafe impl bun_core::ffi::Zeroable for struct_ares_addr_port_node {}
 
 unsafe extern "C" {
     pub fn ares_set_servers_ports(
-        channel: *mut Channel,
+        channel: &Channel,
         servers: *mut struct_ares_addr_port_node,
     ) -> c_int;
     fn ares_get_servers_ports(
-        channel: *mut Channel,
+        channel: &Channel,
         servers: *mut *mut struct_ares_addr_port_node,
     ) -> c_int;
     /// https://c-ares.org/docs/ares_inet_ntop.html

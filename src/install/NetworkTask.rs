@@ -88,7 +88,7 @@ pub enum Callback {
         loaded_manifest: Option<PackageManifest>,
         name: strings::StringOrTinyString,
         is_extended_manifest: bool,
-        registry: npm::registry::ManifestTag,
+        registry: npm::registry::ManifestCacheKey,
     },
     Extract(ExtractTarball),
     LocalTarball,
@@ -687,7 +687,7 @@ impl NetworkTask {
             name: stored_string(name),
             loaded_manifest: loaded_manifest.cloned(),
             is_extended_manifest: needs_extended,
-            registry: scope.manifest_tag(),
+            registry: scope.manifest_cache_key(),
         };
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -723,7 +723,7 @@ pub enum ForTarballError {
     /// package); callers treat it like `AlreadyFailed`.
     #[error("TarballFailedToDownload")]
     Offline,
-    /// Returned by `enqueue_package_for_cache` when the dedupe map already records
+    /// Returned by `enqueue_install_task` when the dedupe map already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
     #[error("TarballFailedToDownload")]

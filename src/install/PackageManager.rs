@@ -229,7 +229,7 @@ use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name_print,
+    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
     cached_npm_package_folder_print_basename, cached_tarball_folder_name,
     cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
     get_cache_directory, get_cache_directory_abs_path, get_temporary_directory, global_link_dir,
@@ -238,11 +238,11 @@ pub use directories::{
 };
 
 pub use self::package_manager_enqueue as enqueue;
+pub(crate) use enqueue::enqueue_install_task;
 pub use enqueue::{
     enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
     enqueue_extract_npm_package, enqueue_git_checkout, enqueue_network_task,
-    enqueue_package_for_cache, enqueue_parse_npm_package, enqueue_patch_task,
-    enqueue_patch_task_pre,
+    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
 };
 
 pub use self::progress_strings::ProgressStrings;

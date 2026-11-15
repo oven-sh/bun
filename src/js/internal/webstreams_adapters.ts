@@ -41,7 +41,7 @@ function tryTransferToNativeReadable(stream: ReadableStream, options: StreamRead
   if (!ptr || ptr === -1) {
     return undefined;
   }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
+  return require("internal/streams/native-readable").constructNativeReadable(stream, options, "webstream");
 }
 
 type DefaultReader = ReturnType<ReadableStream["getReader"]>;

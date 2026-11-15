@@ -282,7 +282,7 @@ export default b.declarations(
   binding(
     "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException",
     [...retainedByNativeCode, b.definesName(["stack", "originalLine", "originalColumn"], b.nativeMemory)],
-    b.undefined,
+    b.bool,
   ),
   Object.entries(bindingsChangingNothing).flatMap(([path, { taken, refused }]) =>
     bindingTakingObjects(path, [...taken, ...refused]),

@@ -10,6 +10,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(unix, feature(core_io_borrowed_buf))]
 // ── submodules ──────────────────────────────────────────────────────────────
 
 pub mod error;
@@ -28,7 +29,7 @@ pub use error::Error;
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
 
-// `posix_event_loop` also defines what Windows shares (`js_vm_ctx`, `PollTag`, `FileType`).
+// `posix_event_loop` also defines what Windows shares (`js_vm_ctx`, `Owner`, `FileType`).
 mod keep_alive;
 pub mod posix_event_loop;
 pub use keep_alive::{JsKeepAlive, KeepAlive};
@@ -275,9 +276,7 @@ pub fn uws_to_native(uws: &'static bun_uws_sys::Loop) -> LoopRef {
     }
 }
 
-#[cfg(not(windows))]
-pub use posix_event_loop::{IoEvent, Owner};
-pub use posix_event_loop::{PollTag, js_vm_ctx};
+pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
 
 #[cfg(not(windows))]
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
@@ -319,8 +318,8 @@ impl EventLoopCtx {
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
     #[cfg(not(windows))]
-    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
-        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read.
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'_>> {
+        // SAFETY: as in `file_polls`.
         unsafe { (*self.pipe_read_scratch()).claim() }
     }
     #[inline]
@@ -402,207 +401,6 @@ pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, R
 pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};
 
-// `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
-// `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
-// trait impl — see `buffered_reader_parent_link!` below.
-bun_dispatch::link_interface! {
-    pub BufferedReaderParentLink[
-        SubprocessPipeReader,
-        ShellPipeReader,
-        ShellIoReader,
-        FileReader,
-        FileResponseStream,
-        Terminal,
-        CronRegister,
-        CronRemove,
-        FilterRunHandle,
-        MultiRunPipeReader,
-        TestParallelWorker,
-        LifecycleScript,
-        InstallGit,
-        SecurityScan,
-    ] {
-        fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
-        fn on_reader_done();
-        fn on_reader_error(err: bun_sys::Error);
-        fn loop_() -> LoopRef;
-        fn event_loop() -> EventLoopCtx;
-        fn ref_();
-        fn deref();
-    }
-}
-
-/// One-stop generator for a `BufferedReader` parent: emits **both** the
-/// `impl BufferedReaderParent for $T` block and the matching
-/// `link_impl_BufferedReaderParentLink!` registration. Every parent type just
-/// declares same-named inherent methods and writes one macro invocation.
-///
-/// ## Shape
-///
-/// ```ignore
-/// bun_io::impl_buffered_reader_parent! {
-///     Variant for Ty;                 // or `Ty<'a>` (link uses `'static`)
-///     has_on_read_chunk = true|false;
-///     // ↓ omit when has_on_read_chunk = false (trait default fires)
-///     on_read_chunk    = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
-///     on_reader_done   = |this| (*this).on_reader_done();
-///     on_reader_error  = |this, err| (*this).on_reader_error(err);
-///     loop_            = |this| (*this).loop_();
-///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
-/// }
-/// ```
-///
-/// Each `|this, ..|` body runs inside the generated
-/// `unsafe fn(this: *mut Self, ..)` trait method, wrapped in an `unsafe {}`
-/// block — `this` is the raw `*mut Self` registered via `set_parent` (see the
-/// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
-/// to `$T` inside every body. Autoref via `(*this).method()` covers the common
-/// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
-/// stay raw-pointer (e.g. `Rc::from_raw` keepalive in shell `PipeReader`)
-/// forward as `<Self>::method(this)` instead.
-#[macro_export]
-macro_rules! impl_buffered_reader_parent {
-    // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
-    (
-        $variant:ident for $T:ident<$lt:lifetime>;
-        feature = $feature:ident;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [$feature] $($rest)* }
-    };
-    (
-        $variant:ident for $T:ident<$lt:lifetime>;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [] $($rest)* }
-    };
-    // Non-generic.
-    (
-        $variant:ident for $T:ty;
-        feature = $feature:ident;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [$feature] $($rest)* }
-    };
-    (
-        $variant:ident for $T:ty;
-        $($rest:tt)*
-    ) => {
-        $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [] $($rest)* }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __buffered_reader_callback {
-    ([] $body:expr) => {
-        $body
-    };
-    ([$feature:ident] $body:expr) => {
-        ::bun_removable_features::removable_body!($feature, Abort, { $body })
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __impl_buffered_reader_parent_body {
-    (
-        [$($lt:lifetime)?] [$T:ty] $variant:ident;
-        $feature:tt
-        has_on_read_chunk = $has:expr;
-        $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
-        on_reader_done = |$rd_this:ident| $rd:expr;
-        on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
-        loop_ = |$l_this:ident| $lp:expr;
-        event_loop = |$e_this:ident| $ev:expr;
-        $( ref_ = |$rf_this:ident| $rf:expr; )?
-        $( deref = |$dr_this:ident| $dr:expr; )?
-    ) => {
-        // SAFETY (all generated methods): see `BufferedReaderParent` aliasing
-        // contract — `this` is the `*mut Self` registered via `set_parent`; a
-        // `&mut` to the embedded reader may be live on the caller's stack.
-        impl $(<$lt>)? $crate::pipe_reader::BufferedReaderParent for $T {
-            const KIND: $crate::BufferedReaderParentLinkKind =
-                $crate::BufferedReaderParentLinkKind::$variant;
-            const HAS_ON_READ_CHUNK: bool = $has;
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn on_read_chunk(
-                    $rc_this: *mut Self,
-                    $rc_chunk: $crate::Chunk<'_>,
-                    $rc_more: $crate::ReadState,
-                ) -> bool {
-                    unsafe { $crate::__buffered_reader_callback!($feature $rc) }
-                }
-            )?
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_done($rd_this: *mut Self) {
-                unsafe { $crate::__buffered_reader_callback!($feature $rd) }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
-                unsafe { $crate::__buffered_reader_callback!($feature $re) }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn loop_($l_this: *mut Self) -> $crate::LoopRef {
-                unsafe { $lp }
-            }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
-                unsafe { $ev }
-            }
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn ref_($rf_this: *mut Self) {
-                    unsafe { $rf }
-                }
-            )?
-            $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn deref($dr_this: *mut Self) {
-                    unsafe { $dr }
-                }
-            )?
-        }
-    };
-}
-
-#[doc(hidden)]
-pub use bun_sys as __bun_sys;
-
-/// Generates the `link_impl_BufferedReaderParentLink!` body for a type that
-/// already implements [`pipe_reader::BufferedReaderParent`]. Used once per
-/// variant in the impl crates (`bun_runtime`/`bun_install`).
-#[macro_export]
-macro_rules! buffered_reader_parent_link {
-    ($variant:ident for $T:ty) => {
-        $crate::link_impl_BufferedReaderParentLink! {
-            $variant for $T => |this| {
-                has_on_read_chunk() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::HAS_ON_READ_CHUNK,
-                on_read_chunk(chunk, has_more) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_read_chunk(this, chunk, has_more),
-                on_reader_done() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_done(this),
-                on_reader_error(err) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_error(this, err),
-                loop_() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
-                event_loop() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
-                ref_() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::ref_(this),
-                deref() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::deref(this),
-            }
-        }
-    };
-}
 pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
 #[cfg(windows)]
 pub use source::Source;
@@ -612,7 +410,7 @@ pub use source::Source;
 
 #[cfg(not(windows))]
 pub use pipe_reader::PosixFlags;
-pub use pipe_reader::{BufferedReader, BufferedReaderParent};
+pub use pipe_reader::{BufferedReader, ReadStatus};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

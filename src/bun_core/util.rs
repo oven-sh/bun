@@ -1508,7 +1508,7 @@ pub mod io {
     use crate::Fd;
     use crate::output::output_sink;
 
-    /// Best-effort writer to stdout or stderr. Shared: what is being printed can itself print.
+    /// Best-effort writer. Takes `&self` because a `Display` impl can print re-entrantly.
     pub struct Writer<Buf: ?Sized = [Cell<u8>]> {
         fd: Cell<Fd>,
         /// How much of `buf` is waiting to be written.
@@ -1517,9 +1517,9 @@ pub mod io {
     }
 
     /// The storage of a [`Writer`] that buffers up to `N` bytes.
-    pub type WriterWithBuffer<const N: usize> = Writer<[Cell<u8>; N]>;
+    pub type WriterStorage<const N: usize> = Writer<[Cell<u8>; N]>;
 
-    impl<const N: usize> WriterWithBuffer<N> {
+    impl<const N: usize> WriterStorage<N> {
         pub const fn new(fd: Fd) -> Self {
             Self {
                 fd: Cell::new(fd),
@@ -1575,21 +1575,14 @@ pub mod io {
         }
         #[inline]
         pub fn print(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
-            use core::fmt::Write;
-            struct A<'a>(&'a Writer, crate::CrateResult<()>);
-            impl core::fmt::Write for A<'_> {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.1 = self.0.write_all(s.as_bytes());
-                    if self.1.is_err() {
-                        Err(core::fmt::Error)
-                    } else {
-                        Ok(())
-                    }
-                }
-            }
-            let mut a = A(self, Ok(()));
-            let _ = a.write_fmt(args);
-            a.1
+            let _ = fmt::Write::write_fmt(&mut &*self, args);
+            Ok(())
+        }
+    }
+
+    impl fmt::Write for &Writer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            Writer::write_all(self, s.as_bytes()).map_err(|_| fmt::Error)
         }
     }
 

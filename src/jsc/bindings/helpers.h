@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
+#include <array>
 #include <limits>
 
 namespace Zig {
@@ -81,10 +82,34 @@ static WTF::String convertInvalidUTF8ToString(std::span<const unsigned char> byt
     return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
 }
 
+static constexpr size_t maxStackConvertedBytes = 1024;
+
+// For non-ASCII `bytes`. Copying a short result is faster than computing its length.
+static NEVER_INLINE WTF::String convertUTF8ToStringOnStack(std::span<const unsigned char> bytes)
+{
+    std::array<char16_t, maxStackConvertedBytes> units;
+    RELEASE_ASSERT(bytes.size() <= units.size());
+    // Writes at most one unit per byte, even if `bytes` changes during the call.
+    size_t length = simdutf::convert_utf8_to_utf16le(reinterpret_cast<const char*>(bytes.data()), bytes.size(), units.data());
+    if (!length) [[unlikely]]
+        return convertInvalidUTF8ToString(bytes);
+    return WTF::tryMakeString(std::span { units }.first(length));
+}
+
+// `Yes` guarantees that no other thread or process writes to the bytes during the call.
+enum class IsImmutable : bool { No,
+    Yes };
+
 // Returns null if the allocation for valid UTF-8 fails or the result exceeds the max string length.
-static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
+static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes, IsImmutable isImmutable = IsImmutable::No)
 {
     const char* data = reinterpret_cast<const char*>(bytes.data());
+    if (bytes.size() <= maxStackConvertedBytes) {
+        if (!bytes.empty() && simdutf::validate_ascii(data, bytes.size()))
+            return WTF::tryMakeString(byteCast<Latin1Character>(bytes));
+        return convertUTF8ToStringOnStack(bytes);
+    }
+
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
@@ -93,17 +118,13 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
         auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
         if (!impl) [[unlikely]]
             return {};
-        if (Bun__encoding__fillUTF16FromUTF8(bytes.data(), bytes.size(), out.data(), out.size())) [[likely]]
+        bool isValid = isImmutable == IsImmutable::Yes
+            ? utf16Length && simdutf::convert_utf8_to_utf16le(data, bytes.size(), out.data()) == utf16Length
+            : Bun__encoding__convertUTF8ToUTF16Exact(bytes.data(), bytes.size(), out.data(), out.size());
+        if (isValid) [[likely]]
             return WTF::String(WTF::move(impl));
-    } else if (!bytes.empty() && simdutf::validate_ascii(data, bytes.size())) [[likely]] {
-        // all-ASCII: stays 8-bit
-        std::span<Latin1Character> out;
-        auto impl = WTF::StringImpl::tryCreateUninitialized(bytes.size(), out);
-        if (!impl) [[unlikely]]
-            return {};
-        memcpy(out.data(), bytes.data(), bytes.size());
-        return WTF::String(WTF::move(impl));
-    }
+    } else if (simdutf::validate_ascii(data, bytes.size())) [[likely]]
+        return WTF::tryMakeString(byteCast<Latin1Character>(bytes));
     return convertInvalidUTF8ToString(bytes);
 }
 

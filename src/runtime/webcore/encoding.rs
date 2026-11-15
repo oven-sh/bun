@@ -99,9 +99,11 @@ pub(crate) use dispatch_encoding;
 // Exported C ABI entry points
 // ────────────────────────────────────────────────────────────────────────────
 
-/// SAFETY: `input[..len]` is valid for reading and `to[..to_len]` for writing during the call.
+/// # Safety
+/// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
+/// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__encoding__fillUTF16FromUTF8(
+unsafe extern "C" fn Bun__encoding__convertUTF8ToUTF16Exact(
     input: *const u8,
     len: usize,
     to: *mut MaybeUninit<u16>,
@@ -114,7 +116,7 @@ unsafe extern "C" fn Bun__encoding__fillUTF16FromUTF8(
             bun_core::ffi::slice_mut(to, to_len),
         )
     };
-    strings::fill_utf16_from_utf8(to.into(), input)
+    strings::convert_utf8_to_utf16_exact(to.into(), input)
 }
 
 /// # Safety
@@ -265,6 +267,23 @@ unsafe extern "C" fn Bun__encoding__encodeUTF16(
 }
 // for SQL statement
 /// # Safety
+/// Caller (C++) must guarantee `input[..len]` is valid for reading, and that
+/// nothing writes to it during the call.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__encoding__toStringImmutableUTF8(
+    input: *const u8,
+    len: usize,
+    global_object: &JSGlobalObject,
+) -> JSValue {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { strings::ImmutableBytes::new_unchecked(bun_core::ffi::slice(input, len)) };
+    match to_bun_string_from_immutable_bytes(input, Encoding::Utf8).into_js(global_object) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
+
+/// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__encoding__toStringUTF8(
@@ -396,6 +415,30 @@ pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunS
     dispatch_encoding!(encoding.into(), |E| to_bun_string_comptime::<E>(input))
 }
 
+pub(crate) fn to_bun_string_from_immutable_bytes(
+    input: strings::ImmutableBytes<'_>,
+    encoding: Encoding,
+) -> BunString {
+    match encoding {
+        Encoding::Buffer | Encoding::Utf8 if !input.slice().is_empty() => {
+            to_bun_string_from_converted_utf8(input.slice(), input.to_utf16_alloc(false))
+        }
+        _ => to_bun_string(input.slice(), encoding),
+    }
+}
+
+fn to_bun_string_from_converted_utf8(
+    input: &[u8],
+    converted: Result<Option<Vec<u16>>, strings::ToUTF16Error>,
+) -> BunString {
+    match converted {
+        Ok(Some(utf16)) => create_external_globally_allocated_utf16(utf16),
+        // The string is 100% ASCII characters. For this, we rely on WebKit to manage the memory.
+        Ok(None) => BunString::clone_latin1(input),
+        Err(_) => BunString::utf16_transcode_failure(input),
+    }
+}
+
 fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
         return BunString::EMPTY;
@@ -419,17 +462,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(input, false, false) {
-                Ok(v) => v,
-                Err(_) => return BunString::utf16_transcode_failure(input),
-            };
-            if let Some(utf16) = converted {
-                return create_external_globally_allocated_utf16(utf16);
-            }
-
-            // If we get here, it means we can safely assume the string is 100% ASCII characters
-            // For this, we rely on WebKit to manage the memory.
-            BunString::clone_latin1(input)
+            to_bun_string_from_converted_utf8(input, strings::to_utf16_alloc(input, false, false))
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters
@@ -503,7 +536,7 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     if to.try_reserve_exact(to_len).is_err() {
         return BunString::OUT_OF_MEMORY;
     }
-    bun_core::vec::append_with(&mut to, |spare| {
+    bun_core::vec::fill_spare_with_cursor(&mut to, |spare| {
         bun_simdutf::base64::encode(input, spare, url_safe)
     });
     debug_assert_eq!(to.len(), to_len);

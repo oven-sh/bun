@@ -1434,7 +1434,7 @@ pub(crate) mod strings_impl {
     // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
-    use bun_simdutf_sys::simdutf::{self, Measured};
+    use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
     use std::io::BorrowedBuf;
 
     #[inline]
@@ -1584,9 +1584,11 @@ pub(crate) mod strings_impl {
         [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
     }
 
-    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: Measured<'_, u8>) {
+    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: WithUtf8Len<'_, u8>) {
         list.reserve(latin1.utf8_len());
-        crate::vec::append_with(list, |out| simdutf::convert::latin1::to::utf8(latin1, out));
+        crate::vec::fill_spare_with_cursor(list, |out| {
+            simdutf::convert::latin1::to::utf8(latin1, out)
+        });
     }
 
     /// Port of `allocateLatin1IntoUTF8WithList`.
@@ -1596,18 +1598,18 @@ pub(crate) mod strings_impl {
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        append_latin1_as_utf8(&mut list, Measured::latin1(latin1));
+        append_latin1_as_utf8(&mut list, WithUtf8Len::latin1(latin1));
         list
     }
 
     /// Port of `toUTF8FromLatin1` — None if input is already ASCII.
     pub fn to_utf8_from_latin1(latin1: &[u8]) -> Option<Vec<u8>> {
-        let measured = Measured::latin1(latin1);
-        if measured.utf8_len() == latin1.len() {
+        let input = WithUtf8Len::latin1(latin1);
+        if input.utf8_len() == latin1.len() {
             return None;
         }
         let mut utf8 = Vec::new();
-        append_latin1_as_utf8(&mut utf8, measured);
+        append_latin1_as_utf8(&mut utf8, input);
         Some(utf8)
     }
 
@@ -1624,9 +1626,9 @@ pub(crate) mod strings_impl {
         }
     }
 
-    pub(crate) fn append_utf16_as_utf8(list: &mut Vec<u8>, utf16: Measured<'_, u16>) {
+    pub(crate) fn append_utf16_as_utf8(list: &mut Vec<u8>, utf16: WithUtf8Len<'_, u16>) {
         list.reserve(utf16.utf8_len());
-        let result = crate::vec::append_with(list, |out| {
+        let result = crate::vec::fill_spare_with_cursor(list, |out| {
             simdutf::convert::utf16::to::utf8::with_errors::le(utf16, out)
         });
         if !result.is_successful() {
@@ -1636,17 +1638,17 @@ pub(crate) mod strings_impl {
 
     /// Port of `convertUTF16ToUTF8Append`.
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
-        let mut measured = Measured::utf16_worst_case(utf16);
-        if measured.utf8_len() > list.capacity() - list.len() {
-            measured = Measured::utf16(utf16);
+        let mut input = WithUtf8Len::utf16_worst_case(utf16);
+        if input.utf8_len() > list.capacity() - list.len() {
+            input = WithUtf8Len::utf16(utf16);
         }
-        append_utf16_as_utf8(list, measured);
+        append_utf16_as_utf8(list, input);
     }
 
     pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
-        let measured = Measured::utf16(utf16);
-        let mut list = Vec::with_capacity(measured.utf8_len() + 16);
-        append_utf16_as_utf8(&mut list, measured);
+        let input = WithUtf8Len::utf16(utf16);
+        let mut list = Vec::with_capacity(input.utf8_len() + 16);
+        append_utf16_as_utf8(&mut list, input);
         list
     }
 
@@ -1671,9 +1673,9 @@ pub(crate) mod strings_impl {
     }
 
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
-        let measured = Measured::utf16(utf16);
-        list.reserve(measured.utf8_len() + 16);
-        append_utf16_as_utf8(list, measured);
+        let input = WithUtf8Len::utf16(utf16);
+        list.reserve(input.utf8_len() + 16);
+        append_utf16_as_utf8(list, input);
     }
 
     /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
@@ -1709,25 +1711,25 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
-        let mut measured = Measured::utf16_worst_case(utf16);
-        if measured.utf8_len() > buf.len() {
-            measured = Measured::utf16_with_replacement(utf16);
+        let mut input = WithUtf8Len::utf16_worst_case(utf16);
+        if input.utf8_len() > buf.len() {
+            input = WithUtf8Len::utf16_with_replacement(utf16);
         }
-        copy_measured_utf16_into_utf8(buf, measured)
+        copy_utf16_into_utf8_with_utf8_len(buf, input)
     }
 
-    pub fn copy_measured_utf16_into_utf8(
+    pub fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
-        measured: Measured<'_, u16>,
+        input: WithUtf8Len<'_, u16>,
     ) -> EncodeIntoResult {
-        let utf16 = measured.input();
+        let utf16 = input.input();
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
         // Fast path: if buf can definitely hold the whole conversion, try simdutf.
-        if measured.utf8_len() <= buf.len() {
+        if input.utf8_len() <= buf.len() {
             let r = simdutf::convert::utf16::to::utf8::with_errors::le(
-                measured,
+                input,
                 BorrowedBuf::from(&mut *buf).unfilled(),
             );
             if r.is_successful() {
@@ -1765,10 +1767,10 @@ pub(crate) mod strings_impl {
         }
         const MIN_LEN_FOR_SIMDUTF: usize = 64;
         if latin1.len() >= MIN_LEN_FOR_SIMDUTF {
-            let measured = Measured::latin1(latin1);
-            if buf.len() >= measured.utf8_len() {
+            let input = WithUtf8Len::latin1(latin1);
+            if buf.len() >= input.utf8_len() {
                 let mut out = BorrowedBuf::from(buf);
-                simdutf::convert::latin1::to::utf8(measured, out.unfilled());
+                simdutf::convert::latin1::to::utf8(input, out.unfilled());
                 return EncodeIntoResult {
                     read: latin1.len(),
                     written: out.len(),
@@ -2220,15 +2222,15 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() {
             return &mut out[..0];
         }
-        let measured = Measured::utf16(utf16);
-        let need = measured.utf8_len();
+        let input = WithUtf8Len::utf16(utf16);
+        let need = input.utf8_len();
         assert!(
             need <= out.len(),
             "convert_utf16_to_utf8_in_buffer: out too small (need {need}, have {})",
             out.len(),
         );
         let mut out = BorrowedBuf::from(out);
-        simdutf::convert::utf16::to::utf8::with_errors::le(measured, out.unfilled());
+        simdutf::convert::utf16::to::utf8::with_errors::le(input, out.unfilled());
         out.into_filled_mut()
     }
     // ─── path basename ─────────────────────────────────────────────────────

@@ -525,7 +525,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // this function encodes to UTF-16 if > 127
                 // so we don't need to worry about latin1 non-ascii code points
                 // we avoid trim since we wanna keep the utf8 validation intact
-                let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
+                // SAFETY: only `feed` passes an `ArrayBuffer`, and `WebSocketStreamOptions` always sets
+                // `ws_mode`. Here `data` is in a buffer of the socket, the tunnel or `self`.
+                let immutable = unsafe { strings::ImmutableBytes::new_unchecked(data) };
+                let utf16_bytes = match immutable.to_utf16_alloc(true) {
                     Ok(v) => v,
                     Err(strings::ToUTF16Error::InvalidByteSequence) => {
                         self.fail(ErrorCode::InvalidUtf8);

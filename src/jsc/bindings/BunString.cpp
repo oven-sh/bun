@@ -48,6 +48,7 @@
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
+extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length);
 
 // Cold path for the Rust-side inlined `deref()`: caller has already brought
 // the refcount to zero via `fetch_sub`, so this is destroy-only.
@@ -104,7 +105,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsString(vm, WTF::String(impl.releaseNonNull())));
     }
 
-    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
+    std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
+    auto str = length <= Zig::maxStackConvertedBytes ? Zig::convertUTF8ToStringOnStack(bytes) : Zig::convertUTF8ToString(bytes);
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -457,14 +459,22 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
     std::span utf8 { reinterpret_cast<const unsigned char*>(bytes), length };
-    // Valid UTF-8 that is not ASCII, which the caller has ruled out, has fewer units than bytes.
+    if (length <= Zig::maxStackConvertedBytes) {
+        auto str = Zig::convertUTF8ToStringOnStack(utf8);
+        if (str.isNull()) [[unlikely]] {
+            return uninitializedStringFailure<char16_t>(length);
+        }
+        return { BunStringTag::WTFStringImpl, { .wtf = str.releaseImpl().leakRef() } };
+    }
+
+    // The caller handles ASCII. Other valid UTF-8 has fewer UTF-16 units than bytes.
     if (size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length); u16Length < length) {
         std::span<char16_t> ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(u16Length, ptr);
         if (!impl) [[unlikely]] {
             return uninitializedStringFailure<char16_t>(u16Length);
         }
-        if (Bun__encoding__fillUTF16FromUTF8(utf8.data(), utf8.size(), ptr.data(), ptr.size())) [[likely]] {
+        if (Bun__encoding__convertUTF8ToUTF16Exact(utf8.data(), utf8.size(), ptr.data(), ptr.size())) [[likely]] {
             return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
         }
     }
@@ -490,18 +500,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* b
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
-{
-    ASSERT(length > 0);
-    std::span<char16_t> ptr;
-    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (!impl) [[unlikely]] {
-        return uninitializedStringFailure<char16_t>(length);
-    }
-    memcpy(ptr.data(), bytes, length * sizeof(char16_t));
-    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
@@ -511,10 +509,22 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const 
         return uninitializedStringFailure<Latin1Character>(length);
     }
 
-    // simdutf stops early if the units stopped being Latin-1 after the caller looked at them.
+    // simdutf stops early if `bytes` changed after the caller checked that it is ASCII.
     if (simdutf::convert_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr.data())) != length) [[unlikely]] {
         return BunString__fromUTF16(bytes, length);
     }
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
+{
+    ASSERT(length > 0);
+    std::span<char16_t> ptr;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
+    if (!impl) [[unlikely]] {
+        return uninitializedStringFailure<char16_t>(length);
+    }
+    memcpy(ptr.data(), bytes, length * sizeof(char16_t));
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 

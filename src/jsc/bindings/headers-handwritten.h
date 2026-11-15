@@ -427,8 +427,8 @@ extern "C" const char* Bun__version_sha;
 
 extern "C" void EncodedSlice__freeGlobal(const unsigned char* ptr, size_t len);
 
-// Whether the input is valid UTF-8 whose UTF-16 form, which `to` then holds, has exactly `other_len` units. The input may change meanwhile.
-extern "C" bool Bun__encoding__fillUTF16FromUTF8(const unsigned char* ptr, size_t len, char16_t* to, size_t other_len);
+// Returns false if the input is invalid or does not convert to exactly `other_len` units. If the input changes during the call, `to` can contain lone surrogates.
+extern "C" bool Bun__encoding__convertUTF8ToUTF16Exact(const unsigned char* ptr, size_t len, char16_t* to, size_t other_len);
 extern "C" size_t Bun__encoding__writeLatin1(const Latin1Character* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 

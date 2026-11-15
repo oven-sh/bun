@@ -17,8 +17,8 @@ const deadline = performance.now() + 500;
 let isInRange = true;
 for (let turn = 0; performance.now() < deadline; turn ^= 1) {
   bytes.set(texts[turn]);
-  const { promise, resolve } = Promise.withResolvers();
-  read(files[turn ^ 1], bytes, 0, bytes.length, 0, resolve);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  read(files[turn ^ 1], bytes, 0, bytes.length, 0, error => (error ? reject(error) : resolve()));
   const { length } = decoder.decode(bytes);
   isInRange &&= length > 0 && length <= bytes.length;
   await promise;

@@ -19,7 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
+    PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -316,8 +316,10 @@ pub struct VirtualMachine {
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
+    #[cfg(not(windows))]
     pub(crate) after_event_loop_callback_ctx: Cell<Option<*mut c_void>>,
-    pub(crate) after_event_loop_callback: Cell<Option<OpaqueCallback>>,
+    #[cfg(not(windows))]
+    pub(crate) after_event_loop_callback: Cell<Option<bun_io::OpaqueCallback>>,
 
     pub(crate) remap_stack_frames_mutex: bun_threading::Mutex,
 
@@ -1624,6 +1626,7 @@ impl VirtualMachine {
     }
 
     pub fn on_after_event_loop(&self) {
+        #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.take() {
             let ctx = self.after_event_loop_callback_ctx.take();
             // SAFETY: `cb` was registered with the matching `ctx`.

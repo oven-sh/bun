@@ -11,8 +11,11 @@ use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::EventLoopHandle;
+#[cfg(unix)]
+use crate::{FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 
+#[cfg(unix)]
 use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
 use crate::source::Source;
@@ -44,6 +47,7 @@ pub enum WriteStatus {
 
 /// The hooks a writer supplies are the required trait methods; the shared
 /// write machinery is the provided trait methods.
+#[cfg(unix)]
 pub trait PosixPipeWriter {
     fn get_fd(&self) -> Fd;
     fn get_buffer(&self) -> &[u8];
@@ -246,6 +250,7 @@ pub trait PosixPipeWriter {
 
 /// Free fn for the blocking-pipe path; the other file types are handled
 /// inline in `try_write` above.
+#[cfg(unix)]
 fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     match bun_core::is_writable(fd) {
         bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
@@ -255,6 +260,7 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 
 /// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
 /// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
+#[cfg(unix)]
 fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     sys::send_non_block(fd, buf).map_err(|err| sys::Error {
         syscall: sys::Tag::write,
@@ -319,6 +325,7 @@ impl<Parent: WriterParent> Drop for KeepParentAlive<Parent> {
 /// Materializing `&mut Parent` while a `&mut writer` is live would alias under
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
+#[cfg(unix)]
 pub trait PosixBufferedWriterParent: WriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
@@ -342,6 +349,7 @@ pub trait PosixBufferedWriterParent: WriterParent {
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
 }
 
+#[cfg(unix)]
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub handle: PollOrFd,
     /// `None` only between `Default` and `set_parent`; every dispatch path
@@ -354,6 +362,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     rwf_unsupported: core::cell::Cell<bool>,
 }
 
+#[cfg(unix)]
 impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
     fn default() -> Self {
         Self {
@@ -368,6 +377,7 @@ impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> 
     }
 }
 
+#[cfg(unix)]
 impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<Parent> {
     fn get_fd(&self) -> Fd {
         self.handle.get_fd()
@@ -400,11 +410,13 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
 
 // SAFETY: writer is an intrusive field of `Parent`; `Parent::on_write`
 // re-entry writes `is_done`/`handle` but never frees it; single JS thread.
+#[cfg(unix)]
 unsafe impl<Parent: PosixBufferedWriterParent> bun_ptr::LaunderedSelf
     for PosixBufferedWriter<Parent>
 {
 }
 
+#[cfg(unix)]
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
     /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
@@ -644,6 +656,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Materializing `&mut Parent` while a `&mut writer` is live would alias under
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
+#[cfg(unix)]
 pub trait PosixStreamingWriterParent: WriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
@@ -666,6 +679,7 @@ pub trait PosixStreamingWriterParent: WriterParent {
     unsafe fn loop_(this: *mut Self) -> crate::LoopRef;
 }
 
+#[cfg(unix)]
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub outgoing: StreamBuffer,
     pub handle: PollOrFd,
@@ -678,6 +692,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     rwf_unsupported: core::cell::Cell<bool>,
 }
 
+#[cfg(unix)]
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
     fn default() -> Self {
         Self {
@@ -693,6 +708,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
     }
 }
 
+#[cfg(unix)]
 impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWriter<Parent> {
     fn get_fd(&self) -> Fd {
         self.handle.get_fd()
@@ -724,11 +740,13 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
 }
 
 // SAFETY: see `PosixBufferedWriter`'s `LaunderedSelf` impl — identical shape.
+#[cfg(unix)]
 unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
     for PosixStreamingWriter<Parent>
 {
 }
 
+#[cfg(unix)]
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     // The smallest page size the target
     // supports (16K on Apple Silicon, 4K elsewhere among our targets).
@@ -1155,6 +1173,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 }
 
+#[cfg(unix)]
 impl<Parent: PosixStreamingWriterParent> Drop for PosixStreamingWriter<Parent> {
     fn drop(&mut self) {
         self.close_without_reporting();

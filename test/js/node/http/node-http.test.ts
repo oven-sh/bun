@@ -35,7 +35,7 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket as NetSocket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import * as path from "node:path";
@@ -10626,32 +10626,37 @@ describe.each([
 });
 
 describe.skipIf(!isIPv6())("listen({ ipv6Only })", () => {
-  function dial(host: string, port: number) {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    const socket = connect(port, host);
-    socket.on("connect", () => {
-      socket.destroy();
-      resolve("connected");
-    });
-    socket.on("error", (error: NodeJS.ErrnoException) => resolve(error.code!));
-    return promise;
-  }
-
   describe.each([
     ["http", () => createServer()],
     ["https", () => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert })],
   ])("an %s server on ::", (_, create) => {
     it.each([
-      [true, "ECONNREFUSED"],
-      [false, "connected"],
-      [undefined, "connected"],
-    ])("with ipv6Only: %p", async (ipv6Only, v4) => {
+      [true, ["::1"]],
+      [false, ["::ffff:127.0.0.1", "::1"]],
+      [undefined, ["::ffff:127.0.0.1", "::1"]],
+    ])("with ipv6Only: %p", async (ipv6Only, expected) => {
       const server = create();
+      const clients: NetSocket[] = [];
       try {
+        // Another process can have the same port on IPv4, so the server says who reached it.
+        const accepted: (string | undefined)[] = [];
+        const last = Promise.withResolvers<void>();
+        server.on("connection", socket => {
+          accepted.push(socket.remoteAddress);
+          if (socket.remoteAddress === "::1") last.resolve();
+        });
         await once(server.listen({ host: "::", port: 0, ipv6Only }), "listening");
         const { port } = server.address() as AddressInfo;
-        expect({ v6: await dial("::1", port), v4: await dial("127.0.0.1", port) }).toEqual({ v6: "connected", v4 });
+        for (const host of ["127.0.0.1", "::1"]) {
+          const client = connect(port, host);
+          clients.push(client);
+          // The kernel defers the accept until a byte arrives.
+          await new Promise(settled => client.on("error", settled).write("G", settled));
+        }
+        await last.promise;
+        expect(accepted).toEqual(expected);
       } finally {
+        for (const client of clients) client.destroy();
         server.close();
       }
     });

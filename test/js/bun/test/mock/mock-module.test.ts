@@ -1890,6 +1890,183 @@ describe.concurrent("a module mocked without a factory", () => {
   });
 });
 
+describe.concurrent("a name that import and require() resolve to two files", () => {
+  // Every sequence of up to three of `calls` that has a mock and no jest.unmock() before it, which would end nothing.
+  const sequences = (calls: string[], steps: string[] = []): string[][] => {
+    const mocked = steps.some(step => step.startsWith("mock"));
+    const next = steps.length < 3 ? calls.filter(call => mocked || !call.startsWith("unmock")) : [];
+    return [...(mocked ? [steps] : []), ...next.flatMap(call => sequences(calls, [...steps, call]))];
+  };
+  // The names of a package have a file each for an import and one file for require(). "require path" and
+  // "import path" are the paths that require() and an import resolve "name" to. `longer` is one sequence of four
+  // calls and a read.
+  const walks = [
+    {
+      names: ["name"],
+      calls: [
+        "require name",
+        "import name",
+        "mock name",
+        "mock require path",
+        "mock import path",
+        "unmock name",
+        "unmock require path",
+        "unmock import path",
+      ],
+      longer: ["require name", "mock require path", "mock name", "unmock require path", "require name"],
+    },
+    {
+      names: ["a", "b"],
+      calls: ["require a", "mock a", "mock b", "unmock a", "unmock b"],
+      longer: ["require a", "mock a", "mock b", "unmock a", "require b"],
+    },
+  ]
+    .flatMap(kind => [...sequences(kind.calls), kind.longer].map(steps => ({ kind, steps })))
+    .map(({ kind, steps }, at) => {
+      // These end every mock. Their order changes from one sequence to the next.
+      const unmocks = kind.calls.filter(call => call.startsWith("unmock"));
+      return {
+        at,
+        names: kind.names,
+        sequence: steps.join(", "),
+        unmocks: unmocks.map((_, nth) => unmocks[(nth + at) % unmocks.length]).join(", "),
+      };
+    });
+
+  // Each sequence runs on two packages of its own, against a model of the table of mocks. On one, its mocks are then
+  // ended and it runs once more, now on loaded files. On the other its mocks stay. The next test file reads both.
+  // There are six parts, and each runs as two processes at once, so that no test takes long in a debug build.
+  test.each([1, 2, 3, 4, 5, 6])(
+    "every sequence of up to three calls of require(), import(), mock.module() and jest.unmock(), part %d of 6",
+    async part => {
+      const ofPart = walks.filter(walk => walk.at % 6 === part - 1);
+      const run = (mine: typeof walks) => {
+        const project = {
+          ...Object.fromEntries(
+            mine.flatMap(walk =>
+              [`ended-${walk.at}`, `left-${walk.at}`].flatMap(pkg => [
+                [
+                  `node_modules/${pkg}/package.json`,
+                  JSON.stringify({
+                    name: pkg,
+                    exports: Object.fromEntries(
+                      walk.names.map(name => [`./${name}`, { import: `./${name}.mjs`, require: "./cjs.cjs" }]),
+                    ),
+                  }),
+                ],
+                [`node_modules/${pkg}/cjs.cjs`, `module.exports = { which: "real cjs" };`],
+                ...walk.names.map(name => [`node_modules/${pkg}/${name}.mjs`, `export const which = "real esm";`]),
+              ]),
+            ),
+          ),
+          "walk.js": `
+            import { expect, jest, mock } from "bun:test";
+            // Of each sequence: its calls, the calls that end every mock, its number, the names of its packages.
+            export const walks = ${JSON.stringify(mine.map(walk => [walk.sequence, walk.unmocks, walk.at, walk.names]))};
+            // The calls that read each name, and those that ask for its original.
+            export const reads = names => names.flatMap(name => ["require " + name, "import " + name]);
+            export const originals = names => names.map(name => "jest.requireActual " + name);
+
+            const calls = {
+              mock: (specifier, which) => void mock.module(specifier, () => ({ which })),
+              unmock: specifier => void jest.unmock(specifier),
+              require: specifier => require(specifier).which,
+              import: async specifier => (await import(specifier)).which,
+              "jest.requireActual": specifier => jest.requireActual(specifier).which,
+            };
+            // A mock has one key: the path that an import resolves its specifier to. \`mocks\` has the mock of each
+            // key, and the later mock of a key replaces the one before. A mock remembers the path that require()
+            // resolves its specifier to. For a mock of a name with two files that is another path, and \`alias\` maps
+            // it to the key of the last such mock.
+            // This is the key of the mock that answers require() of a path. A mock of the path itself answers while
+            // it stands. Otherwise the alias counts, but only while the mock at its key remembers the path.
+            const answering = ({ mocks, alias }, forRequire) => {
+              if (mocks.has(forRequire)) return forRequire;
+              const key = alias.get(forRequire);
+              return mocks.get(key)?.forRequire === forRequire ? key : undefined;
+            };
+            // What each call is to give.
+            const model = {
+              // A mock of a name ends a mock that the test file made of the path that require() resolves the name to.
+              // A mock of a path takes the alias of that path away. It replaces the mock at its key and remembers no
+              // other path, so a mock of a name that it replaces answers require() no more.
+              mock: ({ mocks, alias }, [forRequire, forImport], which) => {
+                if (forRequire === forImport) alias.delete(forRequire);
+                else {
+                  mocks.delete(forRequire);
+                  alias.set(forRequire, forImport);
+                }
+                mocks.set(forImport, { which, forRequire });
+              },
+              // jest.unmock() ends the mock at the path that an import resolves its specifier to, and the mock that
+              // answers require() of the specifier.
+              unmock: (table, [forRequire, forImport]) => {
+                for (const key of [forImport, answering(table, forRequire)]) table.mocks.delete(key);
+              },
+              require: (table, [forRequire]) => table.mocks.get(answering(table, forRequire))?.which ?? "real cjs",
+              import: ({ mocks }, [, forImport]) => mocks.get(forImport)?.which ?? "real esm",
+              // jest.requireActual() looks for the mock that answers require(), then for a mock at the path of an
+              // import. The original of a mock that it finds only there is the file that an import loads. Otherwise
+              // the original is the file that require() loads.
+              "jest.requireActual": (table, [forRequire, forImport]) =>
+                answering(table, forRequire) === undefined && table.mocks.has(forImport) ? "real esm" : "real cjs",
+            };
+
+            // Makes the calls of \`steps\` on a package and expects of each what the model says.
+            export async function walk(pkg, steps) {
+              // Of a target: what is written, the path that require() resolves it to, the path that an import resolves it to.
+              const targets = {};
+              const targetOf = target => {
+                if (target === "require path") return Array(3).fill(targetOf("name")[1]);
+                if (target === "import path") return Array(3).fill(targetOf("name")[2]);
+                const specifier = pkg + "/" + target;
+                return (targets[target] ??= [specifier, require.resolve(specifier), Bun.resolveSync(specifier, import.meta.dir)]);
+              };
+              const table = { mocks: new Map(), alias: new Map() };
+              const answers = [];
+              const expected = [];
+              for (const step of steps) {
+                const [call, target] = step.split(/ (.+)/);
+                const [specifier, ...paths] = targetOf(target);
+                const which = "mock " + (answers.length + 1) + " of " + pkg;
+                const line = answer => (answer === undefined ? step : step + ": " + answer);
+                expected.push(line(model[call](table, paths, which)));
+                try {
+                  answers.push(line(await calls[call](specifier, which)));
+                } catch (error) {
+                  answers.push(line(error));
+                }
+              }
+              expect(answers).toEqual(expected);
+            }
+          `,
+          "1.test.js": `
+            import { test } from "bun:test";
+            import { originals, reads, walk, walks } from "./walk.js";
+            test.each(walks)("%s, then %s, then once more on the loaded files", async (sequence, unmocks, at, names) => {
+              const steps = [...sequence.split(", "), ...reads(names)];
+              const ended = [...unmocks.split(", "), ...reads(names), ...originals(names)];
+              await walk("ended-" + at, [...steps, ...ended, ...steps, ...originals(names)]);
+            });
+            test.each(walks)("%s, and the mocks stay", async (sequence, unmocks, at, names) => {
+              await walk("left-" + at, [...sequence.split(", "), ...reads(names), ...originals(names)]);
+            });
+          `,
+          "2.test.js": `
+            import { test } from "bun:test";
+            import { originals, reads, walk, walks } from "./walk.js";
+            test.each(walks)("the real files after %s in the test file before", async (sequence, unmocks, at, names) => {
+              for (const pkg of ["ended-" + at, "left-" + at]) await walk(pkg, [...reads(names), ...originals(names)]);
+            });
+          `,
+        };
+        return expectFixturesToPass(project, 3 * mine.length);
+      };
+      await Promise.all([0, 1].map(half => run(ofPart.filter((_, nth) => nth % 2 === half))));
+    },
+  );
+});
+
 describe.concurrent("unmock", () => {
   test.each([{}, { BUN_JSC_useDFGJIT: "0" }])(
     "an export still uninitialized when it was mocked keeps the value its module assigned later %j",

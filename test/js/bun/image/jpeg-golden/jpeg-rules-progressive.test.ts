@@ -10,6 +10,7 @@ import {
   copyOf,
   dht,
   dri,
+  EOI,
   frameOf,
   headerOf,
   jpeg,
@@ -21,9 +22,11 @@ import {
   SOF10,
   SOF2,
   sos,
+  stuffed,
   Symbols,
   tableOf,
   typical,
+  unfinished,
   write,
   type Frame,
   type Scan,
@@ -182,17 +185,31 @@ describe.each(coders)("%s", (_, type) => {
 
 describe("Huffman codes", () => {
   type Part = [ss: number, se: number, ah: number, al: number, write: (symbols: Symbols) => unknown];
+  const longCodes = tableOf(
+    bytes,
+    bytes.map(symbol => 11 + (symbol % 6)),
+  );
   /** Of blocks side by side. There is no scan of DC coefficients, so nothing is smoothed. */
-  async function expectBlocks(parts: Part[], blocks: Record<number, number>[], table = everySymbol, interval = 0) {
+  async function expectBlocks(
+    parts: Part[],
+    blocks: Record<number, number>[],
+    tables = [everySymbol, longCodes],
+    interval = 0,
+  ) {
     const frame = frameOf(blocks.length * 8, 8, "1x1", { type: SOF2, tables: [Array(64).fill(4)] });
     blocks.forEach((block, i) => Object.assign(frame.components[0].data.subarray(i * 64), block));
-    const scans = parts.flatMap(([ss, se, ah, al, write]) => {
-      const symbols = new Symbols();
-      write(symbols);
-      return [sos(frame, scanOf([0], ss, se, ah, al)), symbols.bytes({ [AC]: table })];
-    });
-    const file = jpeg(headerOf(frame), dht(AC, table), dri(interval), ...scans);
-    await expectPictures([{ name: JSON.stringify(blocks), file, expected: pictureOf(frame) }]);
+    const expected = pictureOf(frame);
+    await expectPictures(
+      tables.map((table, nth) => {
+        const scans = parts.flatMap(([ss, se, ah, al, write]) => {
+          const symbols = new Symbols();
+          write(symbols);
+          return [sos(frame, scanOf([0], ss, se, ah, al)), symbols.bytes({ [AC]: table })];
+        });
+        const file = jpeg(headerOf(frame), dht(AC, table), dri(interval), ...scans);
+        return { name: `${JSON.stringify(blocks)}, table ${nth}`, file, expected };
+      }),
+    );
   }
   const [end, sixteenZeros] = [0x00, 0xf0];
 
@@ -204,6 +221,34 @@ describe("Huffman codes", () => {
     await expectBlocks([[1, 5, 0, 1, s => then(s.symbol(AC, sixteenZeros))]], [{}, { 1: 14 }]);
     for (let run = 0; run <= 15; run++) {
       await expectBlocks([[63, 63, 0, 0, s => s.value(AC, run, 9).value(AC, 0, 7)]], [{ 63: 9 }, { 63: 7 }]);
+    }
+  });
+
+  test("first scan: 16 zeros end the block if they lead beyond the band, and only then", async () => {
+    const short = tableOf(
+      [sixteenZeros, end, ...range(0, 15).map(run => (run << 4) | 3)],
+      [1, 2, ...Array(16).fill(7)],
+    );
+    for (const se of slow ? [18, 33, 62, 63] : range(1, 63)) {
+      const blocks: Record<number, number>[] = [];
+      const write = (s: Symbols) => {
+        blocks.length = 0;
+        for (let first = 1; first <= 16; first++) {
+          s.value(AC, first - 1, 5);
+          for (let k = first + 1; k <= se; k += 16) s.symbol(AC, sixteenZeros);
+          blocks.push({ [first]: 5 });
+          if (first >= se) continue;
+          // As far as they stay within it.
+          const last = se - ((se - first - 1) % 16);
+          s.value(AC, first - 1, -5);
+          for (let k = first + 1; k < last; k += 16) s.symbol(AC, sixteenZeros);
+          s.value(AC, 0, 6);
+          if (last < se) s.symbol(AC, end);
+          blocks.push({ [first]: -5, [last]: 6 });
+        }
+      };
+      write(new Symbols());
+      await expectBlocks([[1, se, 0, 0, write]], [...blocks], [short, everySymbol, longCodes]);
     }
   });
 
@@ -473,7 +518,7 @@ describe("Huffman codes", () => {
       await expectBlocks(
         [[1, 1, ah, 0, s => one(one(long(s).marker(RST0)))]],
         [{}, {}, { 1: 1 }, { 1: 1 }],
-        everySymbol,
+        undefined,
         2,
       );
     }
@@ -508,10 +553,10 @@ describe("Huffman codes", () => {
 
   test("where the data ends, the block that has begun is read from zeros, and the others stay as they are", async () => {
     // Four bits make a coefficient of 3, and two zeros one of -1.
-    const table = tableOf([0x01, 0x02], [1, 2]);
+    const tables = [tableOf([0x01, 0x02], [1, 2])];
     const threes = (count: number) => (s: Symbols) => range(1, count).map(() => s.value(AC, 0, 3));
-    await expectBlocks([[1, 3, 0, 1, threes(4)]], [[0, 6, 6, 6], [0, 6, -2, -2], {}], table);
-    await expectBlocks([[1, 2, 0, 1, threes(2)]], [[0, 6, 6], [0, -2, -2], {}], table);
+    await expectBlocks([[1, 3, 0, 1, threes(4)]], [[0, 6, 6, 6], [0, 6, -2, -2], {}], tables);
+    await expectBlocks([[1, 2, 0, 1, threes(2)]], [[0, 6, 6], [0, -2, -2], {}], tables);
     await expectBlocks(
       [
         [2, 2, 0, 1, threes(4)],
@@ -523,7 +568,7 @@ describe("Huffman codes", () => {
         [0, 0, 6],
         [0, 0, 6],
       ],
-      table,
+      tables,
     );
     // And in a run of blocks.
     const runs = tableOf([0x02, 0x40], [2, 2]);
@@ -533,7 +578,7 @@ describe("Huffman codes", () => {
         [1, 1, 1, 0, s => s.symbol(AC, 0x40).bits(0, 4).bits(0b11, 2)],
       ],
       [{ 1: 7 }, { 1: 7 }, { 1: 6 }, { 1: 6 }],
-      runs,
+      [runs],
     );
   });
 
@@ -567,6 +612,49 @@ describe("Huffman codes", () => {
     const found = Buffer.alloc(data.length);
     for (let i = 0; i < data.length * 8; i++) found[i >> 3] = (found[i >> 3] << 1) | (rgba[i * 4] - 128);
     expect(found.equals(data)).toBe(true);
+  });
+
+  /** What a refinement of DC coefficients takes from `file`, which begins behind its header: rows of so many bytes. */
+  async function bytesTaken(across: number, down: number, ...file: (Buffer | number[])[]) {
+    const one = frameOf(8, 8, "1x1", { type: SOF2, tables: [unsmoothed] });
+    const frame = { ...one, width: across * 64, height: down * 8 };
+    const start = [headerOf(frame), dri(across * 8), sos(frame, scanOf([0], 0, 0, 1, 0))];
+    const { rgba } = await decode(unfinished(...start, ...file), 1);
+    const found = Buffer.alloc(across * down);
+    for (let i = 0; i < found.length * 8; i++) found[i >> 3] = (found[i >> 3] << 1) | (rgba[i * 4] - 128);
+    return range(0, down - 1).map(y => found.toString("hex", y * across, (y + 1) * across));
+  }
+  const inTurn = (rows: (Buffer | number[])[]) => rows.flatMap((row, y) => [row, marker(RST0 + (y & 7))]);
+
+  test("FF 00 is FF at any distance from the start, from another and from the end", async () => {
+    const places = range(0, 18);
+    const rows = [0xfe, 0x00, 0x7f, 0x80].flatMap(other =>
+      places.flatMap(first =>
+        places
+          .filter(second => second >= first)
+          .map(second => places.map(i => (i === first || i === second ? 0xff : other))),
+      ),
+    );
+    expect(await bytesTaken(places.length, rows.length, ...inTurn(rows.map(stuffed)))).toEqual(rows.map(hex));
+  });
+
+  test("the data can end with any byte", async () => {
+    const row = range(0, 26).map(i => (i % 9 === 4 || i === 14 ? 0xff : 0xfe - i));
+    const lengths = range(0, row.length);
+    const expected = lengths.map(length => hex(row.map((byte, i) => (i < length ? byte : 0))));
+    // At a marker, with or without more FF in front of it.
+    for (const fill of [[], [0xff], Array(9).fill(0xff)]) {
+      const rows = lengths.flatMap(length => [row, row.slice(0, length)]).map(some => [...stuffed(some), ...fill]);
+      expect(await bytesTaken(row.length, rows.length, ...inTurn(rows))).toEqual(
+        expected.flatMap(cut => [hex(row), cut]),
+      );
+    }
+    // With the file, also between FF and 00.
+    for (const rest of [[], [0xff], [0xff, 0xff], marker(EOI)]) {
+      const cut = (length: number) =>
+        bytesTaken(row.length, 2, ...inTurn([stuffed(row)]), stuffed(row.slice(0, length)), rest);
+      expect(await Promise.all(lengths.map(cut))).toEqual(expected.map(cut => [hex(row), cut]));
+    }
   });
 
   test("the sum of the differences has 32 bits", async () => {

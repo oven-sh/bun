@@ -1,5 +1,6 @@
 // The rules for the data of a sequential scan with Huffman codes.
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { slow } from "../png-golden/check";
 import { randomBytes } from "../png-golden/write";
 import {
@@ -11,6 +12,7 @@ import {
   flat,
   headerOnly,
   levels,
+  much,
   outcome,
   range,
   where,
@@ -50,6 +52,12 @@ import {
 } from "./write";
 
 const expectBothWays = (cases: Case[]) => expectPictures(bothWays(cases));
+
+test("the shorter way is taken from where the tests take it to be", async () => {
+  const source = await Bun.file(join(import.meta.dir, "../../../../../src/jpeg/sequential.rs")).text();
+  expect(source).toContain(`const MIN_LEN_FOR_PAIRS: usize = ${much};`);
+  expect(source).toContain("data_len >= MIN_LEN_FOR_PAIRS");
+});
 
 describe("codes", () => {
   /** There is no room for a code of each length and two more. */
@@ -479,6 +487,36 @@ describe("restart markers", () => {
     expect(await row(9, 3, step(20), rst(0), rst(1), pair(30), step(16))).toEqual([20, 19, 0, -1, 0, 0, 30, 14, 30]);
   });
 
+  test("however long the interval before was", async () => {
+    // A byte for the difference, and two for each of the others: 00 01 is 1, and 00 00 is -1.
+    const tables = [dht(0, tableOf([0], [8])), dht(AC, tableOf([0x01], [15]))];
+    const sent = Buffer.from([0, ...range(1, 63).flatMap(() => [0, 1])]);
+    const some = [0, 1, 4, 30, 63];
+    const shown = frameOf(8, (some.length + 1) * 8, "1x1", { tables: [Array(64).fill(4)] });
+    some.forEach((ones, i) =>
+      shown.components[0].data.set([0, ...range(1, 63).map(k => (k <= ones ? 1 : -1))], i * 64),
+    );
+    const { rgba } = pictureOf(shown);
+    const block = (i: number) => rgba.subarray(i * 256, (i + 1) * 256);
+    const [whole, empty] = [block(4), block(5)];
+    await expectBothWays(
+      range(1, 70).flatMap(blocks =>
+        [0, 1, 2, 3].flatMap(i => {
+          if (slow && (blocks + i) % 4) return [];
+          const frame = { ...shown, height: blocks * 3 * 8 };
+          const [long, short] = [Buffer.alloc(blocks * sent.length, sent), sent.subarray(0, 1 + 2 * some[i])];
+          const data = [long, rst(0), short, rst(1), short];
+          const cut = [block(i), Buffer.alloc((blocks - 1) * 256, empty)];
+          return {
+            name: `${blocks} blocks, then ${short.length} bytes`,
+            file: jpeg(headerOf(frame), ...tables, dri(blocks), sos(frame, scanOf([0])), ...data),
+            expected: { ...frame, rgba: Buffer.concat([Buffer.alloc(blocks * 256, whole), ...cut, ...cut]) },
+          };
+        }),
+      ),
+    );
+  });
+
   test("one may follow the last block", async () => {
     expect(await row(4, 2, pair(20), rst(0), pair(30), rst(1))).toEqual([20, 4, 30, 14]);
   });
@@ -533,6 +571,16 @@ describe("restart markers", () => {
     expect(found["17,1,18,2"]).toEqual(below);
     expect(found["17,1,-1,0"]).toEqual([EOI, 0xdc, ...range(0xe0, 0xef), COM]);
     expect(Object.keys(found)).toEqual(["17,1,18,2", "ERR_IMAGE_DECODE_FAILED", "17,1,-1,0"]);
+  });
+
+  test("whichever is due", async () => {
+    const codes = [...range(0xc0, RST0 - 1), RST0 + 8, 0xda, 0xdb];
+    for (const good of range(1, 7)) {
+      const first = range(1, good).flatMap(i => [a, rst(i - 1)]);
+      const after = (code: number) =>
+        row(good * 2 + 4, 2, ...first, a, marker(code), e, rst(good), b).then(String, error => error.code);
+      expect(await where(codes, after)).toEqual({ ERR_IMAGE_DECODE_FAILED: codes });
+    }
   });
 
   test("of any interval, in any layout", async () => {

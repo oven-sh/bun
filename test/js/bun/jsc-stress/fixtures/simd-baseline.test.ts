@@ -239,9 +239,9 @@ function linesOf(file: Uint8Array): Buffer {
 }
 
 describe("JPEG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_jpeg.cpp is compiled twice on x64, for SSSE3 and for AVX2. A machine with AVX2 runs that
-  // one alone. The two have to come to the same bytes, which test/js/bun/image/jpeg-golden checks the slow way. Here
-  // they are checksums, of what libjpeg-turbo 3.2.0 came to.
+  // src/jsc/bindings/highway_jpeg.cpp is compiled twice on x64, for SSSE3 and for AVX2, and has parts of its own for
+  // arm64. A machine runs one of the three. All have to come to the same bytes, which test/js/bun/image/jpeg-golden
+  // checks the slow way. Here they are checksums, of what libjpeg-turbo 3.2.0 came to.
   // Two groups of 32 pixels and a rest, and no whole number of blocks either way.
   const width = 75;
   const height = 37;

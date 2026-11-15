@@ -5,7 +5,7 @@ use crate::marker::{EOI, RST0, RST7, SOF0};
 pub(crate) struct Input<'a> {
     bytes: &'a [u8],
     at: usize,
-    /// What ended the data of a scan, if nothing has taken it yet.
+    /// The marker that ended the entropy-coded data, until it is taken.
     marker: Option<u8>,
 }
 
@@ -18,7 +18,7 @@ impl<'a> Input<'a> {
         }
     }
 
-    /// The file is followed by EOI markers without end, whatever they are read as (jdatasrc-tj.c).
+    /// Past the end of the file come EOI markers without end (jdatasrc-tj.c).
     #[inline]
     pub(crate) fn byte(&mut self) -> u8 {
         let byte = match self.bytes.get(self.at) {
@@ -30,8 +30,12 @@ impl<'a> Input<'a> {
         byte
     }
 
-    pub(crate) fn word(&mut self) -> u16 {
-        u16::from_be_bytes([self.byte(), self.byte()])
+    pub(crate) fn array<const N: usize>(&mut self) -> [u8; N] {
+        core::array::from_fn(|_| self.byte())
+    }
+
+    pub(crate) fn u16(&mut self) -> u16 {
+        u16::from_be_bytes(self.array())
     }
 
     /// Skips `len` bytes. Returns them if the file has them all.
@@ -41,15 +45,7 @@ impl<'a> Input<'a> {
         self.bytes.get(start..self.at)
     }
 
-    /// Skips and returns the bytes before the next 0xFF, `most` at most.
-    fn take_plain(&mut self, most: usize) -> &'a [u8] {
-        let rest = self.bytes.get(self.at..).unwrap_or_default();
-        let rest = rest.get(..most).unwrap_or(rest);
-        let len = bun_highway::index_of_char(rest, 0xFF).unwrap_or(rest.len());
-        self.take(len).unwrap_or_default()
-    }
-
-    /// The next byte of entropy-coded data, or the marker that comes in its place.
+    /// The next byte of entropy-coded data, unstuffed, or the marker in its place.
     fn data_byte(&mut self) -> Result<u8, u8> {
         let mut byte = self.byte();
         if byte != 0xFF {
@@ -61,60 +57,79 @@ impl<'a> Input<'a> {
         if byte == 0 { Ok(0xFF) } else { Err(byte) }
     }
 
-    /// Fills `out` with entropy-coded data, as far as the next marker. Returns how many bytes that is.
-    pub(crate) fn read_data(&mut self, mut out: &mut [u8]) -> usize {
-        let room = out.len();
+    /// Unstuffs entropy-coded data into `out`, up to the next marker, and returns its length. It writes only zeros after that.
+    pub(crate) fn read_data(&mut self, out: &mut [u8]) -> usize {
+        const ONES: u64 = u64::MAX / 0xFF;
+        let mut len = 0;
         while self.marker.is_none() {
-            let plain = self.take_plain(out.len());
-            let (filled, rest) = out.split_at_mut(plain.len());
-            filled.copy_from_slice(plain);
-            out = rest;
-            let [next, ..] = out else { break };
-            match self.data_byte() {
-                Ok(byte) => {
-                    *next = byte;
-                    out = out.get_mut(1..).unwrap_or_default();
+            let from = self.bytes.get(self.at..).unwrap_or_default();
+            let to = out.get_mut(len..).unwrap_or_default();
+            let mut plain = 0;
+            for (to, &from) in to.as_chunks_mut().0.iter_mut().zip(from.as_chunks().0) {
+                let word = u64::from_le_bytes(from);
+                // The lowest set bit is the top bit of the first 0xFF byte.
+                let found = (!word).wrapping_sub(ONES) & word & ONES << 7;
+                if found != 0 {
+                    let before = found.trailing_zeros() - 7;
+                    *to = (word & ((1 << before) - 1)).to_le_bytes();
+                    plain += before as usize / 8;
+                    break;
                 }
+                *to = from;
+                plain += 8;
+            }
+            (self.at, len) = (self.at + plain, len + plain);
+            let Some(next) = out.get_mut(len) else { break };
+            match self.data_byte() {
+                Ok(byte) => (*next, len) = (byte, len + 1),
                 Err(marker) => self.marker = Some(marker),
             }
         }
-        room - out.len()
+        len
     }
 
     pub(crate) fn len_left(&self) -> usize {
         self.bytes.len().saturating_sub(self.at)
     }
 
+    /// Whether more has been read than the file has.
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.at > self.bytes.len()
+    }
+
     pub(crate) fn pending_marker(&self) -> Option<u8> {
         self.marker
     }
 
-    /// Skips whatever comes before it.
+    /// Skips everything up to the next marker.
     pub(crate) fn next_marker(&mut self) -> u8 {
-        if let Some(marker) = self.marker.take() {
-            return marker;
-        }
         loop {
-            self.take_plain(usize::MAX);
-            if let Err(marker) = self.data_byte() {
+            if let Some(marker) = self.marker.take() {
                 return marker;
             }
+            self.read_data(&mut [0; 64]);
         }
     }
 
-    /// Goes past the restart marker `number`, but not one that belongs further on (`jpeg_resync_to_restart()`).
+    /// Takes restart marker `number`. A marker that belongs further on stays pending (`jpeg_resync_to_restart()`).
     pub(crate) fn restart(&mut self, number: u8) {
-        loop {
+        // A shortcut, worth 3 % with a restart after each block.
+        if self.marker.take_if(|it| *it == RST0 + number).is_some() {
+            return;
+        }
+        self.marker = loop {
             let marker = self.next_marker();
             match marker {
                 ..SOF0 => {}
                 RST0..=RST7 => match (marker - RST0).wrapping_sub(number) % 8 {
+                    // An earlier one.
                     6 | 7 => {}
-                    1 | 2 => return self.marker = Some(marker),
-                    _ => return,
+                    // A later one: ours is lost.
+                    1 | 2 => break Some(marker),
+                    _ => break None,
                 },
-                _ => return self.marker = Some(marker),
+                _ => break Some(marker),
             }
-        }
+        };
     }
 }

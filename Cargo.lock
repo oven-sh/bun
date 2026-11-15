@@ -943,6 +943,7 @@ name = "bun_jpeg"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "bun_highway",
  "thiserror",
 ]

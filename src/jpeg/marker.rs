@@ -2,7 +2,6 @@
 
 pub(crate) const TEM: u8 = 0x01;
 pub(crate) const SOF0: u8 = 0xC0;
-pub(crate) const SOF1: u8 = 0xC1;
 pub(crate) const SOF2: u8 = 0xC2;
 pub(crate) const SOF3: u8 = 0xC3;
 pub(crate) const DHT: u8 = 0xC4;

@@ -1,31 +1,31 @@
-//! The bits of entropy-coded data. After the data come zeros.
+//! Reads entropy-coded data bit by bit. Zeros follow the end of the data.
 
 use crate::input::Input;
 use crate::marker::{RST0, SOF0, SOI};
 
 const WINDOW_LEN: usize = 4096;
-/// A block is at most 64 codes of 32 bits, and [`Bits::refill`] loads 8 bytes.
+/// The most that a block can take: 64 codes of 32 bits, and the 8 bytes that [`Bits::refill`] loads.
 const MARGIN: usize = 64 * 4 + 8;
 pub(crate) const BITS_IN_REFILL: u32 = 57;
 
-/// Data without its stuffing. Positions are in bits.
+/// A stretch of unstuffed data. Positions are in bits.
 pub(crate) struct Window<'i, 'a> {
     input: &'i mut Input<'a>,
     bytes: [u8; WINDOW_LEN + 8],
-    /// Where the data in `bytes` ends.
+    /// Where the data in `bytes` ends. Only zeros follow.
     end: usize,
-    /// A block has to start before this to fit.
+    /// A block that starts before this fits in `bytes`.
     limit: usize,
     /// 64 bits before `end`.
     low_mark: usize,
-    /// About how many bytes have been read past the end of the data.
-    zeros: usize,
+    /// How far [`Self::slide`] has moved positions back since the data ended.
+    overrun: usize,
 }
 
-/// Apart from the [`Window`], so that a loop has it in registers.
+/// The read state, separate from [`Window`] so that loops keep it in registers.
 #[derive(Clone, Copy)]
 pub(crate) struct Bits {
-    /// The next bit is the highest. Decoders leave enough of them to look up the next code without waiting for a refill.
+    /// The next bit is the highest. Decoders leave enough bits to look up the next code while a refill is under way.
     buffer: u64,
     position: usize,
 }
@@ -38,31 +38,35 @@ impl<'i, 'a> Window<'i, 'a> {
             end: 0,
             limit: 0,
             low_mark: 0,
-            zeros: 0,
+            overrun: 0,
         }
     }
 
-    /// Returns where the bit that was at `position` is now.
+    /// Drops what is before `position` and reads more. Returns where the bit at `position` is now.
     #[cold]
     #[inline(never)]
     fn slide(&mut self, position: usize) -> usize {
+        // The data has ended. All positions after it read zeros, so any will do.
         if self.limit > self.end {
-            self.zeros += (position - self.end) / 8 - 1;
+            self.overrun += position - self.end - 8;
             return self.end + 8;
         }
-        let (start, end) = (position.min(self.end) / 8, self.end / 8);
-        self.bytes.copy_within(start..end, 0);
-        let room = self.bytes.get_mut(end - start..WINDOW_LEN - MARGIN);
-        let end = end - start + self.input.read_data(room.unwrap_or_default());
+        let (start, old_end) = (position.min(self.end) / 8, self.end / 8);
+        if start < old_end {
+            self.bytes.copy_within(start..old_end, 0);
+        }
+        let room = self.bytes.get_mut(old_end - start..WINDOW_LEN - MARGIN);
+        let end = old_end - start + self.input.read_data(room.unwrap_or_default());
+        if let Some(stale @ [_, ..]) = self.bytes.get_mut(end..old_end) {
+            stale.fill(0);
+        }
         self.end = 8 * end;
         self.low_mark = self.end.saturating_sub(64);
-        if self.input.pending_marker().is_some() {
-            let zeros = self.bytes.get_mut(end..end + MARGIN + 8);
-            zeros.unwrap_or_default().fill(0);
-            self.limit = self.end + 16;
-        } else {
-            self.limit = self.end - 8 * MARGIN;
-        }
+        self.limit = match self.input.pending_marker() {
+            // Above where positions are moved back to.
+            Some(_) => self.end + 16,
+            None => self.end - 8 * MARGIN,
+        };
         position % 8
     }
 
@@ -73,9 +77,9 @@ impl<'i, 'a> Window<'i, 'a> {
         u64::from_be_bytes(next.unwrap_or_default())
     }
 
-    /// The 4 bytes at `position`, which moves past them.
+    /// The 4 bytes at `position`, which it advances.
     #[inline(always)]
-    pub(crate) fn word(&mut self, position: &mut usize) -> u32 {
+    pub(crate) fn take_u32(&mut self, position: &mut usize) -> u32 {
         if *position >= self.limit {
             *position = self.slide(*position);
         }
@@ -84,15 +88,12 @@ impl<'i, 'a> Window<'i, 'a> {
         word as u32
     }
 
-    /// How many of the zeros read since the last restart come after the first `free`. Each counts once.
-    #[inline(always)]
-    pub(crate) fn take_zeros_beyond(&mut self, free: usize) -> usize {
-        let beyond = self.zeros.saturating_sub(free);
-        self.zeros -= beyond;
-        beyond
+    /// How many bits past the end of the data come before `position`.
+    pub(crate) fn overrun_at(&self, position: usize) -> usize {
+        self.overrun + position.saturating_sub(self.end)
     }
 
-    /// Whether `bits` has given out nothing but data so far.
+    /// Whether `bits` has not gone past the end of the data.
     #[inline(always)]
     pub(crate) fn has_data(&self, bits: Bits) -> bool {
         bits.position <= self.end
@@ -103,51 +104,62 @@ impl<'i, 'a> Window<'i, 'a> {
         bits.position >= self.low_mark
     }
 
-    /// The data after it starts at 0. Returns whether there is any: not if the marker is missing.
+    /// Empties the window. Returns false if the marker is missing, so that no data follows.
     pub(crate) fn skip_restart_marker(&mut self, number: u8) -> bool {
         self.input.restart(number);
-        (self.end, self.limit, self.low_mark, self.zeros) = (0, 0, 0, 0);
+        let stale = self.bytes.get_mut(..self.end / 8);
+        stale.unwrap_or_default().fill(0);
+        (self.end, self.limit, self.low_mark, self.overrun) = (0, 0, 0, 0);
         self.input.pending_marker().is_none()
     }
 
-    /// Goes on after the restart marker `number`.
+    /// Continues after restart marker `number`.
     pub(crate) fn restart(&mut self, bits: Bits, number: u8) -> Bits {
         let had_data = self.has_data(bits);
         let has_data = self.skip_restart_marker(number) || had_data;
+        // Position 1 of an empty window is past the data.
         self.bits_from(usize::from(!has_data))
     }
 
     pub(crate) fn bits_from(&mut self, position: usize) -> Bits {
         let buffer = 0;
         let mut bits = Bits { buffer, position };
-        bits.start_block(self);
+        bits.ensure_margin(self);
         bits.refill(self);
         bits
     }
 
-    /// Whether it is known that no restart brings more data.
-    pub(crate) fn is_last(&self) -> bool {
+    /// Whether the data ends with a marker that no restart gets past.
+    pub(crate) fn is_last_segment(&self) -> bool {
         matches!(self.input.pending_marker(), Some(SOF0..RST0 | SOI..))
     }
 
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.input.is_truncated()
+    }
+
     pub(crate) fn is_over(&self, bits: Bits) -> bool {
-        !self.has_data(bits) && self.is_last()
+        !self.has_data(bits) && self.is_last_segment()
     }
 }
 
 impl Bits {
-    /// To be called before each block.
+    /// Leaves [`MARGIN`] bytes in the window, which is enough for a block.
     #[inline(always)]
-    pub(crate) fn start_block(&mut self, window: &mut Window<'_, '_>) {
+    pub(crate) fn ensure_margin(&mut self, window: &mut Window<'_, '_>) {
         if self.position >= window.limit {
             self.position = window.slide(self.position);
         }
     }
 
-    /// There are at least [`BITS_IN_REFILL`] bits after this.
+    /// Leaves at least [`BITS_IN_REFILL`] bits in the buffer.
     #[inline(always)]
     pub(crate) fn refill(&mut self, window: &Window<'_, '_>) {
         self.buffer = window.load(self.position) << (self.position % 8);
+    }
+
+    pub(crate) fn position(self) -> usize {
+        self.position
     }
 
     #[inline(always)]
@@ -155,7 +167,7 @@ impl Bits {
         self.buffer
     }
 
-    /// At most 32 bits. They are the lowest of the result, and what is above them means nothing.
+    /// Takes up to 32 bits. They are the low bits of the result, and the others are garbage.
     #[inline(always)]
     pub(crate) fn take(&mut self, count: u32) -> u32 {
         self.buffer = self.buffer.rotate_left(count);
@@ -163,7 +175,7 @@ impl Bits {
         self.buffer as u32
     }
 
-    /// As many as the low byte of `word` says. The rotation does not have to wait for it to be cut out.
+    /// [`Self::take`] of `word & 0xFF` bits. The rotation does not wait for the mask.
     #[inline(always)]
     pub(crate) fn take_low_byte(&mut self, word: u32) -> u32 {
         self.buffer = self.buffer.rotate_left(word);

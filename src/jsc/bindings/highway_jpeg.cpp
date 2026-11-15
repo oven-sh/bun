@@ -1,10 +1,13 @@
-// The transforms and colour conversions for src/jpeg, in the arithmetic of libjpeg-turbo (LICENSE.md). All targets give the same bytes.
+// The transforms and color conversions for src/jpeg, in the arithmetic of libjpeg-turbo (LICENSE.md). All targets give the same bytes.
 
 // A block has the rows 0 and 4 interleaved, then 2 and 6, 1 and 3, 5 and 7, with their columns in the order 0 2 4 6 1 3 5 7.
 
 // Besides the list in scripts/build/deps/highway.ts: SVE, all above AVX2, and what would compile to the same as the baseline.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))
+#ifndef __OPTIMIZE__
+#error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
+#endif
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_jpeg.cpp"
@@ -33,48 +36,50 @@ using V32 = hn::Vec<D32>;
 using V8 = hn::Vec<D8>;
 
 static constexpr size_t kBytes = hn::MaxLanes(D8());
+// `JPEG_PIXEL_GROUP` in src/highway/lib.rs.
+static constexpr size_t kPixelGroup = 32;
 // How many vectors 32 bytes are.
 static constexpr size_t kParts = 32 / kBytes;
-// Which 128 bits of a vector are its last.
+// The index of the last 128 bits of a vector.
 static constexpr int kLastBlock = kBytes / 16 - 1;
 
-// jidctint.c and jidctred.c, multiplied out: `k[i]` weighs 8 coefficients for sample `i` of `N` and, the odd ones negated, for `N - 1 - i`.
+// jidctint.c and jidctred.c, multiplied out: `kWeights[i]` weighs 8 coefficients for sample `i` of `N` and, the odd ones negated, for `N - 1 - i`.
 template<size_t N> struct Basis;
 // The weights are scaled by 2^(13 + kExtraBits).
 template<size_t N> static constexpr int kExtraBits = N == 2 ? 2 : N == 4 ? 1
                                                                          : 0;
-// The first weight is 32768, which takes 17 bits. This has half of it.
+// The first weight is halved: 32768 does not fit in 16 bits.
 template<> struct Basis<2> {
-    static constexpr int16_t k[1][8] = { { 16384, 29692, 0, -10426, 0, 6967, 0, -5906 } };
+    static constexpr int16_t kWeights[1][8] = { { 16384, 29692, 0, -10426, 0, 6967, 0, -5906 } };
 };
 template<> struct Basis<3> {
-    static constexpr int16_t k[2][8] = {
+    static constexpr int16_t kWeights[2][8] = {
         { 8192, 10033, 5793, 0, 0, 0, 0, 0 },
         { 8192, 0, -11586, 0, 0, 0, 0, 0 },
     };
 };
 template<> struct Basis<4> {
-    static constexpr int16_t k[2][8] = {
+    static constexpr int16_t kWeights[2][8] = {
         { 16384, 20995, 15137, 7373, 0, -4926, -6270, -4176 },
         { 16384, 8697, -15137, -17799, 0, 11893, 6270, -1730 },
     };
 };
 template<> struct Basis<5> {
-    static constexpr int16_t k[3][8] = {
+    static constexpr int16_t kWeights[3][8] = {
         { 8192, 11019, 9372, 6810, 3580, 0, 0, 0 },
         { 8192, 6810, -3580, -11018, -9372, 0, 0, 0 },
         { 8192, 0, -11584, 0, 11584, 0, 0, 0 },
     };
 };
 template<> struct Basis<6> {
-    static constexpr int16_t k[3][8] = {
+    static constexpr int16_t kWeights[3][8] = {
         { 8192, 11190, 10033, 8192, 5793, 2998, 0, 0 },
         { 8192, 8192, 0, -8192, -11586, -8192, 0, 0 },
         { 8192, 2998, -10033, -8192, 5793, 11190, 0, 0 },
     };
 };
 template<> struct Basis<7> {
-    static constexpr int16_t k[4][8] = {
+    static constexpr int16_t kWeights[4][8] = {
         { 8192, 11295, 10438, 9058, 7223, 5027, 2578, 0 },
         { 8192, 9058, 2578, -5027, -10438, -11295, -7223, 0 },
         { 8192, 5027, -7223, -11295, -2578, 9058, 10438, 0 },
@@ -82,7 +87,7 @@ template<> struct Basis<7> {
     };
 };
 template<> struct Basis<8> {
-    static constexpr int16_t k[4][8] = {
+    static constexpr int16_t kWeights[4][8] = {
         { 8192, 11363, 10703, 9633, 8192, 6437, 4433, 2260 },
         { 8192, 9633, 4433, -2259, -8192, -11362, -10704, -6436 },
         { 8192, 6437, -4433, -11362, -8192, 2261, 10704, 9633 },
@@ -90,7 +95,7 @@ template<> struct Basis<8> {
     };
 };
 template<> struct Basis<10> {
-    static constexpr int16_t k[5][8] = {
+    static constexpr int16_t kWeights[5][8] = {
         { 8192, 11443, 11019, 10322, 9373, 8192, 6810, 5260 },
         { 8192, 10323, 6810, 1812, -3580, -8192, -11018, -11442 },
         { 8192, 8192, 0, -8192, -11586, -8192, 0, 8192 },
@@ -99,7 +104,7 @@ template<> struct Basis<10> {
     };
 };
 template<> struct Basis<12> {
-    static constexpr int16_t k[6][8] = {
+    static constexpr int16_t kWeights[6][8] = {
         { 8192, 11487, 11190, 10703, 10033, 9192, 8192, 7053 },
         { 8192, 10703, 8192, 4433, 0, -4433, -8192, -10703 },
         { 8192, 9192, 2998, -4433, -10033, -11485, -8192, -1512 },
@@ -109,7 +114,7 @@ template<> struct Basis<12> {
     };
 };
 template<> struct Basis<14> {
-    static constexpr int16_t k[7][8] = {
+    static constexpr int16_t kWeights[7][8] = {
         { 8192, 11513, 11295, 10935, 10438, 9810, 9058, 8192 },
         { 8192, 10935, 9058, 6164, 2578, -1297, -5026, -8192 },
         { 8192, 9810, 5027, -1297, -7223, -10934, -11295, -8192 },
@@ -122,22 +127,21 @@ template<> struct Basis<14> {
 
 template<size_t N> static constexpr int16_t WeightOf(size_t sample, size_t k)
 {
-    return sample < (N + 1) / 2 ? Basis<N>::k[sample][k] : 0;
+    return sample < (N + 1) / 2 ? Basis<N>::kWeights[sample][k] : 0;
 }
 
-// Which coefficient of a row is in column `x` of a block, and the other way round.
+// The coefficient of a row that is stored in column `x` of a block, and the inverse.
 static constexpr size_t InColumn(size_t x) { return x % 4 * 2 + x / 4; }
 static constexpr size_t ColumnOf(size_t k) { return k % 2 * 4 + k / 2; }
 
-// One row of 8 sums of products.
-struct Sums {
-    V32 part[kParts];
+template<class V> struct Parts {
+    V part[kParts];
 };
 
-// Two rows of 8. x64 multiplies and adds neighbouring lanes, so there they are interleaved. Elsewhere each is a vector.
-struct RowPair {
-    V16 part[kParts];
-};
+// One row of 8 sums of products.
+using Sums = Parts<V32>;
+// Two rows of 8. x64 multiplies and adds neighboring lanes, so there they are interleaved. Elsewhere each is a vector.
+using RowPair = Parts<V16>;
 
 // 16 values per 128 bits: the first 8 are in `lower`.
 struct Widened {
@@ -145,28 +149,16 @@ struct Widened {
     V16 upper;
 };
 
-static HWY_INLINE Sums operator+(Sums a, const Sums& b)
+template<class V>
+static HWY_INLINE Parts<V> operator+(Parts<V> a, const Parts<V>& b)
 {
     for (size_t i = 0; i < kParts; i++)
         a.part[i] = hn::Add(a.part[i], b.part[i]);
     return a;
 }
 
-static HWY_INLINE Sums operator-(Sums a, const Sums& b)
-{
-    for (size_t i = 0; i < kParts; i++)
-        a.part[i] = hn::Sub(a.part[i], b.part[i]);
-    return a;
-}
-
-static HWY_INLINE RowPair operator+(RowPair a, const RowPair& b)
-{
-    for (size_t i = 0; i < kParts; i++)
-        a.part[i] = hn::Add(a.part[i], b.part[i]);
-    return a;
-}
-
-static HWY_INLINE RowPair operator-(RowPair a, const RowPair& b)
+template<class V>
+static HWY_INLINE Parts<V> operator-(Parts<V> a, const Parts<V>& b)
 {
     for (size_t i = 0; i < kParts; i++)
         a.part[i] = hn::Sub(a.part[i], b.part[i]);
@@ -204,11 +196,15 @@ static HWY_INLINE V16 Alternating(int16_t even, int16_t odd)
     return hn::Dup128VecFromValues(D16(), even, odd, even, odd, even, odd, even, odd);
 }
 
-// What is added to the weighed R, G and B before the low 16 bits are dropped.
+// Scaled by 2^16 (jccolor.c) and by 2^15 (jdcolor.c).
+static constexpr int16_t kRedInLuma = 19595, kBlueInLuma = 7471;
+static constexpr int16_t kCbInGreen = -11277, kCrInGreen = -23401;
+
+// Added to the weighted R, G and B before the low 16 bits are dropped.
 static constexpr int32_t kLumaBias = 32768;
 static constexpr int32_t kChromaBias = (128 << 16) + 32767;
 
-// For each coefficient in zigzag order: how many rows and columns come before its own in a block.
+// For each coefficient in zigzag order: the storage position of its row and of its column.
 static constexpr auto kZigzag = [] {
     constexpr size_t nth_row[8] = { 0, 4, 2, 5, 1, 6, 3, 7 };
     std::array<std::array<size_t, 2>, 64> places {};
@@ -246,7 +242,7 @@ static HWY_INLINE Sums Weigh(const RowPair& rows, int16_t first, int16_t second,
     return sums;
 }
 
-// Of sums that fit in 16 bits once they are shifted.
+// The sums have to fit in 16 bits after the shift.
 template<int kShift>
 static HWY_INLINE RowPair RoundAndPairUp(const Sums& first, const Sums& second)
 {
@@ -266,10 +262,10 @@ static HWY_INLINE V16 ShiftAndPack(V32 a, V32 b)
 }
 
 template<size_t N, bool kForward = false> struct Weights {
-    // Of coefficient `k` in `sample`, for `Weigh`.
+    // The weight of coefficient `k` in `sample`, for `Weigh`.
     HWY_INLINE int16_t Of(size_t sample, size_t k) const { return WeightOf<N>(sample, k); }
 
-    // `rows` has a row in each 128 bits. What its columns `x` and `x + 1` weigh in the 4 samples from `kFirst` on.
+    // `rows` has a row in each 128 bits. What its columns `x` and `x + 1` add to the 4 samples from `kFirst` on.
     template<size_t kFirst, int x> HWY_INLINE V32 Spread(V16 rows) const
     {
         constexpr size_t a = InColumn(x), b = InColumn(x + 1), i = kFirst;
@@ -279,13 +275,13 @@ template<size_t N, bool kForward = false> struct Weights {
     }
 };
 
-// The even coefficients of 8 samples, from the sums of those that mirror each other, and the odd ones, from their differences.
+// The DCT of 8 samples: even coefficients from the sums of mirrored samples, odd ones from their differences.
 static HWY_INLINE Sums TransformRow(const Weights<8, true>&, const uint8_t* HWY_RESTRICT samples)
 {
     static constexpr auto weights = [](size_t first) {
         std::array<int16_t, 16> weights {};
         for (size_t i = 0; i < 16; i++)
-            weights[i] = Basis<8>::k[first + i % 2][i < 8 ? i / 2 * 2 : (i - 8) / 2 * 2 + 1];
+            weights[i] = Basis<8>::kWeights[first + i % 2][i < 8 ? i / 2 * 2 : (i - 8) / 2 * 2 + 1];
         return weights;
     };
     HWY_ALIGN static constexpr std::array<int16_t, 16> kOuter = weights(0), kInner = weights(2);
@@ -311,12 +307,12 @@ static HWY_INLINE Sums TransformRow(const Weights<8, true>&, const uint8_t* HWY_
 static HWY_INLINE Widened Widen(V8 bytes)
 {
     const V8 zero = hn::Zero(D8());
-    return { hn::BitCast(D16(), hn::InterleaveLower(D8(), bytes, zero)), hn::BitCast(D16(), hn::InterleaveUpper(D8(), bytes, zero)) };
+    return { hn::ZipLower(D16(), bytes, zero), hn::ZipUpper(D16(), bytes, zero) };
 }
 
 static HWY_INLINE V16 GreenOffset(V16 cb, V16 cr)
 {
-    const V16 weights = Alternating(-11277, -23401);
+    const V16 weights = Alternating(kCbInGreen, kCrInGreen);
     const V32 half = hn::Set(D32(), 1 << 14);
     return ShiftAndPack<15>(hn::Add(hn::WidenMulPairwiseAdd(D32(), hn::InterleaveLower(D16(), cb, cr), weights), half),
         hn::Add(hn::WidenMulPairwiseAdd(D32(), hn::InterleaveUpper(D16(), cb, cr), weights), half));
@@ -328,7 +324,7 @@ static HWY_INLINE V16 RedOrBlue(V16 y, V16 chroma, int16_t weight)
     return hn::Add(hn::Add(y, chroma), hn::MulFixedPoint15(chroma, hn::Set(D16(), static_cast<int16_t>(2 * weight - 32768))));
 }
 
-// For each sample from `row[1]` on: `weight` times three of it and the one before, then the same with the one after.
+// For each sample from `row[1]` on: `weight * (3 * sample + before)`, then `weight * (3 * sample + after)`.
 static HWY_INLINE Widened BlendAcross(const uint8_t* HWY_RESTRICT row, int8_t weight)
 {
     const hn::Full128<uint8_t> d128;
@@ -355,7 +351,7 @@ static HWY_INLINE Centered Center(V8 samples)
     return { hn::Sub(v.lower, hn::Set(D16(), 128)), hn::Sub(v.upper, hn::Set(D16(), 128)) };
 }
 
-// These two are for 32 pixels.
+// Both overloads produce `kPixelGroup` pixels.
 static HWY_INLINE void Upsample(const uint8_t* HWY_RESTRICT row, Centered (&out)[kParts])
 {
     const V16 bias = Alternating(1 - (128 << 2), 2 - (128 << 2));
@@ -375,7 +371,7 @@ static HWY_INLINE void Upsample(const uint8_t* HWY_RESTRICT near_row, const uint
     }
 }
 
-// What was 4 bytes of each of 4 vectors in each 128 bits, in the order of the vectors.
+// Undoes the interleaving of 128-bit halves that packing 4 vectors of 32-bit lanes causes.
 static HWY_INLINE V8 InVectorOrder(V8 packed)
 {
     if constexpr (kParts == 1) {
@@ -391,18 +387,18 @@ static HWY_INLINE void SplitRow(const uint8_t* HWY_RESTRICT rgba, uint8_t* HWY_R
     V32 y[4];
     for (size_t i = 0; i < 4; i++) {
         const V8 pixels = hn::LoadU(D8(), rgba + i * kBytes);
-        const V16 rb = hn::And(hn::BitCast(D16(), pixels), hn::Set(D16(), 0xFF));
+        const V16 rb = hn::PromoteEvenTo(D16(), pixels);
         const V16 gg = hn::BitCast(D16(),
             Shuffle(pixels, { 1, kZero, 1, kZero, 5, kZero, 5, kZero, 9, kZero, 9, kZero, 13, kZero, 13, kZero }));
         const auto weigh = [&](int16_t r, int16_t b, int16_t g, int16_t more_g) HWY_ATTR {
             return hn::Add(hn::WidenMulPairwiseAdd(D32(), rb, Alternating(r, b)),
                 hn::WidenMulPairwiseAdd(D32(), gg, Alternating(g, more_g)));
         };
-        // 38470 and 32768 take 17 bits. Half of the one does not, and neither does the other with its sign changed.
-        y[i] = hn::ShiftRight<16>(hn::Add(hn::Set(D32(), kLumaBias), weigh(19595, 7471, 19235, 19235)));
+        // 38470 and 32768 do not fit in 16 bits, so the first is split in halves and the second negated.
+        y[i] = hn::ShiftRight<16>(hn::Add(hn::Set(D32(), kLumaBias), weigh(kRedInLuma, kBlueInLuma, 19235, 19235)));
         const V32 cb = hn::Sub(hn::Set(D32(), kChromaBias), weigh(11059, -32768, 21709, 0));
         const V32 cr = hn::Sub(hn::Set(D32(), kChromaBias), weigh(-32768, 5329, 27439, 0));
-        chroma[i] = hn::Add(chroma[i], hn::OddEven(hn::BitCast(D16(), cr), hn::BitCast(D16(), hn::ShiftRight<16>(cb))));
+        chroma[i] = hn::Add(chroma[i], hn::InterleaveOdd(D16(), hn::BitCast(D16(), cb), hn::BitCast(D16(), cr)));
     }
     hn::StoreU(InVectorOrder(Pack(D8(), Pack(D16(), y[0], y[1]), Pack(D16(), y[2], y[3]))), D8(), luma);
 }
@@ -419,7 +415,7 @@ static HWY_INLINE void StoreChroma(const V16 (&chroma)[4], uint8_t* HWY_RESTRICT
     hn::StoreU(hn::LowerHalf(half, hn::ConcatOdd(D8(), both, both)), half, cr);
 }
 
-// For each 16 of the 64 bytes that a block is packed to, where in them each coefficient is, in zigzag order.
+// For each 16 of the 64 bytes that a block is packed to: the shuffle that takes its coefficients to zigzag order.
 static constexpr std::array<std::array<uint8_t, 64>, 4> kZigzagFrom = [] {
     std::array<std::array<uint8_t, 64>, 4> from {};
     for (size_t k = 0; k < 64; k++) {
@@ -431,7 +427,7 @@ static constexpr std::array<std::array<uint8_t, 64>, 4> kZigzagFrom = [] {
     return from;
 }();
 
-// One mask for all the bits of `to_pack` or, with `kBitPlanes`, one each for the bits 0, 1 and 2 and the sign.
+// One mask of the nonzero lanes or, with `kBitPlanes`, one each for bits 0, 1 and 2 and the sign.
 template<bool kBitPlanes>
 static HWY_INLINE void StoreMasks(const V16 (&to_pack)[4 * kParts], uint64_t* HWY_RESTRICT masks)
 {
@@ -512,7 +508,7 @@ static HWY_INLINE RowPair RoundAndPairUp(const Sums& first, const Sums& second)
     return { narrow(first), narrow(second) };
 }
 
-// By 16 or more.
+// `kShift` is 16 or more.
 template<int kShift>
 static HWY_INLINE V16 ShiftAndPack(V32 a, V32 b)
 {
@@ -522,9 +518,9 @@ static HWY_INLINE V16 ShiftAndPack(V32 a, V32 b)
     return hn::ShiftRight<kShift - 16>(hn::BitCast(D16(), hn::Combine(DU16(), high_halves(b), high_halves(a))));
 }
 
-// In registers, where a multiplication can pick one lane for all.
+// Kept in registers, for multiplications by a lane.
 template<size_t N, bool kForward = false> struct Weights {
-    // Of two columns in 4 samples or, if `kForward`, of all columns in one.
+    // Each has two columns for 4 samples or, if `kForward`, all columns for one.
     V16 vectors[N > 8 ? 8 : 4];
 
     static constexpr size_t IndexOf(size_t sample, size_t k)
@@ -540,7 +536,7 @@ template<size_t N, bool kForward = false> struct Weights {
                 table[IndexOf(i / 8, i % 8)] = WeightOf<N>(i / 8, i % 8);
             return table;
         }();
-        // If it knew them, the compiler would want a register for each.
+        // Hidden from the compiler, which would broadcast each constant to a register of its own.
         const int16_t* table = kTable.data();
         hwy::PreventElision(table);
         for (size_t i = 0; i < std::size(vectors); i++)
@@ -553,7 +549,7 @@ template<size_t N, bool kForward = false> struct Weights {
         return hn::Set(D16(), WeightOf<N>(sample, k) == 0 ? int16_t { 0 } : hn::ExtractLane(vectors[at / 8], at % 8));
     }
 
-    // What weighs nothing in sample 0 does so in all.
+    // A weight that is zero for sample 0 is zero for all.
     template<int x> static HWY_INLINE V16 Column(V16 row)
     {
         return WeightOf<N>(0, InColumn(x)) == 0 ? hn::Zero(D16()) : hn::Broadcast<x>(row);
@@ -593,7 +589,7 @@ static HWY_INLINE Widened Widen(V8 bytes)
 
 using Centered = hn::Vec<DI8>;
 
-// Doubled, for the next two.
+// Doubled, as `GreenOffset` and `RedOrBlue` expect.
 static HWY_INLINE Widened Widen(Centered v)
 {
     return { hn::ShiftLeft<1>(hn::PromoteLowerTo(D16(), v)), hn::ShiftLeft<1>(hn::PromoteUpperTo(D16(), v)) };
@@ -601,7 +597,7 @@ static HWY_INLINE Widened Widen(Centered v)
 
 static HWY_INLINE V16 GreenOffset(V16 cb, V16 cr)
 {
-    const Sums sums = Bias(1 << 15, 1 << 15) + Weigh({ cb, cr }, -11277, -23401);
+    const Sums sums = Bias(1 << 15, 1 << 15) + Weigh({ cb, cr }, kCbInGreen, kCrInGreen);
     return ShiftAndPack<16>(sums.part[0], sums.part[1]);
 }
 
@@ -626,7 +622,7 @@ static HWY_INLINE void Upsample(const uint8_t* HWY_RESTRICT row, Centered (&out)
     out[1] = hn::InterleaveUpper(DI8(), even, odd);
 }
 
-// All times 16, so that the sixteenth of a sum is its high byte.
+// Scaled by 16, so that the result is the high byte of each sum.
 static HWY_INLINE void Upsample(const uint8_t* HWY_RESTRICT near_row, const uint8_t* HWY_RESTRICT far_row, Centered (&out)[2])
 {
     using VU16 = hn::Vec<DU16>;
@@ -637,7 +633,7 @@ static HWY_INLINE void Upsample(const uint8_t* HWY_RESTRICT near_row, const uint
     const VU16 bias = hn::Set(DU16(), (7 << 4) + (128 << 8));
     VU16 odd[2] = { bias, bias }, even[2];
     add(1, 3 << 4, odd);
-    // It never saturates. The compiler would put off a plain addition, and copy the sums first.
+    // Never saturates. The compiler would reassociate a plain addition and copy the sums.
     for (size_t i = 0; i < 2; i++)
         even[i] = hn::BitCast(DU16(), hn::SaturatedAdd(hn::BitCast(D16(), odd[i]), hn::Set(D16(), 1 << 4)));
     add(0, 1 << 4, even);
@@ -646,7 +642,7 @@ static HWY_INLINE void Upsample(const uint8_t* HWY_RESTRICT near_row, const uint
         out[i] = hn::InterleaveOdd(DI8(), hn::BitCast(DI8(), even[i]), hn::BitCast(DI8(), odd[i]));
 }
 
-// Stores the luma of 16 pixels. Adds the Cb of each two to `chroma[0]`, and their Cr to `chroma[1]`.
+// Stores the luma of 16 pixels. Adds the Cb of each pair to `chroma[0]`, and its Cr to `chroma[1]`.
 static HWY_INLINE void SplitRow(const uint8_t* HWY_RESTRICT rgba, uint8_t* HWY_RESTRICT luma, V16 (&chroma)[4])
 {
     V8 r8, g8, b8, a8;
@@ -655,12 +651,12 @@ static HWY_INLINE void SplitRow(const uint8_t* HWY_RESTRICT rgba, uint8_t* HWY_R
     struct Eight {
         hn::Vec<hn::Half<D8>> y_less_g, cb, cr;
     };
-    // The weights of R, G and B add up to 1 or to 0, so it takes two differences.
+    // The weights of R, G and B add up to 1 or to 0, so two differences are enough.
     const auto eight = [&](V16 r, V16 g, V16 b) HWY_ATTR {
         const V16 g_less_r = hn::ShiftLeft<7>(hn::Sub(g, r)), g_less_b = hn::ShiftLeft<7>(hn::Sub(g, b));
-        const Sums sums = Weigh({ g_less_r, g_less_b }, -19595, -7471);
+        const Sums sums = Weigh({ g_less_r, g_less_b }, -kRedInLuma, -kBlueInLuma);
         const auto y = hn::ConcatOdd(DU16(), hn::BitCast(DU16(), sums.part[1]), hn::BitCast(DU16(), sums.part[0]));
-        // These weights are a little off, so that the product comes out as if it had been rounded down.
+        // These weights are adjusted, so that the rounding multiplication gives the truncated product.
         const auto difference = [&](V16 halved, V16 other, int16_t weight) HWY_ATTR {
             const V16 sum = hn::Add(halved, hn::ShiftRight<1>(hn::MulFixedPoint15(other, hn::Set(D16(), weight))));
             return hn::TruncateTo(half, hn::ShiftRight<8>(hn::Sub(hn::Set(DU16(), kChromaBias >> 8), hn::BitCast(DU16(), sum))));
@@ -682,7 +678,7 @@ static HWY_INLINE void StoreChroma(const V16 (&chroma)[4], uint8_t* HWY_RESTRICT
     hn::StoreU(hn::DemoteTo(half, hn::ShiftRight<2>(hn::Add(chroma[1], Alternating(1, 2)))), half, cr);
 }
 
-// The vector units have enough to do.
+// Scalar, because the vector units are the bottleneck.
 static HWY_INLINE bool HasOnlyDc(const int16_t* HWY_RESTRICT block)
 {
     uint64_t words[16], others = 0;
@@ -695,10 +691,10 @@ static HWY_INLINE bool HasOnlyDc(const int16_t* HWY_RESTRICT block)
     return others == 0;
 }
 
-// Of each 8 coefficients in zigzag order, 4 are in the first 4 of these rows.
+// Of each 8 coefficients in zigzag order, 4 are in the first half of these rows and 4 in the second.
 static constexpr size_t kRowOrder[8] = { 0, 3, 5, 6, 1, 2, 4, 7 };
 
-// For each half of them: where in it the coefficients are, in zigzag order, and their bits in a byte of the mask.
+// For each half: the positions of its coefficients in zigzag order, then their bits in a byte of the mask.
 HWY_ALIGN static constexpr auto kHalves = [] {
     std::array<uint8_t, 128> from_and_bit {};
     size_t found[2] = {};
@@ -738,7 +734,7 @@ static HWY_INLINE void StoreMasks(const V16 (&rows)[8], uint64_t* HWY_RESTRICT m
 
 #endif
 
-// Adds what the rows 2 and 6 weigh in row `y`. Where that is the opposite of an earlier row's, the products are shared.
+// Adds what rows 2 and 6 contribute to row `y`. Where that negates an earlier row's, the products are shared.
 template<size_t N>
 static HWY_INLINE Sums AddRows26(const Sums& sums, const RowPair& rows, const Weights<N>& weights, size_t y)
 {
@@ -759,7 +755,7 @@ static HWY_INLINE V16 InverseRows(const Weights<N>& weights, V16 rows)
     return ShiftAndPack<18 + kExtraBits<N>>(hn::Add(even, odd), hn::Sub(even, odd));
 }
 
-// Of two results of `InverseRows`: two rows, or the outer and the inner samples of one.
+// Orders two results of `InverseRows`: two rows, or the outer and the inner samples of one.
 template<size_t N>
 static HWY_INLINE V8 LeftToRight(V16 first, V16 second)
 {
@@ -787,11 +783,11 @@ static HWY_INLINE void InverseTransform(const int16_t* HWY_RESTRICT blocks, size
 
     const Weights<N> weights;
     const RowPair steps[4] = { LoadPair(quant), LoadPair(quant + 16), LoadPair(quant + 32), LoadPair(quant + 48) };
-    // Weighed as column 0 is by the second pass, 16 rounds its result and 4096 adds 128 to it.
+    // Through the weight of column 0 in the second pass, 16 rounds the result and 4096 adds 128.
     const Sums bias = Bias(((4096 + 16) << kShift) + (1 << (kShift - 1)), 1 << (kShift - 1));
 
     for (; count != 0; count--, blocks += 64, out += N) {
-        // The small ones are done in the time that it takes to find out.
+        // For small sizes the check costs as much as the transform.
         if (N > 4 && HasOnlyDc(blocks)) {
             const int32_t mean = ((static_cast<int16_t>(blocks[0] * quant[0]) + 4) >> 3) + 128;
             const auto row = hn::Set(d128, static_cast<uint8_t>(HWY_MIN(HWY_MAX(mean, 0), 255)));
@@ -820,10 +816,10 @@ static HWY_INLINE void InverseTransform(const int16_t* HWY_RESTRICT blocks, size
         V16 rows[kVectors];
         HWY_DEFAULT_UNROLL
         for (size_t y = 0; y < kHalf; y++) {
-            const int16_t* k = Basis<N>::k[y];
-            Sums even = AddRows26(bias + Weigh(in[0], k[0], k[4]), in[1], weights, y);
+            const int16_t* basis = Basis<N>::kWeights[y];
+            Sums even = AddRows26(bias + Weigh(in[0], basis[0], basis[4]), in[1], weights, y);
             if constexpr (N == 2)
-                even = even + Weigh(in[0], k[0], k[4]);
+                even = even + Weigh(in[0], basis[0], basis[4]);
             const Sums odd = Weigh(in[3], weights.Of(y, 5), weights.Of(y, 7), Weigh(in[2], weights.Of(y, 1), weights.Of(y, 3)));
             const Sums upper = even + odd, lower = even - odd;
             if constexpr (kParts == 1) {
@@ -833,8 +829,8 @@ static HWY_INLINE void InverseTransform(const int16_t* HWY_RESTRICT blocks, size
                 rows[2 * y + 1] = narrow(lower.part[0], lower.part[kParts - 1]);
             }
         }
-        const auto row = [&](size_t vector, size_t block) {
-            const size_t nth = vector * (2 / kParts) + block;
+        const auto row = [&](size_t vector, size_t half) {
+            const size_t nth = vector * (2 / kParts) + half;
             return out + (nth % 2 == 0 ? nth / 2 : N - 1 - nth / 2) * stride;
         };
 
@@ -843,9 +839,9 @@ static HWY_INLINE void InverseTransform(const int16_t* HWY_RESTRICT blocks, size
             for (size_t i = 0; i < kVectors; i += 2) {
                 const size_t next = HWY_MIN(i + 1, kVectors - 1);
                 const V8 bytes = LeftToRight<N>(InverseRows<0>(weights, rows[i]), InverseRows<0>(weights, rows[next]));
-                const auto store = [&](hn::Vec<decltype(d128)> two_rows, size_t block) HWY_ATTR {
-                    hn::StoreU(hn::LowerHalf(d64, two_rows), d64, row(i, block));
-                    uint8_t* second = row(next, block);
+                const auto store = [&](hn::Vec<decltype(d128)> two_rows, size_t half) HWY_ATTR {
+                    hn::StoreU(hn::LowerHalf(d64, two_rows), d64, row(i, half));
+                    uint8_t* second = row(next, half);
                     // arm64 can store a lane, but not with an offset.
                     if constexpr (!HWY_ARCH_X86)
                         hwy::PreventElision(second);
@@ -896,7 +892,7 @@ static void JpegInverseTransform(const int16_t* HWY_RESTRICT blocks, size_t coun
     }
 }
 
-// These weights of 16 bits round as those of jdcolor.c do for all samples.
+// These 16-bit weights give the results of jdcolor.c for all samples.
 static HWY_INLINE void StoreRgba(V8 luma, const Centered& blue, const Centered& red, uint8_t* HWY_RESTRICT out)
 {
     const Widened y = Widen(luma), cb = Widen(blue), cr = Widen(red);
@@ -915,7 +911,7 @@ static void JpegYccToRgba(const uint8_t* HWY_RESTRICT y, const uint8_t* HWY_REST
 static void JpegYcc422ToRgba(const uint8_t* HWY_RESTRICT y, const uint8_t* HWY_RESTRICT cb, const uint8_t* HWY_RESTRICT cr,
     size_t width, uint8_t* HWY_RESTRICT out)
 {
-    for (size_t x = 0; x < width; x += 32) {
+    for (size_t x = 0; x < width; x += kPixelGroup) {
         Centered blue[kParts], red[kParts];
         Upsample(cb + x / 2, blue);
         Upsample(cr + x / 2, red);
@@ -927,7 +923,7 @@ static void JpegYcc422ToRgba(const uint8_t* HWY_RESTRICT y, const uint8_t* HWY_R
 static void JpegYcc420ToRgba(const uint8_t* HWY_RESTRICT y, const uint8_t* HWY_RESTRICT cb_near, const uint8_t* HWY_RESTRICT cb_far,
     const uint8_t* HWY_RESTRICT cr_near, const uint8_t* HWY_RESTRICT cr_far, size_t width, uint8_t* HWY_RESTRICT out)
 {
-    for (size_t x = 0; x < width; x += 32) {
+    for (size_t x = 0; x < width; x += kPixelGroup) {
         Centered blue[kParts], red[kParts];
         Upsample(cb_near + x / 2, cb_far + x / 2, blue);
         Upsample(cr_near + x / 2, cr_far + x / 2, red);
@@ -939,35 +935,37 @@ static void JpegYcc420ToRgba(const uint8_t* HWY_RESTRICT y, const uint8_t* HWY_R
 static void JpegRgbaToYcc420(const uint8_t* HWY_RESTRICT rgba, size_t rgba_stride, size_t width, size_t row_pairs,
     uint8_t* HWY_RESTRICT y, uint8_t* HWY_RESTRICT cb, uint8_t* HWY_RESTRICT cr, size_t chroma_stride)
 {
-    for (; row_pairs != 0; row_pairs--, rgba += 2 * rgba_stride, y += 4 * chroma_stride, cb += chroma_stride, cr += chroma_stride) {
+    for (size_t pair = 0; pair < row_pairs; pair++) {
+        const uint8_t* pixels = rgba + 2 * pair * rgba_stride;
+        const size_t at = pair * chroma_stride;
         for (size_t x = 0; x < width; x += kBytes) {
             V16 chroma[4] = { hn::Zero(D16()), hn::Zero(D16()), hn::Zero(D16()), hn::Zero(D16()) };
-            SplitRow(rgba + 4 * x, y + x, chroma);
-            SplitRow(rgba + rgba_stride + 4 * x, y + 2 * chroma_stride + x, chroma);
-            StoreChroma(chroma, cb + x / 2, cr + x / 2);
+            SplitRow(pixels + 4 * x, y + 4 * at + x, chroma);
+            SplitRow(pixels + rgba_stride + 4 * x, y + 4 * at + 2 * chroma_stride + x, chroma);
+            StoreChroma(chroma, cb + at + x / 2, cr + at + x / 2);
         }
     }
 }
 
 template<bool kBitPlanes>
 static HWY_INLINE void ForwardTransform(const uint8_t* HWY_RESTRICT samples, size_t stride, size_t count,
-    const uint16_t* HWY_RESTRICT divisors, int16_t* HWY_RESTRICT blocks, uint64_t* HWY_RESTRICT masks)
+    const int16_t* HWY_RESTRICT divisors, int16_t* HWY_RESTRICT blocks, uint64_t* HWY_RESTRICT masks)
 {
-    // Coefficient 0 is the only one that taking 128 from each sample changes.
+    // Subtracting 128 from each sample only changes coefficient 0.
     const Sums centering = Bias(-((64 * 128) << 15), 0);
-    const Weights<8, true> k;
+    const Weights<8, true> weights;
 
     for (; count != 0; count--, samples += 8, blocks += 64, masks += kBitPlanes ? 4 : 1) {
         const auto rows = [&](size_t first, size_t second) HWY_ATTR {
-            return RoundAndPairUp<11>(TransformRow(k, samples + first * stride), TransformRow(k, samples + second * stride));
+            return RoundAndPairUp<11>(TransformRow(weights, samples + first * stride), TransformRow(weights, samples + second * stride));
         };
         const RowPair rows01 = rows(0, 1), rows76 = rows(7, 6), rows32 = rows(3, 2), rows45 = rows(4, 5);
         const RowPair sums01 = rows01 + rows76, sums32 = rows32 + rows45;
         const RowPair differences01 = rows01 - rows76, differences32 = rows32 - rows45;
         const RowPair for04 = sums01 + sums32, for26 = sums01 - sums32;
-        const auto even = [&](const RowPair& from, size_t row) HWY_ATTR { return Weigh(from, k.Of(0, row), k.Of(1, row)); };
+        const auto even = [&](const RowPair& from, size_t row) HWY_ATTR { return Weigh(from, weights.Of(0, row), weights.Of(1, row)); };
         const auto odd = [&](size_t row) HWY_ATTR {
-            return Weigh(differences32, k.Of(3, row), k.Of(2, row), Weigh(differences01, k.Of(0, row), k.Of(1, row)));
+            return Weigh(differences32, weights.Of(3, row), weights.Of(2, row), Weigh(differences01, weights.Of(0, row), weights.Of(1, row)));
         };
         const RowPair coefficients[4] = { RoundAndPairUp<15>(Weigh(for04, 8192, 8192) + centering, Weigh(for04, 8192, -8192)),
             RoundAndPairUp<15>(even(for26, 2), even(for26, 6)), RoundAndPairUp<15>(odd(1), odd(3)), RoundAndPairUp<15>(odd(5), odd(7)) };
@@ -975,16 +973,15 @@ static HWY_INLINE void ForwardTransform(const uint8_t* HWY_RESTRICT samples, siz
         V16 to_pack[4 * kParts];
         HWY_DEFAULT_UNROLL
         for (size_t i = 0; i < 4; i++) {
-            const int16_t* from = reinterpret_cast<const int16_t*>(divisors) + 16 * i;
-            const RowPair reciprocal = LoadPair(from), scale = LoadPair(from + 64);
+            const RowPair reciprocal = LoadPair(divisors + 16 * i), scale = LoadPair(divisors + 64 + 16 * i);
             RowPair quantized {};
             for (size_t part = 0; part < kParts; part++) {
-                const V16 value = coefficients[i].part[part], sign = hn::ShiftRight<15>(value);
-                // One less if it is negative makes halves round away from 0.
+                const V16 value = coefficients[i].part[part], sign = hn::BroadcastSignBit(value);
+                // One less if negative, so that halves round away from 0.
                 const V16 doubled = hn::Add(hn::Add(value, value), sign);
                 quantized.part[part] = hn::MulFixedPoint15(hn::MulFixedPoint15(doubled, reciprocal.part[part]), scale.part[part]);
                 if constexpr (kBitPlanes) {
-                    // The low two bits, 4 for all above them, and the sign where a byte has it.
+                    // The low two bits, 4 if any higher bit is set, and the sign in bit 7.
                     const V16 magnitude = hn::Abs(quantized.part[part]);
                     const V16 bits = hn::Min(magnitude, hn::OrAnd(hn::Set(D16(), 4), magnitude, hn::Set(D16(), 3)));
                     to_pack[i * kParts + part] = hn::OrAnd(bits, sign, hn::Set(D16(), -128));
@@ -999,7 +996,7 @@ static HWY_INLINE void ForwardTransform(const uint8_t* HWY_RESTRICT samples, siz
 }
 
 static void JpegForwardTransform(const uint8_t* HWY_RESTRICT samples, size_t stride, size_t count,
-    const uint16_t* HWY_RESTRICT divisors, int16_t* HWY_RESTRICT blocks, uint64_t* HWY_RESTRICT masks, bool bit_planes)
+    const int16_t* HWY_RESTRICT divisors, int16_t* HWY_RESTRICT blocks, uint64_t* HWY_RESTRICT masks, bool bit_planes)
 {
     if (bit_planes)
         return ForwardTransform<true>(samples, stride, count, divisors, blocks, masks);
@@ -1027,7 +1024,7 @@ extern "C" void highway_jpeg_inverse_transform(const int16_t* blocks, size_t cou
     BUN_HWY_DISPATCH(JpegInverseTransform)(blocks, count, quant, size, out, stride);
 }
 
-// These four touch `width` pixels, a multiple of 32. Rows to upsample start one sample early, and have 8 bytes more.
+// These four process `width` pixels, a multiple of 32. Rows to upsample start one sample early, and have 8 bytes more.
 extern "C" void highway_jpeg_ycc_to_rgba(const uint8_t* y, const uint8_t* cb, const uint8_t* cr, size_t width, uint8_t* out)
 {
     BUN_HWY_DISPATCH(JpegYccToRgba)(y, cb, cr, width, out);
@@ -1052,7 +1049,7 @@ extern "C" void highway_jpeg_rgba_to_ycc420(const uint8_t* rgba, size_t rgba_str
 }
 
 // Reads `8 * count` bytes of 8 rows and two blocks of `divisors`. Writes a mask for each block, or four with `bit_planes`.
-extern "C" void highway_jpeg_forward_transform(const uint8_t* samples, size_t stride, size_t count, const uint16_t* divisors,
+extern "C" void highway_jpeg_forward_transform(const uint8_t* samples, size_t stride, size_t count, const int16_t* divisors,
     int16_t* blocks, uint64_t* masks, bool bit_planes)
 {
     BUN_HWY_DISPATCH(JpegForwardTransform)(samples, stride, count, divisors, blocks, masks, bit_planes);

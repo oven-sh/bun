@@ -1,12 +1,14 @@
-//! Estimates of what a progressive file lacks, from the DC coefficients around (`decompress_smooth_data()`).
+//! Block smoothing: estimates what a progressive file lacks from the neighboring DC values (`decompress_smooth_data()`).
 
 use crate::block::{Block, Zigzag};
-use crate::header::{MAX_COMPONENTS, Scan};
-use crate::wrapped_mut;
+use crate::header::Scan;
+use crate::{MAX_COMPONENTS, wrapped_mut};
 use core::hint::select_unpredictable;
 
-/// For coefficients 0 to 9 in zigzag order: how many low bits are missing, or `UNKNOWN`.
-type Missing = [i8; 10];
+/// How many coefficients smoothing looks at, in zigzag order.
+const SMOOTHED: usize = 10;
+/// For each: how many low bits are missing, or `UNKNOWN`.
+type Missing = [i8; SMOOTHED];
 const UNKNOWN: i8 = -1;
 
 /// What is missing after the last scan of a component, and before it.
@@ -24,8 +26,8 @@ pub(crate) struct Progress {
 impl Progress {
     pub(crate) const NONE: Self = Self {
         components: [Accuracy {
-            now: [UNKNOWN; 10],
-            before: [UNKNOWN; 10],
+            now: [UNKNOWN; SMOOTHED],
+            before: [UNKNOWN; SMOOTHED],
         }; MAX_COMPONENTS],
         scans: 0,
     };
@@ -37,31 +39,32 @@ impl Progress {
             accuracy.before = if self.scans > 1 {
                 accuracy.now
             } else {
-                [0; 10]
+                // As in libjpeg, for a component that no later scan has.
+                [0; SMOOTHED]
             };
-            let band = accuracy.now.iter_mut().take(usize::from(scan.last) + 1);
-            band.skip(scan.first.into())
-                .for_each(|missing| *missing = scan.shift as i8);
+            let band = accuracy.now.iter_mut().take(usize::from(scan.se) + 1);
+            band.skip(scan.ss.into())
+                .for_each(|missing| *missing = scan.al as i8);
         }
     }
 
-    /// For each component, if there is something to estimate and enough to go by.
+    /// None if smoothing is not possible or has nothing to estimate (`smoothing_ok()`).
     pub(crate) fn accuracy(mut self, quant: &[Block]) -> Option<[Accuracy; MAX_COMPONENTS]> {
         let mut is_useful = false;
         for (accuracy, quant) in self.components.iter_mut().zip(quant) {
-            if accuracy.now[0] == UNKNOWN || (0..10).any(|k| quant.at(k) == 0) {
+            if accuracy.now[0] == UNKNOWN || (0..SMOOTHED).any(|k| quant.at(k) == 0) {
                 return None;
             }
-            is_useful |= accuracy.now[1..] != [0; 9];
+            is_useful |= accuracy.now[1..] != [0; SMOOTHED - 1];
             if self.scans == 1 {
-                accuracy.before = [UNKNOWN; 10];
+                accuracy.before = [UNKNOWN; SMOOTHED];
             }
         }
         is_useful.then_some(self.components)
     }
 }
 
-/// For the 5 by 5 blocks around one, column by column, and zeros up to the end of a vector.
+/// For the 5 by 5 blocks around one, column by column, padded with zeros to whole vectors.
 type Weights = [i16; 32];
 
 const fn padded(columns: [[i16; 5]; 5]) -> Weights {
@@ -116,7 +119,7 @@ fn estimate(dc: &[i16; 32], weights: &Weights, quant: &Block, k: usize, missing:
 }
 
 impl Accuracy {
-    /// The blocks of the middle row from `first` on, as many as fit. `is_late`: the last scan did not get this far.
+    /// Smooths a batch of `rows[2]` from `first` on. `is_late`: the last scan ran out of data before this row.
     pub(crate) fn smooth<'a>(
         &self,
         is_late: bool,
@@ -128,29 +131,30 @@ impl Accuracy {
         let blocks = rows[2].get(first..).unwrap_or_default();
         let (out, _) = room.split_at_mut(blocks.len().min(BATCH_LEN));
         let missing = if is_late { &self.before } else { &self.now };
-        let has_no_ac = missing[1..] == [UNKNOWN; 9];
+        let has_no_ac = missing[1..] == [UNKNOWN; SMOOTHED - 1];
         let weights: &[Weights] = if has_no_ac {
             &WITHOUT_AC
         } else {
             &WITH_SOME_AC
         };
+        // The last block starts a window of 32, which is 7 columns.
         let mut columns = [[0; 5]; BATCH_LEN + 6];
         for (x, column) in (first..).zip(columns.iter_mut().take(out.len() + 4)) {
             *column = rows.map(|row| {
                 let block = row.get(x.saturating_sub(2)).or_else(|| row.last());
-                block.map_or(0, |block| block.0[0])
+                block.map_or(0, Block::dc)
             });
         }
         let around = columns.as_flattened().array_windows().step_by(5);
         for ((out, block), dc) in out.iter_mut().zip(blocks).zip(around) {
             *out = *block;
-            for (k, (weights, &missing)) in (1..10).zip(weights.iter().zip(&missing[1..])) {
+            for (k, (weights, &missing)) in (1..SMOOTHED).zip(weights.iter().zip(&missing[1..])) {
                 if missing != 0 && out.at(k) == 0 {
                     *out.at_mut(k) = estimate(dc, weights, quant, k, missing);
                 }
             }
             if has_no_ac {
-                out.0[0] = estimate(dc, &DC_WITHOUT_AC, quant, 0, 0);
+                *out.dc_mut() = estimate(dc, &DC_WITHOUT_AC, quant, 0, 0);
             }
         }
         out

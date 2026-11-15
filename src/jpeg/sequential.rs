@@ -2,33 +2,34 @@
 
 use crate::bit_reader::{BITS_IN_REFILL, Bits, Window};
 use crate::block::{Block, Zigzag};
-use crate::header::{MAX_COMPONENTS, Scan, Tables};
-use crate::huffman::{Alphabet, Code, Codes, END, STANDARD_AC, STANDARD_DC, Spec, ZEROS, extend};
-use crate::input::Input;
+use crate::header::{Scan, Tables};
+use crate::huffman::{
+    Alphabet, Code, Codes, RUN_OF_EOB, RUN_OF_ZRL, STANDARD_AC, STANDARD_DC, Spec, extend,
+};
 use crate::scan::{EntropyDecoder, Slot};
-use crate::{Error, Result, wrapped, wrapped_mut};
+use crate::{Error, MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::hint::{cold_path, select_unpredictable};
 use core::ops::Range;
 
-/// The length of what [`Sequential`] decodes to. A byte is an index into it.
+/// The length of the buffer that [`Sequential`] decodes into. A `u8` indexes it without a bounds check.
 pub(crate) const BATCH_ROOM: usize = 256;
 
 const QUICK_BITS: u32 = 9;
 const MAX_QUICK_LENGTH: u32 = 16;
-/// What is left after so many is enough to look up the next.
+/// After this many, enough bits are left to look up the next step.
 const QUICK_STEPS_IN_REFILL: u32 = (BITS_IN_REFILL - QUICK_BITS) / MAX_QUICK_LENGTH;
-/// With less data than this, finding the pairs takes longer than they save.
+/// Below this many bytes of data, building pairs costs more than they save.
 const MIN_LEN_FOR_PAIRS: usize = 2048;
 
-/// One code, or two of the same block.
+/// One code, or two consecutive codes of a block.
 #[derive(Clone, Copy)]
 #[repr(align(8))]
 struct Step {
-    /// In bits, with those that follow the codes.
+    /// In bits, extra bits included.
     length: u8,
-    /// How far it is to the coefficient after the first.
+    /// How far the first code moves `k`.
     first_advance: u8,
-    /// How far it is to the coefficient after the last.
+    /// How far the whole step moves `k`.
     advance: u8,
     ends_block: bool,
     first_value: i16,
@@ -36,7 +37,7 @@ struct Step {
 }
 
 impl Step {
-    /// It fits in no block.
+    /// Looks like two codes that overrun any block, so [`StepTable::slow`] searches.
     const NONE: Self = Self {
         length: 0,
         first_advance: 64,
@@ -46,25 +47,25 @@ impl Step {
         last_mask: 0,
     };
 
-    /// A run of 16 zeros is a zero after 15 others. At the end, a zero goes where the next coefficient would.
+    /// ZRL writes a zero after 15 others. EOB writes a zero where the next coefficient would go.
     #[inline(always)]
     fn single(code: Code) -> Self {
         let advance = match code.run() {
-            END => 1,
-            ZEROS => 16,
+            RUN_OF_EOB => 1,
+            RUN_OF_ZRL => 16,
             run => run as u8 + 1,
         };
         Self {
             length: code.length() as u8,
             first_advance: advance,
             advance,
-            ends_block: code.run() == END,
+            ends_block: code.run() == RUN_OF_EOB,
             first_value: 0,
             last_mask: code.mask() as u16,
         }
     }
 
-    /// `self` is single, and the bits after its code stand for `value`.
+    /// `self` is single, and its extra bits stand for `value`.
     #[inline(always)]
     fn followed_by(self, value: i16, second: Self) -> Self {
         Self {
@@ -77,8 +78,8 @@ impl Step {
     }
 }
 
-struct StepTable {
-    /// By the next bits. What is long is not here.
+pub(crate) struct StepTable {
+    /// By the next [`QUICK_BITS`]. Long codes are [`Step::NONE`].
     quick: [Step; 1 << QUICK_BITS],
     codes: Codes,
 }
@@ -89,29 +90,31 @@ impl StepTable {
         codes: Codes::NONE,
     };
 
-    /// `seconds` go by the bits that the first code leaves: `n` of them from `1 << n` on.
-    fn fill_quick(&mut self, seconds: Option<&[Step; 1 << QUICK_BITS]>) {
-        self.codes.share_out(&mut self.quick, |code, slots| {
-            if code.length() > MAX_QUICK_LENGTH {
-                return;
-            }
-            let single = Step::single(code);
-            let seconds = seconds.filter(|_| code.length() < QUICK_BITS && code.run() != END);
-            let Some(seconds) = seconds else {
-                return slots.fill(single);
-            };
-            let len = 1 << (QUICK_BITS - code.length());
-            let seconds = seconds.get(len..).unwrap_or_default();
-            for (bits, slots) in (0..).zip(slots.chunks_exact_mut(len)) {
-                let value = code.value(bits) as i16;
-                for (slot, &second) in slots.iter_mut().zip(seconds) {
-                    *slot = match second.length {
-                        0 => single,
-                        _ => single.followed_by(value, second),
-                    };
+    /// `second_steps[1 << n..]` is indexed by the `n` bits that a first code leaves.
+    fn fill_quick(&mut self, second_steps: Option<&[Step; 1 << QUICK_BITS]>) {
+        self.codes
+            .for_each_prefix(&mut self.quick, |code, entries| {
+                if code.length() > MAX_QUICK_LENGTH {
+                    return;
                 }
-            }
-        });
+                let single = Step::single(code);
+                let second_steps =
+                    second_steps.filter(|_| code.length() < QUICK_BITS && code.run() != RUN_OF_EOB);
+                let Some(second_steps) = second_steps else {
+                    return entries.fill(single);
+                };
+                let len = 1 << (QUICK_BITS - code.length());
+                let second_steps = second_steps.get(len..).unwrap_or_default();
+                for (bits, entries) in (0..).zip(entries.chunks_exact_mut(len)) {
+                    let value = code.value(bits) as i16;
+                    for (entry, &second) in entries.iter_mut().zip(second_steps) {
+                        *entry = match second.length {
+                            0 => single,
+                            _ => single.followed_by(value, second),
+                        };
+                    }
+                }
+            });
     }
 
     #[inline(always)]
@@ -119,9 +122,9 @@ impl StepTable {
         wrapped(&self.quick, (bits >> (64 - QUICK_BITS)) as usize)
     }
 
-    /// What comes at coefficient `k`.
+    /// The step at coefficient `k`, also for long codes and at the end of a block.
     #[inline(always)]
-    fn find(&self, bits: u64, k: usize) -> Step {
+    fn slow(&self, bits: u64, k: usize) -> Step {
         let mut step = *self.quick(bits);
         if k + usize::from(step.first_advance) >= 64 && step.first_advance != step.advance {
             step = Step::single(self.codes.search(bits));
@@ -131,16 +134,17 @@ impl StepTable {
     }
 }
 
-/// For the first code of a block, and for the others.
-type TablePair = [StepTable; 2];
+type DcAndAc = [StepTable; 2];
 
 pub(crate) struct StepTables {
-    pairs: Vec<TablePair>,
+    /// [`DcAndAc`], flattened.
+    tables: Vec<StepTable>,
     by_component: [usize; MAX_COMPONENTS],
 }
 
 impl StepTables {
-    pub(crate) fn new(tables: &Tables, scan: &Scan, input: &Input<'_>) -> Result<Self> {
+    /// For a scan of at most `data_len` bytes.
+    pub(crate) fn new(tables: &Tables, scan: &Scan, data_len: usize) -> Result<Self> {
         /// Motion JPEG leaves the standard tables out.
         fn find<'s>(specs: &'s [Option<Spec>], standard: &'s [Spec], n: u8) -> Result<&'s Spec> {
             let spec = specs.get(usize::from(n)).and_then(Option::as_ref);
@@ -148,8 +152,8 @@ impl StepTables {
                 .ok_or(Error::MissingTable)
         }
 
-        let (mut pairs, mut by_component) = (Vec::new(), [0; MAX_COMPONENTS]);
-        pairs.try_reserve_exact(scan.components().len())?;
+        let (mut built, mut by_component) = (Vec::new(), [0; MAX_COMPONENTS]);
+        built.try_reserve_exact(2 * scan.components().len())?;
         for (nth, component) in scan.components().iter().enumerate() {
             let numbers = (component.dc_table, component.ac_table);
             let mut before = scan.components().iter().take(nth);
@@ -157,38 +161,53 @@ impl StepTables {
                 *wrapped_mut(&mut by_component, nth) = *wrapped(&by_component, same);
                 continue;
             }
-            *wrapped_mut(&mut by_component, nth) = pairs.len();
-            let [dc, ac] = pairs.push_mut([StepTable::NONE, StepTable::NONE]);
+            *wrapped_mut(&mut by_component, nth) = built.len() / 2;
+            // One by one, so that the pair is not put together on the stack first.
+            built.push(StepTable::NONE);
+            built.push(StepTable::NONE);
+            let [dc, ac] = built.last_chunk_mut().ok_or(Error::Internal)?;
             let dc_spec = find(&tables.dc, &STANDARD_DC, numbers.0)?;
             dc.codes.fill(dc_spec, Alphabet::Dc)?;
             let ac_spec = find(&tables.ac, &STANDARD_AC, numbers.1)?;
             ac.codes.fill(ac_spec, Alphabet::Ac)?;
 
-            let seconds = (input.len_left() >= MIN_LEN_FOR_PAIRS).then(|| {
-                let mut seconds = [Step::NONE; 1 << QUICK_BITS];
+            let second_steps = (data_len >= MIN_LEN_FOR_PAIRS).then(|| {
+                let mut second_steps = [Step::NONE; 1 << QUICK_BITS];
                 for left in 1..QUICK_BITS {
-                    let slots = seconds.get_mut(1 << left..2 << left).unwrap_or_default();
-                    ac.codes.share_out(slots, |code, slots| {
+                    let entries = second_steps
+                        .get_mut(1 << left..2 << left)
+                        .unwrap_or_default();
+                    ac.codes.for_each_prefix(entries, |code, entries| {
                         if QUICK_BITS - left + code.length() <= MAX_QUICK_LENGTH {
-                            slots.fill(Step::single(code));
+                            entries.fill(Step::single(code));
                         }
                     });
                 }
-                seconds
+                second_steps
             });
-            dc.fill_quick(seconds.as_ref());
-            ac.fill_quick(seconds.as_ref());
+            dc.fill_quick(second_steps.as_ref());
+            ac.fill_quick(second_steps.as_ref());
         }
         Ok(Self {
-            pairs,
+            tables: built,
             by_component,
         })
+    }
+
+    /// For [`Slot::pick`].
+    pub(crate) fn by_component(&self) -> Result<[&DcAndAc; MAX_COMPONENTS]> {
+        let all = self.tables.as_chunks().0;
+        let mut tables = [all.first().ok_or(Error::Internal)?; MAX_COMPONENTS];
+        for (to, &index) in tables.iter_mut().zip(&self.by_component) {
+            *to = all.get(index).ok_or(Error::Internal)?;
+        }
+        Ok(tables)
     }
 }
 
 /// For each block of a batch, in the order of the data.
 struct Plan<'t> {
-    tables: [&'t TablePair; BATCH_ROOM],
+    tables: [&'t DcAndAc; BATCH_ROOM],
     block: [u8; BATCH_ROOM],
     component: [u8; BATCH_ROOM],
 }
@@ -202,7 +221,7 @@ struct Cursor<'t> {
 }
 
 impl<'t> Cursor<'t> {
-    /// The end of a block cannot be foreseen, so it takes no branch. What the next step waits for comes first.
+    /// Branchless, because the end of a block is unpredictable. What the next step depends on is computed first.
     #[inline(always)]
     #[expect(
         clippy::trivially_copy_pass_by_ref,
@@ -231,54 +250,46 @@ impl<'t> Cursor<'t> {
     }
 }
 
-/// The blocks that it decodes to are zeros, but for coefficient 0.
+/// The blocks that it decodes into have to be zero, except for coefficient 0.
 pub(crate) struct Sequential<'i, 'a> {
     plan: Plan<'i>,
     predictions: [i16; MAX_COMPONENTS],
-    window: Window<'i, 'a>,
+    window: &'i mut Window<'i, 'a>,
     bits: Bits,
 }
 
 impl<'i, 'a> Sequential<'i, 'a> {
-    /// `slots` are those of all batches, which have `batch_len` blocks at most.
+    /// `slots` are the same for all batches, which have at most `batch_len` blocks.
     pub(crate) fn new(
-        input: &'i mut Input<'a>,
-        tables: &'i StepTables,
+        window: &'i mut Window<'i, 'a>,
+        tables: [&'i DcAndAc; MAX_COMPONENTS],
         slots: &[Slot],
         batch_len: usize,
-    ) -> Result<Self> {
-        let any = tables.pairs.first().ok_or(Error::Internal)?;
+    ) -> Self {
         let mut plan = Plan {
-            tables: [any; BATCH_ROOM],
+            tables: [tables[0]; BATCH_ROOM],
             block: [0; BATCH_ROOM],
             component: [0; BATCH_ROOM],
         };
         let mcus = (0..).flat_map(|mcu| slots.iter().map(move |slot| (mcu, slot)));
         for (nth, (mcu, slot)) in mcus.take(batch_len).enumerate() {
-            let pair = tables.pairs.get(slot.pick(&tables.by_component));
-            *wrapped_mut(&mut plan.tables, nth) = pair.ok_or(Error::Internal)?;
+            *wrapped_mut(&mut plan.tables, nth) = slot.pick(&tables);
             *wrapped_mut(&mut plan.block, nth) = slot.index(mcu) as u8;
             *wrapped_mut(&mut plan.component, nth) = slot.component as u8;
         }
-        let mut window = Window::new(input);
-        Ok(Self {
+        Self {
             plan,
             predictions: [0; MAX_COMPONENTS],
             bits: window.bits_from(0),
             window,
-        })
+        }
     }
 }
 
 impl EntropyDecoder for Sequential<'_, '_> {
-    fn decode(
-        &mut self,
-        blocks: &mut [Block],
-        slots: &[Slot],
-        mcus: Range<usize>,
-    ) -> Result<usize> {
+    fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool> {
         let blocks = blocks.first_chunk_mut().ok_or(Error::Internal)?;
-        let (mut bits, window, plan) = (self.bits, &mut self.window, &self.plan);
+        let (mut bits, window, plan) = (self.bits, &mut *self.window, &self.plan);
         let (start, end) = (mcus.start * slots.len(), mcus.end * slots.len());
         let end = end.min(BATCH_ROOM - 1);
         let mut cursor = Cursor {
@@ -293,7 +304,7 @@ impl EntropyDecoder for Sequential<'_, '_> {
                 if !window.has_data(bits) && starts_mcu() {
                     break;
                 }
-                bits.start_block(window);
+                bits.ensure_margin(window);
                 bits.refill(window);
             } else {
                 let mut step = cursor.table.quick(bits.peek());
@@ -310,9 +321,9 @@ impl EntropyDecoder for Sequential<'_, '_> {
                 bits.refill(window);
             }
             cold_path();
-            let step = cursor.table.find(bits.peek(), cursor.k);
+            let step = cursor.table.slow(bits.peek(), cursor.k);
             cursor.advance(&step, plan, blocks, &mut bits);
-            // It is less already. Knowing that, the compiler leaves a mask out of each step.
+            // A no-op that lets the compiler drop a mask from each step.
             cursor.k %= 64;
         }
         self.bits = bits;
@@ -321,19 +332,15 @@ impl EntropyDecoder for Sequential<'_, '_> {
             let block = wrapped_mut(blocks, (*wrapped(&plan.block, nth)).into());
             let component = *wrapped(&plan.component, nth);
             let prediction = wrapped_mut(&mut self.predictions, component.into());
-            *prediction = prediction.wrapping_add(block.0[0]);
-            block.0[0] = *prediction;
+            *prediction = prediction.wrapping_add(block.dc());
+            *block.dc_mut() = *prediction;
         }
-        Ok((cursor.nth - start) / slots.len())
+        Ok(true)
     }
 
     fn restart(&mut self, number: u8) {
         self.bits = self.window.restart(self.bits, number);
         self.predictions = [0; MAX_COMPONENTS];
-    }
-
-    fn has_data(&self) -> bool {
-        self.window.has_data(self.bits)
     }
 
     fn is_over(&self) -> bool {

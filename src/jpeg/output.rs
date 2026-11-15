@@ -1,8 +1,8 @@
 //! From the samples of each component to pixels (jdsample.c, jdcolor.c).
 
-use crate::block::Block;
-use crate::header::{ColorSpace, Frame, MAX_COMPONENTS, Process};
-use crate::{Error, Result, filled};
+use crate::block::{Block, Zigzag};
+use crate::header::{ColorSpace, Component, Frame};
+use crate::{Error, MAX_COMPONENTS, Result, fill_up, filled};
 use bun_highway::{JPEG_PIXEL_GROUP, JPEG_ROW_SLACK, JpegChroma};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -11,7 +11,7 @@ enum Upsampling {
         h: usize,
         v: usize,
     },
-    /// A sample becomes 2 by 1, 1 by 2 or 2 by 2, each blended with the neighbours on its side.
+    /// libjpeg's "fancy upsampling": a sample becomes 2 by 1, 1 by 2 or 2 by 2, blended with its nearest neighbors.
     BlendH2V1,
     BlendH1V2,
     BlendH2V2,
@@ -20,7 +20,7 @@ enum Upsampling {
 /// Room for a copy of the first sample of a row.
 const LEFT_MARGIN: usize = 16;
 
-/// Some rows of one component.
+/// The rows of a component that wait for color conversion.
 pub(crate) struct Plane {
     /// How many samples wide and high a block is.
     block_size: usize,
@@ -28,7 +28,7 @@ pub(crate) struct Plane {
     height: usize,
     upsampling: Upsampling,
     stride: usize,
-    /// How many rows a row of MCUs has.
+    /// Rows in a strip, which is a row of MCUs.
     strip_height: usize,
     /// The row above `top`, then `top` and those below.
     samples: Vec<u8>,
@@ -37,39 +37,52 @@ pub(crate) struct Plane {
 }
 
 impl Plane {
-    /// From the margin of row `y` to the end of the last row.
-    fn rows_from(&self, y: usize) -> &[u8] {
-        let start = (y + 1 - self.top) * self.stride;
-        self.samples.get(start..).unwrap_or_default()
+    /// For several strips at once.
+    pub(crate) fn make_room(&mut self, strips: usize) -> Result<()> {
+        let len = (1 + strips * self.strip_height) * self.stride;
+        fill_up(&mut self.samples, len, 0)
+    }
+
+    /// Where row `y` starts in `samples`.
+    fn offset(&self, y: usize) -> usize {
+        (y + 1 - self.top) * self.stride + LEFT_MARGIN
     }
 
     /// From the start of row `y` to the end of the last row.
     pub(crate) fn rows_from_mut(&mut self, y: usize) -> &mut [u8] {
-        let start = (y + 1 - self.top) * self.stride + LEFT_MARGIN;
+        let start = self.offset(y);
         self.samples.get_mut(start..).unwrap_or_default()
     }
 
     /// Transforms `blocks`, the first of which is at `x` and `y`, counted in blocks.
-    pub(crate) fn put(&mut self, blocks: &[Block], quant: &Block, x: usize, y: usize) {
+    pub(crate) fn put(
+        &mut self,
+        blocks: &[Block],
+        quant: &Block,
+        x: usize,
+        y: usize,
+    ) -> Result<()> {
         let (size, stride) = (self.block_size, self.stride);
         let out = self.rows_from_mut(y * size).get_mut(x * size..);
         let out = out.unwrap_or_default();
         if size > 1 {
-            return bun_highway::jpeg_inverse_transform(blocks, quant, size, out, stride);
+            bun_highway::jpeg_inverse_transform(blocks, quant, size, out, stride)?;
+            return Ok(());
         }
         for (sample, block) in out.iter_mut().zip(blocks) {
-            let mean = (i32::from(block.0[0]) * i32::from(quant.0[0]) + 4) >> 3;
+            let mean = (i32::from(block.dc()) * i32::from(quant.dc()) + 4) >> 3;
             *sample = (mean + 128).clamp(0, 255) as u8;
         }
+        Ok(())
     }
 
-    /// The row starts `before` samples early, and goes on past its end.
+    /// From `before` samples left of row `y` to the end of the last row.
     fn row(&self, y: usize, before: usize) -> &[u8] {
-        let row = self.rows_from(y).get(LEFT_MARGIN - before..);
+        let row = self.samples.get(self.offset(y) - before..);
         row.unwrap_or_default()
     }
 
-    /// The two rows that row `y` of the image is between, if it has twice as many: the nearer first.
+    /// For 2x vertical upsampling: the two rows around row `y` of the image, the nearer first.
     fn nearest_rows(&self, y: usize, before: usize) -> [&[u8]; 2] {
         let far = match y % 2 {
             0 => (y / 2).saturating_sub(1),
@@ -78,7 +91,7 @@ impl Plane {
         [self.row(y / 2, before), self.row(far, before)]
     }
 
-    /// Makes the first and last sample of each row their own neighbours.
+    /// Repeats the first and last sample of each row, for blending.
     fn fill_margins(&mut self) {
         if !matches!(
             self.upsampling,
@@ -86,10 +99,11 @@ impl Plane {
         ) {
             return;
         }
-        for row in self.samples.chunks_exact_mut(self.stride).skip(1) {
-            row.copy_within(LEFT_MARGIN..=LEFT_MARGIN, LEFT_MARGIN - 1);
-            let last = LEFT_MARGIN + self.width - 1;
-            row.copy_within(last..=last, last + 1);
+        for row in self.samples.chunks_exact_mut(self.stride) {
+            let row = row.get_mut(LEFT_MARGIN - 1..LEFT_MARGIN + self.width + 1);
+            if let Some([before, first, .., last, after]) = row {
+                (*before, *after) = (*first, *last);
+            }
         }
     }
 
@@ -117,7 +131,7 @@ impl Plane {
                 *out = [sample; N];
             }
         }
-        /// `sums` has those of the rows, weighed, from the margin on.
+        /// `sums` yields each sample, weighted vertically, between its left and right neighbors.
         fn blend_across<const SHIFT: u32>(
             out: &mut [u8],
             [left_bias, right_bias]: [u16; 2],
@@ -130,6 +144,7 @@ impl Plane {
                 ];
             }
         }
+        /// Unlike `array_windows()`, this is vectorized.
         fn neighbors(row: &[u8]) -> impl Iterator<Item = [u16; 3]> {
             let from = |x| row.iter().skip(x).map(|&sample| u16::from(sample));
             let all = from(0).zip(from(1)).zip(from(2));
@@ -138,7 +153,7 @@ impl Plane {
 
         let mut out = core::mem::take(&mut self.upsampled);
         match self.upsampling {
-            // It is still there from the row above.
+            // `out` still has it from the row above.
             Upsampling::Repeat { v, .. } if !y.is_multiple_of(v) => {}
             Upsampling::Repeat { h, v } => {
                 let row = self.row(y / v, 0).get(..self.width).unwrap_or_default();
@@ -175,54 +190,40 @@ pub(crate) struct Output {
     color_space: ColorSpace,
     pub(crate) planes: Vec<Plane>,
     strip_height: usize,
-    /// Whether the last row of pixels of a row of MCUs has to wait for the next.
+    /// Whether the last row of pixels of a strip needs samples of the next strip.
     looks_ahead: bool,
-    strips: usize,
-    rows: usize,
+    strips_done: usize,
     pixels: Vec<[u8; 4]>,
 }
 
 impl Output {
-    /// The planes have room for `strips` rows of MCUs. Only [`Process::Lossless`] ignores `eighths`.
-    pub(crate) fn new(
-        frame: &Frame,
-        color_space: ColorSpace,
-        eighths: u8,
-        strips: usize,
-    ) -> Result<Self> {
-        let (scale, unit) = match frame.process {
-            Process::Lossless => (1, 1),
-            _ => (usize::from(eighths), 8),
-        };
-        let (max_h, max_v) = (frame.max_h(), frame.max_v());
+    /// The planes have room for one strip. A lossless frame ignores `eighths`.
+    pub(crate) fn new(frame: &Frame, color_space: ColorSpace, eighths: u8) -> Result<Self> {
+        let scale = frame.block_size().min(eighths.into());
+        let (mcu_width, mcu_height) = (frame.max_h() * scale, frame.max_v() * scale);
         let mcus_wide = frame.size_in_mcus().wide;
-        let (image_width, image_height) = (usize::from(frame.width), usize::from(frame.height));
-        let width = (image_width * scale).div_ceil(unit);
-        let height = (image_height * scale).div_ceil(unit);
+        let image = frame.size_in_units(mcu_width, mcu_height);
+        let (width, height) = (image.wide, image.high);
         let padded_width = width.next_multiple_of(JPEG_PIXEL_GROUP);
 
         let mut planes = Vec::new();
         planes.try_reserve_exact(MAX_COMPONENTS)?;
-        for component in frame.components() {
-            let (h, v) = (usize::from(component.h), usize::from(component.v));
-            // Larger blocks are better than upsampling.
+        for &Component { h, v, .. } in frame.components() {
+            // A subsampled component gets a larger IDCT instead of upsampling where it can (jdmaster.c).
             let mut size = scale;
-            while size < unit
-                && (max_h * scale).is_multiple_of(h * size * 2)
-                && (max_v * scale).is_multiple_of(v * size * 2)
-            {
+            let fits =
+                |size| mcu_width.is_multiple_of(h * size) && mcu_height.is_multiple_of(v * size);
+            while size < frame.block_size() && fits(2 * size) {
                 size *= 2;
             }
-            if !(max_h * scale).is_multiple_of(h * size)
-                || !(max_v * scale).is_multiple_of(v * size)
-            {
+            if !fits(size) {
                 return Err(Error::Unsupported);
             }
-            let plane_width = (image_width * h * size).div_ceil(max_h * unit);
-            let upsampling = match (max_h * scale / (h * size), max_v * scale / (v * size)) {
-                (2, 1) if scale > 1 && plane_width > 2 => Upsampling::BlendH2V1,
+            let plane = frame.size_in_units(h * size, v * size);
+            let upsampling = match (mcu_width / (h * size), mcu_height / (v * size)) {
+                (2, 1) if scale > 1 && plane.wide > 2 => Upsampling::BlendH2V1,
                 (1, 2) if scale > 1 => Upsampling::BlendH1V2,
-                (2, 2) if scale > 1 && plane_width > 2 => Upsampling::BlendH2V2,
+                (2, 2) if scale > 1 && plane.wide > 2 => Upsampling::BlendH2V2,
                 (h, v) => Upsampling::Repeat { h, v },
             };
             let stride = LEFT_MARGIN
@@ -230,16 +231,17 @@ impl Output {
                 + JPEG_ROW_SLACK;
             let upsampled_len = match upsampling {
                 Upsampling::Repeat { h: 1, .. } => 0,
+                // Rounded up to whole triples.
                 _ => padded_width + 2,
             };
             planes.push(Plane {
                 block_size: size,
-                width: plane_width,
-                height: (image_height * v * size).div_ceil(max_v * unit),
+                width: plane.wide,
+                height: plane.high,
                 upsampling,
                 stride,
                 strip_height: v * size,
-                samples: filled((1 + strips * v * size) * stride, 0)?,
+                samples: filled((1 + v * size) * stride, 0)?,
                 top: 0,
                 upsampled: filled(upsampled_len, 0)?,
             });
@@ -258,14 +260,13 @@ impl Output {
                 )
             }),
             planes,
-            strip_height: max_v * scale,
-            strips: 0,
-            rows: 0,
+            strip_height: mcu_height,
+            strips_done: 0,
             pixels,
         })
     }
 
-    /// The planes have the samples of one more row of MCUs, and make room for the next.
+    /// Converts the strip in the planes, and makes room for the next.
     pub(crate) fn finish_strip(&mut self) -> Result<()> {
         self.convert_strips(1)?;
         for plane in &mut self.planes {
@@ -274,24 +275,21 @@ impl Output {
         Ok(())
     }
 
-    /// The planes have the samples of `count` more rows of MCUs.
+    /// Converts the `count` strips in the planes.
     pub(crate) fn convert_strips(&mut self, count: usize) -> Result<()> {
-        self.strips += count;
-        let end = match self.strips * self.strip_height {
+        self.strips_done += count;
+        let end = match self.strips_done * self.strip_height {
             end if end < self.height => end - usize::from(self.looks_ahead),
             _ => self.height,
         };
         self.planes.iter_mut().for_each(Plane::fill_margins);
-        for y in self.rows..end {
-            self.convert_row(y)?;
-        }
-        self.rows = end;
-        Ok(())
+        let start = self.pixels.len() / self.width;
+        (start..end).try_for_each(|y| self.convert_row(y))
     }
 
     fn convert_row(&mut self, y: usize) -> Result<()> {
-        /// Adobe's files have 255 for no ink. Skia and pdf.js multiply like this too.
-        fn inked(color: u8, black: u8) -> u8 {
+        /// Rounded. Adobe's CMYK is inverted, so this gives R, G or B, as in Skia and pdf.js.
+        fn mul_div_255(color: u8, black: u8) -> u8 {
             let product = u16::from(color) * u16::from(black) + 128;
             ((product + (product >> 8)) >> 8) as u8
         }
@@ -312,9 +310,9 @@ impl Output {
                 let (yellow, k) = (yellow.full_row(y), k.full_row(y));
                 let c = c.get(..width).unwrap_or_default();
                 let cmyk = c.iter().zip(m).zip(yellow).zip(k);
-                pixels.extend(
-                    cmyk.map(|(((&c, &m), &y), &k)| [inked(c, k), inked(m, k), inked(y, k), 255]),
-                );
+                pixels.extend(cmyk.map(|(((&c, &m), &y), &k)| {
+                    [mul_div_255(c, k), mul_div_255(m, k), mul_div_255(y, k), 255]
+                }));
             }
             (ColorSpace::Ycc | ColorSpace::Ycck, [luma, cb, cr, k @ ..]) => {
                 let chroma = match (cb.upsampling, cr.upsampling) {
@@ -331,12 +329,17 @@ impl Output {
                         cr: cr.full_row(y),
                     },
                 };
-                bun_highway::jpeg_ycc_to_rgba(luma.full_row(y), chroma, width, pixels);
+                bun_highway::jpeg_ycc_to_rgba(luma.full_row(y), chroma, width, pixels)?;
                 if let [k] = k {
                     let row = pixels.get_mut(y * width..).unwrap_or_default();
                     for (pixel, &k) in row.iter_mut().zip(k.full_row(y)) {
                         let [r, g, b, _] = *pixel;
-                        *pixel = [inked(!r, k), inked(!g, k), inked(!b, k), 255];
+                        *pixel = [
+                            mul_div_255(!r, k),
+                            mul_div_255(!g, k),
+                            mul_div_255(!b, k),
+                            255,
+                        ];
                     }
                 }
             }

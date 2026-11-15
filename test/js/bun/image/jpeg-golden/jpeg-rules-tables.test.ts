@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "../png-golden/write";
 import {
+  bothWays,
   bytes,
   decode,
   eights,
@@ -39,6 +40,7 @@ import {
   jfif,
   jpeg,
   noise,
+  optimalTable,
   scanOf,
   segment,
   sof,
@@ -53,6 +55,7 @@ import {
   typical,
   write,
   type Frame,
+  type HuffmanTable,
   type Scan,
 } from "./write";
 
@@ -174,6 +177,106 @@ describe("DHT", () => {
     expect(await outcome(before(dht(0, { counts: counts(2, 0, 1), symbols: [0, 0, 0] })))).toBe(headerOnly);
   });
 
+  /** Behind codes of these lengths, as many of `length` bits as there is room for. */
+  function filledUp(lengths: number[], length: number) {
+    const room = lengths.reduce((left, taken) => left - 2 ** (length - taken), 2 ** length - 1);
+    return [...lengths, ...Array<number>(Math.min(room, 256 - lengths.length, 255)).fill(length)];
+  }
+  /** The codes of these lengths, and then what is none: the 16 bits that would be next, and all ones. */
+  function codesOf(lengths: number[]) {
+    let next = 0;
+    const codes = lengths.map(length => {
+      next += 1 << (16 - length);
+      return (next >> (16 - length)) - 1;
+    });
+    return { codes, none: [next, 0xffff] };
+  }
+  const random = randomBytes(7);
+  const lengthsIn = ({ counts }: HuffmanTable) => counts.flatMap((count, i) => Array<number>(count).fill(i + 1));
+
+  describe.each([
+    ["all of one length", range(1, 16).map(length => filledUp([], length))],
+    ["from 1111 on", range(5, 16).map(length => filledUp([1, 2, 3, 4], length))],
+    [
+      "of one length on both sides of 1111",
+      range(5, 16).map(length => filledUp([1, 2, 3, ...range(5, length - 1)], length)),
+    ],
+    ["16 bits behind each other length", range(1, 15).map(length => filledUp([...range(1, length - 1), length], 16))],
+    ["in the typical tables", Object.values(typical).map(lengthsIn)],
+    [
+      "of many lengths",
+      range(4, 15).map(spread => lengthsIn(optimalTable(bytes.map(() => 1 << (random() % (2 * spread)))))),
+    ],
+  ])("each code stands for its own symbol, and what is none for 0: %s", (_, spreads) => {
+    test.each([
+      ["few", (i: number) => i % 8],
+      ["many", (i: number, length: number) => 15 - (i % Math.min(length, 8))],
+    ])("with %s bits behind it", async (_, sizeOf) => {
+      await expectPictures(
+        spreads.map(lengths => {
+          const { codes, none } = codesOf(lengths);
+          const sizes = lengths.map((length, i) => sizeOf(i, length));
+          // Zeros behind it for red, ones for green, and anything for blue.
+          const picture = frameOf(codes.length + 3, 1, "1x1,1x1,1x1", { type: SOF3 });
+          const rgba = Buffer.alloc(picture.width * 4, 255);
+          const symbols = new Symbols();
+          for (let x = 0; x < picture.width; x++) {
+            // The first comes once more.
+            const i = x === picture.width - 1 ? 0 : x;
+            for (let c = 0; c < 3; c++) {
+              let difference = 0;
+              if (i < codes.length) {
+                const ones = (1 << sizes[i]) - 1;
+                const bits = ones & (c === 2 ? (random() << 8) | random() : -c);
+                symbols.bits(codes[i], lengths[i]).bits(bits, sizes[i]);
+                difference = 2 * bits > ones ? bits : bits - ones;
+              } else symbols.bits(none[i - codes.length], 16).bits(c, 1);
+              rgba[x * 4 + c] = (x ? rgba[x * 4 + c - 4] : 128) + difference;
+            }
+          }
+          const named = sos(picture, scanOf([0, 1, 2], 1, 0, 0, 0, { dc: [0, 0, 0] }));
+          const file = jpeg(sof(picture), dht(0, tableOf(sizes, lengths)), named, symbols.bytes({}));
+          return { name: `${lengths}`, file, expected: { width: picture.width, height: 1, rgba } };
+        }),
+      );
+    });
+
+    test.each([
+      ["sequential", SOF0],
+      ["progressive", SOF2],
+    ])("in a %s frame", async (_, type) => {
+      await expectPictures(
+        bothWays(
+          spreads.map(lengths => {
+            const { codes, none } = codesOf(lengths);
+            const sizes = lengths.map((_, i) => 1 + (i % 7));
+            const one = frameOf(8, 8, "1x1", { type, tables: [[8, ...Array(63).fill(0)]] });
+            const width = codes.length + 3;
+            const rgba = Buffer.alloc(width * 4, 255);
+            const symbols = new Symbols();
+            for (let x = 0, level = 0; x < width; x++) {
+              const i = x === width - 1 ? 0 : x;
+              if (i < codes.length) {
+                const ones = (1 << sizes[i]) - 1;
+                // Back towards the middle.
+                const bits = ((random() & ones) >> 1) | (level < 0 ? (ones + 1) >> 1 : 0);
+                symbols.bits(codes[i], lengths[i]).bits(bits, sizes[i]);
+                level += level < 0 ? bits : bits - ones;
+              } else symbols.bits(none[i - codes.length], 16).bits(x, 1);
+              if (type === SOF0) symbols.bits(0, 1);
+              rgba.fill(128 + level, x * 4, x * 4 + 3);
+            }
+            const file = jpeg(
+              ...[headerOf({ ...one, width: width * 8 }), dht(0, tableOf(sizes, lengths)), dht(AC, ends)],
+              ...[sos(one, scanOf([0], 0, type === SOF0 ? 63 : 0)), symbols.bytes({})],
+            );
+            return { name: `${lengths}`, file, expected: { width, height: 1, rgba }, eighths: 1 };
+          }),
+        ),
+      );
+    });
+  });
+
   test("a difference has up to 15 bits, whether or not the code occurs", async () => {
     const withSymbol = (number: number) => (symbol: number) =>
       outcome(before(dht(number, tableOf([0, symbol], [1, 16]))));
@@ -226,6 +329,15 @@ describe("DHT", () => {
     for (const number of [0, AC]) {
       const mixed = own.bytes({ ...typical, [number]: other[number as 0] });
       expect(await levels(jpeg(steps, frame, dht(number, other[number as 0]), header, mixed))).toEqual([[5]]);
+    }
+  });
+
+  test("so it has in the first of several scans, and in a later one", async () => {
+    const color = frameOf(8, 8, "1x1,1x1,1x1");
+    const named = (c: number, number: number) => sos(color, scanOf([c], 0, 63, 0, 0, { dc: [number], ac: [number] }));
+    for (const earlier of [[], [named(0, 0)]]) {
+      const of = (number: number) => outcome(jpeg(headerOf(color), ...earlier, named(1, number)));
+      expect(await where(range(0, 4), of)).toEqual({ [fine]: [0, 1], [headerOnly]: [2, 3, 4] });
     }
   });
 

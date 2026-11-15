@@ -193,6 +193,20 @@ describe("codes", () => {
     expect(file.equals(fileOf(frame, true))).toBe(true);
   });
 
+  test("there can be more than 128 in a table", async () => {
+    // In the same band: every run up to 15 in front of every size up to 8, where the wave is square and has room for it.
+    const blocks = range(0, 127).map(i =>
+      Array(64)
+        .fill(0)
+        .with(38 - (i >> 3), 6)
+        .with(39, 6 << (i & 7)),
+    );
+    const file = await encode(grayOf(blocks, Array(64).fill(1)), { quality: 100, progressive: true });
+    const { frame } = read(file);
+    expect(optimalTable(symbolsOf(frame, simpleProgression[4]).occurrences().get(AC)!).symbols).toHaveLength(130);
+    expect(file.equals(fileOf(frame, true))).toBe(true);
+  });
+
   test("of symbols that occur equally often, the later is joined first", async () => {
     // Small pictures have few of each.
     expect(

@@ -4,10 +4,16 @@ use crate::block::{self, Block, Zigzag};
 use crate::huffman::Spec;
 use crate::input::Input;
 use crate::marker::*;
-use crate::{Error, Result};
+use crate::{Error, MAX_COMPONENTS, Result};
 
-pub(crate) const MAX_DIMENSION: u32 = 65500;
-pub(crate) const MAX_COMPONENTS: usize = 4;
+const MAX_DIMENSION: u32 = 65500;
+
+pub(crate) fn check_size(width: u32, height: u32) -> Result<()> {
+    if width.min(height) == 0 || width.max(height) > MAX_DIMENSION {
+        return Err(Error::InvalidSize);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
@@ -35,8 +41,8 @@ pub(crate) enum ColorSpace {
 pub(crate) struct Component {
     id: u8,
     /// Sampling factors, from 1 to 4.
-    pub(crate) h: u8,
-    pub(crate) v: u8,
+    pub(crate) h: usize,
+    pub(crate) v: usize,
     pub(crate) quant_table: u8,
 }
 
@@ -49,7 +55,7 @@ pub(crate) struct Grid {
 #[derive(Clone, Copy)]
 pub(crate) struct Frame {
     pub(crate) process: Process,
-    pub(crate) arithmetic: bool,
+    pub(crate) is_arithmetic: bool,
     pub(crate) precision: u8,
     pub(crate) width: u16,
     pub(crate) height: u16,
@@ -63,43 +69,39 @@ impl Frame {
     }
 
     pub(crate) fn max_h(&self) -> usize {
-        self.components().iter().fold(1, |h, it| it.h.max(h)).into()
+        self.components().iter().fold(1, |h, it| it.h.max(h))
     }
 
     pub(crate) fn max_v(&self) -> usize {
-        self.components().iter().fold(1, |v, it| it.v.max(v)).into()
+        self.components().iter().fold(1, |v, it| it.v.max(v))
     }
 
-    /// In a lossless file, each sample counts as a block.
-    pub(crate) fn size_in_blocks(&self, component: Component) -> Grid {
-        let unit = match self.process {
+    /// How many samples wide and high a block is. In a lossless file, each sample counts as a block.
+    pub(crate) fn block_size(&self) -> usize {
+        match self.process {
             Process::Lossless => 1,
             _ => 8,
-        };
-        let (width, height) = (usize::from(self.width), usize::from(self.height));
-        Grid {
-            wide: (width * usize::from(component.h)).div_ceil(self.max_h() * unit),
-            high: (height * usize::from(component.v)).div_ceil(self.max_v() * unit),
         }
     }
 
-    /// Of a scan with more than one component.
+    /// In units of which an interleaved MCU has `h` by `v`.
+    pub(crate) fn size_in_units(&self, h: usize, v: usize) -> Grid {
+        let (width, height) = (usize::from(self.width), usize::from(self.height));
+        Grid {
+            wide: (width * h).div_ceil(self.max_h() * self.block_size()),
+            high: (height * v).div_ceil(self.max_v() * self.block_size()),
+        }
+    }
+
+    pub(crate) fn size_in_blocks(&self, component: Component) -> Grid {
+        self.size_in_units(component.h, component.v)
+    }
+
     pub(crate) fn size_in_mcus(&self) -> Grid {
-        self.size_in_blocks(Component {
-            h: 1,
-            v: 1,
-            ..Default::default()
-        })
+        self.size_in_units(1, 1)
     }
 
-    /// With those that fill up the MCUs at the edges.
-    pub(crate) fn block_count(&self) -> usize {
-        let mcus = self.size_in_mcus();
-        let in_mcu = self.components().iter().map(|it| usize::from(it.h * it.v));
-        mcus.wide * mcus.high * in_mcu.sum::<usize>()
-    }
-
-    /// With nothing to be relative to, the sampling factors of a single component say nothing about the image.
+    /// Makes a strip one row of blocks if there is one component. Only smoothing could tell.
     pub(crate) fn ignore_lone_sampling(&mut self) {
         if let (1, [component, ..]) = (self.count, &mut self.components) {
             (component.h, component.v) = (1, 1);
@@ -116,17 +118,28 @@ pub(crate) struct ScanComponent {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) enum ScanKind {
+    /// A sequential or lossless scan.
+    Whole,
+    DcFirst,
+    DcRefine,
+    AcFirst,
+    AcRefine,
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct Scan {
     components: [ScanComponent; MAX_COMPONENTS],
     count: u8,
-    /// `Ss`: the first coefficient in zigzag order, or the predictor of a lossless scan.
-    pub(crate) first: u8,
-    /// `Se`
-    pub(crate) last: u8,
-    /// `Ah`: what `shift` was in the scan that this one refines, or 0.
-    pub(crate) previous_shift: u8,
-    /// `Al`
-    pub(crate) shift: u8,
+    pub(crate) kind: ScanKind,
+    /// The first coefficient in zigzag order, or the predictor of a lossless scan.
+    pub(crate) ss: u8,
+    /// The last coefficient.
+    pub(crate) se: u8,
+    /// What `al` was in the scan that this one refines, or 0.
+    pub(crate) ah: u8,
+    /// How many low bits the scan leaves out.
+    pub(crate) al: u8,
 }
 
 impl Scan {
@@ -153,7 +166,6 @@ struct IccSegment<'a> {
 pub(crate) struct Segments<'a> {
     pub(crate) input: Input<'a>,
     pub(crate) tables: Tables,
-    frame: Option<Frame>,
     has_jfif: bool,
     adobe_transform: Option<u8>,
     icc: Vec<IccSegment<'a>>,
@@ -162,7 +174,7 @@ pub(crate) struct Segments<'a> {
 impl<'a> Segments<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Result<Self> {
         let mut input = Input::new(bytes);
-        if input.word().to_be_bytes() != [0xFF, SOI] {
+        if input.array() != [0xFF, SOI] {
             return Err(Error::InvalidSignature);
         }
         Ok(Self {
@@ -174,33 +186,25 @@ impl<'a> Segments<'a> {
                 conditioning: core::array::from_fn(|i| if i < 16 { 0x10 } else { 5 }),
                 restart_interval: 0,
             },
-            frame: None,
             has_jfif: false,
             adobe_transform: None,
             icc: Vec::new(),
         })
     }
 
-    /// Reads as far as the data of the next scan. There is none after EOI.
-    pub(crate) fn next_scan(&mut self) -> Result<Option<(Frame, Scan)>> {
+    /// Reads tables and metadata as far as the next SOF, SOS or EOI marker.
+    fn next_header(&mut self) -> Result<u8> {
         loop {
             match self.input.next_marker() {
-                SOF0 | SOF1 => self.read_frame(Process::Sequential, false)?,
-                SOF2 => self.read_frame(Process::Progressive, false)?,
-                SOF3 => self.read_frame(Process::Lossless, false)?,
-                SOF9 => self.read_frame(Process::Sequential, true)?,
-                SOF10 => self.read_frame(Process::Progressive, true)?,
-                SOF11 => self.read_frame(Process::Lossless, true)?,
-                SOS => return self.read_scan().map(Some),
-                EOI => return Ok(None),
+                marker @ (SOF0..=SOF3 | SOF9..=SOF11 | SOS | EOI) => return Ok(marker),
                 DAC => self.read_conditioning()?,
                 DHT => self.read_huffman_tables()?,
                 DQT => self.read_quant_tables()?,
                 DRI => {
-                    if self.input.word() != 4 {
+                    if self.input.u16() != 4 {
                         return Err(Error::InvalidLength);
                     }
-                    self.tables.restart_interval = self.input.word();
+                    self.tables.restart_interval = self.input.u16();
                 }
                 marker @ (APP0..=APP15 | COM | DNL) => self.read_metadata(marker)?,
                 RST0..=RST7 | TEM => {}
@@ -210,31 +214,31 @@ impl<'a> Segments<'a> {
         }
     }
 
-    /// The length of what follows the length.
+    /// The length of the segment after its length field.
     fn read_length(&mut self) -> Result<usize> {
-        usize::from(self.input.word())
+        usize::from(self.input.u16())
             .checked_sub(2)
             .ok_or(Error::InvalidLength)
     }
 
-    fn read_frame(&mut self, process: Process, arithmetic: bool) -> Result<()> {
-        if self.frame.is_some() {
-            return Err(Error::MarkerOutOfPlace);
-        }
+    pub(crate) fn read_frame(&mut self) -> Result<Frame> {
+        let marker = self.next_header()?;
+        let process = match marker {
+            SOS => return Err(Error::MarkerOutOfPlace),
+            EOI => return Err(Error::MissingScan),
+            SOF2 | SOF10 => Process::Progressive,
+            SOF3 | SOF11 => Process::Lossless,
+            _ => Process::Sequential,
+        };
         let length = self.read_length()?;
         let precision = self.input.byte();
-        let height = self.input.word();
-        let width = self.input.word();
+        let height = self.input.u16();
+        let width = self.input.u16();
         let count = self.input.byte();
         if length != 6 + 3 * usize::from(count) {
             return Err(Error::InvalidLength);
         }
-        if ![width, height]
-            .iter()
-            .all(|&size| (1..=MAX_DIMENSION).contains(&size.into()))
-        {
-            return Err(Error::InvalidSize);
-        }
+        check_size(width.into(), height.into())?;
         let valid_precision = match process {
             Process::Lossless => matches!(precision, 2..=16),
             _ => matches!(precision, 8 | 12),
@@ -244,8 +248,8 @@ impl<'a> Segments<'a> {
         }
         let mut components = [Component::default(); MAX_COMPONENTS];
         for component in components.iter_mut().take(count.into()) {
-            let [id, sampling, quant_table] = core::array::from_fn(|_| self.input.byte());
-            let (h, v) = (sampling >> 4, sampling & 15);
+            let [id, sampling, quant_table] = self.input.array();
+            let (h, v) = (usize::from(sampling >> 4), usize::from(sampling & 15));
             if !matches!((h, v), (1..=4, 1..=4)) {
                 return Err(Error::InvalidFrame);
             }
@@ -256,20 +260,27 @@ impl<'a> Segments<'a> {
                 quant_table,
             };
         }
-        self.frame = Some(Frame {
+        Ok(Frame {
             process,
-            arithmetic,
+            is_arithmetic: marker >= SOF9,
             precision,
             width,
             height,
             components,
             count,
-        });
-        Ok(())
+        })
     }
 
-    fn read_scan(&mut self) -> Result<(Frame, Scan)> {
-        let frame = self.frame.ok_or(Error::MarkerOutOfPlace)?;
+    /// Reads as far as the data of the next scan. There is none after EOI.
+    pub(crate) fn next_scan(&mut self, frame: &Frame) -> Result<Option<Scan>> {
+        match self.next_header()? {
+            SOS => self.read_scan(frame).map(Some),
+            EOI => Ok(None),
+            _ => Err(Error::MarkerOutOfPlace),
+        }
+    }
+
+    fn read_scan(&mut self, frame: &Frame) -> Result<Scan> {
         let length = self.read_length()?;
         let count = self.input.byte();
         if length != 4 + 2 * usize::from(count) || !matches!(count, 1..=4) {
@@ -278,7 +289,7 @@ impl<'a> Segments<'a> {
         let mut components = [ScanComponent::default(); MAX_COMPONENTS];
         let mut seen = 0u8;
         for (nth, component) in components.iter_mut().take(count.into()).enumerate() {
-            let [id, tables] = self.input.word().to_be_bytes();
+            let [id, tables] = self.input.array();
             // Starting at `nth` tells components apart that have the same id.
             let (index, _) = (0..)
                 .zip(frame.components())
@@ -293,16 +304,23 @@ impl<'a> Segments<'a> {
                 ac_table: tables & 15,
             };
         }
-        let [first, last, shifts] = core::array::from_fn(|_| self.input.byte());
-        let scan = Scan {
+        let [ss, se, ah_al] = self.input.array();
+        let (ah, al) = (ah_al >> 4, ah_al & 15);
+        Ok(Scan {
             components,
             count,
-            first,
-            last,
-            previous_shift: shifts >> 4,
-            shift: shifts & 15,
-        };
-        Ok((frame, scan))
+            kind: match (frame.process, ss, ah) {
+                (Process::Progressive, 0, 0) => ScanKind::DcFirst,
+                (Process::Progressive, 0, _) => ScanKind::DcRefine,
+                (Process::Progressive, _, 0) => ScanKind::AcFirst,
+                (Process::Progressive, ..) => ScanKind::AcRefine,
+                _ => ScanKind::Whole,
+            },
+            ss,
+            se,
+            ah,
+            al,
+        })
     }
 
     fn read_conditioning(&mut self) -> Result<()> {
@@ -311,7 +329,7 @@ impl<'a> Segments<'a> {
             return Err(Error::InvalidLength);
         }
         for _ in 0..length / 2 {
-            let [index, value] = self.input.word().to_be_bytes();
+            let [index, value] = self.input.array();
             if index < 16 && value & 15 > value >> 4 {
                 return Err(Error::InvalidTable);
             }
@@ -329,7 +347,7 @@ impl<'a> Segments<'a> {
         while left != 0 {
             let index = self.input.byte();
             let mut spec = Spec {
-                counts: core::array::from_fn(|_| self.input.byte()),
+                counts: self.input.array(),
                 symbols: [0; 256],
             };
             let count = spec.len();
@@ -366,7 +384,7 @@ impl<'a> Segments<'a> {
                 .insert(block::ZERO);
             for k in 0..64 {
                 *table.at_mut(k) = if is_wide {
-                    self.input.word().cast_signed()
+                    self.input.u16().cast_signed()
                 } else {
                     self.input.byte().into()
                 };
@@ -376,19 +394,20 @@ impl<'a> Segments<'a> {
     }
 
     fn read_metadata(&mut self, marker: u8) -> Result<()> {
+        // A length below 2 skips nothing.
         let length = self.read_length().unwrap_or(0);
-        // No scan comes after a segment that is cut off.
+        // A truncated segment ends the file, so what it says does not matter.
         let Some(data) = self.input.take(length) else {
             return Ok(());
         };
-        match (marker, data.split_first_chunk::<12>()) {
-            (APP0, Some((start, [_, _, ..]))) if start.starts_with(&JFIF) => self.has_jfif = true,
-            (APP14, Some((start @ &[.., transform], _))) if start.starts_with(&ADOBE) => {
-                self.adobe_transform = Some(transform);
+        match marker {
+            APP0 if data.len() >= 14 && data.starts_with(&JFIF) => self.has_jfif = true,
+            APP14 if data.len() >= 12 && data.starts_with(&ADOBE) => {
+                self.adobe_transform = data.get(11).copied();
             }
-            // One more than there can be is enough to tell that there are too many.
-            (APP2, Some((&ICC_PROFILE, &[number, count, ref data @ ..])))
-                if self.icc.len() <= u8::MAX.into() =>
+            // A 256th segment makes the profile invalid, whatever follows.
+            APP2 if let Some(&[number, count, ref data @ ..]) = data.strip_prefix(&ICC_PROFILE)
+                && self.icc.len() <= u8::MAX.into() =>
             {
                 self.icc.try_reserve(1)?;
                 self.icc.push(IccSegment {
@@ -402,7 +421,7 @@ impl<'a> Segments<'a> {
         Ok(())
     }
 
-    /// Going by the segments so far (`default_decompress_parms()`).
+    /// By the segments read so far (`default_decompress_parms()`).
     pub(crate) fn color_space(&self, frame: &Frame) -> ColorSpace {
         match (frame.components(), self.adobe_transform) {
             ([_, _, _], _) if self.has_jfif => ColorSpace::Ycc,
@@ -417,21 +436,23 @@ impl<'a> Segments<'a> {
         }
     }
 
-    /// Going by the segments so far. There is none unless they are numbered from 1 and agree on how many they are.
-    pub(crate) fn icc_profile(&mut self) -> Result<Option<Vec<u8>>> {
-        self.icc.sort_unstable_by_key(|segment| segment.number);
-        let is_whole = self.icc.iter().zip(1..).all(|(segment, number)| {
-            usize::from(segment.number) == number && usize::from(segment.count) == self.icc.len()
-        });
-        let len = self.icc.iter().map(|segment| segment.data.len()).sum();
-        if !is_whole || len == 0 {
+    /// None unless the segments read so far are numbered 1 to n and all say n.
+    pub(crate) fn icc_profile(&self) -> Result<Option<Vec<u8>>> {
+        let count = self.icc.len();
+        let in_order = || {
+            (1..=count).map(|number| {
+                let mut segments = self.icc.iter();
+                segments.find(|it| (it.number.into(), it.count.into()) == (number, count))
+            })
+        };
+        if in_order().any(|segment| segment.is_none()) {
             return Ok(None);
         }
         let mut profile = Vec::new();
-        profile.try_reserve_exact(len)?;
-        for segment in &self.icc {
+        profile.try_reserve_exact(self.icc.iter().map(|segment| segment.data.len()).sum())?;
+        for segment in in_order().flatten() {
             profile.extend_from_slice(segment.data);
         }
-        Ok(Some(profile))
+        Ok((!profile.is_empty()).then_some(profile))
     }
 }

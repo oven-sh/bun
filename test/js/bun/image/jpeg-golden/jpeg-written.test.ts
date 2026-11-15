@@ -3,9 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { deflateSync } from "node:zlib";
 import { slow } from "../png-golden/check";
 import { chunk, iccp, iend, ihdr, png, RGBA } from "../png-golden/write";
-import { decode, pngOf, range, where } from "./decode";
+import { decode, expectPictures, pngOf, range, where } from "./decode";
 import { encode, fill, mistakes, noisy, type Options } from "./encode";
-import { coefficientsOf, pictureOf, tablesFor } from "./model";
+import { coefficientsOf, pictureOf, scaled, tablesFor } from "./model";
 import { read, segmentsOf } from "./read";
 import { APP2, DHT, DQT, icc } from "./write";
 
@@ -163,6 +163,26 @@ describe("sizes", () => {
         ERR_IMAGE_ENCODE_FAILED: sizes.slice(2),
       });
     }
+  });
+
+  test.each([false, true])("stripes all the way across or down, progressive: %p", async progressive => {
+    // At quality 100, a block of one gray comes back as it was.
+    const length = 65500;
+    const grays = range(0, 22).map(i => [...Array(3).fill((i * 89) & 255), 255]);
+    const across = Buffer.concat(grays.map(gray => Buffer.alloc(8 * 4, Buffer.from(gray))));
+    const down = Buffer.concat(grays.map(gray => Buffer.alloc(8 * 5, Buffer.from([0, ...gray]))));
+    const rgba = Buffer.alloc(scaled(length, 1) * 4, Buffer.from(grays.flat()));
+    const of = async (width: number, height: number, ...lines: Buffer[]) => {
+      const data = deflateSync(Buffer.concat(lines), { level: 0 });
+      const from = png(ihdr(width, height, 8, RGBA), chunk("IDAT", data), iend);
+      const file = await new Bun.Image(from).jpeg({ quality: 100, progressive }).bytes();
+      const expected = { width: scaled(width, 1), height: scaled(height, 1), rgba };
+      return { name: `${width} by ${height}`, file, eighths: 1, expected };
+    };
+    await expectPictures([
+      await of(length, 1, Buffer.alloc(1), Buffer.alloc(length * 4, across)),
+      await of(1, length, Buffer.alloc(length * 5, down)),
+    ]);
   });
 });
 

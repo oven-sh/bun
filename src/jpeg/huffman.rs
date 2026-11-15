@@ -1,9 +1,8 @@
-//! Huffman tables: as a file has them, and as the decoders and encoders look codes up in them.
+//! Huffman tables: the DHT form, and lookup tables for decoding and encoding.
 
 use crate::bit_reader::{BITS_IN_REFILL, Bits, Window};
-use crate::header::{MAX_COMPONENTS, Scan};
-use crate::{Error, Result, wrapped, wrapped_mut};
-use core::hint::select_unpredictable;
+use crate::{Error, MAX_COMPONENTS, Result, wrapped, wrapped_mut};
+use core::hint::{cold_path, select_unpredictable};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Spec {
@@ -13,14 +12,9 @@ pub(crate) struct Spec {
 }
 
 impl Spec {
-    #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
     const fn new(counts: [u8; 16], used: &[u8]) -> Self {
         let mut symbols = [0; 256];
-        let mut i = 0;
-        while i < used.len() {
-            symbols[i] = used[i];
-            i += 1;
-        }
+        symbols.split_at_mut(used.len()).0.copy_from_slice(used);
         Self { counts, symbols }
     }
 
@@ -28,7 +22,7 @@ impl Spec {
         self.counts.iter().map(|&count| usize::from(count)).sum()
     }
 
-    /// For each length: the length, the first code of that length, and the symbols that it and the next codes are for.
+    /// For each code length: the length, its first code and its symbols.
     fn groups(&self) -> impl Iterator<Item = (u32, u32, &[u8])> {
         let (mut code, mut rest) = (0, self.symbols.as_slice());
         (1..).zip(self.counts).map(move |(length, count)| {
@@ -40,11 +34,11 @@ impl Spec {
     }
 
     /// The shortest codes of at most 16 bits. It breaks ties like `jpeg_gen_optimal_table()`.
-    pub(crate) fn optimal(frequencies: &[u64; 256]) -> Self {
+    pub(crate) fn optimal(frequencies: &[u64]) -> Self {
         const MERGED: u64 = u64::MAX;
         const NONE: usize = 0;
 
-        // By leaf, from 1 on. Of the leaves of a subtree, the first has the weight of them all.
+        // Indexed by leaf, from 1. `next` chains the leaves of a subtree, and the first one holds its weight.
         let (mut symbols, mut weights) = ([0u8; 512], [0; 512]);
         let (mut lengths, mut next) = ([0u16; 512], [NONE as u16; 512]);
         let mut last = 1;
@@ -55,7 +49,7 @@ impl Spec {
                 last += 1;
             }
         }
-        // It takes the code that is all ones, which is not allowed.
+        // A dummy leaf takes the all-ones code, which no symbol may have.
         *wrapped_mut(&mut weights, last) = 1;
 
         loop {
@@ -78,7 +72,8 @@ impl Spec {
                 *wrapped_mut(&mut lengths, leaf) += 1;
                 let next = wrapped_mut(&mut next, leaf);
                 if usize::from(*next) == NONE {
-                    break *next = append as u16;
+                    *next = append as u16;
+                    break;
                 }
                 leaf = (*next).into();
             };
@@ -104,7 +99,7 @@ impl Spec {
             *at += 1;
         }
 
-        // Two of the longest codes make way: one for their prefix, the other for half of a shorter code.
+        // Limits lengths to 16 (ITU-T T.81, K.2): of two longest codes, one takes their prefix, one splits a shorter code.
         for length in (17..=longest).rev() {
             while *wrapped(&counts, length) != 0 {
                 let shorter = (1..length - 1)
@@ -116,9 +111,7 @@ impl Spec {
                 *wrapped_mut(&mut counts, shorter) -= 1;
             }
         }
-        if let Some(count) = counts.iter_mut().take(17).rfind(|count| **count != 0) {
-            *count -= 1;
-        }
+        *wrapped_mut(&mut counts, longest.min(16)) -= 1;
         for (to, &count) in spec.counts.iter_mut().zip(counts.iter().skip(1)) {
             *to = count as u8;
         }
@@ -178,22 +171,48 @@ pub(crate) enum Alphabet {
     AcRefine,
 }
 
-/// The run of 16 zeros that no coefficient follows.
-pub(crate) const ZEROS: usize = 16;
-/// The run of the code that ends a block.
-pub(crate) const END: usize = 128;
+/// The [`Code::run`] of ZRL, 16 zeros, except in [`Alphabet::AcRefine`]. Both are large enough to leave any block.
+pub(crate) const RUN_OF_ZRL: usize = 64;
+/// The [`Code::run`] of EOB and EOBn.
+pub(crate) const RUN_OF_EOB: usize = 128;
 
-/// No bits follow that difference. [`extend`] makes 32768 or -32768 of anything, which is the same in 16 bits.
+/// For lossless category 16, which has no extra bits. [`extend`] gives 32768 or -32768, the same in 16 bits.
 const MASK_OF_32768: u32 = 0x8000;
 
-/// The number that the bits of `bits` under `mask` stand for.
+/// `EXTEND` (ITU-T T.81, F.2.2.1) of the bits under `mask`.
 #[inline(always)]
 pub(crate) fn extend(bits: u32, mask: u32) -> i32 {
     let (bits, mask) = ((bits & mask) as i32, mask as i32);
     bits - select_unpredictable(2 * bits > mask, 0, mask)
 }
 
-/// A code, and how to read the bits that follow it.
+/// The inverse of [`extend`]: how many extra bits `value` takes, and those bits.
+#[inline(always)]
+pub(crate) const fn categorize(value: i32) -> (u32, u32) {
+    let size = value.unsigned_abs().bit_width();
+    (size, (value + (value >> 31)) as u32 & ((1 << size) - 1))
+}
+
+#[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
+static AC_CATEGORIES: [(u8, u16); 2048] = {
+    let mut categories = [(0, 0); 2048];
+    let mut value = -1024;
+    while value < 1024 {
+        let (size, bits) = categorize(value);
+        categories[value as usize % 2048] = (size as u8, bits as u16);
+        value += 1;
+    }
+    categories
+};
+
+/// [`categorize`] for an AC coefficient, which is at most 8 times a sample.
+#[inline(always)]
+pub(crate) fn categorize_ac(value: i16) -> (u32, u32) {
+    let (size, bits) = *wrapped(&AC_CATEGORIES, value as usize % 2048);
+    (size.into(), bits.into())
+}
+
+/// From the low byte up: [`Self::length`], [`Self::run`] and 16 bits of [`Self::mask`].
 #[derive(Clone, Copy)]
 pub(crate) struct Code(u32);
 
@@ -206,22 +225,22 @@ impl Code {
             (Alphabet::Lossless, 1, 0) => return Self(code_length | MASK_OF_32768 << 16),
             (Alphabet::Dc | Alphabet::Lossless, ..) => (0, low),
             (Alphabet::AcRefine, 15, 0) => (15, 0),
-            (_, 15, 0) => (ZEROS, 0),
-            (Alphabet::Ac, _, 0) => (END, 0),
-            (_, _, 0) => (END, high),
+            (_, 15, 0) => (RUN_OF_ZRL, 0),
+            (Alphabet::Ac, _, 0) => (RUN_OF_EOB, 0),
+            (_, _, 0) => (RUN_OF_EOB, high),
             (Alphabet::AcRefine, ..) => (high.into(), 1),
             _ => (high.into(), low),
         };
         Self((code_length + u32::from(extra)) | (run as u32) << 8 | ((1 << extra) - 1) << 16)
     }
 
-    /// Of the code and the bits that follow it: at most 32.
+    /// Of the code and its extra bits: at most 32.
     #[inline(always)]
     pub(crate) fn length(self) -> u32 {
         self.0 & 0xFF
     }
 
-    /// Takes them from `bits`.
+    /// Takes the code and its extra bits.
     #[inline(always)]
     pub(crate) fn take(self, bits: &mut Bits) -> u32 {
         bits.take_low_byte(self.0)
@@ -233,7 +252,7 @@ impl Code {
         (self.0 >> 8 & 0xFF) as usize
     }
 
-    /// A one for each of the bits that follow the code, or [`MASK_OF_32768`].
+    /// Covers the extra bits, or is [`MASK_OF_32768`].
     #[inline(always)]
     pub(crate) fn mask(self) -> u32 {
         self.0 >> 16
@@ -243,27 +262,53 @@ impl Code {
         self.mask().trailing_ones()
     }
 
-    /// The number that `bits`, which end with those that follow the code, stand for.
+    /// `bits` ends with the extra bits, like the result of [`Self::take`].
     #[inline(always)]
     pub(crate) fn value(self, bits: u32) -> i32 {
         extend(bits, self.mask())
     }
 
-    /// For how many more blocks [`END`] counts.
+    /// How many more blocks an EOBn ends.
     #[inline(always)]
-    pub(crate) fn end_run(self, bits: u32) -> usize {
+    pub(crate) fn eob_run(self, bits: u32) -> usize {
         (self.mask() + (bits & self.mask())) as usize
+    }
+}
+
+/// In most tables, all codes of more than 8 bits start with four ones.
+const FOUR_ONES: u16 = 0xF000;
+
+/// [`Codes::for_each_prefix`] for the last `entries.len()` indices of `bits` bits.
+#[inline(always)]
+fn for_each_prefix<T>(
+    codes: &[Code],
+    bits: u32,
+    entries: &mut [T],
+    mut visit: impl FnMut(Code, &mut [T]),
+) {
+    let mut start = entries.len().wrapping_sub(1 << bits);
+    for &code in codes.iter().take_while(|code| code.length() != 0) {
+        let Some(after_code) = bits.checked_sub(code.length() - code.extra_length()) else {
+            return;
+        };
+        let end = start.wrapping_add(1 << after_code);
+        if let Some(prefixed) = entries.get_mut(start..end) {
+            visit(code, prefixed);
+        }
+        start = end;
     }
 }
 
 /// All the codes of a table.
 pub(crate) struct Codes {
-    /// For each length, the first 16 bits that no code of at most that length is the start of.
+    /// For each length: the first 16-bit prefix that needs a longer code.
     limits: [u16; 16],
-    /// For each length, where in `codes` the code 0 would be.
+    /// For each length: what to add to a code to get its index in `codes`.
     offsets: [u16; 16],
     codes: [Code; 256],
-    /// libjpeg takes 17 bits to be sure that there is no such code, and goes on as if it were for symbol 0.
+    /// Codes of up to 8 bits by the first byte, and of up to 12 bits by the byte after [`FOUR_ONES`].
+    by_byte: [[Code; 256]; 2],
+    /// Where no code matches, libjpeg takes 17 bits and goes on with symbol 0.
     no_code: Code,
 }
 
@@ -272,6 +317,7 @@ impl Codes {
         limits: [0; 16],
         offsets: [0; 16],
         codes: [Code::NONE; 256],
+        by_byte: [[Code::NONE; 256]; 2],
         no_code: Code::NONE,
     };
 
@@ -295,50 +341,67 @@ impl Codes {
                 *code = Code::new(alphabet, symbol, length);
             }
         }
+        for (bits, entries) in [8, 12].into_iter().zip(&mut self.by_byte) {
+            for_each_prefix(&self.codes, bits, entries, |code, entries| {
+                entries.fill(code)
+            });
+        }
         self.no_code = Code::new(alphabet, 0, 17);
         Ok(())
     }
 
-    /// Calls `visit` for each code that is no longer than an index into `slots`, with those whose indices start with it.
+    /// Calls `visit` with each code that fits in an index into `entries`, and the entries whose index starts with it.
     #[inline(always)]
-    pub(crate) fn share_out<T>(&self, mut slots: &mut [T], mut visit: impl FnMut(Code, &mut [T])) {
-        let bits = slots.len().ilog2();
-        for &code in self.codes.iter().take_while(|code| code.length() != 0) {
-            let after_code = bits.checked_sub(code.length() - code.extra_length());
-            let share = after_code.and_then(|bits| slots.split_off_mut(..1 << bits));
-            let Some(share) = share else { return };
-            visit(code, share);
+    pub(crate) fn for_each_prefix<T>(&self, entries: &mut [T], visit: impl FnMut(Code, &mut [T])) {
+        for_each_prefix(&self.codes, entries.len().ilog2(), entries, visit);
+    }
+
+    /// `bits` has at least 16 bits, the next at its top.
+    #[inline(always)]
+    pub(crate) fn search(&self, bits: u64) -> Code {
+        let bits = (bits >> 48) as u16;
+        let ([.., up_to_15, up_to_16], [.., offset_of_16]) = (self.limits, self.offsets);
+        let [by_first, by_second] = &self.by_byte;
+        let code = if bits < FOUR_ONES {
+            cold_path();
+            *wrapped(by_first, (bits >> 8).into())
+        } else {
+            let of_16 = *wrapped(&self.codes, bits.wrapping_add(offset_of_16).into());
+            let shorter = *wrapped(by_second, (bits >> 4 & 0xFF).into());
+            select_unpredictable(bits >= up_to_15, of_16, shorter)
+        };
+        if code.length() != 0 && bits < up_to_16 {
+            code
+        } else {
+            self.search_limits(bits)
         }
     }
 
-    /// `bits` has the next bit at its top, and at least 16 of them.
+    /// For codes of more than 8 bits.
     #[cold]
     #[inline(never)]
-    pub(crate) fn search(&self, bits: u64) -> Code {
-        let bits = (bits >> 48) as u16;
-        let shorter: u16 = self
-            .limits
-            .iter()
-            .map(|&limit| u16::from(bits >= limit))
-            .sum();
-        let Some(offset) = self.offsets.get(usize::from(shorter)) else {
-            return self.no_code;
-        };
-        let code = bits >> (15 - shorter);
-        *wrapped(&self.codes, code.wrapping_add(*offset).into())
+    fn search_limits(&self, bits: u16) -> Code {
+        let bounds = self.limits[8..].iter().zip(&self.offsets[8..]);
+        for (length, (&limit, &offset)) in (9..).zip(bounds) {
+            if bits < limit {
+                let index = (bits >> (16 - length)).wrapping_add(offset);
+                return *wrapped(&self.codes, index.into());
+            }
+        }
+        self.no_code
     }
 }
 
 const QUICK_BITS: u32 = 10;
-/// For all but DC coefficients.
-const MAX_QUICK_LENGTH: u32 = 15;
-/// What is left after so many is enough to look up the next.
+/// Except in DC and lossless tables.
+pub(crate) const MAX_QUICK_LENGTH: u32 = 15;
+/// After this many, enough bits are left to look up the next code.
 pub(crate) const QUICK_CODES_IN_REFILL: u32 = (BITS_IN_REFILL - QUICK_BITS) / MAX_QUICK_LENGTH;
-/// So is what is left after a code of 16 bits, a sign and so many more.
+/// After a 16-bit code, a sign and this many bits, enough are left to look up the next code.
 pub(crate) const MAX_BITS_AFTER_CODE: u32 = BITS_IN_REFILL - QUICK_BITS - 17;
 
 pub(crate) struct DecodeTable {
-    /// By the next bits. What is long or takes special care is not here.
+    /// By the next [`QUICK_BITS`]. Long codes and those that need special care are [`Code::NONE`].
     quick: [Code; 1 << QUICK_BITS],
     codes: Codes,
 }
@@ -352,23 +415,23 @@ impl DecodeTable {
     fn fill(&mut self, spec: &Spec, alphabet: Alphabet) -> Result<()> {
         self.codes.fill(spec, alphabet)?;
         let (longest, shift) = match alphabet {
-            Alphabet::Dc => (32, 0),
+            Alphabet::Dc | Alphabet::Lossless => (32, 0),
             Alphabet::AcFirst { shift } => (MAX_QUICK_LENGTH, shift),
             _ => (MAX_QUICK_LENGTH, 0),
         };
-        self.codes.share_out(&mut self.quick, |code, slots| {
-            // So a coefficient that a quick code is for is not zero, not even in 16 bits after the shift.
-            if code.length() <= longest
-                && code.run() != ZEROS
-                && (code.run() == END || code.mask() << shift <= 0xFFFF)
-            {
-                slots.fill(code);
-            }
-        });
+        self.codes
+            .for_each_prefix(&mut self.quick, |code, entries| {
+                // A quick coefficient has to stay nonzero in 16 bits after the shift.
+                if code.length() <= longest
+                    && (code.run() == RUN_OF_EOB || code.mask() << shift <= 0xFFFF)
+                {
+                    entries.fill(code);
+                }
+            });
         Ok(())
     }
 
-    /// `bits` has at least [`QUICK_BITS`], the next at its top. A length of 0 is a case for [`Self::search`].
+    /// `bits` has at least [`QUICK_BITS`], the next at its top. A length of 0 calls for [`Self::search`].
     #[inline(always)]
     pub(crate) fn quick(&self, bits: u64) -> Code {
         *wrapped(&self.quick, (bits >> (64 - QUICK_BITS)) as usize)
@@ -380,9 +443,9 @@ impl DecodeTable {
         self.codes.search(bits)
     }
 
-    /// It refills `bits`.
+    /// Refills `bits`, and leaves the code in them.
     #[inline(always)]
-    pub(crate) fn find(&self, bits: &mut Bits, window: &Window<'_, '_>) -> Code {
+    pub(crate) fn next_code(&self, bits: &mut Bits, window: &Window<'_, '_>) -> Code {
         let quick = self.quick(bits.peek());
         bits.refill(window);
         if quick.length() != 0 {
@@ -393,53 +456,51 @@ impl DecodeTable {
     }
 }
 
-/// The table for each of the components of a scan. Those that name the same one share it.
+/// The tables that a scan names, each built once.
 pub(crate) struct DecodeTables {
     tables: Vec<DecodeTable>,
-    by_number: [usize; 4],
+    by_component: [usize; MAX_COMPONENTS],
 }
 
 impl DecodeTables {
+    /// `numbers` has the number of a table for each component of the scan.
     pub(crate) fn new(
         numbers: impl Iterator<Item = u8>,
         specs: &[Option<Spec>; 4],
         alphabet: Alphabet,
     ) -> Result<Self> {
-        let mut this = Self {
-            tables: Vec::new(),
-            by_number: [usize::MAX; 4],
-        };
-        for number in numbers.map(usize::from) {
+        let (mut tables, mut by_component) = (Vec::new(), [0; MAX_COMPONENTS]);
+        let mut by_number = [None; 4];
+        for (number, index) in numbers.map(usize::from).zip(&mut by_component) {
             let spec = specs.get(number).and_then(Option::as_ref);
             let spec = spec.ok_or(Error::MissingTable)?;
-            let index = wrapped_mut(&mut this.by_number, number);
-            if *index == usize::MAX {
-                *index = this.tables.len();
-                this.tables.try_reserve(1)?;
-                this.tables
-                    .push_mut(DecodeTable::NONE)
-                    .fill(spec, alphabet)?;
+            *index = *wrapped_mut(&mut by_number, number).get_or_insert(tables.len());
+            if *index == tables.len() {
+                tables.try_reserve(1)?;
+                tables.push_mut(DecodeTable::NONE).fill(spec, alphabet)?;
             }
         }
-        Ok(this)
+        Ok(Self {
+            tables,
+            by_component,
+        })
     }
 
-    pub(crate) fn get(&self, number: u8) -> Result<&DecodeTable> {
-        let index = *wrapped(&self.by_number, number.into());
-        self.tables.get(index).ok_or(Error::Internal)
+    pub(crate) fn first(&self) -> Result<&DecodeTable> {
+        self.tables.first().ok_or(Error::Internal)
     }
 
     /// For [`Slot::pick`](crate::scan::Slot::pick).
-    pub(crate) fn dc_by_component(&self, scan: &Scan) -> Result<[&DecodeTable; MAX_COMPONENTS]> {
-        let mut tables = [self.tables.first().ok_or(Error::Internal)?; MAX_COMPONENTS];
-        for (to, component) in tables.iter_mut().zip(scan.components()) {
-            *to = self.get(component.dc_table)?;
+    pub(crate) fn by_component(&self) -> Result<[&DecodeTable; MAX_COMPONENTS]> {
+        let mut tables = [self.first()?; MAX_COMPONENTS];
+        for (to, &index) in tables.iter_mut().zip(&self.by_component) {
+            *to = self.tables.get(index).ok_or(Error::Internal)?;
         }
         Ok(tables)
     }
 }
 
-/// For each symbol: its code, and below that 8 bits with its length.
+/// For each symbol: `code << 8 | length`.
 pub(crate) struct EncodeTable([u32; 256]);
 
 impl EncodeTable {
@@ -451,7 +512,7 @@ impl EncodeTable {
         table
     }
 
-    /// The codes of `spec` go to symbols that are `offset` higher.
+    /// Adds the codes of `spec`, for symbols that are `offset` higher.
     pub(crate) fn add(&mut self, spec: &Spec, offset: usize) {
         for (length, first, symbols) in spec.groups() {
             for (code, &symbol) in (first..).zip(symbols) {

@@ -9751,11 +9751,10 @@ declare module "bun" {
      *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A JPEG with stray bytes, a missing end marker or truncated scan data
-     *   usually does not reject.
-     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
-     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
-     *   before its last row, or inside the data of the `IDAT` chunk that holds
-     *   it, rejects.
+     *   usually does not reject. If it is Huffman-coded, blocks with no data
+     *   come back flat grey. A PNG with a wrong CRC or Adler-32 does not
+     *   reject: Bun verifies neither. A PNG that ends before its last row, or
+     *   inside the data of the `IDAT` chunk that holds it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
      *   that its decode or encode needs.

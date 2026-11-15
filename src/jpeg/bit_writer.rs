@@ -1,25 +1,29 @@
-//! Puts codes together to entropy-coded data.
+//! Writes entropy-coded data.
 
-use crate::Result;
+use crate::{Result, wrapped_mut};
+use bun_core::strings::index_of_char_usize;
 
 const BUFFER_LEN: usize = 4096;
-/// So many bytes can be stored between two calls of [`PendingBits::make_room`].
+/// How many bytes may be stored between two calls of [`PendingBits::make_room`].
 pub(crate) const ROOM: usize = 512;
-/// A store ends with the last bit, so the first ones start before the data.
+/// A store writes the 8 bytes that end with the last bit, so the first ones start before the data.
 const MARGIN: usize = 8;
 
-/// Data that is yet to get its stuffing.
+/// How many bytes are stuffed one by one from an 0xFF on. A search for each takes too long where they are dense.
+const DENSE_LEN: usize = 8;
+
+/// Data that has not been stuffed yet.
 pub(crate) struct BitBuffer<'a> {
     out: &'a mut Vec<u8>,
     bytes: [u8; MARGIN + BUFFER_LEN],
 }
 
-/// Apart from the [`BitBuffer`], so that a loop has it in registers.
+/// The write state, separate from [`BitBuffer`] so that loops keep it in registers.
 #[derive(Clone, Copy)]
 pub(crate) struct PendingBits {
-    /// The last 64. The very last is the lowest.
+    /// The last 64 bits, the newest lowest.
     bits: u64,
-    /// How many there are for the buffer, and 7 more: an eighth of this is how many bytes have been begun.
+    /// The number of bits in the buffer plus 7, so that `end / 8` counts a partial byte.
     end: usize,
 }
 
@@ -35,11 +39,19 @@ impl<'a> BitBuffer<'a> {
     #[inline(never)]
     fn flush(&mut self, len: usize) -> Result<()> {
         let mut rest = self.bytes.get(MARGIN..MARGIN + len).unwrap_or_default();
-        self.out.try_reserve(2 * len)?;
-        while let Some(at) = bun_highway::index_of_char(rest, 0xFF) {
-            let (through, after) = rest.split_at(at + 1);
-            self.out.extend_from_slice(through);
-            self.out.push(0);
+        self.out.try_reserve(2 * (len + DENSE_LEN))?;
+        while let Some(at) = index_of_char_usize(rest, 0xFF) {
+            let (plain, after) = rest.split_at(at);
+            let (dense, after) = after.split_at(after.len().min(DENSE_LEN));
+            let (mut stuffed, mut stuffed_len) = ([0; 2 * DENSE_LEN], 0);
+            for &byte in dense {
+                *wrapped_mut(&mut stuffed, stuffed_len) = byte;
+                stuffed_len += 1 + usize::from(byte == 0xFF);
+            }
+            self.out.extend_from_slice(plain);
+            let end = self.out.len() + stuffed_len;
+            self.out.extend_from_slice(&stuffed);
+            self.out.truncate(end);
             rest = after;
         }
         self.out.extend_from_slice(rest);
@@ -50,7 +62,7 @@ impl<'a> BitBuffer<'a> {
 impl PendingBits {
     pub(crate) const NONE: Self = Self { bits: 0, end: 7 };
 
-    /// At most 56 bits from one store to the next. Those above `count` are zeros.
+    /// At most 56 bits between stores. `bits` has nothing above `count`.
     #[inline(always)]
     pub(crate) fn add(&mut self, bits: u64, count: u32) {
         self.bits = self.bits.wrapping_shl(count) | bits;

@@ -796,14 +796,14 @@ _ZN3bun11N_AVX3_ZEN417ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [
 
 
 # ----------------------------------------------------------------------------
-# Bun JPEG transforms and colour conversions (src/jsc/bindings/highway_jpeg.cpp).
+# Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX2L13JpegYccToRgbaEPKhS2_S2_mPh                                    [AVX, AVX2]
 _ZN3bun6N_AVX2L16JpegRgbaToYcc420EPKhmmmPhS3_S3_m                              [AVX, AVX2]
 _ZN3bun6N_AVX2L16JpegYcc420ToRgbaEPKhS2_S2_S2_S2_mPh                           [AVX, AVX2]
 _ZN3bun6N_AVX2L16JpegYcc422ToRgbaEPKhS2_S2_mPh                                 [AVX, AVX2]
-_ZN3bun6N_AVX2L20JpegForwardTransformEPKhmmPKtPsPmb                            [AVX, AVX2]
+_ZN3bun6N_AVX2L20JpegForwardTransformEPKhmmPKsPsPmb                            [AVX, AVX2]
 _ZN3bun6N_AVX2L20JpegInverseTransformEPKsmS2_mPhm                              [AVX, AVX2]
 
 

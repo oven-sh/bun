@@ -1,11 +1,10 @@
 //! Scans with arithmetic coding (jdarith.c).
 
 use crate::bit_reader::Window;
-use crate::block::{Block, Zigzag};
-use crate::header::{Frame, MAX_COMPONENTS, Process, Scan, Tables};
-use crate::input::Input;
-use crate::scan::{EntropyDecoder, Slot};
-use crate::{Result, wrapped, wrapped_mut};
+use crate::block::{Block, Zigzag, prefetch_after};
+use crate::header::{Scan, ScanKind, Tables};
+use crate::scan::{Allowance, EntropyDecoder, Slot};
+use crate::{MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::hint::select_unpredictable;
 use core::ops::Range;
 
@@ -49,81 +48,120 @@ static STATES: [u32; 128] = {
     let mut states = [0; 128];
     let mut i = 0;
     while i < ESTIMATES.len() {
-        let (qe, after_less, after_more, switch) = ESTIMATES[i];
-        states[i] = qe << 16 | after_more << 8 | switch << 7 | after_less;
+        let (qe, next_lps, next_mps, switch) = ESTIMATES[i];
+        states[i] = qe << 16 | next_mps << 8 | switch << 7 | next_lps;
         i += 1;
     }
     states
 };
 
-/// An encoder leaves out the zeros that its data ends with. So many bytes of them are taken for granted between restarts.
-const FREE_ZEROS: usize = 8;
-/// A restart marker that is missing counts as so many zeros.
-const MARKER_LEN: usize = 2;
+/// These go by the names in ITU-T T.81, tables F.4 and F.5.
+const DC_X1: usize = 20;
+const AC_X2_UP_TO_KX: usize = 189;
+const AC_X2_ABOVE_KX: usize = 217;
+const X_TO_M: usize = 14;
 
-/// How many more all the scans of `frame` get. Those of an image that repeats a block can end with many.
-pub(crate) fn spare_zeros(frame: &Frame) -> usize {
-    2 * frame.block_count() + 4096
+/// `SE` of coefficient `k`. `S0` and `SP` follow it.
+const fn se(k: usize) -> usize {
+    3 * (k - 1)
 }
 
+/// The registers of the decoder (ITU-T T.81, D.2).
 #[derive(Clone, Copy)]
-struct Interval {
+struct Coder {
+    /// `A`
     size: u32,
-    /// Less than `size << spare_bits`.
+    /// `C`, less than `size << spare_bits`.
     code: u64,
     spare_bits: u32,
     /// In the window.
     position: usize,
+    /// Not yet charged to the [`Allowance`].
+    steps: usize,
 }
 
-impl Interval {
+impl Coder {
     fn new(window: &mut Window<'_, '_>) -> Self {
         let mut position = 0;
         Self {
             size: 0x10000,
-            code: window.word(&mut position).into(),
+            code: window.take_u32(&mut position).into(),
             spare_bits: 16,
             position,
+            steps: Allowance::INTERVAL_COST,
         }
     }
 
-    /// `state` has the more probable symbol in its highest bit, and an index into [`STATES`] in the others.
+    /// How many bits past the data have been used up. Encoders drop trailing zeros, so valid files have some.
+    fn overrun(&self, window: &Window<'_, '_>) -> usize {
+        let ahead = 16 + self.spare_bits as usize;
+        window.overrun_at(self.position).saturating_sub(ahead)
+    }
+
+    /// `bin` has the MPS in its top bit, and an index into [`STATES`] below.
     #[inline(always)]
-    fn decide(&mut self, window: &mut Window<'_, '_>, state: &mut u8) -> bool {
-        let entry = *wrapped(&STATES, (*state).into());
+    fn decide(&mut self, window: &mut Window<'_, '_>, bin: &mut u8) -> bool {
+        self.steps += 1;
+        let entry = *wrapped(&STATES, (*bin & 0x7F).into());
         let qe = entry >> 16;
-        let more_probable = *state & 0x80;
+        let mps = *bin & 0x80;
         self.size -= qe;
         let lower = u64::from(self.size) << self.spare_bits;
         let is_upper = self.code >= lower;
         if !is_upper && self.size >= 0x8000 {
-            return more_probable != 0;
+            return mps != 0;
         }
-        let is_less_probable = is_upper != (self.size < qe);
+        let is_lps = is_upper != (self.size < qe);
         self.code -= select_unpredictable(is_upper, lower, 0);
         self.size = select_unpredictable(is_upper, qe, self.size);
-        *state = more_probable ^ select_unpredictable(is_less_probable, entry, entry >> 8) as u8;
+        *bin = mps ^ select_unpredictable(is_lps, entry, entry >> 8) as u8;
 
         let shift = self.size.leading_zeros() - 16;
         self.size <<= shift;
         if self.spare_bits < shift {
-            self.code = self.code << 32 | u64::from(window.word(&mut self.position));
+            self.code = self.code << 32 | u64::from(window.take_u32(&mut self.position));
             self.spare_bits += 32;
         }
         self.spare_bits -= shift;
-        (more_probable != 0) != is_less_probable
+        (mps != 0) != is_lps
     }
 
-    /// Doubles `magnitude` for as long as the states from `at` on say so. Returns where they stop.
+    #[inline(always)]
+    fn decide_evenly(&mut self, window: &mut Window<'_, '_>) -> bool {
+        self.decide(window, &mut { EVEN_ODDS })
+    }
+
+    /// Moves `k` to the next coefficient that becomes nonzero. Returns false at the end of the block.
+    #[inline(always)]
+    fn skip_zeros(
+        &mut self,
+        window: &mut Window<'_, '_>,
+        bins: &mut [u8; 256],
+        k: &mut usize,
+        last: usize,
+    ) -> Option<bool> {
+        if *k > last || self.decide(window, wrapped_mut(bins, se(*k))) {
+            return Some(false);
+        }
+        while !self.decide(window, wrapped_mut(bins, se(*k) + 1)) {
+            *k += 1;
+            if *k > last {
+                return None;
+            }
+        }
+        Some(true)
+    }
+
+    /// Doubles `magnitude` for each 1 that the bins from `at` on decide. Returns the index of the last.
     #[inline(always)]
     fn widen<const N: usize>(
         &mut self,
         window: &mut Window<'_, '_>,
-        states: &mut [u8; N],
+        bins: &mut [u8; N],
         mut at: usize,
         magnitude: &mut i32,
     ) -> Option<usize> {
-        while self.decide(window, wrapped_mut(states, at)) {
+        while self.decide(window, wrapped_mut(bins, at)) {
             *magnitude <<= 1;
             if *magnitude == 0x8000 {
                 return None;
@@ -133,142 +171,129 @@ impl Interval {
         Some(at)
     }
 
-    /// The number whose magnitude, less one, has the highest bit of `magnitude`.
+    /// Decodes the bits below `magnitude`, the top bit of the absolute value less one.
     #[inline(always)]
     fn value(
         &mut self,
         window: &mut Window<'_, '_>,
-        state: &mut u8,
+        bin: &mut u8,
         magnitude: i32,
         is_negative: bool,
     ) -> i32 {
         let (mut value, mut bit) = (magnitude, magnitude >> 1);
         while bit != 0 {
-            value |= select_unpredictable(self.decide(window, state), bit, 0);
+            value |= select_unpredictable(self.decide(window, bin), bit, 0);
             bit >>= 1;
         }
         select_unpredictable(is_negative, -value - 1, value + 1)
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Pass {
-    Sequential,
-    DcFirst,
-    DcRefine,
-    AcFirst,
-    AcRefine,
-}
-
 #[derive(Clone, Copy, Default)]
-struct Predictor {
+struct DcState {
     value: i16,
     context: usize,
 }
 
 pub(crate) struct Arithmetic<'i, 'a> {
     scan: Scan,
-    pass: Pass,
+    /// The DC and AC table numbers of each component of the scan.
+    tables: [(usize, usize); MAX_COMPONENTS],
     conditioning: [u8; 32],
-    dc_states: [[u8; 64]; 16],
-    ac_states: [[u8; 256]; 16],
-    predictors: [Predictor; MAX_COMPONENTS],
+    dc_bins: [[u8; 64]; 16],
+    ac_bins: [[u8; 256]; 16],
+    dc_states: [DcState; MAX_COMPONENTS],
     /// None from an error to the next restart.
-    interval: Option<Interval>,
-    window: Window<'i, 'a>,
+    coder: Option<Coder>,
+    window: &'i mut Window<'i, 'a>,
     /// For each block of a progressive file: bit `k` is set if AC coefficient `k`, in zigzag order, is not zero.
     nonzero: &'i mut [u64],
-    spare_zeros: &'i mut usize,
+    allowance: &'i mut Allowance,
 }
 
 impl<'i, 'a> Arithmetic<'i, 'a> {
     pub(crate) fn new(
-        input: &'i mut Input<'a>,
+        window: &'i mut Window<'i, 'a>,
         tables: &Tables,
-        process: Process,
         scan: &Scan,
         nonzero: &'i mut [u64],
-        spare_zeros: &'i mut usize,
+        allowance: &'i mut Allowance,
     ) -> Self {
-        let mut window = Window::new(input);
+        let mut numbers = [(0, 0); MAX_COMPONENTS];
+        for (to, component) in numbers.iter_mut().zip(scan.components()) {
+            *to = (component.dc_table.into(), component.ac_table.into());
+        }
         Self {
             scan: *scan,
-            pass: match (process, scan.first, scan.previous_shift) {
-                (Process::Progressive, 0, 0) => Pass::DcFirst,
-                (Process::Progressive, 0, _) => Pass::DcRefine,
-                (Process::Progressive, _, 0) => Pass::AcFirst,
-                (Process::Progressive, ..) => Pass::AcRefine,
-                _ => Pass::Sequential,
-            },
+            tables: numbers,
             conditioning: tables.conditioning,
-            dc_states: [[0; 64]; 16],
-            ac_states: [[0; 256]; 16],
-            predictors: Default::default(),
-            interval: Some(Interval::new(&mut window)),
+            dc_bins: [[0; 64]; 16],
+            ac_bins: [[0; 256]; 16],
+            dc_states: Default::default(),
+            coder: Some(Coder::new(window)),
             window,
             nonzero,
-            spare_zeros,
+            allowance,
         }
     }
 
     #[inline(always)]
-    fn dc(&mut self, interval: &mut Interval, component: usize, table: usize) -> Option<i16> {
-        let (window, states) = (&mut self.window, wrapped_mut(&mut self.dc_states, table));
-        let predictor = wrapped_mut(&mut self.predictors, component);
-        let context = predictor.context;
-        if !interval.decide(window, wrapped_mut(states, context)) {
-            predictor.context = 0;
-            return Some(predictor.value);
+    fn dc(&mut self, coder: &mut Coder, component: usize, table: usize) -> Option<i16> {
+        let (window, bins) = (&mut *self.window, wrapped_mut(&mut self.dc_bins, table));
+        let state = wrapped_mut(&mut self.dc_states, component);
+        let context = state.context;
+        if !coder.decide(window, wrapped_mut(bins, context)) {
+            state.context = 0;
+            return Some(state.value);
         }
-        let is_negative = interval.decide(window, wrapped_mut(states, context + 1));
+        let is_negative = coder.decide(window, wrapped_mut(bins, context + 1));
         let mut at = context + 2 + usize::from(is_negative);
-        let mut magnitude = i32::from(interval.decide(window, wrapped_mut(states, at)));
+        let mut magnitude = i32::from(coder.decide(window, wrapped_mut(bins, at)));
         if magnitude != 0 {
-            at = interval.widen(window, states, 20, &mut magnitude)?;
+            at = coder.widen(window, bins, DC_X1, &mut magnitude)?;
         }
         let bounds = *wrapped(&self.conditioning, table);
-        predictor.context = if magnitude < 1 << (bounds & 15) >> 1 {
+        state.context = if magnitude < 1 << (bounds & 15) >> 1 {
             0
         } else if magnitude > 1 << (bounds >> 4) >> 1 {
             12 + 4 * usize::from(is_negative)
         } else {
             4 + 4 * usize::from(is_negative)
         };
-        let state = wrapped_mut(states, at + 14);
-        let difference = interval.value(window, state, magnitude, is_negative);
-        predictor.value = predictor.value.wrapping_add(difference as i16);
-        Some(predictor.value)
+        let bin = wrapped_mut(bins, at + X_TO_M);
+        let difference = coder.value(window, bin, magnitude, is_negative);
+        state.value = state.value.wrapping_add(difference as i16);
+        Some(state.value)
     }
 
     #[inline(always)]
-    fn ac_first(
+    fn ac(
         &mut self,
-        interval: &mut Interval,
-        (block, at): (&mut Block, usize),
+        coder: &mut Coder,
+        block: &mut Block,
+        index: usize,
         table: usize,
         (mut k, last, shift): (usize, usize, u8),
     ) -> Option<()> {
-        let (window, states) = (&mut self.window, wrapped_mut(&mut self.ac_states, table));
+        let (window, bins) = (&mut *self.window, wrapped_mut(&mut self.ac_bins, table));
         let mut unused = 0;
-        let nonzero = self.nonzero.get_mut(at).unwrap_or(&mut unused);
-        let last_low = usize::from(*wrapped(&self.conditioning, 16 + table));
-        while k <= last && !interval.decide(window, wrapped_mut(states, 3 * k - 3)) {
-            while !interval.decide(window, wrapped_mut(states, 3 * k - 2)) {
-                k += 1;
-                if k > last {
-                    return None;
-                }
-            }
-            let is_negative = interval.decide(window, &mut { EVEN_ODDS });
-            let mut at = 3 * k - 1;
-            let mut magnitude = i32::from(interval.decide(window, wrapped_mut(states, at)));
-            if magnitude != 0 && interval.decide(window, wrapped_mut(states, at)) {
+        let nonzero = self.nonzero.get_mut(index).unwrap_or(&mut unused);
+        let kx = usize::from(*wrapped(&self.conditioning, 16 + table));
+        while coder.skip_zeros(window, bins, &mut k, last)? {
+            let is_negative = coder.decide_evenly(window);
+            let mut at = se(k) + 2;
+            let mut magnitude = i32::from(coder.decide(window, wrapped_mut(bins, at)));
+            if magnitude != 0 && coder.decide(window, wrapped_mut(bins, at)) {
                 magnitude = 2;
-                let first = if k <= last_low { 189 } else { 217 };
-                at = interval.widen(window, states, first, &mut magnitude)?;
+                let x2 = if k <= kx {
+                    AC_X2_UP_TO_KX
+                } else {
+                    AC_X2_ABOVE_KX
+                };
+                at = coder.widen(window, bins, x2, &mut magnitude)?;
             }
-            let state = wrapped_mut(states, at + 14);
-            let value = (interval.value(window, state, magnitude, is_negative) << shift) as i16;
+            let bin = wrapped_mut(bins, at + X_TO_M);
+            let value = (coder.value(window, bin, magnitude, is_negative) << shift) as i16;
             *block.at_mut(k) = value;
             *nonzero = *nonzero & !(1 << k) | u64::from(value != 0) << k;
             k += 1;
@@ -279,128 +304,149 @@ impl<'i, 'a> Arithmetic<'i, 'a> {
     #[inline(always)]
     fn ac_refine(
         &mut self,
-        interval: &mut Interval,
-        (block, at): (&mut Block, usize),
+        coder: &mut Coder,
+        block: &mut Block,
+        index: usize,
         table: usize,
     ) -> Option<()> {
-        let (window, states) = (&mut self.window, wrapped_mut(&mut self.ac_states, table));
-        let (mut k, last) = (usize::from(self.scan.first), usize::from(self.scan.last));
-        let bit = 1i16 << self.scan.shift;
-        let nonzero = self.nonzero.get_mut(at)?;
+        let (window, bins) = (&mut *self.window, wrapped_mut(&mut self.ac_bins, table));
+        let (mut k, last) = (usize::from(self.scan.ss), usize::from(self.scan.se));
+        let bit = 1i16 << self.scan.al;
+        let nonzero = self.nonzero.get_mut(index)?;
         let known = *nonzero & u64::MAX >> (63 - last);
         let last_known = (known | 1).ilog2() as usize;
-        while k <= last
-            && (k <= last_known || !interval.decide(window, wrapped_mut(states, 3 * k - 3)))
-        {
-            loop {
-                if known >> k & 1 != 0 {
-                    if interval.decide(window, wrapped_mut(states, 3 * k - 1)) {
-                        let coefficient = block.at_mut(k);
-                        *coefficient =
-                            coefficient.wrapping_add(if *coefficient < 0 { -bit } else { bit });
-                    }
-                    break;
-                }
-                if interval.decide(window, wrapped_mut(states, 3 * k - 2)) {
-                    let is_negative = interval.decide(window, &mut { EVEN_ODDS });
-                    *block.at_mut(k) = select_unpredictable(is_negative, -bit, bit);
-                    *nonzero |= 1 << k;
-                    break;
-                }
-                k += 1;
-                if k > last {
-                    return None;
-                }
+        coder.steps += (known >> k).count_ones() as usize;
+        // There is no EOB decision up to `last_known`. What is known is unpredictable, so nothing branches on it.
+        let (mut ahead, mut ones) = (known >> k, 0);
+        let triples = bins.as_chunks_mut().0.get_mut(k - 1..last_known);
+        for [_, is_new, is_corrected] in triples.unwrap_or_default() {
+            let bin = select_unpredictable(ahead & 1 != 0, is_corrected, is_new);
+            let decision = u64::from(coder.decide(window, bin));
+            ones |= decision << k;
+            if decision > ahead & 1 {
+                let is_negative = coder.decide_evenly(window);
+                *block.at_mut(k) = select_unpredictable(is_negative, -bit, bit);
             }
+            (k, ahead) = (k + 1, ahead >> 1);
+        }
+        *nonzero |= ones;
+        let mut corrections = ones & known;
+        while corrections != 0 {
+            let coefficient = block.at_mut(corrections.trailing_zeros() as usize);
+            *coefficient = coefficient.wrapping_add(if *coefficient < 0 { -bit } else { bit });
+            corrections &= corrections - 1;
+        }
+        while coder.skip_zeros(window, bins, &mut k, last)? {
+            let is_negative = coder.decide_evenly(window);
+            *block.at_mut(k) = select_unpredictable(is_negative, -bit, bit);
+            *nonzero |= 1 << k;
             k += 1;
         }
         Some(())
     }
 
-    /// Whether the data ended so long ago that AC coefficients could only be noise.
-    fn is_adrift(&mut self) -> bool {
-        let extra = self.window.take_zeros_beyond(FREE_ZEROS);
-        let left = self.spare_zeros.checked_sub(extra);
-        *self.spare_zeros = left.unwrap_or(0);
-        left.is_none()
+    /// Returns false if the data is invalid.
+    #[inline(always)]
+    fn decode_mcus(
+        &mut self,
+        coder: &mut Coder,
+        blocks: &mut [Block],
+        slots: &[Slot],
+        mcus: Range<usize>,
+    ) -> Result<bool> {
+        let kind = self.scan.kind;
+        let band @ (.., shift) = match kind {
+            ScanKind::Whole => (1, 63, 0),
+            _ => (self.scan.ss.into(), self.scan.se.into(), self.scan.al),
+        };
+        for mcu in mcus {
+            for slot in slots {
+                let (block, index) = (slot.of(blocks, mcu)?, slot.index(mcu));
+                prefetch_after(block, slot.step_right);
+                let (dc, ac) = slot.pick(&self.tables);
+                if !matches!(kind, ScanKind::AcFirst) {
+                    let Some(value) = self.dc(coder, slot.component, dc) else {
+                        return Ok(false);
+                    };
+                    *block.dc_mut() = value << shift;
+                }
+                if !matches!(kind, ScanKind::DcFirst)
+                    && self.ac(coder, block, index, ac, band).is_none()
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Like [`Self::decode_mcus`]. Refinement is up to 15 % faster in a loop of its own.
+    #[inline(always)]
+    fn refine_mcus(
+        &mut self,
+        coder: &mut Coder,
+        blocks: &mut [Block],
+        slots: &[Slot],
+        mcus: Range<usize>,
+    ) -> Result<bool> {
+        for mcu in mcus {
+            for slot in slots {
+                let (block, index) = (slot.of(blocks, mcu)?, slot.index(mcu));
+                prefetch_after(block, slot.step_right);
+                let (_, ac) = slot.pick(&self.tables);
+                if self.scan.ss == 0 {
+                    let bit = coder.decide_evenly(self.window);
+                    *block.dc_mut() |= i16::from(bit) << self.scan.al;
+                } else if self.ac_refine(coder, block, index, ac).is_none() {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 }
 
 impl EntropyDecoder for Arithmetic<'_, '_> {
-    fn decode(
-        &mut self,
-        blocks: &mut [Block],
-        slots: &[Slot],
-        mcus: Range<usize>,
-    ) -> Result<usize> {
-        let count = mcus.len();
-        let Some(mut interval) = self.interval.take() else {
-            return Ok(count);
+    fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool> {
+        let Some(mut coder) = self.coder.take() else {
+            return Ok(true);
         };
-        let mut tables = [(0, 0); MAX_COMPONENTS];
-        for (to, component) in tables.iter_mut().zip(self.scan.components()) {
-            *to = (component.dc_table.into(), component.ac_table.into());
-        }
-        let (pass, shift) = (self.pass, self.scan.shift);
-        let band = match pass {
-            Pass::Sequential => (1, 63, 0),
-            _ => (self.scan.first.into(), self.scan.last.into(), shift),
-        };
-        for mcu in mcus {
-            if !matches!(pass, Pass::DcFirst | Pass::DcRefine) && self.is_adrift() {
-                return Ok(count);
+        let (kind, count) = (self.scan.kind, mcus.len() * slots.len());
+        let overrun_so_far = coder.overrun(self.window);
+        let is_valid = match kind {
+            ScanKind::DcRefine | ScanKind::AcRefine => {
+                self.refine_mcus(&mut coder, blocks, slots, mcus)
             }
-            for slot in slots {
-                let (block, at) = (slot.of(blocks, mcu)?, slot.index(mcu));
-                let (dc, ac) = slot.pick(&tables);
-                if matches!(pass, Pass::Sequential | Pass::DcFirst) {
-                    let Some(value) = self.dc(&mut interval, slot.component, dc) else {
-                        return Ok(count);
-                    };
-                    block.0[0] = value << band.2;
-                }
-                let decoded = match pass {
-                    Pass::DcFirst => Some(()),
-                    Pass::DcRefine => {
-                        let bit = interval.decide(&mut self.window, &mut { EVEN_ODDS });
-                        block.0[0] |= i16::from(bit) << shift;
-                        Some(())
-                    }
-                    Pass::Sequential | Pass::AcFirst => {
-                        self.ac_first(&mut interval, (block, at), ac, band)
-                    }
-                    Pass::AcRefine => self.ac_refine(&mut interval, (block, at), ac),
-                };
-                if decoded.is_none() {
-                    return Ok(count);
-                }
-            }
+            _ => self.decode_mcus(&mut coder, blocks, slots, mcus),
+        }?;
+        let (steps, overrun) = (
+            core::mem::take(&mut coder.steps),
+            coder.overrun(self.window),
+        );
+        self.coder = is_valid.then_some(coder);
+        let allowance = &mut self.allowance;
+        match allowance.spend_on_decisions(kind, count, steps, overrun_so_far..overrun) {
+            // A truncated file keeps what has been decoded.
+            Err(_) if overrun != 0 && self.window.is_truncated() => Ok(true),
+            spent => spent.map(|()| true),
         }
-        self.interval = Some(interval);
-        Ok(count)
     }
 
     fn restart(&mut self, number: u8) {
-        self.interval = None;
-        if !self.window.skip_restart_marker(number) {
-            let Some(left) = self.spare_zeros.checked_sub(MARKER_LEN) else {
-                return;
-            };
-            *self.spare_zeros = left;
+        self.window.skip_restart_marker(number);
+        for &(dc, ac) in self.tables.iter().take(self.scan.components().len()) {
+            if matches!(self.scan.kind, ScanKind::Whole | ScanKind::DcFirst) {
+                *wrapped_mut(&mut self.dc_bins, dc) = [0; 64];
+            }
+            if !matches!(self.scan.kind, ScanKind::DcFirst | ScanKind::DcRefine) {
+                *wrapped_mut(&mut self.ac_bins, ac) = [0; 256];
+            }
         }
-        for component in self.scan.components() {
-            *wrapped_mut(&mut self.dc_states, component.dc_table.into()) = [0; 64];
-            *wrapped_mut(&mut self.ac_states, component.ac_table.into()) = [0; 256];
-        }
-        self.predictors = Default::default();
-        self.interval = Some(Interval::new(&mut self.window));
-    }
-
-    fn has_data(&self) -> bool {
-        true
+        self.dc_states = Default::default();
+        self.coder = Some(Coder::new(self.window));
     }
 
     fn is_over(&self) -> bool {
-        self.interval.is_none() && *self.spare_zeros < MARKER_LEN && self.window.is_last()
+        self.allowance.is_spent()
     }
 }

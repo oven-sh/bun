@@ -770,7 +770,7 @@ bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
-# Bun JPEG transforms and colour conversions (src/jsc/bindings/highway_jpeg.cpp).
+# Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX2::JpegForwardTransform                                    [AVX, AVX2]

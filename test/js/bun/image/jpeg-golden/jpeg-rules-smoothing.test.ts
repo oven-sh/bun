@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { slow } from "../png-golden/check";
 import { randomBytes } from "../png-golden/write";
 import { bytes, expectPictures, range, said } from "./decode";
-import { known, missingBits, pictureOf, smoothed } from "./model";
+import { known, missingBits, pictureOf, scaled, smoothed } from "./model";
 import {
   AC,
   all,
@@ -129,6 +129,42 @@ test("in long rows", async () => {
   );
 });
 
+test.each(["across", "down"])("in thousands of blocks %s", async way => {
+  const [some, count] = [23, slow ? 180 : 356];
+  const sized = (blocks: number): [number, number] => (way === "across" ? [blocks * 8, 8] : [8, blocks * 8]);
+  const [once, twice] = [1, 2].map(n => frameOf(...sized(n * some), "1x1", { type: SOF2, tables: [steps] }));
+  const [{ data: values }] = noise(once, randomBytes(15), { sparse: 200 }).components;
+  for (const n of [0, 1]) twice.components[0].data.set(values, n * values.length);
+  const scans = [scanOf([0], 0, 0)];
+  const { tables, header, data } = coded(once, scans[0]);
+  const [width, height] = sized(count * some - 0.5);
+  const more = range(0, count - 2).flatMap(n => [marker(RST0 + (n & 7)), data]);
+  const file = jpeg(headerOf({ ...once, width, height }), dri(some), ...tables, header, data, ...more);
+  // From the middle of the first to the middle of the second, all have what they would have around them in between.
+  const two = guessed(twice, scans, 1).rgba;
+  const [start, end] = [some >> 1, some + (some >> 1)].map(pixels => pixels * 4);
+  const between = Buffer.alloc((count - 1) * some * 4, two.subarray(start, end));
+  const rgba = Buffer.concat([two.subarray(0, start), between, two.subarray(end)]);
+  const expected = { width: scaled(width, 1), height: scaled(height, 1), rgba };
+  await expectPictures([{ name: way, file, eighths: 1, expected }]);
+});
+
+test("up to 13 bits can be missing", async () => {
+  const random = randomBytes(16);
+  await expectPictures(
+    range(5, 13).map(al => {
+      // In 16 bits, the DC coefficients come to 0, and the highest guess to minus the step.
+      const table = Array(64)
+        .fill(65536 >> al)
+        .with(0, 32768);
+      const frame = frameOf(24, 24, "1x1", { type: SOF2, tables: [table] });
+      for (let i = 0; i < 9; i++) frame.components[0].data[i * 64] = [-200, 200][random() & 1];
+      const scans = [scanOf([0], 0, 0), scanOf([0], 1, 1, 0, al), scanOf([0], 2, 5)];
+      return { name: `${al}`, file: write(frame, scans), expected: guessed(frame, scans) };
+    }),
+  );
+});
+
 test("every component by itself, at any scale", async () => {
   const frame = noise(
     frameOf(70, 60, "2x2,1x1,1x1", { type: SOF2, tables: [steps, steps.toReversed()] }),
@@ -138,6 +174,20 @@ test("every component by itself, at any scale", async () => {
   const file = write(frame, scans);
   await expectPictures(
     range(1, 8).map(eighths => ({ name: `${eighths}`, file, eighths, expected: guessed(frame, scans, eighths) })),
+  );
+});
+
+test("so it is with four", async () => {
+  const frame = noise(frameOf(40, 24, "1x1,1x1,1x1,1x1", { type: SOF2, tables: [steps] }), randomBytes(17), {
+    sparse: 3,
+    ac: 60,
+  });
+  const dc = scanOf(all(frame), 0, 0);
+  await expectPictures(
+    all(frame).map(c => {
+      const scans = [dc, scanOf([c], 1, 5, 0, 1), scanOf([(c + 1) & 3], 1, 63)];
+      return { name: `${c}`, file: write(frame, scans), expected: guessed(frame, scans) };
+    }),
   );
 });
 

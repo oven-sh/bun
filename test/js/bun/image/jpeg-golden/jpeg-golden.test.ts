@@ -16,10 +16,10 @@ const recorded = await loadCases<Cases>(join(import.meta.dir, "cases.json.gz"));
 const cases = { ...observable(recorded), "decode with more behind": observable(recorded, withMoreBehind).decode };
 
 describe.each([
-  ["decode", 667],
-  ["decode with more behind", 667],
-  ["scale", 1158],
-  ["encode", 224],
+  ["decode", 971],
+  ["decode with more behind", 971],
+  ["scale", 1290],
+  ["encode", 229],
 ] as const)("Bun.Image reads and writes JPEG the way it was recorded to: %s", (kind, count) => {
   test("all cases are there", () => {
     expect(cases[kind].length).toBe(count);

@@ -27,6 +27,7 @@ import {
   unfinished,
   write,
   type Frame,
+  type Scan,
 } from "./write";
 
 test("every state of the estimate, and both ways out of it", async () => {
@@ -157,6 +158,18 @@ describe.each([
     );
   });
 
+  test("so it does whichever tables the components have or share", async () => {
+    const numbers = ["000 000", "012 012", "555 999", "377 7c3", "f0f 0ff"];
+    await expectPictures(
+      numbers.map(name => {
+        const [dc, ac] = name.split(" ").map(digits => [...digits].map(digit => parseInt(digit, 16)));
+        const of = (scan: Scan, numbers: number[]) => scan.components.map(c => numbers[c]);
+        const restarted = scans.map(scan => ({ ...scan, dc: of(scan, dc), ac: of(scan, ac), interval: 5 }));
+        return { name, file: write(frame, restarted), expected };
+      }),
+    );
+  });
+
   test("where the data ends, zeros follow", async () => {
     const small = noise(frameOf(16, 16, "1x1", { type }), randomBytes(3), { sparse: 4, ac: 8 });
     small.tables = [[1, ...Array(63).fill(0)]];
@@ -252,7 +265,7 @@ describe("after what cannot be, nothing is read up to the next restart marker", 
     coder.evenly(0);
     for (const bin of [3 * (k - 1) + 2, 3 * (k - 1) + 2, ...range(189, 202)]) coder.decide(bins, bin, 1);
   };
-  /** Two intervals of three blocks. `wrong` writes the first, up to the fault, and `good` a block. */
+  /** Two intervals of three blocks, across or down. `wrong` writes the first, up to the fault, and `good` a block. */
   async function expectBlocks(
     type: number,
     band: [number, number, number, number],
@@ -261,15 +274,19 @@ describe("after what cannot be, nothing is read up to the next restart marker", 
     blocks: number[][],
     earlier = (frame: Frame) => [] as Buffer[],
   ) {
-    // The 0 keeps it from being smoothed.
-    const frame = frameOf(48, 8, "1x1", { type, tables: [eights.with(9, 0)] });
     const [first, second] = [new ArithmeticCoder(), new ArithmeticCoder()];
     wrong(first);
     for (const coder of [first, first, second, second, second]) good(coder);
     const data = [stuffed(first.finish()), marker(RST0), stuffed(second.finish())];
-    const file = jpeg(headerOf(frame), ...earlier(frame), dri(3), sos(frame, scanOf([0], ...band)), ...data);
-    blocks.forEach((coefficients, i) => frame.components[0].data.set(coefficients, i * 64));
-    await expectPictures([{ name: JSON.stringify(blocks), file, expected: pictureOf(frame) }]);
+    await expectPictures(
+      [1, 6].map(rows => {
+        // The 0 keeps it from being smoothed.
+        const frame = frameOf(48 / rows, 8 * rows, "1x1", { type, tables: [eights.with(9, 0)] });
+        const file = jpeg(headerOf(frame), ...earlier(frame), dri(3), sos(frame, scanOf([0], ...band)), ...data);
+        blocks.forEach((coefficients, i) => frame.components[0].data.set(coefficients, i * 64));
+        return { name: `${JSON.stringify(blocks)} in ${rows}`, file, expected: pictureOf(frame) };
+      }),
+    );
   }
 
   test("sequential", async () => {

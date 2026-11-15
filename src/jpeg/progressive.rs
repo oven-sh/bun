@@ -1,14 +1,13 @@
 //! Progressive scans with Huffman coding (jdphuff.c).
 
 use crate::bit_reader::{Bits, Window};
-use crate::block::{Block, Zigzag};
-use crate::header::{MAX_COMPONENTS, Scan, Tables};
+use crate::block::{Block, Zigzag, band, prefetch_after, without_lowest};
+use crate::header::{Scan, ScanKind, Tables};
 use crate::huffman::{
-    Alphabet, DecodeTable, DecodeTables, END, MAX_BITS_AFTER_CODE, QUICK_CODES_IN_REFILL, ZEROS,
+    Alphabet, DecodeTables, MAX_BITS_AFTER_CODE, QUICK_CODES_IN_REFILL, RUN_OF_EOB, RUN_OF_ZRL,
 };
-use crate::input::Input;
-use crate::scan::{EntropyDecoder, Slot};
-use crate::{Error, Result, wrapped_mut};
+use crate::scan::{Allowance, EntropyDecoder, Slot};
+use crate::{Error, MAX_COMPONENTS, Result, wrapped_mut};
 use core::hint::{cold_path, select_unpredictable};
 use core::ops::Range;
 
@@ -18,53 +17,57 @@ pub(crate) struct Progressive<'i, 'a> {
     /// For each block: bit `k` is set if AC coefficient `k`, in zigzag order, is not zero.
     nonzero: &'i mut [u64],
     predictions: [i32; MAX_COMPONENTS],
-    /// For how many more blocks the last code that ended one counts.
-    end_run: usize,
-    window: Window<'i, 'a>,
+    /// `EOBRUN`: how many more blocks the last EOBn ends.
+    eob_run: usize,
+    window: &'i mut Window<'i, 'a>,
     bits: Bits,
+    allowance: &'i mut Allowance,
+}
+
+pub(crate) fn tables_for(scan: &Scan, tables: &Tables) -> Result<DecodeTables> {
+    let numbers = scan.components().iter().filter_map(|it| match scan.kind {
+        ScanKind::DcFirst => Some(it.dc_table),
+        ScanKind::DcRefine => None,
+        _ => Some(it.ac_table),
+    });
+    let (specs, alphabet) = match scan.kind {
+        ScanKind::DcFirst | ScanKind::DcRefine => (&tables.dc, Alphabet::Dc),
+        ScanKind::AcFirst => (&tables.ac, Alphabet::AcFirst { shift: scan.al }),
+        _ => (&tables.ac, Alphabet::AcRefine),
+    };
+    DecodeTables::new(numbers, specs, alphabet)
 }
 
 impl<'i, 'a> Progressive<'i, 'a> {
     pub(crate) fn new(
-        input: &'i mut Input<'a>,
-        tables: &Tables,
+        window: &'i mut Window<'i, 'a>,
+        tables: DecodeTables,
         scan: &Scan,
         nonzero: &'i mut [u64],
-    ) -> Result<Self> {
-        let components = scan.components().iter();
-        let ac = |alphabet| {
-            let numbers = scan.components().iter().map(|it| it.ac_table);
-            DecodeTables::new(numbers, &tables.ac, alphabet)
-        };
-        let dc = |count| {
-            let numbers = components.take(count).map(|it| it.dc_table);
-            DecodeTables::new(numbers, &tables.dc, Alphabet::Dc)
-        };
-        let mut window = Window::new(input);
-        Ok(Self {
+        allowance: &'i mut Allowance,
+    ) -> Self {
+        Self {
             scan: *scan,
-            tables: match (scan.first, scan.previous_shift) {
-                (0, 0) => dc(usize::MAX)?,
-                (0, _) => dc(0)?,
-                (_, 0) => ac(Alphabet::AcFirst { shift: scan.shift })?,
-                _ => ac(Alphabet::AcRefine)?,
-            },
+            tables,
             nonzero,
             predictions: [0; MAX_COMPONENTS],
-            end_run: 0,
+            eob_run: 0,
             bits: window.bits_from(0),
             window,
-        })
+            allowance,
+        }
     }
 
+    /// Like the other three, returns how many MCUs began with data left. Inlined, the DC scans cost the AC scans 2 %.
+    #[inline(never)]
     fn dc_first(
         &mut self,
         blocks: &mut [Block],
         slots: &[Slot],
         mcus: Range<usize>,
     ) -> Result<usize> {
-        let tables = self.tables.dc_by_component(&self.scan)?;
-        let (mut bits, window) = (self.bits, &mut self.window);
+        let tables = self.tables.by_component()?;
+        let (mut bits, window) = (self.bits, &mut *self.window);
         let mut begun = 0;
         for mcu in mcus {
             if !window.has_data(bits) {
@@ -72,37 +75,42 @@ impl<'i, 'a> Progressive<'i, 'a> {
             }
             begun += 1;
             for slot in slots {
-                bits.start_block(window);
-                let code = slot.pick(&tables).find(&mut bits, window);
+                bits.ensure_margin(window);
+                let code = slot.pick(&tables).next_code(&mut bits, window);
                 let difference = code.value(code.take(&mut bits));
                 let prediction = wrapped_mut(&mut self.predictions, slot.component);
                 *prediction = prediction
                     .checked_add(difference)
                     .ok_or(Error::InvalidCoefficient)?;
-                slot.of(blocks, mcu)?.0[0] = (*prediction << self.scan.shift) as i16;
+                let block = slot.of(blocks, mcu)?;
+                prefetch_after(block, slot.step_right);
+                *block.dc_mut() = (*prediction << self.scan.al) as i16;
             }
         }
         self.bits = bits;
         Ok(begun)
     }
 
+    #[inline(never)]
     fn dc_refine(
         &mut self,
         blocks: &mut [Block],
         slots: &[Slot],
         mcus: Range<usize>,
     ) -> Result<usize> {
-        let (mut bits, window) = (self.bits, &mut self.window);
+        let (mut bits, window) = (self.bits, &mut *self.window);
         let mut begun = 0;
         for mcu in mcus {
             if !window.has_data(bits) {
                 break;
             }
             begun += 1;
-            bits.start_block(window);
+            bits.ensure_margin(window);
             bits.refill(window);
             for slot in slots {
-                slot.of(blocks, mcu)?.0[0] |= ((bits.take(1) & 1) << self.scan.shift) as i16;
+                let block = slot.of(blocks, mcu)?;
+                prefetch_after(block, slot.step_right);
+                *block.dc_mut() |= ((bits.take(1) & 1) << self.scan.al) as i16;
             }
         }
         self.bits = bits;
@@ -110,24 +118,22 @@ impl<'i, 'a> Progressive<'i, 'a> {
     }
 
     fn ac_first(&mut self, blocks: &mut [Block], range: Range<usize>) -> Result<usize> {
-        let table = ac_table(&self.tables, &self.scan)?;
-        let (first, last) = (usize::from(self.scan.first), usize::from(self.scan.last));
-        let shift = self.scan.shift;
-        let (mut bits, window) = (self.bits, &mut self.window);
+        let table = self.tables.first()?;
+        let (first, last) = (usize::from(self.scan.ss), usize::from(self.scan.se));
+        let shift = self.scan.al;
+        let (mut bits, window) = (self.bits, &mut *self.window);
         let mut at = range.start;
         while at < range.end && window.has_data(bits) {
-            if self.end_run != 0 {
-                let skipped = self.end_run.min(range.end - at);
-                self.end_run -= skipped;
+            if self.eob_run != 0 {
+                let skipped = self.eob_run.min(range.end - at);
+                self.eob_run -= skipped;
                 at += skipped;
                 continue;
             }
-            let (Some(block), Some(nonzero)) = (blocks.get_mut(at), self.nonzero.get_mut(at))
-            else {
-                return Err(Error::Internal);
-            };
+            let block = blocks.get_mut(at).ok_or(Error::Internal)?;
+            let nonzero = self.nonzero.get_mut(at).ok_or(Error::Internal)?;
             at += 1;
-            bits.start_block(window);
+            bits.ensure_margin(window);
             let (mut k, mut found) = (first, *nonzero);
             'refill: loop {
                 let mut code = table.quick(bits.peek());
@@ -138,8 +144,13 @@ impl<'i, 'a> Progressive<'i, 'a> {
                     let value = (code.value(taken) << shift) as i16;
                     k += code.run();
                     if k >= last {
-                        if k >= END {
-                            self.end_run = code.end_run(taken);
+                        if k >= RUN_OF_EOB {
+                            self.eob_run = code.eob_run(taken);
+                        } else if code.run() == RUN_OF_ZRL {
+                            k -= RUN_OF_ZRL - 16;
+                            if k <= last {
+                                continue 'refill;
+                            }
                         } else {
                             *block.at_mut(k) = value;
                             found |= 1 << k.min(63);
@@ -159,12 +170,14 @@ impl<'i, 'a> Progressive<'i, 'a> {
                 bits.refill(window);
                 let code = table.search(bits.peek());
                 let taken = code.take(&mut bits);
-                if code.run() == END {
-                    self.end_run = code.end_run(taken);
+                if code.run() == RUN_OF_EOB {
+                    self.eob_run = code.eob_run(taken);
                     break;
                 }
-                k += code.run();
-                if code.run() != ZEROS {
+                if code.run() == RUN_OF_ZRL {
+                    k += 16;
+                } else {
+                    k += code.run();
                     let value = (code.value(taken) << shift) as i16;
                     *block.at_mut(k) = value;
                     found &= !(1 << k.min(63));
@@ -182,12 +195,12 @@ impl<'i, 'a> Progressive<'i, 'a> {
     }
 
     fn ac_refine(&mut self, blocks: &mut [Block], range: Range<usize>) -> Result<usize> {
-        let table = ac_table(&self.tables, &self.scan)?;
-        let (first, last) = (u32::from(self.scan.first), u32::from(self.scan.last));
-        let band = u64::MAX << first & u64::MAX >> (63 - last);
-        let bit = 1i16 << self.scan.shift;
-        let (mut bits, window) = (self.bits, &mut self.window);
-        let mut end_run = self.end_run;
+        let table = self.tables.first()?;
+        let (first, last) = (u32::from(self.scan.ss), u32::from(self.scan.se));
+        let band = band(first, last);
+        let bit = 1i16 << self.scan.al;
+        let (mut bits, window) = (self.bits, &mut *self.window);
+        let mut eob_run = self.eob_run;
         let (Some(blocks), Some(nonzero)) = (
             blocks.get_mut(range.start..range.end),
             self.nonzero.get_mut(range),
@@ -197,8 +210,8 @@ impl<'i, 'a> Progressive<'i, 'a> {
         let mut begun = 0;
         for (block, nonzero) in blocks.iter_mut().zip(nonzero) {
             let known = *nonzero & band;
-            if end_run != 0 && known == 0 {
-                end_run -= 1;
+            if eob_run != 0 && known == 0 {
+                eob_run -= 1;
                 begun += usize::from(window.has_data(bits));
                 continue;
             }
@@ -206,9 +219,10 @@ impl<'i, 'a> Progressive<'i, 'a> {
                 break;
             }
             begun += 1;
-            bits.start_block(window);
+            prefetch_after(block, 1);
+            bits.ensure_margin(window);
 
-            // One bit for each coefficient in `known`, the first at the top once they are all there.
+            // The correction bits of `known`, in order.
             let mut corrections = 0u64;
             let mut take_corrections = |bits: &mut Bits, mut count: u32| {
                 while count > MAX_BITS_AFTER_CODE {
@@ -221,35 +235,34 @@ impl<'i, 'a> Progressive<'i, 'a> {
                 corrections = corrections << count | bits.peek() >> 1 >> (63 - count);
                 bits.take(count);
             };
-            let (mut zeros, mut known_ahead) = (band & !known, known);
-            let mut past_the_band = 0;
-            while end_run == 0 && zeros | known_ahead != 0 {
-                let code = table.find(&mut bits, window);
+            let (mut zeros, mut next) = (band & !known, first);
+            let (mut found, mut past_the_band) = (*nonzero, 0);
+            while eob_run == 0 && next <= last {
+                let code = table.next_code(&mut bits, window);
                 let taken = code.take(&mut bits);
-                if code.run() == END {
-                    end_run = code.end_run(taken) + 1;
+                if code.run() == RUN_OF_EOB {
+                    eob_run = code.eob_run(taken) + 1;
                     break;
                 }
                 zeros = without_lowest(zeros, code.run());
-                let through = zeros ^ zeros.wrapping_sub(1);
-                take_corrections(&mut bits, (known_ahead & through).count_ones());
-                known_ahead &= !through;
-                let value = (code.value(taken) << self.scan.shift) as i16;
-                if value != 0 {
-                    if zeros == 0 {
-                        past_the_band = value;
-                        break;
-                    }
-                    *block.at_mut(zeros.trailing_zeros() as usize) = value;
-                    *nonzero |= zeros & through;
+                let value = select_unpredictable(taken & 1 != 0, bit, -bit);
+                if zeros == 0 {
+                    past_the_band = if code.mask() != 0 { value } else { 0 };
+                    break;
                 }
-                zeros &= !through;
+                let k = zeros.trailing_zeros();
+                // All up to `k` that the run does not count are known. `count_ones()` is slower, above all on arm64.
+                take_corrections(&mut bits, k - next - code.run() as u32);
+                if code.mask() != 0 {
+                    *block.at_mut(k as usize) = value;
+                    found |= 1 << k;
+                }
+                (zeros, next) = (zeros & (zeros - 1), k + 1);
             }
-            if end_run != 0 {
-                bits.refill(window);
-                take_corrections(&mut bits, known_ahead.count_ones());
-                end_run -= 1;
-            }
+            *nonzero = found;
+            bits.refill(window);
+            take_corrections(&mut bits, known.unbounded_shr(next).count_ones());
+            eob_run = eob_run.saturating_sub(1);
 
             let mut left = known;
             corrections = corrections.unbounded_shl(64 - known.count_ones());
@@ -266,51 +279,32 @@ impl<'i, 'a> Progressive<'i, 'a> {
                 *nonzero |= 1 << (last + 1).min(63);
             }
         }
-        (self.bits, self.end_run) = (bits, end_run);
+        (self.bits, self.eob_run) = (bits, eob_run);
         Ok(begun)
     }
 }
 
-/// Clears the lowest `count` bits that are set. How many they are cannot be foreseen, but mostly they are few.
-#[inline(always)]
-fn without_lowest(bits: u64, count: usize) -> u64 {
-    let next = |bits: u64| bits & bits.wrapping_sub(1);
-    let (one, two) = (next(bits), next(next(bits)));
-    let mut left = select_unpredictable(
-        count & 2 == 0,
-        select_unpredictable(count & 1 == 0, bits, one),
-        select_unpredictable(count & 1 == 0, two, next(two)),
-    );
-    for _ in 0..count / 4 {
-        left = next(next(next(next(left))));
-    }
-    left
-}
-
-fn ac_table<'t>(tables: &'t DecodeTables, scan: &Scan) -> Result<&'t DecodeTable> {
-    tables.get(scan.components().first().ok_or(Error::Internal)?.ac_table)
-}
-
 impl EntropyDecoder for Progressive<'_, '_> {
-    fn decode(
-        &mut self,
-        blocks: &mut [Block],
-        slots: &[Slot],
-        mcus: Range<usize>,
-    ) -> Result<usize> {
+    fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool> {
         let start = slots.first().map_or(0, |slot| slot.start);
-        match (self.scan.first, self.scan.previous_shift) {
-            (0, 0) => self.dc_first(blocks, slots, mcus),
-            (0, _) => self.dc_refine(blocks, slots, mcus),
-            (_, 0) => self.ac_first(blocks, start + mcus.start..start + mcus.end),
+        let overrun_so_far = self.window.overrun_at(self.bits.position());
+        let begun = match self.scan.kind {
+            ScanKind::DcFirst => self.dc_first(blocks, slots, mcus),
+            ScanKind::DcRefine => self.dc_refine(blocks, slots, mcus),
+            ScanKind::AcFirst => self.ac_first(blocks, start + mcus.start..start + mcus.end),
             _ => self.ac_refine(blocks, start + mcus.start..start + mcus.end),
+        }?;
+        if !self.window.is_last_segment() {
+            let overrun = self.window.overrun_at(self.bits.position());
+            self.allowance.spend(overrun - overrun_so_far)?;
         }
+        Ok(begun > 1)
     }
 
     fn restart(&mut self, number: u8) {
         self.bits = self.window.restart(self.bits, number);
         self.predictions = [0; MAX_COMPONENTS];
-        self.end_run = 0;
+        self.eob_run = 0;
     }
 
     fn has_data(&self) -> bool {

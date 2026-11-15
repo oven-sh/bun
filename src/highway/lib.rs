@@ -1411,10 +1411,19 @@ pub fn png_filter_rgba(row: &[u8], above: &[u8], filtered: [&mut [u8]; 4]) -> [u
 #[repr(C, align(64))]
 pub struct JpegBlock(pub [i16; 64]);
 
-/// The colour kernels work on so many pixels at a time, and touch what belongs to all of them.
+/// The color kernels read and write whole groups of this many pixels: `kPixelGroup` in highway_jpeg.cpp.
 pub const JPEG_PIXEL_GROUP: usize = 32;
 /// The bytes that a kernel may touch past what it needs of a row.
 pub const JPEG_ROW_SLACK: usize = 16;
+
+/// What a JPEG wrapper returns, having done nothing, if its slices do not cover what the kernel touches.
+#[derive(Debug)]
+pub struct JpegMisfit;
+
+#[inline(always)]
+fn jpeg_require(condition: bool) -> Result<(), JpegMisfit> {
+    if condition { Ok(()) } else { Err(JpegMisfit) }
+}
 
 /// Whether `rows` rows of `row_len`, `stride` apart, are within `len`.
 #[inline(always)]
@@ -1425,7 +1434,7 @@ fn rows_fit(len: usize, rows: usize, stride: usize, row_len: usize) -> bool {
         .is_some_and(|end| end <= len)
 }
 
-/// Writes `size` by `size` samples for each of `blocks`, side by side. `size` is 2 to 8, 10, 12 or 14, or nothing happens.
+/// Writes `size` by `size` samples for each of `blocks`, side by side. `size` is 2 to 8, 10, 12 or 14.
 #[inline(always)]
 pub fn jpeg_inverse_transform(
     blocks: &[JpegBlock],
@@ -1433,11 +1442,11 @@ pub fn jpeg_inverse_transform(
     size: usize,
     out: &mut [u8],
     stride: usize,
-) {
-    assert!(size <= JPEG_ROW_SLACK);
+) -> Result<(), JpegMisfit> {
+    jpeg_require(matches!(size, 2..=8 | 10 | 12 | 14))?;
     let row_len = blocks.len() * size + JPEG_ROW_SLACK;
-    assert!(rows_fit(out.len(), size, stride, row_len));
-    // SAFETY: the kernel reads the blocks, and writes less than `row_len` bytes to each row (asserted above).
+    jpeg_require(rows_fit(out.len(), size, stride, row_len))?;
+    // SAFETY: the kernel reads the blocks, and writes less than `row_len` bytes to each row (checked above).
     unsafe {
         highway_jpeg_inverse_transform(
             blocks.as_ptr(),
@@ -1448,6 +1457,7 @@ pub fn jpeg_inverse_transform(
             stride,
         );
     }
+    Ok(())
 }
 
 /// The Cb and Cr of a row of pixels.
@@ -1457,40 +1467,45 @@ pub enum JpegChroma<'a> {
         cb: &'a [u8],
         cr: &'a [u8],
     },
-    /// One sample for two pixels. The rows start with what is left of the first sample.
+    /// One sample for two pixels. The rows start one sample early, with the left neighbor of the first.
     HalfWidth {
         cb: &'a [u8],
         cr: &'a [u8],
     },
-    /// The same, for two rows of pixels as well: the row of samples nearest to this one, then the next nearest.
+    /// One sample for 2 by 2 pixels: the nearest row of samples, then the next nearest. They start early too.
     HalfSize {
         cb: [&'a [u8]; 2],
         cr: [&'a [u8]; 2],
     },
 }
 
-/// Appends `width` pixels to `out`, which has room for whole groups of them. So have all the rows.
+/// Appends `width` pixels to `out`. Its spare capacity and all rows have to cover whole groups.
 #[inline(always)]
-pub fn jpeg_ycc_to_rgba(y: &[u8], chroma: JpegChroma<'_>, width: usize, out: &mut Vec<[u8; 4]>) {
-    assert!(width <= y.len());
+pub fn jpeg_ycc_to_rgba(
+    y: &[u8],
+    chroma: JpegChroma<'_>,
+    width: usize,
+    out: &mut Vec<[u8; 4]>,
+) -> Result<(), JpegMisfit> {
+    jpeg_require(width <= y.len())?;
     let padded = width.next_multiple_of(JPEG_PIXEL_GROUP);
     let half = padded / 2 + JPEG_ROW_SLACK;
     let spare = out.spare_capacity_mut();
-    assert!(padded <= y.len() && padded <= spare.len());
+    jpeg_require(padded <= y.len() && padded <= spare.len())?;
     let (y, to) = (y.as_ptr(), spare.as_mut_ptr().cast::<u8>());
     match chroma {
         JpegChroma::Full { cb, cr } => {
-            assert!(padded <= cb.len().min(cr.len()));
-            // SAFETY: the kernel reads `padded` bytes of each row and writes as many pixels (asserted above).
+            jpeg_require(padded <= cb.len().min(cr.len()))?;
+            // SAFETY: the kernel reads `padded` bytes of each row and writes as many pixels (checked above).
             unsafe { highway_jpeg_ycc_to_rgba(y, cb.as_ptr(), cr.as_ptr(), padded, to) };
         }
         JpegChroma::HalfWidth { cb, cr } => {
-            assert!(half <= cb.len().min(cr.len()));
+            jpeg_require(half <= cb.len().min(cr.len()))?;
             // SAFETY: as above, but it reads less than `half` bytes of `cb` and `cr`.
             unsafe { highway_jpeg_ycc422_to_rgba(y, cb.as_ptr(), cr.as_ptr(), padded, to) };
         }
         JpegChroma::HalfSize { cb, cr } => {
-            assert!(cb.iter().chain(&cr).all(|row| half <= row.len()));
+            jpeg_require(cb.iter().chain(&cr).all(|row| half <= row.len()))?;
             let ([cb_near, cb_far], [cr_near, cr_far]) =
                 (cb.map(<[u8]>::as_ptr), cr.map(<[u8]>::as_ptr));
             // SAFETY: as above, for all four.
@@ -1499,6 +1514,7 @@ pub fn jpeg_ycc_to_rgba(y: &[u8], chroma: JpegChroma<'_>, width: usize, out: &mu
     }
     // SAFETY: the kernel has written `padded` pixels.
     unsafe { out.set_len(out.len() + width) };
+    Ok(())
 }
 
 /// A sample of `cb` and `cr` is the average of 2 by 2 pixels. The rows of `y` are twice `chroma_stride` apart.
@@ -1510,14 +1526,14 @@ pub fn jpeg_rgba_to_ycc420(
     row_pairs: usize,
     [y, cb, cr]: [&mut [u8]; 3],
     chroma_stride: usize,
-) {
-    assert!(width.is_multiple_of(JPEG_PIXEL_GROUP));
-    assert!(row_pairs.max(chroma_stride).max(rgba_stride) <= usize::MAX / 4);
-    assert!(rows_fit(rgba.len(), 2 * row_pairs, rgba_stride, width));
-    assert!(rows_fit(y.len(), 2 * row_pairs, 2 * chroma_stride, width));
+) -> Result<(), JpegMisfit> {
+    jpeg_require(width.is_multiple_of(JPEG_PIXEL_GROUP))?;
+    jpeg_require(row_pairs.max(chroma_stride).max(rgba_stride) <= usize::MAX / 4)?;
+    jpeg_require(rows_fit(rgba.len(), 2 * row_pairs, rgba_stride, width))?;
+    jpeg_require(rows_fit(y.len(), 2 * row_pairs, 2 * chroma_stride, width))?;
     let chroma_len = cb.len().min(cr.len());
-    assert!(rows_fit(chroma_len, row_pairs, chroma_stride, width / 2));
-    // SAFETY: the kernel touches the rows asserted above.
+    jpeg_require(rows_fit(chroma_len, row_pairs, chroma_stride, width / 2))?;
+    // SAFETY: the kernel touches the rows checked above.
     unsafe {
         highway_jpeg_rgba_to_ycc420(
             rgba.as_ptr().cast(),
@@ -1530,6 +1546,7 @@ pub fn jpeg_rgba_to_ycc420(
             chroma_stride,
         );
     }
+    Ok(())
 }
 
 /// Fills `blocks` from 8 rows of samples, `stride` bytes apart.
@@ -1540,13 +1557,13 @@ pub fn jpeg_forward_transform<const MASKS: usize>(
     // A coefficient `c` becomes `(2 * c - (c < 0)) * divisors[0] / 2^15 * divisors[1] / 2^15`, rounded after each division.
     divisors: &[JpegBlock; 2],
     blocks: &mut [JpegBlock],
-    // By coefficient, in zigzag order: it is not zero or, in four masks, bits 0, 1 and above of its magnitude, and `c < 0`.
+    // A bit for each coefficient, in zigzag order: nonzero or, in four masks, magnitude bit 0, bit 1, higher bits, and `c < 0`.
     masks: &mut [[u64; MASKS]],
-) {
+) -> Result<(), JpegMisfit> {
     const { assert!(MASKS == 1 || MASKS == 4) };
-    assert_eq!(blocks.len(), masks.len());
-    assert!(rows_fit(samples.len(), 8, stride, 8 * blocks.len()));
-    // SAFETY: the kernel reads 8 bytes of each row for each block, and writes the block and its masks (asserted above).
+    jpeg_require(blocks.len() == masks.len())?;
+    jpeg_require(rows_fit(samples.len(), 8, stride, 8 * blocks.len()))?;
+    // SAFETY: the kernel reads 8 bytes of each row for each block, and writes the block and its masks (checked above).
     unsafe {
         highway_jpeg_forward_transform(
             samples.as_ptr(),
@@ -1558,6 +1575,7 @@ pub fn jpeg_forward_transform<const MASKS: usize>(
             MASKS == 4,
         );
     }
+    Ok(())
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

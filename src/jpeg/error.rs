@@ -22,6 +22,8 @@ pub enum Error {
     InvalidCoefficient,
     #[error("component without a scan")]
     MissingScan,
+    #[error("allowance spent")]
+    AllowanceSpent,
     #[error("unsupported kind of JPEG")]
     Unsupported,
     #[error("invalid image size")]
@@ -38,6 +40,12 @@ pub enum Error {
 impl From<std::collections::TryReserveError> for Error {
     fn from(_: std::collections::TryReserveError) -> Self {
         Self::Alloc(bun_alloc::AllocError)
+    }
+}
+
+impl From<bun_highway::JpegMisfit> for Error {
+    fn from(_: bun_highway::JpegMisfit) -> Self {
+        Self::Internal
     }
 }
 

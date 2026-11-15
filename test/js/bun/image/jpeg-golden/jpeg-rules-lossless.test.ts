@@ -21,6 +21,7 @@ import {
   adobe,
   all,
   as,
+  coded,
   copyOf,
   dht,
   dri,
@@ -29,6 +30,7 @@ import {
   jpeg,
   marker,
   noise,
+  predict,
   RST0,
   scanOf,
   sof,
@@ -114,26 +116,23 @@ test("with arithmetic coding, only the size can be had", async () => {
 
 const small = frameOf(2, 2, three, { type, precision: 5 });
 const none = dht(2, tableOf([0], [1]));
-const twos = { dc: [2, 2, 2] };
+const [zeros, twos] = [0, 2].map(number => ({ dc: Array(3).fill(number) }));
 
 test("the predictor is 1 to 7, a bit has to be left, and the other fields are 0", async () => {
-  const first = (ss: number, se: number, both: number) =>
-    outcome(jpeg(sof(small), none, sos(small, scanOf([0, 1, 2], ss, se, both >> 4, both & 15, twos))));
-  const later = (ss: number, se: number, both: number) =>
-    outcome(
-      jpeg(
-        sof(small),
-        none,
-        ...[lossless([0, 1], 1, 0, twos), scanOf([2], ss, se, both >> 4, both & 15, twos)].map(scan =>
-          sos(small, scan),
-        ),
-      ),
-    );
   const some = [...range(0, 17), 63, 255];
-  for (const of of [first, later]) {
+  // In the only scan, in a later one, and in one that the picture could do without.
+  for (const [components, ...before] of [[[0, 1, 2]], [[2], [0, 1]], [[2], [0, 1], [2]]]) {
+    const start = [sof(small), none, ...before.map(group => sos(small, lossless(group, 1, 0, twos)))];
+    const of = (ss: number, se: number, both: number) =>
+      outcome(jpeg(...start, sos(small, scanOf(components, ss, se, both >> 4, both & 15, twos))));
     expect((await where(some, ss => of(ss, 0, 0)))[fine]).toEqual(range(1, 7));
     expect((await where(some, se => of(1, se, 0)))[fine]).toEqual([0]);
     expect((await where(some, both => of(1, 0, both)))[fine]).toEqual(range(0, 4));
+  }
+  for (const precision of [2, 7, 8]) {
+    const of = (al: number) =>
+      outcome(jpeg(sof({ ...small, precision }), none, sos(small, lossless([0, 1, 2], 1, al, twos))));
+    expect((await where(range(0, 15), of))[fine]).toEqual(range(0, precision - 1));
   }
 });
 
@@ -200,14 +199,20 @@ test("components can be in one scan or in several, each with its own predictor a
 
 test("but each has to be in one", async () => {
   const layouts = ["0", "01", "12", "0 2", "0 0 0", "0 1 2"];
-  const of = (name: string) =>
-    outcome(
-      write(
-        small,
-        name.split(" ").map(group => lossless([...group].map(Number))),
-      ),
-    );
-  expect(await where(layouts, of)).toEqual({ [headerOnly]: layouts.slice(0, 5), [fine]: layouts.slice(5) });
+  for (const frame of [small, frameOf(2, 1, three, { type })]) {
+    const of = (name: string) =>
+      outcome(
+        write(
+          frame,
+          name.split(" ").map(group => lossless([...group].map(Number))),
+        ),
+      );
+    expect(await where(layouts, of)).toEqual({ [headerOnly]: layouts.slice(0, 5), [fine]: layouts.slice(5) });
+  }
+  const four = frameOf(2, 1, "1x1,1x1,1x1,1x1", { type });
+  const without = (c: number) =>
+    outcome(write(four, [lossless(all(four).filter(other => other !== c)), lossless([c ? 0 : 1])]));
+  expect(await where(all(four), without)).toEqual({ [headerOnly]: all(four) });
   expect(await outcome(write(small, [lossless([0, 1, 2]), lossless([0])]))).toBe(headerOnly);
   const apart = write(small, [lossless([0]), lossless([1, 2])]);
   expect(await outcome(jpeg(apart.subarray(2, -2), marker(0xf0)))).toBe(headerOnly);
@@ -242,6 +247,31 @@ test("samples that stand for several pixels are repeated", async () => {
   });
 });
 
+test.each<[string, string[]]>([
+  ["2x2,1x1,1x1", ["01 2", "12 0", "1 02"]],
+  ["1x2,2x1,1x1", ["01 2", "0 12", "02 1"]],
+  ["1x1,1x3,3x1", ["01 2", "12 0", "02 1"]],
+  ["4x1,2x1,1x4", ["01 2", "0 21", "1 02"]],
+  ["2x2,2x2,2x2", ["01 2", "12 0", "0 1 2"]],
+  ["2x1,1x1,1x2,2x2", ["03 12", "012 3", "2 013"]],
+])("some of the components in one scan and some in another, at any size: %s", async (sampling, layouts) => {
+  const random = randomBytes(11);
+  const sides = [1, 2, 3, 5, 7, 8, 13];
+  const sizes = sides.flatMap(width => sides.map(height => [width, height]));
+  await expectPictures(
+    sizes.flatMap(([width, height], i) => {
+      const frame = noise(frameOf(width, height, sampling, { type }), random);
+      const expected = pictureOf(frame);
+      return layouts
+        .filter((_, nth) => !slow || (i + nth) % 3 === 0)
+        .map(layout => {
+          const scans = layout.split(" ").map((group, nth) => lossless([...group].map(Number), 1 + ((i + nth) % 7)));
+          return { name: `${width} by ${height}, ${layout}`, file: write(frame, scans), expected };
+        });
+    }),
+  );
+});
+
 test("rows of any length", async () => {
   const random = randomBytes(6);
   await expectPictures(
@@ -255,6 +285,28 @@ test("rows of any length", async () => {
       };
     }),
   );
+});
+
+test.each(["012", "0 1 2"])("thousands of samples across or down, in scans of %s", async layout => {
+  const [some, length] = [20, slow ? 8200 : 65500];
+  const row = noise(frameOf(some, 1, three, { type }), randomBytes(12));
+  // Two bytes for each difference, and at the end the sample that the first is predicted from. So the data can repeat.
+  const tables = { 0: tableOf(range(0, 8), range(8, 16).toReversed()) };
+  for (const { data } of row.components) data[some - 1] = 128;
+  const scans = layout.split(" ").map(group => coded(row, scanOf([...group].map(Number), 1, 0, 0, 0, zeros), tables));
+  const of = (width: number, height: number, interval = width * height) => {
+    const parts = scans.flatMap(({ header, data }) => {
+      const each = Buffer.alloc((data.length * interval) / some, data);
+      const more = range(2, (width * height) / interval);
+      return [header, each, ...more.flatMap(n => [marker(RST0 + ((n - 2) & 7)), each])];
+    });
+    return {
+      name: `${width} by ${height}, ${interval}`,
+      file: jpeg(sof({ ...row, width, height }), dht(0, tables[0]), dri(interval), ...parts),
+      expected: { width, height, rgba: Buffer.alloc(width * height * 4, pictureOf(row).rgba) },
+    };
+  };
+  await expectPictures([of(length, 3, length), of(1, length), of(1, length, length / 5)]);
 });
 
 test("restart markers come after whole rows, and the next row is predicted like the first", async () => {
@@ -321,6 +373,42 @@ test("where the data ends, the row that has begun is read from zeros, and the ot
   expect(await reds(0, 0, [0b1011_01_10], [0b11_1011_10])).toEqual([3, 4, 6, 7, 3, 6, 0, 0]);
   expect(await reds(0, 0)).toEqual([-1, -2, 0, 0, 0, 0, 0, 0]);
   expect(await reds(0, 2, threes)).toEqual([12, 24, 8, 20, 0, 0, 0, 0]);
+});
+
+test("so it is in a longer row, by the table of each component", async () => {
+  const frame = frameOf(50, 2, three, { type });
+  const sizes = [1, 2, 0];
+  frame.components.forEach(({ data }, c) =>
+    data.forEach((_, i) => (data[i] = i < 50 ? (128 - (i + 1) * ((1 << sizes[c]) - 1)) & 255 : 128)),
+  );
+  const tables = sizes.map((size, c) => dht(c, tableOf([size], [1 + c])));
+  await expectPictures(
+    [0, 1, 20].map(length => ({
+      name: `${length}`,
+      file: jpeg(sof(frame), ...tables, sos(frame, lossless([0, 1, 2])), Buffer.alloc(length)),
+      expected: pictureOf(frame),
+    })),
+  );
+});
+
+test("and in a later row, with all bits of the differences", async () => {
+  const frame = frameOf(50, 2, three, { type });
+  const sizes = [9, 12, 15];
+  frame.components.forEach(({ data }, c) =>
+    data.forEach((_, i) => {
+      const predicted = i > 50 ? predict(7, data[i - 1], data[i - 50], 0) : i ? data[i % 50 ? i - 1 : 0] : 128;
+      data[i] = (predicted + 1 - (1 << sizes[c])) & 0xffff;
+    }),
+  );
+  const tables = sizes.map((size, c) => dht(c, tableOf([size], [1])));
+  // A row takes 50 times 39 bits.
+  await expectPictures(
+    [244, 250, 300, 488].map(length => ({
+      name: `${length}`,
+      file: jpeg(sof(frame), ...tables, sos(frame, lossless([0, 1, 2], 7)), Buffer.alloc(length)),
+      expected: pictureOf(frame),
+    })),
+  );
 });
 
 test("restart markers that are out of turn", async () => {

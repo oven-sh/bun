@@ -3,6 +3,7 @@
 use super::codecs;
 
 fn decode_error(error: bun_jpeg::Error) -> codecs::Error {
+    debug_assert_ne!(error, bun_jpeg::Error::Internal);
     match error {
         bun_jpeg::Error::Alloc(_) => codecs::Error::OutOfMemory,
         _ => codecs::Error::DecodeFailed,
@@ -10,6 +11,7 @@ fn decode_error(error: bun_jpeg::Error) -> codecs::Error {
 }
 
 fn encode_error(error: bun_jpeg::Error) -> codecs::Error {
+    debug_assert_ne!(error, bun_jpeg::Error::Internal);
     match error {
         bun_jpeg::Error::Alloc(_) => codecs::Error::OutOfMemory,
         _ => codecs::Error::EncodeFailed,
@@ -29,6 +31,7 @@ fn eighths(width: u32, height: u32, hint: codecs::DecodeHint) -> u8 {
         return 8;
     }
     let scaled = |eighths: u8| [width, height].map(|size| (size * u32::from(eighths)).div_ceil(8));
+    // Backwards, for the largest of the scales that give the same size.
     (1..=8)
         .rev()
         .filter(|&eighths| {

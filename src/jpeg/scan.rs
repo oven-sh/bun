@@ -1,21 +1,42 @@
 //! What all scans have in common: the order of their blocks, and restarts.
 
 use crate::block::Block;
-use crate::header::{Frame, Grid, MAX_COMPONENTS, Process, Scan};
-use crate::{Error, Result, wrapped};
+use crate::header::{Frame, Grid, Process, Scan, ScanKind};
+use crate::{Error, MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::ops::Range;
 
 const MAX_BLOCKS_IN_MCU: usize = 10;
 
-/// Where the blocks of a component are among those of all.
+/// Where the blocks of a component are in a buffer that all components share.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Region {
     pub(crate) start: usize,
-    /// How far it is from one row to the next.
     pub(crate) stride: usize,
 }
 
-/// What a component has in each MCU.
+/// The components back to back.
+pub(crate) struct Regions {
+    by_component: [Region; MAX_COMPONENTS],
+    pub(crate) len: usize,
+}
+
+impl Regions {
+    /// `sizes` has the index in the frame, the stride and the number of rows of each component.
+    pub(crate) fn new(sizes: impl Iterator<Item = [usize; 3]>) -> Self {
+        let (mut by_component, mut len) = ([Region::default(); MAX_COMPONENTS], 0);
+        for [index, stride, rows] in sizes {
+            *wrapped_mut(&mut by_component, index) = Region { start: len, stride };
+            len += rows * stride;
+        }
+        Self { by_component, len }
+    }
+
+    pub(crate) fn of(&self, index: usize) -> Region {
+        *wrapped(&self.by_component, index)
+    }
+}
+
+/// A component's share of an MCU.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Part {
     /// In `Frame::components()`.
@@ -24,9 +45,25 @@ pub(crate) struct Part {
     pub(crate) v: usize,
 }
 
+fn has_valid_parameters(frame: &Frame, scan: &Scan) -> bool {
+    let Scan { ss, se, ah, al, .. } = *scan;
+    match frame.process {
+        Process::Sequential => true,
+        Process::Progressive => {
+            let is_band = match ss {
+                0 => se == 0,
+                _ => (ss..64).contains(&se) && scan.components().len() == 1,
+            };
+            is_band && (ah == 0 || ah - 1 == al) && al <= 13
+        }
+        Process::Lossless => matches!((ss, se, ah), (1..=7, 0, 0)) && al < frame.precision,
+    }
+}
+
+/// Only valid scans have one.
 pub(crate) struct Layout {
     pub(crate) mcus: Grid,
-    /// How many rows of them a row of MCUs of the frame has.
+    /// How many rows of `mcus` make a strip: one row of the frame's interleaved MCUs.
     pub(crate) rows_in_strip: usize,
     pub(crate) blocks_in_mcu: usize,
     parts: [Part; MAX_COMPONENTS],
@@ -40,7 +77,7 @@ impl Layout {
         for (part, in_scan) in parts.iter_mut().zip(scan.components()) {
             let index = usize::from(in_scan.index);
             let component = *frame.components().get(index).ok_or(Error::Internal)?;
-            let (mut h, mut v) = (component.h.into(), component.v.into());
+            let (mut h, mut v) = (component.h, component.v);
             if let [_] = scan.components() {
                 mcus = frame.size_in_blocks(component);
                 (rows_in_strip, h, v) = (v, 1, 1);
@@ -48,7 +85,7 @@ impl Layout {
             *part = Part { index, h, v };
         }
         let blocks_in_mcu = parts.iter().map(|part| part.h * part.v).sum();
-        if blocks_in_mcu > MAX_BLOCKS_IN_MCU {
+        if blocks_in_mcu > MAX_BLOCKS_IN_MCU || !has_valid_parameters(frame, scan) {
             return Err(Error::InvalidScan);
         }
         Ok(Self {
@@ -64,17 +101,16 @@ impl Layout {
         self.parts.get(..self.count).unwrap_or_default()
     }
 
-    /// `regions` go by the index of the component in the frame.
-    pub(crate) fn slots(&self, regions: &[Region; MAX_COMPONENTS]) -> Slots {
+    pub(crate) fn slots(&self, regions: &Regions) -> Slots {
         let mut slots = [Slot::default(); MAX_BLOCKS_IN_MCU];
         let mut free = slots.iter_mut();
         for (component, part) in self.parts().iter().enumerate() {
-            let region = wrapped(regions, part.index);
+            let region = regions.of(part.index);
             for y in 0..part.v {
                 for (x, slot) in (0..part.h).zip(&mut free) {
                     *slot = Slot {
                         start: region.start + y * region.stride + x,
-                        step: part.h,
+                        step_right: part.h,
                         step_down: part.v * region.stride,
                         component,
                     };
@@ -85,29 +121,74 @@ impl Layout {
     }
 }
 
-/// How much more the scans of a frame can cover, by weight.
+/// How many more steps the scans of a file may take. A step is what one arithmetic decision takes.
 pub(crate) struct Allowance(usize);
 
 impl Allowance {
-    /// The usual progressions take 300 for each block. Any other fits if the image is small.
-    pub(crate) fn new(frame: &Frame) -> Self {
-        Self(512 * frame.block_count() + (1 << 26))
+    /// Enough for each of 14 bits of 64 coefficients to have a Huffman-coded scan of its own.
+    const SCANS: usize = 1024;
+    /// Enough for the same with arithmetic coding, if the image is small.
+    const PER_FILE: usize = 1 << 29;
+    /// What each bit of an arithmetic-coded file adds, and each bit that is read past its data costs.
+    const PER_BIT: usize = 4;
+    /// To start a scan, a row of MCUs and an arithmetic-coded restart interval.
+    const SCAN_COST: usize = 1 << 15;
+    const ROW_COST: usize = 12;
+    pub(crate) const INTERVAL_COST: usize = 48;
+    /// To skip a block of a progressive scan, as Huffman coding can, and to load it.
+    const SKIP_COST: usize = 1;
+    const LOAD_COST: usize = 14;
+    /// The least that a block costs in [`ScanKind::Whole`].
+    const WHOLE_BLOCK_COST: usize = Self::SCANS * Self::SKIP_COST / 2;
+    /// [`Self::WHOLE_BLOCK_COST`] covers a restart interval until it has read this many bits past its data.
+    const FREE_OVERRUN: usize = 256;
+
+    /// It goes by the size in whole MCUs, whatever the components and their sampling.
+    pub(crate) fn new(frame: &Frame, file_len: usize) -> Self {
+        let mcus = frame.size_in_mcus();
+        let (wide, high) = (mcus.wide * frame.max_h(), mcus.high * frame.max_v());
+        let scan = MAX_COMPONENTS * (Self::ROW_COST + Self::SKIP_COST * wide) * high;
+        let bits = if frame.is_arithmetic { 8 * file_len } else { 0 };
+        Self(Self::SCANS * scan + Self::PER_BIT * bits + Self::PER_FILE)
     }
 
-    pub(crate) fn spend(&mut self, frame: &Frame, scan: &Scan, layout: &Layout) -> Result<()> {
-        let weight = match (frame.process, frame.arithmetic) {
-            (Process::Progressive, false) => 8,
-            (Process::Progressive, true) => match (scan.first, scan.previous_shift) {
-                (0, 0) => 64,
-                (0, _) => 24,
-                _ => 9 + usize::from(scan.last - scan.first),
-            },
-            _ => 256,
+    /// Pays for the part of a scan that does not depend on its data.
+    pub(crate) fn spend_on(&mut self, frame: &Frame, scan: &Scan, layout: &Layout) -> Result<()> {
+        let block_cost = match (scan.kind, frame.is_arithmetic) {
+            (ScanKind::Whole, _) => Self::WHOLE_BLOCK_COST,
+            (_, false) => Self::SKIP_COST,
+            (_, true) => Self::LOAD_COST,
         };
-        let blocks = layout.mcus.wide * layout.mcus.high * layout.blocks_in_mcu;
-        let left = self.0.checked_sub(4096 + weight * blocks);
-        self.0 = left.ok_or(Error::InvalidScan)?;
+        let row_cost = Self::ROW_COST + block_cost * layout.mcus.wide * layout.blocks_in_mcu;
+        self.spend(Self::SCAN_COST + row_cost * layout.mcus.high)
+    }
+
+    /// Pays for arithmetic-coded `blocks` that took `steps`, and `overrun` of the bits past the data.
+    pub(crate) fn spend_on_decisions(
+        &mut self,
+        kind: ScanKind,
+        blocks: usize,
+        steps: usize,
+        overrun: Range<usize>,
+    ) -> Result<()> {
+        let steps = steps + Self::PER_BIT * overrun.len();
+        match kind {
+            ScanKind::Whole if overrun.end < Self::FREE_OVERRUN => Ok(()),
+            ScanKind::Whole => self.spend(steps.saturating_sub(Self::WHOLE_BLOCK_COST * blocks)),
+            _ => self.spend(steps),
+        }
+    }
+
+    pub(crate) fn spend(&mut self, steps: usize) -> Result<()> {
+        self.0 = self.0.saturating_sub(steps);
+        if self.is_spent() {
+            return Err(Error::AllowanceSpent);
+        }
         Ok(())
+    }
+
+    pub(crate) fn is_spent(&self) -> bool {
+        self.0 == 0
     }
 }
 
@@ -125,14 +206,14 @@ impl Slots {
     }
 }
 
-/// One of the blocks of an MCU.
+/// One block of an MCU.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Slot {
-    /// Where the block of the first MCU in the row is.
+    /// Its index for the first MCU of the row.
     pub(crate) start: usize,
-    /// How far it is from there to the block of the next.
-    pub(crate) step: usize,
-    /// And to that of the one below.
+    /// From one MCU to the next.
+    pub(crate) step_right: usize,
+    /// From one row of MCUs to the next.
     step_down: usize,
     /// In `Scan::components()`.
     pub(crate) component: usize,
@@ -141,7 +222,7 @@ pub(crate) struct Slot {
 impl Slot {
     #[inline(always)]
     pub(crate) fn index(&self, mcu: usize) -> usize {
-        self.start + mcu * self.step
+        self.start + mcu * self.step_right
     }
 
     #[inline(always)]
@@ -149,21 +230,45 @@ impl Slot {
         blocks.get_mut(self.index(mcu)).ok_or(Error::Internal)
     }
 
-    /// Of an array that has something for each component of the scan.
+    /// `from` is indexed by the components of the scan.
     #[inline(always)]
     pub(crate) fn pick<T: Copy>(&self, from: &[T; MAX_COMPONENTS]) -> T {
         *wrapped(from, self.component)
     }
 }
 
+/// Used as `dyn`, so that the loops over rows exist once. They only call it once for each row or batch.
 pub(crate) trait EntropyDecoder {
-    /// There is no restart marker between `mcus`. Returns for how many of them there was data left to begin with.
-    fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>)
-    -> Result<usize>;
+    /// `mcus` are within one restart interval. Returns whether any but the first began while [`Self::has_data`].
+    fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool>;
     fn restart(&mut self, number: u8);
-    fn has_data(&self) -> bool;
+    /// Only smoothing asks, and only Huffman coding can tell.
+    fn has_data(&self) -> bool {
+        true
+    }
     /// Whether the rest of the scan leaves all blocks as they are.
     fn is_over(&self) -> bool;
+
+    /// Returns whether any of `mcus` began with data left. As in jdcoefct.c, that is judged before its restart.
+    fn decode_with_restarts(
+        &mut self,
+        restarts: &mut Restarts,
+        blocks: &mut [Block],
+        slots: &[Slot],
+        mut mcus: Range<usize>,
+    ) -> Result<bool> {
+        let mut had_data = false;
+        while !mcus.is_empty() && !self.is_over() {
+            had_data |= self.has_data();
+            if let Some(number) = restarts.take_due() {
+                self.restart(number);
+            }
+            let end = mcus.start + restarts.advance(mcus.len());
+            had_data |= self.decode(blocks, slots, mcus.start..end)?;
+            mcus.start = end;
+        }
+        Ok(had_data)
+    }
 }
 
 pub(crate) struct Restarts {
@@ -173,7 +278,7 @@ pub(crate) struct Restarts {
 }
 
 impl Restarts {
-    /// 0 is for no restarts.
+    /// 0 means no restarts.
     pub(crate) fn new(interval: usize) -> Self {
         let interval = if interval == 0 { usize::MAX } else { interval };
         Self {
@@ -184,7 +289,7 @@ impl Restarts {
     }
 
     /// The number of the marker that is due, if one is.
-    pub(crate) fn due(&mut self) -> Option<u8> {
+    pub(crate) fn take_due(&mut self) -> Option<u8> {
         if self.left != 0 {
             return None;
         }
@@ -193,31 +298,10 @@ impl Restarts {
         Some(number)
     }
 
-    /// How many of `count` come before the next marker.
+    /// Counts off up to `count` MCUs, as far as the next marker.
     pub(crate) fn advance(&mut self, count: usize) -> usize {
         let count = count.min(self.left);
         self.left -= count;
         count
-    }
-
-    /// Returns whether there was data left when one of `mcus` began. As in jdcoefct.c, that is before its restart.
-    pub(crate) fn decode(
-        &mut self,
-        decoder: &mut dyn EntropyDecoder,
-        blocks: &mut [Block],
-        slots: &[Slot],
-        mut mcus: Range<usize>,
-    ) -> Result<bool> {
-        let mut had_data = false;
-        while !mcus.is_empty() && !decoder.is_over() {
-            had_data |= decoder.has_data();
-            if let Some(number) = self.due() {
-                decoder.restart(number);
-            }
-            let end = mcus.start + self.advance(mcus.len());
-            had_data |= decoder.decode(blocks, slots, mcus.start..end)? > 1;
-            mcus.start = end;
-        }
-        Ok(had_data)
     }
 }

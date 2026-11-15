@@ -62,7 +62,8 @@ export async function expectPictures(cases: Case[]) {
 }
 
 /** What follows a file is taken to be EOI anyway. A decoder may take a shorter way while much of the file is left. */
-export const withMoreBehind = (file: Uint8Array) => Buffer.concat([file, Buffer.alloc(2048, marker(EOI))]);
+export const withMoreBehind = (file: Uint8Array) => Buffer.concat([file, Buffer.alloc(much, marker(EOI))]);
+export const much = 2048;
 
 export const bothWays = (cases: Case[]) =>
   cases.flatMap((short, i) => {

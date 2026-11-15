@@ -20,6 +20,7 @@ import { before, behind, data, frame, gray, header, scan, scanned, steps } from 
 import {
   AC,
   adobe,
+  all,
   APP0,
   APP14,
   APP2,
@@ -37,6 +38,7 @@ import {
   frameOf,
   headerOf,
   icc,
+  isProgressive,
   jfif,
   jpeg,
   marker,
@@ -288,11 +290,12 @@ describe("SOF", () => {
 
   test("an MCU has up to 10 blocks", async () => {
     const samplings = ["4x2,1x1,1x1", "2x2,2x2,2x1", "2x2,1x1,1x1,2x2", "3x3,1x1,1x1", "2x2,2x2,2x2", "4x4,1x1,1x1"];
-    for (const type of [SOF0, SOF9]) {
-      expect(await where(samplings, sampling => outcome(write(frameOf(8, 8, sampling, { type }))))).toEqual({
-        [fine]: samplings.slice(0, 3),
-        [headerOnly]: samplings.slice(3),
-      });
+    for (const type of [SOF0, SOF2, SOF9, SOF10]) {
+      const of = (sampling: string) => {
+        const sampled = frameOf(8, 8, sampling, { type });
+        return outcome(write(sampled, [scanOf(all(sampled), 0, isProgressive(sampled) ? 0 : 63)]));
+      };
+      expect(await where(samplings, of)).toEqual({ [fine]: samplings.slice(0, 3), [headerOnly]: samplings.slice(3) });
     }
     // What counts is the scan, the first or a later one.
     const twelve = frameOf(8, 8, "2x2,2x2,2x2");

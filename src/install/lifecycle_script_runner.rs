@@ -518,15 +518,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if key == 0 { &self.stdout } else { &self.stderr }
     }
 
+    /// `true` if the reader has ended.
+    fn read(&mut self, key: u32, event: IoEvent) -> bool {
+        let event_loop = self.event_loop().as_event_loop_ctx();
+        let status = self.output(key).read(event_loop, Some(event));
+        self.note_read_status(status)
+    }
+
     /// SAFETY: `this` is what [`Self::watch`] handed out. It may be freed.
     pub unsafe fn on_io(this: *mut Self, key: u32, event: IoEvent) {
         // SAFETY: fn contract. Nothing else runs until `maybe_finished`.
-        let script = unsafe { &mut *this };
-        let event_loop = script.event_loop().as_event_loop_ctx();
-        let status = script.output(key).read(event_loop, Some(event));
-        if script.note_read_status(status) {
-            // SAFETY: fn contract.
-            unsafe { Self::maybe_finished(this) };
+        unsafe {
+            if (*this).read(key, event) {
+                Self::maybe_finished(this);
+            }
         }
     }
 

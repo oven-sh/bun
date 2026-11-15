@@ -301,19 +301,20 @@ pub mod ffi {
     /// Count u16 code units up to (and
     /// excluding) the first NUL. Single audited funnel for the hand-rolled
     /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
-    /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, env-block
+    /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
+    /// `napi_create_string_utf16`, env-block
     /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
     /// `CStr::from_ptr`.
     ///
     /// # Safety
     /// `p` must be non-null and point to a NUL-terminated u16 sequence
-    /// readable up to and including the terminator.
+    /// readable up to and including the terminator. It can be unaligned.
     #[inline(always)]
     pub unsafe fn wcslen(p: *const u16) -> usize {
         debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
         let mut n = 0usize;
         // SAFETY: caller contract — non-null, NUL-terminated.
-        while unsafe { *p.add(n) } != 0 {
+        while unsafe { p.add(n).read_unaligned() } != 0 {
             n += 1;
         }
         n
@@ -323,7 +324,7 @@ pub mod ffi {
     /// as a `&[u16]`. Dominant shape at call sites.
     ///
     /// # Safety
-    /// Same contract as [`wcslen`]; the returned borrow must not outlive the
+    /// Same contract as [`wcslen`], and `p` is aligned; the returned borrow must not outlive the
     /// allocation backing `p`.
     #[inline(always)]
     pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {

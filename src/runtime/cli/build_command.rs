@@ -27,7 +27,7 @@ fn cli_start_time() -> i128 {
 /// such method yet; loop on `write_all`.
 #[inline]
 fn splat_byte_all(
-    writer: &mut bun_core::io::Writer,
+    writer: &bun_core::io::Writer,
     byte: u8,
     count: usize,
 ) -> Result<(), crate::Error> {
@@ -224,9 +224,7 @@ impl BuildCommand {
                 sources: &mut core::iter::empty(),
             };
             if !type_check(checked, log_ref) {
-                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ))?;
+                log_ref.print(Output::error_writer())?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
@@ -652,9 +650,7 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ))?;
+                    log_ref.print(Output::error_writer())?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -702,9 +698,7 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                            Output::error_writer(),
-                        ))?;
+                        log_ref.print(Output::error_writer())?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -973,7 +967,7 @@ impl BuildCommand {
                         file.output_kind == options::OutputKind::EntryPoint
                     };
                     let entry_points = output_files.iter().filter(is_entry_point);
-                    let sources = entry_points.map(|file| file.src_path.text);
+                    let sources = entry_points.map(|file| &*file.src_path);
                     let written = ctx.args.entry_points.iter().map(|path| &path[..]);
                     let checked = super::compile_command::check_entry_points_are_kept(
                         outfile, written, sources,
@@ -1320,9 +1314,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ))?;
+        log_ref.print(Output::error_writer())?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

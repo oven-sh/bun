@@ -1930,9 +1930,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     this.remaining_fds().set(0);
 
     #[cfg(not(windows))]
-    let resolved_argv0: Option<*const core::ffi::c_char> = None;
+    let resolved_argv0 = None;
     #[cfg(windows)]
-    let resolved_argv0: Option<*const core::ffi::c_char>;
+    let resolved_argv0;
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the spawn below.
     #[cfg(windows)]
@@ -1949,7 +1949,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             .unwrap_or(b"");
         let argv0 = argv[0].to_bytes();
         match bun_which::which(&mut path_buf, path_env, b"", argv0) {
-            Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
+            Some(p) => resolved_argv0 = Some(p.into()),
             None => {
                 this.set_err(format_args!(
                     "Could not find '{}' in PATH",
@@ -1960,24 +1960,21 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     }
     #[cfg(unix)]
-    let env = spawn::SpawnEnv::Inherit;
+    let env = None;
     #[cfg(windows)]
     let envp_owned;
-    #[cfg(windows)]
-    let env_strings: Vec<&CStr>;
     #[cfg(windows)]
     let env = {
         match VirtualMachine::get()
             .transpiler
             .get()
-            .env_mut()
+            .env()
             .map
             .create_null_delimited_env_map()
         {
             Ok(v) => {
                 envp_owned = v;
-                env_strings = envp_owned.iter().collect();
-                spawn::SpawnEnv::Strings(&env_strings)
+                Some(envp_owned.as_list())
             }
             Err(_) => {
                 this.set_err(format_args!("Failed to create environment block"));

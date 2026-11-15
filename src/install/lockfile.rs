@@ -470,7 +470,7 @@ impl LoadResultErr {
 
 pub(crate) fn print_log_errors(log: &bun_ast::Log) {
     if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
     }
 }
 
@@ -1341,54 +1341,20 @@ impl Lockfile {
 
                 workspace_paths_builder.allocate()?;
 
-                // SAFETY: capacity reserved by `ensure_total_capacity` above; every
-                // slot in `0..old.count()` is overwritten by the copy/zip loops below
-                // before `re_index()` reads them.
-                unsafe {
-                    new.workspace_paths
-                        .set_entries_len(old.workspace_paths.count())
-                };
-
-                debug_assert_eq!(
-                    old.workspace_paths.values().len(),
-                    new.workspace_paths.values().len()
+                new.workspace_paths.set_entries(
+                    old.workspace_paths.keys(),
+                    (old.workspace_paths.values().iter()).map(|path| {
+                        workspace_paths_builder.append::<SemverString>(path.slice(old_string_buf))
+                    }),
                 );
-                for (src, dest) in old
-                    .workspace_paths
-                    .values()
-                    .iter()
-                    .zip(new.workspace_paths.values_mut().iter_mut())
-                {
-                    *dest =
-                        workspace_paths_builder.append::<SemverString>(src.slice(old_string_buf));
-                }
-                new.workspace_paths
-                    .keys_mut()
-                    .copy_from_slice(old.workspace_paths.keys());
-
-                new.workspace_versions
-                    .ensure_total_capacity(old.workspace_versions.count())?;
-                // SAFETY: capacity reserved immediately above; every slot is filled by
-                // the zip loop below before `re_index()`.
-                unsafe {
-                    new.workspace_versions
-                        .set_entries_len(old.workspace_versions.count())
-                };
-                for (src, dest) in versions
-                    .iter()
-                    .zip(new.workspace_versions.values_mut().iter_mut())
-                {
-                    *dest = src.append(old_string_buf, &mut workspace_paths_builder);
-                }
-
-                new.workspace_versions
-                    .keys_mut()
-                    .copy_from_slice(old.workspace_versions.keys());
+                new.workspace_versions.set_entries(
+                    old.workspace_versions.keys(),
+                    (versions.iter()).map(|version| {
+                        version.append(old_string_buf, &mut workspace_paths_builder)
+                    }),
+                );
 
                 workspace_paths_builder.clamp();
-
-                new.workspace_versions.re_index()?;
-                new.workspace_paths.re_index()?;
             }
             for key in old.self_contained_workspaces.keys() {
                 new.self_contained_workspaces.put(*key, ())?;
@@ -1753,13 +1719,9 @@ fn registry_tarball_url(
 ) -> Vec<u8> {
     let mut url = Vec::new();
     // Writing to a `Vec` does not fail.
-    let _ = crate::extract_tarball::build_url_with_printer(
-        registry,
-        &strings::StringOrTinyString::init(name),
-        version,
-        buf,
-        |args| url.write_fmt(args),
-    );
+    let _ = crate::extract_tarball::build_url_with_printer(registry, name, version, buf, |args| {
+        url.write_fmt(args)
+    });
     url
 }
 
@@ -2021,7 +1983,7 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
-        match printer::Yarn::print(&lockfile, Output::writer_buffered()) {
+        match printer::Yarn::print(&lockfile, &mut Output::writer_buffered()) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
             Err(crate::Error::WriteFailed) => return Ok(()),

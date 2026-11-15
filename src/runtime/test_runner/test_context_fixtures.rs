@@ -10,7 +10,7 @@ use bun_jsc::{
     JsClass as _, JsResult,
 };
 
-use super::bun_test::{self, DescribeScope};
+use super::bun_test::{self, BunTest, ScopeChain, ScopeId};
 use super::jest::Jest;
 use super::test_context::TestContext;
 use super::test_context_parameter::{ContextParameter, TEXT_LEFT_OUT};
@@ -56,7 +56,7 @@ struct Definition {
 }
 
 struct Override {
-    scope: *const DescribeScope,
+    scope: ScopeId,
     registrations: Vec<usize>,
 }
 
@@ -131,7 +131,7 @@ impl TestFixtures {
     /// Drops state left by an earlier file, since several files can share a helper module's fixtures.
     #[optimize(size)]
     fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        let generation = Jest::file_generation(global);
+        let generation = Jest::file_generation();
         if self.generation.replace(generation) == generation {
             return Ok(());
         }
@@ -157,16 +157,13 @@ impl TestFixtures {
         }
     }
 
-    fn registrations_in(&self, mut scope: Option<*mut DescribeScope>) -> Vec<usize> {
+    fn registrations_in(&self, scopes: ScopeChain<'_>) -> Vec<usize> {
         let overrides = self.overrides.get();
-        while let Some(current) = scope.filter(|_| !overrides.is_empty()) {
-            if let Some(found) = overrides.iter().find(|candidate| core::ptr::eq(candidate.scope, current)) {
-                return found.registrations.clone();
-            }
-            // SAFETY: `current` is a scope of the running file, whose describe tree is alive.
-            scope = unsafe { (*current).base.parent };
-        }
-        self.registrations.get().clone()
+        scopes
+            .take_while(|_| !overrides.is_empty())
+            .find_map(|scope| overrides.iter().find(|candidate| candidate.scope == scope.id))
+            .map_or_else(|| self.registrations.get(), |found| &found.registrations)
+            .clone()
     }
 
     fn find(definitions: &[Definition], registrations: &[usize], name: &[u8]) -> Option<usize> {
@@ -177,26 +174,27 @@ impl TestFixtures {
         Self::of(value).is_some_and(|this| this.definitions.get().iter().any(|definition| definition.scope != Scope::Test))
     }
 
-    /// `test.override()` mutates `parent` for `active_scope` only, or for every file in a preload or without a scope.
+    /// `test.override()` mutates `parent` for the active scope only, or for every file in a preload or when no file is `collecting`.
     #[optimize(size)]
     pub(crate) fn define(
         global: &JSGlobalObject,
         [first, second, third]: [JSValue; 3],
         signature: &str,
         parent: JSValue,
-        active_scope: *const DescribeScope,
-        is_top_level: bool,
+        collecting: Option<&BunTest>,
         is_override: bool,
     ) -> JsResult<JSValue> {
+        let active_scope = collecting.map(|buntest| buntest.collection.active_scope.get());
+        let is_top_level = active_scope.is_none_or(|scope| scope == ScopeId::ROOT);
         let parent_fixtures = Self::of(parent);
         if let Some(parent_fixtures) = parent_fixtures {
             parent_fixtures.enter_file(parent, global)?;
         }
         let mut definitions = parent_fixtures.map_or_else(Vec::new, |parent| parent.definitions.get().clone());
-        let mut registrations = match parent_fixtures {
-            Some(parent) if is_override => parent.registrations_in(Some(active_scope.cast_mut()).filter(|scope| !scope.is_null())),
-            Some(parent) => parent.registrations.get().clone(),
-            None => Vec::new(),
+        let mut registrations = match (parent_fixtures, collecting) {
+            (Some(parent), Some(buntest)) if is_override => parent.registrations_in(buntest.scopes_from(active_scope)),
+            (Some(parent), _) => parent.registrations.get().clone(),
+            (None, _) => Vec::new(),
         };
         let values = JSValue::create_empty_array(global, 0)?;
         for index in 0..definitions.len() {
@@ -365,14 +363,14 @@ impl TestFixtures {
             let defined = definitions.len();
             parent_fixtures.definitions.set(definitions);
             js::values_set_cached(parent, global, values);
-            if active_scope.is_null() || global.bun_vm().is_in_preload.get() {
+            if let Some(scope) = active_scope.filter(|_| !global.bun_vm().is_in_preload.get()) {
+                parent_fixtures.overrides.with_mut(|overrides| {
+                    overrides.retain(|existing| existing.scope != scope);
+                    overrides.push(Override { scope, registrations });
+                });
+            } else {
                 parent_fixtures.lasting.set(defined);
                 parent_fixtures.registrations.set(registrations);
-            } else {
-                parent_fixtures.overrides.with_mut(|overrides| {
-                    overrides.retain(|existing| !core::ptr::eq(existing.scope, active_scope));
-                    overrides.push(Override { scope: active_scope, registrations });
-                });
             }
             return Ok(parent);
         }
@@ -382,7 +380,7 @@ impl TestFixtures {
             registrations: JsCell::new(registrations),
             overrides: JsCell::new(Vec::new()),
             scoped: JsCell::new(Vec::new()),
-            generation: Cell::new(Jest::file_generation(global)),
+            generation: Cell::new(Jest::file_generation()),
         }
         .to_js(global);
         js::values_set_cached(fixtures, global, values);
@@ -459,7 +457,7 @@ impl TestFixtures {
         this_value: JSValue,
         global: &JSGlobalObject,
         context: JSValue,
-        scope: Option<*mut DescribeScope>,
+        scopes: ScopeChain<'_>,
         parameter: &ContextParameter,
         timeout: u32,
     ) -> JsResult<Next> {
@@ -490,7 +488,7 @@ impl TestFixtures {
         };
         let test_context = TestContext::from_js(context);
         let definitions = this.definitions.get();
-        let registrations = this.registrations_in(scope);
+        let registrations = this.registrations_in(scopes);
         for index in Self::order(global, definitions, &registrations, names, test_context.is_none())? {
             let fixture = &definitions[index];
             let name = BunString::clone_utf8(&fixture.name);
@@ -605,7 +603,7 @@ impl TestFixtures {
 
 impl ActiveFixture {
     fn create(global: &JSGlobalObject, fixtures: JSValue, context: JSValue, definition: usize, timeout: u32) -> JSValue {
-        let generation = Jest::file_generation(global);
+        let generation = Jest::file_generation();
         let this_value = ActiveFixture { definition, timeout, generation, state: Cell::new(State::NotStarted) }.to_js(global);
         active::fixtures_set_cached(this_value, global, fixtures);
         active::context_set_cached(this_value, global, context);
@@ -642,8 +640,8 @@ impl ActiveFixture {
                 (*test_context).defer_fixture(context, tear_down, self.timeout)
             },
             _ => {
-                self.generation == Jest::file_generation(global)
-                    && bun_test::clone_active_strong().is_some_and(|buntest| buntest.get().defer_to_file_end(tear_down, self.timeout))
+                self.generation == Jest::file_generation()
+                    && bun_test::clone_active_strong().is_some_and(|buntest| buntest.defer_to_file_end(tear_down, self.timeout))
             }
         };
         self.state.set(State::Ready);

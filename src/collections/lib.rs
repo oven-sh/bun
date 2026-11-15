@@ -36,7 +36,7 @@ pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
-pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
+pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
 
 pub use bit_set::{
     AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
@@ -376,18 +376,9 @@ impl<T, const N: usize> SmallList<T, N> {
             self.0.reserve_exact(new_capacity as usize - cur);
         }
     }
-    /// Exposed as safe: every current external caller only shrinks
-    /// (`new_len <= len`). Growing past the initialised region is the
-    /// caller's responsibility.
     #[inline]
-    pub fn set_len(&mut self, new_len: u32) {
-        // SAFETY: a raw length store. All current external callers only
-        // shrink (`new_len <= self.len()`), so `[0..new_len]` stays
-        // initialised and `new_len <= capacity`, satisfying
-        // `SmallVec::set_len`'s preconditions (the truncated tail merely
-        // leaks). Any caller that grows takes responsibility for
-        // initialising the exposed region.
-        unsafe { self.0.set_len(new_len as usize) }
+    pub fn truncate(&mut self, new_len: u32) {
+        self.0.truncate(new_len as usize);
     }
 
     // ── conversion / clone ─────────────────────────────────────────────────

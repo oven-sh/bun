@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
 // bun_install -> bun_install_types::AutoInstaller trait; bun_standalone_graph ->
@@ -699,16 +700,6 @@ pub mod fs {
     use bun_ptr::Interned;
     use bun_sys::Fd;
     use bun_threading::Mutex;
-
-    // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
-    // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
-    impl strings::Appender for &FilenameStore {
-        fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            // Route through the inherent method (which already handles the
-            // singleton deref + `'static` widening) instead of open-coding it.
-            FilenameStore::append(self, s)
-        }
-    }
 
     // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
     // `read_directory*` returns a pointer into this when the entry-cache is

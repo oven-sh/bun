@@ -890,9 +890,6 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseTOML");
                 let temp_log = Log::init();
                 // `temp_log` must flush into `log` on the error path too.
-                // scopeguard would alias `log`/`temp_log` (both borrowed mutably
-                // below); reshape as a closure so every `?` exits through one
-                // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
                         bun_parsers::toml::TOML::parse(source, &temp_log, bump, false)?;
@@ -1273,8 +1270,6 @@ pub mod parse_worker {
                 let mut import_records = Vec::<ImportRecord>::default();
                 let source_code = &source.contents;
                 let temp_log = Log::init();
-                // `temp_log` is flushed into `log` on every exit path via linear
-                // control flow (scopeguard would alias `log`/`temp_log`).
 
                 const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
                 let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()

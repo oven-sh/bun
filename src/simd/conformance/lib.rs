@@ -1,4 +1,5 @@
 //! `bun test --run-simd-tests`, in debug and canary builds, for `test/internal/simd.test.ts`.
+#![feature(optimize_attribute, stmt_expr_attributes)]
 #![cfg_attr(target_arch = "aarch64", feature(aarch64_unstable_target_feature))]
 
 mod bench;
@@ -107,7 +108,8 @@ fn run(arguments: &[&[u8]]) -> Option<bool> {
     ));
     match (*command, rest) {
         (b"check", [seed, rounds]) => return Some(check::run(number(seed)?, number(rounds)?)),
-        (b"bench", [js, json, map]) => {
+        (b"bench", [js, json, map, only @ ..]) if only.len() < 2 => {
+            bench::ONLY.set(only.concat()).ok()?;
             bench::against_highway(&read(js)?, &read(json)?, &read(map)?)
         }
         (b"edges", []) => bench::at_the_end_of_a_page(),

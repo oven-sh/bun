@@ -26,6 +26,11 @@ pub(crate) fn of_bytes(with: &mut impl Pairs<u8>) {
     with.pair(h::count_mapping_delims, r::count_mapping_delims);
     with.pair(h::visible_latin1_width, r::visible_latin1_width);
     with.pair(h::visible_latin1_width_exclude_ansi, r::visible_latin1_width_exclude_ansi);
+    of_paths(with);
+}
+
+#[rustfmt::skip]
+pub(crate) fn of_paths(with: &mut impl Pairs<u8>) {
     with.pair(h::index_of_untidy_slash, r::index_of_untidy_slash);
     with.pair(h::index_of_untidy_slash_or_non_ascii, r::index_of_untidy_slash_or_non_ascii);
     with.pair(h::last_index_of_slash, r::last_index_of_slash);

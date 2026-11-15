@@ -500,7 +500,7 @@ fn sync_lockfile(
             let lbuf = manager.lockfile.buffers.string_bytes.as_slice();
             let row_deps = row.get(manager.lockfile.buffers.dependencies.as_slice());
             // Zero-length while every scratch dep so far matched the row at its own index.
-            let mut claimed = DynamicBitSet::default();
+            let mut claimed: DynamicBitSet = DynamicBitSet::default();
             let mut changed = Vec::new();
             for (si, s) in scratch_deps.iter().enumerate() {
                 let same_index = si < row_deps.len()

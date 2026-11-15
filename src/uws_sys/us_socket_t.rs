@@ -73,7 +73,7 @@ pub enum QueuedInput {
 pub struct UsIoVec<'a> {
     base: *const u8,
     len: usize,
-    bytes: PhantomData<&'a [u8]>,
+    _marker: PhantomData<&'a [u8]>,
 }
 
 impl<'a> UsIoVec<'a> {
@@ -81,7 +81,7 @@ impl<'a> UsIoVec<'a> {
         Self {
             base: bytes.as_ptr(),
             len: bytes.len(),
-            bytes: PhantomData,
+            _marker: PhantomData,
         }
     }
 

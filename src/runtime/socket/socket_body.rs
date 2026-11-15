@@ -185,10 +185,10 @@ extern "C" fn select_alpn_callback(
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
             // SAFETY: `in_` is valid for `inlen` per the callback contract.
-            let wire = unsafe { core::slice::from_raw_parts(in_, inlen as usize) };
+            let client_protocols = unsafe { core::slice::from_raw_parts(in_, inlen as usize) };
             // BoringSSL's ALPN callback is these sockets' landing frame for this
             // event: whatever it leaves pending is folded before returning to C.
-            let buffer = match jsc::ArrayBuffer::create_buffer(&global, wire) {
+            let buffer = match jsc::ArrayBuffer::create_buffer(&global, client_protocols) {
                 Ok(b) => b,
                 Err(err) => {
                     crate::dispatch::fold(Err(err));

@@ -5,10 +5,19 @@ use core::ffi::c_void;
 use crate::js_value::ForEachPropertyWithRowsCallback;
 use crate::{JSGlobalObject, JSValue, JsResult};
 
-/// The rows of one `JSValue::jest_deep_match` call, or none. A GC cell that only the stack roots: keep it in locals.
+/// The rows of one `JSValue::jest_deep_match` or `JSValue::jest_matched_rows` call, or none. A GC cell that only the stack roots: keep it in locals.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
 pub struct MatchedRows(JSValue);
+
+/// Where a `JSValue::jest_deep_match_telling_where` comparison stopped (C++: `Bun::DeepMatchStop`).
+/// Only the stack roots its cell: keep it in a local until the rows are made.
+#[repr(C)]
+#[derive(Default)]
+pub struct DeepMatchStop {
+    path: JSValue,
+    at: u8,
+}
 
 impl MatchedRows {
     #[inline]
@@ -114,7 +123,7 @@ impl MatchedPlace {
         callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<bool> {
         let (rows, place) = self.cell_and_handle();
-        // SAFETY: `rows` is the cell that `jest_deep_match` returned, and its holder keeps it on the stack.
+        // SAFETY: `rows` is the cell of a `MatchedRows`, and its holder keeps it on the stack.
         unsafe {
             object.for_each_property_ordered_calling_getters_with_rows(
                 global, ctx, callback, rows, place,
@@ -132,7 +141,7 @@ impl MatchedPlace {
         callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<()> {
         let (rows, place) = self.cell_and_handle();
-        // SAFETY: `rows` is the cell that `jest_deep_match` returned, and its holder keeps it on the stack.
+        // SAFETY: `rows` is the cell of a `MatchedRows`, and its holder keeps it on the stack.
         unsafe {
             object.for_each_property_ordered_with_non_enumerable_with_rows(
                 global, ctx, callback, rows, place,

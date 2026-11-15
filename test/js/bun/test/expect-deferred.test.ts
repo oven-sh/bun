@@ -1294,6 +1294,8 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       }
       const cases = {
         "toMatchObject": () => expect({ a: 1, b: 1 }).toMatchObject({ a: expect.any(Number), b: expect.toBeOdd() }),
+        "toMatchObject, a mismatch after the wait": () =>
+          expect({ a: 1, b: 1, c: 1 }).toMatchObject({ a: expect.toBeOdd(), b: 2, c: expect.toBeCalledFirst() }),
         "not.toMatchObject": () => expect({ a: 1, b: 1 }).not.toMatchObject({ a: expect.any(Number), b: expect.toBeOdd() }),
         "not.toMatchObject, resolvesTo": () =>
           expect({ a: 1, b: later("x") }).not.toMatchObject({ a: expect.any(Number), b: expect.resolvesTo.any(String) }),
@@ -1328,6 +1330,7 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     `);
     expect(stdout).toEqual([
       'toMatchObject: passes {"toBeOdd":1}',
+      'toMatchObject, a mismatch after the wait: fails {"toBeOdd":1,"toBeCalledFirst":1}',
       'not.toMatchObject: fails {"toBeOdd":1}',
       "not.toMatchObject, resolvesTo: fails {}",
       'toContainEqual, generator: passes {"generator":1,"toBeOdd":2}',

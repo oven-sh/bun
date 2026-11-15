@@ -2,9 +2,10 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, MatchedRows};
+use bun_jsc::{DeepMatchStop, JSGlobalObject, JSValue, JsResult, MatchedRows};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
+use super::expect::expect_deferred::Pass;
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
@@ -24,49 +25,53 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
-        Self::with_matched_rows(global_this, received, expected, not, MatchedRows::default())
+        let received_string = Cow::Owned(Self::print(global_this, received, MatchedRows::default(), None)?);
+        let expected_string = Cow::Owned(Self::print(global_this, expected, MatchedRows::default(), None)?);
+        Ok(DiffFormatter { received_string, expected_string, not })
     }
 
-    /// Like [`DiffFormatter::new`], but `received` prints the matchers in `rows` in place of what they matched.
+    /// The diff of a `toMatchObject()` that failed at `stop`. `received` prints each matcher of `expected` that passed
+    /// in place of what it matched. The comparison asked only the matchers before `stop`, so the others are asked here.
     #[optimize(size)]
-    pub(crate) fn with_matched_rows(
+    pub(crate) fn of_failed_match(
         global_this: &JSGlobalObject,
         received: JSValue,
         expected: JSValue,
-        not: bool,
-        rows: MatchedRows,
+        stop: &DeepMatchStop,
     ) -> JsResult<DiffFormatter<'static>> {
-        let fmt_options = FormatOptions {
-            enable_colors: false,
-            add_newline: false,
-            flush: false,
-            quote_strings: true,
+        let printed_matcher = core::cell::Cell::new(false);
+        let expected_string =
+            Cow::Owned(Self::print(global_this, expected, MatchedRows::default(), Some(&printed_matcher))?);
+        // A pattern that prints no matcher leaves none to show.
+        let rows = if printed_matcher.get() {
+            let pass = Pass::collecting();
+            let _entered = pass.enter();
+            received.jest_matched_rows(expected, global_this, stop)?
+        } else {
+            MatchedRows::default()
         };
-        let mut received_buf: Vec<u8> = Vec::new();
+        let received_string = Cow::Owned(Self::print(global_this, received, rows, None)?);
+        Ok(DiffFormatter { received_string, expected_string, not: false })
+    }
+
+    fn print(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        rows: MatchedRows,
+        printed_matcher: Option<&core::cell::Cell<bool>>,
+    ) -> JsResult<Vec<u8>> {
+        let mut printed: Vec<u8> = Vec::new();
         JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
-            core::slice::from_ref(&received),
+            core::slice::from_ref(&value),
             1,
-            &mut received_buf,
-            fmt_options,
+            &mut printed,
+            FormatOptions { enable_colors: false, add_newline: false, flush: false, quote_strings: true },
             rows,
+            printed_matcher,
         )?;
-        let mut expected_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
-            MessageLevel::Debug,
-            global_this,
-            core::slice::from_ref(&expected),
-            1,
-            &mut expected_buf,
-            fmt_options,
-            MatchedRows::default(),
-        )?;
-        Ok(DiffFormatter {
-            received_string: Cow::Owned(trim_one_newline(received_buf)),
-            expected_string: Cow::Owned(trim_one_newline(expected_buf)),
-            not,
-        })
+        Ok(trim_one_newline(printed))
     }
 
     pub(crate) fn from_strings(received: &'a [u8], expected: &'a [u8], not: bool) -> Self {

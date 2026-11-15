@@ -266,8 +266,13 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 // Ensure we instantiate the true and false variants of this function
 template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
+// The two walks of toMatchObject() (JestMatchedRows.cpp).
+template bool Bun__deepMatch<true, Bun::DeepMatchWalk::StopsAndTellsWhere>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
+template bool Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
+extern "C" bool Expect_isAsymmetricMatcher(JSC::EncodedJSValue value);
+extern "C" uint32_t Expect_answersWithheld();
 
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
@@ -2495,7 +2500,8 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
  */
 #if ENABLE(AOT)
 // What the loop of Bun__deepMatch does with a property. A private field has no name to record.
-template<bool enableAsymmetricMatchers>
+// `walk` only gives each walk its own copy of this, which keeps the code of the walk that stops as it is.
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk>
 static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining, JSValue prop, JSValue subsetProp)
 {
     JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
@@ -2561,7 +2567,103 @@ static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, Thr
 }
 #endif
 
-template<bool enableAsymmetricMatchers>
+static ALWAYS_INLINE void tellDeepMatchStop(Bun::DeepMatchState& state, Bun::DeepMatchStop::At at)
+{
+    static_cast<Bun::DeepMatchStateWithStop&>(state).stopAt = at;
+}
+
+// The walk returns false through `key`, and its path to the stop gets the name. Out of line and cold: inlined, this
+// changes which values the loop keeps in registers, and a walk that passes pays for that at each key.
+static COLD NEVER_INLINE void tellDeepMatchStopIsBelowKey(Bun::DeepMatchState& walkState, const Identifier& key)
+{
+    auto& state = static_cast<Bun::DeepMatchStateWithStop&>(walkState);
+    if (!state.stopPath)
+        state.stopPath = makeUnique<Vector<RefPtr<UniquedStringImpl>>>().release();
+    state.stopPath->append(key.impl());
+}
+
+static COLD NEVER_INLINE void tellDeepMatchStopAtKey(Bun::DeepMatchState& state, const Identifier& key)
+{
+    tellDeepMatchStop(state, Bun::DeepMatchStop::At::Key);
+    tellDeepMatchStopIsBelowKey(state, key);
+}
+
+// Whether a walk that collects is at the two objects of the stop. From there on it is past the stop.
+static bool collectingWalkComesTo(Bun::DeepMatchStop::At at, Bun::DeepMatchState& walkState)
+{
+    auto& state = static_cast<Bun::DeepMatchStateWithStop&>(walkState);
+    if (state.isPastStop || state.stopAt != at || state.remainingOnPath)
+        return false;
+    state.isPastStop = true;
+    return true;
+}
+
+// What a walk that collects does with a key of the pattern that is not the key of the stop. Returns false if it threw.
+// It reads a property of the received object only to ask a matcher about it, or to go into it.
+// `remainingBelow` is `remainingOnPath` for the two objects at this key.
+static bool collectMatchersBelowKey(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchStateWithStop& state, JSObject* obj, JSObject* subsetObj, const Identifier& property, uint32_t remainingBelow)
+{
+    JSValue subsetProp = subsetObj->get(globalObject, property);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (!subsetProp.isObject())
+        return true;
+
+    if (Expect_isAsymmetricMatcher(JSValue::encode(subsetProp))) {
+        // The comparison asked each matcher before the stop, and each passed.
+        if (state.isPastStop) {
+            JSValue prop = obj->getIfPropertyExists(globalObject, property);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (prop.isEmpty())
+                return true;
+            uint32_t withheld = Expect_answersWithheld();
+            auto result = matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            // A matcher that had to leave a promise alone, or an async function uncalled, gave no answer.
+            if (result != AsymmetricMatcherResult::PASS || Expect_answersWithheld() != withheld)
+                return true;
+        }
+        state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
+        return true;
+    }
+
+    JSValue prop = obj->getIfPropertyExists(globalObject, property);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (prop.isEmpty() || !prop.isObject())
+        return true;
+    // A matcher in the received value and an object with asymmetricMatch() get no row, so neither is asked.
+    if (Expect_isAsymmetricMatcher(JSValue::encode(prop)) || !asymmetricMatchMethod(globalObject, prop) != !asymmetricMatchMethod(globalObject, subsetProp))
+        return true;
+
+    state.gcBuffer.append(prop);
+    state.gcBuffer.append(subsetProp);
+    state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+    if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second)
+        return true;
+    uint32_t remainingHere = state.remainingOnPath;
+    state.remainingOnPath = remainingBelow;
+    bool walked = Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(prop, subsetProp, globalObject, throwScope, state, false);
+    state.remainingOnPath = remainingHere;
+    RETURN_IF_EXCEPTION(throwScope, false);
+    return walked;
+}
+
+// What a walk that collects does with a key of the pattern. Returns false if it threw.
+static bool collectMatchersAtKey(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& walkState, JSObject* obj, JSObject* subsetObj, const Identifier& property)
+{
+    using State = Bun::DeepMatchStateWithStop;
+    auto& state = static_cast<State&>(walkState);
+    uint32_t remainingOnPath = state.remainingOnPath;
+    bool isOnPath = !state.isPastStop && remainingOnPath && remainingOnPath != State::offPath && state.stopPath->at(remainingOnPath - 1) == property.impl();
+    // At the key of the stop, the value did not match.
+    bool isStop = isOnPath && remainingOnPath == 1 && state.stopAt == Bun::DeepMatchStop::At::Key;
+    bool collected = isStop || collectMatchersBelowKey(globalObject, throwScope, state, obj, subsetObj, property, isOnPath ? remainingOnPath - 1 : State::offPath);
+    // The comparison ended at this key or below it. The walk has the stop behind it, also if the two values no longer lead there.
+    if (isOnPath)
+        state.isPastStop = true;
+    return collected;
+}
+
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk>
 bool Bun__deepMatch(
     JSValue objValue,
     JSValue subsetValue,
@@ -2570,6 +2672,9 @@ bool Bun__deepMatch(
     Bun::DeepMatchState& state,
     bool isMatchingObjectContaining)
 {
+    constexpr bool tellsWhere = walk == Bun::DeepMatchWalk::StopsAndTellsWhere;
+    constexpr bool collects = walk == Bun::DeepMatchWalk::Collects;
+    using StopAt = Bun::DeepMatchStop::At;
 
     // Caller must ensure only objects are passed to this function.
     ASSERT(objValue.isCell());
@@ -2580,11 +2685,25 @@ bool Bun__deepMatch(
         return false;
     }
 
+    if constexpr (collects) {
+        if (collectingWalkComesTo(StopAt::Pair, state))
+            return true;
+    }
+
     if constexpr (enableAsymmetricMatchers) {
         // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
         if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
-            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
+            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue)) {
+                if constexpr (collects) {
+                    // The testers answered for all that the two objects hold.
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    return true;
+                }
+                if constexpr (tellsWhere) {
+                    if (!*verdict) tellDeepMatchStop(state, StopAt::Pair);
+                }
                 return *verdict;
+            }
         }
     }
 
@@ -2597,8 +2716,13 @@ bool Bun__deepMatch(
         if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
             auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (nodesEqual)
+            if (nodesEqual) {
+                if constexpr (collects) return true;
+                if constexpr (tellsWhere) {
+                    if (!*nodesEqual) tellDeepMatchStop(state, StopAt::Pair);
+                }
                 return *nodesEqual;
+            }
         }
     }
 
@@ -2612,12 +2736,13 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
+    bool objIsArray = !collects && isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+            if constexpr (tellsWhere) tellDeepMatchStop(state, StopAt::Shape);
             return false;
         }
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
@@ -2634,14 +2759,25 @@ bool Bun__deepMatch(
         }
 #endif
         if (objCount != subsetCount) {
+            if constexpr (tellsWhere) tellDeepMatchStop(state, StopAt::Shape);
             return false;
         }
     }
+    if constexpr (collects) {
+        // The walk stopped at these two arrays before it compared any of their keys.
+        collectingWalkComesTo(StopAt::Shape, state);
+    }
 
     for (const auto& property : subsetProps) {
+        if constexpr (collects) {
+            if (!collectMatchersAtKey(globalObject, throwScope, state, obj, subsetObj, property))
+                return false;
+            continue;
+        }
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
+            if constexpr (tellsWhere) tellDeepMatchStopAtKey(state, property);
             return false;
         }
 
@@ -2655,6 +2791,7 @@ bool Bun__deepMatch(
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if constexpr (tellsWhere) tellDeepMatchStopAtKey(state, property);
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
@@ -2666,6 +2803,7 @@ bool Bun__deepMatch(
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if constexpr (tellsWhere) tellDeepMatchStopAtKey(state, property);
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     // continue to next subset prop
@@ -2675,8 +2813,10 @@ bool Bun__deepMatch(
                 }
             } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
                 if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
-                    if (!*matched)
+                    if (!*matched) {
+                        if constexpr (tellsWhere) tellDeepMatchStopAtKey(state, property);
                         return false;
+                    }
                     continue;
                 }
             }
@@ -2698,20 +2838,30 @@ bool Bun__deepMatch(
                 state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
                 // This (value, pattern) pair already matched, or is still being compared (a cycle).
                 if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers, walk>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
-                if (!matched) return false;
+                if (!matched) {
+                    if constexpr (tellsWhere) tellDeepMatchStopIsBelowKey(state, property);
+                    return false;
+                }
             }
         } else {
             if constexpr (enableAsymmetricMatchers) {
                 if (hasEqualityTesters(globalObject)) [[unlikely]] {
                     if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
-                        if (!*verdict) return false;
+                        if (!*verdict) {
+                            if constexpr (tellsWhere) tellDeepMatchStopAtKey(state, property);
+                            return false;
+                        }
                         continue;
                     }
                 }
             }
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
+            if constexpr (tellsWhere) {
+                // Before the exception check, so that what follows is the code of the walk that only stops.
+                if (!same) tellDeepMatchStopAtKey(state, property);
+            }
             RETURN_IF_EXCEPTION(throwScope, false);
             if (!same) return false;
         }
@@ -2719,14 +2869,21 @@ bool Bun__deepMatch(
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
-    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+    if (!collects && vm.aotState().someClassHasPrivateNames) [[unlikely]] {
         bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
-            return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
+            return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers, walk>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });
         RETURN_IF_EXCEPTION(throwScope, false);
-        if (!matched) return false;
+        if (!matched) {
+            if constexpr (tellsWhere) tellDeepMatchStop(state, StopAt::PrivateField);
+            return false;
+        }
     }
 #endif
+    if constexpr (collects) {
+        // Every key of these two objects matched, and a private field did not.
+        collectingWalkComesTo(StopAt::PrivateField, state);
+    }
 
     return true;
 }
@@ -3672,7 +3829,7 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool rowsWhen, JSC::EncodedJSValue* rows)
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue* rowsOfMatch)
 {
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
@@ -3680,11 +3837,11 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     Bun::DeepMatchState state;
-    state.records = !!rows;
+    state.records = !!rowsOfMatch;
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
-    if (rows) {
-        *rows = JSValue::encode(matched == rowsWhen ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
+    if (rowsOfMatch) {
+        *rowsOfMatch = JSValue::encode(matched ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
         RETURN_IF_EXCEPTION(scope, false);
     }
     return matched;
@@ -4813,6 +4970,19 @@ extern "C" bool JSC__JSValue__isPlaceholderForOmittedBuiltin(JSC::EncodedJSValue
     UNUSED_PARAM(encodedValue);
     return false;
 #endif
+}
+
+extern "C" bool JSC__JSValue__isAsyncFunction(JSC::EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    auto callData = getCallData(value);
+    if (callData.type == CallData::Type::JS)
+        return isAsyncFunctionWrapperParseMode(callData.js.functionExecutable->parseMode());
+#if ENABLE(AOT)
+    if (callData.type == CallData::Type::Compiled)
+        return JSC::AOT::declaredAs(value.asCell()) == JSC::AOT::DeclaredAs::AsyncFunction;
+#endif
+    return false;
 }
 
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)

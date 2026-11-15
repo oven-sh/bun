@@ -109,6 +109,7 @@ impl JestPrettyFormat {
         writer: &mut W,
         options: FormatOptions,
         matched_rows: MatchedRows,
+        printed_matcher: Option<&core::cell::Cell<bool>>,
     ) -> JsResult<()> {
         // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
         // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
@@ -119,7 +120,7 @@ impl JestPrettyFormat {
             let mut counted = CountedWriter { writer: &mut *writer, length: &length };
             let mut bridge = AsFmt::new(&mut counted);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options, &length, matched_rows)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options, &length, matched_rows, printed_matcher)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
@@ -137,6 +138,7 @@ impl JestPrettyFormat {
         options: FormatOptions,
         output_length: &core::cell::Cell<usize>,
         matched_rows: MatchedRows,
+        printed_matcher: Option<&core::cell::Cell<bool>>,
     ) -> JsResult<()> {
         use bun_io::Write as _;
         type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
@@ -149,6 +151,7 @@ impl JestPrettyFormat {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
             fmt.output_length = Some(output_length);
+            fmt.printed_matcher = printed_matcher;
             fmt.place = MatchedPlaceScope::at_root(matched_rows);
             let tag = Tag::get(vals[0], global)?;
 
@@ -329,6 +332,8 @@ pub(crate) struct Formatter<'a> {
     same_as_older_bun: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
+    /// Set once an asymmetric matcher of `expect` is printed. Only the pattern of a failed `toMatchObject()` tracks it.
+    printed_matcher: Option<&'a core::cell::Cell<bool>>,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -367,6 +372,7 @@ impl<'a> Formatter<'a> {
             like_older_bun: None,
             same_as_older_bun: true,
             output_length: None,
+            printed_matcher: None,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -1768,6 +1774,9 @@ impl<'a> Formatter<'a> {
                     } else if JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
                         self, &mut writer, value,
                     )? {
+                        if let Some(printed_matcher) = self.printed_matcher {
+                            printed_matcher.set(true);
+                        }
                         return Ok(());
                     } else if js_type != JSType::DOMWrapper {
                         if value.is_callable() {

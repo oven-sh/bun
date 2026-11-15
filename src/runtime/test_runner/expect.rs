@@ -620,6 +620,19 @@ impl Expect {
         false
     }
 
+    /// Called by C++, by a walk that collects the matchers that passed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_isAsymmetricMatcher(value: JSValue) -> bool {
+        Self::is_asymmetric_matcher(value)
+    }
+
+    /// Called by C++ before and after that walk asks a matcher. A matcher that had to leave a promise alone, or an
+    /// async function uncalled, gave no answer.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_answersWithheld() -> u32 {
+        Pass::answers_withheld()
+    }
+
     /// Called by C++ when matching with asymmetric matchers
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
@@ -657,6 +670,10 @@ impl Expect {
         let promise = match flags.promise() {
             Promise::None => None,
             _ => match Pass::settled(global_this, Question { asked: Asked::Promise, who: JSValue::UNDEFINED, what: v }, &mut || {
+                // A collecting pass leaves the promise alone. This error has thrown nothing.
+                if Pass::withholds_promises() {
+                    return Err(JsError::Thrown);
+                }
                 Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
             }) {
                 Ok(promise) => promise,
@@ -1310,7 +1327,7 @@ impl Expect {
 
             let prop_matchers = _prop_matchers;
 
-            let (matched, matched_rows) = value.jest_deep_match(prop_matchers, global_this, Some(true))?;
+            let (matched, matched_rows) = value.jest_deep_match(prop_matchers, global_this, true)?;
             if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
@@ -1662,14 +1679,20 @@ impl Expect {
     ) -> JsResult<bool> {
         // call the custom matcher implementation
         let what = args.first().copied().unwrap_or(JSValue::UNDEFINED);
-        let mut result = Pass::once_inline(global_this, Question { asked: Asked::Matcher, who, what }, || {
+        let Some(mut result) = Pass::once_inline(global_this, Question { asked: Asked::Matcher, who, what }, matcher_fn, || {
             matcher_fn.call(global_this, ExpectMatcherContext { flags, parent: parent.cloned() }.to_js(global_this), args)
-        })?;
+        })?
+        else {
+            return Ok(false);
+        };
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
             let vm = global_this.vm();
             promise.set_handled(vm);
             if promise.status() == js_promise::Status::Pending {
+                if Pass::withholds_promises() {
+                    return Ok(false);
+                }
                 return Err(Pass::wait_for(global_this, promise));
             }
 
@@ -3428,7 +3451,8 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute,
+//   Expect_isAsymmetricMatcher, Expect_answersWithheld
 
 #[cfg(test)]
 mod tests {

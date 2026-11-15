@@ -414,13 +414,66 @@ JSC::JSValue JestMatchedRows::forSerializers(JSC::JSGlobalObject* globalObject, 
 
 } // namespace Bun
 
+// The result of a toMatchObject() that is not negated. It records nothing. If it failed, `stop` says where, for JSC__JSValue__jestMatchedRows.
+// Rust declares this and the next by hand, with references. cppbind would hand out raw pointers.
+extern "C" bool JSC__JSValue__jestDeepMatchTellingWhere(JSC::EncodedJSValue received, JSC::EncodedJSValue pattern, JSC::JSGlobalObject* globalObject, Bun::DeepMatchStop* stop)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::DeepMatchStateWithStop state;
+    bool matched = Bun__deepMatch<true, Bun::DeepMatchWalk::StopsAndTellsWhere>(JSC::JSValue::decode(received), JSC::JSValue::decode(pattern), globalObject, scope, state, false);
+    // Only a walk that returns false has made a path.
+    std::unique_ptr<Vector<RefPtr<UniquedStringImpl>>> path { matched ? nullptr : state.stopPath };
+    RETURN_IF_EXCEPTION(scope, false);
+    if (matched)
+        return true;
+    stop->at = state.stopAt;
+    if (path) {
+        JSC::MarkedArgumentBuffer names;
+        for (auto& name : *path)
+            names.append(JSC::identifierToJSValue(vm, JSC::Identifier::fromUid(vm, name.get())));
+        stop->path = JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names));
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return false;
+}
+
+// The rows of a match that failed at `stop`: the matchers of the pattern that passed, before and after it.
+// It asks the matchers after `stop`. The caller is in a collecting pass (expect_deferred.rs), so none of them waits.
+extern "C" void JSC__JSValue__jestMatchedRows(JSC::EncodedJSValue received, JSC::EncodedJSValue pattern, JSC::JSGlobalObject* globalObject, const Bun::DeepMatchStop* stop, JSC::EncodedJSValue* rows)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSValue root = JSC::JSValue::decode(received);
+    JSC::JSValue rootPattern = JSC::JSValue::decode(pattern);
+    Bun::DeepMatchStateWithStop state;
+    state.records = true;
+    state.stopAt = stop->at;
+    Vector<RefPtr<UniquedStringImpl>> path;
+    if (auto* names = stop->path ? dynamicDowncast<JSC::JSArray>(JSC::JSValue::decode(stop->path)) : nullptr) {
+        for (unsigned index = 0, length = names->length(); index < length; index++) {
+            auto name = names->getDirectIndex(globalObject, index).toPropertyKey(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            path.append(name.impl());
+        }
+    }
+    state.stopPath = &path;
+    state.remainingOnPath = path.size();
+    state.isPastStop = stop->at == Bun::DeepMatchStop::At::Nowhere;
+    Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(root, rootPattern, globalObject, scope, state, false);
+    RETURN_IF_EXCEPTION(scope, );
+    // The walk did not come to the stop if the pattern lost a key of the path since the comparison. Then it took for passed what nothing asked.
+    if (!state.isPastStop)
+        return;
+    *rows = JSC::JSValue::encode(Bun::matchedRowsFrom(globalObject, state, root, rootPattern));
+}
+
 // These answer for any `rows` and `place`: a value that is not a rows cell has no place.
 extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows)
 {
     return Bun::JestMatchedRows::from(rows) ? Bun::JestMatchedRows::rootPlace : 0;
 }
 
-// Rust declares the two that take pointers by hand, with references. cppbind would hand out raw pointers.
+// Rust declares the two that take pointers by hand, with references.
 extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__get(JSC::EncodedJSValue rows, uint32_t place, const BunString* name, uint32_t* childPlace)
 {
     auto* cell = Bun::JestMatchedRows::from(rows);

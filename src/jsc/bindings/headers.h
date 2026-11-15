@@ -225,7 +225,7 @@ CPP_DECL bool JSC__JSValue__isSymbol(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
-CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, bool arg3, JSC::EncodedJSValue* arg4);
+CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, JSC::EncodedJSValue* arg3);
 CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0);
@@ -254,6 +254,8 @@ CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JS
 
 #pragma mark - Bun::JestMatchedRows
 
+CPP_DECL bool JSC__JSValue__jestDeepMatchTellingWhere(JSC::EncodedJSValue received, JSC::EncodedJSValue pattern, JSC::JSGlobalObject* globalObject, Bun::DeepMatchStop* stop);
+CPP_DECL void JSC__JSValue__jestMatchedRows(JSC::EncodedJSValue received, JSC::EncodedJSValue pattern, JSC::JSGlobalObject* globalObject, const Bun::DeepMatchStop* stop, JSC::EncodedJSValue* rows);
 CPP_DECL uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows);
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__get(JSC::EncodedJSValue rows, uint32_t place, const BunString* name, uint32_t* childPlace);
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValue rows, uint32_t place, uint32_t index, uint32_t* childPlace);

@@ -1088,6 +1088,143 @@ describe("expect.addEqualityTesters", () => {
     expect(() => expect({ deep: "vitest-apis-throw" }).toMatchObject({ deep: "x" })).toThrow(
       new RangeError("the tester threw"),
     );
+    // Reading `last` from the revoked Proxy throws a TypeError, which must not replace the tester's error.
+    const revocable = Proxy.revocable({ deep: "vitest-apis-revoke", last: 1 }, {});
+    expect.addEqualityTesters([
+      a => {
+        if (a !== "vitest-apis-revoke") return undefined;
+        revocable.revoke();
+        throw new RangeError("the tester threw");
+      },
+    ]);
+    expect(() => expect(revocable.proxy).toMatchObject({ deep: "x", last: 1 })).toThrow(
+      new RangeError("the tester threw"),
+    );
+  });
+
+  // https://github.com/oven-sh/bun/issues/9089
+  describe("a toMatchObject that fails", () => {
+    const flaggedLines = (received: object, expected: object) =>
+      messageOf(() => expect(received).toMatchObject(expected))
+        .split("\n")
+        .filter(line => /^[-+] {3}/.test(line));
+
+    test("does not flag a matcher that passed after a tester said no", () => {
+      class Part {
+        constructor(public id: number) {}
+      }
+      expect.addEqualityTesters([
+        (a, b) => {
+          if (a === "vitest-apis-walk-past") return false;
+          if (a instanceof Part && b instanceof Part) return false;
+          return undefined;
+        },
+      ]);
+      const matcher = { b: expect.any(Date) };
+      // The tester rejects `a`, which prints the same on both sides. So the match fails and the diff flags no line.
+      expect(
+        flaggedLines({ a: "vitest-apis-walk-past", b: new Date(0) }, { a: "vitest-apis-walk-past", ...matcher }),
+      ).toEqual([]);
+      expect(flaggedLines({ a: new Part(1), b: new Date(0) }, { a: new Part(1), ...matcher })).toEqual([]);
+      expect({ a: new Part(1), b: new Date(0) }).not.toMatchObject({ a: new Part(1), ...matcher });
+    });
+
+    test("asks each matcher once when a tester said no", () => {
+      class Part {
+        constructor(public id: number) {}
+      }
+      const calls = { before: 0, after: 0 };
+      expect.extend({
+        toBeCountedAroundATester(_received: unknown, position: "before" | "after") {
+          calls[position]++;
+          return { pass: true, message: () => "" };
+        },
+      });
+      expect.addEqualityTesters([
+        (a, b) => {
+          if (a === "vitest-apis-asked-once") return false;
+          if (a instanceof Part && b instanceof Part) return false;
+          return undefined;
+        },
+      ]);
+      const counted = (position: "before" | "after") => (expect as any).toBeCountedAroundATester(position);
+      for (const rejected of [() => "vitest-apis-asked-once", () => new Part(1)]) {
+        calls.before = calls.after = 0;
+        flaggedLines(
+          { before: 1, rejected: rejected(), after: 1 },
+          { before: counted("before"), rejected: rejected(), after: counted("after") },
+        );
+        expect(calls).toEqual({ before: 1, after: 1 });
+      }
+    });
+
+    test("flags a matcher in two objects that a tester accepted, in each key order", () => {
+      class Box {
+        constructor(
+          public id: number,
+          public when: unknown,
+        ) {}
+      }
+      expect.addEqualityTesters([(a, b) => (a instanceof Box && b instanceof Box ? a.id === b.id : undefined)]);
+      // The tester decides for all that the two objects hold, so the walk does not go into them.
+      const flagged = [
+        '-   "a": 2,',
+        '+   "a": 1,',
+        '-     "when": Any<Date>,',
+        '+     "when": 1970-01-01T00:00:00.000Z,',
+      ];
+      expect(flaggedLines({ a: 1, box: new Box(1, new Date(0)) }, { a: 2, box: new Box(1, expect.any(Date)) })).toEqual(
+        flagged,
+      );
+      expect(flaggedLines({ box: new Box(1, new Date(0)), a: 1 }, { box: new Box(1, expect.any(Date)), a: 2 })).toEqual(
+        flagged,
+      );
+    });
+
+    test("asks the testers again only for the diff, and then only about two objects", () => {
+      class Whole {
+        constructor(public id: number) {}
+      }
+      const asked: string[] = [];
+      expect.addEqualityTesters([
+        a => {
+          if (a === "vitest-apis-asked") asked.push("string");
+          if (a instanceof Whole) asked.push("object");
+          if (a === "vitest-apis-throw-late" || (a instanceof Whole && a.id < 0))
+            throw new RangeError("the tester threw");
+          return undefined;
+        },
+      ]);
+      const askedBy = (received: object, expected: object) => {
+        asked.length = 0;
+        flaggedLines(received, expected);
+        return [...asked];
+      };
+      const rest = () => ({ text: "vitest-apis-asked", whole: new Whole(1) });
+      // A pattern with no matcher leaves the diff nothing to look for, so only the comparison asks.
+      expect(askedBy({ ...rest(), a: 1 }, { ...rest(), a: 2 })).toEqual(["string", "object"]);
+      expect(askedBy({ a: 1, ...rest() }, { a: 2, ...rest() })).toEqual([]);
+      // With a matcher, the diff goes into two objects to find the matchers that passed, if no tester answers for them.
+      const when = () => ({ when: new Date(0) });
+      const any = { when: expect.any(Date) };
+      expect(askedBy({ ...rest(), ...when(), a: 1 }, { ...rest(), ...any, a: 2 })).toEqual([
+        "string",
+        "object",
+        "object",
+      ]);
+      expect(askedBy({ a: 1, ...rest(), ...when() }, { a: 2, ...rest(), ...any })).toEqual(["object"]);
+      const onlyA = ['-   "a": 2,', '+   "a": 1,'];
+      expect(
+        flaggedLines(
+          { a: 1, text: "vitest-apis-throw-late", ...when() },
+          { a: 2, text: "vitest-apis-throw-late", ...any },
+        ),
+      ).toEqual(onlyA);
+      // Jest also asks a tester about two objects after the first mismatch.
+      expect(() =>
+        expect({ a: 1, whole: new Whole(-1), ...when() }).toMatchObject({ a: 2, whole: new Whole(-1), ...any }),
+      ).toThrow(new RangeError("the tester threw"));
+    });
   });
 
   test("this.equals uses only the testers it is given", () => {

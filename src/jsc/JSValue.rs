@@ -11,9 +11,9 @@ use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
-    AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult, MatchedRows,
-    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
+    AnyPromise, ArrayBuffer, BuiltinName, DeepMatchStop, JSArrayIterator, JSGlobalObject,
+    JSInternalPromise, JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError,
+    JsResult, MatchedRows, StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -2381,6 +2381,13 @@ impl JSValue {
         }
         JSC__JSValue__isClass(self, global)
     }
+    /// True for an async function, method or arrow function. Not for a bound one, and not for an async generator function.
+    pub fn is_async_function(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isAsyncFunction(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isAsyncFunction(self)
+    }
 
     // ── Iteration. ────────────────────────────────
     /// `JSValue.isIterable`.
@@ -2548,7 +2555,7 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `jest_deep_match` call.
+    /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `MatchedRows`.
     pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
         self,
         global: &JSGlobalObject,
@@ -2863,19 +2870,45 @@ impl JSValue {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
     }
-    /// `expect(a).toMatchObject(b)` and snapshot property matchers. With `rows_when: Some(result)`, also the matchers that passed if the comparison gives `result`.
+    /// `expect(a).not.toMatchObject(b)` and snapshot property matchers. With `rows_of_match`, also the matchers that passed if the comparison passes.
     pub fn jest_deep_match(
         self,
         subset: JSValue,
         global: &JSGlobalObject,
-        rows_when: Option<bool>,
+        rows_of_match: bool,
     ) -> JsResult<(bool, MatchedRows)> {
         let mut rows = MatchedRows::default();
-        let out = rows_when.is_some().then_some(&mut rows);
+        let out = rows_of_match.then_some(&mut rows);
         let matched = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(self, subset, global, rows_when == Some(true), out)
+            JSC__JSValue__jestDeepMatch(self, subset, global, out)
         })?;
         Ok((matched, rows))
+    }
+    /// `expect(a).toMatchObject(b)`. If the comparison fails, also where it stopped, for [`Self::jest_matched_rows`].
+    pub fn jest_deep_match_telling_where(
+        self,
+        subset: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<(bool, DeepMatchStop)> {
+        let mut stop = DeepMatchStop::default();
+        let matched = host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestDeepMatchTellingWhere(self, subset, global, &mut stop)
+        })?;
+        Ok((matched, stop))
+    }
+    /// The matchers of `subset` that pass, for the message of a comparison that failed at `stop`.
+    /// It asks the matchers after `stop`, which the comparison did not reach: call it in a collecting pass, so none of them waits.
+    pub fn jest_matched_rows(
+        self,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        stop: &DeepMatchStop,
+    ) -> JsResult<MatchedRows> {
+        let mut rows = MatchedRows::default();
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestMatchedRows(self, subset, global, stop, &mut rows)
+        })?;
+        Ok(rows)
     }
 
     // ── BigInt ordering. ────────────────────────────────
@@ -2986,9 +3019,21 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
-        rows_when: bool,
-        rows: Option<&mut MatchedRows>,
+        rows_of_match: Option<&mut MatchedRows>,
     ) -> bool;
+    safe fn JSC__JSValue__jestDeepMatchTellingWhere(
+        this: JSValue,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        stop: &mut DeepMatchStop,
+    ) -> bool;
+    safe fn JSC__JSValue__jestMatchedRows(
+        this: JSValue,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        stop: &DeepMatchStop,
+        rows: &mut MatchedRows,
+    );
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;

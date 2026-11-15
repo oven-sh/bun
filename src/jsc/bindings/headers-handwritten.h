@@ -475,6 +475,52 @@ struct DeepMatchState {
     }
 };
 
+// What a walk of Bun__deepMatch does at a mismatch.
+enum class DeepMatchWalk : uint8_t {
+    // It returns false.
+    Stops,
+    // It returns false, and its state (a DeepMatchStateWithStop) gets where that was.
+    StopsAndTellsWhere,
+    // It goes on, and gives no result. It records the matchers of the pattern that pass: it takes those before the
+    // stop in its state (a DeepMatchStateWithStop) as passed, and asks those after it.
+    Collects,
+};
+
+// Where a walk stopped: the keys that lead there from the two values that it began with, and what it stopped at.
+// Shared with Rust (bun_jsc::DeepMatchStop), which keeps `path` alive on its stack.
+struct DeepMatchStop {
+    enum class At : uint8_t {
+        // No walk stopped: a walk that collects asks every matcher.
+        Nowhere,
+        // At the last key of the path.
+        Key,
+        // At the two objects that the path leads to, as a whole, because a tester or isEqualNode() said no. Nothing inside them was compared.
+        Pair,
+        // At those two objects, which are arrays of another length or with another number of keys, before any of their keys.
+        Shape,
+        // At those two objects after their keys, at a private field of a compiled class.
+        PrivateField,
+    };
+    // An array of the names of the keys, as strings and symbols, from the stop up. Empty if the path has no key.
+    // The two walks can read two objects at a key, for a getter can return another one each time. The names are the same.
+    JSC::EncodedJSValue path { 0 };
+    At at { At::Nowhere };
+};
+
+struct DeepMatchStateWithStop : DeepMatchState {
+    static constexpr uint32_t offPath = std::numeric_limits<uint32_t>::max();
+
+    DeepMatchStop::At stopAt { DeepMatchStop::At::Nowhere };
+    // The names of the keys on the path, from the stop up. A walk that stops makes the list as it returns and leaks
+    // it, for its caller to adopt. It holds a reference on each name, which can die with the list of names that it
+    // came from. A walk that collects reads the list of its caller.
+    WTF::Vector<RefPtr<WTF::UniquedStringImpl>>* stopPath { nullptr };
+    // For a walk that collects: how many keys of the path lie below the two objects that it is at, or `offPath`.
+    uint32_t remainingOnPath { 0 };
+    // A walk that collects has come to the stop. The walk that stopped there asked every matcher before it, and each passed.
+    bool isPastStop { false };
+};
+
 // JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
 struct MatchedRow {
     JSC::JSValue value;
@@ -501,8 +547,10 @@ void appendMissingMatchedRowNames(JSC::JSCell* rows, uint32_t place, std::span<c
  * @brief `Bun.deepMatch(a, b)`
  *
  * `object` and `subset` must be objects. Neither is changed.
+ *
+ * A `walk` other than `Stops` needs a `Bun::DeepMatchStateWithStop` as `state`.
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk = Bun::DeepMatchWalk::Stops>
 bool Bun__deepMatch(
     JSC::JSValue object,
     JSC::JSValue subset,

@@ -15,3 +15,4 @@ pub(crate) use super::parallel::runner::WorkerLink;
 pub(crate) use super::parallel::runner::run_as_coordinator;
 pub(crate) use super::parallel::runner::run_as_worker;
 pub(crate) use super::parallel::runner::set_ids_without_workers;
+pub(crate) use super::parallel::runner::worker_emit_test_done;

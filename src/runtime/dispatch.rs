@@ -1432,9 +1432,10 @@ pub(crate) unsafe fn fire_timer(
         ),
         EventLoopTimerTag::BunTest => in_features!(
             [Test],
-            (now: &ElTimespec = now) -> JsResult<()> {
-                // `exit_file` drops a file, which takes its timer out of the heap.
-                if let Some(file) = clone_active_strong() {
+            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
+                if let Some(file) = clone_active_strong()
+                    && core::ptr::eq(&raw const file.timer, t)
+                {
                     BunTest::bun_test_timeout_callback(&file, now, VirtualMachine::get());
                 }
                 Ok(())

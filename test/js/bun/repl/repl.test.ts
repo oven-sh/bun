@@ -349,6 +349,16 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test(`"use strict" above another directive keeps the line strict`, async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `"use strict"; "use client"; (function () { return this === undefined ? "strict" : "sloppy"; })()`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"strict"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("special variables", () => {

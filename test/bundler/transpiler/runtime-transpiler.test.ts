@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -286,3 +287,319 @@ test.skipIf(isDebug || isASAN)(
     expect(exitCode).toBe(0);
   },
 );
+
+// A parse that does not bundle keeps a top-level class and `export default` where they are
+// written. One process imports every module of the tables below. `t` returns what a read
+// returns, or the class of the error that it throws. `report` stores that for the module.
+describe("a top-level class and `export default` stay where they are written", () => {
+  type Row = [name: string, files: (stem: string) => Record<string, string>, expected: unknown];
+  const throws = "THROW:ReferenceError";
+
+  // Each module reads a binding above the statement that initializes it.
+  const readsAboveTheStatement: Row[] = [
+    ["typeof a class", m => ({ [`${m}.mjs`]: `report(t(() => typeof C));\nclass C {}\n` }), throws],
+    ["new on a class", m => ({ [`${m}.mjs`]: `report(t(() => new C().constructor.name));\nclass C {}\n` }), throws],
+    ["an exported class", m => ({ [`${m}.mjs`]: `report(t(() => typeof X));\nexport class X {}\n` }), throws],
+    [
+      "a default class with a name",
+      m => ({ [`${m}.mjs`]: `report(t(() => typeof Named));\nexport default class Named {}\n` }),
+      throws,
+    ],
+    [
+      "a class that a function declared below it reads",
+      m => ({ [`${m}.mjs`]: `report(t(probe));\nclass C {}\nfunction probe() { return typeof C; }\n` }),
+      throws,
+    ],
+    [
+      "an assignment to a class",
+      m => ({
+        [`${m}.mjs`]: `const seen = [t(() => { C = 1; return "assigned"; })];\nclass C {}\nseen.push(typeof C);\nreport(seen);\n`,
+      }),
+      [throws, "function"],
+    ],
+    [
+      "an instance built before the class has its static properties",
+      m => ({
+        [`${m}.mjs`]: `
+          report(t(() => make().mode));
+          function make() { return new Config(); }
+          class Config { constructor() { this.mode = Config.defaultMode; } }
+          Config.defaultMode = "safe";
+        `,
+      }),
+      throws,
+    ],
+    ...(
+      [
+        ["export default class {}", "export default class {}"],
+        ["a default class with a name", "export default class Named {}"],
+        ["export default 42", "export default 42;"],
+        ["a default arrow function", "export default () => 1;"],
+      ] as const
+    ).map(([name, statement]): Row => [
+      `${name}, read through the module namespace`,
+      m => ({
+        [`${m}.mjs`]: `import * as self from "./${m}.mjs";\nreport(t(() => typeof self.default));\n${statement}\n`,
+      }),
+      throws,
+    ]),
+    ["a class in a CommonJS module", m => ({ [`${m}.cjs`]: `report(t(() => typeof C));\nclass C {}\n` }), throws],
+    [
+      "a class that a function of an import cycle partner reads",
+      m => ({
+        [`${m}.mjs`]: `import { helper } from "./${m}-partner.mjs";\nreport(t(helper));\nexport class A {}\n`,
+        [`${m}-partner.mjs`]: `import { A } from "./${m}.mjs";\nexport function helper() { return typeof A; }\n`,
+      }),
+      throws,
+    ],
+    [
+      "a class that is the type of a decorated field, with emitDecoratorMetadata",
+      m => ({
+        [`${m}.ts`]: `
+          const d = (..._: unknown[]) => {};
+          report(t(() => { class Holder { @d dto: Dto; } return typeof Holder; }));
+          class Dto {}
+        `,
+      }),
+      throws,
+    ],
+    [
+      "a class in a module that a plugin onLoad returns",
+      m => ({ [`${m}.virtual`]: `report(t(() => typeof C));\nclass C {}\n` }),
+      throws,
+    ],
+  ];
+
+  // A function declaration has its value before the module runs, and a read that runs below a
+  // statement sees what the statement made. A class with a static block was never moved.
+  const unaffected: Row[] = [
+    [
+      "a closure that is called below the class",
+      m => ({ [`${m}.mjs`]: `const read = () => typeof C;\nclass C {}\nreport(t(read));\n` }),
+      "function",
+    ],
+    [
+      "a class with a static block",
+      m => ({ [`${m}.mjs`]: `report(t(() => typeof W));\nclass W { static { void 0; } }\n` }),
+      throws,
+    ],
+    [
+      "export default function, read through the module namespace",
+      m => ({
+        [`${m}.mjs`]: `import * as self from "./${m}.mjs";\nreport(t(() => typeof self.default));\nexport default function f() {}\n`,
+      }),
+      "function",
+    ],
+    [
+      "two modules that import the default class of each other",
+      m => ({
+        [`${m}.mjs`]: `import A from "./${m}-a.mjs";\nimport B from "./${m}-b.mjs";\nreport([A.useB(), B.useA()]);\n`,
+        [`${m}-a.mjs`]: `import B from "./${m}-b.mjs";\nexport default class A { static useB() { return B.name; } }\n`,
+        [`${m}-b.mjs`]: `import A from "./${m}-a.mjs";\nexport default class B { static useA() { return A.name; } }\n`,
+      }),
+      ["B", "A"],
+    ],
+  ];
+
+  // tsc prints `Object` as the type of a union with null, so Node does not read the class.
+  // Bun prints `typeof Later === "undefined" ? Object : Later`, which throws ReferenceError
+  // above `class Later {}` (#44120).
+  const unionType: Row = [
+    "a class in a union that is the type of a decorated field, with emitDecoratorMetadata",
+    m => ({
+      [`${m}.ts`]: `
+        const d = (..._: unknown[]) => {};
+        report(t(() => { class Holder { @d later: Later | null = null; } return typeof Holder; }));
+        class Later {}
+      `,
+    }),
+    "function",
+  ];
+
+  // The moved class stood above the `require` of the helper that its lowered accessor calls.
+  const staticAccessor: Row = [
+    "a class with a static accessor in a CommonJS module",
+    m => ({
+      [`${m}.cjs`]: `report(t(() => require("./${m}-box.cjs")));\n`,
+      [`${m}-box.cjs`]: `class Box { static accessor count = 1 }\nmodule.exports = Box.count;\n`,
+    }),
+    "1",
+  ];
+
+  const rows = [...readsAboveTheStatement, ...unaffected, unionType, staticAccessor];
+
+  async function runFixture() {
+    const files: Record<string, string> = {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true, strictNullChecks: true },
+      }),
+    };
+    const imports: [name: string, file: string][] = [];
+    rows.forEach(([name, make], i) => {
+      const made = make(`m${i}`);
+      Object.assign(files, made);
+      imports.push([name, `./${Object.keys(made)[0]}`]);
+    });
+    // The plugin is registered last, so the modules before it load with no plugin.
+    imports.sort(([, a], [, b]) => Number(a.endsWith(".virtual")) - Number(b.endsWith(".virtual")));
+    files["entry.mjs"] = `
+      const out = {};
+      let current;
+      globalThis.report = value => { out[current] = value; };
+      globalThis.t = read => { try { return String(read()); } catch (e) { return "THROW:" + e.constructor.name; } };
+      for (const [name, file] of ${JSON.stringify(imports)}) {
+        if (file.endsWith(".virtual")) {
+          Bun.plugin({
+            name: "virtual",
+            setup(build) {
+              build.onLoad({ filter: /\\.virtual$/ }, async ({ path }) => ({ contents: await Bun.file(path).text(), loader: "js" }));
+            },
+          });
+        }
+        current = name;
+        await import(file);
+      }
+      console.log(JSON.stringify(out));
+    `;
+    using dir = tempDir("transpiler-source-order", files);
+    const { stdout, ...result } = await bunRun(join(String(dir), "entry.mjs"));
+    return { out: result.exitCode === 0 ? JSON.parse(stdout) : {}, result };
+  }
+  let fixture: ReturnType<typeof runFixture> | undefined;
+
+  test("the fixture runs", async () => {
+    const { out, result } = await (fixture ??= runFixture());
+    expect(result).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    expect(Object.keys(out).sort()).toEqual(rows.map(([name]) => name).sort());
+  });
+
+  describe("a read above the statement", () => {
+    test.each(readsAboveTheStatement)("%s", async (name, _, expected) => {
+      expect((await (fixture ??= runFixture())).out[name]).toEqual(expected);
+    });
+  });
+
+  describe("unaffected", () => {
+    test.each(unaffected)("%s", async (name, _, expected) => {
+      expect((await (fixture ??= runFixture())).out[name]).toEqual(expected);
+    });
+  });
+
+  test(staticAccessor[0], async () => {
+    expect((await (fixture ??= runFixture())).out[staticAccessor[0]]).toEqual(staticAccessor[2]);
+  });
+
+  test.todo(unionType[0], async () => {
+    expect((await (fixture ??= runFixture())).out[unionType[0]]).toEqual(unionType[2]);
+  });
+
+  // Node runs these graphs. Bun runs a CommonJS file that an ES module imports when its text is
+  // loaded, not where Node evaluates it, so a call reaches a class above its statement. The
+  // second graph prints "undefined": the read of the getter throws and the import stays unset.
+  const graphsThatNodeRuns: [name: string, files: Record<string, string>, entry: string, expected: string][] = [
+    [
+      "a CommonJS module that requires the import cycle partner of its importer",
+      {
+        "a.mjs": `import c from "./c.cjs";\nimport "./b.mjs";\nconsole.log(c.make().constructor.name);\n`,
+        "b.mjs": `import "./a.mjs";\n`,
+        "c.cjs": `exports.make = () => new K();\nrequire("./b.mjs");\nclass K {}\n`,
+      },
+      "a.mjs",
+      "K",
+    ],
+    [
+      "the same graph with the class behind a getter of exports",
+      {
+        "a.mjs": `import { K } from "./c.cjs";\nimport "./b.mjs";\nconsole.log(typeof K);\n`,
+        "b.mjs": `import "./a.mjs";\n`,
+        "c.cjs": `Object.defineProperty(exports, "K", { enumerable: true, get: function () { return K; } });\nrequire("./b.mjs");\nclass K {}\n`,
+      },
+      "a.mjs",
+      "function",
+    ],
+    [
+      "a CommonJS module that is imported below an ES module and calls back into it",
+      {
+        "main.mjs": `import "./b.mjs";\nimport "./a.cjs";\nconsole.log(globalThis.got);\n`,
+        "a.cjs": `require("./registry.cjs").consume(value => { globalThis.got = value.constructor.name; });\n`,
+        "b.mjs": `import registry from "./registry.cjs";\nregistry.provide(() => new B());\nexport class B {}\n`,
+        "registry.cjs": `
+          const factories = [];
+          let consumer;
+          exports.provide = f => { if (consumer) consumer(f()); else factories.push(f); };
+          exports.consume = next => { consumer = next; for (const f of factories) next(f()); };
+        `,
+      },
+      "main.mjs",
+      "B",
+    ],
+    [
+      "two CommonJS modules in a require cycle, as tsc prints them, that an ES module imports at two depths",
+      {
+        "entry.mjs": `import { route } from "./routes.mjs";\nimport { User } from "./models/user.js";\nconsole.log(route(), new User().addPost().author.name);\n`,
+        "routes.mjs": `import { systemPost } from "./models/post.js";\nexport const route = () => systemPost.author.name;\n`,
+        "models/package.json": `{ "type": "commonjs" }`,
+        "models/post.js": `
+          "use strict";
+          Object.defineProperty(exports, "__esModule", { value: true });
+          exports.systemPost = exports.Post = void 0;
+          const user_1 = require("./user");
+          class Post {
+            author;
+            constructor(author) { this.author = author; }
+          }
+          exports.Post = Post;
+          exports.systemPost = new Post((0, user_1.createUser)());
+        `,
+        "models/user.js": `
+          "use strict";
+          Object.defineProperty(exports, "__esModule", { value: true });
+          exports.User = void 0;
+          exports.createUser = createUser;
+          const post_1 = require("./post");
+          class User {
+            name = "user";
+            addPost() { return new post_1.Post(this); }
+          }
+          exports.User = User;
+          function createUser() { return new User(); }
+        `,
+      },
+      "entry.mjs",
+      "user user",
+    ],
+  ];
+  test.todo.each(graphsThatNodeRuns)("%s", async (_, files, entry, expected) => {
+    using dir = tempDir("transpiler-source-order-graph", files);
+    expect(await bunRun(join(String(dir), entry))).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("bun build --no-bundle --target=bun prints a directive, an import and an export default function in the order they are written", async () => {
+    const page = `"use client";\nimport x from "./x";\nexport default function Page() {\n  return x;\n}`;
+    using dir = tempDir("transpiler-source-order-print", { "page.mjs": page + "\n" });
+    expect(await bunRun(["build", "--no-bundle", "--target=bun", join(String(dir), "page.mjs")])).toEqual({
+      stdout: page,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.each([
+    "class C {}",
+    "export class C {}",
+    "export default class N {}",
+    "export default class {}",
+    "export default 42;",
+    "export default () => a;",
+    "export default function f() {}",
+  ])("Bun.Transpiler prints `%s` below the statement above it", statement => {
+    const transpiler = new Bun.Transpiler({ treeShaking: true, target: "bun" });
+    expect(transpiler.transformSync(`const a = 1;\n${statement}\n`)).toStartWith("const a = 1;\n");
+  });
+});

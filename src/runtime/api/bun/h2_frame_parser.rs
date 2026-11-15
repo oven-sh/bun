@@ -5011,24 +5011,21 @@ impl H2FrameParser {
         }
         let stream_id = stream_id.to_u32();
         let reading = reading.to_boolean();
-        let streams = self.streams.borrow();
-        let Some(stream) = streams.get(stream_id) else {
+        match self.streams.borrow().get(stream_id) {
+            Some(stream) => stream.reading_paused.set(!reading),
             // The stream already finished (or never reached the wire); nothing to backpressure.
-            return;
-        };
-        stream.reading_paused.set(!reading);
+            None => return,
+        }
         if reading {
             // Resumed: send the deferred WINDOW_UPDATE now. try_borrow: a resume issued from
             // inside a dispatch (the engine borrow is held by rewrite_read) is covered by the
             // batch-end replenish instead.
-            if let Ok(mut guard) = self.engine.try_borrow_mut() {
-                if let Some(engine) = guard.as_mut() {
-                    let sink = Inbound {
-                        parser: self,
-                        streams: &streams,
-                    };
-                    engine.replenish_stream(&sink, stream_id);
-                }
+            let increment = match self.engine.try_borrow_mut().as_deref_mut() {
+                Ok(Some(engine)) => engine.take_stream_window_update(stream_id),
+                _ => 0,
+            };
+            if increment > 0 {
+                self.send_window_update(stream_id, UInt31WithReserved::init(increment, false));
             }
             let _ = self.flush();
         }

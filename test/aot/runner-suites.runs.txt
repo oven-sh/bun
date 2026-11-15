@@ -48,9 +48,10 @@ test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wai
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too
 # These: a name that import and require() resolve to two files. Plain keeps a mock of mock.module(), jest.mock() or jest.doMock() under the path that an import resolves the name to, and hands it to require() of the name too:
-# the file that require() resolves the name to does not run. jest.requireActual(), jest.createMockFromModule(), a mock without a factory and `__mocks__` go by the file that require() loads, and jest.unmock() ends what require() of the name gets too.
+# the file that require() resolves the name to does not run, and a module of an earlier test file that has required it runs again for the mock. jest.requireActual(), jest.createMockFromModule(), a mock without a factory and `__mocks__` go by the file that require() loads, and jest.unmock() ends what require() of the name gets too.
 # Compiled, a mock answers an import alone: require() of the name loads the file that require() resolves it to, and that file runs. Those functions go by the file that an import loads, and jest.unmock() ends the mock of that file alone.
 # A test of the fixture fails for it, or where a compiled run refuses build.module() of a compiled file or a mock of a file that the build saw no mock of, and what stands behind the failing line does not run.
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a CommonJS module of an earlier test file that requires the name runs again for the mock
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a factory that fails is called again by the next require() or import of the name
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a factory that loads its own name gets the file that require() loads ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a factory that loads its own name gets the file that require() loads ["--isolate=modules"]
@@ -84,7 +85,6 @@ test/js/bun/test/mock/mock-module.test.ts: a name that import and require() reso
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock without a factory over the ES module that a preload or an earlier test file has run
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock without a factory over the ES module that has run: the file that it is made of
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a name that an onResolve plugin or tsconfig.json maps to one of them
-test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a name whose file for require() is a builtin module
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > an ES module of a package that wraps the CommonJS file ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > an ES module of a package that wraps the CommonJS file ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > an ES module of a package that wraps the CommonJS file []
@@ -100,6 +100,7 @@ test/js/bun/test/mock/mock-module.test.ts: a name that import and require() reso
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > mock calls of a name that only an import resolves do not grow the process
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > require() of the path that an import resolves the name to
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > require() that cannot wait for an async factory that takes the original
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > require() where Module._resolveFilename is replaced, and with options.paths
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > several mocks of one path > a mock of the path that an import resolves the name to, over a mock of the name ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > several mocks of one path > a mock of the path that an import resolves the name to, over a mock of the name ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > several mocks of one path > a mock of the path that an import resolves the name to, over a mock of the name []

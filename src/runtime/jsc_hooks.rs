@@ -1150,9 +1150,9 @@ unsafe fn timer_insert(
     timer_all_of(vm).insert(t);
 }
 
-/// `vm.timer.remove(timer)` — counterpart to [`timer_insert`].
-fn timer_remove(vm: &VirtualMachine, t: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-    timer_all_of(vm).remove(t);
+#[unsafe(no_mangle)]
+fn __bun_remove_timer(timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
+    timer_all().remove(timer);
 }
 
 /// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
@@ -1349,7 +1349,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     run_pending_test_step,
     print_exception,
     timer_insert,
-    timer_remove,
     timer_min_delay_ms,
     abort_signal_timeout_clock,
     timers_left,
@@ -1512,7 +1511,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
             return;
         };
         for (&timer, &kind) in timers.iter() {
-            // SAFETY: tracked ⇒ live (each untracks itself in its deinit); a
+            // SAFETY: tracked ⇒ live (each untracks itself when it drops); a
             // cancel may free the one it cancels, never another tracked one.
             unsafe {
                 match kind {

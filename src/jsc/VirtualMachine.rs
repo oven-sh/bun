@@ -2461,7 +2461,7 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
         }
-        vm.gc_controller.deinit();
+        vm.gc_controller.disabled.set(true);
         crate::web_worker::join_child_workers(vm.child_workers.take());
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
@@ -2804,9 +2804,6 @@ pub struct RuntimeHooks {
         vm: &VirtualMachine,
         timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
-    /// `vm.timer.remove(&event_loop_timer)` — see `timer_insert`.
-    pub timer_remove:
-        fn(vm: &VirtualMachine, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
@@ -3006,15 +3003,6 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract.
         unsafe { (hooks.timer_insert)(self, timer) }
-    }
-
-    /// `vm.timer.remove(timer)` if `timer` is armed — see [`Self::timer_insert`].
-    #[inline]
-    pub fn timer_remove(&self, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-        if timer.state.get() == bun_event_loop::EventLoopTimer::State::ACTIVE {
-            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            (hooks.timer_remove)(self, timer)
-        }
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.

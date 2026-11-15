@@ -1,6 +1,7 @@
 //! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
+use crate::timer::OwnedTimer;
 use bun_collections::index_sort;
 
 type DNSServiceRef = *mut c_void;
@@ -412,7 +413,7 @@ pub(crate) struct SharedConnection {
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
     /// Early-out timer (JS threads only; the daemon timeout backstops other loops).
-    pub(crate) early_out_timer: EventLoopTimer,
+    pub(crate) early_out_timer: OwnedTimer,
     /// Deadline the timer is currently armed for (0 = disarmed).
     early_out_armed_for: Cell<i64>,
 }
@@ -420,11 +421,6 @@ pub(crate) struct SharedConnection {
 impl Drop for SharedConnection {
     fn drop(&mut self) {
         debug_assert!(self.inflight.is_empty());
-        if self.early_out_timer.state.get() == EventLoopTimerState::ACTIVE
-            && VirtualMachine::is_loaded()
-        {
-            crate::jsc_hooks::timer_all().remove(&self.early_out_timer);
-        }
     }
 }
 
@@ -472,7 +468,7 @@ impl SharedConnection {
             ctx,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
-            early_out_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
+            early_out_timer: OwnedTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
             early_out_armed_for: Cell::new(0),
         });
         this.file_poll.owner.ptr = (&raw mut *this).cast();
@@ -657,7 +653,8 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        crate::jsc_hooks::timer_all().update(&raw const self.early_out_timer, &next);
+        crate::jsc_hooks::timer_all()
+            .update(OwnedTimer::node(&raw const self.early_out_timer), &next);
         self.early_out_armed_for.set(deadline);
     }
 
@@ -666,13 +663,11 @@ impl SharedConnection {
         // Raw receiver like `on_readable`: `finish()` may re-derive `&mut Self`, so no borrow of `*this` outlives it.
         let _exit = event_loop_scope();
         // SAFETY: `this` is the live connection whose timer fired; each borrow
-        // below is scoped to its statement and ends before `finish()`.
+        // below ends before `finish()`.
         let ready = unsafe {
             // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-            (*this)
-                .early_out_timer
-                .state
-                .set(EventLoopTimerState::FIRED);
+            let timer = &(*this).early_out_timer;
+            timer.state.set(EventLoopTimerState::FIRED);
             (*this).early_out_armed_for.set(0);
             let now = now_ms();
             let ready = (*this).take_ready(|q| {

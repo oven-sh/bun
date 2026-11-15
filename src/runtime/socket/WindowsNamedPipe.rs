@@ -836,9 +836,7 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.current_timeout.set(ms);
 
         // if the interval is 0 means that we stop the timer

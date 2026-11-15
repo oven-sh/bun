@@ -249,9 +249,7 @@ impl ViWait {
 
     /// Idempotent. The wrapper may be collected afterwards.
     fn finish(&self) {
-        if self.timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.timer);
-        }
+        self.timer.disarm();
         self.abort_handle.leave();
         self.keep_alive.unref(bun_io::js_vm_ctx());
         self.root.set(None);

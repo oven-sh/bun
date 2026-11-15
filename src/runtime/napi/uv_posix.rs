@@ -883,10 +883,7 @@ impl UvTimer {
             if !(*handle).ref_state.active {
                 return;
             }
-            let event_loop_timer = &(*(*handle).node).event_loop_timer;
-            if event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-                timer_all().remove(event_loop_timer);
-            }
+            (*(*handle).node).event_loop_timer.disarm();
             (*handle).ref_state.set_active(false);
         }
     }

@@ -60,7 +60,6 @@ fn create_page_outputs(
             None,
             heap,
             Some(NonNull::from(&any_loop)),
-            false,
             Some(NonNull::from(carrier.graph.pool().worker_pool())),
             heap,
         );

@@ -434,6 +434,25 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     expect(result).toEqual({ stdout: "false false 4", stderr: "", exitCode: 0 });
   });
 
+  test("closed streams are freed when every read comes from a flush of queued DATA", async () => {
+    const result = await run(/* js */ `
+      const { session, duplex, encrypt, close } = await connectTls();
+      // More than its window: from now on every write is queued.
+      session.request(post).on("error", () => {}).write(Buffer.alloc(70000));
+      await until(() => session.state.outboundQueueSize > 0);
+      duplex.minLength = 16384;
+      for (let id = 3; id <= 7; id += 2) {
+        const record = await encrypt(frame(HEADERS, END_STREAM | END_HEADERS, id, hpackStatus200));
+        duplex.inNextWrite = () => duplex.push(record);
+        await once(session.request(post).resume().end(Buffer.alloc(20000)), "close");
+        await tick();
+      }
+      console.log(isAllocated(session, 3), isAllocated(session, 5));
+      close();
+    `);
+    expect(result).toEqual({ stdout: "false false", stderr: "", exitCode: 0 });
+  });
+
   test("destroy() and GC do not free the TLSSocket mid-write", async () => {
     const result = await run(/* js */ `
       const { session, socket, duplex, close } = await connectTls();

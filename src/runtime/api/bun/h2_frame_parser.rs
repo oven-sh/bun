@@ -3289,8 +3289,6 @@ impl H2FrameParser {
             });
             self.evict_closed_streams(engine);
         }
-        // A read from inside the `flush()` calls below must not evict what this one closes.
-        let _streams = self.streams.borrow();
         if self.rewrite_tail.with_taken(|t| t.is_empty()) {
             let feed = {
                 let mut guard = self.engine.borrow_mut();

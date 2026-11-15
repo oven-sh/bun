@@ -320,15 +320,15 @@ impl<'a> Cmd<'a> {
         let mut spawn_args = SpawnArgs::default(&arena);
         let mut redirection_fd = None;
 
-        match shell_interp.with_interp(|interp| {
+        let inited = shell_interp.with_interp(|interp| {
             Cmd::init_spawn_args(interp, this, &mut spawn_args, &mut redirection_fd)
-        }) {
-            Some(ControlFlow::Continue(None)) => {}
-            Some(ControlFlow::Continue(Some((jsbuf, flags)))) => {
+        });
+        match inited.expect("the script waits for this Cmd") {
+            ControlFlow::Continue(None) => {}
+            ControlFlow::Continue(Some((jsbuf, flags))) => {
                 Self::init_subproc_jsbuf_redirection(shell_interp, jsbuf, flags, &mut spawn_args)?;
             }
-            Some(ControlFlow::Break(y)) => return Ok(y),
-            None => return Ok(Yield::suspended()),
+            ControlFlow::Break(y) => return Ok(y),
         }
 
         Ok(ShellSubprocess::spawn_async(shell_interp, this, spawn_args))
@@ -609,8 +609,10 @@ impl<'a> Cmd<'a> {
 
     pub(crate) fn deinit(interp: &mut Interpreter<'a>, this: NodeId) {
         log!("Cmd {} deinit", this);
-        if let Exec::Builtin(b) = core::mem::take(&mut interp.as_cmd_mut(this).exec) {
-            b.deinit(interp);
+        match core::mem::take(&mut interp.as_cmd_mut(this).exec) {
+            Exec::None => {}
+            Exec::Builtin(b) => b.deinit(interp),
+            Exec::Subproc(sub) => sub.kill(),
         }
     }
 

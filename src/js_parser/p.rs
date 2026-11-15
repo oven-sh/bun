@@ -7576,7 +7576,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     array.extend_from_slice(&constructor_param_decorators);
 
                     if self.options.features.emit_decorator_metadata {
-                        if let Some(cf) = constructor_function {
+                        // tsc writes none for a constructor that is not in the source.
+                        let written =
+                            constructor_function.filter(|cf| !cf.func.open_parens_loc.is_empty());
+                        if let Some(cf) = written {
                             // design:paramtypes
                             let constructor_args: &[G::Arg] = cf.func.args.slice();
                             let args1 = if !constructor_args.is_empty() {

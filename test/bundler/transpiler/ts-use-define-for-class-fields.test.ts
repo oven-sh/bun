@@ -245,4 +245,87 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     // No declaration-only native class field for the parameter property.
     expect(out).not.toMatch(/^\s*x;\s*$/m);
   });
+
+  // The expected values are what the output of tsc 6.0.2 prints on Node, at every target:
+  // a class has `design:paramtypes` of its own only if its source has a constructor.
+  test.concurrent("false: a constructor that Bun adds for assigned fields has no design:paramtypes", async () => {
+    using dir = tempDir("udfcf-paramtypes", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { useDefineForClassFields: false, experimentalDecorators: true, emitDecoratorMetadata: true },
+      }),
+      "index.ts": `
+        // Stands for reflect-metadata: Reflect.getMetadata() asks the class, then each class it extends.
+        const given = new Map<object, Map<string, Function[]>>();
+        (Reflect as any).metadata = (key: string, value: Function[]) => (target: object) => {
+          given.set(target, new Map(given.get(target)).set(key, value));
+        };
+        const names = (types: Function[] | undefined) =>
+          types ? types.map(type => type.name).join() || "empty" : "none";
+        const own = (target: object) => names(given.get(target)?.get("design:paramtypes"));
+        function found(target: object | null): string {
+          for (; target; target = Object.getPrototypeOf(target)) {
+            const types = given.get(target)?.get("design:paramtypes");
+            if (types) return names(types);
+          }
+          return "none";
+        }
+        function injectable(target: Function): void {}
+
+        class Dep {}
+        @injectable
+        class Base {
+          constructor(public dep: Dep) {}
+        }
+        @injectable
+        class AssignsField extends Base {
+          label = "x";
+        }
+        @injectable
+        class AssignsFieldWithoutBase {
+          label = "x";
+        }
+        @injectable
+        class FieldWithoutValue extends Base {
+          label?: string;
+        }
+        @injectable
+        class PrivateField extends Base {
+          #cache = new Map<string, number>();
+          size() { return this.#cache.size; }
+        }
+        @injectable
+        class WritesConstructor extends Base {
+          label = "x";
+          constructor() { super(new Dep()); }
+        }
+        @injectable
+        class WritesParameters extends Base {
+          label = "x";
+          constructor(dep: Dep, public count: number) { super(dep); }
+        }
+
+        process.stdout.write(JSON.stringify({
+          Base: [own(Base), found(Base)],
+          AssignsField: [own(AssignsField), found(AssignsField), new AssignsField(new Dep()).label],
+          AssignsFieldWithoutBase: [own(AssignsFieldWithoutBase), found(AssignsFieldWithoutBase)],
+          FieldWithoutValue: [own(FieldWithoutValue), found(FieldWithoutValue)],
+          PrivateField: [own(PrivateField), found(PrivateField), new PrivateField(new Dep()).size()],
+          WritesConstructor: [own(WritesConstructor), found(WritesConstructor)],
+          WritesParameters: [own(WritesParameters), found(WritesParameters)],
+        }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      Base: ["Dep", "Dep"],
+      AssignsField: ["none", "Dep", "x"],
+      AssignsFieldWithoutBase: ["none", "none"],
+      FieldWithoutValue: ["none", "Dep"],
+      PrivateField: ["none", "Dep", 0],
+      WritesConstructor: ["empty", "empty"],
+      WritesParameters: ["Dep,Number", "Dep,Number"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

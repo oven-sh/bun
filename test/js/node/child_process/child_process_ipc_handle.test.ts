@@ -815,11 +815,9 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent(
-    "the callbacks of queued messages are out of reach of an index setter on Array.prototype",
-    async () => {
-      using dir = tempDir("ipc-queued-callbacks", {
-        "parent.js": `
+  test.concurrent("an index setter on Array.prototype does not see the callbacks of queued send() calls", async () => {
+    using dir = tempDir("ipc-queued-callbacks", {
+      "parent.js": `
 const { fork } = require('node:child_process');
 const child = fork('child.js', { stdio: ['pipe', 'inherit', 'inherit', 'ipc'] });
 const server = require('node:net').createServer().listen(0, '127.0.0.1', () => {
@@ -848,7 +846,7 @@ const server = require('node:net').createServer().listen(0, '127.0.0.1', () => {
   });
 });
 `,
-        "child.js": `
+      "child.js": `
 process.stdin.resume().on('end', () => {
   const got = [];
   process.on('message', (m, handle) => {
@@ -860,23 +858,22 @@ process.stdin.resume().on('end', () => {
   });
 });
 `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "parent.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(
-        stdout
-          .trim()
-          .split("\n")
-          .map(line => JSON.parse(line)),
-      ).toEqual([["xxxxxx", "a", "b", "c"], { sawCallback: false, sent: ["large", "a", "b", "c"], code: 0 }]);
-      expect(exitCode).toBe(0);
-    },
-  );
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(
+      stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+    ).toEqual([["xxxxxx", "a", "b", "c"], { sawCallback: false, sent: ["large", "a", "b", "c"], code: 0 }]);
+    expect(exitCode).toBe(0);
+  });
 });

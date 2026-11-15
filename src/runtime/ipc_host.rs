@@ -311,19 +311,19 @@ pub(crate) fn emit_handle_ipc_message<'a>(
         }
         MessageTarget::Missing | MessageTarget::Ignored(_) => {}
         MessageTarget::ThisProcess => {
+            let channel = get_ipc_instance(global_this.bun_vm());
             // Cluster-internal replies that carried a descriptor (shared dgram
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
             // the cluster's internal-message dispatcher instead of emitting a
             // process 'message' event, mirroring Node's NODE_-prefix routing.
-            let channel = get_ipc_instance(global_this.bun_vm());
             if is_object {
                 if let Some(cmd) = message.get(global_this, "cmd")? {
                     if cmd.is_string() {
                         let cmd_str = cmd.to_bun_string(global_this)?;
                         if cmd_str.eq_ascii(b"NODE_CLUSTER") {
                             if let Some(channel) = channel {
-                                let internal = &channel.data().internal_msg_queue;
-                                internal.dispatch(message, handle, global_this);
+                                let queue = &channel.data().internal_msg_queue;
+                                queue.dispatch(message, handle, global_this);
                             }
                             return Ok(());
                         }
@@ -419,8 +419,8 @@ impl IPCInstance {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
                 let _entered = vm.enter_event_loop_scope();
                 if let Some(channel) = CHANNEL.get() {
-                    let internal = &channel.data().internal_msg_queue;
-                    internal.dispatch(data, handle, global_this);
+                    let queue = &channel.data().internal_msg_queue;
+                    queue.dispatch(data, handle, global_this);
                 }
             }
         }
@@ -432,7 +432,10 @@ impl IPCInstance {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         if let Some(channel) = CHANNEL.get() {
-            channel.data().internal_msg_queue.stop_listening();
+            channel
+                .data()
+                .internal_msg_queue
+                .clear_listener_and_messages();
         }
         {
             let _entered = vm.enter_event_loop_scope();

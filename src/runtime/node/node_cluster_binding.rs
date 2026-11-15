@@ -25,10 +25,10 @@ pub(crate) fn on_internal_message_child<'a>(
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let global = cx.global();
     if let Some(channel) = get_ipc_instance(global.bun_vm()) {
-        let internal = &channel.data().internal_msg_queue;
+        let queue = &channel.data().internal_msg_queue;
         // TODO: we should not create two jsc.Strong here. If absolutely necessary, a single Array. should be all we use.
-        internal.listen(worker.to_js(), callback.to_js(), global);
-        internal.flush(global);
+        queue.set_listener(worker.to_js(), callback.to_js(), global);
+        queue.flush(global);
     }
     Ok(())
 }
@@ -103,10 +103,11 @@ pub(crate) fn send_helper_primary<'a>(
             };
         }
     }
-    let this_seq = ipc_data
-        .internal_msg_queue
-        .next_seq(callback.map(|callback| Strong::create(callback.to_js(), global)));
-    if callback.is_some() {
+    let this_seq = ipc_data.internal_msg_queue.next_seq();
+    if let Some(callback) = callback {
+        ipc_data
+            .internal_msg_queue
+            .put_callback(this_seq, Strong::create(callback.to_js(), global));
         if let Some(h) = &mut native_handle {
             h.cluster_seq = Some(this_seq);
         }
@@ -157,7 +158,7 @@ pub(crate) fn on_internal_message_primary<'a>(
     // TODO: remove these strongs.
     ipc_data
         .internal_msg_queue
-        .listen(worker.to_js(), callback.to_js(), cx.global());
+        .set_listener(worker.to_js(), callback.to_js(), cx.global());
 }
 
 pub(crate) fn handle_internal_message_primary(
@@ -168,17 +169,18 @@ pub(crate) fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
-    let Some((worker, listener)) = ipc_data.internal_msg_queue.worker_and_listener() else {
+    let Some((worker, cb)) = ipc_data.internal_msg_queue.worker_and_cb() else {
         return Ok(());
     };
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
-    let acknowledged = (message.get(global, "ack")?)
+    let ack_callback = message
+        .get(global, "ack")?
         .filter(|ack| ack.is_int32())
         .and_then(|ack| ipc_data.internal_msg_queue.take_callback(ack.as_int32()));
     global.bun_vm().event_loop().run_callback(
         subprocess.context,
-        acknowledged.unwrap_or(listener),
+        ack_callback.unwrap_or(cb),
         global,
         worker,
         &[

@@ -1534,7 +1534,7 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
 });
 
 test.concurrent.each(["running", "terminated"])(
-  "a %s Worker thread that set itself up as a cluster worker doesn't get the messages of the process",
+  "cluster._setupWorker() in a %s worker thread does not take the cluster messages of the process",
   async state => {
     using dir = tempDir("cluster-setup-in-thread", {
       "index.js": `

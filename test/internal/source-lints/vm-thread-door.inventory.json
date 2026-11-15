@@ -172,10 +172,22 @@
     ]
   },
   "src/runtime/shell/builtin/cp.rs": {
-    "WorkPool::schedule*": 1
+    "WorkPool::schedule*": 1,
+    "intrusive_work_task!": [
+      "ShellCpTask"
+    ]
+  },
+  "src/runtime/shell/builtin/ls.rs": {
+    "WorkPool::schedule*": 1,
+    "intrusive_work_task!": [
+      "ShellLsTask"
+    ]
   },
   "src/runtime/shell/builtin/rm.rs": {
-    "WorkPool::schedule*": 2
+    "WorkPool::schedule*": 3,
+    "intrusive_work_task!": [
+      "DirTask"
+    ]
   },
   "src/runtime/shell/dispatch_tasks.rs": {
     "unsafe impl Send": [
@@ -183,7 +195,10 @@
     ]
   },
   "src/runtime/shell/interpreter.rs": {
-    "WorkPool::schedule*": 1
+    "WorkPool::schedule*": 1,
+    "unsafe impl Send": [
+      "ShellTask"
+    ]
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1

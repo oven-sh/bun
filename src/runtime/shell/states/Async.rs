@@ -1,6 +1,9 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnvId, log};
+use crate::shell::dispatch_tasks::ShellAsyncTask;
+use crate::shell::interpreter::{
+    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnvId, ShellInterpreterRef, log,
+};
 use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::cmd::Cmd;
@@ -16,10 +19,8 @@ pub(crate) struct Async<'a> {
     pub(crate) io: IO,
     pub(crate) state: AsyncState,
     pub(crate) event_loop: EventLoopHandle,
-    /// Heap payload for the main-thread bounce. The node lives in the
-    /// reallocatable `Interpreter::nodes` arena, so the intrusive
-    /// concurrent-task node must live in a stable heap allocation instead.
-    task: bun_ptr::AliasableBox<crate::shell::dispatch_tasks::ShellAsyncTask>,
+    /// Heap payload for the main-thread bounce. `None` while it is queued.
+    task: Option<Box<ShellAsyncTask>>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -49,12 +50,12 @@ impl<'a> Async<'a> {
             io,
             state: AsyncState::Idle,
             event_loop: evtloop,
-            task: bun_ptr::AliasableBox::new(crate::shell::dispatch_tasks::ShellAsyncTask {
-                interp: interp.shell_interp(),
-                node: core::cell::Cell::new(NodeId::NONE),
-            }),
+            task: None,
         }));
-        interp.as_async(id).task.node.set(id);
+        interp.as_async_mut(id).task = Some(Box::new(ShellAsyncTask {
+            interp: None,
+            node: id,
+        }));
         id
     }
 
@@ -145,19 +146,20 @@ impl<'a> Async<'a> {
     /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &mut Interpreter<'a>, this: NodeId) {
+        let interp_ref = ShellInterpreterRef::new(interp);
         let me = interp.as_async_mut(this);
-        let task = me.task.as_ptr();
+        let mut task = me.task.take().expect("ShellAsyncTask is not queued");
+        task.interp = Some(interp_ref);
         match me.event_loop {
             // Next loop iteration, after I/O has had a turn.
             EventLoopHandle::Js { owner } => {
-                owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
+                owner.enqueue_task_after_yield(bun_jsc::Task::from_boxed(task))
             }
             EventLoopHandle::Mini(mini) => {
-                // The payload embeds only the JS-arm `ConcurrentTask`, so the
-                // mini arm heap-allocates an auto-deinit wrapper per bounce.
+                // The mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
                     task,
-                    run_from_main_thread_mini,
+                    |task, _| task.run_from_main_thread(),
                 );
                 mini.enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
             }
@@ -174,32 +176,22 @@ enum NextAction {
 
 // `runtime::dispatch::run_task`'s `task_tag::ShellAsync` arm casts the
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
-impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
+impl bun_event_loop::BoxedTask for ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
-    /// The `Async` node's, which drops with the interpreter.
-    unsafe fn release_unrun(_: *mut Self) {}
+    fn release_unrun(self: Box<Self>) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-impl crate::shell::dispatch_tasks::ShellAsyncTask {
-    /// # Safety
-    /// `this` was queued by `enqueue_self`, and the queue is running it.
-    pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: fn contract. The node that owns it is freed at the tail of this bounce chain,
-        // which the script waits for.
-        let (shell_interp, node) = unsafe { ((*this).interp.as_ref(), (*this).node.get()) };
-        shell_interp.run_yield_with(|interp| Async::next(interp, node));
+impl ShellAsyncTask {
+    pub(crate) fn run_from_main_thread(mut self: Box<Self>) {
+        let interp_ref = self.interp.take().expect("set by enqueue_self");
+        interp_ref.run_yield_with(|interp| {
+            let node = self.node;
+            interp.as_async_mut(node).task = Some(self);
+            Async::next(interp, node)
+        });
     }
-}
-
-/// Mini-loop trampoline.
-fn run_from_main_thread_mini(
-    task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
-    _: *mut core::ffi::c_void,
-) {
-    // SAFETY: the callback that `enqueue_self` queued.
-    unsafe { crate::shell::dispatch_tasks::ShellAsyncTask::run_from_main_thread(task) };
 }

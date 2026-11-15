@@ -99,9 +99,7 @@ pub(crate) use dispatch_encoding;
 // Exported C ABI entry points
 // ────────────────────────────────────────────────────────────────────────────
 
-/// # Safety
-/// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
-/// reading / writing respectively for the duration of the call.
+/// SAFETY: `input[..len]` is valid for reading and `to[..to_len]` for writing during the call.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__encoding__fillUTF16FromUTF8(
     input: *const u8,

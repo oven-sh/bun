@@ -15,7 +15,6 @@ use crate::shell::interpreter::{
 use crate::shell::io::{OutFd, OutKind};
 use crate::shell::io_reader::{IOReader, IOReaderId};
 use crate::shell::io_writer::{self, IOWriter, IOWriterId};
-use crate::shell::states::base::Base;
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::{Action, Yield};
 
@@ -678,8 +677,12 @@ impl Builtin {
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
-        let Base { parent, shell, .. } = interp.as_cmd(cmd).base;
-        (interp.shells.buffered_mut(shell, IoKind::Stderr)).append_slice(&buf);
+        let shell = interp.as_cmd(cmd).shell.id();
+        interp
+            .shells
+            .buffered_mut(shell, IoKind::Stderr)
+            .append_slice(&buf);
+        let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)
     }
 

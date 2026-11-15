@@ -884,6 +884,11 @@ thread_local! {
     static POOL: Pool = const { Pool(OnceCell::new()) };
 }
 
+struct PendingWrite {
+    written: usize,
+    complete: bool,
+}
+
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
 #[derive(Clone, Copy)]
 enum BatchSegment {
@@ -2323,7 +2328,7 @@ impl H2FrameParser {
     }
 
     /// Takes the pending bytes out for the write: JS re-entering under it would send them again.
-    fn write_pending(&self, socket: &BunSocket, bytes: &[u8]) -> (usize, usize) {
+    fn write_pending(&self, socket: &BunSocket, bytes: &[u8]) -> PendingWrite {
         let offset = self.write_buffer_offset.replace(0);
         let mut pending = self.write_buffer.take();
         let _ = pending.write(bytes);
@@ -2343,18 +2348,21 @@ impl H2FrameParser {
             pending.clear();
             self.write_buffer.set(pending);
         }
-        (written, total)
+        PendingWrite {
+            written,
+            complete: written == total,
+        }
     }
 
     fn generic_flush(&self) -> usize {
         let written = if self.pending_len() > 0
             && let Some(socket) = self.native_socket.get()
         {
-            let (written, total) = self.write_pending(&socket, b"");
-            if written == total {
+            let write = self.write_pending(&socket, b"");
+            if write.complete {
                 self.write_buffer.with_taken(Self::shrink_write_buffer);
             }
-            written
+            write.written
         } else {
             0
         };
@@ -2368,20 +2376,20 @@ impl H2FrameParser {
         let had_pending = self.pending_len() > 0;
         if had_pending {
             if self.transport_write_runs_js() {
-                let (written, total) = self.write_pending(socket, bytes);
-                if written == total {
+                let write = self.write_pending(socket, bytes);
+                if write.complete {
                     self.write_buffer.with_taken(Self::shrink_write_buffer);
                 }
-                return written == total;
+                return write.complete;
             }
-            let (written, total) = self.write_pending(socket, b"");
-            if written < total {
+            let write = self.write_pending(socket, b"");
+            if !write.complete {
                 // we still have more to buffer and even more now
                 self.append_pending(bytes);
                 bun_output::scoped_log!(
                     H2FrameParser,
                     "_genericWrite flushed {} and buffered more {}",
-                    written,
+                    write.written,
                     bytes.len()
                 );
                 return false;

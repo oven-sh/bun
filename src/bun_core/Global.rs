@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use core::ffi::{CStr, c_char, c_int};
+use core::ffi::{CStr, c_int};
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use const_format::{concatcp, formatcp};
@@ -11,7 +11,7 @@ use crate::output as Output;
 
 use crate::USE_MIMALLOC;
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
-use crate::ZStr;
+use crate::{CStrRef, ZStr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Process-wide top-level directory (cwd at startup). Storage lives at T0 so
@@ -613,14 +613,14 @@ pub fn set_thread_name(name: &ZStr) {
     {
         // SAFETY: macOS pthread_setname_np takes the current thread implicitly.
         unsafe {
-            let _ = libc::pthread_setname_np(name.as_ptr().cast::<c_char>());
+            let _ = libc::pthread_setname_np(name.as_ptr());
         }
     }
     #[cfg(target_os = "freebsd")]
     {
         // SAFETY: FreeBSD signature is (pthread_t, const char*).
         unsafe {
-            libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr().cast::<c_char>());
+            libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr());
         }
     }
     #[cfg(windows)]
@@ -856,12 +856,9 @@ pub fn crash() -> ! {
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 
-#[repr(transparent)]
-pub struct SyncCStr(pub *const c_char);
-// SAFETY: points into a `'static` string literal; the pointer is never mutated.
-unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
-static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
+static Bun__userAgent: CStrRef<'static> =
+    CStrRef::from_slice_with_nul(concatcp!(user_agent, "\0").as_bytes());
 
 /// The certificate authorities that TLS trusts when a connection names none, besides those in
 /// `NODE_EXTRA_CA_CERTS`.

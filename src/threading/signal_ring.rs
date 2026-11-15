@@ -103,6 +103,12 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
+    /// Any thread. `false` from when a producer has claimed a slot.
+    pub fn is_empty(&self) -> bool {
+        let (head, tail) = unpack(self.state.load(Ordering::Relaxed));
+        head == tail
+    }
+
     /// Starts both indices at `index`, to put the `u16` wrap within reach.
     #[cfg(test)]
     fn starting_at(index: u16) -> Self {

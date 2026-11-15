@@ -40,8 +40,6 @@ pub(crate) struct BuildContext {
 // SAFETY: immutable after its phase. `build` finishes setting up the carrier before `compile`
 // starts, and the fields read through this pointer do not change until `compile` returns.
 // `plugins.rs` alone makes a `&mut BundleV2` from it, under its lock.
-unsafe impl Send for BuildContext {}
-// SAFETY: as for `Send`.
 unsafe impl Sync for BuildContext {}
 
 impl BuildContext {

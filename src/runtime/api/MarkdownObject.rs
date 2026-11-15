@@ -136,7 +136,7 @@ fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<Pinne
     let StringOrBuffer::Buffer(buffer) = input else {
         return Ok(None);
     };
-    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
+    match PinnedArrayBuffer::pin(global, buffer.value) {
         Some(pinned) => Ok(Some(pinned)),
         None => Err(global.throw_out_of_memory()),
     }

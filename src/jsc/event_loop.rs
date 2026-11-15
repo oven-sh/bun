@@ -38,8 +38,6 @@ pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::jsc_scheduler as JSCScheduler;
-#[cfg(unix)]
-pub use crate::posix_signal_handle::PosixSignalHandle;
 pub use crate::posix_signal_handle::PosixSignalTask;
 
 bun_core::declare_scope!(EventLoop, hidden);
@@ -115,14 +113,6 @@ pub struct EventLoop {
     /// Low tier stores the erased pointer; the high-tier hook installed via
     /// (link-time `__bun_run_wtf_timer`) casts it back.
     pub imminent_gc_timer: AtomicPtr<()>,
-
-    #[cfg(unix)]
-    /// Boxed `PosixSignalHandle` ring buffer, leaked once by
-    /// `Bun__ensureSignalHandler` and live for the process lifetime. Stored as
-    /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
-    /// `enqueue()` reads go through the single audited `BackRef::deref`
-    /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
-    pub(crate) signal_handler: Cell<Option<bun_ptr::BackRef<PosixSignalHandle>>>,
 }
 
 impl EventLoop {
@@ -152,8 +142,6 @@ impl EventLoop {
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(unix)]
-            signal_handler: Cell::new(None),
         }
     }
 
@@ -625,11 +613,7 @@ impl EventLoop {
         self.apply_concurrent_ref_delta();
 
         #[cfg(unix)]
-        {
-            if let Some(signal_handler) = self.signal_handler.get() {
-                signal_handler.drain(self);
-            }
-        }
+        self.drain_pending_signals();
 
         self.run_imminent_gc_timer();
 

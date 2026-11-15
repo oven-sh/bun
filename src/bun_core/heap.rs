@@ -48,7 +48,7 @@ pub fn into_raw<T: ?Sized>(boxed: Box<T>) -> *mut T {
 ///
 ///   - an intrusive refcount on the payload (the trailing `deref()` / `unref()`
 ///     reclaims via `Box::from_raw` once the count hits zero),
-///   - a JSC `ExternalStringImpl` / `MarkedArrayBuffer` that owns the bytes and
+///   - a JSC `ExternalStringImpl` that owns the bytes and
 ///     frees them on GC,
 ///   - a `WeakPtr` table that may have outstanding aliases,
 ///   - an enqueued work-pool task that reclaims in its `destroy()` / `run()`.

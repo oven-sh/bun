@@ -1787,6 +1787,11 @@ impl VirtualMachine {
         self.macro_mode.set(false);
         self.event_loop.set(&raw const self.regular_event_loop);
         self.transpiler_store.enabled.set(true);
+        // The macro loop polls the same wakeup fd, so it may have taken the signal's wakeup.
+        #[cfg(unix)]
+        if self.regular_event_loop.has_pending_signals() {
+            self.regular_event_loop.wakeup();
+        }
     }
 
     pub fn enqueue_task(&self, task: bun_event_loop::Task) {

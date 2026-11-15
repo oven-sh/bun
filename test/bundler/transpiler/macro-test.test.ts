@@ -294,6 +294,37 @@ test.concurrent.each(["{ 0: zero, key }", "{ key, 0: zero }"])(
   },
 );
 
+test("import.meta.hot.accept() doesn't change the other uses of the const it is given", async () => {
+  using dir = tempDir("macro-hot-accept-shared", {
+    "m.ts": `export const specifiers = () => ["./dep.ts"];`,
+    "dep.ts": ``,
+    "index.ts": `
+      import { specifiers } from "./m.ts" with { type: "macro" };
+      import "./dep.ts";
+      const list = specifiers();
+      import.meta.hot.accept(list, () => {});
+      import.meta.hot.accept(list, () => {});
+      console.log(list);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--minify-syntax", "--format=internal_bake_dev", "index.ts", "--outfile=out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(exitCode, stderr).toBe(0);
+  const out = await Bun.file(path.join(String(dir), "out.js")).text();
+  expect(out.slice(out.lastIndexOf("var list")).match(/"[^"]*dep\.ts"/g)).toEqual([
+    `"./dep.ts"`,
+    `"dep.ts"`,
+    `"dep.ts"`,
+    `"./dep.ts"`,
+  ]);
+});
+
 // A `const` initialized with a macro result is inlined at each use, so every use shares one AST object.
 test("spreading a macro result into JSX doesn't change the other uses of its const", async () => {
   using dir = tempDir("macro-jsx-spread-run", {

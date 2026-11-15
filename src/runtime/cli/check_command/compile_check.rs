@@ -53,8 +53,7 @@ pub(super) fn check_arguments(command_line: &CommandLine) {
     }
 }
 
-pub(super) fn exec(options: &Options) -> ! {
-    let ctx = crate::cli::command::get();
+pub(super) fn exec(ctx: &mut ContextData, options: &Options) -> ! {
     let cwd = working_directory();
     set_compile_context(ctx, options, &cwd);
     match compile_command::compile_from_context(ctx, CompileProduct::ReportsOnly) {

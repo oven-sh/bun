@@ -105,9 +105,7 @@ pub fn update_package_json_and_install_with_manager(
             // `dependency::parse_with_tag` is the only consumer of `pm`; it inserts
             // into `pm.known_npm_aliases` for `npm:`-aliased positionals.
             Some(manager),
-            // SAFETY: `ctx.log` is set once during `Command::create()` (process-
-            // lifetime singleton) and is never null afterward.
-            unsafe { &*ctx.log },
+            ctx.log(),
             positionals,
             &mut update_requests,
             subcommand,

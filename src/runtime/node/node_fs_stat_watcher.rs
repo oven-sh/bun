@@ -10,9 +10,7 @@ use bun_io::JsKeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool, WorkPoolTask,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, WorkPool, WorkPoolTask};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
@@ -332,9 +330,9 @@ impl StatWatcherScheduler {
 // TODO: make this a top-level struct
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `closed` is
-// `AtomicBool` because it is genuinely cross-thread (written by `close()` on
-// the JS thread, read by the work-pool callback). `last_check` is `Cell`
+// interior mutability via `Cell`. `closed` is `AtomicBool` because it is
+// genuinely cross-thread (written by `close()` on the JS thread, read by the
+// work-pool callback). `last_check` is `Cell`
 // (worker-thread-only after init); `persistent`/`poll_ref`/`this_value` are
 // JS-thread-only. Read-only-after-construction fields stay bare.
 /// `StatWatcher`, declared in `node_fs_stat_watcher.bind.ts`.
@@ -361,7 +359,7 @@ pub(crate) struct StatWatcher {
     // gives safe `&JSGlobalObject` projection (Deref) at every read site.
     global_this: BackRef<JSGlobalObject>,
 
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
 
     poll_ref: JsKeepAlive,
 
@@ -480,13 +478,13 @@ impl StatWatcher {
         let el_ctx = self.ctx.loop_ctx();
         self.poll_ref.unref(el_ctx);
         self.closed.store(true, Ordering::Relaxed);
-        self.this_value.with_mut(|r| r.downgrade());
+        self.this_value.downgrade();
     }
 
     /// The scheduler holds its own ref; `closed` tells it to drop it.
     pub(crate) fn finalize(&self) {
         log!("Finalize\n");
-        self.this_value.with_mut(|r| r.finalize());
+        self.this_value.finalize();
         self.closed.store(true, Ordering::Relaxed);
     }
 
@@ -495,7 +493,7 @@ impl StatWatcher {
             return Ok(());
         }
 
-        let Some(js_this) = this.this_value.get().try_get() else {
+        let Some(js_this) = this.this_value.try_get() else {
             return Ok(());
         };
         let global_this = this.global_this();
@@ -514,7 +512,7 @@ impl StatWatcher {
             return Ok(());
         }
 
-        let Some(js_this) = this.this_value.get().try_get() else {
+        let Some(js_this) = this.this_value.try_get() else {
             return Ok(());
         };
         let global_this = this.global_this();
@@ -585,7 +583,7 @@ impl StatWatcher {
         if self.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let Some(js_this) = self.this_value.get().try_get() else {
+        let Some(js_this) = self.this_value.try_get() else {
             return Ok(());
         };
         let global_this = self.global_this();
@@ -642,7 +640,7 @@ impl StatWatcher {
             // Instant.now will not fail on our target platforms.
             last_check: Cell::new(Instant::now()),
             global_this: args.global_this,
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
@@ -656,8 +654,7 @@ impl StatWatcher {
         }
 
         let js_this = js::to_js(this.clone().into_raw(), &args.global_this);
-        this.this_value
-            .set(JsRef::init_strong(js_this, &args.global_this));
+        this.this_value.set_strong(js_this, &args.global_this);
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // SAFETY: heap-allocated; `close()` disarms it before any drop.
         unsafe { bun_jsc::AbortHandle::arm_owner(this.as_ptr(), vm.context_of(args.context)) };

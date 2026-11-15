@@ -1579,7 +1579,6 @@ impl Run<'_> {
                         .entry_point_result
                         .value
                         .get()
-                        .get()
                         .unwrap_or(JSValue::UNDEFINED);
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {

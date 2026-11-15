@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_jsc::{
     self as jsc, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef, JSGlobalObject,
-    JSPromise, JSValue, JsCell, JsCellRefExt as _, JsRef, JsResult, SystemError, bun_string_jsc,
+    JSPromise, JSValue, JsCell, JsRef, JsResult, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -605,7 +605,7 @@ pub struct RewriterPipe {
     /// The owning `JSHTMLRewriterTransform` wrapper cell (which holds a ref on this
     /// pipe). Its WriteBarrier slots root the response, input/output streams,
     /// pending promise, and handler error. Weak: the pipe's other owners outlive the cell.
-    cell: JsCell<JsRef>,
+    cell: JsRef,
     /// Boxed (never held by value): lol-html's `write/end/resume` re-enter
     /// the output sink which reads fields off `*self`. `JsCell`
     /// because those calls (and `suspended_*`) need `&mut LolRewriter` from
@@ -699,7 +699,7 @@ impl RewriterPipe {
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept.
     pub fn finalize(&self) {
-        self.cell.with_mut(|r| r.finalize());
+        self.cell.finalize();
     }
 
     fn ref_guard(&self) -> RefPtr<Self> {
@@ -905,7 +905,7 @@ impl RewriterPipe {
 
         let pipe = RefPtr::new(RewriterPipe {
             global: GlobalRef::from(cx.global()),
-            cell: JsCell::new(JsRef::empty()),
+            cell: JsRef::empty(),
             rewriter: JsCell::new(None),
             context,
             script_context: cx.context().id(),
@@ -999,7 +999,7 @@ impl RewriterPipe {
         // input/output streams; the Response's `transform` slot roots the cell
         // so it survives as long as user code can reach the output.
         let cell = js_HTMLRewriterTransform::to_js(pipe.into_raw(), cx.global());
-        this.cell.set(JsRef::init_weak(cell));
+        this.cell.set_weak(cell);
         js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
         js_Response::transform_set_cached(response_js_value, cx.global(), cell);
         // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
@@ -1200,7 +1200,7 @@ impl RewriterPipe {
             return;
         }
         self.background_pull_root
-            .set(Some(self.cell.get_or_undefined().protected()));
+            .set(Some(self.cell.get().protected()));
         vm.enqueue_task(bun_event_loop::Task::init(
             self.ref_guard()
                 .into_raw()
@@ -1409,7 +1409,7 @@ impl RewriterPipe {
             return None;
         }
         // A handler can cut every other path to the cell while lol-html has handlers left to run.
-        let cell = self.cell.get_or_undefined();
+        let cell = self.cell.get();
         let _active = ActiveSinkGuard::enter(self);
         self.driving.set(true);
         let res = self.rewriter.with_mut(|r| {

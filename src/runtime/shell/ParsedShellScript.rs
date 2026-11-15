@@ -16,8 +16,8 @@ use super::{EnvStr, Interpreter};
 pub(crate) use crate::generated_bindgen::parsed_shell_script::js_ParsedShellScript as js;
 
 pub(crate) struct ParsedShellScript {
-    pub args: JsCell<Option<Box<ShellArgs>>>,
-    pub(crate) export_env: JsCell<Option<EnvMap>>,
+    pub args: JsCell<Option<ShellArgs>>,
+    pub(crate) export_env: JsCell<Option<EnvMap<'static>>>,
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Read-only after construction (set once before the JS wrapper exists).
@@ -56,7 +56,7 @@ impl ParsedShellScript {
     }
 
     // Returns a tuple; callers destructure it.
-    pub(crate) fn take(&self) -> (Box<ShellArgs>, bool, Option<BunString>, Option<EnvMap>) {
+    pub(crate) fn take(&self) -> (ShellArgs, bool, Option<BunString>, Option<EnvMap<'static>>) {
         let args = self.args.replace(None).expect("args already taken");
         let quiet = self.quiet.get();
         let cwd = self.cwd.replace(None);
@@ -165,17 +165,11 @@ fn create_parsed_shell_script_impl(
     template_args_js: JSValue,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    // Box<ShellArgs> drops automatically on every early `return`/`?` below,
-    // so no scopeguard is needed.
-    let mut shargs: Box<ShellArgs> = ShellArgs::init();
-
     let mut template_args = template_args_js.array_iterator(global)?;
 
     // PERF: a stack-fallback allocation may be worth it — profile if hot.
     let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
 
-    // Uses a global Vec here to sidestep a self-referential borrow against
-    // `shargs`'s arena (it later moves into `ParsedShellScript`).
     let mut script: Vec<u8> = Vec::new();
     shell_cmd_from_js(
         global,
@@ -187,16 +181,7 @@ fn create_parsed_shell_script_impl(
     )?;
     let jsobjs_len = u32::try_from(marked_argument_buffer.size()).expect("int cast");
 
-    // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
-    // `shargs.__arena`, so they're scoped to a block that ends before
-    // `shargs.script_ast = script` below. The arena reference is taken via raw
-    // pointer so the `&shargs` borrow doesn't outlive the call (the returned
-    // `ast::Script` is lifetime-erased).
-    let arena_ptr: *const bun_alloc::Arena = shargs.arena();
-    let script_ast = {
-        // SAFETY: `shargs` lives on this stack frame for the whole block; arena
-        // is not moved/dropped while `out_parser`/`out_lex_result` borrow it.
-        let arena = unsafe { &*arena_ptr };
+    let shargs = ShellArgs::init(|arena| {
         let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
         let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
         match Interpreter::parse(
@@ -207,7 +192,7 @@ fn create_parsed_shell_script_impl(
             &mut out_parser,
             &mut out_lex_result,
         ) {
-            Ok(ast) => ast,
+            Ok(ast) => Ok(ast),
             Err(err) => {
                 // `out_lex_result.is_some()` ⇔ `err == ParseError::Lex` — `Interpreter::parse`
                 // only populates `out_lex_result` on the Lex error path.
@@ -223,12 +208,10 @@ fn create_parsed_shell_script_impl(
                     return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
-                return Err(global.throw_error(err, "failed to lex/parse shell"));
+                Err(global.throw_error(err, "failed to lex/parse shell"))
             }
         }
-    };
-
-    shargs.set_script_ast(script_ast);
+    })?;
 
     let mut parsed_shell_script = ParsedShellScript {
         args: JsCell::new(Some(shargs)),

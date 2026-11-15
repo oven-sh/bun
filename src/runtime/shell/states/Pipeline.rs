@@ -2,21 +2,22 @@ use bun_sys::File;
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
-use crate::shell::io::{IO, InKind, OutKind};
-use crate::shell::io_reader::IOReader;
-use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::base::{Base, Env, InheritedEnv};
+use crate::shell::builtin::IoKind;
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnvId, ShellExecEnvKind, log};
+use crate::shell::io::{IO, OutFd, OutKind};
+use crate::shell::io_reader::{IOReader, IOReaderId};
+use crate::shell::io_writer::{self, IOWriter, IOWriterId};
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct Pipeline {
+pub(crate) struct Pipeline<'a> {
     pub(crate) base: Base,
-    shell: InheritedEnv,
-    pub node: bun_ptr::BackRef<ast::Pipeline>,
+    shell: ShellExecEnvId,
+    pub node: &'a ast::Pipeline<'a>,
     pub(crate) io: IO,
     pub(crate) exited_count: u32,
     /// `None` until `setup_commands` has inited every child.
@@ -25,8 +26,33 @@ pub(crate) struct Pipeline {
 }
 
 pub(crate) enum CmdOrResult {
-    Cmd(NodeId),
+    Cmd { id: NodeId, pipe_ends: PipeEnds },
     Result(ExitCode),
+}
+
+impl CmdOrResult {
+    fn deinit(self, interp: &mut Interpreter<'_>) {
+        if let CmdOrResult::Cmd { id, pipe_ends } = self {
+            interp.deinit_node(id);
+            pipe_ends.deinit(interp);
+        }
+    }
+}
+
+pub(crate) struct PipeEnds {
+    stdin: Option<IOReaderId>,
+    stdout: Option<IOWriterId>,
+}
+
+impl PipeEnds {
+    fn deinit(self, interp: &mut Interpreter<'_>) {
+        if let Some(stdin) = self.stdin {
+            interp.io_readers.remove(stdin);
+        }
+        if let Some(stdout) = self.stdout {
+            interp.io_writers.remove(stdout);
+        }
+    }
 }
 
 pub(crate) enum PipelineState {
@@ -47,18 +73,18 @@ impl Default for PipelineState {
     }
 }
 
-impl Pipeline {
+impl<'a> Pipeline<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
-        shell: *mut ShellExecEnv,
-        node: &ast::Pipeline,
+        interp: &mut Interpreter<'a>,
+        shell: ShellExecEnvId,
+        node: &'a ast::Pipeline<'a>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
             base: Base::new(parent),
-            shell: InheritedEnv(shell),
-            node: bun_ptr::BackRef::new(node),
+            shell,
+            node,
             io,
             exited_count: 0,
             cmds: None,
@@ -66,25 +92,25 @@ impl Pipeline {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
     /// Queried by the trampoline (`Yield::run`) to manage the pipeline stack.
     #[inline]
-    pub(crate) fn is_done(interp: &Interpreter, this: NodeId) -> bool {
+    pub(crate) fn is_done(interp: &Interpreter<'a>, this: NodeId) -> bool {
         matches!(interp.as_pipeline(this).state, PipelineState::Done { .. })
     }
 
     #[inline]
-    pub(crate) fn is_starting_cmds(interp: &Interpreter, this: NodeId) -> bool {
+    pub(crate) fn is_starting_cmds(interp: &Interpreter<'a>, this: NodeId) -> bool {
         matches!(
             interp.as_pipeline(this).state,
             PipelineState::StartingCmds { .. }
         )
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
             PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
@@ -95,9 +121,9 @@ impl Pipeline {
         }
     }
 
-    /// Starts ONE child per call; `drain_pipelines` (Yield.rs) re-enters
+    /// Starts ONE child per call; `drain_deferred` (Yield.rs) re-enters
     /// `Pipeline::next` for the next one once the current child suspends.
-    fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
+    fn next_starting(interp: &mut Interpreter<'a>, this: NodeId, idx: u32) -> Yield {
         if interp.failed() {
             // A nested pipeline's member failed while this one was still starting.
             if interp.as_pipeline(this).cmds.is_none() {
@@ -117,7 +143,7 @@ impl Pipeline {
             let me = interp.as_pipeline(this);
             let cmds = me.cmds.as_deref().expect("set by setup_commands");
             cmds.get(idx as usize).map(|slot| match slot {
-                CmdOrResult::Cmd(id) => *id,
+                CmdOrResult::Cmd { id, .. } => *id,
                 CmdOrResult::Result(_) => {
                     unreachable!("pipeline child {} finished before it was started", idx)
                 }
@@ -135,9 +161,11 @@ impl Pipeline {
     /// Creates the pipes and inits every child without starting any, so a
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
-    fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
-        let (node, evtloop) = (interp.as_pipeline(this).node, interp.event_loop);
-        let items: &[ast::PipelineItem] = node.items;
+    fn setup_commands(interp: &mut Interpreter<'a>, this: NodeId) -> Option<Yield> {
+        let (items, parent_shell, io) = {
+            let me = interp.as_pipeline(this);
+            (me.node.items, me.shell, me.io)
+        };
         let cmd_count = items
             .iter()
             .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
@@ -181,51 +209,45 @@ impl Pipeline {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
                 continue;
             }
-            let child_io = {
-                let me = interp.as_pipeline(this);
-                let stdin = if let Some(read_end) = read_end.take() {
-                    let r = IOReader::init(read_end.into_raw(), evtloop);
-                    r.set_interp(interp);
-                    InKind::Fd(r)
-                } else {
-                    me.io.stdin.clone()
-                };
-                let stdout = if let Some([read, write]) = pipes.next() {
+            let pipe_ends = PipeEnds {
+                stdin: (read_end.take()).map(|read| IOReader::init(interp, read.into_raw())),
+                stdout: pipes.next().map(|[read, write]| {
                     read_end = Some(read);
                     // `is_socket` is set on POSIX — the POSIX
                     // pipe is actually a socketpair end (see above).
-                    let w = IOWriter::init(
+                    IOWriter::init(
+                        interp,
                         write.into_raw(),
                         io_writer::Flags {
                             pollable: true,
                             is_socket: cfg!(unix),
                             ..Default::default()
                         },
-                        evtloop,
-                    );
-                    w.set_interp(interp);
-                    OutKind::Fd(crate::shell::io::OutFd {
-                        writer: w,
+                    )
+                }),
+            };
+            let child_io = IO {
+                stdin: pipe_ends.stdin.unwrap_or(io.stdin),
+                stdout: pipe_ends.stdout.map_or(io.stdout, |writer| {
+                    OutKind::Fd(OutFd {
+                        writer,
                         captured: None,
                     })
-                } else {
-                    me.io.stdout.clone()
-                };
-                IO {
-                    stdin,
-                    stdout,
-                    stderr: me.io.stderr.clone(),
-                }
+                }),
+                stderr: io.stderr,
             };
 
             // Each pipeline child gets its own duped env (var assignments
             // inside a pipeline must not leak to siblings or the parent).
-            let env = match (interp.as_pipeline_mut(this).shell)
-                .dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
-            {
+            let env = match interp.shells.dupe_for_subshell(
+                parent_shell,
+                child_io,
+                ShellExecEnvKind::Pipeline,
+            ) {
                 Ok(d) => d,
                 Err(e) => {
-                    drop((child_io, read_end, pipes));
+                    pipe_ends.deinit(interp);
+                    drop((read_end, pipes));
                     interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
                     let sys_err = e.to_shell_system_error();
                     return Some(Self::write_failing_error(
@@ -245,17 +267,17 @@ impl Pipeline {
                 }
                 ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
             };
-            cmds.push(CmdOrResult::Cmd(id));
+            cmds.push(CmdOrResult::Cmd { id, pipe_ends });
         }
         interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
         None
     }
 
     /// Mark the pipeline done with `exit_code`. Returns `Next(this)` so the
-    /// trampoline sees `is_done`, removes us from `pipeline_stack`, and
+    /// trampoline sees `is_done`, removes us from its `DeferredStack`, and
     /// `next()` reports to the parent. Calling `child_done(parent, ..)`
-    /// directly would free this node while it is still on `pipeline_stack`.
-    fn finish(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    /// directly would free this node while it is still on that stack.
+    fn finish(interp: &mut Interpreter<'a>, this: NodeId, exit_code: ExitCode) -> Yield {
         interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code };
         Yield::Next(this)
     }
@@ -265,29 +287,21 @@ impl Pipeline {
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
     fn write_failing_error(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        let stderr_fd = match &interp.as_pipeline(this).io.stderr {
-            OutKind::Fd(fd) => Some((std::rc::Rc::clone(&fd.writer), fd.captured)),
-            OutKind::Pipe | OutKind::Ignore => None,
-        };
-        if let Some((writer, captured)) = stderr_fd {
+        if let OutKind::Fd(fd) = interp.as_pipeline(this).io.stderr {
             // Only the fd arm transitions state.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            return writer.enqueue(child, captured, &buf);
+            return interp.enqueue(fd, child, &buf);
         }
-        if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr = unsafe { interp.as_pipeline_mut(this).shell.buffered_stderr_mut() };
-            stderr.extend_from_slice(&buf);
-        }
+        let shell = interp.as_pipeline(this).shell;
+        (interp.shells.buffered_mut(shell, IoKind::Stderr)).extend_from_slice(&buf);
         Self::finish(interp, this, 1)
     }
 
@@ -296,7 +310,7 @@ impl Pipeline {
     /// not the write succeeded: the parent always needs a completion, and a
     /// failed stderr write has nowhere else to be reported.
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         _written: usize,
         _err: Option<bun_sys::SystemError>,
@@ -309,7 +323,7 @@ impl Pipeline {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -320,7 +334,6 @@ impl Pipeline {
             child,
             exit_code
         );
-        interp.deinit_node(child);
         // Find the child in `cmds` and replace with its result.
         Self::record_result(interp, this, child, exit_code);
         if interp.failed() {
@@ -330,7 +343,7 @@ impl Pipeline {
     }
 
     /// `Done` once every member reported, else keep waiting for the rest.
-    fn finish_if_all_exited(interp: &Interpreter, this: NodeId) -> Yield {
+    fn finish_if_all_exited(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         let me = interp.as_pipeline(this);
         let Some(cmds) = me.cmds.as_deref() else {
             return Yield::suspended();
@@ -353,21 +366,23 @@ impl Pipeline {
         Yield::Next(this)
     }
 
-    fn record_result(interp: &Interpreter, this: NodeId, child: NodeId, exit_code: ExitCode) {
+    /// Frees `child`.
+    fn record_result(
+        interp: &mut Interpreter<'a>,
+        this: NodeId,
+        child: NodeId,
+        exit_code: ExitCode,
+    ) {
         let me = interp.as_pipeline_mut(this);
         me.exited_count += 1;
-        if let Some(cmds) = &mut me.cmds {
-            for slot in cmds.iter_mut() {
-                if matches!(slot, CmdOrResult::Cmd(id) if *id == child) {
-                    *slot = CmdOrResult::Result(exit_code);
-                    break;
-                }
-            }
-        }
+        let slot = (me.cmds.iter_mut().flatten())
+            .find(|slot| matches!(slot, CmdOrResult::Cmd { id, .. } if *id == child))
+            .expect("a child is in cmds");
+        core::mem::replace(slot, CmdOrResult::Result(exit_code)).deinit(interp);
     }
 
     /// The script failed: free the members that never started so their pipe ends close.
-    fn release_unstarted(interp: &Interpreter, this: NodeId) {
+    fn release_unstarted(interp: &mut Interpreter<'a>, this: NodeId) {
         let PipelineState::StartingCmds { idx } = interp.as_pipeline(this).state else {
             return;
         };
@@ -379,7 +394,7 @@ impl Pipeline {
                 cmds.iter()
                     .skip(idx as usize)
                     .filter_map(|slot| match slot {
-                        CmdOrResult::Cmd(id) => Some(*id),
+                        CmdOrResult::Cmd { id, .. } => Some(*id),
                         CmdOrResult::Result(_) => None,
                     })
                     .collect()
@@ -387,21 +402,18 @@ impl Pipeline {
             .unwrap_or_default();
         for child in unstarted {
             log!("Pipeline {} release unstarted child {}", this, child);
-            interp.deinit_node(child);
             Self::record_result(interp, this, child, 1);
         }
         interp.as_pipeline_mut(this).state = PipelineState::Pending;
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &mut Interpreter<'a>, this: NodeId) {
         log!("Pipeline {} deinit", this);
         // Only children that never started (setup failed) are still here.
         let cmds = interp.as_pipeline_mut(this).cmds.take();
         if let Some(cmds) = cmds {
             for c in cmds.into_vec() {
-                if let CmdOrResult::Cmd(id) = c {
-                    interp.deinit_node(id);
-                }
+                c.deinit(interp);
             }
         }
     }

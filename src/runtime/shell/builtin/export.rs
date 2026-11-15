@@ -19,7 +19,7 @@ enum State {
 }
 
 impl Export {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             // No args: print all exported vars.
@@ -34,18 +34,17 @@ impl Export {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
-            // The argv backing is freed when the Cmd retires,
-            // so the key/value MUST be duplicated into ref-counted storage —
-            // `init_slice` here would leave dangling EnvStr in `export_env`.
+            // The argv backing is freed when the Cmd retires.
             let label = EnvStr::init_ref_counted(name.into());
             let val = EnvStr::init_ref_counted(value.into());
-            interp.as_cmd_mut(cmd).shell.export_env.insert(label, val);
+            let shell = interp.as_cmd(cmd).shell.id();
+            interp.shells[shell].export_env.insert(label, val);
         }
         Builtin::done(interp, cmd, 0)
     }
 
-    fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut entries: Vec<(&EnvStr, &EnvStr)> =
+    fn print_all(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
+        let mut entries: Vec<(&EnvStr<'_>, &EnvStr<'_>)> =
             Builtin::shell(interp, cmd).export_env.iter().collect();
         index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
 
@@ -57,19 +56,17 @@ impl Export {
             buf.push(b'\n');
         }
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &buf, safeguard);
+            return interp.enqueue(fd, child, &buf);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,

@@ -17,7 +17,6 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub(crate) struct Ls {
-    pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
@@ -49,11 +48,11 @@ enum ParseFlag {
 }
 
 impl Ls {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         // Match on a tag, drop the borrow, then act.
         enum Tag {
             Idle,
@@ -71,16 +70,14 @@ impl Ls {
             Tag::Idle => {
                 // Parse opts; will be None if called with no args, in
                 // which case we run once with ".".
-                let paths_start = match Self::parse_opts(interp, cmd) {
+                let mut opts = Opts::default();
+                let paths_start = match Self::parse_opts(Builtin::of(interp, cmd), &mut opts) {
                     Ok(p) => p,
                     Err(opt) => {
-                        let buf: Vec<u8> = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
+                        let buf: Vec<u8> = Builtin::fmt_error(
                             Some(Kind::Ls),
                             format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                        )
-                        .to_vec();
+                        );
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }
@@ -110,7 +107,6 @@ impl Ls {
                 };
 
                 let cwd = Builtin::cwd(interp, cmd);
-                let opts = Self::state_mut(interp, cmd).opts;
                 let print_directory = task_count > 1;
                 let schedule = |path: &[u8]| {
                     let path = ZBox::from_bytes(path);
@@ -154,7 +150,7 @@ impl Ls {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -173,7 +169,7 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    fn on_shell_ls_task_done(interp: &Interpreter, task: &mut ShellLsTask) -> Yield {
+    fn on_shell_ls_task_done(interp: &mut Interpreter<'_>, task: &mut ShellLsTask) -> Yield {
         let cmd = task.cmd;
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
@@ -182,7 +178,7 @@ impl Ls {
         let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
+            let s = Builtin::task_error_to_string(Kind::Ls, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if exec.err.is_none() {
                     exec.err = Some(e);
@@ -195,15 +191,14 @@ impl Ls {
 
     /// Returns the index of the first non-flag arg, or `None` if there are no
     /// positional args. `Err` carries the offending flag byte.
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
-        let argc = Builtin::of(interp, cmd).args_slice().len();
+    fn parse_opts(bltn: &Builtin, opts: &mut Opts) -> Result<Option<usize>, Box<[u8]>> {
+        let argc = bltn.args_slice().len();
         if argc == 0 {
             return Ok(None);
         }
         let mut idx = 0usize;
         while idx < argc {
-            let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
+            match Self::parse_flag(opts, bltn.arg_bytes(idx)) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}
                 ParseFlag::IllegalOption(s) => return Err(s),
@@ -240,7 +235,7 @@ impl Ls {
     }
 
     #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Ls {
+    fn state_mut<'i>(interp: &'i mut Interpreter<'_>, cmd: NodeId) -> &'i mut Ls {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Ls(l) => &mut **l,
             _ => unreachable!(),
@@ -250,7 +245,7 @@ impl Ls {
 
 impl OutputTaskVTable for Ls {
     fn write_err(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
         errbuf: &[u8],
@@ -258,7 +253,7 @@ impl OutputTaskVTable for Ls {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
@@ -266,51 +261,42 @@ impl OutputTaskVTable for Ls {
             };
             exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
+            return ControlFlow::Break(interp.enqueue(fd, childptr, errbuf));
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         ControlFlow::Continue(child)
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
     fn write_out(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
     ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
+            let next = interp.enqueue(fd, childptr, child.output.slice());
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 unreachable!()
             };
             exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return ControlFlow::Break(next);
         }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
         ControlFlow::Continue(child)
     }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -694,7 +680,7 @@ impl ShellWork for ShellLsTask {
     fn run_from_thread_pool(&mut self, task: &ShellTask) {
         Self::list(self, task)
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
         Ls::on_shell_ls_task_done(interp, self)
     }
 }

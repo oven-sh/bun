@@ -16,7 +16,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
-    CommonAbortReasonExt as _, DOMWrapped, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_paths::resolve_path::{self as Path, platform};
@@ -490,7 +490,7 @@ pub(crate) struct Arguments<'a> {
     pub global_this: &'a JSGlobalObject,
     /// The context of the script that called `fs.watch`: the watcher is that script's.
     pub(crate) context: &'a bun_jsc::ScriptExecutionContext,
-    pub(crate) signal: Option<DOMWrapped<AbortSignal>>,
+    pub(crate) signal: Option<AbortSignalRef>,
     pub(crate) persistent: bool,
     pub(crate) recursive: bool,
     pub(crate) encoding: Encoding,
@@ -558,7 +558,7 @@ impl<'a> Arguments<'a> {
 
                 // abort signal
                 if let Some(signal_) = options_or_callable.get_truthy(cx.global(), "signal")? {
-                    signal = AbortSignal::from_js(signal_);
+                    signal = AbortSignal::ref_from_js(signal_);
                     if signal.is_none() {
                         return Err(cx.global().throw_invalid_arguments(format_args!(
                             "signal is not of type AbortSignal"
@@ -603,7 +603,7 @@ impl<'a> Arguments<'a> {
         })
     }
 
-    pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<JSValue> {
+    pub(crate) fn create_fs_watcher(self) -> bun_sys::Result<JSValue> {
         FSWatcher::init(self)
     }
 }
@@ -884,7 +884,7 @@ impl FSWatcher {
     }
 
     /// Returns the JS wrapper (`undefined` once `detach()` has cleared it).
-    pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn init(args: Arguments<'_>) -> bun_sys::Result<JSValue> {
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
@@ -906,6 +906,7 @@ impl FSWatcher {
         };
 
         let vm_ref = args.global_this.bun_vm();
+        let is_aborted = args.signal.as_ref().is_some_and(|s| s.aborted());
 
         let watcher = RefPtr::new(FSWatcher {
             ctx: bun_ptr::BackRef::new(vm_ref),
@@ -914,7 +915,7 @@ impl FSWatcher {
             #[cfg(not(windows))]
             loop_kind: vm_ref.current_loop_kind(),
             mutex: Mutex::default(),
-            signal: Cell::new(args.signal.as_ref().map(|s| s.ref_())),
+            signal: Cell::new(args.signal),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
@@ -929,24 +930,22 @@ impl FSWatcher {
         let ctx = watcher.as_ptr();
         let ctx_ref = watcher.this_ptr();
 
-        ctx_ref
-            .path_watcher
-            .set(if args.signal.as_ref().is_none_or(|s| !s.aborted()) {
-                match path_watcher::watch(vm_ref, file_path, args.recursive, ctx.cast()) {
-                    Ok(r) => Some(r),
-                    Err(err) => {
-                        ctx_ref.detach();
-                        return Err(bun_sys::Error {
-                            errno: err.errno,
-                            syscall: bun_sys::Tag::watch,
-                            path: args.path.slice().into(),
-                            ..Default::default()
-                        });
-                    }
+        ctx_ref.path_watcher.set(if !is_aborted {
+            match path_watcher::watch(vm_ref, file_path, args.recursive, ctx.cast()) {
+                Ok(r) => Some(r),
+                Err(err) => {
+                    ctx_ref.detach();
+                    return Err(bun_sys::Error {
+                        errno: err.errno,
+                        syscall: bun_sys::Tag::watch,
+                        path: args.path.slice().into(),
+                        ..Default::default()
+                    });
                 }
-            } else {
-                None
-            });
+            }
+        } else {
+            None
+        });
         FSWatcher::init_js(
             watcher,
             args.listener.with_async_context_if_needed(args.global_this),

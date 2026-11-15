@@ -407,27 +407,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // kept as raw `*mut Request` because the body re-borrows it
-    // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> = 'brk: {
-        if first_arg.is_cell() {
-            if let Some(request_) = first_arg.as_direct::<Request>() {
-                break 'brk Some(request_);
-            }
-        }
-        break 'brk None;
-    };
-    // Helper macro: short-lived `&Request` reborrow of the optional pointer.
-    macro_rules! request_ref {
-        () => {
-            // SAFETY: `request` was obtained from a live JS-owned Request via
-            // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &*p })
-        };
-    }
+    let request = first_arg.as_direct::<Request>();
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
+    let url_str_optional = if !first_arg.is::<Request>() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None
@@ -451,7 +434,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.get().clone();
         }
@@ -510,7 +493,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             break 'extract_method Some(req.method);
         }
 
@@ -768,7 +751,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
         // First, try to use the Request object's redirect if available
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             redirect_type = req.flags.redirect;
         }
 
@@ -933,7 +916,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal Some(signal_.ref_());
             }
@@ -983,7 +966,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_ref!() {
+        if let Some(req) = &request {
             let body_value = req.body();
             let already_used = match body_value.tag() {
                 BodyTag::Used => true,
@@ -1047,7 +1030,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // headers: Headers | undefined;
     headers = 'extract_headers: {
-        let headers_init: Option<HeadersInit>;
+        let headers_slot;
+        let headers_init: Option<HeadersInit<'_>>;
 
         let fetch_headers: Option<&FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
@@ -1055,14 +1039,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        headers_init = HeadersInit::from_js(ctx, headers_value)?
+                        headers_slot = headers_value;
+                        headers_init = HeadersInit::from_js(ctx, &headers_slot)?
                             .filter(|h| !matches!(h, HeadersInit::Object(o) if o.is_empty()));
                         break 'brk headers_init.as_deref();
                     }
                 }
             }
 
-            if let Some(req) = request_ref!() {
+            if let Some(req) = &request {
                 break 'brk req.get_fetch_headers_unless_empty();
             }
 
@@ -1071,7 +1056,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        headers_init = HeadersInit::from_js(ctx, headers_value)?
+                        headers_slot = headers_value;
+                        headers_init = HeadersInit::from_js(ctx, &headers_slot)?
                             .filter(|h| !matches!(h, HeadersInit::Object(o) if o.is_empty()));
                         break 'brk headers_init.as_deref();
                     }

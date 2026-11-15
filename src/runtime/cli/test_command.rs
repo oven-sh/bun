@@ -1141,9 +1141,15 @@ impl TestFailure {
     pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
         let (name, msg): (&[u8], _) =
             if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
-                (b"ResolveMessage", &error.msg)
+                (
+                    b"ResolveMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
             } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
-                (b"BuildMessage", &error.msg)
+                (
+                    b"BuildMessage",
+                    jsc::WrapperGuard::map(error, |error| &error.msg),
+                )
             } else {
                 return;
             };

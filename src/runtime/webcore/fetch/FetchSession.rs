@@ -10,8 +10,7 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, HeadersInit, JSGlobalObject, JSValue, JsClass as _, JsError, JsRef, JsResult,
-    URLJsc as _,
+    self as jsc, HeadersInit, JSGlobalObject, JSValue, JsError, JsRef, JsResult, URLJsc as _,
 };
 use bun_ptr::RefPtr;
 
@@ -113,7 +112,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
         return Ok(ProxyArg::Policy(ProxyOption::Direct));
     }
     // A URL instance has no `.url` own property; treat it as its href.
-    let is_url_instance = bun_jsc::DOMURL::cast_(proxy_arg, global.vm()).is_some();
+    let is_url_instance = bun_jsc::DOMURL::cast_(&proxy_arg, global.vm()).is_some();
     if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(global)? > 0) {
         return Ok(ProxyArg::Policy(ProxyOption::Explicit {
             href: proxy_href(global, proxy_arg)?,
@@ -138,7 +137,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
     let mut headers = None;
     if let Some(headers_value) = proxy_arg.get(global, "headers")? {
         if !headers_value.is_undefined_or_null() {
-            if let Some(fetch_headers) = HeadersInit::from_js(global, headers_value)? {
+            if let Some(fetch_headers) = HeadersInit::from_js(global, &headers_value)? {
                 headers = Some(from_fetch_headers(global, Some(&fetch_headers), None)?);
             }
         }
@@ -187,13 +186,11 @@ pub(crate) struct SessionHold(RefPtr<FetchSession>);
 
 impl SessionHold {
     pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionHold> {
-        let Some(session) = FetchSession::from_js(value) else {
+        let Some(session) = js::ref_from_js(value) else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "fetch: 'session' must be a Bun.FetchSession"
             )));
         };
-        // SAFETY: `value` holds a ref on it.
-        let session = unsafe { RefPtr::init_ref(session) };
         session.used.set(true);
         if session.is_only_hold() {
             session.this_value.upgrade(global);

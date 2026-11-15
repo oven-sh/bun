@@ -1513,7 +1513,12 @@ export const linkerFlags: Flag[] = [
       // that actually runs on the `bun <file>` startup path; segregating it
       // into `.text.unlikely` made ~84% of that section resident at startup
       // anyway, so the monolithic default `.text` has *better* RSS locality.
-      "-Wl,--hash-style=both",
+      //
+      // gnu, not both: `both` adds the SysV `.hash` table, which no loader
+      // this binary runs on reads (glibc since 2.5, musl, and bionic since
+      // API 23 all use `.gnu.hash`). The FreeBSD entry keeps `both`: it is a
+      // superset of `gnu`, and freebsdVersion can be set below the default.
+      "-Wl,--hash-style=gnu",
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
@@ -1858,9 +1863,8 @@ export function linkDepends(cfg: Config): string[] {
  * Strip step only runs for plain release builds (bun-profile → bun).
  * Not for debug/asan/valgrind/assertions variants — those keep symbols.
  *
- * Always: --strip-all --strip-debug --discard-all.
- * Platform extras remove unwind/exception sections we compile without
- * (no -fexceptions, lolhtml built with panic=abort).
+ * Always: --strip-all. Platform extras remove unwind/exception sections we
+ * compile without (no -fexceptions, lolhtml built with panic=abort).
  *
  * Linux section removal: CMake notes llvm-strip doesn't fully delete
  * these (leaves [LOAD #2 [R]]), GNU strip does. If size matters and
@@ -1868,9 +1872,12 @@ export function linkDepends(cfg: Config): string[] {
  */
 export const stripFlags: Flag[] = [
   {
-    // Core strip: symbols + debug info + local symbols.
-    flag: ["--strip-all", "--strip-debug", "--discard-all"],
-    desc: "Remove symbols, debug info, local symbols",
+    // --strip-all alone. Each of the two flags that used to follow it keeps
+    // .symtab and .strtab in the output of one of the tools cfg.strip can be:
+    // GNU strip has one strip level and the last flag sets it, so a trailing
+    // --strip-debug wins; llvm-strip keeps the table when --discard-all is set.
+    flag: ["--strip-all"],
+    desc: "Remove all symbols and debug info",
   },
   {
     flag: [

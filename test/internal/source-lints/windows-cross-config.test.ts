@@ -12,11 +12,15 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
+
+const repoRoot = join(import.meta.dir, "..", "..", "..");
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -168,5 +172,79 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // reject with "inconsistent LTO Unit splitting". WPD falls back to
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
+  });
+});
+
+/**
+ * A release config for a unix target, resolved the way the CI lane does. The
+ * fake sysroots keep it host-independent, as resolveWindowsCross's winsysroot
+ * does: without one, resolveConfig probes the host and throws on any machine
+ * that is not the target.
+ */
+function resolveUnixRelease(os: "linux" | "freebsd"): Config {
+  return resolveConfig(
+    {
+      os,
+      arch: "x64",
+      ...(os === "linux"
+        ? { abi: "gnu" as const, linuxSysroot: "/fake/linux-sysroot" }
+        : { freebsdSysroot: "/fake/freebsd-sysroot" }),
+      buildType: "Release",
+      ci: true,
+      buildkite: false,
+    },
+    mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
+  );
+}
+
+describe("release binary-size flags", () => {
+  test("the always-on strip step passes --strip-all alone", () => {
+    // Either extra flag leaves .symtab and .strtab in the stripped binary:
+    // --strip-debug after --strip-all under GNU strip (the last strip level
+    // wins), --discard-all under llvm-strip.
+    const strip = computeFlags(resolveUnixRelease("linux")).stripflags;
+    expect(strip).toContain("--strip-all");
+    expect(strip).not.toContain("--strip-debug");
+    expect(strip).not.toContain("--discard-all");
+  });
+
+  test("linux links the GNU hash table only; FreeBSD keeps the SysV one too", () => {
+    const linux = computeFlags(resolveUnixRelease("linux")).ldflags;
+    expect(linux).toContain("-Wl,--hash-style=gnu");
+    expect(linux).not.toContain("-Wl,--hash-style=both");
+
+    // FreeBSD keeps both on purpose: `both` is a superset of `gnu`, and
+    // freebsdVersion can be set below the default.
+    expect(computeFlags(resolveUnixRelease("freebsd")).ldflags).toContain("-Wl,--hash-style=both");
+  });
+});
+
+describe("src/bun.ico", () => {
+  test("is a PNG-in-ICO, not an uncompressed DIB", () => {
+    // llvm-rc copies the .ico into every bun.exe as it is (emitWindowsResources
+    // in scripts/build/bun.ts), so the file's encoding is what ships. A 256px
+    // frame stored as a raw DIB is about 258 KB larger than the same pixels
+    // as PNG, which Windows reads since Vista.
+    const ico = readFileSync(join(repoRoot, "src", "bun.ico"));
+
+    // ICONDIR: reserved 0, type 1 (icon).
+    expect({ reserved: ico.readUInt16LE(0), type: ico.readUInt16LE(2) }).toEqual({ reserved: 0, type: 1 });
+    const count = ico.readUInt16LE(4);
+    expect(count).toBeGreaterThan(0);
+
+    // A DIB frame starts with its BITMAPINFOHEADER (biSize 0x28) instead.
+    const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    let payloadBytes = 0;
+    for (let i = 0; i < count; i++) {
+      const entry = 6 + i * 16;
+      const bytesInRes = ico.readUInt32LE(entry + 8);
+      const imageOffset = ico.readUInt32LE(entry + 12);
+      expect(ico.subarray(imageOffset, imageOffset + PNG_MAGIC.length)).toEqual(PNG_MAGIC);
+      payloadBytes += bytesInRes;
+    }
+
+    // Header, directory and payloads account for the whole file.
+    expect(6 + count * 16 + payloadBytes).toBe(ico.length);
+    expect(ico.length).toBeLessThan(64 * 1024);
   });
 });

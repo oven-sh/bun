@@ -1,6 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
+use crate::bundled_ast::BundledAstRow;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
@@ -215,8 +216,8 @@ pub(crate) fn post_process_js_chunk(
             });
         }
 
-        let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
-        let ast_view = ast.as_printer_view();
+        let ast_view = BundledAstRow::new(&c.graph.ast, chunk.entry_point.source_index() as usize)
+            .printer_view;
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver.opts.target;
 
@@ -793,7 +794,7 @@ pub(crate) fn generate_entry_point_tail_js(
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
-    let ast = c.graph.ast.get(source_index as usize);
+    let ast = BundledAstRow::new(&c.graph.ast, source_index as usize);
 
     match c.options.output_format {
         options::OutputFormat::Esm => {
@@ -1262,10 +1263,10 @@ pub(crate) fn generate_entry_point_tail_js(
         result: js_printer::print::<false>(
             arena,
             c.resolver.opts.target,
-            &ast.as_printer_view(),
+            &ast.printer_view,
             c.get_source(source_index),
             print_options,
-            ast.import_records.as_slice(),
+            ast.import_records,
             &[Part {
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()

@@ -1693,6 +1693,17 @@ pub mod io {
         }
     }
 
+    impl Write for crate::vec::BorrowedCursor<'_, u8> {
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
+            if buf.len() > self.capacity() {
+                return Err(crate::CrateError::NoSpaceLeft);
+            }
+            self.append(buf);
+            Ok(())
+        }
+    }
+
     /// So printers taking `W: io::Write` accept process stdout/stderr sinks.
     impl Write for &Writer {
         #[inline]

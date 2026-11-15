@@ -308,7 +308,7 @@ impl PatchTask {
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
-            let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
+            let pkg: Package = manager.lockfile.packages.get(pkg_id as usize);
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
             let name_and_version_hash = calc_hash.name_and_version_hash;

@@ -1,4 +1,4 @@
-use bun_http1::{ChunkedDecoder, HeadError, HeadLimits, InvalidChunk, ResponseParser};
+use bun_http1::{ChunkedDecoder, Error, HeadOptions, ResponseParser};
 
 #[unsafe(no_mangle)]
 extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
@@ -35,16 +35,17 @@ fn is_content(byte: u8) -> bool {
 mod head {
     use super::*;
 
-    const NO_LIMITS: HeadLimits = HeadLimits {
+    const NO_LIMITS: HeadOptions = HeadOptions {
         max_len: u32::MAX,
         max_headers: usize::MAX,
         max_interim_len: usize::MAX,
+        spare_capacity: 8,
     };
 
     /// `1.1 200 "OK" [a=b] +rest`
-    type Outcome = Result<Option<String>, HeadError>;
+    type Outcome = bun_http1::Result<Option<String>>;
 
-    fn feed(reads: &[&[u8]], limits: HeadLimits) -> Outcome {
+    fn feed(reads: &[&[u8]], limits: HeadOptions) -> Outcome {
         let mut parser = ResponseParser::default();
         for (i, read) in reads.iter().enumerate() {
             let fed = parser.feed(read, limits);
@@ -55,6 +56,8 @@ mod head {
             let received = reads[..=i].concat();
             assert!(received.ends_with(&[&response.headers.buf, rest].concat()));
             assert!(response.headers.buf.starts_with(b"HTTP/1."));
+            let spare = response.headers.buf.capacity() - response.headers.buf.len();
+            assert!(spare >= limits.spare_capacity);
             assert_eq!(parser.memory_cost(), 0);
             let headers: Vec<_> = (response.headers.iter())
                 .map(|header| format!("{}={}", show(header.name()), show(header.value())))
@@ -72,7 +75,7 @@ mod head {
     }
 
     #[track_caller]
-    fn parse_within(bytes: &[u8], limits: HeadLimits) -> Outcome {
+    fn parse_within(bytes: &[u8], limits: HeadOptions) -> Outcome {
         let outcome = feed(&[bytes], limits);
         for reads in ways_to_read(bytes) {
             let lens: Vec<_> = reads.iter().map(|read| read.len()).collect();
@@ -196,7 +199,7 @@ mod head {
             assert_eq!(parse(before), Ok(None), "{}", show(before));
             for after in [&b""[..], b"\r\n\r\n", b"a: 0123456789abcdef\r\n\r\n"] {
                 let bytes = [bytes, after].concat();
-                assert_eq!(parse(&bytes), Err(HeadError::Malformed), "{}", show(&bytes));
+                assert_eq!(parse(&bytes), Err(Error::MalformedHead), "{}", show(&bytes));
             }
         }
     }
@@ -216,7 +219,7 @@ mod head {
                 for read in [&b""[..], b"c", b"HTTP/1.1 204\r\n\r\n"] {
                     let error = parser.feed(read, NO_LIMITS).err();
                     len += read.len();
-                    assert_eq!(error, Some(HeadError::Malformed));
+                    assert_eq!(error, Some(Error::MalformedHead));
                     assert_eq!(parser.received_len(), len);
                 }
             }
@@ -257,7 +260,7 @@ mod head {
                         _ => false,
                     };
                     let is_allowed = is_allowed(byte) || ends_part;
-                    let expected = is_allowed.then_some(None).ok_or(HeadError::Malformed);
+                    let expected = is_allowed.then_some(None).ok_or(Error::MalformedHead);
                     assert_eq!(feed(&[&cut], NO_LIMITS), expected, "{}", show(&cut));
 
                     let after = after.strip_prefix(b"(").unwrap_or(after);
@@ -283,17 +286,17 @@ mod head {
 
     #[test]
     fn max_headers() {
-        let limits = |max_headers| HeadLimits {
+        let limits = |max_headers| HeadOptions {
             max_headers,
             ..NO_LIMITS
         };
         let bytes = b"HTTP/1.1 200 OK\r\na: 1\r\nb: 2\r\n\r\n";
         assert!(parse_within(bytes, limits(2)).is_ok());
-        assert_eq!(parse_within(bytes, limits(1)), Err(HeadError::Malformed));
+        assert_eq!(parse_within(bytes, limits(1)), Err(Error::MalformedHead));
         assert_eq!(parse_within(&bytes[..23], limits(1)), Ok(None));
         assert_eq!(
             parse_within(&bytes[..24], limits(1)),
-            Err(HeadError::Malformed)
+            Err(Error::MalformedHead)
         );
         assert!(parse_within(b"HTTP/1.1 200 OK\r\n\r\n", limits(0)).is_ok());
     }
@@ -303,12 +306,12 @@ mod head {
         let head = b"HTTP/1.1  200 OK\r\nname: value\r\n\r\n";
         let bytes = [&head[..], b"body"].concat();
         for max_len in 0..bytes.len() + 2 {
-            let limits = HeadLimits {
+            let limits = HeadOptions {
                 max_len: max_len as u32,
                 ..NO_LIMITS
             };
             if max_len < head.len() {
-                assert_eq!(parse_within(&bytes, limits), Err(HeadError::TooLong));
+                assert_eq!(parse_within(&bytes, limits), Err(Error::HeadTooLong));
                 assert_eq!(parse_within(&bytes[..max_len], limits), Ok(None));
             } else {
                 assert_eq!(parse_within(&bytes, limits), parse(&bytes));
@@ -373,22 +376,28 @@ mod head {
     fn limits_with_interim_responses() {
         let interim = b"HTTP/1.1 103 A\r\na: 1\r\n\r\n";
         let last = b"HTTP/1.1 200 A\r\na: 1\r\n\r\n";
-        let limits = HeadLimits {
+        let limits = HeadOptions {
             max_len: last.len() as u32,
             max_headers: 1,
             max_interim_len: 2 * interim.len(),
+            ..NO_LIMITS
         };
         let twice = [&interim[..], interim, last].concat();
         assert_eq!(parse_within(&twice, limits), parse(last));
         let thrice = [&interim[..], interim, interim].concat();
         assert_eq!(parse_within(&thrice[..thrice.len() - 1], limits), Ok(None));
-        assert_eq!(parse_within(&thrice, limits), Err(HeadError::TooLong));
+        assert_eq!(parse_within(&thrice, limits), Err(Error::HeadTooLong));
+
+        let mut parser = ResponseParser::default();
+        for read in [&thrice[..], b"", last] {
+            assert_eq!(parser.feed(read, limits).err(), Some(Error::HeadTooLong));
+        }
     }
 
     #[test]
     fn one_response_after_another() {
         let one = b"HTTP/1.1 100 A\r\n\r\nHTTP/1.1 200 B\r\nb: 2\r\n\r\n";
-        let limits = HeadLimits {
+        let limits = HeadOptions {
             max_interim_len: b"HTTP/1.1 100 A\r\n\r\n".len(),
             ..NO_LIMITS
         };
@@ -444,7 +453,10 @@ mod chunked {
         let mut left = None;
         for read in reads {
             match decoder.decode(read, &mut body) {
-                Err(InvalidChunk) => return (show(&body[1..]), End::Invalid),
+                Err(error) => {
+                    assert_eq!(error, Error::MalformedChunk);
+                    return (show(&body[1..]), End::Invalid);
+                }
                 Ok(None) => assert_eq!(left, None),
                 Ok(Some(rest)) => {
                     assert!(read.ends_with(rest));

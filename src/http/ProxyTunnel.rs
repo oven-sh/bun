@@ -41,7 +41,7 @@ pub use bun_uws::MaybeAnySocket as Socket;
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
     pub(crate) wrapper: Option<ProxyTunnelWrapper>,
-    pub(crate) shutdown_err: Cell<Option<Error>>,
+    pub(crate) shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
     pub(crate) socket: Socket,
     pub(crate) write_buffer: bun_io::StreamBuffer,
@@ -64,7 +64,7 @@ impl Default for ProxyTunnel {
     fn default() -> Self {
         Self {
             wrapper: None,
-            shutdown_err: Cell::new(None),
+            shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
             write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
@@ -113,10 +113,10 @@ impl ProxyTunnel {
         unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }
 
-    /// Shared access to `shutdown_err` (a `Cell`; disjoint from
+    /// Shared access to `shutdown_err` (a `Cell<Error>`; disjoint from
     /// `wrapper`). Callers use `.get()`/`.set()` — no `&mut` needed.
     #[inline]
-    fn shutdown_err_of<'a>(this: NonNull<Self>) -> &'a Cell<Option<Error>> {
+    fn shutdown_err_of<'a>(this: NonNull<Self>) -> &'a Cell<Error> {
         // SAFETY: see [`Self::socket_of`].
         unsafe { &*addr_of!((*this.as_ptr()).shutdown_err) }
     }
@@ -273,6 +273,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
                 Err(err) => {
+                    this.state.fail = Some(err);
                     // `this` is dead (NLL); reenter via raw ptr so on_close's
                     // fresh `&mut *ctx` / `&mut *proxy_ptr` do not alias us.
                     // SAFETY: tunnel pinned by ref_raw above.
@@ -295,6 +296,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {
+                    this.state.fail = Some(err);
                     // SAFETY: see Body arm.
                     ProxyTunnel::close_from_callback(proxy_nn, err);
                     return;
@@ -512,9 +514,8 @@ fn on_close(ctx: *mut HTTPClient) {
     let in_progress = this.state.stage != Stage::Done
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
-    let shutdown_err = ProxyTunnel::shutdown_err_of(proxy_nn).get();
     let mut fail_err: Option<crate::Error> = None;
-    if in_progress && shutdown_err.is_none() && this.state.is_body_complete_on_close() {
+    if in_progress && this.state.fail.is_none() && this.state.is_body_complete_on_close() {
         match this.state.finalize_body_on_eof() {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
@@ -529,7 +530,7 @@ fn on_close(ctx: *mut HTTPClient) {
     // Otherwise, treat as failure. `close_and_fail` de-tags the outer socket
     // before `fail()` frees the AsyncHTTP that embeds `self` (the uSockets ext
     // still points here until then).
-    let err = (fail_err.or(shutdown_err)).unwrap_or(crate::Error::ConnectionClosed);
+    let err = fail_err.unwrap_or_else(|| ProxyTunnel::shutdown_err_of(proxy_nn).get());
     match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => {
             this.close_and_fail::<true>(err, socket);
@@ -673,8 +674,8 @@ impl ProxyTunnel {
     /// tunnel and no whole-struct `&mut ProxyTunnel` is held across the call.
     /// Callers satisfy that by construction (see [`Self::close_from_callback`]).
     pub(crate) fn close_raw(this: NonNull<Self>, err: Error) {
-        // `shutdown_err` is a `Cell` disjoint from `wrapper`; safe set.
-        Self::shutdown_err_of(this).set(Some(err));
+        // `shutdown_err` is a `Cell<Error>` disjoint from `wrapper`; safe set.
+        Self::shutdown_err_of(this).set(err);
         // shutdown() fires on_close synchronously, which accesses only
         // disjoint tunnel fields via `addr_of!` (see on_close), so the
         // `&SSLWrapper` from `wrapper_ref` is never aliased by a `&mut`

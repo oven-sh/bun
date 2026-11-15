@@ -33,7 +33,8 @@ use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::header_has_token;
 use bun_http::{HeaderValueIterator, Headers};
-use bun_http1::{ChunkedDecoder, HeadError, HeadLimits, Response, ResponseParser};
+use bun_http_types::ETag::Header;
+use bun_http1::{ChunkedDecoder, HeadOptions, Response, ResponseParser};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
@@ -850,19 +851,25 @@ where
         let mut received = this.body.take();
         received.extend_from_slice(data);
         let cap = max_response_head_len();
-        let limits = HeadLimits {
+        let options = HeadOptions {
             max_len: u32::try_from(cap).unwrap_or(u32::MAX),
             max_headers: usize::MAX,
             max_interim_len: cap,
+            spare_capacity: 0,
         };
-        match this.response_parser.with_mut(|p| p.feed(&received, limits)) {
+        match this
+            .response_parser
+            .with_mut(|p| p.feed(&received, options))
+        {
             Ok(Some((response, rest))) => {
                 this.body.set([&response.headers.buf, rest].concat());
                 on_head(&response, rest);
             }
             Ok(None) => {}
-            Err(HeadError::Malformed) => Self::terminate(this, ErrorCode::InvalidResponse),
-            Err(HeadError::TooLong) => Self::terminate(this, ErrorCode::ResponseHeadersTooLarge),
+            Err(bun_http1::Error::HeadTooLong) => {
+                Self::terminate(this, ErrorCode::ResponseHeadersTooLarge);
+            }
+            Err(_) => Self::terminate(this, ErrorCode::InvalidResponse),
         }
     }
 
@@ -1233,10 +1240,10 @@ where
         &self,
         response: &Response,
     ) -> Result<Option<WebSocketDeflate::Params>, ErrorCode> {
-        let mut upgrade_header: Option<&[u8]> = None;
+        let mut upgrade_header = Header::new(b"", b"");
         let mut connection_header_seen = false;
         let mut connection_has_upgrade = false;
-        let mut websocket_accept_header: Option<&[u8]> = None;
+        let mut websocket_accept_header = Header::new(b"", b"");
         let mut protocol_header_seen = false;
 
         let mut deflate_params: Option<WebSocketDeflate::Params> = None;
@@ -1253,9 +1260,13 @@ where
                     }
                 }
                 len if len == b"Upgrade".len() => {
-                    if strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Upgrade")
+                    if upgrade_header.name().is_empty()
+                        && strings::eql_case_insensitive_ascii_ignore_length(
+                            header.name(),
+                            b"Upgrade",
+                        )
                     {
-                        upgrade_header.get_or_insert_with(|| header.value());
+                        upgrade_header = header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Version".len() => {
@@ -1269,11 +1280,13 @@ where
                     }
                 }
                 len if len == b"Sec-WebSocket-Accept".len() => {
-                    if strings::eql_case_insensitive_ascii_ignore_length(
-                        header.name(),
-                        b"Sec-WebSocket-Accept",
-                    ) {
-                        websocket_accept_header.get_or_insert_with(|| header.value());
+                    if websocket_accept_header.name().is_empty()
+                        && strings::eql_case_insensitive_ascii_ignore_length(
+                            header.name(),
+                            b"Sec-WebSocket-Accept",
+                        )
+                    {
+                        websocket_accept_header = header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Protocol".len() => {
@@ -1336,17 +1349,27 @@ where
             }
         }
 
-        let Some(upgrade_header @ [_, ..]) = upgrade_header else {
+        if upgrade_header
+            .name()
+            .len()
+            .min(upgrade_header.value().len())
+            == 0
+        {
             return Err(ErrorCode::MissingUpgradeHeader);
-        };
+        }
 
         if !connection_header_seen {
             return Err(ErrorCode::MissingConnectionHeader);
         }
 
-        let Some(websocket_accept_header @ [_, ..]) = websocket_accept_header else {
+        if websocket_accept_header
+            .name()
+            .len()
+            .min(websocket_accept_header.value().len())
+            == 0
+        {
             return Err(ErrorCode::MissingWebsocketAcceptHeader);
-        };
+        }
 
         if !protocol_header_seen && !self.subprotocols.get().is_empty() {
             return Err(ErrorCode::MissingClientProtocol);
@@ -1356,11 +1379,11 @@ where
             return Err(ErrorCode::InvalidConnectionHeader);
         }
 
-        if !strings::eql_case_insensitive_ascii(upgrade_header, b"websocket", true) {
+        if !strings::eql_case_insensitive_ascii(upgrade_header.value(), b"websocket", true) {
             return Err(ErrorCode::InvalidUpgradeHeader);
         }
 
-        if websocket_accept_header != self.expected_accept {
+        if websocket_accept_header.value() != &self.expected_accept[..] {
             return Err(ErrorCode::MismatchWebsocketAcceptHeader);
         }
 

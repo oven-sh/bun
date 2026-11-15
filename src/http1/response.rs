@@ -2,6 +2,7 @@ use bun_core::StringPointer;
 use bun_http_types::ETag::{HeaderEntry, Headers};
 
 use crate::scan::{content_len, token_len};
+use crate::{Error, Result};
 
 /// The status and header fields of a response.
 #[derive(Default)]
@@ -31,18 +32,14 @@ impl Response {
 }
 
 #[derive(Clone, Copy)]
-pub struct HeadLimits {
+pub struct HeadOptions {
     /// Of one head, from the status line to the empty line.
     pub max_len: u32,
     pub max_headers: usize,
     /// Of all interim responses together.
     pub max_interim_len: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HeadError {
-    Malformed,
-    TooLong,
+    /// To leave after the head in `headers.buf`.
+    pub spare_capacity: usize,
 }
 
 /// Parses a response head (RFC 9112 §4, §5) read by read.
@@ -57,14 +54,19 @@ pub struct ResponseParser {
 
 impl ResponseParser {
     /// Once a head other than 100 and 102 to 199 is complete, returns it and the rest of `data`.
+    // Inlined, the response is built where the caller keeps it.
+    #[inline(always)]
     pub fn feed<'a>(
         &mut self,
         mut data: &'a [u8],
-        limits: HeadLimits,
-    ) -> Result<Option<(Response, &'a [u8])>, HeadError> {
+        options: HeadOptions,
+    ) -> Result<Option<(Response, &'a [u8])>> {
         loop {
+            if self.interim_len > options.max_interim_len {
+                return Err(Error::HeadTooLong);
+            }
             let earlier = self.received.len();
-            let room = (limits.max_len as usize).saturating_sub(earlier);
+            let room = (options.max_len as usize).saturating_sub(earlier);
             let window = data.get(..room).unwrap_or(data);
             let head = if earlier == 0 {
                 window
@@ -73,9 +75,9 @@ impl ResponseParser {
                 &self.received
             };
 
-            let parsed = match self.open_run {
+            let parsed = match self.open_run.take() {
                 Some(run) if run.covers(window) => Err(Stop::Short(Some(run))),
-                _ => self.lines.parse(head, limits.max_headers),
+                _ => self.lines.parse(head, options.max_headers),
             };
             let len = match parsed {
                 Ok(len) => len,
@@ -83,10 +85,9 @@ impl ResponseParser {
                     if earlier == 0 {
                         self.received.extend_from_slice(window);
                     }
-                    self.open_run = None;
                     return match stop {
-                        Stop::Malformed => Err(HeadError::Malformed),
-                        Stop::Short(_) if window.len() < data.len() => Err(HeadError::TooLong),
+                        Stop::Malformed => Err(Error::MalformedHead),
+                        Stop::Short(_) if window.len() < data.len() => Err(Error::HeadTooLong),
                         Stop::Short(run) => {
                             self.open_run = run;
                             Ok(None)
@@ -97,18 +98,15 @@ impl ResponseParser {
             data = data.get(len.saturating_sub(earlier)..).unwrap_or_default();
 
             if !matches!(self.lines.response.status_code, 100 | 102..=199) {
-                let buf = head.get(..len).unwrap_or(head).to_vec();
+                let mut buf = Vec::with_capacity(len + options.spare_capacity);
+                buf.extend_from_slice(head.get(..len).unwrap_or(head));
                 let mut response = core::mem::take(self).lines.response;
                 response.headers.buf = buf;
                 return Ok(Some((response, data)));
             }
-            self.interim_len = self.interim_len.saturating_add(len);
-            if self.interim_len > limits.max_interim_len {
-                return Err(HeadError::TooLong);
-            }
+            self.interim_len += len;
             self.received.clear();
             self.lines.clear();
-            self.open_run = None;
         }
     }
 
@@ -136,7 +134,6 @@ enum Run {
 }
 
 impl Run {
-    #[inline(never)]
     fn covers(self, bytes: &[u8]) -> bool {
         match self {
             Self::Spaces => skip_spaces(bytes).is_empty(),
@@ -160,6 +157,7 @@ impl Lines {
     }
 
     /// Returns the length of the head, which `head` starts with.
+    // Inlined, it slows down short heads.
     #[inline(never)]
     fn parse(&mut self, head: &[u8], max_headers: usize) -> Result<usize, Stop> {
         let mut rest = match self.len {
@@ -201,14 +199,17 @@ impl Lines {
         let [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9'] = code else {
             return Err(Stop::Malformed);
         };
-        let (text, end) = split_content(skip_spaces(rest));
+        // From the start of the line, which leaves a short head enough bytes for a block.
+        let (line, end) = split_content(head);
         let next = skip_line_end(end)?;
+        let text_offset = head.len() - skip_spaces(rest).len();
 
         self.response.minor_version = minor - b'0';
         self.response.status_code = code
             .iter()
             .fold(0, |code, digit| code * 10 + u32::from(digit - b'0'));
-        self.response.status_text = pointer(head.len() - end.len() - text.len(), text);
+        self.response.status_text =
+            pointer(text_offset, line.get(text_offset..).unwrap_or_default());
         Ok(next)
     }
 
@@ -216,23 +217,22 @@ impl Lines {
     #[inline(always)]
     fn parse_field_line<'a>(&mut self, rest: &'a [u8]) -> Result<&'a [u8], Stop> {
         let (line, end) = split_content(rest);
-        let (name, mut value) = match line.split_at_checked(token_len(rest)) {
+        let (name, value) = match line.split_at_checked(token_len(rest)) {
             Some((name @ [_, ..], [b':', value @ ..])) => (name, value),
             Some((_, [])) if end.is_empty() => return Err(Stop::Short(Some(Run::Token))),
             _ => return Err(Stop::Malformed),
         };
         let next = skip_line_end(end)?;
 
-        while let [b' ' | b'\t', tail @ ..] = value {
-            value = tail;
+        let entries = &mut self.response.headers.entries;
+        // For a lone field: a small block is cheaper to free on another thread.
+        if let (0, [b'\r' | b'\n', ..]) = (entries.capacity(), next) {
+            bun_core::handle_oom(entries.set_capacity(1));
         }
-        let value_offset = self.len + line.len() - value.len();
-        while let [init @ .., b' ' | b'\t'] = value {
-            value = init;
-        }
-        bun_core::handle_oom(self.response.headers.entries.append(HeaderEntry {
+        let value = value.trim_ascii_start();
+        bun_core::handle_oom(entries.append(HeaderEntry {
             name: pointer(self.len, name),
-            value: pointer(value_offset, value),
+            value: pointer(self.len + line.len() - value.len(), value.trim_ascii_end()),
         }));
         Ok(next)
     }

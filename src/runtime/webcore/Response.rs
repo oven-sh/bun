@@ -62,6 +62,12 @@ impl HeadersRef {
         unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
     }
 
+    #[inline]
+    pub(crate) fn create_from_headers(headers: &bun_http::Headers) -> Self {
+        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
+        unsafe { Self::adopt(FetchHeaders::create_from_headers(headers)) }
+    }
+
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
     pub(crate) fn create_from_js(

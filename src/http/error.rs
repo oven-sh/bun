@@ -370,11 +370,12 @@ impl From<bun_uws::ConnectError> for Error {
     }
 }
 
-impl From<bun_http1::HeadError> for Error {
-    fn from(e: bun_http1::HeadError) -> Self {
+impl From<bun_http1::Error> for Error {
+    fn from(e: bun_http1::Error) -> Self {
         match e {
-            bun_http1::HeadError::Malformed => Error::MalformedHTTPResponse,
-            bun_http1::HeadError::TooLong => Error::ResponseHeadersTooLarge,
+            bun_http1::Error::MalformedHead => Error::MalformedHTTPResponse,
+            bun_http1::Error::HeadTooLong => Error::ResponseHeadersTooLarge,
+            bun_http1::Error::MalformedChunk => Error::InvalidHTTPResponse,
         }
     }
 }

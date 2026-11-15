@@ -1,13 +1,11 @@
 use crate::scan::{content_len, is_control, len_before, token_len};
+use crate::{Error, Result};
 
 const MAX_SIZE_DIGITS: usize = 16;
 const MAX_SIZE_LINE_LEN: usize = 16 * 1024;
 const MAX_TRAILERS_LEN: u64 = 64 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidChunk;
-
-/// What the next byte belongs to.
+/// What the next byte belongs to, in the order of the message.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 enum State {
     #[default]
@@ -48,7 +46,7 @@ impl ChunkedDecoder {
         &mut self,
         mut input: &'a [u8],
         body: &mut Vec<u8>,
-    ) -> Result<Option<&'a [u8]>, InvalidChunk> {
+    ) -> Result<Option<&'a [u8]>> {
         let capacity = body.len() + input.len();
         while !self.has_whole_body() {
             let step = if self.is_in_extension() {
@@ -63,9 +61,10 @@ impl ChunkedDecoder {
             input = match step {
                 Ok(rest) => rest,
                 Err(Stop::Short) => return Ok(None),
-                Err(Stop::Invalid) => return Err(InvalidChunk),
+                Err(Stop::Invalid) => return Err(Error::MalformedChunk),
             };
         }
+        // A shortcut: few messages have trailers.
         if let (State::TrailerStart, [b'\r', b'\n', rest @ ..]) = (self.state, input) {
             self.state = State::Done;
             return Ok(Some(rest));
@@ -158,11 +157,13 @@ impl ChunkedDecoder {
         }
     }
 
+    // Inlined, it slows down the loop over small chunks.
     #[inline(never)]
     fn skip_extension<'a>(&mut self, mut input: &'a [u8]) -> Result<&'a [u8], Stop> {
         loop {
             let plain = match self.state {
                 State::EscapedExtension => 0,
+                // With `||` this is not vectorized.
                 _ => len_before(input, |b| is_control(b) | (b == b'"') | (b == b'\\')),
             };
             self.line_len += plain;
@@ -188,6 +189,7 @@ impl ChunkedDecoder {
     }
 
     /// The body is whole by now, so a byte that cannot be part of the section ends the message.
+    // Inlined, it slows down the loop over small chunks.
     #[inline(never)]
     fn skip_trailers<'a>(&mut self, mut input: &'a [u8]) -> Option<&'a [u8]> {
         while self.state != State::Done {
@@ -216,7 +218,6 @@ impl ChunkedDecoder {
 }
 
 /// Grows `body` once per read.
-#[inline(always)]
 fn append(body: &mut Vec<u8>, data: &[u8], capacity: usize) {
     if body.capacity() - body.len() < data.len() {
         body.reserve(capacity - body.len());
@@ -224,7 +225,6 @@ fn append(body: &mut Vec<u8>, data: &[u8], capacity: usize) {
     body.extend_from_slice(data);
 }
 
-#[inline]
 fn expect(expected: u8, input: &[u8]) -> Result<&[u8], Stop> {
     match input {
         [] => Err(Stop::Short),

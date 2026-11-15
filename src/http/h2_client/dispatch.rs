@@ -581,8 +581,6 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
 /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
 /// dropped; the final response is stored on the stream for delivery.
 pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
-    /// RFC 9113 §6.5.2
-    const FIELD_OVERHEAD: usize = 32;
     // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
     let mut headers = Headers::default();
@@ -643,7 +641,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         }
         // Cap decoded size independently of the wire size: HPACK indexed
         // refs can amplify a small block into huge name/value pairs.
-        untrimmed_len += result.name.len() + result.value.len() + FIELD_OVERHEAD;
+        untrimmed_len += result.name.len() + result.value.len();
         if untrimmed_len > LOCAL_MAX_HEADER_LIST_SIZE as usize {
             session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
             stream.header_block.clear();

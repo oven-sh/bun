@@ -517,6 +517,10 @@ bun_which = { path = "src/which" }
 [profile.dev.package.bun_png]
 opt-level = 3
 
+# Loops over every byte of a response head and every chunk of a body.
+[profile.dev.package.bun_http1]
+opt-level = 3
+
 # It stands in for vector code that every test program runs over each byte it parses.
 [profile.dev.package.bun_sema_standalone]
 opt-level = 3

@@ -2981,27 +2981,46 @@ bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
     return true;
 }
 
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromEntries(FfiSlice<StringPointer> names, FfiSlice<StringPointer> values, FfiSlice<Latin1Character> buf)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromHeaders(FfiSlice<StringPointer> names, FfiSlice<StringPointer> values, FfiSlice<Latin1Character> buf)
 {
     RELEASE_ASSERT(names.len == values.len);
     auto slice = [&](StringPointer pointer) {
         RELEASE_ASSERT(static_cast<size_t>(pointer.off) + pointer.len <= buf.len);
         return std::span { buf.ptr + pointer.off, pointer.len };
     };
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
 
-    HTTPHeaderMap map;
-    for (size_t i = 0; i < names.len; i++) {
-        StringView nameView { slice(names.ptr[i]) };
-        String value { StringImpl::create(slice(values.ptr[i])) };
+    if (names.len > 0) {
+        HTTPHeaderMap map = HTTPHeaderMap();
 
-        HTTPHeaderName name;
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
-            map.add(name, value);
-        } else {
-            map.addUncommonHeaderCloneName(nameView, value);
+        for (size_t j = 0; j < names.len; j++) {
+            StringView nameView { slice(names.ptr[j]) };
+
+            // Empty values count: duplicate headers combine as "a, , c".
+            auto bytes = slice(values.ptr[j]);
+            std::span<Latin1Character> data;
+            auto value = String::createUninitialized(bytes.size(), data);
+            if (bytes.size() > 0)
+                memcpy(data.data(), bytes.data(), bytes.size());
+
+            HTTPHeaderName name;
+
+            // memory safety: the header names must be cloned if they're not statically known
+            // the value must also be cloned
+            // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
+            if (WebCore::findHTTPHeaderName(nameView, name)) {
+                map.add(name, value);
+            } else {
+                // the case where we do not need to clone the name
+                // when the header name is already present in the list
+                // we don't have that information here, so map.addUncommonHeaderCloneName exists
+                map.addUncommonHeaderCloneName(nameView, value);
+            }
         }
+
+        headers->setInternalHeaders(WTF::move(map));
     }
-    return new WebCore::FetchHeaders(WebCore::FetchHeaders::Guard::None, WTF::move(map));
+    return headers;
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {

@@ -43,7 +43,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     // safe: C++ asserts that `names` and `values` pair up and lie within `buf`.
-    safe fn WebCore__FetchHeaders__createFromEntries(
+    safe fn WebCore__FetchHeaders__createFromHeaders(
         names: FfiSlice<'_, StringPointer>,
         values: FfiSlice<'_, StringPointer>,
         buf: FfiSlice<'_>,
@@ -157,12 +157,12 @@ impl FetchHeaders {
     }
 
     pub fn create_from_headers(headers: &Headers) -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createFromEntries(
+        NonNull::new(WebCore__FetchHeaders__createFromHeaders(
             headers.entries.items_name().into(),
             headers.entries.items_value().into(),
             headers.buf.as_slice().into(),
         ))
-        .expect("WebCore__FetchHeaders__createFromEntries returned null")
+        .expect("WebCore__FetchHeaders__createFromHeaders returned null")
     }
 
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value

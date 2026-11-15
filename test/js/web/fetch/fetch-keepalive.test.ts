@@ -1052,6 +1052,24 @@ test.concurrent.each<[string, string]>([
   });
 });
 
+test.concurrent.each<[string, string, string]>([
+  ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\nA: b\r\n\r\n", "ok"],
+  // https://github.com/oven-sh/bun/issues/36940
+  ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n0\r\n\r\n", "ok"],
+  ["HEAD", "304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", ""],
+])("a connection is reused after a %s answered with %j", async (method, reply, body) => {
+  await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 ${reply}`));
+  const bodies = [
+    await bodyOrCode(origin.url, {}),
+    await bodyOrCode(origin.url, { method }),
+    await bodyOrCode(origin.url, {}),
+  ];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", body, "ok"],
+    requests: ["connection 1 request 1", "connection 1 request 2", "connection 1 request 3"],
+  });
+});
+
 // The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
 test.concurrent(
   "a GET through a reused tunnel is sent again when the TLS session with the https proxy breaks",

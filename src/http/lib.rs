@@ -142,7 +142,8 @@ pub use init_error::InitError;
 /// Ownership transfers to the user once the headers phase completes.
 pub struct HTTPResponseMetadata {
     response: Response,
-    url: Box<[u8]>,
+    /// In `response.headers.buf`.
+    url: StringPointer,
 }
 
 impl HTTPResponseMetadata {
@@ -155,7 +156,7 @@ impl HTTPResponseMetadata {
         self.response.status_text()
     }
     pub fn url(&self) -> &[u8] {
-        &self.url
+        self.headers().as_str(self.url)
     }
     pub fn headers(&self) -> &Headers {
         &self.response.headers
@@ -395,7 +396,7 @@ pub(crate) enum HeaderResult {
 impl HTTPClient<'_> {
     /// Shared body of `apply_headers` for the h2/h3 client sessions: hand a
     /// pre-decoded multiplexed response (HPACK / QPACK) to the HTTP/1.1
-    /// metadata pipeline (`handle_response_metadata` + `store_metadata`), then
+    /// metadata pipeline (`handle_response_metadata`), then
     /// undo the HTTP/1.1-specific framing decisions that don't apply when the
     /// transport delimits the body (h2 DATA frames / h3 STREAM frames).
     ///
@@ -405,9 +406,9 @@ impl HTTPClient<'_> {
     fn apply_multiplexed_headers(
         &mut self,
         status_code: u32,
-        headers: Headers,
+        headers: &mut Headers,
     ) -> crate::Result<(HeaderResult, Response)> {
-        let mut response = Response::from_fields(status_code, headers);
+        let mut response = Response::from_fields(status_code, core::mem::take(headers));
         let should_continue = self.handle_response_metadata(&mut response)?;
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.x persistence rules don't apply.
@@ -878,6 +879,7 @@ pub(crate) static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
 // blocks so the state machine compiles standalone.
 // ═══════════════════════════════════════════════════════════════════════
 
+use core::cell::Cell;
 use core::ffi::c_uint;
 use core::mem::ManuallyDrop;
 
@@ -885,18 +887,18 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::ArrayHashMap;
 use bun_core::StringBuilder;
-use bun_core::fmt::{ItoaBuf, itoa};
-use bun_core::{BoundedArray, FeatureFlags, Global};
+use bun_core::fmt::{EscapeControlChars, ItoaBuf, escape_control_chars, itoa};
+use bun_core::{BoundedArray, FeatureFlags, Global, Output};
 use bun_core::{StringView, Tag as BunStringTag, strings};
 use bun_http_types::ETag::{Header, StringPointer};
-use bun_http1::{HeadError, HeadLimits};
+use bun_http1::HeadOptions;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
 use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
 use crate::internal_state::{RequestStage, ResponseStage, Stage};
-use crate::verbose::{print_request, print_response};
+use crate::verbose::{CurlFormatter, HeaderFormatter, ResponseFormatter};
 
 bun_core::declare_scope!(fetch, visible);
 
@@ -1042,14 +1044,6 @@ impl RedirectHop {
     }
 }
 
-/// HTTP-thread-only scratch, fully overwritten before it is read.
-#[inline]
-pub(crate) fn temp_hostname() -> &'static mut [u8; 8192] {
-    // SAFETY: every caller is on the dedicated HTTP thread (the only thread that runs `HTTPClient`
-    // methods after `on_start`) and is done with the buffer before the next call.
-    unsafe { &mut *TEMP_HOSTNAME.get() }
-}
-
 pub(crate) struct Request<'a> {
     pub(crate) method: &'a [u8],
     pub(crate) path: &'a [u8],
@@ -1065,6 +1059,23 @@ pub(crate) struct RequestBuffer<'a> {
     /// Without drop glue, `headers` can borrow `content_length`.
     headers: ManuallyDrop<BoundedArray<Header<'a>, MAX_REQUEST_HEADERS>>,
 }
+
+/// Accessors for the HTTP-thread-only `RacyCell` scratch buffers.
+///
+/// INVARIANT: every caller is on the dedicated HTTP thread (the only thread
+/// that runs `HTTPClient` methods after `on_start`), and each buffer is fully
+/// overwritten before being read, so a fresh `&mut` here is the sole live
+/// borrow. Centralised so the SAFETY argument lives in one place instead of
+/// being repeated at every `&mut *X.get()` call site.
+mod scratch {
+    use super::*;
+    #[inline]
+    pub(crate) fn temp_hostname() -> &'static mut [u8; 8192] {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *TEMP_HOSTNAME.get() }
+    }
+}
+pub(crate) use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // bun_boringssl doesn't expose an ALPN-offer enum, so
@@ -1348,6 +1359,61 @@ fn write_request(writer: &mut Vec<u8>, request: &Request<'_>) -> crate::Result<(
 
     writer.extend_from_slice(b"\r\n");
     Ok(())
+}
+
+#[cold]
+pub(crate) fn print_request(
+    protocol: Protocol,
+    request: &Request<'_>,
+    url: &[u8],
+    ignore_insecure: bool,
+    body: &[u8],
+    curl: bool,
+) {
+    if curl {
+        let command = CurlFormatter {
+            request,
+            url,
+            ignore_insecure,
+            body,
+        };
+        bun_core::pretty_errorln!("{}", command);
+    }
+
+    let ver: &str = match protocol {
+        Protocol::Http1_1 => "HTTP/1.1",
+        Protocol::Http2 => "HTTP/2",
+        Protocol::Http3 => "HTTP/3",
+    };
+    bun_core::pretty_errorln!(
+        "> {} {} {}",
+        ver,
+        BStr::new(request.method),
+        EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
+    );
+    for header in request.headers {
+        let name = header.name();
+        if strings::eql_case_insensitive_ascii(name, b"authorization", true)
+            || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+        {
+            let value = header.value();
+            let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
+            bun_core::pretty_errorln!(
+                "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
+                escape_control_chars(name),
+                escape_control_chars(&value[..scheme_len]),
+            );
+        } else {
+            bun_core::pretty_errorln!("> {}", HeaderFormatter(*header));
+        }
+    }
+    Output::flush();
+}
+
+#[cold]
+fn print_response(response: &Response) {
+    bun_core::pretty_errorln!("{}", ResponseFormatter(response));
+    Output::flush();
 }
 
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
@@ -1792,7 +1858,7 @@ impl<'a> HTTPClient<'a> {
                 let host_z: *const core::ffi::c_char =
                     if !bun_core::ip_address::is_ip_host(raw_hostname) {
                         // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                        let temp = temp_hostname();
+                        let temp = scratch::temp_hostname();
                         if raw_hostname.len() < temp.len() {
                             temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
                             temp[raw_hostname.len()] = 0;
@@ -2447,10 +2513,11 @@ impl<'a> HTTPClient<'a> {
             }
 
             // Silently drop excess headers to stay within the fixed-size request header buffer.
-            if will_append {
-                headers
-                    .append_assume_capacity(Header::new(name, self.header_str(header_values[i])));
+            if !will_append {
+                continue;
             }
+
+            headers.append_assume_capacity(Header::new(name, self.header_str(header_values[i])));
         }
 
         if !override_connection_header && !self.flags.disable_keepalive && !self.bypasses_pool() {
@@ -3252,7 +3319,7 @@ impl<'a> HTTPClient<'a> {
             // (same hazard as documented in `start_proxy_handshake`). The
             // socket handle outlives the client; use it as the liveness
             // guard before touching `self` again.
-            if !GenHttpContext::<IS_SSL>::has_client(socket) {
+            if socket.is_closed() {
                 return;
             }
         }
@@ -3299,6 +3366,9 @@ impl<'a> HTTPClient<'a> {
                             // lets signal to start streaming the body
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
+                            if !GenHttpContext::<IS_SSL>::has_client(socket) {
+                                return;
+                            }
                         }
                     }
                     debug_assert!(
@@ -3505,6 +3575,9 @@ impl<'a> HTTPClient<'a> {
                             // lets signal to start streaming the body
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
+                            if !GenHttpContext::<IS_SSL>::has_client(socket) {
+                                return;
+                            }
                         }
                         debug_assert!(
                             // leftover bytes OR stream/sendfile (whose body
@@ -3584,19 +3657,22 @@ impl<'a> HTTPClient<'a> {
             "handleOnDataHeader data: {}",
             BStr::new(incoming_data)
         );
-        // Not `MAX_HTTP_HEADER_SIZE`: 16 KB rejects responses with a large `Location` or `Set-Cookie`.
-        const LIMITS: HeadLimits = HeadLimits {
+        let options = HeadOptions {
+            // Not `MAX_HTTP_HEADER_SIZE`: 16 KB rejects responses with a large `Location` or `Set-Cookie`.
             max_len: 1024 * 1024,
             max_headers: 256,
             max_interim_len: usize::MAX,
+            // For `store_metadata`.
+            spare_capacity: self.url.href.len(),
         };
 
-        let (mut response, to_read) = match self.state.response_parser.feed(incoming_data, LIMITS) {
+        let fed = self.state.response_parser.feed(incoming_data, options);
+        let (mut response, to_read) = match fed {
             Ok(Some(parsed)) => parsed,
             // Does not re-arm the idle timer; see [`IDLE_TIMEOUT_SECONDS`].
             Ok(None) => return,
             // Too short for a reply: the end of the previous one, from a peer that may close next.
-            Err(HeadError::Malformed)
+            Err(bun_http1::Error::MalformedHead)
                 if self.state.response_parser.received_len() < b"HTTP/1.1 200\r\n\r\n".len()
                     && self.retries_on_close() =>
             {
@@ -3611,13 +3687,10 @@ impl<'a> HTTPClient<'a> {
         // A proxy that answers CONNECT with 101 refused the tunnel.
         if response.status_code == 101 && !self.is_reading_connect_reply() {
             if self.flags.upgrade_state == HTTPUpgradeState::None {
-                // we cannot upgrade to websocket because the client did not request it!
                 self.close_and_fail::<IS_SSL>(crate::Error::UnrequestedUpgrade, socket);
                 return;
             }
-            // special case for websocket upgrade
             self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-            // start draining the request body
             self.flush_stream::<IS_SSL>(socket);
             if !GenHttpContext::<IS_SSL>::has_client(socket) {
                 return;
@@ -3643,7 +3716,6 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
             // this means that the request ended
-            // store metadata and return the progress at this point
             self.store_metadata(response);
             // if is chuncked but no body is expected we mark the last chunk
             self.state.flags.received_last_chunk = true;
@@ -3658,7 +3730,6 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // we have body data incoming so we store metadata and keep going
         self.store_metadata(response);
 
         if to_read.is_empty() {
@@ -3878,11 +3949,15 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub(crate) fn store_metadata(&mut self, response: Response) {
-        self.state.metadata = Some(HTTPResponseMetadata {
-            url: self.url.href.into(),
-            response,
-        });
+    pub(crate) fn store_metadata(&mut self, mut response: Response) {
+        let buf = &mut response.headers.buf;
+        let url = StringPointer {
+            offset: buf.len() as u32,
+            length: self.url.href.len() as u32,
+        };
+        buf.reserve_exact(self.url.href.len());
+        buf.extend_from_slice(self.url.href);
+        self.state.metadata = Some(HTTPResponseMetadata { response, url });
     }
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):
@@ -4520,10 +4595,25 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
+        const MAX_SMALL_LEN: usize = 16 * 1024;
+        thread_local! {
+            static SMALL_BODY: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
+        }
+        let is_compressed = self.state.encoding.is_compressed();
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
-        let len_before = body_buf.list.len();
-        let decoded = decoder.decode(incoming_data, &mut body_buf.list);
-        let buffer_len = body_buf.list.len();
+        let body = &mut body_buf.list;
+        let len_before = body.len();
+        // The consumer keeps the allocation, so a small body gets one of its exact size.
+        let is_small =
+            !is_compressed && body.capacity() == 0 && incoming_data.len() <= MAX_SMALL_LEN;
+        let mut small = is_small.then(|| SMALL_BODY.take());
+        let decoded = decoder.decode(incoming_data, small.as_mut().unwrap_or(body));
+        if let Some(mut small) = small {
+            *body = small.as_slice().to_vec();
+            small.clear();
+            SMALL_BODY.set(small);
+        }
+        let buffer_len = body.len();
         self.state.total_body_received += buffer_len - len_before;
         bun_core::scoped_log!(
             fetch,
@@ -4531,7 +4621,7 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
 
-        let Some(rest) = decoded.map_err(|_| crate::Error::InvalidHTTPResponse)? else {
+        let Some(rest) = decoded? else {
             self.report_progress(buffer_len);
             // streaming chunks
             if self.signals.get(signals::Field::ResponseBodyStreaming)
@@ -4545,7 +4635,8 @@ impl<'a> HTTPClient<'a> {
             return Ok(false);
         };
 
-        if !rest.is_empty() {
+        // https://github.com/oven-sh/bun/issues/36940
+        if !rest.is_empty() && rest != END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY {
             self.state.flags.allow_keepalive = false;
         }
         self.state.flags.received_last_chunk = true;
@@ -4676,13 +4767,22 @@ impl<'a> HTTPClient<'a> {
             print_response(response);
         }
 
+        // A chunked body is read to its end all the same.
+        let skips_body = pretend_304 && self.state.transfer_encoding != Encoding::Chunked;
+        let has_no_body = skips_body || matches!(response.status_code, 100..=199 | 204 | 304);
         if pretend_304 {
             response.status_code = 304;
-            self.state.flags.allow_keepalive = false;
         }
 
-        // RFC 9110 §8.6
-        if response.status_code == 204 && self.state.content_length.is_some_and(|len| len > 0) {
+        // RFC 9112 §9.3
+        let content_length = self.state.content_length;
+        if skips_body
+            || (response.status_code == 204 && content_length.is_some_and(|len| len > 0))
+            || (has_transfer_encoding
+                && self.method.has_body()
+                && (has_no_body || content_length.is_some() || response.minor_version == 0))
+            || matches!(self.method, Method::CONNECT | Method::TRACE)
+        {
             self.state.flags.allow_keepalive = false;
         }
 
@@ -4694,10 +4794,7 @@ impl<'a> HTTPClient<'a> {
         // and is not waited for (which could cause a timeout).
         // This applies regardless of whether we're using a proxy tunnel or not,
         // since these status codes NEVER have a body per the HTTP spec.
-        if (response.status_code >= 100 && response.status_code < 200)
-            || response.status_code == 204
-            || response.status_code == 304
-        {
+        if has_no_body {
             self.state.content_length = Some(0);
             self.state.transfer_encoding = Encoding::Identity;
             is_server_sent_events = false;
@@ -4736,14 +4833,6 @@ impl<'a> HTTPClient<'a> {
         // proxies commonly answer CONNECT with `HTTP/1.0 200`, which says nothing
         // about the tunneled origin, whose own response is what gets judged here.
         if response.minor_version == 0 && !has_keep_alive_token {
-            self.state.flags.allow_keepalive = false;
-        }
-
-        // RFC 9112 §6.1, §6.3; RFC 9110 §9.3.6, §9.3.8
-        if (has_transfer_encoding
-            && (self.state.content_length.is_some() || response.minor_version == 0))
-            || matches!(self.method, Method::CONNECT | Method::TRACE)
-        {
             self.state.flags.allow_keepalive = false;
         }
 

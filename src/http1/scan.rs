@@ -19,17 +19,15 @@ fn is_token(byte: u8) -> bool {
     IS_TOKEN.get(usize::from(byte)) == Some(&true)
 }
 
-// `&` and `|` instead of `&&` and `||`: a branch keeps these two from vectorizing.
-
 pub(crate) fn is_control(byte: u8) -> bool {
-    ((byte < 0x20) & (byte != b'\t')) | (byte == 0x7f)
+    byte.is_ascii_control() && byte != b'\t'
 }
 
 /// False for letters, digits, `-` and `.`, which nearly all field names are made of.
 fn is_rare_in_token(byte: u8) -> bool {
     let is_letter = (byte | 0x20).wrapping_sub(b'a') < 26;
     let is_dash_to_nine = byte.wrapping_sub(b'-') <= b'9' - b'-';
-    !(is_letter | (is_dash_to_nine & (byte != b'/')))
+    !(is_letter || (is_dash_to_nine && byte != b'/'))
 }
 
 /// Bit `i` is `test(block[i])`.

@@ -213,10 +213,6 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         session.fail(stream, crate::Error::ResponseHeadersTooLarge);
         return;
     }
-    // A second HEADERS block after the final response is trailers (RFC 9114 §4.1).
-    if stream.status_code != 0 {
-        return;
-    }
     let n = s.header_count();
 
     let mut headers = Headers::default();
@@ -234,26 +230,31 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = match value.len() {
-                    3 => bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0),
-                    _ => 0,
-                };
+                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
             }
             i += 1;
             continue;
         }
-        if is_malformed_response_field(name) || is_malformed_response_value(value) {
+        if stream.status_code == 0
+            && (is_malformed_response_field(name) || is_malformed_response_value(value))
+        {
             session.fail(stream, crate::Error::HTTP3ProtocolError);
             return;
         }
         headers.append(name, trim_response_value(value));
         i += 1;
     }
-    if status < 100 {
+    if status == 0 {
+        // A second HEADERS block after the final response is trailers
+        // (RFC 9114 §4.1) and carries no :status; ignore it rather than
+        // treating the stream as malformed.
+        if stream.status_code != 0 {
+            return;
+        }
         session.fail(stream, crate::Error::HTTP3ProtocolError);
         return;
     }
-    if status < 200 {
+    if status >= 100 && status < 200 {
         return;
     }
     stream.status_code = status;

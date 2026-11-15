@@ -11,7 +11,6 @@ use super::client_session::ClientSession;
 use super::stream::Stream;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
-use crate::verbose::print_request;
 use crate::{HTTPClient, HTTPVerboseLevel, Protocol, RequestBuffer};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
@@ -19,6 +18,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, Protocol, RequestBuffer};
 /// for this stream (not `on_stream_open`; see the comment there for why no
 /// `lsquic_stream_write` may happen before lsquic's priority iterator has
 /// served the HSK crypto stream).
+// Keeps the `RequestBuffer` out of `on_stream_writable`'s frame.
 #[inline(never)]
 pub(crate) fn write_request(
     session: &ClientSession,
@@ -48,7 +48,7 @@ pub(crate) fn write_request(
     let request = client.build_request(&mut buffer);
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
-        print_request(
+        crate::print_request(
             Protocol::Http3,
             &request,
             href,

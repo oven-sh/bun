@@ -11,8 +11,10 @@
 #![warn(unused_must_use)]
 
 mod chunked;
+mod error;
 mod response;
 mod scan;
 
-pub use chunked::{ChunkedDecoder, InvalidChunk};
-pub use response::{HeadError, HeadLimits, Response, ResponseParser};
+pub use chunked::ChunkedDecoder;
+pub use error::{Error, Result};
+pub use response::{HeadOptions, Response, ResponseParser};

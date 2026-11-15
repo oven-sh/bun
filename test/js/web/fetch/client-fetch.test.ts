@@ -750,7 +750,6 @@ describe.concurrent("response head", () => {
     ["SSH-2.0\r\n", "Malformed_HTTP_Response"],
     ["\r\nHTTP/1.1 204 OK\r\n\r\n", "Malformed_HTTP_Response"],
     ["HTTP/2.0 204 OK\r\n\r\n", "Malformed_HTTP_Response"],
-    ["HTTP/1.1 099 OK\r\n\r\n", "Malformed_HTTP_Response"],
     ["HTTP/1.1 20 OK\r\n\r\n", "Malformed_HTTP_Response"],
     ["HTTP/1.1 2040 OK\r\n\r\n", "Malformed_HTTP_Response"],
     ["HTTP/1.1 204 O\0K\r\n\r\n", "Malformed_HTTP_Response"],

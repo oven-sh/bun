@@ -21,7 +21,6 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::verbose::print_request;
 use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol, RequestBuffer};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
@@ -596,7 +595,7 @@ impl ClientSession {
             return;
         }
         if client.verbose != HTTPVerboseLevel::None {
-            print_request(
+            crate::print_request(
                 Protocol::Http2,
                 &request,
                 client.url.href,
@@ -1172,19 +1171,19 @@ impl ClientSession {
 
         if stream.headers_ready {
             stream.headers_ready = false;
-            let headers = core::mem::take(&mut stream.decoded_headers);
-            let (result, response) =
-                match client.apply_multiplexed_headers(stream.status_code, headers) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        self.rst_stream(stream, wire::ErrorCode::CANCEL);
-                        let _ = self.flush();
-                        stream.client = None;
-                        client.h2 = None;
-                        client.h2_fail(err);
-                        return true;
-                    }
-                };
+            let (result, response) = match client
+                .apply_multiplexed_headers(stream.status_code, &mut stream.decoded_headers)
+            {
+                Ok(r) => r,
+                Err(err) => {
+                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
+                    let _ = self.flush();
+                    stream.client = None;
+                    client.h2 = None;
+                    client.h2_fail(err);
+                    return true;
+                }
+            };
             // handleResponseMetadata set is_redirect_pending. The doRedirect
             // contract assumes the caller already detached the stream.
             // Detach + RST here unconditionally so the

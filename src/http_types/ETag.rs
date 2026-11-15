@@ -249,7 +249,7 @@ impl Clone for Headers {
 }
 
 impl Headers {
-    /// Allocates `buf` once, so that no partial copy of it is freed.
+    /// Never regrows `buf`: S3 zeroes it, and would miss an earlier allocation.
     pub fn copy_of<'a>(list: impl Iterator<Item = Header<'a>> + Clone) -> Headers {
         let (count, len) = list.clone().fold((0, 0), |(count, len), header| {
             (count + 1, len + header.name.len() + header.value.len())

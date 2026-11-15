@@ -1340,12 +1340,6 @@ pub struct BundleOptions<'a> {
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
-    /// TODO: remove this in favor accessing bundler.log
-    /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
-    /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
-    /// `&'a mut` here would assert uniqueness for `'a` and make every access
-    /// through those sibling raw pointers UB under stacked borrows.
-    pub log: *const bun_ast::Log,
     pub(crate) external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
@@ -1606,7 +1600,6 @@ impl<'a> BundleOptions<'a> {
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
             main_fields: self.main_fields.clone(),
-            log: self.log,
             external: self.external.clone(),
             allow_unresolved: self.allow_unresolved.clone(),
             entry_points: self.entry_points.clone(),
@@ -1690,19 +1683,6 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
-    /// Shared-borrow the per-Transpiler `Log`.
-    ///
-    /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
-    /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api`.
-    /// The pointee is the caller-owned arena `Log` which outlives `self`.
-    #[inline]
-    pub(crate) fn log(&self) -> &bun_ast::Log {
-        // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
-        // arena `Log` it points to outlives `self`; see method doc.
-        unsafe { &*self.log }
-    }
-
     /// Whether `bake.DevServer` is driving this bundle. The stored pointer is
     /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerVTable`),
     /// so no `&T` accessor is possible; bundler code only ever tests presence.
@@ -1723,6 +1703,7 @@ impl<'a> BundleOptions<'a> {
 
     pub(crate) fn load_defines(
         &mut self,
+        log: &bun_ast::Log,
         arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
@@ -1761,9 +1742,8 @@ impl<'a> BundleOptions<'a> {
 
             Some(Cow::Borrowed(b"\"development\"".as_slice()))
         };
-        // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
-            self.log(),
+            log,
             self.transform_options.define.as_ref(),
             self.target,
             loader_,
@@ -1784,7 +1764,7 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn from_api(
-        log: *const bun_ast::Log,
+        log: &bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
         use core::sync::atomic::Ordering;
@@ -1808,7 +1788,6 @@ impl<'a> BundleOptions<'a> {
         let mut opts = BundleOptions {
             footer: Cow::Borrowed(b""),
             banner: Cow::Borrowed(b""),
-            log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
             define: Box::new(defines::Define::default()),
@@ -2029,7 +2008,7 @@ impl<'a> BundleOptions<'a> {
                 .iter()
                 .map(|s| s.as_ref())
                 .collect::<Vec<&[u8]>>(),
-            opts.log(),
+            log,
             opts.target,
         );
         opts.out_extensions = opts.target.out_extensions();

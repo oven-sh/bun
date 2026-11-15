@@ -17,6 +17,15 @@ fn toy() -> Vec<u8> {
     toy_elf(Architecture::X86_64, true)
 }
 
+pub(crate) const HEADERS_WITH_ONE_CUT: usize =
+    TOY_SEGMENT_COUNT as usize + PAYLOAD_SEGMENT_COUNT + 1;
+
+pub(crate) fn limit_header_room(elf: &mut [u8], header_count: usize) {
+    let room_size = (header_count as u64 * PHDR_SIZE) as u32;
+    elf[NOTES_OFFSET as usize + size_of::<u32>()..][..size_of::<u32>()]
+        .copy_from_slice(&room_size.to_le_bytes());
+}
+
 fn for_each_toy(check: impl Fn(&[u8])) {
     for architecture in [Architecture::X86_64, Architecture::Aarch64] {
         check(&toy_elf(architecture, true));
@@ -493,12 +502,7 @@ fn cut_beside_an_unsplit_segment_takes_a_header() {
 #[test]
 fn full_table_takes_what_needs_no_header() {
     for_each_toy(|toy| {
-        let header_count = TOY_SEGMENT_COUNT as usize + PAYLOAD_SEGMENT_COUNT + 1;
-        let room_size = (header_count as u64 * PHDR_SIZE) as u32;
-        let original = edited(toy, |elf| {
-            elf[NOTES_OFFSET as usize + size_of::<u32>()..][..size_of::<u32>()]
-                .copy_from_slice(&room_size.to_le_bytes());
-        });
+        let original = edited(toy, |elf| limit_header_room(elf, HEADERS_WITH_ONE_CUT));
         let once = remove_and_verify(&original, &[text_pages(&original, 1..2)]);
         let model = cut_model(&once);
         assert_eq!(model.capacity, CutCapacity::Cuts(0));

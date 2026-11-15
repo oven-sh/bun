@@ -137,12 +137,30 @@ fn compute_headers_end(table: &ProgramHeaderTable) -> u64 {
     table.end_file_offset().max(size_of::<Elf64_Ehdr>() as u64)
 }
 
+fn find_payload_headers(headers: &[Elf64_Phdr]) -> Option<Range<usize>> {
+    let start = headers
+        .iter()
+        .position(|header| header.p_type == PT_BUN_PAYLOAD)?;
+    Some(start..start + PAYLOAD_SEGMENT_COUNT)
+}
+
+fn headers_in_use(headers: &[Elf64_Phdr]) -> impl Iterator<Item = &Elf64_Phdr> {
+    let payload = find_payload_headers(headers).unwrap_or(0..0);
+    headers
+        .iter()
+        .enumerate()
+        .filter(move |(index, header)| match header.p_type {
+            PT_BUN_RESERVED => false,
+            PT_NULL => payload.contains(index),
+            _ => true,
+        })
+        .map(|(_, header)| header)
+}
+
 fn count_headers_to_reserve(headers: &[Elf64_Phdr]) -> usize {
-    let holds_payload = headers.iter().any(|header| header.p_type == PT_BUN_PAYLOAD);
-    if holds_payload {
-        0
-    } else {
-        PAYLOAD_SEGMENT_COUNT
+    match find_payload_headers(headers) {
+        Some(_) => 0,
+        None => PAYLOAD_SEGMENT_COUNT,
     }
 }
 
@@ -161,11 +179,7 @@ fn count_free_slots(
     if !loads.all(|load| is_congruent(load, alignment)) {
         return Err(NoCutReason::SegmentsNotCongruent);
     }
-    let used = table
-        .headers
-        .iter()
-        .filter(|header| !matches!(header.p_type, PT_NULL | PT_BUN_RESERVED))
-        .count();
+    let used = headers_in_use(&table.headers).count();
     table
         .capacity()
         .checked_sub(used + count_headers_to_reserve(&table.headers))
@@ -372,11 +386,10 @@ impl Removal<'_> {
     ) -> Result<Vec<Elf64_Phdr>, ImageError> {
         let mut updated =
             Vec::with_capacity(headers.len() + self.cuts.len() + PAYLOAD_SEGMENT_COUNT);
-        for header in headers {
+        for header in headers_in_use(headers) {
             match header.p_type {
-                PT_NULL | PT_BUN_RESERVED => {}
                 PT_LOAD => updated.extend(self.split_load_segment(header)?),
-                PT_PHDR => updated.push(*header),
+                PT_NULL | PT_PHDR => updated.push(*header),
                 _ => {
                     let p_offset = self
                         .compute_moved_offset(header.p_offset, header.p_filesz)

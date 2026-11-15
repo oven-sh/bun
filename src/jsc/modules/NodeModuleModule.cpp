@@ -284,6 +284,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RELEASE_AND_RETURN(scope, JSValue::encode(require));
 }
 
+bool isRelativeRequest(const WTF::String& request)
+{
+    return request == "."_s || request == ".."_s || request.startsWith("./"_s) || request.startsWith("../"_s)
+#if OS(WINDOWS)
+        || request.startsWith(".\\"_s) || request.startsWith("..\\"_s)
+#endif
+        ;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -349,6 +358,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
         JSC::EncodedJSValue result;
 
+        // Like Node: a builtin id wins before the entries of `paths` are checked; any other non-relative request needs string entries.
+        bool entriesMustBeStrings = false;
+        if (!pathsValue.isUndefinedOrNull()) {
+            bool isPrimitive = moduleName.isString();
+            auto request = moduleName.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isPrimitive && Bun::isBuiltinModule(request)) {
+                pathsValue = JSC::jsUndefined();
+            } else {
+                entriesMustBeStrings = !isRelativeRequest(request);
+                if (!isPrimitive)
+                    moduleName = JSC::jsString(vm, request);
+            }
+        }
+
         // If paths are provided, use Bun__resolveSyncWithPaths
         if (!pathsValue.isUndefinedOrNull()) {
             // Node.js requires options.paths to be an array
@@ -367,6 +391,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
                 if (scope.exception())
                     return;
+
+                // Node's name is the argument of path.resolve(entry), "paths[0]" for every entry: https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1257
+                if (entriesMustBeStrings && !item.isString()) {
+                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "paths[0]"_s, "string"_s, item);
+                    return;
+                }
 
                 WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
                 if (scope.exception())

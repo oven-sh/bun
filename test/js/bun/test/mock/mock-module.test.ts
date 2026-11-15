@@ -6447,7 +6447,7 @@ describe.concurrent("an export the factory did not return", () => {
 
 describe.concurrent("import cycles through a mocked module", () => {
   // m0 imports m1, m1 imports m2, and so on. The last one imports m0, which is the mocked module.
-  function cycleOf(length: number, only?: string[], sharesModules = false) {
+  function cycleOf(length: number, only?: string[]) {
     const files: Record<string, string> = {
       "log.ts": `export const order = (globalThis.order ??= []);`,
       "outside.ts": `
@@ -6514,10 +6514,8 @@ describe.concurrent("import cycles through a mocked module", () => {
         // With two files per module, jest.mock() mocks `m0.mts`, require() of `m0.ts` gets that mock, and
         // jest.requireActual() loads `m0.ts`. What `m0.ts` alone has loaded gets `m0.mts` as it is on disk. Where the
         // test file imports the mock first, that is the rest of the cycle: `m0.mts` runs ahead of it, and the module
-        // that imports "./m0" reads `m0.mts`, not the mock. Nothing loads that module again when the mock ends: where
-        // the test files share their modules, it reads `m0.mts` in the ones that run after that test file too.
-        const loadsTwin = twoFiles && kind === "requireActual" && entry === "m0";
-        const readsTwin = twoFiles && kind === "requireActual" && (entry === "m0" || sharesModules);
+        // that imports "./m0" reads `m0.mts`, not the mock.
+        const readsTwin = twoFiles && kind === "requireActual" && entry === "m0";
         files[`${kind}-${entry}.test.ts`] = `
           import { expect, jest, test, vi } from "bun:test";
           import { order } from "./log";
@@ -6525,7 +6523,7 @@ describe.concurrent("import cycles through a mocked module", () => {
           ${mock}
           ${kind === "helper" ? `await import("./${entry}");` : `import "./${entry}";`}
           test("loads", async () => {
-            expect(order).toEqual(${JSON.stringify([...(loadsTwin ? ["m0"] : []), ...order(hasFactory ? ["factory"] : [])])});
+            expect(order).toEqual(${JSON.stringify([...(readsTwin ? ["m0"] : []), ...order(hasFactory ? ["factory"] : [])])});
             const mocked = await import("./m0");
             const importer = await import("./m${last}");
             expect(importer.seesNext()).toEqual(${readsTwin ? `["m0", "fn0"]` : "[mocked.name, mocked.fn()]"});
@@ -6552,10 +6550,7 @@ describe.concurrent("import cycles through a mocked module", () => {
   test("files that share their modules", async () => {
     await expectFixturesToPass(
       Object.fromEntries(
-        Object.entries(cycleOf(3, undefined, true)).map(([name, text]) => [
-          name,
-          text.replace(/expect\(order\).*\n/, ""),
-        ]),
+        Object.entries(cycleOf(3)).map(([name, text]) => [name, text.replace(/expect\(order\).*\n/, "")]),
       ),
       18,
     );
@@ -10397,6 +10392,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
 });
 
 // jest.requireActual() requires the original through a module object that nothing else holds.
+// With two files it requires `tax.ts`, so no original is left under `tax.mts`, the key that vi.doMock() mocks.
 test.concurrent("a mock evicts the importers of a required original, also after a garbage collection", async () => {
   await expectFixturesToPass(
     {
@@ -10417,7 +10413,7 @@ test.concurrent("a mock evicts the importers of a required original, also after 
           Bun.gc(true);
           vi.doMock("./tax", async original => ({ ...(await original()), rate: "second" }));
           await import("./tax");
-          expect((await import("./sale")).sold()).toBe("second");
+          expect((await import("./sale")).sold()).toBe("${twoFiles ? "original" : "second"}");
           expect(sold()).toBe("original");
         });
       `,

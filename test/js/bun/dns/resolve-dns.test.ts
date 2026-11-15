@@ -548,5 +548,17 @@ describe("dns", () => {
         exitCode: 0,
       });
     });
+
+    test.concurrent("a failed lookup() does not keep the event loop alive", async () => {
+      const script = `
+        import { getEventLoopStats } from "bun:internal-for-testing";
+        const code = await Bun.dns.lookup("host.corp.example").catch(e => e.code);
+        console.log(JSON.stringify({ code, loopActive: getEventLoopStats().loopActive }));
+      `;
+      expect(await exchange({}, script)).toMatchObject({
+        printed: { code: "DNS_ENOTFOUND", loopActive: false },
+        exitCode: 0,
+      });
+    });
   });
 });

@@ -22,22 +22,22 @@ pub enum IfState {
 
 pub struct Exec {
     pub(crate) state: ExecBranch,
-    /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
+    /// Back-reference to the current `SmolList<ast::Stmt>` being walked.
     /// Points into the AST arena, which the interpreter holds for its entire
     /// lifetime — it outlives every state node.
-    pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
+    pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt>>,
     pub(crate) stmt_idx: u32,
     pub(crate) last_exit_code: ExitCode,
 }
 
 impl Exec {
-    /// Borrow the current `SmolList<Stmt, 1>` being walked.
+    /// Borrow the current `SmolList<Stmt>` being walked.
     ///
     /// `stmts` always points into the AST arena (`ShellArgs::__arena`), which
     /// the interpreter holds for its entire lifetime — it outlives every state
     /// node (BackRef invariant).
     #[inline]
-    fn stmts(&self) -> &ast::SmolList<ast::Stmt, 1> {
+    fn stmts(&self) -> &ast::SmolList<ast::Stmt> {
         self.stmts.get()
     }
 

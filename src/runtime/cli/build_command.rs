@@ -971,7 +971,7 @@ impl BuildCommand {
                         file.output_kind == options::OutputKind::EntryPoint
                     };
                     let entry_points = output_files.iter().filter(is_entry_point);
-                    let sources = entry_points.map(|file| file.src_path.text);
+                    let sources = entry_points.map(|file| &*file.src_path);
                     let written = ctx.args.entry_points.iter().map(|path| &path[..]);
                     let checked = super::compile_command::check_entry_points_are_kept(
                         outfile, written, sources,

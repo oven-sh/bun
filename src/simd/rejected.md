@@ -536,6 +536,65 @@ mod simd {
 }
 ```
 
+The same, with a `#` of the macro:
+
+```rust,compile_fail,E0658
+macro_rules! take {
+    (then $($item:tt)*) => { $($item)* };
+    ($hash:tt [inline] $(#$more:tt)* fn f $($rest:tt)*) => {
+        take! { then $hash $($rest)* }
+    };
+}
+#[bun_simd::foreach_target]
+mod simd {
+    take! { fn f [rustc_nounwind] const fn g() {} }
+}
+# fn main() {}
+```
+
+A macro in the place of the module, which would get all that is added:
+
+```rust,compile_fail
+macro_rules! take {
+    ($($all:tt)*) => {};
+}
+#[bun_simd::foreach_target]
+take! {}
+# fn main() {}
+```
+
+A fragment of a macro, for which `C` would be 3:
+
+```rust,compile_fail
+macro_rules! make {
+    ($e:expr) => {
+        #[bun_simd::foreach_target]
+        mod simd {
+            pub const C: u8 = $e * 2;
+        }
+    };
+}
+make!(1 + 1);
+# fn main() {}
+```
+
+Its neighbour:
+
+```rust
+# macro_rules! make {
+#     ($e:expr) => {
+#         #[bun_simd::foreach_target]
+#         mod simd {
+#             pub const C: u8 = $e * 2;
+#         }
+#     };
+# }
+make!((1 + 1));
+fn main() {
+    assert_eq!(simd::portable::C, 4);
+}
+```
+
 A pointer to what has to be inlined:
 
 ```rust,compile_fail,E0308
@@ -559,21 +618,12 @@ impl bun_simd::Lane for Lane {}
 
 ## `unsafe` in what the macros are given
 
-The lint has no code, so each of these comes a second time, where it is allowed.
+The lint has no code, so each of these expects it, and is rejected if it stays away.
 
 In a function:
 
-```rust,compile_fail
-#[bun_simd::foreach_target]
-mod simd {
-    fn f(p: *const u8) -> u8 {
-        unsafe { *p }
-    }
-}
-```
-
 ```rust,no_run
-#![allow(unsafe_code)]
+#![expect(unsafe_code)]
 #[bun_simd::foreach_target]
 mod simd {
     fn f(p: *const u8) -> u8 {
@@ -584,15 +634,25 @@ mod simd {
 
 In a type:
 
-```rust,compile_fail
+```rust,no_run
+#![expect(unsafe_code)]
 const EMPTY: [u8; 0] = [];
 bun_simd::if_supported!(["sse2"], [u8; unsafe { 0 }], EMPTY);
 ```
 
+In an attribute that only the function that dispatches has:
+
 ```rust,no_run
-#![allow(unsafe_code)]
-const EMPTY: [u8; 0] = [];
-bun_simd::if_supported!(["sse2"], [u8; unsafe { 0 }], EMPTY);
+#![expect(unsafe_code)]
+mod portable {
+    pub fn f() {}
+}
+bun_simd::export! {
+    best[] native[is_allowed "x86_64" Sse4 portable ["sse2"]] portable_for_tests[]
+    #[unsafe(export_name = "g")]
+    fn f()
+}
+# fn main() {}
 ```
 
 ## What compiles, and does no harm

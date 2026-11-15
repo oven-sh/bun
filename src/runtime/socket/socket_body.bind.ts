@@ -40,7 +40,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       /** Can call the socket's handlers. */
       close: { capability: "js" },
       data: { setter: true, internalField: "data" },
-      disableRenegotiation: {},
+      disableRenegotiation: { capability: "heap" },
       end,
       exportKeyingMaterial: { ...bufferIfAny, args: { length: b.any, label: b.any, context: b.any } },
       fd: { getter: b.any.returning("number"), capability: "heap" },
@@ -64,7 +64,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       getTLSVersion: { returns: b.any.returning("string", "null"), ...js },
       getTypeOfService: { returns: b.i32 },
       ...(ssl ? { getX509Certificate: objectIfAny } : {}),
-      isSessionReused: { returns: b.bool },
+      isSessionReused: { returns: b.bool, capability: "heap" },
       listener: { getter: b.any.returning("Listener", "undefined"), capability: "heap" },
       localAddress: cached,
       localFamily: { getter: textIfOpen, cache: true, capability: "js" },

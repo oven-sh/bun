@@ -546,7 +546,7 @@ impl Cmd {
             args = core::mem::take(&mut cmd.args);
             spawn_args.argv.reserve_exact(args.len() + 1);
             for arg in &args {
-                let arg = bun_core::CStrRef::from_bytes_with_nul(arg);
+                let arg = bun_core::CStrRef::from_slice_with_nul(arg);
                 spawn_args.argv.push(Some(arg));
             }
             match &mut cmd.exec {

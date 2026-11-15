@@ -1410,7 +1410,7 @@ pub fn spawn_git_diff(
     ];
     let mut envp = Vec::with_capacity(ENV_STATIC.len() + 2);
     let variables = path_var.as_deref().into_iter().chain(ENV_STATIC);
-    envp.extend(variables.map(|variable| Some(CStrRef::from_bytes_with_nul(variable))));
+    envp.extend(variables.map(|variable| Some(CStrRef::from_slice_with_nul(variable))));
 
     #[cfg(not(windows))]
     let _ = loop_;
@@ -1419,7 +1419,7 @@ pub fn spawn_git_diff(
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
-        envp: Some(CStrList::terminate(&mut envp)),
+        envp: Some(CStrList::from_unterminated(&mut envp)),
         argv,
         // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
         // zeroed.

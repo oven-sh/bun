@@ -1241,22 +1241,19 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // `spawn_sync` takes the null-terminated envp
-                // directly, so build it from the DotEnv map. Output is buffered and
-                // silently dropped along with any spawn error.
-                if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
-                    let _ = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_list()),
-                        cwd: Box::<[u8]>::from(target_dirname),
-                        stdout: spawn_sync::SyncStdio::Buffer,
-                        stderr: spawn_sync::SyncStdio::Buffer,
-                        stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                }
+                let envp = env_loader.map.to_envp();
+                // Output is buffered and silently dropped along with any spawn error.
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: build_argv(&completions_argv),
+                    envp: Some(envp.as_list()),
+                    cwd: Box::<[u8]>::from(target_dirname),
+                    stdout: spawn_sync::SyncStdio::Buffer,
+                    stderr: spawn_sync::SyncStdio::Buffer,
+                    stdin: spawn_sync::SyncStdio::Ignore,
+                    #[cfg(windows)]
+                    windows: spawn_windows_options(),
+                    ..Default::default()
+                });
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());

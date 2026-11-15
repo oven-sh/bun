@@ -2240,7 +2240,7 @@ mod spawn_process_body {
         }
 
         pub fn spawn(options: &Options<'_>) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let argv = CStringList::concat(options.argv.iter().map(|arg| [&**arg]));
+            let argv = CStringList::from_parts(options.argv.iter().map(|arg| [&**arg]));
             let argv = argv.as_list();
 
             #[cfg(windows)]

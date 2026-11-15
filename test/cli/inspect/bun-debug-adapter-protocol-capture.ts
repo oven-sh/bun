@@ -51,11 +51,16 @@ function send(method: string, params: object = {}): Promise<any> {
   socket.send(JSON.stringify({ id, method, params }));
   return promise;
 }
+// A runtime that ends before it answers, for example in a crash, closes the connection.
+const closed = Promise.withResolvers<never>();
+socket.onclose = () => closed.reject(new Error(`${runtime} closed the connection of its inspector before it answered`));
+const answer = <T>(from: Promise<T>) => Promise.race([from, closed.promise]);
 
-await Promise.all([send("Inspector.enable"), send("Debugger.enable")]);
+await answer(Promise.all([send("Inspector.enable"), send("Debugger.enable")]));
 void send("Inspector.initialized");
-const { scriptId, sourceMapURL } = await parsed.promise;
-const { scriptSource } = await send("Debugger.getScriptSource", { scriptId });
+const { scriptId, sourceMapURL } = await answer(parsed.promise);
+const { scriptSource } = await answer(send("Debugger.getScriptSource", { scriptId }));
+socket.onclose = null;
 socket.close();
 
 const { version, sourcesContent, mappings } = JSON.parse(

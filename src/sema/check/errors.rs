@@ -435,15 +435,37 @@ impl Checker<'_, '_> {
             }
             // `GetIncludeProcessorDiagnostics`: skipped under `SkipTypeChecking`. Its directive filter is a separate
             // pass that doesn't mark directives as used.
-            self.include_processor_diagnostics(file);
-            checked.include = std::mem::take(&mut self.reported);
-            (checked.include).retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
+            checked.include = self.unsuppressed_include_diagnostics(file, &mut directives);
             for d in &mut checked.include {
                 self.resolve_span_end(d);
             }
         }
         checked.semantic = Some(semantic);
         checked
+    }
+
+    fn unsuppressed_include_diagnostics(
+        &mut self,
+        file: FileId,
+        directives: &mut Directives,
+    ) -> Vec<Reported> {
+        let hir = self.hir(file);
+        self.include_processor_diagnostics(file);
+        let mut include = std::mem::take(&mut self.reported);
+        include.retain(|d| directives.preceding(file, hir, d.start) == NO_DIRECTIVE);
+        include
+    }
+
+    /// `GetIncludeProcessorDiagnostics` alone: what `check_file` reports about the files that `file` brings into the
+    /// program. It computes no type.
+    pub fn check_included_files(&mut self, file: FileId) -> Checked {
+        self.begin_visit(file);
+        let mut include = Vec::new();
+        if self.hir(file).kind != FileKind::Json && self.reports_semantic_errors(file) {
+            include = self.unsuppressed_include_diagnostics(file, &mut Directives::default());
+        }
+        self.is_type_checked = true;
+        self.checked(include, Vec::new())
     }
 
     /// `GetDeclarationDiagnostics`. It also runs for files that aren't type-checked. `self.reported` must be empty on

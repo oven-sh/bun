@@ -80,8 +80,8 @@ pub mod Macro {
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
         /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
-        /// `deinit`; `bun_js_parser` never dereferences it.
-        pub data: *mut core::ffi::c_void,
+        /// `drop`; `bun_js_parser` never dereferences it.
+        data: *mut core::ffi::c_void,
         /// Set by a build that parses a file more than once, for the length of a parse.
         pub known_answers: Option<core::ptr::NonNull<dyn KnownAnswers>>,
     }
@@ -93,6 +93,14 @@ pub mod Macro {
                 data: core::ptr::null_mut(),
                 known_answers: None,
             }
+        }
+    }
+    /// Frees the strings of every `Expr` its macros returned, so it has to outlive their ASTs.
+    impl Drop for MacroContext {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: `data` is null, or the box `__bun_macro_context_init` made for `self`.
+            unsafe { __bun_macro_context_deinit(self.data) }
         }
     }
     /// What calls of macros have answered. A macro can keep state and have effects, so a call that is parsed again
@@ -108,7 +116,7 @@ pub mod Macro {
         // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
         // caller must guarantee it is non-null, exclusively borrowed, and of
         // that exact concrete type.
-        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
+        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
         // NOT `safe fn`: when non-null, `data` must be the exact `Box::into_raw`
         // value produced by `__bun_macro_context_init` and uniquely owned
         // (callee `Box::from_raw`s it → double-free / aliasing UB otherwise).
@@ -145,8 +153,7 @@ pub mod Macro {
     /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
     /// finalized before the worker thread's TLS root vanishes. Only call from
     /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
-    /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
-    /// path is either inside JS execution or inside a GC sweep, where
+    /// `MacroContext` boxes are freed, not inside JS execution or a GC sweep, where
     /// re-entering `run_gc(true)` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {
@@ -206,22 +213,19 @@ pub mod Macro {
             // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
             // retain the pointer past return (the boxed state it allocates owns
             // its own data).
-            unsafe {
+            let data = unsafe {
                 __bun_macro_context_init(
                     core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
                 )
+            };
+            Self {
+                javascript_object: MacroJSCtx::ZERO,
+                data,
+                known_answers: None,
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Its arena backs the
-        /// strings of every `Expr` its macros returned, so only call once the
-        /// ASTs that hold them are printed.
-        #[inline]
-        pub fn deinit(self) {
-            // SAFETY: `self.data` is either null (callee no-ops) or the exact
-            // `Box::into_raw` produced by `__bun_macro_context_init`; `self` is
-            // taken by value so this is the unique owner and no double-free is
-            // possible.
-            unsafe { __bun_macro_context_deinit(self.data) }
+        pub fn data(&mut self) -> *mut core::ffi::c_void {
+            self.data
         }
         /// Returns `'static` so callers can keep the result across `&mut self`
         /// parser calls without a borrowck conflict; the table lives in

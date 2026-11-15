@@ -15,6 +15,7 @@ type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
+    log: &mut bun_ast::Log,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
@@ -32,9 +33,7 @@ pub(crate) fn generate_code_for_lazy_export(
     // Take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
-    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-    // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
+    let all_sources = this.parse_graph().input_files.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
@@ -119,9 +118,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     ),
                     ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
                 };
-                // Split-borrow — see `LinkerContext::log_disjoint`.
-                let names =
-                    visitor.exported_names(css_ast, ref_, source_index, this.log_disjoint());
+                let names = visitor.exported_names(css_ast, ref_, source_index, log);
                 let value = if let [name] = names {
                     name_expr(name)
                 } else {
@@ -273,8 +270,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 write!(
                     &mut name_buf,
                     "{}_default",
-                    this.parse_graph().input_files.items_source()[source_index as usize]
-                        .fmt_identifier()
+                    all_sources[source_index as usize].fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
                 let alloc = this.arena();

@@ -125,6 +125,36 @@ test.concurrent("Bun.serve({ app }) frees the bundler plugin when the config is 
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("Bun.serve({ app }) frees the bundler plugin when the server stops", async () => {
+  using dir = tempDir("bake-app-plugin-stop", {
+    "server.ts": `export function render() { return new Response("ok"); }`,
+    "routes/index.ts": `export default 1;`,
+    "fixture.ts": `
+      import { heapStats } from "bun:jsc";
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const app = { framework: { fileSystemRouterTypes: [fsr] }, plugins: [{ name: "p", setup() {} }] };
+      const count = () => heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0;
+      const server = Bun.serve({ port: 0, development: true, app });
+      const text = await (await fetch(server.url)).text();
+      const serving = count();
+      await server.stop(true);
+      console.log(JSON.stringify({ text, serving, stopped: count() }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toEndWith(`{"text":"ok","serving":1,"stopped":0}\n`);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("Bun.serve({ app }) skips the directories in fileSystemRouterTypes[].ignoreDirs", async () => {
   using dir = tempDir("bake-app-ignore-dirs", {
     "server.ts": `export function render() { return new Response("ok"); }`,

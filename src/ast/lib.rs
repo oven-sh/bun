@@ -2403,6 +2403,19 @@ impl<'a> Source<'a> {
         }
     }
 
+    /// A copy that owns nothing, to be put in `arena`, which drops nothing.
+    pub fn clone_in(&self, arena: &'a bun_alloc::Arena) -> Source<'a> {
+        let clone_in = |bytes: &Cow<'a, [u8]>| match bytes {
+            Cow::Borrowed(bytes) => Cow::Borrowed(*bytes),
+            Cow::Owned(bytes) => Cow::Borrowed(&*arena.alloc_slice_copy(bytes)),
+        };
+        Source {
+            contents: clone_in(&self.contents),
+            identifier_name: clone_in(&self.identifier_name),
+            ..*self
+        }
+    }
+
     pub fn text_for_range(&self, r: Range) -> &[u8] {
         &self.contents[r.loc.i()..r.end_i()]
     }

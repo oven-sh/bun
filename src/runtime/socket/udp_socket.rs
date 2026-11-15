@@ -4,7 +4,7 @@ use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, Utf8Bytes};
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
@@ -142,13 +142,11 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if global_this.has_exception() {
         return;
     }
-    let event_loop = VirtualMachine::get().event_loop();
-    event_loop.enter();
+    let _entered = VirtualMachine::get().enter_event_loop_scope();
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
         this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
     }
-    event_loop.exit();
 }
 
 extern "C" fn on_data(
@@ -262,8 +260,7 @@ extern "C" fn on_data(
             BunString::clone_utf8(span)
         };
 
-        let loop_ = VirtualMachine::get().event_loop();
-        loop_.enter();
+        let _entered = VirtualMachine::get().enter_event_loop_scope();
 
         let flags = JSValue::create_empty_object(global_this, 2);
         flags.put(global_this, b"truncated", JSValue::from(truncated));
@@ -279,7 +276,6 @@ extern "C" fn on_data(
         {
             Ok(v) => v,
             Err(_) => {
-                loop_.exit();
                 this_value.ensure_still_alive();
                 return;
             }
@@ -287,7 +283,6 @@ extern "C" fn on_data(
         let hostname_js = match hostname_string.into_js(global_this) {
             Ok(v) => v,
             Err(_) => {
-                loop_.exit();
                 this_value.ensure_still_alive();
                 return;
             }
@@ -309,7 +304,6 @@ extern "C" fn on_data(
         }
 
         this_value.ensure_still_alive();
-        loop_.exit();
 
         i += 1;
     }
@@ -520,7 +514,7 @@ pub(crate) struct UDPSocket {
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
     connect_info: Cell<Option<ConnectInfo>>,
@@ -580,7 +574,7 @@ impl UDPSocket {
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
@@ -1677,7 +1671,6 @@ impl Drop for UDPSocket {
             }
             uws::udp::Socket::opaque_mut(socket).close();
         }
-        this.poll_ref.disable();
     }
 }
 

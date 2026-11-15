@@ -30,7 +30,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_TINY => {
             if raw {
                 let data = reader.read(1)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             let val = reader.byte()?;
             if unsigned {
@@ -42,7 +42,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_SHORT => {
             if raw {
                 let data = reader.read(2)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             if unsigned {
                 return Ok(SQLDataCell::uint4(reader.int::<u16>()? as u32));
@@ -54,7 +54,7 @@ pub(crate) fn decode_binary_value(
             // column_length is the display width (4), not the wire size.
             if raw {
                 let data = reader.read(2)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             Ok(SQLDataCell::uint4(reader.int::<u16>()? as u32))
         }
@@ -63,7 +63,7 @@ pub(crate) fn decode_binary_value(
                 // Binary protocol sends INT24 as a fixed 4-byte field; consume
                 // all 4 to keep the cursor aligned and return only the low 3.
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(Some(&data.substring(0, 3))));
+                return Ok(SQLDataCell::raw(&data.slice()[..3]));
             }
             if unsigned {
                 return Ok(SQLDataCell::uint4(reader.int_u24()?));
@@ -73,7 +73,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_LONG => {
             if raw {
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             if unsigned {
                 return Ok(SQLDataCell::uint4(reader.int::<u32>()?));
@@ -82,7 +82,7 @@ pub(crate) fn decode_binary_value(
         }
         FieldType::MYSQL_TYPE_LONGLONG => {
             if raw {
-                return Ok(SQLDataCell::raw(Some(&reader.read(8)?)));
+                return Ok(SQLDataCell::raw(reader.read(8)?.slice()));
             }
             if unsigned {
                 let val = reader.int::<u64>()?;
@@ -110,7 +110,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_FLOAT => {
             if raw {
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             Ok(SQLDataCell::float8(
                 f32::from_bits(reader.int::<u32>()?) as f64
@@ -119,7 +119,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_DOUBLE => {
             if raw {
                 let data = reader.read(8)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             Ok(SQLDataCell::float8(f64::from_bits(reader.int::<u64>()?)))
         }
@@ -130,7 +130,7 @@ pub(crate) fn decode_binary_value(
             }
             let data = reader.read(length as usize)?;
             if raw {
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             let time = Time::from_binary(data.slice());
             if time.microseconds >= 1_000_000 {
@@ -172,7 +172,7 @@ pub(crate) fn decode_binary_value(
             }
             let data = reader.read(length as usize)?;
             if raw {
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             // A zero-length binary DATETIME is MySQL's "0000-00-00 00:00:00"
             // sentinel — surface it as Invalid Date (NaN), not the Unix epoch,
@@ -198,7 +198,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_NEWDECIMAL => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             let string_data = reader.encode_len_string()?;
             Ok(SQLDataCell::string(string_data.slice()))
@@ -217,7 +217,7 @@ pub(crate) fn decode_binary_value(
         | FieldType::MYSQL_TYPE_BLOB => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             let string_data = reader.encode_len_string()?;
             // Only treat as binary if character_set indicates the binary pseudo-charset.
@@ -226,7 +226,7 @@ pub(crate) fn decode_binary_value(
             // but should return strings, not buffers.
             if column.flags.contains(ColumnFlags::BINARY) && column.character_set == BINARY_CHARSET
             {
-                return Ok(SQLDataCell::raw(Some(&string_data)));
+                return Ok(SQLDataCell::raw(string_data.slice()));
             }
             Ok(SQLDataCell::string(string_data.slice()))
         }
@@ -234,7 +234,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_JSON => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                return Ok(SQLDataCell::raw(data.slice()));
             }
             let string_data = reader.encode_len_string()?;
             Ok(SQLDataCell::json(string_data.slice()))
@@ -246,12 +246,12 @@ pub(crate) fn decode_binary_value(
                 let slice = data.slice();
                 Ok(SQLDataCell::bool(!slice.is_empty() && slice[0] == 1))
             } else {
-                Ok(SQLDataCell::raw(Some(&data)))
+                Ok(SQLDataCell::raw(data.slice()))
             }
         }
         _ => {
             let data = reader.read(column.column_length as usize)?;
-            Ok(SQLDataCell::raw(Some(&data)))
+            Ok(SQLDataCell::raw(data.slice()))
         }
     }
 }

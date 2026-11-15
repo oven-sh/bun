@@ -575,6 +575,48 @@ test.skipIf(!isDebug)(
   timeout,
 );
 
+test.skipIf(!isASAN)(
+  "terminate() while formData() waits for a fetch() body does not leak its boundary",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(new ReadableStream({ start: c => c.enqueue(new Uint8Array(1)) }), {
+          headers: { "content-type": "multipart/form-data; boundary=abcdefgh" },
+        }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        // leaksan.supp hides what module evaluation allocates.
+        const w = new Worker(
+          'const { parentPort, workerData } = require("worker_threads");' +
+          'setImmediate(async () => {' +
+          '  (await fetch(workerData)).formData().catch(() => {});' +
+          '  parentPort.postMessage(0);' +
+          '});',
+          { eval: true, workerData: "${server.url}" },
+        );
+        w.on("message", () => w.terminate().then(() => console.log("ok")));
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // WebCore-style callbacks (PerformanceObserver, abort algorithms)
 // were still invoked from the task queue after terminate() had stopped the
 // worker's VM mid-tick, entering JS with the TerminationException a previous
@@ -1302,6 +1344,35 @@ test(
     expect(stderr).toBe("");
     expect(stdout).toBe(JSON.stringify({ failures: [], leakedFileSinks: 0 }) + "\n");
     expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+test.skipIf(!isASAN)(
+  "a worker's end frees the strings its FileSystemRouter interned",
+  async () => {
+    using dir = tempDir("worker-router-strings", {
+      "pages/index.js": "",
+      "main.js": `
+        const { Worker, isMainThread } = require("node:worker_threads");
+        if (isMainThread) new Worker(__filename).on("exit", () => console.log("ok"));
+        // leaksan.supp hides what module evaluation allocates.
+        else setImmediate(() => new Bun.FileSystemRouter({ dir: __dirname + "/pages", style: "nextjs" }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   },
   timeout,
 );

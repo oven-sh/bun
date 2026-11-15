@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
+use bun_ptr::AliasableBox;
 use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
@@ -278,9 +279,50 @@ struct FSEventsLoopState {
     watchers: Vec<Option<NonNull<FSEventsWatcher>>>,
     watcher_count: u32,
     has_scheduled_watchers: bool,
-    fsevent_stream: FSEventStreamRef,
-    paths: Option<Box<[*mut c_void]>>,
-    cf_paths: CFArrayRef,
+    stream: Option<StartedStream>,
+}
+
+/// The array does not retain the strings in it.
+struct StreamPaths {
+    strings: Box<[CFStringRef]>,
+    array: CFArrayRef,
+}
+
+impl Drop for StreamPaths {
+    fn drop(&mut self) {
+        let cf = CoreFoundation::get();
+        for &object in self.strings.iter().chain([&self.array]) {
+            if !object.is_null() {
+                // SAFETY: from a `Create` function, and released nowhere else.
+                unsafe { (cf.release)(object) };
+            }
+        }
+    }
+}
+
+struct EventStream(NonNull<c_void>);
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        let cs = CoreServices::get();
+        // SAFETY: from `FSEventStreamCreate`, and scheduled on the run loop of this thread.
+        unsafe {
+            (cs.fs_event_stream_invalidate)(self.0.as_ptr());
+            (cs.fs_event_stream_release)(self.0.as_ptr());
+        }
+    }
+}
+
+struct StartedStream {
+    stream: EventStream,
+    _paths: StreamPaths,
+}
+
+impl Drop for StartedStream {
+    fn drop(&mut self) {
+        // SAFETY: `FSEventStreamStart` succeeded.
+        unsafe { (CoreServices::get().fs_event_stream_stop)(self.stream.0.as_ptr()) };
+    }
 }
 
 // SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
@@ -366,9 +408,7 @@ impl FSEventsLoop {
     }
 
     pub(crate) fn init() -> crate::Result<&'static FSEventsLoop> {
-        // Owning raw pointer first, shared view second: the error paths below reclaim
-        // through `this_ptr`, which must not be derived from a shared reference.
-        let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
+        let owned = AliasableBox::new(FSEventsLoop {
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
             sem: Semaphore::default(),
@@ -378,13 +418,11 @@ impl FSEventsLoop {
                 watchers: Vec::new(),
                 watcher_count: 0,
                 has_scheduled_watchers: false,
-                fsevent_stream: ptr::null_mut(),
-                paths: None,
-                cf_paths: ptr::null_mut(),
+                stream: None,
             }),
-        }));
-        // SAFETY: just allocated and exclusively owned; the CF thread only sees it after spawn.
-        let this: &'static FSEventsLoop = unsafe { &*this_ptr };
+        });
+        // SAFETY: leaked once the CF thread has it, and not used after an early return.
+        let this: &'static FSEventsLoop = unsafe { &*owned.as_ptr() };
 
         let cf = CoreFoundation::get();
 
@@ -407,8 +445,6 @@ impl FSEventsLoop {
         let signal_source =
             unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
-            // SAFETY: nothing else has seen the allocation (published only on Ok).
-            drop(unsafe { bun_core::heap::take(this_ptr) });
             return Err(crate::Error::FailedToCreateCoreFoudationSourceLoop);
         }
         this.signal_source.store(signal_source, Ordering::Relaxed);
@@ -419,15 +455,12 @@ impl FSEventsLoop {
         {
             Ok(handle) => handle,
             Err(_) => {
-                // SAFETY: the source was never scheduled on a run loop and the allocation
-                // was never published, so both are exclusively owned here.
-                unsafe {
-                    (cf.release)(signal_source.cast());
-                    drop(bun_core::heap::take(this_ptr));
-                }
+                // SAFETY: the source was never scheduled on a run loop.
+                unsafe { (cf.release)(signal_source.cast()) };
                 return Err(crate::Error::FailedToSpawnFSEventsThread);
             }
         };
+        owned.into_raw();
         // SAFETY: `thread` is only touched by `init()`/`shutdown()` on the JS thread; the CF thread never accesses it.
         unsafe {
             *this.thread.get() = Some(handle);
@@ -555,42 +588,20 @@ impl FSEventsLoop {
         state.has_scheduled_watchers = false;
         let watcher_count = state.watcher_count;
 
+        state.stream = None;
+        if watcher_count == 0 {
+            return;
+        }
+
         let cf = CoreFoundation::get();
         let cs = CoreServices::get();
 
         // SAFETY: all CF/CS calls below operate on handles we own
         unsafe {
-            if !state.fsevent_stream.is_null() {
-                let stream = state.fsevent_stream;
-                // Stop emitting events
-                (cs.fs_event_stream_stop)(stream);
-
-                // Release stream
-                (cs.fs_event_stream_invalidate)(stream);
-                (cs.fs_event_stream_release)(stream);
-                state.fsevent_stream = ptr::null_mut();
-            }
-            // clean old paths
-            if let Some(p) = state.paths.take() {
-                for s in p.iter() {
-                    if !s.is_null() {
-                        (cf.release)(*s);
-                    }
-                }
-                drop(p);
-            }
-            if !state.cf_paths.is_null() {
-                let cfp = state.cf_paths;
-                state.cf_paths = ptr::null_mut();
-                (cf.release)(cfp);
-            }
-
-            if watcher_count == 0 {
-                return;
-            }
-
-            let mut paths: Box<[*mut c_void]> =
-                vec![ptr::null_mut(); watcher_count as usize].into_boxed_slice();
+            let mut paths = StreamPaths {
+                strings: vec![ptr::null_mut(); watcher_count as usize].into_boxed_slice(),
+                array: ptr::null_mut(),
+            };
             let mut count: u32 = 0;
             for w in state.watchers.slice() {
                 if let Some(watcher) = *w {
@@ -602,14 +613,14 @@ impl FSEventsLoop {
                         ptr::null_mut(),
                         watcher.path.slice().as_ptr().cast(),
                     );
-                    paths[count as usize] = path;
+                    paths.strings[count as usize] = path;
                     count += 1;
                 }
             }
 
-            let cf_paths = (cf.array_create)(
+            paths.array = (cf.array_create)(
                 ptr::null_mut(),
-                paths.as_mut_ptr(),
+                paths.strings.as_mut_ptr(),
                 count as CFIndex,
                 ptr::null(),
             );
@@ -647,45 +658,28 @@ impl FSEventsLoop {
                 ptr::null_mut(),
                 Self::events_cb,
                 &raw mut ctx,
-                cf_paths,
+                paths.array,
                 cs.k_fs_event_stream_event_id_since_now,
                 latency,
                 flags,
             );
-            if r#ref.is_null() {
+            let Some(stream) = NonNull::new(r#ref).map(EventStream) else {
                 // FSEventStreamCreate can fail under rapid stream churn (resource
                 // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
-                for s in &paths[..count as usize] {
-                    if !s.is_null() {
-                        (cf.release)(*s);
-                    }
-                }
-                drop(paths);
-                (cf.release)(cf_paths);
                 return;
-            }
+            };
 
             (cs.fs_event_stream_schedule_with_run_loop)(
                 r#ref,
                 self.loop_.load(Ordering::Relaxed),
                 *cf.run_loop_default_mode,
             );
-            if (cs.fs_event_stream_start)(r#ref) == 0 {
-                //clean in case of failure
-                for s in &paths[..count as usize] {
-                    if !s.is_null() {
-                        (cf.release)(*s);
-                    }
-                }
-                drop(paths);
-                (cf.release)(cf_paths);
-                (cs.fs_event_stream_invalidate)(r#ref);
-                (cs.fs_event_stream_release)(r#ref);
-                return;
+            if (cs.fs_event_stream_start)(r#ref) != 0 {
+                state.stream = Some(StartedStream {
+                    stream,
+                    _paths: paths,
+                });
             }
-            state.fsevent_stream = r#ref;
-            state.paths = Some(paths);
-            state.cf_paths = cf_paths;
         }
     }
 

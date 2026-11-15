@@ -6,7 +6,7 @@ use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
+    InHeap, Popped, TimerHeap, TimerObjectInternals,
 };
 use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
@@ -740,19 +740,8 @@ impl FakeTimers {
                 (*timer).in_heap.set(InHeap::None);
                 (*timer).state.set(EventLoopTimerState::CANCELLED);
                 match (*timer).tag {
-                    EventLoopTimerTag::TimeoutObject => {
-                        let parent = TimeoutObject::from_timer_ptr(timer);
-                        TimerObjectInternals::release_heap_pin(
-                            core::ptr::NonNull::new_unchecked(&raw mut (*parent).internals),
-                            vm,
-                        );
-                    }
-                    EventLoopTimerTag::ImmediateObject => {
-                        let parent = ImmediateObject::from_timer_ptr(timer);
-                        TimerObjectInternals::release_heap_pin(
-                            core::ptr::NonNull::new_unchecked(&raw mut (*parent).internals),
-                            vm,
-                        );
+                    EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                        Popped::new(timer).cancel(vm);
                     }
                     EventLoopTimerTag::AbortSignalTimeout => {
                         AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
@@ -970,19 +959,12 @@ impl FakeTimers {
         let _firing = Firing::begin();
         let vm = VirtualMachine::get();
         let mut thrown = JSValue::ZERO;
-        // SAFETY: `timer` is live and its tag names its owner; the callees take raw pointers (noalias re-entrancy).
+        // SAFETY: `timer` was just popped from our heap.
         unsafe {
             match tag {
-                EventLoopTimerTag::TimeoutObject => TimerObjectInternals::fire_catching(
-                    core::ptr::addr_of_mut!((*TimeoutObject::from_timer_ptr(timer)).internals),
-                    vm,
-                    &raw mut thrown,
-                ),
-                EventLoopTimerTag::ImmediateObject => TimerObjectInternals::fire_catching(
-                    core::ptr::addr_of_mut!((*ImmediateObject::from_timer_ptr(timer)).internals),
-                    vm,
-                    &raw mut thrown,
-                ),
+                EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                    TimerObjectInternals::fire_catching(Popped::new(timer), vm, &raw mut thrown)
+                }
                 // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {
                     if let Err(err) = crate::dispatch::fire_timer(timer, &at, vm) {

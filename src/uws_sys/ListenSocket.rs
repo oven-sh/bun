@@ -9,8 +9,24 @@ bun_opaque::opaque_ffi! {
     pub struct ListenSocket;
 }
 
+/// Closed on drop.
+#[repr(transparent)]
+pub struct OwnedListenSocket(pub(crate) core::ptr::NonNull<ListenSocket>);
+
+impl OwnedListenSocket {
+    pub fn as_ptr(&self) -> *mut ListenSocket {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedListenSocket {
+    fn drop(&mut self) {
+        ListenSocket::opaque_mut(self.as_ptr()).close()
+    }
+}
+
 impl ListenSocket {
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         us_listen_socket_close(self)
     }
 

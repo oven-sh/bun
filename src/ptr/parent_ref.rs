@@ -147,11 +147,6 @@ impl<T: ?Sized, P> ParentRef<T, P> {
         // non-null, aligned, dereferenceable. `&T` is `SharedReadOnly`.
         unsafe { self.ptr.as_ref() }
     }
-
-    #[inline]
-    pub fn as_const_ptr(self) -> *const T {
-        self.ptr.as_ptr()
-    }
 }
 
 impl<T: ?Sized, P> Copy for ParentRef<T, P> {}

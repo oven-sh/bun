@@ -177,9 +177,10 @@ impl PackageManagerCommand {
         Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
 
         Output::flush();
-        Output::disable_buffering();
-        Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
-        Output::enable_buffering();
+        {
+            let _unbuffered = Output::disable_buffering_scope();
+            Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
+        }
         Global::exit(0);
     }
 
@@ -384,9 +385,8 @@ impl PackageManagerCommand {
             }
             if !print_string {
                 Output::flush();
-                Output::disable_buffering();
+                let _unbuffered = Output::disable_buffering_scope();
                 Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-                Output::enable_buffering();
             }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {

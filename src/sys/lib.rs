@@ -7659,13 +7659,13 @@ pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
 // ── environ ──
 
 /// Borrowed slice of the process's `KEY=VALUE\0` C strings.
-/// SAFETY note: the returned slice borrows the libc `environ` global; do not
-/// mutate the environment concurrently.
-pub fn environ() -> &'static [bun_core::CStrRef<'static>] {
+///
+/// # Safety
+/// On POSIX, nothing changes the environment (`setenv`, `putenv`) during `'a`.
+pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
     #[cfg(unix)]
     {
-        // SAFETY: `environ` is a process-global NULL-terminated array of C strings. `setenv` can
-        // free them: `'static` relies on every caller reading them at once, as noted above.
+        // SAFETY: `environ` is a NULL-terminated array of C strings, live for `'a` by fn contract.
         unsafe {
             let mut n = 0usize;
             let base: *const *const c_char = bun_core::c_environ();
@@ -7696,7 +7696,8 @@ pub fn environ() -> &'static [bun_core::CStrRef<'static>] {
 /// [`environ()`] with the null pointer behind it.
 #[cfg(windows)]
 pub fn environ_list() -> bun_core::CStrList<'static> {
-    let entries = environ();
+    // SAFETY: the contract is about POSIX.
+    let entries = unsafe { environ() };
     if entries.is_empty() {
         return bun_core::CStrList::new(&[None]);
     }

@@ -944,7 +944,8 @@ fn sentence_of_variables_never_read(names: &[&[u8]]) -> Option<String> {
 /// A setting that would be ignored is not lost without a word. By its name alone: so is one with an empty value.
 #[cfg(bun_locked_environment)]
 pub fn refuse_variables_that_are_never_read() {
-    let names: Vec<&[u8]> = bun_sys::environ()
+    // SAFETY: at startup, and nothing here changes the environment.
+    let names: Vec<&[u8]> = unsafe { bun_sys::environ() }
         .iter()
         .filter_map(|entry| {
             let entry = entry.to_cstr();

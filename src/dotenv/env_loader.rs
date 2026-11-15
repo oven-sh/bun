@@ -588,7 +588,8 @@ impl Loader {
             return Ok(());
         }
 
-        let environ = bun_sys::environ();
+        // SAFETY: copied below. Bun only calls `setenv` on the main thread, while it starts.
+        let environ = unsafe { bun_sys::environ() };
         self.map.map.ensure_total_capacity(environ.len())?;
         for entry in environ {
             let env = entry.to_cstr().to_bytes();

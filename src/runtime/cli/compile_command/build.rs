@@ -613,8 +613,7 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
-        let log = unsafe { &*request.log };
+        let log = request.log;
         if !log.has_errors() {
             log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
         }
@@ -641,8 +640,7 @@ fn add_assets(
             .map_err(CompileFailure::Assets);
     }
     let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
-    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
-    let log = unsafe { &*request.log };
+    let log = request.log;
     let implicit = &files_for_file_system.implicitly_embedded[..];
     let asked_about = &files_for_file_system.asked_about[..];
     let (named_at_root, asset_paths) = match (assets, implicit, asked_about) {

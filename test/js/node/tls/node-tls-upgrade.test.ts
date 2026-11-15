@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, tls as certs, isWindows } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -455,20 +455,10 @@ test("_parent is the wrapped net.Socket", async () => {
   }
 });
 
-async function run(script: string) {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const net = require("net"), tls = require("tls"), { Duplex } = require("stream"); ${script}`,
-    ],
-    env: { ...bunEnv, CERTS: JSON.stringify(certs) },
-    stdout: "pipe",
-    stderr: "pipe",
+const run = (script: string) =>
+  bunRun(["-e", `const net = require("net"), tls = require("tls"), { Duplex } = require("stream"); ${script}`], {
+    CERTS: JSON.stringify(certs),
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
 
 describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
   // The handle buffers "x" until the handshake is done. onWrite() runs in the duplex.write() that sends it.
@@ -495,6 +485,17 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
       ${script}
     });`;
 
+  // The session is decoded after TLS has started and before it has sent the ClientHello.
+  const connectAndRunBeforeClientHello = (duplex: string, code: string) => `
+    const from = Buffer.from;
+    let socket;
+    Buffer.from = function (value) {
+      if (value !== "session" || !socket) return from.apply(this, arguments);
+      ${code};
+      return from("");
+    };
+    socket = tls.connect({ socket: ${duplex}, session: "session", rejectUnauthorized: false });`;
+
   test("can terminate the handle while buffered data is written", async () => {
     const result = await run(
       withBufferedWrite(`socket.on("secureConnect", () => {
@@ -503,21 +504,21 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
         raw.end();
       });`),
     );
-    expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
+    expect(result).toSpawn("server got xy");
   });
 
   test("can emit 'drain' without sending buffered data twice", async () => {
     const result = await run(
       withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => duplex.emit("drain")));`),
     );
-    expect(result).toEqual({ stdout: "server got x\n", stderr: "", exitCode: 0 });
+    expect(result).toSpawn("server got x");
   });
 
   test("can call socket._handle.write() while buffered data is written", async () => {
     const result = await run(
       withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => socket._handle.write("y")));`),
     );
-    expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
+    expect(result).toSpawn("server got xy");
   });
 
   test("can destroy the socket, and bytesWritten counts the buffered data", async () => {
@@ -525,7 +526,7 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
       withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => socket.destroy()));
         socket.on("close", () => (console.log(socket.bytesWritten), raw.end()));`),
     );
-    expect(result).toEqual({ stdout: "1\nserver got x\n", stderr: "", exitCode: 0 });
+    expect(result).toSpawn("1\nserver got x");
   });
 
   test.each([
@@ -538,18 +539,10 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
       const secureContext = tls.createSecureContext(JSON.parse(process.env.CERTS));
       new tls.TLSSocket(far, { isServer: true, secureContext }).on("data", data => console.log("server got " + data));
       setImmediate(() => {
-        // The session is decoded after TLS has started and before it has sent the ClientHello.
-        const from = Buffer.from;
-        let socket;
-        Buffer.from = function (value) {
-          if (value !== "session" || !socket) return from.apply(this, arguments);
-          ${beforeClientHello};
-          return from("");
-        };
-        socket = tls.connect({ socket: near, session: "session", rejectUnauthorized: false });
+        ${connectAndRunBeforeClientHello("near", beforeClientHello)}
         ${afterConnect};
       });`);
-    expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
+    expect(result).toSpawn("server got xy");
   });
 
   test("can detach the ArrayBuffer that is being written", async () => {
@@ -562,17 +555,13 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
           callback();
         },
       });
-      // The session is decoded after TLS has started and before it has sent the ClientHello.
-      const from = Buffer.from;
-      let socket;
-      Buffer.from = function (value) {
-        if (value !== "session" || !socket) return from.apply(this, arguments);
-        socket._write(buffer, "buffer", () => {});
+      ${connectAndRunBeforeClientHello(
+        "duplex",
+        `socket._write(buffer, "buffer", () => {});
         console.log(buffer.length, socket._handle.bytesWritten);
-        process.exit(0);
-      };
-      socket = tls.connect({ socket: duplex, session: "session" });`);
-    expect(result).toEqual({ stdout: "0 0\n", stderr: "", exitCode: 0 });
+        process.exit(0)`,
+      )}`);
+    expect(result).toSpawn("0 0");
   });
 });
 
@@ -598,7 +587,7 @@ describe.concurrent("reconnecting after upgradeTLS()", () => {
         socket.destroy();
         server.close();
       });`);
-    expect(result).toEqual({ stdout: `${other} closed\nhello -1\n`, stderr: "", exitCode: 0 });
+    expect(result).toSpawn(`${other} closed\nhello -1`);
   });
 
   test("connect({ socket }) in 'connectionAttempt' closes that socket when the attempt starts", async () => {
@@ -616,6 +605,6 @@ describe.concurrent("reconnecting after upgradeTLS()", () => {
           });
         });
       });`);
-    expect(result).toEqual({ stdout: isWindows ? "EPIPE\n" : "EBADF\n", stderr: "", exitCode: 0 });
+    expect(result).toSpawn(isWindows ? "EPIPE" : "EBADF");
   });
 });

@@ -241,12 +241,6 @@ pub mod linker_context {
 
     #[path = "StaticRouteVisitor.rs"]
     pub mod static_route_visitor;
-
-    // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
-    //    resolves at every submodule call-site.
-    pub use crate::linker_context_mod::{
-        ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
-    };
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +256,7 @@ pub use defines::{Define, DefineDataExt, DefineExt};
 /// See `linker` module.
 pub use linker::Linker;
 /// See `linker_context_mod` module.
-pub use linker_context_mod::LinkerContext;
+pub(crate) use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
 /// `EntryPoint::Kind` is an inherent associated type on the struct (not a
@@ -398,13 +392,12 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// Erased handle to `bake::DevServer`. The struct stores a `&'a mut [Chunk]`
-// it mutates through, hence `*mut`.
+// Erased handle to `bake::DevServer`.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
         fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
-        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
+        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
         fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;

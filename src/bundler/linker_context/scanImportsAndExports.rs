@@ -77,6 +77,7 @@ macro_rules! col_ref {
 
 pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
+    log: &mut bun_ast::Log,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
@@ -94,9 +95,6 @@ pub(crate) fn scan_imports_and_exports(
     let ast = this.graph.ast.split_raw();
     let meta = this.graph.meta.split_raw();
     let files = this.graph.files.split_raw();
-    // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
-    // lifetime of the link step. Read-only — this function never writes to it.
-    let input = this.parse_graph().input_files.split_raw();
 
     use crate::bundled_ast::CssCol;
     let import_records_list: *mut [ImportRecordList<'_>] = ast.import_records;
@@ -116,8 +114,8 @@ pub(crate) fn scan_imports_and_exports(
     // pointer (`BundledAst.css: Option<*mut BundlerStyleSheet>`).
     let css_asts: *mut [CssCol] = ast.css;
 
-    let input_files: *mut [Source] = input.source;
-    let loaders: *mut [Loader] = input.loader;
+    let input_files: &[Source] = this.parse_graph().input_files.items_source();
+    let loaders: &[Loader] = this.parse_graph().input_files.items_loader();
 
     let resolved_exports: *mut [ResolvedExports] = meta.resolved_exports;
     let resolved_export_stars: *mut [ExportData] = meta.resolved_export_star;
@@ -150,16 +148,16 @@ pub(crate) fn scan_imports_and_exports(
                     id as u32,
                     col_ref!(import_records_list)[id].as_slice(),
                     col_ref!(css_asts),
-                    col_ref!(input_files),
-                    col_ref!(loaders),
-                    // `log_disjoint`: split-borrow with the SoA column refs above.
-                    this.log_disjoint(),
+                    input_files,
+                    loaders,
+                    log,
                 );
 
                 // Validate cross-file "composes: ... from" named imports and
                 // composes-from property collisions.
                 __css_validation::validate_css_import_composes(
                     this,
+                    log,
                     id,
                     css_asts,
                     import_records_list,
@@ -515,7 +513,7 @@ pub(crate) fn scan_imports_and_exports(
                 // generation is done here because at this point we know that the
                 // "ExportsKind" field has its final value and will not be changed.
                 if col_ref!(ast_flags_list)[id].contains(AstFlags::HAS_LAZY_EXPORT) {
-                    this.generate_code_for_lazy_export(id as u32)?;
+                    this.generate_code_for_lazy_export(log, id as u32)?;
                 }
 
                 // Propagate exports for export star statements
@@ -576,6 +574,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 if col_ref!(named_imports)[source_index].count() > 0 {
                     this.match_imports_with_exports_for_file(
+                        log,
                         // SAFETY: `named_imports` is a raw column ptr;
                         // pass the element by raw `*const` so no `&mut`
                         // protector spans the `&mut this` call (the callee
@@ -586,7 +585,7 @@ pub(crate) fn scan_imports_and_exports(
                         &mut member_resolutions,
                     );
 
-                    if this.log().errors > 0 {
+                    if log.errors > 0 {
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
                     }
                 }
@@ -656,21 +655,16 @@ pub(crate) fn scan_imports_and_exports(
         // `do_step5` only touches distinct SoA rows per `source_index` (the
         // columns are pre-sized and never reallocate during this step).
         // The tasks share one `&LinkerContext`; the callee uses it
-        // for reads and writes per-row cells via raw `split_raw()` pointers —
-        // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
-        // forms `&mut LinkerContext`).
+        // for reads and writes per-row cells via raw `split_raw()` pointers.
         {
-            let ctx: &LinkerContext<'_> = this;
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool
-            // set in `BundleV2::init`.
+            let ctx: &LinkerContext<'_, '_> = this;
             let worker_pool = this.worker_pool();
             // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
             // so reborrow it mutably (not actually mutated by the by-value
             // variant). Step 6 reuses it afterwards.
             worker_pool.each(
                 ctx,
-                |ctx: &&LinkerContext<'_>, source_index: Index, i: usize| {
+                |ctx: &&LinkerContext<'_, '_>, source_index: Index, i: usize| {
                     // SAFETY: `reachable` names each file once, so each call has its own rows.
                     unsafe { ctx.do_step5(source_index, i) };
                 },
@@ -747,7 +741,7 @@ pub(crate) fn scan_imports_and_exports(
             let flag = col_ref!(flags)[id];
             let wrap = flag.wrap;
             let export_kind = col_ref!(exports_kind)[id];
-            let source: &Source = &col_ref!(input_files)[id];
+            let source: &Source = &input_files[id];
 
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
@@ -1751,11 +1745,12 @@ mod __css_validation {
     use crate::bundled_ast::CssCol;
 
     pub(super) fn validate_css_import_composes<'bump>(
-        this: &mut LinkerContext,
+        this: &LinkerContext,
+        log: &mut Log,
         id: usize,
         css_asts: *mut [CssCol<'bump>],
         import_records_list: *mut [ImportRecordList<'bump>],
-        input_files: *mut [Source],
+        input_files: &[Source],
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
         // `other_css_ast` below may alias the same allocation when a file
@@ -1784,15 +1779,14 @@ mod __css_validation {
                 for name in compose.names.slice() {
                     let name_v = name.v;
                     if !other_css_ast.local_scope.contains(name_v) {
-                        // Split-borrow — see `LinkerContext::log_disjoint`.
-                        let _ = this.log_disjoint().add_error_fmt(
-                            &col_ref!(input_files)[record.source_index.get() as usize],
+                        let _ = log.add_error_fmt(
+                            &input_files[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
                                 "The name \"{}\" never appears in \"{}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                 bstr::BStr::new(name_v),
                                 bstr::BStr::new(
-                                    &col_ref!(input_files)[record.source_index.get() as usize]
+                                    &input_files[record.source_index.get() as usize]
                                         .path
                                         .pretty
                                 ),
@@ -1802,7 +1796,14 @@ mod __css_validation {
                 }
             }
         }
-        validate_composes_from_properties(this, id as u32, css_ast, import_records_list, css_asts);
+        validate_composes_from_properties(
+            this,
+            log,
+            id as u32,
+            css_ast,
+            import_records_list,
+            css_asts,
+        );
     }
 
     /// CSS modules spec says that the following is undefined behavior:
@@ -1832,7 +1833,8 @@ mod __css_validation {
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
     fn validate_composes_from_properties<'bump>(
-        this: &mut LinkerContext,
+        this: &LinkerContext,
+        log: &mut Log,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         import_records_list: *mut [ImportRecordList<'bump>],
@@ -1858,7 +1860,7 @@ mod __css_validation {
             all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol<'bump>],
             all_symbols: &'a symbol::Map,
-            all_sources: *mut [Source<'a>],
+            all_sources: &'a [Source<'a>],
             log: &'a mut Log,
         }
 
@@ -1896,7 +1898,7 @@ mod __css_validation {
                 let _ = self.log.add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Err,
                     data: bun_ast::range_data(
-                        Some(&col_ref!(self.all_sources)[source_index as usize]),
+                        Some(&self.all_sources[source_index as usize]),
                         range,
                         bun_ast::alloc_print!(
                             "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
@@ -1908,7 +1910,7 @@ mod __css_validation {
                         &[
                             bun_ast::range_data(
                                 Some(
-                                    &col_ref!(self.all_sources)
+                                    &self.all_sources
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
@@ -2068,8 +2070,6 @@ mod __css_validation {
             }
         }
 
-        // SAFETY: parse_graph backref valid for link step. Read-only.
-        let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
             visited: ArrayHashMap::<bun_ast::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
@@ -2077,10 +2077,8 @@ mod __css_validation {
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,
-            all_sources: input.source,
-            // Split-borrow with `&this.graph.symbols` above —
-            // `log_disjoint` returns the disjoint `Transpiler.log` backref.
-            log: this.log_disjoint(),
+            all_sources: this.parse_graph().input_files.items_source(),
+            log,
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();

@@ -1389,7 +1389,7 @@ impl BunxCommand {
             .map
             .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)?;
 
-        let envp = env_loader.map.create_null_delimited_env_map()?;
+        let envp = env_loader.map.to_envp();
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

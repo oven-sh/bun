@@ -1185,7 +1185,7 @@ impl GitSubprocess {
         let argv = argv.iter().map(|arg| Some(arg.as_c_str().into()));
         let argv: Vec<_> = argv.chain([None]).collect();
         // Without `variable`, the list ends one place earlier.
-        let envp = [env.envp.entries(), &[variable.map(Into::into), None]].concat();
+        let envp = [env.envp.unterminated(), &[variable.map(Into::into), None]].concat();
 
         let this_ptr: *mut c_void = this.as_ptr().cast();
         this.read_error.set(None);

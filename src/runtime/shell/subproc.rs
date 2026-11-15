@@ -553,8 +553,8 @@ impl ShellSubprocess {
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
         // completion.
         let interp = cmd_parent.interp;
-        let argv = CStrList::terminate(&mut spawn_args.argv);
-        let envp = CStrList::terminate(&mut spawn_args.env_array);
+        let argv = CStrList::from_unterminated(&mut spawn_args.argv);
+        let envp = CStrList::from_unterminated(&mut spawn_args.env_array);
 
         let foreground = !interp.in_background(cmd_parent.id);
         let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
@@ -571,8 +571,6 @@ impl ShellSubprocess {
         };
 
         let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
-        let stdio1 = core::mem::replace(&mut spawn_args.stdio[1], Stdio::Ignore);
-        let stdio2 = core::mem::replace(&mut spawn_args.stdio[2], Stdio::Ignore);
 
         // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
@@ -601,7 +599,7 @@ impl ShellSubprocess {
         };
         let stdout = Readable::init(
             OutKind::Stdout,
-            &stdio1,
+            &spawn_args.stdio[1],
             spawn_args.redirect_stdout.take(),
             shellio.stdout.clone(),
             event_loop,
@@ -613,7 +611,7 @@ impl ShellSubprocess {
         );
         let stderr = Readable::init(
             OutKind::Stderr,
-            &stdio2,
+            &spawn_args.stdio[2],
             spawn_args.redirect_stderr.take(),
             shellio.stderr.clone(),
             event_loop,
@@ -1207,7 +1205,7 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            (self.env_array).push(Some(CStrRef::from_bytes_with_nul(line)));
+            (self.env_array).push(Some(CStrRef::from_slice_with_nul(line)));
         }
     }
 }

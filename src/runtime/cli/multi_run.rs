@@ -215,8 +215,8 @@ impl<'a> ProcessHandle<'a> {
                 &mut env,
                 &self.config.name,
                 &self.config.cwd,
-                |env| env.map.create_null_delimited_env_map(),
-            )?;
+                |env| env.map.to_envp(),
+            );
             spawn::spawn_process(&self.options, argv.as_list(), Some(envp.as_list()))?
                 .map_err(Error::from)?
         };

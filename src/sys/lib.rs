@@ -7687,10 +7687,10 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
     }
 }
 
-/// [`environ()`] with the null pointer behind it.
+/// [`environ()`] including its null terminator.
 #[cfg(windows)]
 pub fn environ_list() -> bun_core::CStrList<'static> {
-    // SAFETY: the contract is about POSIX.
+    // SAFETY: no precondition on Windows.
     let entries = unsafe { environ() };
     if entries.is_empty() {
         return bun_core::CStrList::new(&[None]);

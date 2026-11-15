@@ -205,12 +205,10 @@ fn run_to_end(
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let mut variables = bun_dotenv::Loader::init();
     let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
-    let Some(envp) = is_ready
-        .then(|| variables.map.create_null_delimited_env_map().ok())
-        .flatten()
-    else {
+    if !is_ready {
         return Err(b"Could not start a process: out of memory".to_vec());
-    };
+    }
+    let envp = variables.map.to_envp();
     let [read_end, write_end] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),

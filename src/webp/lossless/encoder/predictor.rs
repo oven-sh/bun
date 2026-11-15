@@ -2,6 +2,7 @@
 
 use super::entropy::{ONE_BIT, set_bits};
 use super::residuals::{Bias, Counts, Totals};
+use super::sub;
 use super::tiles::{self, Tiles};
 use crate::array::At;
 use crate::error::{Error, Result};
@@ -25,18 +26,15 @@ pub(super) enum HiddenColors {
 type Pixel = [u8; 4];
 
 #[inline(always)]
-fn to_argb<const N: usize>(bytes: &[u8; N], index: usize) -> Argb {
+fn to_argb(bytes: &Lanes, index: usize) -> Argb {
     Argb::from_le_bytes(core::array::from_fn(|channel| {
         *bytes.at(4 * index + channel)
     }))
 }
 
-/// `predict()` for the channels of whole pixels.
+/// `predict()` for the channels of four pixels.
 #[inline(always)]
-fn predict_pixels<const MODE: usize, const N: usize>(
-    left: [u8; N],
-    above: [[u8; N]; 3],
-) -> [u8; N] {
+fn predict_four<const MODE: usize>(left: Lanes, above: [Lanes; 3]) -> Lanes {
     let [top_left, top, _] = above;
     let to_left = lanewise(left, top_left, u8::abs_diff);
     let to_top = lanewise(top, top_left, u8::abs_diff);
@@ -51,6 +49,49 @@ fn predict_pixels<const MODE: usize, const N: usize>(
     *predict(black, left, above, prefers_left).at(MODE)
 }
 
+/// The same for one pixel, whose channels are too few for the compiler to put them into a vector.
+#[inline(always)]
+fn predict_pixel<const MODE: usize>(left: Pixel, above: [Pixel; 3]) -> Argb {
+    const ONES: u64 = 0x0001_0001_0001_0001;
+    let left = Argb::from_le_bytes(left);
+    let [top_left, top, top_right] = above.map(Argb::from_le_bytes);
+    let average = |a: Argb, b: Argb| (((a ^ b) & 0xfefe_fefe) >> 1) + (a & b);
+    // 16 bits for each channel.
+    let wide = |it: Argb| u64::from(it & 0x00ff_00ff) | u64::from(it & 0xff00_ff00) << 24;
+    let clamped_less_256 = |sums: u64| {
+        let channels = sums & ((sums >> 8 & ONES) * 255) | ((sums >> 9 & ONES) * 255);
+        channels as Argb | (channels >> 24) as Argb & 0xff00_ff00
+    };
+    let to_top_left = |from: Argb| {
+        let differences = wide(from) + 256 * ONES - wide(top_left);
+        let are_negative = !differences >> 8 & ONES;
+        let magnitudes = ((differences ^ (are_negative * 255)) & (255 * ONES)) + are_negative;
+        magnitudes.wrapping_mul(ONES) >> 48
+    };
+    match MODE {
+        0 => BLACK,
+        1 => left,
+        2 => top,
+        3 => top_right,
+        4 => top_left,
+        5 => average(average(left, top_right), top),
+        6 => average(left, top_left),
+        7 => average(left, top),
+        8 => average(top_left, top),
+        9 => average(top, top_right),
+        10 => average(average(left, top_left), average(top, top_right)),
+        11 if to_top_left(top) < to_top_left(left) => left,
+        11 => top,
+        12 => clamped_less_256(wide(left) + wide(top) + 256 * ONES - wide(top_left)),
+        _ => {
+            let from = wide(average(left, top));
+            let differences = from + 512 * ONES - wide(top_left);
+            let are_negative = !differences >> 9 & ONES;
+            clamped_less_256(from + ((differences + are_negative) >> 1 & (511 * ONES)))
+        }
+    }
+}
+
 // In a loop, the compiler would put the same byte of different iterations into a vector.
 #[inline(never)]
 fn subtract_four<const MODE: usize>(above: &[Pixel; 6], row: &[Pixel; 5], to: &mut [Argb; 4]) {
@@ -60,7 +101,7 @@ fn subtract_four<const MODE: usize>(above: &[Pixel; 6], row: &[Pixel; 5], to: &m
         bytes.unwrap_or_default()
     };
     let above = [four(above, 0), four(above, 1), four(above, 2)];
-    let predicted = predict_pixels::<MODE, 16>(four(row, 0), above);
+    let predicted = predict_four::<MODE>(four(row, 0), above);
     let bytes = lanewise(four(row, 1), predicted, u8::wrapping_sub);
     *to = core::array::from_fn(|i| to_argb(&bytes, i));
 }
@@ -93,17 +134,17 @@ fn subtract<const MODE: usize>(
     };
     let others = above.array_windows().zip(residuals).skip(done);
     for (pixel, (&above, residual)) in row.iter_mut().zip(others) {
-        *residual = hidden.residual(pixel, predict_pixels::<MODE, 4>(left, above));
+        *residual = hidden.residual(pixel, predict_pixel::<MODE>(left, above));
         left = *pixel;
     }
 }
 
 impl HiddenColors {
     #[inline(always)]
-    fn residual(self, pixel: &mut Pixel, predicted: Pixel) -> Argb {
-        let residual = Argb::from_le_bytes(lanewise(*pixel, predicted, u8::wrapping_sub));
+    fn residual(self, pixel: &mut Pixel, predicted: Argb) -> Argb {
+        let residual = sub(Argb::from_le_bytes(*pixel), predicted);
         if self == Self::Replaced && matches!(pixel, [.., 0]) {
-            *pixel = (Argb::from_le_bytes(predicted) & !ALPHA).to_le_bytes();
+            *pixel = (predicted & !ALPHA).to_le_bytes();
             return residual & ALPHA;
         }
         residual
@@ -149,7 +190,10 @@ impl Rows {
             ) else {
                 return Err(Error::Internal);
             };
-            let predicted = if y == 0 { BLACK.to_le_bytes() } else { *above };
+            let predicted = match y {
+                0 => BLACK,
+                _ => Argb::from_le_bytes(*above),
+            };
             *residual = self.hidden.residual(first, predicted);
             *behind_above = *first;
             x = 1;
@@ -185,12 +229,12 @@ const LANES: usize = 16;
 type Lanes = [u8; LANES];
 
 #[inline(always)]
-fn lanewise<const N: usize>(a: [u8; N], b: [u8; N], f: impl Fn(u8, u8) -> u8) -> [u8; N] {
+fn lanewise(a: Lanes, b: Lanes, f: impl Fn(u8, u8) -> u8) -> Lanes {
     core::array::from_fn(|i| f(*a.at(i), *b.at(i)))
 }
 
 #[inline(always)]
-fn average<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
+fn average(a: Lanes, b: Lanes) -> Lanes {
     lanewise(a, b, |a, b| {
         ((u16::from(a) + u16::from(b) + 1) >> 1) as u8 - ((a ^ b) & 1)
     })
@@ -198,12 +242,12 @@ fn average<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
 
 /// What each mode predicts, for any channels of any pixels. `prefers_left` is all ones where mode 11 does.
 #[inline(always)]
-fn predict<const N: usize>(
-    black: [u8; N],
-    left: [u8; N],
-    [top_left, top, top_right]: [[u8; N]; 3],
-    prefers_left: [u8; N],
-) -> [[u8; N]; MODES] {
+fn predict(
+    black: Lanes,
+    left: Lanes,
+    [top_left, top, top_right]: [Lanes; 3],
+    prefers_left: Lanes,
+) -> [Lanes; MODES] {
     let (left_top_left, left_top) = (average(left, top_left), average(left, top));
     let top_top_right = average(top, top_right);
     // Either what is added or what is subtracted is zero.

@@ -4,6 +4,7 @@ use core::ops::Range;
 
 use scopeguard::ScopeGuard;
 
+use bun_core::compress::Ranges;
 use bun_jsc::bindgen::{JsLocal, JsPayload, JsScope, JsWrapper, StrongWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -47,7 +48,7 @@ pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
 pub(crate) trait CompressionContext: Send + 'static {
     fn set_flush(&mut self, flush: i32);
     fn flush_value_is_valid(flush: u32) -> bool;
-    fn do_work(&mut self, input: &[u8], out: &mut [u8]);
+    fn do_work(&mut self, ranges: Ranges<'_>);
     fn reset(&mut self) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
     fn write_result(&mut self) -> Result<[u32; 2], Error>;
@@ -130,7 +131,7 @@ struct PendingBuffers {
     out: PinnedArrayBuffer,
 }
 
-// SAFETY: `write` says why where it builds one.
+// SAFETY: `pin` pins both views, or copies the input. The handle's `pendingInput` and `pendingOutput` root them.
 unsafe impl ThreadIsolatedArg for PendingBuffers {}
 
 impl PendingBuffers {
@@ -169,13 +170,21 @@ impl PendingBuffers {
         Ok(Self { input, out })
     }
 
-    fn slices<'a>(&'a mut self, input_copy: &'a InputCopy) -> (&'a [u8], &'a mut [u8]) {
-        let input = match &self.input {
-            PendingInput::Empty => &[],
-            PendingInput::Pinned(buffer) => buffer.slice(),
-            PendingInput::Copied(range) => &input_copy.bytes[range.clone()],
+    fn ranges<'a>(&'a self, input_copy: &'a InputCopy) -> Ranges<'a> {
+        let bytes = |buffer: &ArrayBuffer| -> *mut [u8] {
+            if buffer.is_detached() {
+                return &mut [];
+            }
+            core::ptr::slice_from_raw_parts_mut(buffer.ptr, buffer.byte_len)
         };
-        (input, self.out.slice_mut())
+        let input: *const [u8] = match &self.input {
+            PendingInput::Empty => &[],
+            PendingInput::Pinned(buffer) => bytes(buffer),
+            PendingInput::Copied(range) => &raw const input_copy.bytes[range.clone()],
+        };
+        // SAFETY: `write` refuses an output, and `pin` copies an input, that can be freed while it
+        // is pinned. `pin` checked for overlap. The gap that `pinStorage` documents is still open.
+        unsafe { Ranges::from_raw(input, bytes(&self.out)) }
     }
 }
 
@@ -194,8 +203,8 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
 
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         if done.ticket().script_allowed() {
-            let (input, out) = this.buffers.slices(&this.stream.input_copy);
-            this.stream.context.do_work(input, out);
+            let ranges = this.buffers.ranges(&this.stream.input_copy);
+            this.stream.context.do_work(ranges);
         }
         Some(done)
     }
@@ -462,7 +471,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 stream: ScopeGuard::into_inner(stream),
                 // SAFETY: the job roots the handle, whose fields root both buffers until `then`
                 // has dropped this: no other write sets them while the job has the stream. A job
-                // is dropped on the JS thread, and `run` only borrows the bytes.
+                // is dropped on the JS thread, and `run` makes no reference to the bytes.
                 buffers: unsafe { ThreadIsolated::new(buffers) },
             },
             StrongWrapper::new(this_value, global_this),
@@ -565,9 +574,8 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         stream
             .context
             .set_flush(i32::try_from(flush).expect("int cast"));
-        stream
-            .context
-            .do_work(in_buf.byte_slice(), out_buf.byte_slice_mut());
+        let ranges = Ranges::new(in_buf.byte_slice(), out_buf.byte_slice_mut());
+        stream.context.do_work(ranges);
         let result = stream.context.write_result();
         drop(stream);
 

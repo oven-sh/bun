@@ -2,12 +2,19 @@
 use core::ffi::c_uint;
 use core::ptr::{self, NonNull};
 
-use bun_core::vec::{BorrowedCursor, append_with};
+use bun_core::compress::Buffers;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
 pub mod error;
 pub use error::{Error, Result};
 
-pub use bun_brotli_sys::brotli_c as c;
+pub mod c {
+    pub(crate) use bun_brotli_sys::brotli_c::*;
+    pub use bun_brotli_sys::brotli_c::{
+        BROTLI_DEFAULT_WINDOW, BROTLI_MAX_QUALITY, BROTLI_MIN_QUALITY, BROTLI_PARAM_QUALITY,
+        BrotliDecoderErrorCode2, BrotliDecoderResult, BrotliEncoderMode, BrotliEncoderOperation,
+    };
+}
 use c::{BrotliDecoder, BrotliEncoder};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -45,28 +52,24 @@ pub enum InitError {
     AttachDictionary,
 }
 
-/// Runs `call(available_in, next_in, available_out, next_out)` and returns how much of `input` it consumed.
+/// Runs `call(available_in, next_in, available_out, next_out)` and returns how much input it consumed.
 fn step<R>(
-    input: &[u8],
-    mut out: BorrowedCursor<'_, u8>,
+    mut buffers: impl Buffers,
     call: impl FnOnce(*mut usize, *mut *const u8, *mut usize, *mut *mut u8) -> R,
 ) -> (usize, R) {
-    let (mut available_in, mut next_in) = (input.len(), input.as_ptr());
-    let capacity = out.capacity();
-    let mut available_out = capacity;
-    // SAFETY: only brotli lowers `available_out`, by as many bytes as it wrote at the start of `out`.
-    let result = unsafe {
-        let mut next_out = out.as_mut().as_mut_ptr().cast::<u8>();
-        let result = call(
-            &raw mut available_in,
-            &raw mut next_in,
-            &raw mut available_out,
-            &raw mut next_out,
-        );
-        out.advance(capacity - available_out);
-        result
-    };
-    (input.len() - available_in, result)
+    let (input, out) = buffers.parts();
+    let (mut available_in, mut next_in) = (input.len(), input.cast::<u8>());
+    let (mut available_out, mut next_out) = (out.len(), out.cast::<u8>());
+    let result = call(
+        &raw mut available_in,
+        &raw mut next_in,
+        &raw mut available_out,
+        &raw mut next_out,
+    );
+    let consumed = input.len() - available_in;
+    // SAFETY: only brotli lowers the two counts, `available_out` by as many bytes as it wrote at the start of `out`.
+    unsafe { buffers.advance(consumed, out.len() - available_out) };
+    (consumed, result)
 }
 
 pub struct OwnedDecoder {
@@ -116,27 +119,19 @@ impl OwnedDecoder {
         unsafe { c::BrotliDecoderSetParameter(self.state.as_ptr(), param, value) != 0 }
     }
 
-    /// One `BrotliDecoderDecompressStream()` call. Returns how much of `input` it consumed.
-    pub fn step(
-        &mut self,
-        input: &[u8],
-        out: BorrowedCursor<'_, u8>,
-    ) -> (usize, c::BrotliDecoderResult) {
+    /// One `BrotliDecoderDecompressStream()` call. Returns how much input it consumed.
+    pub fn step(&mut self, buffers: impl Buffers) -> (usize, c::BrotliDecoderResult) {
         // SAFETY: created in `new`; the buffers are `step`'s.
-        step(
-            input,
-            out,
-            |avail_in, next_in, avail_out, next_out| unsafe {
-                c::BrotliDecoderDecompressStream(
-                    self.state.as_ptr(),
-                    avail_in,
-                    next_in,
-                    avail_out,
-                    next_out,
-                    ptr::null_mut(),
-                )
-            },
-        )
+        step(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
+            c::BrotliDecoderDecompressStream(
+                self.state.as_ptr(),
+                avail_in,
+                next_in,
+                avail_out,
+                next_out,
+                ptr::null_mut(),
+            )
+        })
     }
 
     /// True when decoded bytes are still held in the decoder's ring buffer.
@@ -200,29 +195,20 @@ impl OwnedEncoder {
         unsafe { c::BrotliEncoderSetParameter(self.state.as_ptr(), param, value) != 0 }
     }
 
-    /// One `BrotliEncoderCompressStream()` call. Returns how much of `input` it consumed, and whether it succeeded.
-    pub fn step(
-        &mut self,
-        input: &[u8],
-        out: BorrowedCursor<'_, u8>,
-        op: c::BrotliEncoderOperation,
-    ) -> (usize, bool) {
+    /// One `BrotliEncoderCompressStream()` call. Returns how much input it consumed, and whether it succeeded.
+    pub fn step(&mut self, buffers: impl Buffers, op: c::BrotliEncoderOperation) -> (usize, bool) {
         // SAFETY: created in `new`; the buffers are `step`'s.
-        step(
-            input,
-            out,
-            |avail_in, next_in, avail_out, next_out| unsafe {
-                c::BrotliEncoderCompressStream(
-                    self.state.as_ptr(),
-                    op,
-                    avail_in,
-                    next_in,
-                    avail_out,
-                    next_out,
-                    ptr::null_mut(),
-                ) != 0
-            },
-        )
+        step(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
+            c::BrotliEncoderCompressStream(
+                self.state.as_ptr(),
+                op,
+                avail_in,
+                next_in,
+                avail_out,
+                next_out,
+                ptr::null_mut(),
+            ) != 0
+        })
     }
 }
 
@@ -372,7 +358,7 @@ impl StreamingDecoder {
             }
             let len_before = out.len();
             let (bytes_read, result) = append_with(out, max_output - len_before, |out| {
-                self.brotli.step(&input[total_in..], out)
+                self.brotli.step((&input[total_in..], out))
             });
             total_in += bytes_read;
 
@@ -433,22 +419,8 @@ pub fn encode(
     input: &[u8],
     output: &mut [u8],
 ) -> Option<usize> {
-    let mut out_len = output.len();
-    // SAFETY: input/output slices are valid for their lengths;
-    // BrotliEncoderCompress only reads `input` and writes up to `out_len`
-    // bytes into `output`, updating `out_len` to bytes written.
-    let ok = unsafe {
-        c::BrotliEncoderCompress(
-            quality,
-            lgwin,
-            mode,
-            input.len(),
-            input.as_ptr(),
-            &raw mut out_len,
-            output.as_mut_ptr(),
-        )
-    };
-    (ok != 0).then_some(out_len)
+    let mut output = BorrowedBuf::from(output);
+    encode_into(quality, lgwin, mode, input, output.unfilled())
 }
 
 /// [`encode`] into `out`'s spare capacity (callers reserve the bound first), advancing `out.len()`.
@@ -459,26 +431,41 @@ pub fn encode_append(
     input: &[u8],
     out: &mut Vec<u8>,
 ) -> Option<usize> {
-    let spare = out.spare_capacity_mut();
-    let mut out_len = spare.len();
-    // SAFETY: input/spare are valid for their lengths; BrotliEncoderCompress
-    // only reads `input` and writes at most `out_len` bytes into spare,
+    append_with(out, usize::MAX, |output| {
+        encode_into(quality, lgwin, mode, input, output)
+    })
+}
+
+fn encode_into(
+    quality: core::ffi::c_int,
+    lgwin: core::ffi::c_int,
+    mode: c::BrotliEncoderMode,
+    input: &[u8],
+    mut output: BorrowedCursor<'_, u8>,
+) -> Option<usize> {
+    let mut out_len = output.capacity();
+    // SAFETY: input/output are valid for their lengths; BrotliEncoderCompress
+    // only reads `input` and writes up to `out_len` bytes into `output`,
     // updating `out_len` to the number written.
-    let ok = unsafe {
-        c::BrotliEncoderCompress(
+    unsafe {
+        let ok = c::BrotliEncoderCompress(
             quality,
             lgwin,
             mode,
             input.len(),
             input.as_ptr(),
             &raw mut out_len,
-            spare.as_mut_ptr().cast::<u8>(),
-        )
-    };
-    if ok == 0 {
-        return None;
+            output.as_mut().as_mut_ptr().cast::<u8>(),
+        );
+        if ok == 0 {
+            return None;
+        }
+        output.advance(out_len);
     }
-    // SAFETY: brotli initialized the first `out_len` bytes of spare.
-    unsafe { bun_core::vec::commit_spare(out, out_len) };
     Some(out_len)
+}
+
+/// `BrotliEncoderMaxCompressedSize()`: 0 if the bound overflows.
+pub fn encode_bound(input_len: usize) -> usize {
+    c::BrotliEncoderMaxCompressedSize(input_len)
 }

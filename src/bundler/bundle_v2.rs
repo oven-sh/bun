@@ -332,6 +332,7 @@ pub mod bv2_impl {
     use bun_collections::{ArrayHashMap, DynamicBitSet, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
+    use bun_paths::resolve_path::SpillBuf;
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
@@ -2425,8 +2426,8 @@ pub mod bv2_impl {
             let transpiler = self
                 .target_transpilers
                 .for_target(self.transpiler, ast_arena, target);
-            let source_dir =
-                Fs::PathName::init(import_record.source_file).dir_with_trailing_slash();
+            let source_dir = Fs::PathName::init(import_record.source_file)
+                .dir_with_trailing_slash(import_record.source_file);
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
@@ -2654,14 +2655,15 @@ pub mod bv2_impl {
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
-                let rel = bun_paths::resolve_path::relative_platform::<
-                    bun_paths::resolve_path::platform::Loose,
-                    false,
-                >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir(),
-                    path.text,
-                );
-                path.pretty = heap.alloc_slice_copy(rel);
+                path.pretty = SpillBuf::with_scratch(|buf| {
+                    heap.alloc_slice_copy(bun_paths::resolve_path::relative_platform_spill::<
+                        bun_paths::resolve_path::platform::Loose,
+                    >(
+                        buf,
+                        bun_resolver::fs::FileSystem::get().top_level_dir(),
+                        path.text,
+                    ))
+                });
             }
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
@@ -4184,14 +4186,12 @@ pub mod bv2_impl {
                             template
                         };
 
-                        {
+                        SpillBuf::with_scratch(|buf| {
                             let source = &sources[index];
                             // TODO: outbase
                             let pathname =
-                                Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Auto,
-                                    false,
-                                >(
+                                Fs::PathName::init(bun_paths::resolve_path::relative_spill(
+                                    buf,
                                     &self.transpiler.options.root_dir,
                                     source.path.text,
                                 ));
@@ -4214,7 +4214,7 @@ pub mod bv2_impl {
                             if template.needs(options::PlaceholderField::Target) {
                                 template.placeholder.target = target.naming_placeholder().into();
                             }
-                        }
+                        });
                         templates.push((index, template));
                     }
                 }
@@ -6281,12 +6281,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                Fs::FileSystem::get().top_level_dir(), path.text
-                            );
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html
                                 && entry.kind == bake_types::CacheKind::Asset
@@ -6309,8 +6303,6 @@ pub mod bv2_impl {
                                     .as_bytes();
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = self
                                     .path_with_pretty_initialized(path, target)
                                     .expect("oom");
@@ -7347,28 +7339,29 @@ pub mod bv2_impl {
         } else {
             b""
         };
-        let mut prefixed = Vec::new();
-        let mut path_clone: crate::bun_fs::Path<'_> = *path;
-        path_clone.pretty = if path.is_file() || is_node {
-            let rel = bun_paths::resolve_path::relative_platform::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(top_level_dir, path.text);
-            if ssr_prefix.is_empty() {
-                rel
+        SpillBuf::with_scratch(|buf| {
+            let mut prefixed = Vec::new();
+            let mut path_clone: crate::bun_fs::Path<'_> = *path;
+            path_clone.pretty = if path.is_file() || is_node {
+                let rel = bun_paths::resolve_path::relative_platform_spill::<
+                    bun_paths::resolve_path::platform::Loose,
+                >(buf, top_level_dir, path.text);
+                if ssr_prefix.is_empty() {
+                    rel
+                } else {
+                    prefixed = [ssr_prefix, rel].concat();
+                    &prefixed
+                }
             } else {
-                prefixed = [ssr_prefix, rel].concat();
+                prefixed.reserve(ssr_prefix.len() + path.namespace.len() + 1 + path.text.len());
+                prefixed.extend_from_slice(ssr_prefix);
+                push_escaped_namespace(&mut prefixed, path.namespace);
+                prefixed.extend_from_slice(b":");
+                prefixed.extend_from_slice(path.text);
                 &prefixed
-            }
-        } else {
-            prefixed.reserve(ssr_prefix.len() + path.namespace.len() + 1 + path.text.len());
-            prefixed.extend_from_slice(ssr_prefix);
-            push_escaped_namespace(&mut prefixed, path.namespace);
-            prefixed.extend_from_slice(b":");
-            prefixed.extend_from_slice(path.text);
-            &prefixed
-        };
-        path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+            };
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+        })
     }
 
     /// `pretty` stays an alias of `text` if it is one: some readers compare the pointers.

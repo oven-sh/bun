@@ -20,7 +20,7 @@ use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
 use bun_parsers::json as JSON;
-use bun_paths::resolve_path::{self, normalize_buf_z_spill};
+use bun_paths::resolve_path::{self, SpillBuf, normalize_buf_z_spill};
 use bun_paths::{self as path, SEP_STR};
 use bun_sha_hmac::sha;
 use bun_sys::{
@@ -635,29 +635,29 @@ impl Bundle {
 /// The folder that `require(name)` resolves to from `from`, with symlinks resolved, and whether it
 /// is in `from`'s own `node_modules`. The search does not go above `project`.
 fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
-    let mut spill: Vec<u8> = Vec::new();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
     let ancestors = || core::iter::successors(Some(from), |&dir| path::dirname(dir));
     let last = ancestors()
         .find(|dir| *dir == project)
         .or_else(|| strings::index_of(from, path::NODE_MODULES_NEEDLE).map(|at| &from[..at]))
         .unwrap_or(from);
-    for dir in ancestors().take_while(|dir| dir.len() >= last.len()) {
-        if path::basename(dir) == b"node_modules" {
-            continue;
+    SpillBuf::with_scratch(|buf| {
+        for dir in ancestors().take_while(|dir| dir.len() >= last.len()) {
+            if path::basename(dir) == b"node_modules" {
+                continue;
+            }
+            let parts: [&[u8]; 3] = [dir, b"node_modules", name];
+            let candidate = resolve_path::join_z_spill::<resolve_path::platform::Auto>(buf, &parts);
+            let Some(found) = open_dir_if_present(&Dir::cwd(), candidate) else {
+                continue;
+            };
+            let real_path = found
+                .get_fd_path(&mut real_path_buf)
+                .unwrap_or_else(|err| fail_open_dir(err.into(), candidate.as_bytes()));
+            return Some((Box::from(&*real_path), dir.len() == from.len()));
         }
-        let parts: [&[u8]; 3] = [dir, b"node_modules", name];
-        let candidate =
-            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
-        let Some(found) = open_dir_if_present(&Dir::cwd(), candidate) else {
-            continue;
-        };
-        let real_path = found
-            .get_fd_path(&mut real_path_buf)
-            .unwrap_or_else(|err| fail_open_dir(err.into(), candidate.as_bytes()));
-        return Some((Box::from(&*real_path), dir.len() == from.len()));
-    }
-    None
+        None
+    })
 }
 
 /// Returns the files of the bundled dependencies and of everything they depend on, sorted by their
@@ -1234,28 +1234,28 @@ pub(crate) fn bin_kind_without_following_symlinks(
 ) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
     let bin_path = strings::without_trailing_slash(bin_path);
-    let mut spill: Vec<u8> = Vec::new();
     let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
-    for end in slashes.chain([bin_path.len()]) {
-        // Use the absolute path, because on Windows `lstatat` reports a reparse point as the kind
-        // of its target.
-        let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
-        let abs_path =
-            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
-        let stat = match bun_sys::lstat(abs_path) {
-            Ok(stat) => stat,
-            Err(err) if is_absent(err.get_errno()) => break,
-            Err(err) => fail_file(err, "stat", bin_path),
-        };
-        let kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
-        if end == bin_path.len() {
-            return kind;
+    SpillBuf::with_scratch(|buf| {
+        for end in slashes.chain([bin_path.len()]) {
+            // Use the absolute path, because on Windows `lstatat` reports a reparse point as the kind
+            // of its target.
+            let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
+            let abs_path = resolve_path::join_z_spill::<resolve_path::platform::Auto>(buf, &parts);
+            let stat = match bun_sys::lstat(abs_path) {
+                Ok(stat) => stat,
+                Err(err) if is_absent(err.get_errno()) => break,
+                Err(err) => fail_file(err, "stat", bin_path),
+            };
+            let kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+            if end == bin_path.len() {
+                return kind;
+            }
+            if kind != bun_sys::FileKind::Directory {
+                break;
+            }
         }
-        if kind != bun_sys::FileKind::Directory {
-            break;
-        }
-    }
-    bun_sys::FileKind::Unknown
+        bun_sys::FileKind::Unknown
+    })
 }
 
 /// `published_files` has already queued the bins, so the walks skip them.

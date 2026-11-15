@@ -53,10 +53,10 @@ impl router::InsertionHandler for RouteScan<'_> {
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
-            BStr::new(resolve_path::relative(
+            resolve_path::fmt_relative(
                 &self.entry_points.root,
                 self.entry_points.files.keys()[other_id.get() as usize].abs_path()
-            ))
+            )
         );
         Output::flush();
         Ok(())

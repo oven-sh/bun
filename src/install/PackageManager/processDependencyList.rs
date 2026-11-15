@@ -2,6 +2,7 @@ use core::cmp::Ordering;
 
 use bun_collections::index_sort;
 use bun_core::{Output, strings};
+use bun_paths::resolve_path::SpillBuf;
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::{Expr, JsonView};
@@ -381,14 +382,15 @@ impl PackageManager {
             return Ok(row);
         }
         let joined = [base, b"/", folder].concat();
-        let mut spill = Vec::new();
-        let literal = [
-            b"file:".as_slice(),
-            bun_paths::resolve_path::normalize_string_spill::<true, bun_paths::platform::Loose>(
-                &mut spill, &joined,
-            ),
-        ]
-        .concat();
+        let literal = SpillBuf::with_scratch(|buf| {
+            [
+                b"file:".as_slice(),
+                bun_paths::resolve_path::normalize_string_spill::<true, bun_paths::platform::Loose>(
+                    buf, &joined,
+                ),
+            ]
+            .concat()
+        });
         let log = self.log();
         let literal = self.lockfile.string_buf().append(&literal)?;
         let sliced = literal.sliced(self.lockfile.buffers.string_bytes.as_slice());

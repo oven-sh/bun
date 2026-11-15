@@ -192,15 +192,16 @@ impl MacroEntryPoint {
 
     pub fn generate(
         entry: &mut MacroEntryPoint,
-        import_path: &Fs::PathName,
+        entry_path: &[u8],
         function_name: &[u8],
         macro_id: i32,
         macro_label_: &[u8],
     ) -> crate::Result<()> {
+        let import_path = Fs::PathName::init(entry_path);
         let dir_to_use: &[u8] = if import_path.dir.is_empty() {
             b""
         } else {
-            import_path.dir_with_trailing_slash()
+            import_path.dir_with_trailing_slash(entry_path)
         };
         let label_len = macro_label_.len();
         entry.code_buffer[..label_len].copy_from_slice(macro_label_);

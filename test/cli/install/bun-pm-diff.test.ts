@@ -1209,6 +1209,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   });
 
   test("the summary of a published version comes from the registry's metadata", async () => {
+    const long = Buffer.alloc(5000, "x").toString();
     // What version 2.0.0 adds, as [to the package.json in its tarball, to its entry in the registry's document].
     const cases: Record<string, [object, object]> = {
       "same": [{ dependencies: { dep: "1.0.0" } }, { dependencies: { dep: "1.0.0" } }],
@@ -1229,6 +1230,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
           os: ["linux"],
         },
       ],
+      "long": [{ bin: `./${long}` }, { bin: { long } }],
       "dependency": [{}, { dependencies: { extra: "1.0.0" } }],
       "optional": [{}, { optionalDependencies: { extra: "1.0.0" } }],
       "peer": [{}, { peerDependencies: { extra: "1.0.0" } }],
@@ -1278,8 +1280,10 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     }
     const disagree = (name: string, field: string, registry: string, file: string) =>
       `registry and package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install uses the registry's)`;
-    expect(notes.respelled.filter(note => note.includes("disagree"))).toEqual([]);
-    delete notes.respelled;
+    for (const name of ["respelled", "long"]) {
+      expect(notes[name].filter(note => note.includes("disagree"))).toEqual([]);
+      delete notes[name];
+    }
     expect(notes).toEqual({
       "same": ["dependencies added: dep@1.0.0"],
       "dependency": [

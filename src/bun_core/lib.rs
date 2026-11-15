@@ -52,8 +52,9 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    EncodedSlice, HashedString, MutableString, NodeEncoding, String, StringBuilder, StringOrView,
-    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
+    EncodedSlice, EncodedUnits, HashedString, MutableString, NodeEncoding, String, StringBuilder,
+    StringOrView, StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt,
+    WTFStringImplStruct,
 };
 pub use string::{
     STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
@@ -499,6 +500,22 @@ pub mod vec {
         // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `v` ends.
         unsafe { v.set_len(v.len() + filled) };
         result
+    }
+
+    /// Appends `f(byte)` for each byte of `source`. Panics if `cursor` is too small.
+    pub(crate) fn append_mapped<const N: usize>(
+        mut cursor: BorrowedCursor<'_, u8>,
+        source: &[u8],
+        f: impl Fn(u8) -> [u8; N],
+    ) {
+        // SAFETY: each of the first `source.len()` chunks of `N` bytes is written whole.
+        unsafe {
+            let chunks = &mut cursor.as_mut().as_chunks_mut().0[..source.len()];
+            for (chunk, &byte) in chunks.iter_mut().zip(source) {
+                *chunk = f(byte).map(core::mem::MaybeUninit::new);
+            }
+            cursor.advance(source.len() * N);
+        }
     }
 }
 

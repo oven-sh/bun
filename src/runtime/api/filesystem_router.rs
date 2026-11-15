@@ -277,7 +277,7 @@ impl FileSystemRouter {
         let mut path: Utf8Bytes<'static> = match input {
             Routable::Path(path) => path.into_utf8(),
             Routable::Request(req) => {
-                req.ensure_url().expect("unreachable");
+                req.ensure_url()?;
                 req.url.get().clone().into_utf8()
             }
             Routable::Response(resp) => resp.url().clone().into_utf8(),

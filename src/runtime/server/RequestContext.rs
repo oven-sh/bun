@@ -2133,9 +2133,8 @@ where
                 .set_request(req.cast::<uws::Request>());
         }
 
-        if request_object.ensure_url().is_err() {
-            request_object.url.set(BunString::EMPTY);
-        }
+        // On `Err`, `url` stays dead, so a later `ensure_url` fails too.
+        let _ = request_object.ensure_url();
 
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {

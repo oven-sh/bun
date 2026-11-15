@@ -8,7 +8,7 @@
 //! `impl super::All { … }` surface plus the C-ABI export thunks.
 
 use bun_core::String as BunString;
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{EncodedUnits, Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
@@ -400,13 +400,11 @@ impl All {
                             }
                         }};
                     }
-                    // bun_core::String has no `encoding()` accessor;
-                    // dispatch on `is_utf16()` and treat the 8-bit case via
-                    // `latin1()` (digit chars are in the ASCII range either way).
-                    if string.is_utf16() {
-                        parse_slice!(string.utf16());
-                    } else {
-                        parse_slice!(string.latin1());
+                    match string.encoded_units() {
+                        EncodedUnits::Utf16(units) => parse_slice!(units),
+                        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                            parse_slice!(bytes)
+                        }
                     }
                     accumulator
                 };

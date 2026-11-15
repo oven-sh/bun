@@ -1054,7 +1054,6 @@ impl CompressError {
 
 fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     use bun_libdeflate_sys::libdeflate;
-    libdeflate::load();
 
     let mut compressor =
         libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;

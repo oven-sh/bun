@@ -1077,6 +1077,7 @@ name = "bun_libdeflate_sys"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "bun_opaque",
 ]
 

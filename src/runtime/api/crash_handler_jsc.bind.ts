@@ -27,4 +27,5 @@ export const crashHandler = b.namespace({
   trap: { length: 1 },
   raiseIgnoringPanicHandler: { length: 1 },
   stackTraceStartsAtSignedReturnAddress: { returns: b.bool.optional },
+  boundedArrayResizeGrowReturnsErr: { returns: b.bool },
 });

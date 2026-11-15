@@ -1760,10 +1760,10 @@ pub(crate) fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8
     if rc != 0 {
         return None;
     }
-    let mut hex = vec![0u8; size * 2];
-    let n = bun_core::strings::encode_bytes_to_hex(&mut hex, &info);
-    debug_assert!(n == size * 2);
-    hex.truncate(n);
+    let mut hex = Vec::with_capacity(size * 2);
+    bun_core::vec::append_with(&mut hex, size * 2, |spare| {
+        bun_core::strings::encode_bytes_to_hex(spare, &info)
+    });
     Some(hex.into_boxed_slice())
 }
 

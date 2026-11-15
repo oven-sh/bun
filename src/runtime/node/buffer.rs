@@ -7,7 +7,7 @@ mod _impl {
 
     use crate::node::Encoding;
     use crate::webcore::encoding::{self as encoder, dispatch_encoding};
-    use bun_core::EncodedSlice;
+    use bun_core::{EncodedSlice, EncodedUnits};
 
     impl BufferVectorized {
         /// # Safety
@@ -44,20 +44,17 @@ mod _impl {
             // repeat loop below always doubles a seed equal to the full encoding.
             // SAFETY: `s` and `buf` are valid slices derived above; the source/destination
             // pointers and lengths passed to the encoder are exactly those slice bounds.
-            let result = if str.is_16bit() {
-                let s = str.utf16_slice();
-                dispatch_encoding!(encoding, {
+            let result = match str.encoded_units() {
+                EncodedUnits::Utf16(s) => dispatch_encoding!(encoding, {
                     // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
                     Encoding::Ucs2 => unsafe { encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
                         s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
                     ) },
                 // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                }, |E| unsafe { encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
-            } else {
-                let s = str.slice();
-                dispatch_encoding!(encoding, {
+                }, |E| unsafe { encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) }),
+                EncodedUnits::Latin1(s) | EncodedUnits::Utf8(s) => dispatch_encoding!(encoding, {
                     Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(s, buf),
-                }, |E| encoder::write_u8::<E, true>(s, buf))
+                }, |E| encoder::write_u8::<E, true>(s, buf)),
             };
             let Ok(written) = result else {
                 return false;

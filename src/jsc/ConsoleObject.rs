@@ -13,7 +13,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult};
 use bun_collections::HashMap;
 use bun_core::io::WriterStorage;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, EncodedUnits, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 use bun_options_types::context::CONSOLE_DEPTH;
 
@@ -333,14 +333,13 @@ fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -
         let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
     }
     let characters = text.to_js_string_view(global)?;
-    if characters.is_utf16() {
-        let _ = writer.write_fmt(format_args!("{characters}"));
-    } else if let Some(slice) = characters.as_utf8() {
-        let _ = writer.write_all(slice);
-    } else if !characters.is_empty() {
-        let buf = strings::allocate_latin1_into_utf8(characters.latin1()).unwrap_or_default();
-        let _ = writer.write_all(&buf);
-    }
+    let _ = match characters.encoded_units() {
+        EncodedUnits::Utf16(_) => writer.write_fmt(format_args!("{characters}")),
+        EncodedUnits::Latin1(latin1) if !strings::is_all_ascii(latin1) => {
+            writer.write_all(&strings::allocate_latin1_into_utf8(latin1).unwrap_or_default())
+        }
+        EncodedUnits::Latin1(utf8) | EncodedUnits::Utf8(utf8) => writer.write_all(utf8),
+    };
     if is_red {
         let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
     }
@@ -2810,11 +2809,14 @@ pub mod formatter {
         ) {
             if !is_symbol {
                 // TODO: make this one pass?
-                if (!key.is_16bit()
-                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
-                    || (key.is_16bit()
-                        && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16_slice())))
-                {
+                let is_identifier = !quote_keys
+                    && match key.encoded_units() {
+                        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                            JSLexer::is_latin1_identifier_u8(bytes)
+                        }
+                        EncodedUnits::Utf16(units) => JSLexer::is_latin1_identifier_u16(units),
+                    };
+                if is_identifier {
                     writer.add_for_new_line(key.len() + 1);
                     writer.print(format_args!(
                         concat!("{}", "{}", "{}"),
@@ -2822,9 +2824,7 @@ pub mod formatter {
                         key,
                         pfmt!("<d>:<r> ", C),
                     ));
-                } else if key.is_16bit() {
-                    let mut utf16_slice = key.utf16_slice();
-
+                } else if let EncodedUnits::Utf16(mut utf16_slice) = key.encoded_units() {
                     writer.add_for_new_line(utf16_slice.len() + 2);
 
                     if C {
@@ -3410,7 +3410,8 @@ pub mod formatter {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
 
-                if str.is_utf16() {
+                let (EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes)) = str.encoded_units()
+                else {
                     if writer.failed {
                         self.failed = true;
                     }
@@ -3419,9 +3420,9 @@ pub mod formatter {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
                     }
                     return Ok(());
-                }
+                };
 
-                JSPrinter::write_json_string(str.latin1(), writer.ctx, JSPrinter::Encoding::Latin1)
+                JSPrinter::write_json_string(bytes, writer.ctx, JSPrinter::Encoding::Latin1)
                     .expect("unreachable");
 
                 if C {
@@ -3439,7 +3440,11 @@ pub mod formatter {
                 }
                 writer.print(format_args!("[String: "));
 
-                if str.is_utf16() {
+                if let EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) = str.encoded_units()
+                {
+                    JSPrinter::write_json_string(bytes, writer.ctx, JSPrinter::Encoding::Latin1)
+                        .expect("unreachable");
+                } else {
                     if writer.failed {
                         self.failed = true;
                     }
@@ -3449,13 +3454,6 @@ pub mod formatter {
                         failed: false,
                         estimated_line_length: &mut self.estimated_line_length,
                     };
-                } else {
-                    JSPrinter::write_json_string(
-                        str.latin1(),
-                        writer.ctx,
-                        JSPrinter::Encoding::Latin1,
-                    )
-                    .expect("unreachable");
                 }
 
                 writer.print(format_args!("]"));
@@ -3472,18 +3470,14 @@ pub mod formatter {
                 writer.print(format_args!("{}", pfmt!("<r><red>", C)));
             }
 
-            if str.is_utf16() {
+            match str.encoded_units() {
                 // streaming print
-                writer.print(format_args!("{str}"));
-            } else if let Some(slice) = str.as_utf8() {
-                // fast path
-                writer.write_all(slice);
-            } else if !str.is_empty() {
+                EncodedUnits::Utf16(_) => writer.print(format_args!("{str}")),
                 // slow path
-                let buf = strings::allocate_latin1_into_utf8(str.latin1()).unwrap_or_default();
-                if !buf.is_empty() {
-                    writer.write_all(&buf);
-                }
+                EncodedUnits::Latin1(latin1) if !strings::is_all_ascii(latin1) => writer
+                    .write_all(&strings::allocate_latin1_into_utf8(latin1).unwrap_or_default()),
+                // fast path
+                EncodedUnits::Latin1(utf8) | EncodedUnits::Utf8(utf8) => writer.write_all(utf8),
             }
 
             if js_type == jsc::JSType::RegExpObject && C {
@@ -3532,7 +3526,7 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
             let view = value.to_js_string_view(self.global_this)?;
-            let out_str = view.latin1();
+            let out_str = view.byte_slice();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
                 "{}{}n{}",

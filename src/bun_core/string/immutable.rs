@@ -7,7 +7,7 @@ use core::num::NonZeroU8;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use crate::vec::{BorrowedBuf, BorrowedCursor};
+use crate::vec::{BorrowedBuf, BorrowedCursor, append_mapped};
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
@@ -325,14 +325,6 @@ impl AsciiStatus {
             Some(false) => AsciiStatus::NonAscii,
         }
     }
-}
-
-/// Returned by classification functions that do not discriminate between utf8 and ascii.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum EncodingNonAscii {
-    Utf8,
-    Utf16,
-    Latin1,
 }
 
 #[inline]
@@ -1450,26 +1442,18 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     Ok(dest_len - remain.len())
 }
 
-pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    debug_assert!(!destination.is_empty());
+/// Panics if `destination` is shorter than `2 * source.len()`.
+pub fn encode_bytes_to_hex(destination: BorrowedCursor<'_, u8>, source: &[u8]) {
     debug_assert!(!source.is_empty());
-    let to_write = if destination.len() < source.len() * 2 {
-        destination.len() - destination.len() % 2
-    } else {
-        source.len() * 2
-    };
-
-    let to_read = to_write / 2;
 
     // Runtime-dispatched SIMD kernel for bulk encodes (Buffer.toString("hex"));
     // the scalar LUT loop wins below this size because of the dispatch overhead.
     const HIGHWAY_MIN_LEN: usize = 64;
-    if to_read >= HIGHWAY_MIN_LEN {
-        highway::encode_hex_lower(&source[..to_read], &mut destination[..to_write]);
-        return to_write;
+    if source.len() >= HIGHWAY_MIN_LEN {
+        return highway::encode_hex_lower(source, destination);
     }
 
-    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
+    append_mapped(destination, source, crate::fmt::hex_byte_lower);
 }
 
 /// Leave a single leading char
@@ -2404,15 +2388,27 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
 }
 
 /// Panics if `out` is not 2-byte aligned or is too short.
-pub fn write_wtf8_as_utf16le(wtf8: &[u8], mut out: BorrowedCursor<'_, u8>) {
-    // SAFETY: any two bytes are a valid `MaybeUninit<u16>`, and `units.len()` units were initialized.
-    unsafe {
-        let (unaligned, units, _) = out.as_mut().align_to_mut::<MaybeUninit<u16>>();
-        let mut units = BorrowedBuf::from(units);
-        assert!(unaligned.is_empty() && try_write_wtf8_as_utf16(wtf8, units.unfilled()));
-        let written = 2 * units.len();
-        out.advance(written);
-    }
+pub fn write_wtf8_as_utf16le(wtf8: &[u8], out: BorrowedCursor<'_, u8>) {
+    with_utf16_cursor(out, |units| assert!(try_write_wtf8_as_utf16(wtf8, units)));
+}
+
+/// `ascii`, then `rest` if it is valid. Panics as [`write_wtf8_as_utf16le`].
+pub fn write_utf8_as_utf16le(ascii: &[u8], rest: WithUtf16Len, mut out: BorrowedCursor<'_, u8>) {
+    append_mapped(out.reborrow(), ascii, |byte| [byte, 0]);
+    with_utf16_cursor(out, |units| {
+        simdutf::convert::utf8::to::utf16::with_errors::le(rest, units);
+    });
+}
+
+fn with_utf16_cursor(mut out: BorrowedCursor<'_, u8>, f: impl FnOnce(BorrowedCursor<'_, u16>)) {
+    // SAFETY: any two bytes are a valid `MaybeUninit<u16>`.
+    let (unaligned, units, _) = unsafe { out.as_mut().align_to_mut::<MaybeUninit<u16>>() };
+    assert!(unaligned.is_empty());
+    let mut units = BorrowedBuf::from(units);
+    f(units.unfilled());
+    let written = 2 * units.len();
+    // SAFETY: `units.len()` units were initialized.
+    unsafe { out.advance(written) };
 }
 
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator

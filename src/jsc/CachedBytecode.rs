@@ -3,9 +3,8 @@ use core::ptr::NonNull;
 use bun_bundler::bundle_v2::dispatch::{BytecodeLinkEncoder, EncoderStringTable};
 use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
-use bun_core::vec::BorrowedBuf;
 use bun_options_types::Format;
-use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
+use bun_simdutf_sys::simdutf::WithUtf16Len;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
@@ -148,16 +147,12 @@ fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
     let (ascii, tail) = input.split_at(first_non_ascii);
     if strings::is_valid_utf8(tail) {
         let tail = WithUtf16Len::utf8(tail);
-        let (string, units) = BunString::create_uninitialized_utf16(ascii.len() + tail.utf16_len());
+        let string = BunString::create_utf16_with(ascii.len() + tail.utf16_len(), |bytes| {
+            strings::write_utf8_as_utf16le(ascii, tail, bytes)
+        });
         if string.is_dead() {
             bun_alloc::out_of_memory();
         }
-        let (ascii_units, tail_units) = units.split_at_mut(ascii.len());
-        strings::copy_u8_into_u16(ascii_units, ascii);
-        let mut tail_units = BorrowedBuf::from(tail_units);
-        let result =
-            simdutf::convert::utf8::to::utf16::with_errors::le(tail, tail_units.unfilled());
-        debug_assert!(result.is_successful());
         return string;
     }
     // A lone surrogate or an invalid byte: the scalar path decides the length.

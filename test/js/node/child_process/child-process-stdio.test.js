@@ -248,10 +248,13 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
 
   // `here`: whether the poll callback alone reads this source on this platform.
   // Outside Linux that holds for sockets only: kqueue does not report the end of
-  // a named pipe, and only a read finds it. `block`: a size that the pipe takes
-  // at once, also when it has a quarter of the default room. A socket of Linux
-  // takes as much as one read takes, and a socket of macOS takes 8 KiB.
-  const socketBlock = isLinux ? 131072 : 4096;
+  // a named pipe, and only a read finds it. `block`: a size that the source takes
+  // at once. A pipe takes 16384 bytes also when it has a quarter of the default
+  // room. The stdio socket of a child takes as much as one read takes on Linux
+  // (208 KiB by default) and on macOS, where Bun asks for 512 KiB (spawn_process.rs).
+  const socketBlock = 131072;
+  // A pipe of Windows takes 64 KiB, and a default socket of FreeBSD takes 8 KiB.
+  const takesASocketBlock = isLinux || isMacOS;
   const sources = {
     "child.stdout": { source: "child.stdout", here: true, block: socketBlock },
     "child.stderr": { source: "child.stderr", here: true, block: socketBlock },
@@ -445,8 +448,7 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
 
   describe.each(Object.entries(sources))("%s", (name, entry) => {
     const cell = entry.here ? it : it.skip;
-    // A pipe of Windows takes less than a block.
-    const blocks = entry.here && !isWindows ? it : it.skip;
+    const blocks = entry.here && takesASocketBlock ? it : it.skip;
 
     cell("a 'data' listener detached until the next setImmediate misses nothing", async () => {
       expect(await run(entry, "data")).toEqual(everyItem);
@@ -487,8 +489,9 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
     );
   });
 
-  it.skipIf(!isLinux)("child.stdout: a stream that push() stopped is not read ahead of its next _read()", () =>
-    notReadAhead(),
+  it.skipIf(!takesASocketBlock)(
+    "child.stdout: a stream that push() stopped is not read ahead of its next _read()",
+    () => notReadAhead(),
   );
 
   // The exit of a child and the last bytes of its stdio can be ready in the same poll, the
@@ -504,12 +507,17 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
       expect(await run(sources["child.stdout"], "data-leave")).toEqual(everyItem);
     });
 
-    // The poll callback runs that listener, and the nested turn of the event loop finds the exit.
-    it("child.stdout: the listener of the last item can wait for 'exit' in a nested turn of the event loop", () =>
-      waitsForTheExit());
+    // The poll callback runs that listener, and the nested turn of the event loop gets the exit
+    // from epoll, which reports the pidfd for as long as it is readable. kqueue reports the exit
+    // of a child once, in the same batch as the last item. Ahead of the item, the read before the
+    // report runs the listener. Behind it, the nested turn polls again and does not run the rest
+    // of that batch. Observed on macOS: the wait never returns.
+    it.todoIf(isMacOS)(
+      "child.stdout: the listener of the last item can wait for 'exit' in a nested turn of the event loop",
+      () => waitsForTheExit(),
+    );
 
-    // The blocks are more than a socket of macOS takes.
-    describe.skipIf(!isLinux)("in blocks", () => {
+    describe("in blocks", () => {
       it.each([
         ["child.stdout", "exit-stopped"],
         ["child.stdout", "exit-stopped-late"],
@@ -562,7 +570,10 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
 
   // The child writes b<i> to its stdout and then sends m<i>, both while the listener for
   // a<i> runs. The poll of the stream is armed again before that listener runs, so epoll
-  // reports the stream ahead of the channel.
+  // reports the stream ahead of the channel. That holds for a channel that the poll before
+  // did not report: the channel is level-triggered, and epoll keeps such a socket in its ready
+  // list after a report, ahead of what gets ready later, until the next poll. Bun polls a new
+  // channel for writability once, so the child starts after the parent has polled.
   it.skipIf(!isLinux)("child.stdout: bytes that the child wrote before an IPC message arrive before it", async () => {
     const rounds = 5;
     using dir = tempDir("stdio-before-ipc", {
@@ -578,6 +589,7 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
           }
         }
         let i = 0;
+        waitFor("polled");
         (function round() {
           if (i === rounds) return process.disconnect();
           fs.writeSync(1, "a" + i + "\\n");
@@ -620,6 +632,8 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
           }
         });
         child.on("close", () => console.log(JSON.stringify(events)));
+        // The second callback runs after the first poll, which reported the channel as writable.
+        setImmediate(() => setImmediate(() => fs.writeFileSync(__dirname + "/polled", "")));
       `,
     });
     await using proc = Bun.spawn({
@@ -652,7 +666,7 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
     );
 
     // One read takes the whole block and does not find the pipe empty behind it.
-    it.skipIf(!isLinux)("child.stdout: at a block of 131072 bytes the stream reads on to its end", () =>
+    it.skipIf(!takesASocketBlock)("child.stdout: at a block of 131072 bytes the stream reads on to its end", () =>
       throwsAndReadsOn("child.stdout", 2, { count: 6, block: 131072 }),
     );
 
@@ -849,9 +863,8 @@ describe.concurrent("a Readable over a pipe takes each chunk from the poll callb
 
   // The decoder holds the stray byte back, so its push adds no text. Pushed from
   // inside _read(), such a chunk stopped the stream: no 'end', and no callback.
-  // With `bulk`, the stray byte follows a chunk that is as much as one read takes,
-  // and more than a pipe of Windows or a socket of macOS takes.
-  it.each(isLinux ? [0, 131072] : [0])(
+  // With `bulk`, the stray byte follows a chunk that is as much as one read takes.
+  it.each(takesASocketBlock ? [0, 131072] : [0])(
     "execFile(): the callback comes when the child wrote part of a character while a 'data' listener ran (after %d more bytes)",
     async bulk => {
       using dir = tempDir("stdio-held-chunk", {

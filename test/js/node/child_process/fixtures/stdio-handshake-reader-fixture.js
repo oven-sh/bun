@@ -75,9 +75,9 @@ const threadWaitsForChildren = process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD 
 // that thread has reaped it.
 function childHasExited() {
   if (process.platform !== "linux") {
-    // A zombie until this process reaps it, and no file tells.
-    const { stdout } = spawnSync("ps", ["-o", "stat=", "-p", String(writerProcess.pid)]);
-    return String(stdout).includes("Z");
+    // A zombie until this process reaps it, and no file tells. After that `ps` finds no process.
+    const { stdout, status } = spawnSync("ps", ["-o", "stat=", "-p", String(writerProcess.pid)]);
+    return status === 1 || String(stdout).includes("Z");
   }
   try {
     const stat = fs.readFileSync(`/proc/${writerProcess.pid}/stat`, "utf8");

@@ -235,7 +235,7 @@ pub mod dir_iterator {
     }
 
     impl<'a> Name<'a> {
-        /// In UTF-8.
+        /// The native bytes on POSIX, UTF-8 on Windows.
         #[inline]
         pub fn slice_u8(&self) -> &'a [u8] {
             self.as_zstr().as_bytes()

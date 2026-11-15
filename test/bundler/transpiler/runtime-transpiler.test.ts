@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -192,6 +193,94 @@ describe("with statement", () => {
     });
 
     expect(exitCode).toBe(0);
+  });
+
+  // The transpiler rewrites `module.require(x)` to `require(x)`. In a `with` body
+  // the name `module` can be a property of the object, so the call stays as it is
+  // written there. Each expected value is what Node prints.
+  test.concurrent("module.require() in the body calls the function of the object", async () => {
+    using dir = tempDir("with-module-require", {
+      "index.cjs": `
+        const fs = require("node:fs");
+        const name = value => (value === fs ? "real" : value);
+        const withModule = () => ({ module: { require: id => "object:" + id } });
+
+        function call(o) { with (o) { return name(module.require("node:fs")); } }
+        function computed(o) { with (o) { return name(module["require"]("node:fs")); } }
+        function later(o) { with (o) { return () => name(module.require("node:fs")); } }
+
+        const o = withModule();
+        const read = later(o);
+        const closure = [read()];
+        delete o.module;
+        closure.push(read());
+
+        const lookedUp = [];
+        with (new Proxy({}, { has: (_, key) => (lookedUp.push(key), false) })) {
+          module.require("node:fs");
+        }
+
+        console.log(JSON.stringify({
+          has: call(withModule()),
+          lacks: call({}),
+          repeated: [call(withModule()), call({}), call(withModule())],
+          computed: [computed(withModule()), computed({})],
+          closure,
+          onlyRequire: call({ require: () => "object-require" }),
+          lookedUp,
+          outside: name(module.require("node:fs")),
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const expected = {
+      has: "object:node:fs",
+      lacks: "real",
+      repeated: ["object:node:fs", "real", "object:node:fs"],
+      computed: ["object:node:fs", "real"],
+      closure: ["object:node:fs", "real"],
+      onlyRequire: "real",
+      lookedUp: ["module"],
+      outside: "real",
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  // A bundle keeps the rewrite in a `with` body too. It is what loads "./dep.cjs":
+  // the `module` that the bundle gives "lib.cjs" has no `require`.
+  test.concurrent("module.require() in the body loads a file of the bundle", async () => {
+    using dir = tempDir("with-module-require-bundle", {
+      "entry.cjs": `console.log(require("./lib.cjs")({}));`,
+      "lib.cjs": `module.exports = function (o) { with (o) { return module.require("./dep.cjs"); } };`,
+      "dep.cjs": `module.exports = "dep";`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "entry.cjs")],
+      outdir: join(String(dir), "out"),
+      format: "cjs",
+    });
+    expect(build.logs).toEqual([]);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "entry.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "dep\n", stderr: "", exitCode: 0 });
   });
 });
 

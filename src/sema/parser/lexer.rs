@@ -1,4 +1,4 @@
-//! The scanner. It works on bytes and dispatches once on a token's first byte. A highway kernel makes one pass over the
+//! The scanner. It works on bytes and dispatches once on a token's first byte. A SIMD kernel makes one pass over the
 //! text up front and finds where names, indentation and the plain parts of strings end ([`ScannerStops`]). Anything
 //! that isn't ASCII takes a slow path.
 //!
@@ -11,9 +11,9 @@ use crate::names::{Names, Text};
 use crate::token::T;
 use bun_core::lexer::{is_identifier_part, is_identifier_start, is_white_space_like};
 use bun_core::strings::{
-    self, CodepointIterator, Cursor, is_js_line_terminator, push_codepoint_wtf8_joined, push_wtf8,
+    self, CodepointIterator, Cursor, ScannerStops, is_js_line_terminator,
+    push_codepoint_wtf8_joined, push_wtf8,
 };
-use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{
     Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind,

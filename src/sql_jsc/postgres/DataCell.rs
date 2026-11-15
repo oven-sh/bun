@@ -28,15 +28,9 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let mut buf: Vec<u8> = Vec::new();
     buf.try_reserve_exact(len)
         .map_err(|_| AnyPostgresError::OutOfMemory)?;
-    // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
-    unsafe {
-        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
-            match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
-                Ok(written) => (written, Ok(())),
-                Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
-            }
-        })
-    }?;
+    let (out, append) = bun_simd::spare_capacity(&mut buf);
+    let decoded = bun_core::decode_hex_to_bytes(out.take(len), hex);
+    append.append(decoded.map_err(|_| AnyPostgresError::InvalidByteSequence)?);
     Ok(SQLDataCell::bytea(buf))
 }
 

@@ -67,7 +67,8 @@ impl HmrSocket {
                     return Err(InvalidMessage);
                 }
                 let mut generation_bytes = [0u8; 4];
-                if strings::decode_hex_to_bytes(&mut generation_bytes, &msg[1..]).is_err() {
+                let out = generation_bytes.as_mut_slice().into();
+                if strings::decode_hex_to_bytes(out, &msg[1..]).is_err() {
                     return Err(InvalidMessage);
                 }
                 let generation = u32::from_ne_bytes(generation_bytes);

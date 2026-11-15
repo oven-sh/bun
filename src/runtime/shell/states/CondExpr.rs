@@ -305,8 +305,12 @@ impl<'a> CondExpr<'a> {
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
-        let Base { parent, shell, .. } = interp.as_condexpr(this).base;
-        (interp.shells.buffered_mut(shell, IoKind::Stderr)).extend_from_slice(&buf);
+        let shell = interp.as_condexpr(this).shell.id();
+        interp
+            .shells
+            .buffered_mut(shell, IoKind::Stderr)
+            .extend_from_slice(&buf);
+        let parent = interp.as_condexpr(this).base.parent;
         interp.child_done(parent, this, 1)
     }
 }

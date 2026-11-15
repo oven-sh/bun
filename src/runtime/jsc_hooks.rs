@@ -751,8 +751,10 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             decoded_path =
                 bun_url::path_from_file_url(&bun_core::StringView::from_bytes(preload_slice))
                     .to_owned_slice();
-            // Keep suffixes on the existing preload resolver path; only decode the URL's path.
-            if let Some(suffix) = bun_core::strings::index_of_any(preload_slice, b"?#") {
+            // Retain literal suffix handling, but never resolve a failed decode's suffix as a package import.
+            if !decoded_path.is_empty()
+                && let Some(suffix) = bun_core::strings::index_of_any(preload_slice, b"?#")
+            {
                 decoded_path.extend_from_slice(&preload_slice[suffix..]);
             }
             &decoded_path

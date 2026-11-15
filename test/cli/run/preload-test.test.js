@@ -128,6 +128,28 @@ describe("preload", () => {
         exitCode: 1,
       });
     });
+
+    test.concurrent("rejects an invalid file URL without resolving its fragment as a package import", async () => {
+      using dir = tempDir("preload-invalid-file-url", {
+        "package.json": JSON.stringify({ imports: { "#preload": "./wrong.mjs" } }),
+        "wrong.mjs": `console.log("wrong preload");`,
+        "main.mjs": `console.log("main must not run");`,
+      });
+      const url = "file://%zz#preload";
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, url, "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: `error: preload not found ${JSON.stringify(url)}\n`,
+        exitCode: 1,
+      });
+    });
   });
 
   test.todo("works", async () => {

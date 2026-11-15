@@ -438,7 +438,7 @@ impl DirEntry {
     }
 
     // `query_` borrow is detached from the returned `Entry` lifetime so callers
-    // can pass a slice into the same threadlocal buffer they then mutate. The
+    // can pass a slice into the same buffer they then mutate. The
     // lookup key is the lowercased basename; a case-mismatched query still
     // returns the stored entry.
     pub fn get(&self, query_: &[u8]) -> Option<&'static Entry> {

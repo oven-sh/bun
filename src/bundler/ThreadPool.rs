@@ -4,8 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the self-referential `macro_context` is wired by
-//! `Transpiler::wire_after_move` once the value is at its final address.
+//! bitwise struct copy).
 
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -468,6 +467,7 @@ pub struct WorkerData {
     // per-worker `options`/`resolver.caches`/etc. without touching the parent.
     pub(crate) transpiler: Transpiler<'static>,
     pub(crate) other_transpiler: Option<Box<Transpiler<'static>>>,
+    pub(crate) loaded_macros: js_ast::Macro::LoadedMacros,
 }
 
 impl Worker {
@@ -563,14 +563,12 @@ impl Worker {
         // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
-        let data = self.data.insert(WorkerData {
+        self.data = Some(WorkerData {
             log,
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
+            loaded_macros: Default::default(),
         });
-        // Wire the self-referential `macro_context` now that `transpiler`
-        // is at its final address inside `WorkerData`.
-        data.transpiler.wire_after_move();
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
@@ -579,8 +577,7 @@ impl Worker {
     ///
     /// reshaped for borrowck — associated fn (no `&mut self`) so
     /// callers can borrow `self.data.log` disjointly. The returned value is a
-    /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
-    /// be called once it is at its final address.
+    /// fully-owned `Transpiler` whose `Drop` is sound.
     fn initialize_transpiler(
         log: *mut bun_ast::Log,
         from: &Transpiler<'_>,
@@ -605,10 +602,9 @@ impl Worker {
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
                     unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
-                let mut boxed = Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
-                // Wire self-refs after the value reached its final (heap) address.
-                boxed.wire_after_move();
-                data.other_transpiler = Some(boxed);
+                data.other_transpiler = Some(Box::new(Self::initialize_transpiler(
+                    data.log, client, arena_ref,
+                )));
             }
             // Just populated above (or on a prior call) — `expect` is
             // unreachable. No `unsafe` needed for a set-once `Option<Box<_>>`.

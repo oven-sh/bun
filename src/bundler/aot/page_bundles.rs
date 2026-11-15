@@ -119,7 +119,6 @@ fn create_page_transpiler<'h>(
     options.footer = Cow::Borrowed(b"");
 
     transpiler.sync_resolver_opts();
-    transpiler.wire_after_move();
     transpiler
 }
 

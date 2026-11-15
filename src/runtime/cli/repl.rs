@@ -2150,16 +2150,16 @@ impl<'a> Repl<'a> {
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
-        // Initialize macro context from transpiler (required for import processing).
-        vm.transpiler.with_mut(|t| {
-            if t.macro_context.is_none() {
-                t.macro_context = Some(bun_js_parser::Macro::MacroContext::init(t));
-            }
-        });
         let define = &vm.transpiler.get().options.define;
-        // SAFETY: JS thread, and `define` is another field. Does not hold for a macro: loading it
-        // borrows the transpiler again while the parse holds this.
-        opts.macro_context = unsafe { (*vm.transpiler.as_ptr()).macro_context.as_mut() };
+        opts.macro_remap = Some(&vm.transpiler.get().options.macro_remap);
+        // SAFETY: JS thread, where nothing that is on the stack here borrows the resolver.
+        opts.macro_context = Some(unsafe {
+            bun_js_parser::Macro::MacroContext::new(
+                vm.transpiler.as_ptr().cast(),
+                &vm.module_loader.loaded_macros,
+                Default::default(),
+            )
+        });
 
         // Create log for errors
         let mut log = bun_ast::Log::init();

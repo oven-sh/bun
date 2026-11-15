@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1125,6 +1125,237 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
   port1.close();
 });
 
+// node: close() only starts closing the handle. hasRef() keeps reporting the handle's
+// ref flag until the close callback fires 'close' (HandleWrap::OnClose marks the handle
+// closed before emitting), so it is still true right after close() and false inside
+// the handler. A port learns of its peer's close the same way, so it follows the same
+// timing. Both ways of holding a ref are covered: a 'message' listener and ref().
+describe.each([
+  ["a 'message' listener", (port: MessagePort) => port.on("message", () => {})],
+  ["ref()", (port: MessagePort) => port.ref()],
+])("hasRef() around close() on a port kept alive by %s", (_, keepAlive) => {
+  test("own close(): true until its 'close' event, false inside and after it", async () => {
+    const { port1 } = new MessageChannel();
+    keepAlive(port1);
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    port1.on("close", () => resolve(port1.hasRef()));
+    port1.close();
+    const afterClose = port1.hasRef();
+    const inCloseEvent = await promise;
+    expect({ afterClose, inCloseEvent, afterCloseEvent: port1.hasRef() }).toEqual({
+      afterClose: true,
+      inCloseEvent: false,
+      afterCloseEvent: false,
+    });
+  });
+
+  test("peer close(): true until this side's 'close' event, false inside and after it", async () => {
+    const { port1, port2 } = new MessageChannel();
+    keepAlive(port1);
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    port1.on("close", () => resolve(port1.hasRef()));
+    port2.close();
+    const afterPeerClose = port1.hasRef();
+    const inCloseEvent = await promise;
+    expect({ afterPeerClose, inCloseEvent, afterCloseEvent: port1.hasRef() }).toEqual({
+      afterPeerClose: true,
+      inCloseEvent: false,
+      afterCloseEvent: false,
+    });
+  });
+});
+
+// The closing half of node's test/parallel/test-messageport-hasref.js: closing one side
+// leaves both sides reporting true until their 'close' events; the closing side's own
+// 'close' fires first, so by the time the peer's handler runs both report false.
+test("closing one side: both ports report true until their 'close' events, then false", async () => {
+  const { port1, port2 } = new MessageChannel();
+  port1.on("message", () => {});
+  port2.on("message", () => {});
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  port2.on("close", () => events.push(`port2 close: ${port1.hasRef()} ${port2.hasRef()}`));
+  port1.on("close", () => {
+    events.push(`port1 close: ${port1.hasRef()} ${port2.hasRef()}`);
+    resolve();
+  });
+  port2.close();
+  const rightAfterClose = [port1.hasRef(), port2.hasRef()];
+  await promise;
+  expect({ rightAfterClose, events }).toEqual({
+    rightAfterClose: [true, true],
+    events: ["port2 close: true false", "port1 close: false false"],
+  });
+});
+
+// Between close() and 'close' the handle is still alive in node, so ref changes made
+// in that window show up in hasRef(), and 'close' still ends with it false.
+test("hasRef() tracks unref() and listener changes made between close() and 'close'", async () => {
+  const { port1: unrefd } = new MessageChannel();
+  unrefd.on("message", () => {});
+  const unrefdClosed = Promise.withResolvers<boolean>();
+  unrefd.on("close", () => unrefdClosed.resolve(unrefd.hasRef()));
+  unrefd.close();
+  unrefd.unref();
+  const afterUnref = unrefd.hasRef();
+
+  const { port1: listened } = new MessageChannel();
+  const listenedClosed = Promise.withResolvers<boolean>();
+  listened.on("close", () => listenedClosed.resolve(listened.hasRef()));
+  listened.close();
+  listened.on("message", () => {});
+  const afterListenerAdd = listened.hasRef();
+
+  expect({
+    afterUnref,
+    unrefdInCloseEvent: await unrefdClosed.promise,
+    afterListenerAdd,
+    listenedInCloseEvent: await listenedClosed.promise,
+  }).toEqual({
+    afterUnref: false,
+    unrefdInCloseEvent: false,
+    afterListenerAdd: true,
+    listenedInCloseEvent: false,
+  });
+});
+
+// node has no rule of its own for a closing port: until 'close', unref() and listener
+// changes act on its handle as on an open one, and hasRef() reads the same flag. So
+// calls give, on a port that close() was called on part-way, what they give on a port
+// that stays open. ref() and a function `onmessage =` are left out after close(): bun
+// ignores them on a closing port, node honours them.
+test("between close() and 'close', hasRef() is what the same calls give on an open port", () => {
+  const f = () => {};
+  const g = () => {};
+  const calls: [name: string, call: (port: MessagePort) => unknown, takesRef?: true][] = [
+    ["ref", port => port.ref(), true],
+    ["unref", port => port.unref()],
+    ["on f", port => port.on("message", f)],
+    ["off f", port => port.off("message", f)],
+    ["once g", port => port.once("message", g)],
+    ["addEventListener g", port => port.addEventListener("message", g)],
+    ["removeEventListener g", port => port.removeEventListener("message", g)],
+    ["onmessage = f", port => (port.onmessage = f), true],
+    ["onmessage = null", port => (port.onmessage = null)],
+  ];
+  // Every order of up to three calls, with close() before each call in turn and after the last.
+  const orders: number[][] = [[]];
+  for (const order of orders) {
+    if (order.length < 3) for (let call = 0; call < calls.length; call++) orders.push([...order, call]);
+  }
+  let compared = 0;
+  const differing: string[] = [];
+  for (const order of orders) {
+    for (let closeAt = 0; closeAt <= order.length; closeAt++) {
+      if (order.slice(closeAt).some(call => calls[call][2])) continue;
+      const { port1: closing } = new MessageChannel();
+      const { port1: open } = new MessageChannel();
+      for (let i = 0; i < order.length; i++) {
+        if (i === closeAt) closing.close();
+        calls[order[i]][1](closing);
+        calls[order[i]][1](open);
+      }
+      closing.close();
+      compared++;
+      if (closing.hasRef() !== open.hasRef()) {
+        const names = order.map(call => calls[call][0]);
+        names.splice(closeAt, 0, "close");
+        differing.push(`${names.join("; ")}: ${closing.hasRef()}, on an open port: ${open.hasRef()}`);
+      }
+      open.close();
+    }
+  }
+  expect({ compared, differing }).toEqual({ compared: 2290, differing: [] });
+});
+
+// The refs close() leaves in place for hasRef() are dropped when 'close' fires, so a
+// closed port cannot keep the process alive. Spawned: the failure mode is a hang.
+test.concurrent("a closed port stops keeping the process alive once 'close' has fired", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const { port1 } = new MessageChannel();
+       port1.on("message", () => {});
+       port1.ref();
+       port1.on("close", () => console.log("in close event: " + port1.hasRef()));
+       port1.close();
+       console.log("after close(): " + port1.hasRef());`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lines: stdout.split(/\r?\n/).filter(Boolean), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    lines: ["after close(): true", "in close event: false"],
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// hasRef() keeps the same close() timing inside a worker, and a worker can exit while
+// its ports' 'close' tasks are still queued (teardown discards them unrun). Whether the
+// stop phase then drops the refs those tasks would have is not observable from here:
+// the LSan-checked main-thread test below covers that.
+test.concurrent("a worker exiting right after closing ref'd ports shuts down cleanly", async () => {
+  const w = new Worker(
+    `const { parentPort, MessageChannel } = require("worker_threads");
+     const { port1, port2 } = new MessageChannel();
+     port1.on("message", () => {});
+     port2.ref();
+     parentPort.on("message", () => {});
+     port1.close();
+     port2.close();
+     parentPort.close();
+     process.exit(parentPort.hasRef() && port1.hasRef() && port2.hasRef() ? 42 : 1);`,
+    { eval: true },
+  );
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  expect(await exited).toBe(42);
+});
+
+// The same close-then-exit sequence on the main thread, checked for leaks: onmessage=
+// takes a self-ref on the native port that only its 'close' task or the teardown
+// releases, so a port closed right before exit leaks outright if teardown skips it.
+// Malloc=1 routes WebKit allocations through the system allocator so LSan can see the
+// port. Linux is where that combination is verified clean (CI's ASAN lane); keep the
+// fixture on the main thread, since every exited worker thread leaves its thread_local
+// eventNames() table behind under Malloc=1, which LSan would report here.
+test.concurrent.skipIf(!isASAN || !isLinux)(
+  "ports closed right before exit are released by the VM teardown",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessageChannel } = require("worker_threads");
+       for (let i = 0; i < 50; i++) {
+         const { port1, port2 } = new MessageChannel();
+         port1.onmessage = () => {};
+         port2.on("message", () => {});
+         port1.close();
+         port2.close();
+       }
+       process.exit(0);`,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+);
+
 // In a node worker only parentPort receives what the parent posts; the global
 // scope's `self.onmessage` is not a channel there (as in node). Libraries that
 // install both a parentPort listener and self.onmessage as a node/web shim
@@ -1173,6 +1404,62 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.ref();
   expect({ afterListener, afterRefCycle: port1.hasRef() }).toEqual({ afterListener: true, afterRefCycle: true });
   port1.close();
+});
+
+// A port kept alive only by ref() has no listener to tell the pipe where it lives,
+// so the peer's close never reached it and the ref was never released. Node closes
+// any port, listening or not, when its peer closes, and the process exits.
+test.concurrent("a port kept alive only by ref() lets the process exit once its peer closes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       port1.ref();
+       port2.close();`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than being killed.
+  expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+});
+
+// A collected peer does close the channel (bun collects entangled ports; node
+// never does), and once this side's 'close' has fired, ref() must stay a no-op:
+// a re-taken loop ref is never released. Spawned: the symptom is "the process
+// never exits".
+test.concurrent("ref() inside 'close' after the peer is collected does not pin the loop", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       function setup() {
+         const { port1 } = new MessageChannel(); // port2 unreachable from birth
+         port1.on("message", () => {});
+         return port1;
+       }
+       const port1 = setup();
+       const pump = setInterval(() => Bun.gc(true), 10);
+       port1.on("close", () => {
+         clearInterval(pump);
+         port1.ref();
+         console.log("refInClose:" + port1.hasRef());
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than being killed.
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "refInClose:false",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer
@@ -2367,6 +2654,33 @@ test("parentPort.unref() lets a listening worker exit", async () => {
   );
   const exited = new Promise<number>(resolve => w.on("exit", resolve));
   expect(await exited).toBe(0);
+});
+
+// Same close() timing as any other port (node): hasRef() is still true right after
+// parentPort.close() and false once its 'close' event runs. Results travel over a
+// separate port because parentPort itself is the one being closed.
+test.concurrent("parentPort.hasRef() stays true after parentPort.close() until its 'close' event", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  port1.on("message", resolve);
+  const w = new Worker(
+    `const { parentPort, workerData } = require("worker_threads");
+     parentPort.on("message", () => {});
+     parentPort.on("close", () => {
+       workerData.report.postMessage({ afterClose, inCloseEvent: parentPort.hasRef() });
+       workerData.report.close();
+     });
+     parentPort.close();
+     const afterClose = parentPort.hasRef();`,
+    { eval: true, workerData: { report: port2 }, transferList: [port2] },
+  );
+  w.on("error", reject);
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  // A worker that exits without reporting fails the assertion, not the timeout.
+  exited.then(code => reject(new Error(`worker exited with ${code} before reporting`)));
+  expect(await promise).toEqual({ afterClose: true, inCloseEvent: false });
+  expect(await exited).toBe(0);
+  port1.close();
 });
 
 test("receiveMessageOnPort distinguishes an undefined message from an empty queue", () => {

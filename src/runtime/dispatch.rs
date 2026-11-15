@@ -1437,6 +1437,11 @@ pub(crate) unsafe fn fire_timer(
                     && core::ptr::eq(&raw const *file.timer, t)
                 {
                     BunTest::bun_test_timeout_callback(&file, now, VirtualMachine::get());
+                } else {
+                    // SAFETY: `t` was just popped, and a timer leaves the heap before it is dropped.
+                    let timer = unsafe { &*t };
+                    timer.next.set(ElTimespec::EPOCH);
+                    timer.state.set(crate::timer::EventLoopTimerState::PENDING);
                 }
                 Ok(())
             }

@@ -103,6 +103,8 @@ pub(crate) struct RuntimeState {
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: JsCell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
     pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
+    /// Set in the VM that runs the files of `bun test`.
+    pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
     /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// For the `node:fs` calls that have no binding object. See [`with_node_fs`].
@@ -362,6 +364,7 @@ unsafe fn init_runtime_state(
         wake_ctx: None,
         cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),
+        test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),

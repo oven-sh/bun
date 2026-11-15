@@ -260,12 +260,9 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    #[thread_local]
-    pub(crate) static RUNNER: Cell<Option<&'static TestRunner>> = Cell::new(None);
-
-    /// `None` outside `bun test`, in a Worker and in the VM of a macro: the runner belongs to the thread that runs the test files.
+    /// `None` outside `bun test` and on other threads: the runner belongs to the VM that runs the test files.
     pub(crate) fn runner() -> Option<&'static TestRunner> {
-        RUNNER.get()
+        crate::jsc_hooks::try_runtime_state()?.test_runner.get()
     }
 
     /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.

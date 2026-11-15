@@ -43,13 +43,14 @@ test.concurrent.each([
 ])("in a macro of %s, expect() works like outside of bun test, and test() and hooks throw", async (_, transpile) => {
   using dir = tempDir("macros-without-runner", {
     "macro.ts": `
-      import { afterAll, describe, expect, onTestFinished, test } from "bun:test";
+      import { afterAll, describe, expect, onTestFinished, setDefaultTimeout, test } from "bun:test";
       export function macro() {
         return Object.entries({
           "expect": () => expect(1).toBe(1),
           "currentTestName": () => expect.getState().currentTestName,
           "assertions": () => expect.assertions(1),
           "toMatchSnapshot": () => expect(1).toMatchSnapshot(),
+          "setDefaultTimeout": () => setDefaultTimeout(1),
           "test": () => test("in a macro", () => {}),
           "describe": () => describe("in a macro", () => {}),
           "afterAll": () => afterAll(() => {}),
@@ -66,10 +67,12 @@ test.concurrent.each([
       import { macro } from "./macro.ts" with { type: "macro" };
       console.log("result", JSON.stringify(macro()));`,
     "runs.test.ts": `
-      import { expect, test } from "bun:test";
+      import { expect, onTestFinished, test } from "bun:test";
       test("runs", async () => {
         expect.assertions(0);
         (0, eval)(await ${transpile});
+        // Outlasts the timeout that the macro asked for.
+        onTestFinished(() => Bun.sleep(20));
       });`,
   });
   await using proc = Bun.spawn({
@@ -84,6 +87,7 @@ test.concurrent.each([
     "currentTestName: undefined",
     "assertions throws: expect.assertions() must be called within a test",
     "toMatchSnapshot throws: Matcher error: Snapshot matchers cannot be used outside of a test",
+    "setDefaultTimeout: undefined",
     "test throws: Cannot use test in a macro.",
     "describe throws: Cannot use describe in a macro.",
     "afterAll throws: Cannot use afterAll() in a macro.",

@@ -436,7 +436,7 @@ impl BunTestRoot {
 
     /// Drop preload-level hooks registered in the previous global. The next
     /// file's `loadPreloads()` re-registers them against the fresh global.
-    pub(crate) fn reset_hook_scope_for_test_isolation(&self) {
+    pub(crate) fn reset_preload_for_test_isolation(&self) {
         self.preload.set(None);
     }
 
@@ -456,15 +456,10 @@ impl BunTestRoot {
         })
     }
 
-    /// Tear down `bun:test` GC roots before `global_exit()` so
-    /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
-    /// closures they pin. Releases the active file's per-test `Strong`s (the
-    /// bail path skips its `scopeguard::defer! { exit_file() }` because
-    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
-    /// `preload`, and the `pending_then_refs` Vec.
+    /// Drops the runner's references before `global_exit()`, which does not unwind to `EnteredFile::drop`.
     pub(crate) fn deinit_for_exit(&self) {
         self.active_file.set(None);
-        self.reset_hook_scope_for_test_isolation();
+        self.reset_preload_for_test_isolation();
         self.pending_then_refs.take();
     }
 

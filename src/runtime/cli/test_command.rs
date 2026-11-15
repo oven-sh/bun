@@ -2807,7 +2807,6 @@ impl TestCommand {
             update_timings: ctx.test_options.update_timings,
             is_shard: ctx.test_options.shard.is_some(),
         }));
-        jest::Jest::RUNNER.set(Some(&reporter.jest));
 
         // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
         if ctx.test_options.test_worker || run_compiled::has_environment_of_first_process() {
@@ -2828,6 +2827,9 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         })?;
+        crate::jsc_hooks::state_of(vm)
+            .test_runner
+            .set(Some(&reporter.jest));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload.set(ctx.preloads.clone());
         if reporter.jest.reports_to_junit {
@@ -3800,7 +3802,7 @@ impl TestCommand {
                             reporter
                                 .jest
                                 .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
+                                .reset_preload_for_test_isolation();
                             crate::test_runner::Expect::reset_for_test_isolation(vm.global());
                         }
                     }

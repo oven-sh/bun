@@ -83,9 +83,7 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // (`writable_slice` hands out `&mut [T]` over not-yet-written slots) bakes in
 // the same exposure for every buffer kind. Sound only for `T` whose
 // any-bit-pattern is valid — and in-tree element types ALREADY violate that:
-// the `Task` enum is
-// stored in fifos today, so materialising `&[T]` over uninitialized slots for
-// that type is latent UB.
+// fifos store `Task` today, so `&[T]` over uninitialized slots is latent UB.
 // The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
 // only assume-init the logically-written subranges; `writable_slice`-family
 // callers in other crates see the signature change, so that lives in #31835.

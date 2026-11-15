@@ -13,7 +13,7 @@ pub(crate) struct UnlinkCommand;
 
 impl UnlinkCommand {
     pub(crate) fn exec(ctx: &mut ContextData) -> crate::Result<()> {
-        let (manager, _original_cwd) = link_command::init_for_link(&mut *ctx, Subcommand::Unlink)?;
+        let (manager, _) = link_command::init_for_link(&mut *ctx, Subcommand::Unlink)?;
 
         if manager.options.positionals.len() != 1 {
             bun_core::prettyln!("<r><red>error:<r> bun unlink {{packageName}} not implemented yet");

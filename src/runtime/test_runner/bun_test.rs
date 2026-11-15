@@ -518,7 +518,7 @@ impl BunTestRoot {
     }
 }
 
-/// Index into `BunTest::scopes`, plus one.
+/// Index into `BunTest::scopes` plus one, or `PRELOAD`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ScopeId(NonZeroU32);
 

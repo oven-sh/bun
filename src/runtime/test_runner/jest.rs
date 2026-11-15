@@ -145,6 +145,7 @@ pub(crate) struct TestRunner {
 }
 
 impl TestRunner {
+    /// `f` must not run script.
     pub(crate) fn with_snapshots<R>(&self, f: impl FnOnce(&mut Snapshots) -> R) -> R {
         f(&mut self.snapshots.borrow_mut())
     }

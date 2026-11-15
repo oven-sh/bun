@@ -464,9 +464,6 @@ impl DirEntry {
                 use core::ptr::addr_of_mut;
                 let p = (*slot).as_mut_ptr();
                 // name_slice only lives for the duration of the iteration.
-                // `init*_append_if_needed` are `#[inline(always)]` so the
-                // 32-byte `StringOrTinyString` is built directly into `*p`
-                // with no intermediate stack copy.
                 addr_of_mut!((*p).base_).write(strings::StringOrTinyString::init_append_if_needed(
                     name_slice,
                     filename_store,
@@ -628,7 +625,7 @@ impl ModKey {
 unsafe impl Sync for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
-// CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
+// CANONICAL: read-file-with-handle (stat → grow → read loop → BOM-strip)
 //
 // One body, two entry points:
 //   • `read_file_with_handle_impl`  — free fn, const-generic, returns
@@ -757,7 +754,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         };
         debug!("stat({}) = {}", file.handle(), size);
 
-        // Skip the pread call for empty files
+        // Skip the read call for empty files
         // Otherwise will get out of bounds errors
         // plus it's an unnecessary syscall
         if size == 0 {

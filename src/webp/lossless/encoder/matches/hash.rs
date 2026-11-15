@@ -47,9 +47,8 @@ pub(super) fn for_each(pixels: &[Argb], end: usize, mut found: impl FnMut(usize,
 
 /// For each position, one more than the last position before it with the same hash, or 0.
 pub(super) fn links(pixels: &[Argb]) -> Result<Vec<Match>> {
-    const LINK_BITS: u32 = 12;
     let mut links = vec::filled(Match::NONE, pixels.len())?;
-    if pixels.len() >= 1 << LINK_BITS {
+    if !link_few(pixels, &mut links)? {
         let mut last = vec::array::<_, HASHES>(0)?;
         for_each(pixels, pixels.len(), |at, hash, _| {
             let link = core::mem::replace(last.at_mut(hash), at as u32 + 1);
@@ -57,18 +56,30 @@ pub(super) fn links(pixels: &[Argb]) -> Result<Vec<Match>> {
                 *to = Match(link);
             }
         });
-        return Ok(links);
     }
-    // It would take longer to clear the table above than to look for free room in one with the hashes that there are.
+    Ok(links)
+}
+
+/// It takes longer to clear a table for all hashes than to look for free room in one with the hashes that there are.
+/// Returns whether all have found room nearby.
+fn link_few(pixels: &[Argb], links: &mut [Match]) -> Result<bool> {
+    const LINK_BITS: u32 = 12;
+    const NEARBY: usize = 64;
+    if pixels.len() >= 1 << LINK_BITS {
+        return Ok(false);
+    }
     let homes = 2 * pixels.len();
-    let mut last = vec::filled(0, homes + pixels.len())?;
+    let mut last = vec::filled(0, homes + NEARBY)?;
+    let mut is_complete = true;
     for_each(pixels, pixels.len(), |at, hash, _| {
-        let mut from_home = last.iter_mut().skip((hash * homes) >> BITS);
-        let entry = from_home.find(|it| **it == 0 || **it >> LINK_BITS == hash as u32);
+        let mut nearby = last.iter_mut().skip((hash * homes) >> BITS).take(NEARBY);
+        let entry = nearby.find(|it| **it == 0 || **it >> LINK_BITS == hash as u32);
         if let (Some(entry), Some(to)) = (entry, links.get_mut(at)) {
             *to = Match(*entry % (1 << LINK_BITS));
             *entry = (hash as u32) << LINK_BITS | (at as u32 + 1);
+        } else {
+            is_complete = false;
         }
     });
-    Ok(links)
+    Ok(is_complete)
 }

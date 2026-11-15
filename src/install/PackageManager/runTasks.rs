@@ -810,11 +810,11 @@ pub(crate) fn run_tasks(
         debug_assert!(manager.pending_task_count() > 0);
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        let return_task = ReturnResolveTask {
+        let task_guard = ReturnResolveTask {
             manager,
             task: task_ptr,
         };
-        let manager = &mut *return_task.manager;
+        let manager = &mut *task_guard.manager;
         manager.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
@@ -835,11 +835,11 @@ pub(crate) fn run_tasks(
                 manifest,
                 ..
             } => {
-                let return_network_task = ReturnNetworkTask {
+                let network_task_guard = ReturnNetworkTask {
                     manager,
                     task: &raw mut **network,
                 };
-                let manager = &mut *return_network_task.manager;
+                let manager = &mut *network_task_guard.manager;
                 let Some(manifest) = manifest.take() else {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
@@ -903,14 +903,14 @@ pub(crate) fn run_tasks(
                 source,
                 data,
             } => {
-                let return_network_task = ReturnNetworkTask {
+                let network_task_guard = ReturnNetworkTask {
                     manager,
                     task: match source {
                         Task::TarballSource::Network(network) => &raw mut **network,
                         Task::TarballSource::Local { .. } => core::ptr::null_mut(),
                     },
                 };
-                let manager = &mut *return_network_task.manager;
+                let manager = &mut *network_task_guard.manager;
 
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
@@ -1673,7 +1673,7 @@ pub fn generate_network_task_for_tarball<'a>(
     };
 
     let extract_tarball = ExtractTarball {
-        registry: directories::folder_tag(this, scope),
+        registry: directories::folder_cache_key(this, scope),
         name: stored_string(pkg_name),
         resolution: package.resolution,
         cache_dir,

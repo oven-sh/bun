@@ -143,7 +143,7 @@ impl PackageManager {
                         let name = pkg
                             .name
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
-                        directories::cached_npm_package_folder_name_print(
+                        directories::cached_npm_package_folder_name(
                             self,
                             &mut buf,
                             name,

@@ -9,7 +9,9 @@ use enumset::EnumSet;
 use crate::api::AnyRequestContext;
 use crate::generated_bindgen::response::js_Request as js;
 use crate::webcore::BlobExt as _;
-use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
+use crate::webcore::body::{
+    self, Body, BodyHiveHandle, BodyMixin, Tag as BodyTag, Value as BodyValue,
+};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
@@ -72,7 +74,7 @@ pub(crate) struct Request {
     // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
     // Clone/Drop to the C++ ref/unref.
     signal: JsCell<Option<AbortSignalRef>>,
-    /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
+    /// Owning `+1` handle into the per-VM `Body` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot.
     body: BodyHiveHandle,
@@ -141,8 +143,8 @@ impl crate::webcore::body::BodyOwnerJs for Request {
 
 impl BodyMixin for Request {
     #[inline]
-    fn get_body_value(&self) -> &mut BodyValue {
-        Request::get_body_value(self)
+    fn body(&self) -> &Body {
+        Request::body(self)
     }
     #[inline]
     fn get_content_type_header(&self) -> Option<BunString> {
@@ -160,24 +162,8 @@ impl BodyMixin for Request {
 impl Request {
     /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
     #[inline]
-    pub(crate) fn get_body_value(&self) -> &mut BodyValue {
-        self.body_value_mut()
-    }
-
-    /// Immutable view of the body value.
-    #[inline]
-    fn body_value(&self) -> &BodyValue {
+    pub(crate) fn body(&self) -> &Body {
         &self.body
-    }
-
-    /// R-2: `&self` → `&mut` through the slot's raw pointer. The slot is shared
-    /// with `RequestContext.request_body` but never `&mut`-borrowed concurrently
-    /// (single-threaded event-loop sequencing). Keep the borrow short.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn body_value_mut(&self) -> &mut BodyValue {
-        // SAFETY: see R-2 invariant above.
-        unsafe { &mut (*self.body.as_ptr()).value }
     }
 
     // Returns if the request has headers already cached/set.
@@ -216,30 +202,24 @@ impl Request {
 
         // we don't have a request context, so we need to create an empty headers object
         let headers = self.headers.get_or_init(HeadersRef::create_empty);
-        let content_type: Option<&[u8]> = match self.body_value() {
-            BodyValue::Blob(blob) => Some(blob.content_type_slice()),
-            BodyValue::Locked(locked) => match locked.readable.get() {
-                Some(readable) => match readable.ptr {
-                    crate::webcore::readable_stream::Source::Blob(blob) => {
-                        // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                        // for as long as the readable stream exists; we only read
-                        // its `content_type` slice and immediately copy below.
-                        Some(unsafe { (*blob).content_type.get().as_slice() })
-                    }
-                    _ => None,
-                },
-                None => None,
-            },
-            _ => None,
+        let put_content_type = |content_type: &[u8]| {
+            headers.put(
+                HTTPHeaderName::ContentType,
+                &StringView::ascii(content_type),
+                global_this,
+            )
         };
 
-        if let Some(content_type_) = content_type {
-            if !content_type_.is_empty() {
-                headers.put(
-                    HTTPHeaderName::ContentType,
-                    &StringView::ascii(content_type_),
-                    global_this,
-                )?;
+        if let Some(result) = self.body.with_blob_content_type(put_content_type) {
+            result?;
+        } else if let Some(readable) = self.body.readable()
+            && let crate::webcore::readable_stream::Source::Blob(blob) = readable.ptr
+        {
+            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
+            // for as long as the readable stream exists.
+            let content_type = unsafe { (*blob).content_type.get().as_slice() };
+            if !content_type.is_empty() {
+                put_content_type(content_type)?;
             }
         }
 
@@ -280,11 +260,7 @@ impl Request {
             return Encoding::get(value.into_utf8().slice());
         }
 
-        if let BodyValue::Blob(blob) = self.body_value() {
-            return Encoding::get(blob.content_type_slice());
-        }
-
-        None
+        self.body.with_blob_content_type(Encoding::get)?
     }
 }
 
@@ -292,7 +268,7 @@ impl Request {
     pub(crate) fn memory_cost(&self) -> usize {
         self.request_context.get().memory_cost()
             + self.url.get().byte_slice().len()
-            + self.body_value().memory_cost()
+            + self.body.memory_cost()
     }
 
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
@@ -371,7 +347,7 @@ impl Request {
     #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
     pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size
-            .set(self.body_value().estimated_size() + self.size_of_url());
+            .set(self.body.estimated_size() + self.size_of_url());
     }
 }
 
@@ -443,7 +419,7 @@ impl Request {
         } else {
             "BunRequest"
         };
-        match self.body_value_mut().known_size() {
+        match self.body.known_size() {
             Some(size) => writeln!(
                 writer,
                 "{} ({}) {{",
@@ -525,16 +501,20 @@ impl Request {
                 )
                 .map_err(js_err)?;
 
-            match self.body_value_mut() {
-                BodyValue::Blob(blob) => {
+            match self.body.tag() {
+                BodyTag::Blob => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    blob.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
+                    self.body
+                        .with_blob(|blob| {
+                            blob.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)
+                        })
+                        .transpose()?;
                 }
-                BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
+                BodyTag::InternalBlob | BodyTag::WTFStringImpl => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    let size = self.body_value_mut().size();
+                    let size = self.body.size();
                     if size == 0 {
                         let empty = Blob::init_empty(formatter.global_this());
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
@@ -546,7 +526,7 @@ impl Request {
                         )?;
                     }
                 }
-                BodyValue::Locked(_) => {
+                BodyTag::Locked => {
                     if let Some(stream) = self.get_body_readable_stream() {
                         writer.write_str("\n")?;
                         formatter.write_indent(writer)?;
@@ -957,11 +937,11 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                        match request.body.tag() {
+                            BodyTag::Null | BodyTag::Empty | BodyTag::Used => {}
                             _ => {
-                                *req.body_value_mut() =
-                                    request.clone_body_value_via_cached_stream(cx)?;
+                                req.body
+                                    .set(request.clone_body_value_via_cached_stream(cx)?);
                                 fields.insert(Fields::Body);
                             }
                         }
@@ -992,11 +972,11 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                        match response.body().tag() {
+                            BodyTag::Null | BodyTag::Empty | BodyTag::Used => {}
                             _ => {
-                                *req.body_value_mut() =
-                                    response.clone_body_value_via_cached_stream(cx)?;
+                                req.body
+                                    .set(response.clone_body_value_via_cached_stream(cx)?);
                                 fields.insert(Fields::Body);
                             }
                         }
@@ -1014,7 +994,7 @@ impl Request {
                             return Err(cx.global().throw_type_error(format_args!("keepalive")));
                         }
                     }
-                    *req.body_value_mut() = BodyValue::from_js(cx.global(), body_)?;
+                    req.body.set(BodyValue::from_js(cx.global(), body_)?);
                 }
 
                 // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
@@ -1165,15 +1145,16 @@ impl Request {
 
         req.url.set(href);
 
-        if let (BodyValue::Blob(blob), Some(headers)) = (req.body_value(), req.headers.get()) {
-            let ct: &[u8] = blob.content_type_slice();
-            if !ct.is_empty() {
-                headers.put_default(
-                    HTTPHeaderName::ContentType,
-                    &StringView::ascii(ct),
-                    cx.global(),
-                )?;
-            }
+        if let Some(headers) = req.headers.get() {
+            req.body
+                .with_blob_content_type(|ct| {
+                    headers.put_default(
+                        HTTPHeaderName::ContentType,
+                        &StringView::ascii(ct),
+                        cx.global(),
+                    )
+                })
+                .transpose()?;
         }
 
         req.calculate_estimated_byte_size();

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_jsc::{
     self as jsc, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef, JSGlobalObject,
-    JSPromise, JSValue, JsCell, JsRef, JsResult, SystemError, bun_string_jsc,
+    JSPromise, JSValue, JsCell, JsRef, JsResult, SysErrorJsc as _, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -395,11 +395,11 @@ impl HTMLRewriter {
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
             // treat `Value::Error` as an empty blob and emit an empty document.
-            let body_value = response.get_body_value();
-            if let webcore::body::Value::Error(err) = body_value {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
+            let body_value = response.body();
+            if let Some(err) = body_value.error_to_js(cx.global()) {
+                return Err(cx.global().throw_value(err));
             }
-            if matches!(*body_value, webcore::body::Value::Used) {
+            if body_value.tag() == webcore::body::Tag::Used {
                 return Err(cx
                     .global()
                     .throw_invalid_arguments(format_args!("Response body already used")));
@@ -459,9 +459,7 @@ impl HTMLRewriter {
             // The body is never still `Locked` here: `sync_only_noun` makes a
             // handler that would suspend fail the rewrite instead, and `init`
             // rethrows that as the synchronous TypeError above.
-            let mut blob = out_response
-                .get_body_value()
-                .use_as_any_blob_allow_non_utf8_string();
+            let mut blob = out_response.body().use_as_any_blob_allow_non_utf8_string();
 
             return match kind {
                 ResponseKind::String => blob.to_string_transfer(&cx),
@@ -645,9 +643,7 @@ pub struct RewriterPipe {
     /// `output` when the call returns, or kept here until the output stream
     /// exists (`on_start_streaming`) or the rewrite finishes.
     output_buffer: JsCell<Vec<u8>>,
-    /// A consumer is waiting on the pending body as a whole (`.text()`,
-    /// `Bun.write`, … via [`Self::on_start_buffering`]): the output is
-    /// observed and never backpressured.
+    /// A consumer waits for the whole body (`.text()`, …): the output is observed and never backpressured.
     buffered_consumer: Cell<bool>,
     /// The pipe's ref on the output Response, so the body stays reachable
     /// (`fail()`, the abandon-suspension path) after the Response JS wrapper
@@ -985,15 +981,11 @@ impl RewriterPipe {
                 status_code: 200,
                 ..Default::default()
             },
-            webcore::Body::new({
-                let mut pv = webcore::body::PendingValue::new(cx.global());
-                pv.task = Some(pipe.as_non_null().cast::<c_void>());
-                pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
-                pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
-                pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
-                pv.producer = SourceHandle::HTMLRewriter(this);
-                webcore::body::Value::Locked(pv)
-            }),
+            webcore::Body::new(webcore::body::Value::from_producer(
+                SourceHandle::HTMLRewriter(this),
+                0,
+                cx.global(),
+            )),
             BunString::EMPTY,
             false,
         ));
@@ -1026,10 +1018,10 @@ impl RewriterPipe {
         result_ref.set_url(original.url().clone());
 
         // ── wire input ──────────────────────────────────────────────────────
-        let value = original.get_body_value();
+        let body = original.body();
         let owned_readable_stream = original.get_body_readable_stream();
 
-        Self::wire_input(&pipe, cell, cx, value, owned_readable_stream);
+        Self::wire_input(&pipe, cell, cx, body, owned_readable_stream);
 
         // A handler that failed synchronously (the input was materialized, so
         // the whole rewrite ran inline above) surfaces as a synchronous throw
@@ -1051,7 +1043,7 @@ impl RewriterPipe {
         this: &RefPtr<Self>,
         cell: JSValue,
         cx: &bun_jsc::JsThread<'_>,
-        value: &mut webcore::body::Value,
+        body: &webcore::Body,
         stream: Option<ReadableStream>,
     ) {
         // A Locked body with no realised stream (fresh `fetch()` Response), or
@@ -1059,13 +1051,12 @@ impl RewriterPipe {
         // the ByteStream/FileReader wiring below can drive it.
         let mut stream = stream;
         if stream.is_none() {
-            let needs_stream = match value {
-                webcore::body::Value::Locked(_) => true,
-                webcore::body::Value::Blob(b) => b.needs_to_read_file() || b.is_s3(),
-                _ => false,
-            };
+            let needs_stream = body.tag() == webcore::body::Tag::Locked
+                || body
+                    .with_blob(|b| b.needs_to_read_file() || b.is_s3())
+                    .unwrap_or(false);
             if needs_stream {
-                match value
+                match body
                     .to_readable_stream(cx)
                     .and_then(|v| ReadableStream::from_js(v, cx.global()))
                 {
@@ -1085,7 +1076,7 @@ impl RewriterPipe {
         let Some(stream) = stream else {
             // lol-html consumes UTF-8; `use_as_any_blob()` encodes a non-ASCII
             // WTFStringImpl into an InternalBlob so `.slice()` is always UTF-8.
-            let any_blob = value.use_as_any_blob();
+            let any_blob = body.use_as_any_blob();
             let bytes = any_blob.slice();
             // Mark EOF first so a handler that suspends mid-feed resumes into
             // `end_rewrite` once its promise settles.
@@ -1110,7 +1101,7 @@ impl RewriterPipe {
         // second `transform()` / `.text()` on the same input throws "Body
         // already used" instead of quietly yielding an empty document.
         js_HTMLRewriterTransform::input_stream_set_cached(cell, cx.global(), stream.value);
-        *value = webcore::body::Value::Used;
+        body.set(webcore::body::Value::Used);
 
         let sink_handle = SinkHandle::HTMLRewriter(this.clone());
 
@@ -1173,13 +1164,11 @@ impl RewriterPipe {
         this.end_from_stream(None);
     }
 
-    /// `PendingValue::on_start_buffering` — `.text()`/`.json()`/`Bun.write`
+    /// `SourceHandle::start_buffering` entry — `.text()`/`.json()`
     /// want the whole output: pull the rest of the input now, unbounded.
-    fn on_start_buffering(ctx: NonNull<c_void>) {
-        // Same liveness argument as `on_start_streaming`.
-        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
-        this.buffered_consumer.set(true);
-        this.resume();
+    pub(crate) fn on_start_buffering(&self) {
+        self.buffered_consumer.set(true);
+        self.resume();
     }
 
     /// Hold a ref on the pipe across an externally-entered call whose work
@@ -1227,15 +1216,11 @@ impl RewriterPipe {
         }
     }
 
-    /// `PendingValue::on_start_streaming` — the output Response's body is
+    /// `SourceHandle::start_streaming` entry — the output Response's body is
     /// being realised as a ByteStream: hand over everything lol-html has
     /// already emitted.
-    fn on_start_streaming(ctx: NonNull<c_void>) -> DrainResult {
-        // `ctx` is the `pipe` heap allocation registered on the PendingValue
-        // in `init()`; the owning `JSHTMLRewriterTransform` cell (rooted by
-        // the output Response's `transform` slot) keeps it live.
-        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
-        let list = this.output_buffer.replace(Vec::new());
+    pub(crate) fn on_start_streaming(&self) -> DrainResult {
+        let list = self.output_buffer.replace(Vec::new());
         if list.is_empty() {
             return DrainResult::EstimatedSize(0);
         }
@@ -1246,16 +1231,15 @@ impl RewriterPipe {
         }
     }
 
-    /// `PendingValue::on_readable_stream_available` — the output ByteStream
+    /// `SourceHandle::readable_stream_available` entry — the output ByteStream
     /// now exists: stash its backref so the output sink pushes
     /// there instead of buffering.
-    fn on_readable_stream_available(
-        ctx: NonNull<c_void>,
+    pub(crate) fn on_readable_stream_available(
+        &self,
         global_this: &JSGlobalObject,
         readable: ReadableStream,
     ) {
-        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
-        let Some(cell) = this.cell.try_get() else {
+        let Some(cell) = self.cell.try_get() else {
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {
@@ -1263,20 +1247,20 @@ impl RewriterPipe {
             // too, so the `producer` backref cannot outlive the pipe. Cleared
             // in `detach_output`.
             bytes.parent_const().set_owner(cell);
-            this.output.set(Some(bytes));
+            self.output.set(Some(bytes));
         }
         js_HTMLRewriterTransform::output_stream_set_cached(cell, global_this, readable.value);
         // If the rewrite already completed before a reader attached, deliver
         // the terminal `Done` now so the first `read()` resolves.
-        if this.phase.get() == RewritePhase::Done
-            && !this.done.get()
+        if self.phase.get() == RewritePhase::Done
+            && !self.done.get()
             && js_HTMLRewriterTransform::handler_error_get_cached(cell)
                 .is_none_or(|v| v.is_empty_or_undefined_or_null())
         {
-            if let Some(out) = this.output.get() {
+            if let Some(out) = self.output.get() {
                 out.on_data(StreamResult::Done);
             }
-            this.detach_output();
+            self.detach_output();
         }
     }
 
@@ -1349,9 +1333,9 @@ impl RewriterPipe {
         } else if let Some(err) = err {
             let value_error = match err {
                 StreamError::JSValue(v) => webcore::body::ValueError::JSValue(v),
-                StreamError::Error(e) => {
-                    webcore::body::ValueError::SystemError(e.to_system_error().into())
-                }
+                StreamError::Error(e) => webcore::body::ValueError::JSValue(
+                    jsc::strong::Optional::create(e.to_js(&self.global), &self.global),
+                ),
                 StreamError::AbortReason(r) => webcore::body::ValueError::AbortReason(r),
             };
             self.fail(value_error);
@@ -1590,19 +1574,13 @@ impl RewriterPipe {
         let Some(response) = self.response.take() else {
             return;
         };
-        let body_value = response.get_body_value();
         let bytes = self.output_buffer.replace(Vec::new());
-        let mut prev_value = core::mem::replace(
-            body_value,
+        let context = self.global.bun_vm().context_of(self.script_context);
+        let _ = response.body().resolve(
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
                 bytes,
                 was_string: false,
             }),
-        );
-        let context = self.global.bun_vm().context_of(self.script_context);
-        let _ = webcore::body::Value::resolve(
-            &mut prev_value,
-            body_value,
             &self.global.js_thread(context),
             Some(&response),
         );
@@ -1751,18 +1729,14 @@ impl RewriterPipe {
         } else {
             self.response.with_taken(|response| {
                 let Some(response) = response else { return };
-                let body_value = response.get_body_value();
-                let has_readable = match body_value {
-                    webcore::body::Value::Locked(l) => l.readable.has(),
-                    _ => false,
-                };
-                if !has_readable
-                    && matches!(body_value, webcore::body::Value::Locked(l)
-                        if l.promise.is_none() && l.on_receive_value.is_none())
+                let body = response.body();
+                if body.tag() == webcore::body::Tag::Locked
+                    && body.readable().is_none()
+                    && !body.has_promise()
                 {
-                    *body_value = webcore::body::Value::Empty;
+                    body.set(webcore::body::Value::Empty);
                 }
-                let _ = body_value.to_error_instance(err, &self.global);
+                let _ = body.to_error_instance(err, &self.global);
             });
         }
         self.release_input_roots(src);

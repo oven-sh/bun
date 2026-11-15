@@ -7,10 +7,10 @@ use core::num::NonZeroU8;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
+use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
-use std::io::{BorrowedBuf, BorrowedCursor};
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
@@ -2524,7 +2524,7 @@ impl<'a> ImmutableBytes<'a> {
         // At least one unit, so that simdutf does not get a dangling pointer.
         out.try_reserve_exact(len.max(1))
             .map_err(|_| ToUTF16Error::OutOfMemory)?;
-        let result = crate::vec::fill_spare_with_cursor(&mut out, |out| {
+        let result = crate::vec::append_with(&mut out, usize::MAX, |out| {
             // SAFETY: `len` units were just reserved, and `self` guarantees that `bytes` does not change.
             unsafe { simdutf::convert::utf8::to::utf16::with_errors::le(bytes, out) }
         });
@@ -2578,7 +2578,7 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
     let (ascii, rest) = bytes.split_at(first_non_ascii_usize(bytes)?);
     let mut out: Vec<u16> = Vec::with_capacity(bytes.len());
     out.extend(ascii.iter().map(|&b| u16::from(b)));
-    let fits = crate::vec::fill_spare_with_cursor(&mut out, |out| append_wtf8_as_utf16(rest, out));
+    let fits = crate::vec::append_with(&mut out, usize::MAX, |out| append_wtf8_as_utf16(rest, out));
     debug_assert!(fits);
     Some(out)
 }

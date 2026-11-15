@@ -1434,8 +1434,8 @@ pub(crate) mod strings_impl {
     // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
-    use std::io::BorrowedBuf;
 
     #[inline]
     pub fn is_all_ascii(slice: &[u8]) -> bool {
@@ -1586,7 +1586,7 @@ pub(crate) mod strings_impl {
 
     fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: WithUtf8Len<'_, u8>) {
         list.reserve(latin1.utf8_len());
-        crate::vec::fill_spare_with_cursor(list, |out| {
+        crate::vec::append_with(list, usize::MAX, |out| {
             simdutf::convert::latin1::to::utf8(latin1, out)
         });
     }
@@ -1628,7 +1628,7 @@ pub(crate) mod strings_impl {
 
     pub(crate) fn append_utf16_as_utf8(list: &mut Vec<u8>, utf16: WithUtf8Len<'_, u16>) {
         list.reserve(utf16.utf8_len());
-        let result = crate::vec::fill_spare_with_cursor(list, |out| {
+        let result = crate::vec::append_with(list, usize::MAX, |out| {
             simdutf::convert::utf16::to::utf8::with_errors::le(utf16, out)
         });
         if !result.is_successful() {

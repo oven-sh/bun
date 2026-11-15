@@ -1,4 +1,4 @@
-use std::io::BorrowedCursor;
+use core::io::BorrowedCursor;
 
 #[repr(C)]
 #[derive(Copy, Clone)]

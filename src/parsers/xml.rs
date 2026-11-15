@@ -30,9 +30,9 @@ use bun_alloc::ArenaVecExt as _;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
+use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
-use std::io::BorrowedBuf;
 
 use crate::xml_index::StructuralIndex;
 use crate::xml_index::byte_class::{CLASS_ALWAYS, CLASS_GT, CLASS_LT, CLASS_TAG, XML_BYTE_CLASS};

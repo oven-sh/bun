@@ -3,9 +3,9 @@ use crate::string::immutable::{
     U3Fast, UNICODE_REPLACEMENT as unicode_replacement, eql_comptime_ignore_len as eql_ignore_len,
     first_non_ascii, first_non_ascii16, truncate_to_char_boundary,
 };
+use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use core::mem::MaybeUninit;
-use std::io::{BorrowedBuf, BorrowedCursor};
 
 use crate::string::immutable::CodePoint; // i32
 /// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
@@ -752,7 +752,7 @@ pub(super) fn append_valid_utf8_as_utf16_to_list<'a>(
     }
     out.try_reserve_exact(len + additional)
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
-    Ok(crate::vec::fill_spare_with_cursor(out, |out| {
+    Ok(crate::vec::append_with(out, usize::MAX, |out| {
         append_valid_utf8_as_utf16(bytes, out)
     }))
 }

@@ -536,7 +536,7 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     if to.try_reserve_exact(to_len).is_err() {
         return BunString::OUT_OF_MEMORY;
     }
-    bun_core::vec::fill_spare_with_cursor(&mut to, |spare| {
+    bun_core::vec::append_with(&mut to, to_len, |spare| {
         bun_simdutf::base64::encode(input, spare, url_safe)
     });
     debug_assert_eq!(to.len(), to_len);

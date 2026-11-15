@@ -39,7 +39,6 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
-#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>

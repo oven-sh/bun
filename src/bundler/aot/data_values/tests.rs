@@ -1,5 +1,5 @@
 use bun_alloc::AstAlloc;
-use bun_ast::{ExprNodeList, Ref, Source};
+use bun_ast::{AstArena, ExprNodeList, Ref, Source};
 use bun_parsers::json::{parse_json_into_arena, parse_utf8};
 use bun_sema::session::Session;
 
@@ -8,19 +8,19 @@ use super::*;
 
 const NESTING_DEPTH: usize = 100_000;
 
-fn with_scope(test: impl for<'s> FnOnce(&Interner<'s>, &'s Arena, &Arena)) {
+fn with_scope(test: impl for<'s> FnOnce(&Interner<'s>, &'s Arena, &AstArena)) {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     with_ast_scope(|scratch| test(&atoms, session.arena(), scratch));
 }
 
-fn parse_tape(text: &'static [u8], scratch: &Arena) -> Expr {
+fn parse_tape(text: &'static [u8], scratch: &AstArena) -> Expr {
     let source = Source::init_path_string(b"/value.json", text);
     parse_json_into_arena(&source, &Log::default(), scratch)
         .unwrap_or_else(|_| panic!("valid JSON"))
 }
 
-fn parse_tree(text: &'static [u8], scratch: &Arena) -> Expr {
+fn parse_tree(text: &'static [u8], scratch: &AstArena) -> Expr {
     let source = Source::init_path_string(b"/value.json", text);
     parse_utf8(&source, &Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
 }

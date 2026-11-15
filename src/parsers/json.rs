@@ -1,16 +1,17 @@
 //! JSON / JSONC parser: a SIMD structural indexer ([`crate::json_index`]) plus a
 //! recursive-descent stage 2 ([`crate::json_stage2`]) over the resulting index.
 
-use bun_alloc::Arena as Bump;
+use core::marker::PhantomData;
+
 use bun_ast::G;
 
 use bun_ast as js_ast;
 use bun_ast::Indentation;
-use bun_ast::{E, Expr};
+use bun_ast::{AstArena, E, Expr, JsonView};
 use bun_core::{self};
 
 use crate::json_index::{IndexError, StructuralIndex};
-use crate::json_stage2::Parser;
+use crate::json_stage2::{Parser, to_json_value};
 
 #[derive(Clone, Copy)]
 pub struct JSONOptions {
@@ -64,14 +65,17 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
 };
 
 #[inline]
-fn empty_object_expr() -> Expr {
-    Expr::init(E::Object::default(), bun_ast::Loc { start: 0 })
+fn empty_object_expr(arena: &AstArena) -> Expr {
+    Expr::allocate(arena, E::Object::default(), bun_ast::Loc { start: 0 })
 }
 
-/// A parsed immutable-AST JSON document: the root expression plus the [`E::JsonTape`] it borrows.
-pub struct ParsedJson {
-    pub root: Expr,
-    pub tape: Option<Box<E::JsonTape>>,
+/// A parsed immutable-AST JSON document: the root value plus the [`E::JsonTape`] it borrows.
+pub struct ParsedJson<'a> {
+    root: E::JsonValue,
+    root_loc: bun_ast::Loc,
+    tape: Option<Box<E::JsonTape>>,
+    /// The source text, and the arena of the `E::ObjectJSON` and `E::ArrayJSON` values.
+    _marker: PhantomData<(&'a [u8], &'a AstArena)>,
 }
 
 struct ParseOutput {
@@ -83,15 +87,17 @@ struct ParseOutput {
 fn parse_impl(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
+    arena: &AstArena,
     opts: JSONOptions,
     check_len: bool,
 ) -> crate::Result<ParseOutput> {
-    parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
+    parse_impl_in(source, log, arena, opts, check_len, E::TapeAlloc::Global)
 }
 
 fn parse_impl_in(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
+    arena: &AstArena,
     opts: JSONOptions,
     check_len: bool,
     tape_alloc: E::TapeAlloc,
@@ -108,7 +114,7 @@ fn parse_impl_in(
         return Err(report_index_error(e, source, log));
     }
     let log_mark = (log.errors.get(), log.msgs_len());
-    let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
+    let result = run_stage2(source, log, arena, &mut sidx, opts, check_len, tape_alloc);
 
     let drop_stage2_errors = |log: &bun_ast::Log| {
         log.with_msgs(|msgs| {
@@ -185,12 +191,13 @@ fn parse_impl_in(
 fn run_stage2<'s>(
     source: &'s bun_ast::Source<'s>,
     log: &bun_ast::Log,
+    arena: &AstArena,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
     check_len: bool,
     tape_alloc: E::TapeAlloc,
 ) -> crate::Result<ParseOutput> {
-    let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
+    let mut parser = Parser::new(source, log, arena, sidx, opts, tape_alloc);
     let root = parser.parse_value()?;
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
@@ -309,7 +316,7 @@ pub fn guess_indentation(s: &[u8]) -> Indentation {
 pub fn parse_utf8(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     parse_utf8_impl::<false>(source, log, bump)
 }
@@ -318,10 +325,10 @@ pub fn parse_utf8(
 pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr(bump));
     }
     Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
@@ -329,7 +336,7 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
 fn parse_classic(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
     opts: JSONOptions,
     check_len: bool,
 ) -> crate::Result<ParseOutput> {
@@ -337,7 +344,7 @@ fn parse_classic(
         record_value_locs: true,
         ..opts
     };
-    let mut out = parse_impl(source, log, opts, check_len)?;
+    let mut out = parse_impl(source, log, bump, opts, check_len)?;
     out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
@@ -356,63 +363,67 @@ fn parse_classic(
     Ok(out)
 }
 
-/// For a tree that outlives the next reset of the thread-local `Store`.
-pub fn clone_out_of_store(
-    root: &Expr,
-    source: &bun_ast::Source,
-    log: &bun_ast::Log,
-    bump: &Bump,
-) -> crate::Result<Expr> {
-    root.deep_clone(bump).map_err(|err| {
-        if let bun_ast::Error::Alloc(err) = err {
-            return err.into();
-        }
-        log.add_error_fmt(
-            source,
-            root.loc,
-            format_args!("JSON document is too deeply nested"),
-        );
-        crate::Error::StackOverflow
-    })
-}
+impl ParsedJson<'_> {
+    pub fn root(&self) -> JsonView<'_> {
+        JsonView::from_json_value(&self.root, self.root_loc)
+    }
 
-impl ParsedJson {
+    pub fn root_expr(&self, arena: &AstArena) -> Expr {
+        Expr::from_json_value(arena, &self.root, self.root_loc)
+    }
+
+    /// Its strings point into the source text or the tape, and its objects and arrays into the arena.
+    pub fn into_tape(self) -> Option<Box<E::JsonTape>> {
+        self.tape
+    }
+
     /// Strict JSON.
-    pub fn parse_json(source: &bun_ast::Source, log: &bun_ast::Log) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, JSON_OPTS, false)
+    pub fn parse_json<'a>(
+        source: &'a bun_ast::Source,
+        log: &bun_ast::Log,
+        arena: &'a AstArena,
+    ) -> crate::Result<ParsedJson<'a>> {
+        parse_to_rows(source, log, arena, JSON_OPTS, false)
     }
 
     /// JSONC (comments and trailing commas).
-    pub fn parse_jsonc(source: &bun_ast::Source, log: &bun_ast::Log) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, TSCONFIG_OPTS, false)
+    pub fn parse_jsonc<'a>(
+        source: &'a bun_ast::Source,
+        log: &bun_ast::Log,
+        arena: &'a AstArena,
+    ) -> crate::Result<ParsedJson<'a>> {
+        parse_to_rows(source, log, arena, TSCONFIG_OPTS, false)
     }
 
     /// JSONC, with nothing but whitespace and comments after the value.
-    pub fn parse_jsonc_document(
-        source: &bun_ast::Source,
+    pub fn parse_jsonc_document<'a>(
+        source: &'a bun_ast::Source,
         log: &bun_ast::Log,
-    ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, TSCONFIG_OPTS, true)
+        arena: &'a AstArena,
+    ) -> crate::Result<ParsedJson<'a>> {
+        parse_to_rows(source, log, arena, TSCONFIG_OPTS, true)
     }
 
     /// package.json (comments & trailing commas allowed).
-    pub fn parse_package_json(
-        source: &bun_ast::Source,
+    pub fn parse_package_json<'a>(
+        source: &'a bun_ast::Source,
         log: &bun_ast::Log,
-    ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
+        arena: &'a AstArena,
+    ) -> crate::Result<ParsedJson<'a>> {
+        parse_to_rows(source, log, arena, PACKAGE_JSON_OPTS, false)
     }
 
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
-    pub fn parse_npm_manifest(
-        source: &bun_ast::Source,
+    pub fn parse_npm_manifest<'a>(
+        source: &'a bun_ast::Source,
         log: &bun_ast::Log,
-    ) -> crate::Result<ParsedJson> {
+        arena: &'a AstArena,
+    ) -> crate::Result<ParsedJson<'a>> {
         const MANIFEST_OPTS: JSONOptions = JSONOptions {
             json_warn_duplicate_keys: false,
             ..JSONOptions::DEFAULT
         };
-        parse_to_rows(source, log, MANIFEST_OPTS, false)
+        parse_to_rows(source, log, arena, MANIFEST_OPTS, false)
     }
 }
 
@@ -420,7 +431,7 @@ impl ParsedJson {
 pub fn parse_json_into_arena(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    arena: &Bump,
+    arena: &AstArena,
 ) -> crate::Result<Expr> {
     parse_to_rows_in(source, log, JSON_OPTS, arena)
 }
@@ -429,34 +440,38 @@ pub fn parse_json_into_arena(
 pub fn parse_jsonc_into_arena(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    arena: &Bump,
+    arena: &AstArena,
 ) -> crate::Result<Expr> {
     parse_to_rows_in(source, log, TSCONFIG_OPTS, arena)
 }
 
-fn parse_to_rows(
-    source: &bun_ast::Source,
+fn parse_to_rows<'a>(
+    source: &'a bun_ast::Source,
     log: &bun_ast::Log,
+    arena: &'a AstArena,
     opts: JSONOptions,
     check_len: bool,
-) -> crate::Result<ParsedJson> {
+) -> crate::Result<ParsedJson<'a>> {
     if source.contents.is_empty() {
         let mut tape = Box::new(E::JsonTape::empty());
-        let root = Expr::init(
+        let root = arena.alloc_node(
             // SAFETY: the tape's own pointer; `ParsedJson` keeps it alive, and
             // an empty span never dereferences it anyway.
             unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
-            bun_ast::Loc { start: 0 },
         );
         return Ok(ParsedJson {
-            root,
+            root: E::JsonValue::Object(root),
+            root_loc: bun_ast::Loc { start: 0 },
             tape: Some(tape),
+            _marker: PhantomData,
         });
     }
-    let out = parse_impl(source, log, opts, check_len)?;
+    let out = parse_impl(source, log, arena, opts, check_len)?;
     Ok(ParsedJson {
-        root: out.root,
+        root: to_json_value(out.root.data),
+        root_loc: out.root.loc,
         tape: out.tape,
+        _marker: PhantomData,
     })
 }
 
@@ -464,29 +479,30 @@ fn parse_to_rows_in(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
     opts: JSONOptions,
-    arena: &Bump,
+    arena: &AstArena,
 ) -> crate::Result<Expr> {
-    let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
+    let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena.heap()));
     if source.contents.is_empty() {
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
-        return Ok(Expr::init(
+        return Ok(Expr::allocate(
+            arena,
             // SAFETY: the arena-allocated tape's own pointer; it lives until the
             // arena resets, and an empty span never dereferences it anyway.
             unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
             bun_ast::Loc { start: 0 },
         ));
     }
-    Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
+    Ok(parse_impl_in(source, log, arena, opts, false, tape_alloc)?.root)
 }
 
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr(bump));
     }
     Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
 }
@@ -502,11 +518,11 @@ pub fn parse_package_json_utf8_with_opts(
     opts: JSONOptions,
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<JsonResult> {
     if source.contents.is_empty() {
         return Ok(JsonResult {
-            root: empty_object_expr(),
+            root: empty_object_expr(bump),
             ..Default::default()
         });
     }
@@ -518,9 +534,9 @@ pub fn parse_package_json_utf8_with_opts(
 }
 
 /// The strings of the result are in `bump`: `json` belongs to an object that the next macro can free.
-pub fn parse_for_macro(json: &[u8], log: &bun_ast::Log, bump: &Bump) -> crate::Result<Expr> {
+pub fn parse_for_macro(json: &[u8], log: &bun_ast::Log, bump: &AstArena) -> crate::Result<Expr> {
     if json.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr(bump));
     }
     let source = bun_ast::Source::init_path_string(b"fetch.json", bump.alloc_slice_copy(json));
     Ok(parse_classic(&source, log, bump, MACRO_JSON_OPTS, false)?.root)
@@ -531,10 +547,10 @@ pub fn parse_for_macro(json: &[u8], log: &bun_ast::Log, bump: &Bump) -> crate::R
 pub fn parse_ts_config(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr(bump));
     }
     Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
 }
@@ -543,11 +559,11 @@ pub fn parse_ts_config(
 pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
     if contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr(bump));
     }
 
     if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
@@ -627,7 +643,7 @@ fn leads_a_number(contents: &[u8]) -> bool {
 fn parse_auto_quoted_string(
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
     let loc = bun_ast::Loc { start: 0 };
@@ -702,11 +718,12 @@ impl<'a> PackageJSONVersionChecker<'a> {
 
     /// Parse the document and record its first top-level string-valued `name` and `version`.
     pub fn parse(&mut self) -> crate::Result<()> {
-        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS, false)?;
-        let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
+        let arena = AstArena::new();
+        let parsed = parse_to_rows(self.source, self.log, &arena, PKG_JSON_CHECKER_OPTS, false)?;
+        let Some(obj) = parsed.root().as_e_object_json() else {
             return Ok(());
         };
-        for row in obj.get().properties() {
+        for row in obj.properties() {
             let Some(value) = row.value.as_str() else {
                 continue;
             };
@@ -768,9 +785,13 @@ pub fn array_item_loc(
 }
 
 /// Source location of a property's value, re-scanning `contents` when it only carries its key's.
-pub fn value_loc_of_property(contents: &[u8], key_loc: bun_ast::Loc, value: &Expr) -> bun_ast::Loc {
-    if value.loc != key_loc {
-        return value.loc;
+pub fn value_loc_of_property(
+    contents: &[u8],
+    key_loc: bun_ast::Loc,
+    value_loc: bun_ast::Loc,
+) -> bun_ast::Loc {
+    if value_loc != key_loc {
+        return value_loc;
     }
     property_value_loc_or_key(contents, key_loc)
 }
@@ -936,7 +957,7 @@ pub fn materialize(
     root: &Expr,
     source: &bun_ast::Source,
     log: &bun_ast::Log,
-    bump: &Bump,
+    bump: &AstArena,
 ) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
@@ -953,7 +974,7 @@ pub fn materialize(
 fn materialize_impl(
     root: &Expr,
     source: &bun_ast::Source,
-    bump: &Bump,
+    bump: &AstArena,
     was_originally_macro: bool,
 ) -> crate::Result<Expr> {
     let m = Materializer {
@@ -972,7 +993,7 @@ fn materialize_impl(
 
 struct Materializer<'a> {
     contents: &'a [u8],
-    bump: &'a Bump,
+    bump: &'a AstArena,
     was_originally_macro: bool,
     stack_check: bun_core::StackCheck,
     overflowed: core::cell::Cell<bool>,
@@ -981,11 +1002,17 @@ struct Materializer<'a> {
 impl Materializer<'_> {
     fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
         match &e.data {
-            js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
-            js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
-            js_ast::expr::Data::EString(s) => {
-                Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
+            js_ast::expr::Data::EObjectJSON(o) => {
+                Expr::allocate(self.bump, self.object(o.get()), loc)
             }
+            js_ast::expr::Data::EArrayJSON(a) => {
+                Expr::allocate(self.bump, self.array(a.get(), loc), loc)
+            }
+            js_ast::expr::Data::EString(s) => Expr::allocate(
+                self.bump,
+                E::EString::init(self.rehome(s.get().data).slice()),
+                loc,
+            ),
             _ => Expr { data: e.data, loc },
         }
     }
@@ -1000,7 +1027,8 @@ impl Materializer<'_> {
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
         let value_locs = o.value_locs();
         for (i, row) in rows.iter().enumerate() {
-            let key = Expr::init(
+            let key = Expr::allocate(
+                self.bump,
                 E::String {
                     data: self.rehome(row.key),
                     ..Default::default()
@@ -1065,10 +1093,12 @@ impl Materializer<'_> {
 
     fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
         match value {
-            E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
-            E::JsonValue::Array(a) => Expr::init(self.array(a.get(), loc), loc),
-            E::JsonValue::String(s) => Expr::init(E::EString::init(self.rehome(*s).slice()), loc),
-            _ => Expr::from_json_value(value, loc),
+            E::JsonValue::Object(o) => Expr::allocate(self.bump, self.object(o.get()), loc),
+            E::JsonValue::Array(a) => Expr::allocate(self.bump, self.array(a.get(), loc), loc),
+            E::JsonValue::String(s) => {
+                Expr::allocate(self.bump, E::EString::init(self.rehome(*s).slice()), loc)
+            }
+            _ => Expr::from_json_value(self.bump, value, loc),
         }
     }
 
@@ -1092,36 +1122,31 @@ mod tests {
         errors: usize,
         warnings: usize,
         first_msg: String,
-        _bump: Box<Bump>,
+        _bump: AstArena,
         _tape: Option<Box<E::JsonTape>>,
-        _scope: js_ast::StoreResetGuard,
     }
 
     fn run(contents: &[u8], which: Which) -> Parsed {
-        bun_ast::initialize_store_or_reset();
-        let scope = js_ast::StoreResetGuard::new();
         let log = bun_ast::Log::init();
-        let bump = Box::new(Bump::new());
+        let bump = AstArena::new();
         let source = bun_ast::Source::init_path_string("fixture.json", contents);
         let mut tape = None;
+        let mut keep_tape = |p: ParsedJson<'_>| {
+            let root = p.root_expr(&bump);
+            tape = p.into_tape();
+            root
+        };
         let r = match which {
             Which::Utf8 => parse_utf8(&source, &log, &bump),
             Which::TsConfig => parse_ts_config(&source, &log, &bump),
             Which::Env => parse_env_json(&source, &log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &log, &bump),
-            Which::Jsonc => ParsedJson::parse_jsonc(&source, &log).map(|p| {
-                tape = p.tape;
-                p.root
-            }),
-            Which::JsoncDocument => ParsedJson::parse_jsonc_document(&source, &log).map(|p| {
-                tape = p.tape;
-                p.root
-            }),
+            Which::Jsonc => ParsedJson::parse_jsonc(&source, &log, &bump).map(&mut keep_tape),
+            Which::JsoncDocument => {
+                ParsedJson::parse_jsonc_document(&source, &log, &bump).map(&mut keep_tape)
+            }
             Which::Immutable => {
-                parse_to_rows(&source, &log, JSONOptions::DEFAULT, false).map(|mut p| {
-                    tape = p.tape.take();
-                    p.root
-                })
+                parse_to_rows(&source, &log, &bump, JSONOptions::DEFAULT, false).map(&mut keep_tape)
             }
         };
         let first_msg = log
@@ -1137,7 +1162,6 @@ mod tests {
             first_msg,
             _bump: bump,
             _tape: tape,
-            _scope: scope,
         }
     }
 
@@ -1598,7 +1622,6 @@ mod tests {
 
     #[test]
     fn duplicate_key_warnings_skipped_under_node_modules() {
-        bun_ast::initialize_store_or_reset();
         let doc = br#"{"a":1,"b":2,"a":3}"#;
         let sep = std::path::MAIN_SEPARATOR;
         for (path, warnings) in [
@@ -1608,14 +1631,11 @@ mod tests {
             ),
             (format!("{sep}app{sep}package.json"), 1),
         ] {
-            let _scope = js_ast::StoreResetGuard::new();
+            let arena = AstArena::new();
             let log = bun_ast::Log::init();
             let source = bun_ast::Source::init_path_string(path.as_str(), &doc[..]);
-            let parsed = ParsedJson::parse_package_json(&source, &log).unwrap();
-            assert!(matches!(
-                parsed.root.data,
-                js_ast::expr::Data::EObjectJSON(_)
-            ));
+            let parsed = ParsedJson::parse_package_json(&source, &log, &arena).unwrap();
+            assert!(parsed.root().as_e_object_json().is_some());
             assert_eq!(log.warnings.get() as usize, warnings, "{path}");
         }
     }
@@ -1779,7 +1799,7 @@ mod tests {
             let materialized = {
                 let p = run(doc.as_bytes(), immutable_which);
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
-                let bump = Bump::new();
+                let bump = AstArena::new();
                 let mlog = bun_ast::Log::init();
                 let root = materialize(p.root.as_ref().unwrap(), &source, &mlog, &bump).unwrap();
                 (root.loc, canon_full(&root))
@@ -1847,7 +1867,7 @@ mod tests {
     }
 
     #[test]
-    fn immutable_expr_accessor_materialization() {
+    fn json_reads_tape_and_materialized_tree_alike() {
         let doc: &[u8] = br#"{
             "name": "pkg",
             "version": "1.2.3",
@@ -1860,15 +1880,13 @@ mod tests {
             "empty_arr": []
         }"#;
 
-        fn describe(e: &Expr, bump: &Bump, out: &mut std::string::String) {
-            match &e.data {
-                Data::ENull(_) => out.push_str("null"),
-                Data::EBoolean(b) => out.push_str(if b.value { "true" } else { "false" }),
-                Data::ENumber(n) => {
-                    use std::fmt::Write;
-                    write!(out, "{}", n.value()).unwrap();
-                }
-                Data::EString(_) => {
+        fn describe(e: JsonView<'_>, bump: &AstArena, out: &mut std::string::String) {
+            use std::fmt::Write;
+            match e.tag_name() {
+                "null" => out.push_str("null"),
+                "boolean" => write!(out, "{}", e.as_bool().unwrap()).unwrap(),
+                "number" => write!(out, "{}", e.as_number().unwrap()).unwrap(),
+                "string" => {
                     assert_eq!(e.as_utf8_string_literal(), e.as_string(bump));
                     out.push('"');
                     out.push_str(&std::string::String::from_utf8_lossy(
@@ -1885,8 +1903,8 @@ mod tests {
         fn probe(doc: &[u8], which: Which) -> std::string::String {
             use std::fmt::Write;
             let p = run(doc, which);
-            let bump: &Bump = &p._bump;
-            let root = p.root.unwrap();
+            let bump = &p._bump;
+            let root = JsonView::from(p.root.as_ref().unwrap());
             let mut out = std::string::String::new();
 
             assert!(root.is_object());
@@ -1913,7 +1931,7 @@ mod tests {
                     q.loc.start
                 )
                 .unwrap();
-                describe(&q.expr, bump, &mut out);
+                describe(q.value, bump, &mut out);
                 out.push('\n');
             }
 
@@ -1923,7 +1941,7 @@ mod tests {
                 root.get(b"private").and_then(|e| e.as_bool())
             )
             .unwrap();
-            writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
+            writeln!(out, "num={:?}", root.get(b"count").unwrap().as_number()).unwrap();
             writeln!(
                 out,
                 "str={:?}",
@@ -1944,18 +1962,12 @@ mod tests {
                 root.get_object(b"name").is_some()
             )
             .unwrap();
-            writeln!(
-                out,
-                "has_any={} {}",
-                root.has_any_property_named(&[b"zzz", b"private"]),
-                root.has_any_property_named(&[b"zzz"])
-            )
-            .unwrap();
+            writeln!(out, "count={}", root.property_count()).unwrap();
 
             let deps = root.get(b"deps").unwrap();
             assert!(deps.is_object());
             out.push_str("deps.a=");
-            describe(&deps.get(b"a").unwrap(), bump, &mut out);
+            describe(deps.get(b"a").unwrap(), bump, &mut out);
             out.push('\n');
 
             let mut pairs: Vec<(std::string::String, std::string::String)> = Vec::new();
@@ -1969,22 +1981,19 @@ mod tests {
             });
             writeln!(out, "deps_map={pairs:?}").unwrap();
 
-            let mut iter = root.get_array(b"files").unwrap();
             out.push_str("files=[");
-            while let Some(item) = iter.next() {
-                describe(&item, bump, &mut out);
+            for item in root.get(b"files").unwrap().as_array().unwrap() {
+                describe(item, bump, &mut out);
                 out.push(',');
             }
             out.push_str("]\n");
-            assert!(root.get(b"files").unwrap().as_array().is_some());
             assert!(root.get(b"empty_arr").unwrap().as_array().is_none());
-            assert!(root.get_array(b"empty_obj").is_none());
+            assert!(root.get(b"empty_obj").unwrap().as_array().is_none());
 
-            let mut files = root.get_array(b"files").unwrap();
-            while let Some(item) = files.next() {
+            for item in root.get(b"files").unwrap().as_array().unwrap() {
                 if let Some(mut nested) = item.as_array() {
                     out.push_str("files[5][0]=");
-                    describe(&nested.next().unwrap(), bump, &mut out);
+                    describe(nested.next().unwrap(), bump, &mut out);
                     out.push('\n');
                 }
             }
@@ -2222,8 +2231,6 @@ mod tests {
 
     #[test]
     fn package_json_version_checker() {
-        bun_ast::initialize_store_or_reset();
-        let _scope = js_ast::StoreResetGuard::new();
         let log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string(
             "package.json",

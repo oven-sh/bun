@@ -41,20 +41,13 @@ fn defines_path() -> FsPath<'static> {
 
 fn env_string_store_put(
     store: &mut UserDefinesArray,
-    bump: &bun_alloc::Arena,
+    bump: &bun_ast::AstArena,
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
-    // The `E.String` slab must NOT live in the thread-local
-    // `Expr.Data.Store` — `configureDefines` resets that store on return, so
-    // the env-define payloads must outlive it. Allocate from `bump` (the
-    // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Copy the value because
-    // `Bun__setEnvValue` frees the env-map entry it points into.
+    // Copy the value because `Bun__setEnvValue` frees the env-map entry it points into.
     let value: &[u8] = bump.alloc_slice_copy(value);
-    let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
-        bump.alloc(bun_ast::E::EString::init(value)),
-    ));
+    let value: ExprData = ExprData::EString(bump.alloc_node(bun_ast::E::EString::init(value)));
     let data = DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,
@@ -72,7 +65,7 @@ pub(crate) fn copy_env_for_define(
     to_string: &mut UserDefinesArray,
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
-    bump: &bun_alloc::Arena,
+    bump: &bun_ast::AstArena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
     const PROCESS_ENV: &[u8] = b"process.env.";
@@ -155,8 +148,7 @@ impl DefineExt for Define {
 /// every transpiler init: `"development"` / `"production"` / `"test"` (the
 /// `process.env.NODE_ENV` & `process.env.BUN_ENV` defaults) and `true` /
 /// `false` (the `process.browser` default). The `E::EString` payloads live in
-/// process-lifetime `static`s — producing one is allocation-free and never
-/// touches the thread-local AST store `json_parser::parse_env_json` writes into.
+/// process-lifetime `static`s — producing one is allocation-free.
 /// Returns `None` for everything else (user `--define` values, env-file
 /// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
 /// falls through to the general `parse_env_json` path in `DefineData::parse`.
@@ -192,7 +184,7 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<DefineData, crate::Error>;
 
     fn from_mergeable_input_entry(
@@ -202,14 +194,14 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<(), crate::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<UserDefines, crate::Error>;
 }
 
@@ -244,7 +236,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<(), crate::Error> {
         user_defines.put_assume_capacity(
             key,
@@ -266,7 +258,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<DefineData, crate::Error> {
         let mut key_splitter = strings::split(key, b".");
         while let Some(part) = key_splitter.next() {
@@ -343,10 +335,7 @@ impl DefineDataExt for DefineData {
         // `"production"` / `"test"` for `process.env.NODE_ENV` & `BUN_ENV`, and
         // `true` / `false` for `process.browser`) — the entire default define
         // set on the `bun run` path. Build the `DefineData` straight from
-        // process-lifetime statics: skips the `bump.alloc_slice_copy` +
-        // `json_parser::parse_env_json` + `Expr::deep_clone` round-trip and,
-        // crucially, never touches the thread-local AST `Expr`/`Stmt` stores
-        // (created lazily below only when a value really needs JSON parsing).
+        // process-lifetime statics: skips `bump.alloc_slice_copy` + `json_parser::parse_env_json`.
         if let Some(value) = const_default_define_value(value_str) {
             let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
             return Ok(DefineData {
@@ -366,29 +355,15 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // `parse_env_json` builds `E::String`/`E::Object` nodes in the
-        // thread-local AST `Expr`/`Stmt` stores, so create them now — done
-        // lazily here (idempotent no-ops once created) instead of eagerly in
-        // `Transpiler::configure_defines`, since most inits resolve every define
-        // through the fast path above and never need an AST store.
-        bun_ast::Expr::data_store_create();
-        bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
             contents: std::borrow::Cow::Borrowed(arena_value),
             path: defines_path(),
             ..Default::default()
         };
-        let expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
-        // The `deep_clone` is load-bearing even though `.data` bytes already
-        // live in `bump`: `parse_env_json` → `new_expr` → `Expr::init` allocates
-        // the `E::String` *payload* (the `StoreRef` target) in the thread-local
-        // AST store, which `configure_defines` resets on return via
-        // `StoreResetGuard`. Before the `bun_ast` unification this was masked by
-        // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
-        // is identity, so without `deep_clone` the `DefineData.value` dangles
-        // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let mut expr = bun_parsers::json_parser::clone_out_of_store(&expr, &source, log, bump)?;
+        // The lists of the value outlive the `AstAlloc` state of the caller.
+        let _detached = bun_alloc::ast_alloc::DetachAstHeap::new();
+        let mut expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
         clear_locs(&mut expr);
         let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
@@ -413,7 +388,7 @@ impl DefineDataExt for DefineData {
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<UserDefines, crate::Error> {
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);

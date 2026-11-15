@@ -134,7 +134,7 @@ impl Class {
 
 pub(crate) fn deep_clone_decorators(
     decorators: &[ExprNodeIndex],
-    bump: &bun_alloc::Arena,
+    bump: &crate::AstArena,
     stack_check: bun_core::StackCheck,
 ) -> crate::Result<StoreSlice<ExprNodeIndex>> {
     let mut clones = bun_alloc::ArenaVec::with_capacity_in(decorators.len(), bump);
@@ -220,16 +220,15 @@ impl Property {
 
     pub(crate) fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
+        bump: &crate::AstArena,
         stack_check: bun_core::StackCheck,
     ) -> crate::Result<Property> {
         let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
-            let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
+            class_static_block = Some(bump.alloc_node(ClassStaticBlock {
                 loc: csb_ref.loc,
                 stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
-            });
-            class_static_block = Some(crate::StoreRef::from_bump(new_block));
+            }));
         }
         Ok(Property {
             initializer: match self.initializer {
@@ -323,7 +322,7 @@ impl Default for Fn {
 impl Fn {
     pub(crate) fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
+        bump: &crate::AstArena,
         stack_check: bun_core::StackCheck,
     ) -> crate::Result<Fn> {
         let src_args: &[Arg] = self.args.slice();
@@ -370,7 +369,7 @@ impl Default for Arg {
 impl Arg {
     pub(crate) fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
+        bump: &crate::AstArena,
         stack_check: bun_core::StackCheck,
     ) -> crate::Result<Arg> {
         Ok(Arg {

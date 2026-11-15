@@ -127,7 +127,7 @@ pub(crate) fn post_process_css_chunk(
     // Make sure the file ends with a newline
     j.ensure_newline_at_end();
 
-    let alloc = worker.arena();
+    let alloc = worker.arena().heap();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (filled in place before post-processing, never reassigned afterwards), graph
     // source paths, or `'static` literals; `watcher.input` is

@@ -1,5 +1,5 @@
 use bstr::BStr;
-use bun_ast::{self, ExprData, Log};
+use bun_ast::{self, Log};
 use bun_core::Global;
 use bun_core::Output;
 use bun_core::strings;
@@ -49,10 +49,6 @@ fn get_candidate_package_patterns<'a>(
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], crate::Error> {
-    bun_ast::expr::data::Store::create();
-    bun_ast::stmt::data::Store::create();
-    let _store_guard = bun_ast::StoreResetGuard::new();
-
     let mut workdir = workdir_;
 
     // Labeled loop with an inner labeled block; `continue` → `break 'body`,
@@ -85,17 +81,18 @@ fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
-            let json = parsed.root;
+            let arena = bun_ast::AstArena::new();
+            let parsed = json::ParsedJson::parse_package_json(&json_source, log, &arena)?;
+            let json = parsed.root();
 
             let Some(prop) = json.as_property(b"workspaces") else {
                 break 'body;
             };
 
-            let json_array = match prop.expr.data {
-                ExprData::EArrayJSON(arr) => arr,
-                ExprData::EObjectJSON(obj) => match (*obj).get(b"packages") {
-                    Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+            let json_array = match prop.value.as_json_value() {
+                Some(bun_ast::e::JsonValue::Array(arr)) => arr,
+                Some(bun_ast::e::JsonValue::Object(obj)) => match obj.get().get(b"packages") {
+                    Some(bun_ast::e::JsonValue::Array(arr)) => arr,
                     _ => break 'walk,
                 },
                 _ => break 'walk,

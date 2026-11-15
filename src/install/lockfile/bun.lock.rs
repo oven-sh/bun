@@ -3,7 +3,7 @@
 use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
-use bun_ast::{Expr, expr::Data as ExprData};
+use bun_ast::JsonView;
 use bun_collections::{DynamicBitSet, HashContext, HashMap, StringHashMap, index_sort};
 use bun_core::strings;
 use bun_core::{self};
@@ -1662,20 +1662,20 @@ impl<T> PkgMap<T> {
     }
 }
 
-fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
-    match &expr.data {
-        ExprData::EObjectJSON(o) => o.get().properties(),
-        _ => {
+fn object_rows<'t>(expr: JsonView<'t>) -> &'t [JSON::E::PropertyJSON] {
+    match expr.as_e_object_json() {
+        Some(o) => o.properties(),
+        None => {
             debug_assert!(!expr.is_object(), "object_rows on a mutable object");
             &[]
         }
     }
 }
 
-fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
-    match &expr.data {
-        ExprData::EArrayJSON(a) => a.get().items(),
-        _ => &[],
+fn array_items<'t>(expr: JsonView<'t>) -> &'t [JSON::E::JsonValue] {
+    match expr.as_e_array_json() {
+        Some(a) => a.items(),
+        None => &[],
     }
 }
 
@@ -1710,15 +1710,15 @@ fn parse_integrity(
     Ok(Integrity::default())
 }
 
-fn parse_bin(info: &Expr, lockfile: &mut BinaryLockfile) -> Result<Bin, ParseError> {
+fn parse_bin(info: JsonView<'_>, lockfile: &mut BinaryLockfile) -> Result<Bin, ParseError> {
     Ok(if let Some(bin) = info.get(b"bin") {
         Bin::parse_append(
-            &bin,
+            bin,
             &mut sbuf!(lockfile),
             &mut lockfile.buffers.extern_strings,
         )?
     } else if let Some(bin_dir) = info.get(b"binDir") {
-        Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?
+        Bin::parse_append_from_directories(bin_dir, &mut sbuf!(lockfile))?
     } else {
         Bin::default()
     })
@@ -1796,7 +1796,7 @@ fn parse_catalog(
 
 pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
-    root: JSON::Expr,
+    root: JsonView<'_>,
     source: &bun_ast::Source,
     log: &bun_ast::Log,
     manager: Option<&PackageManager>,
@@ -1820,12 +1820,8 @@ pub(crate) fn parse_into_binary_lockfile(
         );
     };
 
-    let lockfile_version_num: u32 = match &lockfile_version_expr.data {
-        ExprData::ENumber(num)
-            if (0.0..=u32::MAX as f64).contains(&num.value()) && num.value().fract() == 0.0 =>
-        {
-            num.value() as u32
-        }
+    let lockfile_version_num: u32 = match lockfile_version_expr.as_number() {
+        Some(num) if (0.0..=u32::MAX as f64).contains(&num) && num.fract() == 0.0 => num as u32,
         _ => fail!(
             InvalidLockfileVersion,
             at_value(lockfile_version_expr.loc),
@@ -1859,7 +1855,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
     // configVersion is not required
     if let Some(config_version_expr) = root.get(b"configVersion") {
-        lockfile.saved_config_version = match ConfigVersion::from_expr(&config_version_expr) {
+        lockfile.saved_config_version = match ConfigVersion::from_json(config_version_expr) {
             Some(v) => Some(v),
             None => fail!(
                 InvalidConfigVersion,
@@ -1879,7 +1875,7 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         }
 
-        for (i, dep) in array_items(&trusted_dependencies_expr).iter().enumerate() {
+        for (i, dep) in array_items(trusted_dependencies_expr).iter().enumerate() {
             let Some(name_str) = dep.as_str() else {
                 fail!(
                     InvalidTrustedDependenciesSet,
@@ -1905,7 +1901,7 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         }
 
-        for row in object_rows(&patched_dependencies_expr) {
+        for row in object_rows(patched_dependencies_expr) {
             let Some(path_str) = row.value.as_str() else {
                 fail!(
                     InvalidPatchedDependencies,
@@ -1928,7 +1924,7 @@ pub(crate) fn parse_into_binary_lockfile(
     if let Some(package_extensions_expr) = root.get(b"packageExtensions") {
         lockfile
             .package_extensions
-            .parse_applied(&package_extensions_expr);
+            .parse_applied(package_extensions_expr);
     }
 
     if let Some(overrides_expr) = root.get(b"overrides") {
@@ -1940,7 +1936,7 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         }
 
-        for row in object_rows(&overrides_expr) {
+        for row in object_rows(overrides_expr) {
             let name_str = row.key.slice();
             if name_str.is_empty() {
                 fail!(
@@ -2045,7 +2041,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
         parse_catalog(
             &mut lockfile.catalogs.default,
-            object_rows(&catalog_expr),
+            object_rows(catalog_expr),
             &mut sbuf!(lockfile),
             log,
             source,
@@ -2062,7 +2058,7 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         }
 
-        for catalog_row in object_rows(&catalogs_expr) {
+        for catalog_row in object_rows(catalogs_expr) {
             let catalog_name_str = catalog_row.key.slice();
             if catalog_name_str.is_empty() {
                 fail!(
@@ -2105,11 +2101,11 @@ pub(crate) fn parse_into_binary_lockfile(
         );
     };
 
-    let mut maybe_root_pkg: Option<Expr> = None;
+    let mut maybe_root_pkg: Option<JsonView<'_>> = None;
     // The (last) row of each name, in the order of `workspace_paths`.
     let mut member_rows: Vec<&JSON::E::PropertyJSON> = Vec::new();
 
-    for row in object_rows(&workspaces_obj) {
+    for row in object_rows(workspaces_obj) {
         if row.value.as_object().is_none() {
             fail!(
                 InvalidWorkspaceObject,
@@ -2117,7 +2113,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 b"Expected an object"
             );
         }
-        let value = Expr::from_json_value(&row.value, row.key_loc);
+        let value = JsonView::from_json_value(&row.value, row.key_loc);
 
         let path = row.key.slice();
 
@@ -2142,7 +2138,10 @@ pub(crate) fn parse_into_binary_lockfile(
             );
         };
 
-        let Some(name_hash) = name_expr.as_string_hash_utf8(StringBuilder::string_hash)? else {
+        let Some(name_hash) = name_expr
+            .as_utf8_string_literal()
+            .map(StringBuilder::string_hash)
+        else {
             fail!(
                 InvalidWorkspaceObject,
                 at_value(name_expr.loc),
@@ -2205,9 +2204,6 @@ pub(crate) fn parse_into_binary_lockfile(
     };
 
     {
-        // `Expr::get` returns by value and `as_utf8_string_literal` borrows
-        // from it, so keep the expr alive for the rest of the block instead
-        // of letting it drop at the end of the `if let` arm.
         let name_expr = root_pkg_exr.get(b"name");
         let maybe_name = if let Some(name) = &name_expr {
             match name.as_utf8_string_literal() {
@@ -2224,7 +2220,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
         let (off, len) = parse_append_dependencies(
             lockfile,
-            &root_pkg_exr,
+            root_pkg_exr,
             log,
             source,
             &mut optional_peers_buf,
@@ -2263,7 +2259,7 @@ pub(crate) fn parse_into_binary_lockfile(
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
         for row in &member_rows {
-            let value = Expr::from_json_value(&row.value, row.key_loc);
+            let value = JsonView::from_json_value(&row.value, row.key_loc);
 
             let mut pkg = Package {
                 resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
@@ -2283,7 +2279,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let (off, len) = parse_append_dependencies(
                 lockfile,
-                &value,
+                value,
                 log,
                 source,
                 &mut optional_peers_buf,
@@ -2295,7 +2291,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             pkg.dependencies = DependencySlice::new(off, len);
             pkg.resolutions = PackageIDSlice::new(off, len);
-            pkg.bin = parse_bin(&value, lockfile)?;
+            pkg.bin = parse_bin(value, lockfile)?;
 
             // there should be no duplicates
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
@@ -2317,7 +2313,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 );
             }
         }
-        let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.as_ref().map_or(&[], object_rows);
+        let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.map_or(&[], object_rows);
         pkg_map.map.reserve(pkg_rows.len());
 
         // find the bundle roots.
@@ -2570,11 +2566,11 @@ pub(crate) fn parse_into_binary_lockfile(
                                 b"Expected an object"
                             );
                         };
-                        let deps_expr = Expr::from_json_value(&pkg_info[deps_idx], key_loc);
+                        let deps_expr = JsonView::from_json_value(&pkg_info[deps_idx], key_loc);
 
                         let (off, len) = parse_append_dependencies(
                             lockfile,
-                            &deps_expr,
+                            deps_expr,
                             log,
                             source,
                             &mut optional_peers_buf,
@@ -2586,7 +2582,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                         pkg.dependencies = DependencySlice::new(off, len);
                         pkg.resolutions = PackageIDSlice::new(off, len);
-                        pkg.bin = parse_bin(&deps_expr, lockfile)?;
+                        pkg.bin = parse_bin(deps_expr, lockfile)?;
 
                         if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
@@ -2624,8 +2620,8 @@ pub(crate) fn parse_into_binary_lockfile(
                                 b"Expected an object"
                             );
                         }
-                        let bin_obj = Expr::from_json_value(&pkg_info[bin_obj_idx], key_loc);
-                        pkg.bin = parse_bin(&bin_obj, lockfile)?;
+                        let bin_obj = JsonView::from_json_value(&pkg_info[bin_obj_idx], key_loc);
+                        pkg.bin = parse_bin(bin_obj, lockfile)?;
                     }
                     _ => {}
                 }
@@ -3344,7 +3340,7 @@ fn dependency_resolution_failure(
 
 fn parse_append_dependencies(
     lockfile: &mut BinaryLockfile,
-    obj: &Expr,
+    obj: JsonView<'_>,
     log: &bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
@@ -3379,7 +3375,7 @@ fn parse_append_dependencies(
             );
         }
 
-        for (i, item) in array_items(&names).iter().enumerate() {
+        for (i, item) in array_items(names).iter().enumerate() {
             let Some(name_str) = item.as_str() else {
                 fail!(
                     InvalidPackageInfo,
@@ -3410,7 +3406,7 @@ fn parse_append_dependencies(
                 );
             }
 
-            for row in object_rows(&deps) {
+            for row in object_rows(deps) {
                 let name_str = row.key.slice();
 
                 let name_hash = StringBuilder::string_hash(name_str);
@@ -3489,7 +3485,7 @@ fn parse_append_dependencies(
 
     if let Some(member_rows) = member_rows {
         for row in member_rows {
-            let value = Expr::from_json_value(&row.value, row.key_loc);
+            let value = JsonView::from_json_value(&row.value, row.key_loc);
 
             let name_expr = value.get(b"name").unwrap();
             let name = name_expr

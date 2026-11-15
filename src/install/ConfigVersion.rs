@@ -1,7 +1,4 @@
-// The install crate's JSON layer routes through `bun_ast::js_ast`
-// (see `crate::bun_json`), not the full `bun_js_parser` AST. `from_expr` is
-// only ever fed nodes from the lockfile JSON parse, so type against that.
-use bun_ast::{Expr, ExprData};
+use bun_ast::JsonView;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -13,11 +10,8 @@ pub enum ConfigVersion {
 impl ConfigVersion {
     pub(crate) const CURRENT: ConfigVersion = ConfigVersion::V1;
 
-    pub(crate) fn from_expr(expr: &Expr) -> Option<ConfigVersion> {
-        let ExprData::ENumber(e_number) = &expr.data else {
-            return None;
-        };
-        let version: f64 = e_number.value();
+    pub(crate) fn from_json(expr: JsonView<'_>) -> Option<ConfigVersion> {
+        let version: f64 = expr.as_number()?;
 
         if version == 0.0 {
             return Some(ConfigVersion::V0);

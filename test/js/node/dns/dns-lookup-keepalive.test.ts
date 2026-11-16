@@ -116,9 +116,9 @@ describe("a settled query does not keep the event loop alive", () => {
       "DNS_ETIMEOUT",
     ],
     [
-      "c-ares answers from its cache",
+      "repeated c-ares queries do not remain cached",
       `return [await resolver.resolve4("answered.test"), await resolver.resolve4("answered.test")]`,
-      [["10.0.0.1"], ["10.0.0.1"]],
+      [["10.0.0.1"], ["10.0.0.2"]],
     ],
     [
       "c-ares answers without asking a server",

@@ -17,7 +17,6 @@
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
@@ -1038,7 +1037,7 @@ private:
     Configuration m_configuration;
     JSC::WriteBarrier<JSC::Unknown> m_initialImplementation;
     JSC::WriteBarrier<JSC::Unknown> m_spyOriginal;
-    JSC::Weak<JSObject> m_spyTarget;
+    JSC::WriteBarrier<JSObject> m_spyTarget;
     JSC::Identifier m_spyIdentifier;
     unsigned m_spyAttributes { 0 };
     uint8_t m_lists { 0 };
@@ -1061,6 +1060,7 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->m_recorded.invocationCallOrder);
     visitor.append(fn->m_recorded.state);
     visitor.append(fn->m_spyOriginal);
+    visitor.append(fn->m_spyTarget);
     visitor.append(fn->prototypeMock);
     visitor.append(fn->ownPrototype);
     visitor.append(fn->ownPrototypeParent);
@@ -1145,22 +1145,11 @@ static const HashTableValue JSMockFunctionPrototypeTableValues[] = {
 
 const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunction) };
 
-class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final { return FinalizeResult::KeepImpl; }
-};
-
-static SpyWeakHandleOwner& weakValueHandleOwner()
-{
-    static NeverDestroyed<SpyWeakHandleOwner> jscWeakValueHandleOwner;
-    return jscWeakValueHandleOwner;
-}
-
 void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes)
 {
     enter(List::Spies);
     this->isSpy = true;
-    m_spyTarget = JSC::Weak<JSObject>(target, &weakValueHandleOwner(), nullptr);
+    m_spyTarget.set(vm(), this, target);
     m_spyIdentifier = key;
     m_spyAttributes = attributes;
     if (original)

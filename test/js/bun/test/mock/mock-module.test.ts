@@ -2550,6 +2550,33 @@ describe.concurrent("resetModules", () => {
     );
   });
 
+  // The export is replaced in the module that declares it. Once the re-exporting module is forgotten, only the spy refers to its namespace.
+  test.each(["vi.resetModules()", "jest.resetModules()", `delete require.cache[require.resolve("./reexports.js")]`])(
+    "a spy on a re-exported binding is restored after %s and a garbage collection",
+    async forget => {
+      await expectFixturesToPass(
+        {
+          "declares.js": `export function x() { return "original"; } export const callX = () => x();`,
+          "reexports.js": `export { x } from "./declares.js";`,
+          "reexport.test.js": `
+            import { expect, jest, spyOn, test, vi } from "bun:test";
+            import { callX } from "./declares.js";
+
+            test("restores", () => {
+              const fn = (() => spyOn(require("./reexports.js"), "x").mockReturnValue("spied"))();
+              expect(callX()).toBe("spied");
+              ${forget};
+              Bun.gc(true);
+              fn.mockRestore();
+              expect(callX()).toBe("original");
+            });
+          `,
+        },
+        1,
+      );
+    },
+  );
+
   test.each(isolationFlags)("vi.doMock() of a package that is still loaded calls the factory lazily %j", async args => {
     await expectFixturesToPass(
       {

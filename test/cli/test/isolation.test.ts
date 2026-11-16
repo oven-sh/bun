@@ -3138,6 +3138,45 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Only the spy refers to the Proxy, so the restore has to find it after a garbage collection to report that it failed.
+  test.each([
+    [
+      "was revoked",
+      `const { proxy, revoke } = Proxy.revocable(target, {}); spyOn(proxy, "method"); revoke();`,
+      "TypeError",
+    ],
+    [
+      "has a trap that throws",
+      `spyOn(new Proxy(target, { defineProperty(...args) { if (isOver) throw new Error("the trap refuses"); return Reflect.defineProperty(...args); } }), "method");`,
+      "error: the trap refuses",
+    ],
+  ])(
+    "a spy that can't be restored is also reported once if its Proxy %s and is garbage collected",
+    async (_, install, error) => {
+      using dir = tempDir("spies-of-a-file", {
+        "a.test.ts": `
+          import { spyOn, test } from "bun:test";
+          globalThis.target = { method: () => "original" };
+          test("a", () => {
+            let isOver = false;
+            (() => { ${install} })();
+            isOver = true;
+            Bun.gc(true);
+          });
+        `,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
+        "c.test.ts": `import { test } from "bun:test"; test("c", () => {});`,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts", "./c.test.ts"]);
+      const lines = stderr.split("\n").filter(line => /^(\w*[Ee]rror: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+      expect(
+        lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "").replace(/^TypeError: .*/, "TypeError")),
+        stderr,
+      ).toEqual(["a.test.ts:", "(pass) a", error, "b.test.ts:", "(pass) b", "c.test.ts:", "(pass) c"]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test.each([
     [
       "a spy that is made",
@@ -3186,6 +3225,55 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       ["./a.test.ts", "./b.test.ts"],
     );
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  // Only the spy refers to the Proxy, and the mock is on the object behind it.
+  test("a spy put on through a Proxy is restored after its file, once the Proxy is garbage collected", async () => {
+    using dir = tempDir("spy-through-a-collected-proxy", {
+      "a.test.ts": `
+        import { expect, jest, spyOn, test } from "bun:test";
+        globalThis.target = { method: () => "original" };
+        test("a", () => {
+          (() => spyOn(new Proxy(target, {}), "method"))();
+          expect(jest.isMockFunction(target.method)).toBe(true);
+          Bun.gc(true);
+        });
+      `,
+      "b.test.ts": `import { expect, test } from "bun:test"; test("b", () => expect(target.method()).toBe("original"));`,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  test("a preload's spy put on through a Proxy is kept across files, once the Proxy is garbage collected", async () => {
+    using dir = tempDir("spy-of-a-preload-through-a-collected-proxy", {
+      "preload.ts": `
+        import { spyOn } from "bun:test";
+        globalThis.target = { method: () => "original" };
+        (() => spyOn(new Proxy(target, {}), "method").mockReturnValue("spied"))();
+      `,
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        test("a", () => {
+          Bun.gc(true);
+          expect(target.method()).toBe("spied");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("b", () => {
+          expect(target.method()).toBe("spied");
+          vi.restoreAllMocks();
+          expect(target.method()).toBe("original");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
   test("a preload's afterAll() sees the calls made in every file", async () => {

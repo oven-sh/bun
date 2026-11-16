@@ -589,6 +589,7 @@ public:
     // Only require() has loaded the data file that it was laid over, so an import finds the mock alone.
     bool replacesRequiredDataFile { false };
     bool isDisplacedByTestMock { false };
+    bool isOfHook { false };
     // Restored when the test file's mock ended. `bun test` keeps it displaced until the end of the test file.
     bool wasRestoredByTestMock { false };
     // The module of this preload mock is registered under the key of the original. See stashLoadedModule() and packagesToRestore.
@@ -4006,6 +4007,17 @@ static JSModuleMock* displacedPreloadMock(Zig::GlobalObject* globalObject, const
     return nullptr;
 }
 
+static bool isUncalledMockOfHookInPlaceOfFile(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier, const Vector<JSC::Strong<JSC::JSObject>>& displacedMocks)
+{
+    auto file = mock->isOfHook && !isBuiltinModuleKey(specifier) ? Bun::compiledModuleForPath(specifier) : std::nullopt;
+    if (!file || !JSC::AOT::isESModule(*file) || JSC::AOT::isMockLoadedInPreload(globalObject, *file) || JSC::AOT::evaluatedBy(globalObject, *file) == JSC::AOT::LoadedBy::Preload)
+        return false;
+    return std::ranges::all_of(displacedMocks, [&](const auto& displaced) {
+        auto* each = uncheckedDowncast<JSModuleMock>(displaced.get());
+        return each->specifier->tryGetValue().data != specifier || (each->isFromPreload && each->state == JSModuleMock::State::NotCalled && !each->originalExports && !each->originalCommonJSExports);
+    });
+}
+
 // Mirrors packagesToRestore in unmockModule(), for the module of a preload mock.
 static JSModuleMock* findPreloadMockToRestore(Zig::GlobalObject* globalObject, JSModuleMock* ended, const String& specifier)
 {
@@ -5963,6 +5975,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (!mock->isFromPreload)
         globalObject->onLoadPlugins.mockingModules.add(callerPath(vm, callframe));
 #if ENABLE(AOT)
+    mock->isOfHook = mock->isFromPreload && vm.hasCompiledCode() && JSC::AOT::hasBegunTestFile(globalObject);
     std::optional<size_t> remembered;
     if (vm.hasCompiledCode() && !mock->isFromPreload)
         remembered = recordBodyMock(globalObject, callframe, function);
@@ -7612,10 +7625,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
 
     for (auto& displaced : plugins.displacedPreloadModuleMocks)
         giveLoadedModuleBackToPreloadModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(displaced.get())->specifier->tryGetValue().data);
-    for (auto& displaced : std::exchange(plugins.displacedPreloadModuleMocks, {})) {
+    auto displacedMocks = std::exchange(plugins.displacedPreloadModuleMocks, {});
+#if ENABLE(AOT)
+    Vector<JSModuleMock*, 4> registeredAgain;
+#endif
+    for (auto& displaced : displacedMocks) {
         auto* mock = uncheckedDowncast<JSModuleMock>(displaced.get());
         String specifier = mock->specifier->tryGetValue().data;
 #if ENABLE(AOT)
+        auto* mockOfHook = globalObject->vm().hasCompiledCode() ? registeredModuleMock(globalObject, specifier) : nullptr;
+        if (mockOfHook && mockOfHook != mock && !registeredAgain.contains(mockOfHook) && isUncalledMockOfHookInPlaceOfFile(globalObject, mock, specifier, displacedMocks)) {
+            unmockModule(globalObject, mockOfHook, specifier, evict);
+            if (scope.exception()) [[unlikely]]
+                (void)scope.tryClearException();
+        }
+        registeredAgain.append(mock);
         // In `bun test` a restored original stays registered, and the next mock change evicts its importers.
         if (auto file = globalObject->vm().hasCompiledCode() && retainedCompiledFiles.contains(specifier) ? Bun::compiledModuleForPath(specifier) : std::nullopt) {
             JSC::AOT::reportKeptImporters(globalObject, *file);

@@ -287,8 +287,8 @@ impl HTTPRequestBody {
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
-        if let Some(form_data) = jsc::DOMFormData::from_js(value) {
-            return match Blob::from_dom_form_data(cx.global(), form_data) {
+        if let Some(form_data) = jsc::DOMFormData::from_js(&value) {
+            return match Blob::from_dom_form_data(cx.global(), &form_data) {
                 Ok(blob) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
                 Err(err) => Err(cx
                     .global()

@@ -188,25 +188,12 @@ impl BodyAbortListener {
 
 use crate::generated_bindgen::response::js_Response as js;
 
-#[inline]
-pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
-    js::from_js(value).map(|p| p.as_ptr())
-}
-
-/// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
-#[inline]
-pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
-    from_js(value)
-        .and_then(core::ptr::NonNull::new)
-        .map(bun_ptr::ParentRef::from)
-}
-
 impl bun_jsc::JsClass for Response {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        from_js(value)
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         Response::to_js(RefPtr::new(self), global)
@@ -261,9 +248,9 @@ impl Default for Response {
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
@@ -1018,9 +1005,6 @@ impl Response {
         init: JSValue,
     ) -> JsResult<RefPtr<Response>> {
         if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
             if let Some(blob) = body.as_class_ref::<Blob>() {
                 if blob.is_s3() {
                     if !init.is_undefined_or_null() {
@@ -1305,7 +1289,7 @@ impl Init {
             return Ok(None);
         }
 
-        match Pristine::of(response_init) {
+        match Pristine::of(&response_init) {
             Pristine::Request(req) => {
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;

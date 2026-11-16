@@ -528,9 +528,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         debug_assert!(
             Some(ptr.cast::<c_void>())
                 == if SSL {
-                    js_TLSSocket::from_js(value).map(|p| p.as_ptr().cast())
+                    js_TLSSocket::from_js(&value).map(|p| p.as_ptr().cast())
                 } else {
-                    js_TCPSocket::from_js(value).map(|p| p.as_ptr().cast())
+                    js_TCPSocket::from_js(&value).map(|p| p.as_ptr().cast())
                 },
             "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
         );

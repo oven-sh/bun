@@ -4,8 +4,8 @@ use core::ptr::NonNull;
 
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
-use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JsCell, JsClass as _, WrapperGuard};
 use bun_ptr::{AliasableBox, AnyRefCounted, RefPtr};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
@@ -297,25 +297,6 @@ impl<const SSL: bool, const DBG: bool, const MUX: bool> AnyRefCounted
         // SAFETY: caller contract.
         unsafe { (*this).ref_count.get() == 1 }
     }
-}
-
-// `Response` doesn't yet implement `JsClass` (codegen-gated). Route the
-// downcast through the codegen stub so the call sites type-check; the stub
-// returns `None` until codegen lands.
-//
-/// The C++-owned cell pointer for `value`, or `None` if it is not a `Response`.
-///
-/// Returns a raw pointer rather than `&mut Response` so it keeps the wrapper
-/// allocation's provenance: `RequestContext::set_response` stores it in a
-/// `WeakPtr<Response>`, which outlives any reborrow and is read again after
-/// the Response has been written through other pointers.
-///
-/// Callers must keep `value` GC-rooted for as
-/// long as they use the pointer, so the JSC-owned allocation outlives it, and
-/// must not form two overlapping `&mut Response` from it.
-#[inline]
-fn as_response(value: JSValue) -> Option<*mut Response> {
-    response::from_js(value).map(|p| p.cast::<Response>())
 }
 
 /// Reports an error that no `error()` handled. The server keeps running, so a
@@ -630,10 +611,9 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             }
             None => value,
         };
-        if let Some(response) = response::from_js_ref(value) {
-            Self::cancel_unread_body(response.get(), global_this);
+        if let Some(response) = Response::from_js(&value) {
+            Self::cancel_unread_body(&response, global_this);
         }
-        value.ensure_still_alive();
     }
 
     /// [`Self::discard_response_body`] for a request this context can no longer respond to.
@@ -697,10 +677,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         }
 
         if let Some((error, status)) = self.deferred_error.replace(None) {
-            let sendable = as_response(value).is_some_and(|response| {
-                // SAFETY: `response` is the live cell pointer; `value` is rooted by the caller's frame.
-                HTTPStatusText::is_sendable(unsafe { (*response).status_code() })
-            });
+            let sendable = Response::from_js(&value)
+                .is_some_and(|response| HTTPStatusText::is_sendable(response.status_code()));
             if !sendable {
                 let error_js = error.get().unwrap_or(JSValue::UNDEFINED);
                 self.finish_running_error_handler(error_js, status);
@@ -713,13 +691,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return;
         }
 
-        let Some(response) = as_response(value) else {
+        let Some(response) = Response::from_js(&value) else {
             self.render_missing_invalid_response(value);
             return;
         };
-        // SAFETY: `response` is the live cell pointer; `value` is rooted by the
-        // caller's frame.
-        if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
+        if self.reject_unsendable_response(response.status_code()) {
             return;
         }
         self.response_root.set_rooted(value, global_this);
@@ -735,8 +711,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return;
         }
 
-        // SAFETY: `response` is the live, rooted cell pointer.
-        unsafe { self.render(response) };
+        self.render(response);
     }
 
     #[inline]
@@ -2367,7 +2342,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
     fn do_render_head_response(pair: &HeaderResponsePair<'_, SSL_ENABLED, DEBUG_MODE, MUX>) {
         let this = pair.this;
-        let response_ptr = pair.response;
+        let response = &pair.response;
         if this.resp.get().is_none() {
             return;
         }
@@ -2376,11 +2351,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
 
         let resp = this.resp.get().expect("infallible: resp bound");
-        // SAFETY: `response_ptr` is the live, GC-rooted cell pointer the
-        // constructing frame put in the pair; it carries the cell's provenance.
-        unsafe { this.set_response(response_ptr) };
-        // SAFETY: sole `&mut Response` for this cell in this frame.
-        let response = unsafe { &mut *response_ptr };
+        this.set_response(response);
 
         // `render` drops the body for a null-body status on GET, so HEAD must
         // not derive framing from that body (or the user headers) either
@@ -2571,9 +2542,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return;
         }
 
-        if let Some(response) = as_response(response_value) {
-            // SAFETY: `response` is the live, rooted cell pointer.
-            if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+        if let Some(response) = Response::from_js(&response_value) {
+            if ctx.reject_unsendable_response(response.status_code()) {
                 return;
             }
             ctx.response_root.clear();
@@ -2587,8 +2557,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 }
                 return;
             } else {
-                // SAFETY: `response` is the live, rooted cell pointer.
-                unsafe { ctx.protect_for_body_and_render(response_value, response) };
+                ctx.protect_for_body_and_render(response);
             }
             return;
         }
@@ -2621,13 +2590,12 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     }
-                    let Some(response) = as_response(fulfilled_value) else {
+                    let Some(response) = Response::from_js(&fulfilled_value) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     };
 
-                    // SAFETY: `response` is the live, rooted cell pointer.
-                    if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+                    if ctx.reject_unsendable_response(response.status_code()) {
                         return;
                     }
 
@@ -2642,8 +2610,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                         }
                         return;
                     }
-                    // SAFETY: `response` is the live, rooted cell pointer.
-                    unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
+                    ctx.protect_for_body_and_render(response);
                     return;
                 }
                 jsc::PromiseResult::Rejected(err) => {
@@ -3507,21 +3474,17 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                     } else if let Some(promise) = result.as_any_promise() {
                         self.process_on_error_promise(result, promise, value, status);
                         return;
-                    // `result` is GC-rooted by `_keep` (EnsureStillAlive)
-                    // across the render() call.
-                    } else if let Some(response) = as_response(result) {
+                    } else if let Some(response) = Response::from_js(&result) {
                         // An unsendable Response from the error handler itself
                         // falls through to the default error page below.
-                        // SAFETY: `response` is the live, rooted cell pointer.
-                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                        if HTTPStatusText::is_sendable(response.status_code()) {
                             // A file or streaming body defers `render_metadata`
                             // past this frame, where `_keep` is the only root,
                             // so root the Response the way the async error
                             // path does or the deferred flush can read a
                             // collected weakref.
                             self.response_root.clear();
-                            // SAFETY: as above.
-                            unsafe { self.protect_for_body_and_render(result, response) };
+                            self.protect_for_body_and_render(response);
                             return;
                         }
                     }
@@ -3558,24 +3521,18 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 ); // TODO: properly propagate exception upwards
             }
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
-                // `fulfilled_value` is rooted via ensure_still_alive() below for
-                // as long as `response` is used.
-                let Some(response) = as_response(fulfilled_value) else {
+                let Some(response) = Response::from_js(&fulfilled_value) else {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 };
 
-                // SAFETY: `response` is the live, rooted cell pointer.
-                if !HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                if !HTTPStatusText::is_sendable(response.status_code()) {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 }
 
                 ctx.response_root.clear();
-                fulfilled_value.ensure_still_alive();
-
-                // SAFETY: `response` is the live, rooted cell pointer.
-                unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
+                ctx.protect_for_body_and_render(response);
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
@@ -3771,26 +3728,19 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     /// Replace the tracked Response. Drops the previous weak ref (if any)
     /// before taking a new one so the old Response's allocation can be
     /// freed once its own strong refs go to zero.
-    ///
-    /// # Safety
-    /// `response` must be the live JS wrapper's cell pointer (as returned by
-    /// [`as_response`]), carrying the allocation's provenance — `WeakPtr` keeps
-    /// it past any reborrow.
-    unsafe fn set_response(&self, response: *mut Response) {
-        if self.response_weakref.with_mut(|weak| weak.get()) == NonNull::new(response) {
+    fn set_response(&self, response: &WrapperGuard<'_, Response>) {
+        let ptr = response.as_ptr();
+        if self.response_weakref.with_mut(|weak| weak.get()) == NonNull::new(ptr) {
             return;
         }
-        // SAFETY: caller contract — `response` is live and root-provenanced.
+        // SAFETY: every caller got the guard from `from_js`, so this is the pointer of the ref that the wrapper holds.
         self.response_weakref
-            .set(unsafe { response::WeakRef::init_ref(response) });
+            .set(unsafe { response::WeakRef::init_ref(ptr) });
         let global_this = self.server().global_this();
-        // SAFETY: caller contract — `response` is live.
-        crate::dispatch::fold(unsafe { (*response).prepare_headers_for_send(global_this) });
+        crate::dispatch::fold(response.prepare_headers_for_send(global_this));
     }
 
-    /// # Safety
-    /// Same contract as [`Self::set_response`].
-    pub(crate) unsafe fn render(&self, response: *mut Response) {
+    fn render(&self, response: WrapperGuard<'_, Response>) {
         ctx_log!("render");
         self.forbid_upgrade();
 
@@ -3808,11 +3758,9 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return;
         }
 
-        // SAFETY: caller contract.
-        unsafe { self.set_response(response) };
+        self.set_response(&response);
 
-        // SAFETY: caller contract — `response` is live.
-        if HTTPStatusText::is_null_body(unsafe { (*response).status_code() }) {
+        if HTTPStatusText::is_null_body(response.status_code()) {
             self.do_render_null_body_status();
             return;
         }
@@ -3824,15 +3772,9 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     /// streaming body is still being sent after this frame returns, so for
     /// those `response_root` roots the wrapper first; in-memory bodies leave
     /// it unrooted.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::render`].
-    unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
-        // SAFETY: caller contract.
-        unsafe { self.set_response(response) };
-        // SAFETY: caller contract: `response` is live. This is the only borrow
-        // of its body, and it ends before `render` reborrows the cell.
-        let body_value = unsafe { (*response).get_body_value() };
+    fn protect_for_body_and_render(&self, response: WrapperGuard<'_, Response>) {
+        self.set_response(&response);
+        let body_value = response.get_body_value();
         let sent_after_return = match body_value {
             Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
             Body::Value::Locked(_) => true,
@@ -3840,10 +3782,9 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         };
         if sent_after_return {
             self.response_root
-                .set_rooted(response_value, self.server().global_this());
+                .set_rooted(response.to_js(), self.server().global_this());
         }
-        // SAFETY: caller contract.
-        unsafe { self.render(response) };
+        self.render(response);
     }
 
     pub(crate) fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
@@ -4346,10 +4287,7 @@ struct StreamPair<'a, const SSL: bool, const DBG: bool, const MUX: bool> {
 
 struct HeaderResponsePair<'a, const SSL: bool, const DBG: bool, const MUX: bool> {
     pub this: &'a RequestContext<SSL, DBG, MUX>,
-    /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
-    /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
-    /// outlives any reborrow. The cell is GC-rooted by the constructing frame.
-    pub(crate) response: *mut Response,
+    pub(crate) response: WrapperGuard<'a, Response>,
 }
 
 struct PathnameFormatter<'a, const SSL: bool, const DBG: bool, const MUX: bool> {

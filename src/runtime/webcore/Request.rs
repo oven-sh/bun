@@ -33,19 +33,19 @@ use bun_ptr::weak_ptr::WeakPtrData;
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
 impl bun_jsc::JsClass for Request {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js::from_js(value).map(|p| p.as_ptr())
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         Request::to_js(RefPtr::new(self), global)
@@ -56,8 +56,7 @@ impl bun_jsc::JsClass for Request {
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
-/// field layout is unchanged. `method`/`flags`/`body`/
-/// `weak_ptr_data` are only written during construction or via raw-ptr
+/// field layout is unchanged. `method`/`flags`/`body` are only written during construction or via raw-ptr
 /// `destroy`, so stay plain.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -841,22 +840,20 @@ impl Request {
 
 /// A Request or Response that nothing has tampered with is copied from its fields, not through its getters.
 pub(crate) enum Pristine<'a> {
-    Request(&'a Request),
-    Response(&'a Response),
+    Request(bun_jsc::WrapperGuard<'a, Request>),
+    Response(bun_jsc::WrapperGuard<'a, Response>),
     No,
 }
 
-impl Pristine<'_> {
+impl<'a> Pristine<'a> {
     /// `value` is an object.
-    pub(crate) fn of(value: JSValue) -> Self {
+    pub(crate) fn of(value: &'a JSValue) -> Self {
         if value.js_type() == bun_jsc::JSType::DOMWrapper {
             if let Some(request) = value.as_direct::<Request>() {
-                // SAFETY: the live payload of the wrapper, which the caller's argument keeps alive.
-                return Self::Request(unsafe { &*request });
+                return Self::Request(request);
             }
             if let Some(response) = value.as_direct::<Response>() {
-                // SAFETY: as above.
-                return Self::Response(unsafe { &*response });
+                return Self::Response(response);
             }
         }
         Self::No
@@ -925,7 +922,7 @@ impl Request {
         let input_type = input.js_type();
         let mut url = BunString::EMPTY;
         let input = if input_type.is_string_like()
-            || bun_jsc::DOMURL::cast_(input, global.vm()).is_some()
+            || bun_jsc::DOMURL::cast_(&input, global.vm()).is_some()
         {
             url = BunString::from_js(input, global)?;
             None
@@ -939,7 +936,7 @@ impl Request {
         let init = init.is_object().then_some(init);
 
         if let (Some(only), None) | (None, Some(only)) = (init, input)
-            && let Pristine::Request(request) = Pristine::of(only)
+            && let Pristine::Request(request) = Pristine::of(&only)
         {
             return request.cloned(cx, (!url.is_empty()).then_some(url));
         }
@@ -952,9 +949,9 @@ impl Request {
         };
 
         let body = sources.object_member(|object| {
-            let copy = match Pristine::of(object) {
-                Pristine::Request(request) => copy_body(request, cx)?,
-                Pristine::Response(response) => copy_body(response, cx)?,
+            let copy = match Pristine::of(&object) {
+                Pristine::Request(request) => copy_body(&*request, cx)?,
+                Pristine::Response(response) => copy_body(&*response, cx)?,
                 Pristine::No => None,
             };
             if copy.is_some() {
@@ -975,7 +972,7 @@ impl Request {
 
         if url.is_empty() {
             let member = sources.object_member(|object| {
-                if let Pristine::Response(response) = Pristine::of(object)
+                if let Pristine::Response(response) = Pristine::of(&object)
                     && !response.url().is_empty()
                 {
                     return Ok(Some(response.url().clone()));
@@ -1003,7 +1000,7 @@ impl Request {
             })
         })?;
 
-        let headers = sources.object_member(|object| match Pristine::of(object) {
+        let headers = sources.object_member(|object| match Pristine::of(&object) {
             Pristine::Request(request) => request.clone_headers(global),
             Pristine::Response(response) => response.clone_init_headers(global),
             Pristine::No => match object.fast_get(global, bun_jsc::BuiltinName::Headers)? {
@@ -1012,7 +1009,7 @@ impl Request {
             },
         })?;
 
-        let method = sources.object_member(|object| match Pristine::of(object) {
+        let method = sources.object_member(|object| match Pristine::of(&object) {
             Pristine::Request(request) => Ok(Some(request.method.clone())),
             // A Response has no `method` property, so as `init` it can't set one.
             Pristine::Response(response) => {
@@ -1025,19 +1022,19 @@ impl Request {
         })?;
 
         let mut flags = Flags::default();
-        if let Some(redirect) = sources.object_member(|object| match Pristine::of(object) {
+        if let Some(redirect) = sources.object_member(|object| match Pristine::of(&object) {
             Pristine::Request(request) => Ok(Some(request.flags.redirect)),
             _ => object.get_optional_enum::<FetchRedirect>(global, "redirect"),
         })? {
             flags.redirect = redirect;
         }
-        if let Some(cache) = sources.object_member(|object| match Pristine::of(object) {
+        if let Some(cache) = sources.object_member(|object| match Pristine::of(&object) {
             Pristine::Request(request) => Ok(Some(request.flags.cache)),
             _ => object.get_optional_enum::<FetchCacheMode>(global, "cache"),
         })? {
             flags.cache = cache;
         }
-        if let Some(mode) = sources.object_member(|object| match Pristine::of(object) {
+        if let Some(mode) = sources.object_member(|object| match Pristine::of(&object) {
             Pristine::Request(request) => Ok(Some(request.flags.mode)),
             _ => object.get_optional_enum::<FetchRequestMode>(global, "mode"),
         })? {

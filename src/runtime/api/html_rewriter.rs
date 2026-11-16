@@ -387,7 +387,7 @@ impl HTMLRewriter {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let (this_value, input) = (this_value.to_js(), input.to_js());
-        if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
+        if let Some(response) = js_Response::from_js(&input) {
             // An already-failed body surfaces its stored upstream error (abort
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
@@ -446,10 +446,7 @@ impl HTMLRewriter {
             if let Some(err) = out_response_value.to_error() {
                 return Err(cx.global().throw_value(err));
             }
-            out_response_value.ensure_still_alive();
-            let Some(out_response) =
-                js_Response::from_js(out_response_value).map(BackRef::<Response>::from)
-            else {
+            let Some(out_response) = js_Response::from_js(&out_response_value) else {
                 return Ok(out_response_value);
             };
 

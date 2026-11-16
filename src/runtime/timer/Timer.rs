@@ -252,11 +252,8 @@ impl All {
         );
         if is_due_when_idle {
             let object =
-                TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
-            // SAFETY: the wrapper is pinned by the heap that holds the timer.
-            unsafe { &(*object).event_loop_timer }
-                .is_due_when_idle
-                .set(true);
+                TimeoutObject::from_js(&timeout).expect("TimeoutObject::init returns its wrapper");
+            object.event_loop_timer.is_due_when_idle.set(true);
         }
         Ok(timeout)
     }
@@ -423,20 +420,15 @@ impl All {
             if let Some(timeout) = timer_id_value.as_class_ref::<TimeoutObject>() {
                 // clearImmediate should be a noop if anything other than an Immediate is passed to it.
                 if kind != Kind::SetImmediate {
-                    break 'brk &timeout.internals;
-                } else {
-                    return Ok(());
+                    timeout.internals.cancel(vm);
                 }
             } else if let Some(immediate) = timer_id_value.as_class_ref::<ImmediateObject>() {
                 // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
                 if kind == Kind::SetImmediate {
-                    break 'brk &immediate.internals;
-                } else {
-                    return Ok(());
+                    immediate.internals.cancel(vm);
                 }
-            } else {
-                return Ok(());
             }
+            return Ok(());
         };
 
         timer.cancel(vm);
@@ -630,9 +622,11 @@ pub(crate) fn fake_request_animation_frame_export(
         JSValue::js_number((now_ns + to_next_frame * NS_PER_MS) as f64 / NS_PER_MS as f64),
         clock,
     );
-    let timeout = TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
-    // SAFETY: the wrapper is pinned by the heap that holds the timer.
-    unsafe { (*timeout).internals.to_primitive() }.map(JSValue::js_number_from_uint64)
+    TimeoutObject::from_js(&timeout)
+        .expect("TimeoutObject::init returns its wrapper")
+        .internals
+        .to_primitive()
+        .map(JSValue::js_number_from_uint64)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__queueTick, c)

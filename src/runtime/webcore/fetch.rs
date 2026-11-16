@@ -435,15 +435,11 @@ fn fetch_impl(
         break 'brk None;
     };
 
-    let request: Option<&Request> = if first_arg.is_cell() {
-        // SAFETY: `first_arg`, which the call frame keeps alive, owns the Request.
-        first_arg.as_direct::<Request>().map(|p| unsafe { &*p })
-    } else {
-        None
-    };
+    let request = first_arg.as_direct::<Request>();
+    let request = request.as_deref();
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
+    let url_str_optional = if !first_arg.is::<Request>() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None

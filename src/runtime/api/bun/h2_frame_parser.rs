@@ -69,11 +69,9 @@ enum Link<const SSL: bool> {
 }
 
 impl<const SSL: bool> Link<SSL> {
-    fn new(socket: *mut NewSocket<SSL>, h2: RefPtr<H2FrameParser>) -> Self {
-        // BACKREF: the caller's JS socket holds a ref on it.
-        let socket = bun_ptr::BackRef::from(NonNull::new(socket).expect("non-null socket"));
+    fn new(socket: &NewSocket<SSL>, h2: RefPtr<H2FrameParser>) -> Self {
         if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
-            Self::Callback(socket)
+            Self::Callback(bun_ptr::BackRef::new(socket))
         } else {
             Self::WriteOnly(socket.ref_guard())
         }
@@ -4083,17 +4081,17 @@ impl H2FrameParser {
     pub(crate) fn set_native_socket(&self, _: &mut JsScope<'_>, socket: JsLocal<'_>) {
         let socket = socket.to_js();
         self.detach_native_socket();
-        if let Some(socket) = TLSSocket::from_js(socket) {
+        if let Some(socket) = TLSSocket::from_js(&socket) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
             self.native_socket
-                .attach(Attachment::Tls(Link::new(socket, self.ref_guard())));
+                .attach(Attachment::Tls(Link::new(&socket, self.ref_guard())));
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
-        } else if let Some(socket) = TCPSocket::from_js(socket) {
+        } else if let Some(socket) = TCPSocket::from_js(&socket) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
             self.native_socket
-                .attach(Attachment::Tcp(Link::new(socket, self.ref_guard())));
+                .attach(Attachment::Tcp(Link::new(&socket, self.ref_guard())));
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
@@ -4189,17 +4187,17 @@ impl H2FrameParser {
         Handlers::install(global_object, &options.handlers, js_value);
 
         let socket_js = options.native.to_js();
-        if let Some(socket) = TLSSocket::from_js(socket_js) {
+        if let Some(socket) = TLSSocket::from_js(&socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
             this_ref
                 .native_socket
-                .attach(Attachment::Tls(Link::new(socket, this_ref.ref_guard())));
+                .attach(Attachment::Tls(Link::new(&socket, this_ref.ref_guard())));
             let _ = this_ref.flush();
-        } else if let Some(socket) = TCPSocket::from_js(socket_js) {
+        } else if let Some(socket) = TCPSocket::from_js(&socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
             this_ref
                 .native_socket
-                .attach(Attachment::Tcp(Link::new(socket, this_ref.ref_guard())));
+                .attach(Attachment::Tcp(Link::new(&socket, this_ref.ref_guard())));
             let _ = this_ref.flush();
         }
         let settings_js = options.settings.to_js();

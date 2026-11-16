@@ -7446,6 +7446,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
     if (globalObject->vm().hasCompiledCode()) {
         Bun::clearSavedResolutions(globalObject);
         JSC::AOT::didBeginTestFile(globalObject);
+        JSC::AOT::releaseEndedTestFiles(globalObject);
     }
 #else
     UNUSED_PARAM(globalObject);
@@ -9192,8 +9193,15 @@ JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject* globalObject, JSC::
         return nullptr;
     auto resolution = moduleRecord->resolveExport(globalObject, name);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!resolution.isLiveExport(vm))
-        return nullptr;
+    if (!resolution.isLiveExport(vm)) {
+        JSObject* behind = JSC::AOT::mockBehindExport(moduleNamespace, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* mock = behind ? dynamicDowncast<Zig::JSModuleMock>(behind) : nullptr;
+        JSObject* exports = mock ? mock->exports.get() : nullptr;
+        bool holdsName = exports && exports->hasProperty(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return holdsName ? exports : nullptr;
+    }
     JSObject* source = resolution.moduleRecord->liveExportsSource();
     auto* mock = source ? dynamicDowncast<Zig::JSModuleMock>(source) : nullptr;
     return mock ? mock->exports.get() : nullptr;

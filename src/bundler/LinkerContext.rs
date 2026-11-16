@@ -1738,6 +1738,7 @@ impl<'a> LinkerContext<'_, 'a> {
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
+            never_transpiled_again: self.options.compile_mode.is_executable(),
 
             to_esm_ref,
             to_commonjs_ref,

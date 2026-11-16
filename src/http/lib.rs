@@ -3697,11 +3697,11 @@ impl<'a> HTTPClient<'a> {
         // `start` can fail synchronously, which frees the AsyncHTTP that embeds `*self`.
     }
 
-    pub(crate) fn handle_on_data_headers<const IS_SSL: bool>(
+    /// `None` until the head is complete.
+    fn parse_response_head<'d>(
         &mut self,
-        mut incoming_data: &[u8],
-        socket: HttpSocket<IS_SSL>,
-    ) {
+        mut incoming_data: &'d [u8],
+    ) -> bun_http1::Result<Option<(Response, &'d [u8])>> {
         bun_core::scoped_log!(
             fetch,
             "handleOnDataHeader data: {}",
@@ -3721,18 +3721,27 @@ impl<'a> HTTPClient<'a> {
         if self.allow_retry && self.state.response_parser.received_len() == 0 {
             incoming_data = strings::trim_left(incoming_data, b"0\r\n");
         }
-        let fed = self.state.response_parser.feed(incoming_data, options);
-        let (mut response, to_read) = match fed {
-            Ok(Some(parsed)) => parsed,
-            // Does not re-arm the idle timer; see [`IDLE_TIMEOUT_SECONDS`].
-            Ok(None) => return,
+        match self.state.response_parser.feed(incoming_data, options) {
             // Too short for a reply: the end of the previous one, from a peer that may close next.
             Err(bun_http1::Error::MalformedHead)
                 if self.state.response_parser.received_len() < b"HTTP/1.1 200\r\n\r\n".len()
                     && self.retries_on_close() =>
             {
-                return;
+                Ok(None)
             }
+            fed => fed,
+        }
+    }
+
+    pub(crate) fn handle_on_data_headers<const IS_SSL: bool>(
+        &mut self,
+        incoming_data: &[u8],
+        socket: HttpSocket<IS_SSL>,
+    ) {
+        let (mut response, to_read) = match self.parse_response_head(incoming_data) {
+            Ok(Some(parsed)) => parsed,
+            // Does not re-arm the idle timer; see [`IDLE_TIMEOUT_SECONDS`].
+            Ok(None) => return,
             Err(e) => {
                 self.close_and_fail::<IS_SSL>(e.into(), socket);
                 return;

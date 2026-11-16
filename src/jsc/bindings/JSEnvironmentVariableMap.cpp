@@ -13,7 +13,6 @@
 #include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSCast.h>
-#include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -50,11 +49,14 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
-    JSC::HeapIterationScope iterationScope(vm.heap);
-    vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
+    // HeapIterationScope stops every allocator, and resuming one leaves the address of its next cell on the stack.
+    auto& space = vm.heap.dateInstanceSpace;
+    space.forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
+    space.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
         static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
         return IterationStatus::Continue;
     });
+    space.forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
 }
 
 void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)

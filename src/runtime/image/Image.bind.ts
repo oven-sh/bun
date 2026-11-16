@@ -38,6 +38,8 @@ export const Image = b.class({
     jpeg: chainableWithOptions,
     metadata: terminal,
     modulate: chainableWithOptions,
+    /** Post-pipeline RGBA8 plane, no encode: `{ data, width, height, channels: 4 }`. */
+    pixels: terminal,
     /** ThumbHash rendered as a PNG data: URL of at most 32px. */
     placeholder: { ...settlingWith(table.string), args: { format: b.any }, length: 0 },
     png: chainableWithOptions,

@@ -103,3 +103,11 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+{
+  const px = await new Bun.Image("photo.jpg").resize(224, 224).pixels();
+  tsd.expectType(px).is<Bun.Image.Pixels>();
+  tsd.expectType(px.data).is<Uint8Array<ArrayBuffer>>();
+  tsd.expectType(px.channels).is<4>();
+  tsd.expectType(px.width).is<number>();
+}

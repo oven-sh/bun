@@ -190,7 +190,7 @@ What you have to trust:
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque`**, which is `asm!` without an instruction.
 - **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
-- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. The loops do not depend on two reads giving the same value.
+- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. `copy_from_shared` and `copy_to_shared` jump to `memmove` where LLVM does not see it, and rely on it to store nothing but what it has loaded. Miri runs loops over bytes in place of all this. The loops do not depend on two reads giving the same value.
 
 ## What the ops avoid
 

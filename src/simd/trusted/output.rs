@@ -1,5 +1,5 @@
 //! Output to memory that may be uninitialized.
-use crate::SharedOutU8;
+use crate::{SharedOutU8, SharedU8, copy_to_shared};
 use alloc::vec::Vec;
 use core::cell::Cell;
 use core::mem::MaybeUninit;
@@ -173,6 +173,13 @@ impl<'a, T: Copy> Out<'a, T> {
         let len = self.len().min(64 / size_of::<T>());
         Writer { all: self.0, len }.finish()
     }
+}
+
+/// As many bytes as fit.
+#[inline(always)]
+pub fn copy_from_shared<'a>(from: &[SharedU8], Out(all): Out<'a, u8>) -> &'a mut [u8] {
+    let len = copy_to_shared(from, Out(&mut *all).into_shared());
+    Writer { all, len }.finish()
 }
 
 /// Fills an `Out` from the start.

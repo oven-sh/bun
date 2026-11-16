@@ -498,11 +498,15 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
     if input.is_empty() || to_len == 0 {
         return Ok(0);
     }
-    if matches!(encoding_from_u8(ENCODING), Encoding::Hex | Encoding::Utf8) {
+    let encoding = encoding_from_u8(ENCODING);
+    if let Encoding::Buffer | Encoding::Latin1 | Encoding::Hex | Encoding::Utf8 = encoding {
         // SAFETY: forwarded from this fn's contract. `SharedOutU8` has the layout of `u8`.
         let to = unsafe { bun_core::ffi::slice(to.cast::<SharedOutU8>(), to_len) };
-        if matches!(encoding_from_u8(ENCODING), Encoding::Hex) {
+        if encoding == Encoding::Hex {
             return Ok(kernels::decode_hex_to_shared(input.as_chunks().0, to));
+        }
+        if encoding != Encoding::Utf8 {
+            return Ok(bun_simd::copy_to_shared(input, to));
         }
         let r = strings::copy_latin1_into_shared_utf8(to, input);
         let mut written = r.written;
@@ -521,12 +525,6 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
     // TODO: increase temporary buffer size for larger amounts of data
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Buffer | Encoding::Latin1 => {
-            let written = input.len().min(to.len());
-            to[..written].copy_from_slice(&input[..written]);
-
-            Ok(written)
-        }
         Encoding::Ascii => {
             let written = input.len().min(to.len());
 
@@ -569,7 +567,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
             Ok(written)
         }
 
-        Encoding::Hex | Encoding::Utf8 => unreachable!(),
+        Encoding::Buffer | Encoding::Latin1 | Encoding::Hex | Encoding::Utf8 => unreachable!(),
 
         Encoding::Base64 | Encoding::Base64url => {
             let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
@@ -613,26 +611,23 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
         return Ok(0);
     }
 
+    // SAFETY: forwarded from this fn's contract. `SharedOutU8` has the layout of `u8`.
+    let output = unsafe { bun_core::ffi::slice(to.cast::<SharedOutU8>(), to_len) };
+
     // string is already encoded, just need to copy the data
-    if matches!(
-        encoding_from_u8(ENCODING),
-        Encoding::Ucs2 | Encoding::Utf16le
-    ) {
-        let fit = (len * 2).min(to_len);
-        let written = if ALLOW_PARTIAL_WRITE { fit } else { fit & !1 };
-        // SAFETY: both ranges have `written` bytes. They may overlap, so neither becomes a slice.
-        unsafe { core::ptr::copy(input.cast::<u8>(), to, written) };
-        return Ok(written);
+    if let Encoding::Ucs2 | Encoding::Utf16le = encoding_from_u8(ENCODING) {
+        // SAFETY: the same for `SharedU8`, which may overlap with `output`.
+        let bytes = unsafe { bun_core::ffi::slice(input.cast::<SharedU8>(), len * 2) };
+        let room = if ALLOW_PARTIAL_WRITE {
+            to_len
+        } else {
+            to_len & !1
+        };
+        return Ok(bun_simd::copy_to_shared(bytes, &output[..room]));
     }
 
-    // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and non-overlapping
-    // for the other encodings. `SharedOutU8` has the layout of `u8`.
-    let (input, output) = unsafe {
-        (
-            bun_core::ffi::slice(input, len),
-            bun_core::ffi::slice(to.cast::<SharedOutU8>(), to_len),
-        )
-    };
+    // SAFETY: forwarded from this fn's contract, which rules out an overlap for these encodings.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => {

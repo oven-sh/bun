@@ -232,8 +232,6 @@ mod dc {
         this.deep_clone(bump)
     }
 
-    /// `Property::deep_clone` — routes to the real inherent
-    /// `Property::deep_clone` in properties_generated.rs.
     #[inline]
     pub(crate) fn property<'bump>(
         this: &crate::properties::Property<'bump>,

@@ -621,6 +621,10 @@ pub(super) fn find_test_files_that_ask_loader(
         let Some(scan) = scans.find(file) else {
             continue;
         };
+        let mut sites = input.files.analysis(file).import_sites.iter();
+        if sites.any(|site| matches!(site.kind, ImportSiteKind::MockModule(_))) {
+            continue;
+        }
         match scan.interop.kind {
             ModuleKind::CommonJs => run_again.push(ModuleRef::File(file)),
             ModuleKind::SourceText if !scan.left_to_loader.is_empty() => asking.push(file),

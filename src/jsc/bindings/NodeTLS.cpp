@@ -86,27 +86,24 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
 
     JSC::MarkedArgumentBuffer args;
     for (auto i = 0; i < size; i++) {
-        BIO* bio = BIO_new(BIO_s_mem());
+        auto bio = ncrypto::BIOPointer::NewMem();
         if (!bio) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
 
-        if (PEM_write_bio_X509(bio, sk_X509_value(root_extra_cert_instances, i)) != 1) {
-            BIO_free(bio);
+        if (PEM_write_bio_X509(bio.get(), sk_X509_value(root_extra_cert_instances, i)) != 1) {
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "X509 to PEM conversion"_str);
         }
 
         char* bioData = nullptr;
-        long bioLen = BIO_get_mem_data(bio, &bioData);
+        long bioLen = BIO_get_mem_data(bio.get(), &bioData);
         if (bioLen <= 0 || !bioData) {
-            BIO_free(bio);
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Reading PEM data"_str);
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
         args.append(JSC::jsString(vm, str));
-        BIO_free(bio);
     }
 
     if (args.hasOverflowed()) {
@@ -137,31 +134,27 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
     if (size < 0) size = 0; // no parsed certificates on this platform
 
     for (auto i = 0; i < size; i++) {
-        BIO* bio = BIO_new(BIO_s_mem());
+        auto bio = ncrypto::BIOPointer::NewMem();
         if (!bio) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
         X509* cert = sk_X509_value(root_system_cert_instances, i);
         if (!cert) {
-            BIO_free(bio);
             continue;
         }
-        if (!PEM_write_bio_X509(bio, cert)) {
-            BIO_free(bio);
+        if (!PEM_write_bio_X509(bio.get(), cert)) {
             continue;
         }
 
         char* bioData;
-        long bioLen = BIO_get_mem_data(bio, &bioData);
+        long bioLen = BIO_get_mem_data(bio.get(), &bioData);
         if (bioLen <= 0) {
-            BIO_free(bio);
             continue;
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
         args.append(JSC::jsString(vm, str));
-        BIO_free(bio);
     }
 
     if (args.hasOverflowed()) {
@@ -309,6 +302,13 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
+struct ServerNameTreeDeleter {
+    void operator()(void* tree) const
+    {
+        sni_free(tree, [](void*) {});
+    }
+};
+
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
 JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -321,7 +321,7 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
     Latin1CString servername = servernameValue.toWTFString(globalObject).latin1();
     RETURN_IF_EXCEPTION(scope, {});
 
-    void* tree = sni_new();
+    std::unique_ptr<void, ServerNameTreeDeleter> tree { sni_new() };
     JSC::MarkedArgumentBuffer values;
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), names, JSC::IterationKind::Entries);
     JSValue name, value;
@@ -329,20 +329,17 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
         auto* string = name.isString() ? asString(name) : nullptr;
         if (!string) continue;
         auto view = string->view(globalObject);
-        if (scope.exception()) [[unlikely]]
-            break;
+        RETURN_IF_EXCEPTION(scope, {});
         // No ClientHello can carry a NUL.
         if (view->contains('\0')) continue;
         values.append(value);
         if (values.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
-            break;
+            return {};
         }
-        sni_add(tree, view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
+        sni_add(tree.get(), view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
     }
-    auto selected = reinterpret_cast<uintptr_t>(sni_find(tree, byteCast<char>(servername.spanIncludingNullTerminator()).data()));
-    sni_free(tree, [](void*) {});
-    RETURN_IF_EXCEPTION(scope, {});
+    auto selected = reinterpret_cast<uintptr_t>(sni_find(tree.get(), byteCast<char>(servername.spanIncludingNullTerminator()).data()));
     return JSValue::encode(selected ? values.at(selected - 1) : jsUndefined());
 }
 

@@ -38,6 +38,7 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSPerformanceMeasure*>(cell)->JSPerformanceMeasure::~JSPerformanceMeasure(); }
 
     DECLARE_INFO;
 

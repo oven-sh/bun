@@ -5,7 +5,15 @@
 #include <openssl/x509.h>
 
 #ifdef __cplusplus
+#include <memory>
+
 #define CPPDECL extern "C"
+
+// bssl::UniquePtr, which BORINGSSL_NO_CXX (Windows) leaves out.
+template <auto free_fn> struct us_deleter {
+  void operator()(auto *ptr) const { free_fn(ptr); }
+};
+template <typename T, auto free_fn> using us_unique_ptr = std::unique_ptr<T, us_deleter<free_fn>>;
 
 STACK_OF(X509) *us_get_root_extra_cert_instances();
 X509_LAZY_CERT_SET *us_get_bundled_root_cert_set();

@@ -295,7 +295,7 @@ impl Watcher {
         watchlist: &mut WatchList,
         file: Option<CloseOnDrop>,
         file_path: &'a [u8],
-        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: fn(&'a [u8]) -> Cow<'static, [u8]>,
         hash: HashType,
         parent_hash: HashType,
     ) -> sys::Result<()> {
@@ -342,7 +342,7 @@ impl Watcher {
         &self,
         watchlist: &mut WatchList,
         file_path: &'a [u8],
-        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: fn(&'a [u8]) -> Cow<'static, [u8]>,
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
@@ -405,7 +405,7 @@ impl Watcher {
         watchlist: &mut WatchList,
         file: Option<CloseOnDrop>,
         file_path: &'a [u8],
-        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: fn(&'a [u8]) -> Cow<'static, [u8]>,
         hash: HashType,
     ) -> sys::Result<()> {
         debug_assert!(file_path.len() > 1);
@@ -481,7 +481,7 @@ impl Watcher {
     fn add_directory_with<'a>(
         &self,
         file_path: &'a [u8],
-        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: fn(&'a [u8]) -> Cow<'static, [u8]>,
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
         let watchlist = &mut self.state.lock().watchlist;
@@ -558,7 +558,7 @@ impl Watcher {
         &self,
         file: Option<File>,
         file_path: &'a [u8],
-        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: fn(&'a [u8]) -> Cow<'static, [u8]>,
         hash: HashType,
     ) -> sys::Result<()> {
         let file = file.map(CloseOnDrop::from);

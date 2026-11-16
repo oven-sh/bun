@@ -2,6 +2,7 @@
 #include "ErrorCode.h"
 #include "helpers.h"
 #include "CryptoUtil.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "BunClientData.h"
 
@@ -31,10 +32,6 @@ CheckPrimeJobCtx::~CheckPrimeJobCtx()
 {
 }
 
-extern "C" void Bun__CheckPrimeJobCtx__runTask(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
-{
-    ctx->runTask(lexicalGlobalObject);
-}
 void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
     auto res = m_candidate.isPrime(m_checks, whileScriptAllowed(lexicalGlobalObject));
@@ -42,31 +39,11 @@ void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = res > 0;
 }
 
-extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(lexicalGlobalObject);
-}
 JSCallbackArgs CheckPrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
 {
     if (m_failed) [[unlikely]]
         return { createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not check prime"_s) };
     return { jsUndefined(), jsBoolean(m_result) };
-}
-
-extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void CheckPrimeJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__CheckPrimeJob__createAndSchedule(JSGlobalObject*, CheckPrimeJobCtx*, EncodedJSValue callback);
-void CheckPrimeJob::createAndSchedule(JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSValue callback)
-{
-    CheckPrimeJobCtx* ctx = new CheckPrimeJobCtx(WTF::move(candidate), checks);
-    return Bun__CheckPrimeJob__createAndSchedule(globalObject, ctx, JSValue::encode(callback));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -172,7 +149,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
         }
     }
 
-    CheckPrimeJob::createAndSchedule(lexicalGlobalObject, WTF::move(candidate), checks, callback);
+    NodeCryptoJob::schedule<CheckPrimeJobCtx>(lexicalGlobalObject, callback, WTF::move(candidate), checks);
 
     return JSValue::encode(jsUndefined());
 }
@@ -191,10 +168,6 @@ GeneratePrimeJobCtx::~GeneratePrimeJobCtx()
 {
 }
 
-extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
-{
-    ctx->runTask(lexicalGlobalObject);
-}
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
@@ -210,10 +183,6 @@ static JSValue createGeneratePrimeError(JSGlobalObject* globalObject, ThrowScope
     return createCryptoError(globalObject, scope, opensslError, nullptr);
 }
 
-extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(lexicalGlobalObject);
-}
 JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
@@ -236,22 +205,6 @@ JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
     }
     ASSERT(!result.isEmpty());
     return { jsUndefined(), result };
-}
-
-extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void GeneratePrimeJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__GeneratePrimeJob__createAndSchedule(JSGlobalObject*, GeneratePrimeJobCtx*, EncodedJSValue callback);
-void GeneratePrimeJob::createAndSchedule(JSGlobalObject* globalObject, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSValue callback)
-{
-    GeneratePrimeJobCtx* ctx = new GeneratePrimeJobCtx(size, safe, WTF::move(prime), WTF::move(add), WTF::move(rem), bigint);
-    Bun__GeneratePrimeJob__createAndSchedule(globalObject, ctx, JSValue::encode(callback));
 }
 
 JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& scope, const ncrypto::BignumPointer& prime, bool bigint)
@@ -389,7 +342,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
     }
 
-    GeneratePrimeJob::createAndSchedule(lexicalGlobalObject, size, safe, WTF::move(prime), WTF::move(add), WTF::move(rem), bigint, callback);
+    NodeCryptoJob::schedule<GeneratePrimeJobCtx>(lexicalGlobalObject, callback, size, safe, WTF::move(prime), WTF::move(add), WTF::move(rem), bigint);
 
     return JSValue::encode(jsUndefined());
 }

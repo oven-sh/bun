@@ -27,6 +27,7 @@
 #include "internal/internal.h"
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <cstring>
 #include <cstdlib>
@@ -39,6 +40,8 @@ thread_local void (*sni_free_cb)(void *);
 
 /* RFC 6066 section 3: host names compare ASCII case-insensitively */
 struct sni_label_less {
+    using is_transparent = void;
+
     static unsigned char fold(unsigned char c) {
         return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
     }
@@ -53,7 +56,7 @@ struct sni_label_less {
 struct sni_node {
     /* Empty nodes must always hold null */
     void *user = nullptr;
-    std::map<std::string_view, std::unique_ptr<sni_node>, sni_label_less> children;
+    std::map<std::string, std::unique_ptr<sni_node>, sni_label_less> children;
 
     ~sni_node() {
         /* A name from JS can have any number of labels, so tear the subtree down
@@ -70,9 +73,6 @@ struct sni_node {
     /* Frees what this node owns in its children and moves the child nodes out to `pending` */
     void releaseChildren(std::vector<std::unique_ptr<sni_node>> &pending) {
         for (auto &p : children) {
-            /* The data of our string_views are managed by us_malloc */
-            us_free((void *) p.first.data());
-
             /* Call destructor passed to sni_free only if we hold data */
             if (p.second.get()->user) {
                 sni_free_cb(p.second.get()->user);
@@ -149,12 +149,7 @@ extern "C" {
 
             auto it = root->children.find(label);
             if (it == root->children.end()) {
-                /* Duplicate this label for our kept string_view of it */
-                void *labelString = us_xmalloc(label.length());
-                memcpy(labelString, label.data(), label.length());
-
-                it = root->children.emplace(std::string_view((char *) labelString, label.length()),
-                                            std::make_unique<sni_node>()).first; // NOLINT(clang-analyzer-unix.Malloc)
+                it = root->children.emplace(label, std::make_unique<sni_node>()).first;
             }
 
             root = it->second.get();

@@ -1557,6 +1557,12 @@ impl Process {
     }
 }
 
+/// `TerminateProcess` from any thread. 0 is this process.
+pub fn terminate(pid: uv_pid_t) -> ReturnCode {
+    // SAFETY: integers only. Only `SIGQUIT` enters DbgHelp, which is for one thread at a time.
+    unsafe { uv_kill(pid, 9) }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union uv_stdio_container_data {
@@ -2667,6 +2673,7 @@ unsafe extern "C" {
         options: *const uv_process_options_t,
     ) -> ReturnCode;
     pub fn uv_process_kill(handle: *mut Process, signum: c_int) -> ReturnCode;
+    fn uv_kill(pid: uv_pid_t, signum: c_int) -> ReturnCode;
 
     // misc
     pub fn uv_uptime(uptime: *mut f64) -> c_int;

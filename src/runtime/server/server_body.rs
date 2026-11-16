@@ -941,13 +941,11 @@ fn warn_about_idle_timeout_once() {
 // ─── NewServer ───────────────────────────────────────────────────────────────
 // ─── NewServer (canonical type lives in mod.rs) ──────────────────────────────
 // NOTE (unification): the struct, `UserRoute`,
-// `CreateJsRequest`, `PreparedRequest`, `SavedRequest`, `SavedRequestUnion`,
+// `SavedRequest`, `SavedRequestUnion`,
 // `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
-pub(super) use super::{
-    CreateJsRequest, DispatchedRequest, NewServer, PreparedRequest, ServerRequestContext, UserRoute,
-};
+pub(super) use super::{DispatchedRequest, NewServer, ServerRequestContext, UserRoute};
 
 impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
     for NewServer<SSL, DEBUG>
@@ -2131,11 +2129,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let Some(mut prepared) = Self::prepare_js_request_context::<MUX>(
+        let Some((request, ctx)) = Self::prepare_js_request_context::<MUX>(
             this,
             req,
             resp,
-            CreateJsRequest::No,
             user_route.route.method.specific(),
             upgrade_ctx,
         ) else {
@@ -2153,20 +2150,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             Bun__ServerRouteList__callRoute
         };
-        let response_value = jsc::from_js_host_call(global, || {
-            call_route(
-                global,
-                user_route.id,
-                prepared.request.native.as_ptr(),
-                server_js,
-                route_list,
-                &mut prepared.request.js,
-                req.as_ptr(),
-            )
-        })
-        .unwrap_or_else(|err| global.take_exception(err));
+        let (request, response_value) =
+            DispatchedRequest::call_route(request, global, |request, js_request| {
+                call_route(
+                    global,
+                    user_route.id,
+                    request,
+                    server_js,
+                    route_list,
+                    js_request,
+                    req.as_ptr(),
+                )
+            });
 
-        Self::handle_request(this, prepared, req, response_value);
+        Self::handle_request(this, &request, ctx, req, response_value);
     }
 
     /// Calls the `fetch` handler. `upgrade_ctx` as in [`Self::on_user_route_request`].
@@ -2183,14 +2180,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let Some(prepared) = Self::prepare_js_request_context::<MUX>(
-            this,
-            req,
-            resp,
-            CreateJsRequest::Yes,
-            None,
-            upgrade_ctx,
-        ) else {
+        let Some((request, ctx)) =
+            Self::prepare_js_request_context::<MUX>(this, req, resp, None, upgrade_ctx)
+        else {
             return;
         };
 
@@ -2200,23 +2192,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let on_request = server.config.get().on_request;
         debug_assert!(!on_request.is_empty());
         let global = server.global_this();
-        let response_value =
-            match on_request.call(global, server_js, &[prepared.request.js, server_js]) {
-                Ok(v) => v,
-                Err(err) => global.take_exception(err),
-            };
+        let request = DispatchedRequest::new(request, global);
+        let response_value = match on_request.call(global, server_js, &[request.js, server_js]) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
 
-        Self::handle_request(this, prepared, req, response_value);
+        Self::handle_request(this, &request, ctx, req, response_value);
     }
 
     /// Hands what the handler returned to the `RequestContext`, then frees it or makes the request asynchronous.
     fn handle_request<const MUX: bool>(
         this: *mut Self,
-        prepared: PreparedRequest<SSL, DEBUG, MUX>,
+        request: &DispatchedRequest,
+        ctx: Dispatch<SSL, DEBUG, MUX>,
         req: uws::AnyRequest,
         response_value: JSValue,
     ) {
-        let PreparedRequest { request, ctx } = prepared;
         // SAFETY: `this` is the live server.
         let server = unsafe { &*this };
         let Some(ctx) = ServerRequestContext::respond(ctx, server, request.js, response_value)
@@ -2240,10 +2232,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this: *mut Self,
         mut req: uws::AnyRequest,
         resp: uws::AnyResponse,
-        create_js_request: CreateJsRequest,
         method: Option<http::Method>,
         upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
-    ) -> Option<PreparedRequest<SSL, DEBUG, MUX>> {
+    ) -> Option<(RefPtr<Request>, Dispatch<SSL, DEBUG, MUX>)> {
         debug_assert!(match resp {
             uws::AnyResponse::SSL(_) => SSL && !MUX,
             uws::AnyResponse::TCP(_) => !SSL && !MUX,
@@ -2381,10 +2372,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        Some(PreparedRequest {
-            request: DispatchedRequest::new(request, create_js_request, global)?,
-            ctx,
-        })
+        Some((request, ctx))
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -2531,7 +2519,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             })
     }
 
-    // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
+    // `js_gc_route_list_set` lives on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
 
@@ -2564,7 +2552,7 @@ unsafe extern "C" {
     safe fn Bun__ServerRouteList__callRoute(
         global: &JSGlobalObject,
         index: u32,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,
@@ -2574,7 +2562,7 @@ unsafe extern "C" {
     safe fn Bun__ServerRouteList__callRouteH3(
         global: &JSGlobalObject,
         index: u32,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,

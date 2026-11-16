@@ -735,9 +735,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         }
         let len = path.len();
         buf[..len].copy_from_slice(path);
-        buf[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&buf[..], len);
+        let z = ZStr::nul_terminate(&mut buf, len);
         let flags = libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC;
         openat(dir, z, flags, 0)
     }
@@ -813,10 +811,7 @@ pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
 /// the libuv path does too.
 pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
     let len = getcwd(&mut buf[..])?;
-    debug_assert!(len < buf.len());
-    buf[len] = 0;
-    // SAFETY: NUL written at buf[len]; slice is within buf.
-    Ok(ZStr::from_buf(&buf[..], len))
+    Ok(ZStr::nul_terminate(buf, len))
 }
 
 pub mod coreutils_error_map;
@@ -2324,8 +2319,7 @@ mod posix_impl {
                 );
             }
             buf[..p.len()].copy_from_slice(p);
-            buf[p.len()] = 0;
-            mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode)
+            mkdirat(dir, ZStr::nul_terminate(&mut buf, p.len()), mode)
         })
     }
     pub(crate) fn mkdir_recursive_with(
@@ -3470,7 +3464,7 @@ mod posix_impl {
     /// (drops `MFD_EXEC`/`MFD_NOEXEC_SEAL`); on ENOSYS/EPERM/EACCES latches
     /// [`can_use_memfd`] to false.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
+    pub fn memfd_create(name: bun_core::CStrRef<'_>, flags_: MemfdFlags) -> Maybe<Fd> {
         let mut flags: u32 = flags_ as u32;
         loop {
             // bionic only added the `memfd_create()` libc wrapper at API 30; we
@@ -3922,8 +3916,7 @@ mod windows_impl {
             &mut long[4..],
         );
         let len = 4 + normalized.len();
-        long[len] = 0;
-        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
+        sys_uv::readlink(ZStr::nul_terminate(&mut long, len), buf).map(|target| target.len())
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -4198,8 +4191,7 @@ mod windows_impl {
         let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
-            z.0[p.len()] = 0;
-            match mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode) {
+            match mkdirat(dir, ZStr::nul_terminate(&mut z, p.len()), mode) {
                 Ok(()) => Ok(MakePathStep::Created),
                 Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
                 Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
@@ -4392,12 +4384,7 @@ mod windows_impl {
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let p = super::get_fd_path(fd, &mut buf)?;
-        let mut zb = bun_paths::path_buffer_pool::get();
-        zb.0[..p.len()].copy_from_slice(p);
-        zb.0[p.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        chdir(ZStr::from_buf(&zb.0[..], p.len()))
+        chdir(super::get_fd_path_z(fd, &mut buf)?)
     }
     pub fn umask(mode: Mode) -> Mode {
         unsafe extern "C" {
@@ -5949,9 +5936,7 @@ impl DynLib {
         }
         let len = path.len();
         buf.0[..len].copy_from_slice(path);
-        buf.0[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&buf.0[..], len);
+        let z = ZStr::nul_terminate(&mut buf, len);
         match dlopen(z, RTLD::LAZY) {
             Some(h) => Ok(Self { handle: h }),
             None => Err(bun_errno::SystemErrno::ENOENT),
@@ -6099,9 +6084,7 @@ pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd
         return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
     }
     buf.0[..path.len()].copy_from_slice(path);
-    buf.0[path.len()] = 0;
-    // SAFETY: NUL-terminated above.
-    let z = ZStr::from_buf(&buf.0[..], path.len());
+    let z = ZStr::nul_terminate(&mut buf, path.len());
     openat(dir, z, flags, perm)
 }
 /// `openatOSPath` — `openat` taking a platform-native path
@@ -7334,8 +7317,7 @@ fn linux_kernel_is_freebsd() -> bool {
         return v == 2;
     }
     let detected: u8 = 'detect: {
-        // SAFETY: literal is NUL-terminated.
-        let z = ZStr::from_static(b"/proc/version\0");
+        let z = bun_core::zstr!("/proc/version");
         let Ok(file) = open(z, O::RDONLY | O::NOCTTY, 0).map(CloseOnDrop::new) else {
             break 'detect 1;
         };
@@ -7356,8 +7338,7 @@ fn linux_kernel_is_freebsd() -> bool {
 fn fd_path_z<'a>(prefix: &[u8], fd: Fd, buf: &'a mut [u8; 32]) -> &'a ZStr {
     buf[..prefix.len()].copy_from_slice(prefix);
     let end = prefix.len() + bun_core::fmt::print_int(&mut buf[prefix.len()..], fd.native());
-    buf[end] = 0;
-    ZStr::from_buf(&buf[..], end)
+    ZStr::nul_terminate(buf, end)
 }
 
 /// readlink `/dev/fd/N` (fdescfs).
@@ -8772,9 +8753,7 @@ pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
 /// NUL-terminates in-place so callers receive a `&ZStr`.
 pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a ZStr> {
     let len = get_fd_path(fd, out)?.len();
-    out.0[len] = 0;
-    // SAFETY: NUL written at out[len]; bytes [0..len] initialised by get_fd_path.
-    Ok(ZStr::from_buf(&out.0[..], len))
+    Ok(ZStr::nul_terminate(out, len))
 }
 
 /// `bun.iterateDir(dir)` — convenience wrapper around `dir_iterator::iterate`.
@@ -8791,10 +8770,7 @@ pub fn exists(path: &[u8]) -> bool {
         return false;
     }
     buf.0[..path.len()].copy_from_slice(path);
-    buf.0[path.len()] = 0;
-    // SAFETY: NUL-terminated above.
-    let z = ZStr::from_buf(&buf.0[..], path.len());
-    exists_z(z)
+    exists_z(ZStr::nul_terminate(&mut buf, path.len()))
 }
 /// `moveFileZ`. Routes through
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
@@ -9051,9 +9027,7 @@ pub fn write_file_with_path_buffer(
                 return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
             }
             path_buf.0[..bytes.len()].copy_from_slice(bytes);
-            path_buf.0[bytes.len()] = 0;
-            // SAFETY: NUL-terminated above.
-            let z = ZStr::from_buf(&path_buf.0[..], bytes.len());
+            let z = ZStr::nul_terminate(path_buf, bytes.len());
             let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
             opened = CloseOnDrop::new(openat(args.dirfd, z, flags, args.mode)?);
             &opened

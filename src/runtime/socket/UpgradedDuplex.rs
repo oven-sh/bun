@@ -55,7 +55,7 @@ pub(crate) struct UpgradedDuplex {
     /// That context.
     context: bun_jsc::ContextId,
     /// Set by `start_tls` and freed with `self`: a `handle_traffic` frame can be on the stack when the connection closes.
-    wrapper: OnceCell<WrapperType>,
+    wrapper: OnceCell<SSLWrapper>,
     /// The owning `JSTLSSocket` wrapper. Its `internalFields` root `origin` and
     /// the three listener thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
@@ -87,8 +87,6 @@ pub(crate) struct UpgradedDuplex {
     /// `pause_stream` paused the wrapped stream and `resume_stream` has not run since.
     paused_origin: Cell<bool>,
 }
-
-type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
 /// `UpgradeOptions::server_verify` and applied via `SSLWrapper::set_server_verify`.
@@ -133,11 +131,8 @@ fn lazy_js_handler(
 }
 
 impl UpgradedDuplex {
-    // SAFETY (all handlers): the SSLWrapper handlers ctx is `self as *mut
-    // Self`, live for the wrapper's lifetime.
-
     #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
+    fn wrapper_ref(&self) -> Option<&SSLWrapper> {
         self.wrapper.get()
     }
 
@@ -180,53 +175,55 @@ impl UpgradedDuplex {
         self.debug_assert_kept_alive();
         self.tls.get().as_ref().map(RefPtr::this_ptr)
     }
+}
 
-    fn on_open(this: *mut Self) {
+impl ssl_wrapper::Handler for &UpgradedDuplex {
+    fn on_open(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        this.is_open.set(true);
-        if let Some(tls) = this.listener() {
-            fold(TLSSocket::on_open(tls, this.socket()));
+        self.is_open.set(true);
+        if let Some(tls) = self.listener() {
+            fold(TLSSocket::on_open(tls, self.socket()));
         }
     }
 
-    fn on_data(this: *mut Self, decoded_data: &[u8]) {
+    fn on_data(&mut self, decoded_data: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        if let Some(tls) = this.listener() {
-            fold(TLSSocket::on_data(tls, this.socket(), decoded_data));
+        if let Some(tls) = self.listener() {
+            fold(TLSSocket::on_data(tls, self.socket(), decoded_data));
         }
     }
 
-    fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
-        // SAFETY: see handler note above.
-        let this = unsafe { &*this };
-        if let Some(tls) = this.listener() {
+        if let Some(tls) = self.listener() {
             fold(TLSSocket::on_handshake(
                 tls,
-                this.socket(),
+                self.socket(),
                 handshake_success as i32,
                 ssl_error,
             ));
         }
         // Retry writes parked during the handshake, like openssl.cpp's `ssl_write_wants_read`.
         if handshake_success
-            && !this.is_shutdown()
-            && let Some(tls) = this.listener()
+            && !self.is_shutdown()
+            && let Some(tls) = self.listener()
         {
-            fold(TLSSocket::on_writable(tls, this.socket()));
+            fold(TLSSocket::on_writable(tls, self.socket()));
         }
     }
 
-    fn on_close(this: *mut Self) {
+    fn on_close(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
-        // SAFETY: see handler note above.
-        unsafe { &*this }.finish_close();
+        self.finish_close();
     }
 
+    fn write(&mut self, encoded_data: &[u8]) -> usize {
+        self.write_encrypted(encoded_data);
+        encoded_data.len()
+    }
+}
+
+impl UpgradedDuplex {
     fn finish_close(&self) {
         let _keep_alive = self.keep_alive();
         // Keep the wrapper (and so its visited `duplex*` slots) reachable
@@ -355,12 +352,6 @@ impl UpgradedDuplex {
         Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
-    fn internal_write(this: *mut Self, encoded_data: &[u8]) -> usize {
-        // SAFETY: see handler note above.
-        unsafe { &*this }.write_encrypted(encoded_data);
-        encoded_data.len()
-    }
-
     fn write_encrypted(&self, encoded_data: &[u8]) {
         // Possible scenarios:
         // Scenario 1: will not write if vm is shutting down (we cannot do anything about it)
@@ -372,7 +363,7 @@ impl UpgradedDuplex {
 
     fn on_internal_receive_data(&self, data: &[u8]) {
         if let Some(w) = self.wrapper_ref() {
-            w.receive_data(data);
+            w.receive_data(&mut &*self, data);
             return;
         }
         // Engine not up yet - `start_tls` is still queued. Stage the bytes;
@@ -396,7 +387,7 @@ impl UpgradedDuplex {
         // Taking ownership is load-bearing: a re-entrant `teardown()` clears `pending_data`.
         let staged = self.pending_data.replace(Vec::new());
         if let Some(w) = self.wrapper_ref() {
-            w.receive_data(&staged);
+            w.receive_data(&mut &*self, &staged);
         }
         self.drain_pending_shutdown();
     }
@@ -481,16 +472,15 @@ impl UpgradedDuplex {
         if self.pending_close.replace(false) {
             return self.finish_close();
         }
-        let handlers = self.wrapper_handlers();
         let ctx = self.ctx.take().expect("StartTLS ran twice");
         let w = self
             .wrapper
-            .get_or_init(|| WrapperType::init_with_ctx(ctx, self.is_client, handlers));
+            .get_or_init(|| SSLWrapper::init_with_ctx(ctx, self.is_client));
         w.set_server_verify(
             self.server_verify.request_cert,
             self.server_verify.reject_unauthorized,
         );
-        w.start();
+        w.start(&mut &*self);
         self.drain_pending();
     }
 
@@ -595,17 +585,6 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut UpgradedDuplex> {
-        ssl_wrapper::Handlers {
-            ctx: std::ptr::from_ref(self).cast_mut(),
-            on_open: Self::on_open,
-            on_handshake: Self::on_handshake,
-            on_data: Self::on_data,
-            on_close: Self::on_close,
-            write: Self::internal_write,
-        }
-    }
-
     /// Runs when the connection closes or fails to open, and again in `Drop`. Idempotent.
     fn teardown(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "deinit");
@@ -648,7 +627,7 @@ impl Transport for UpgradedDuplex {
         let _keep_alive = self.keep_alive();
         let written = self
             .wrapper_ref()
-            .map_or(0, |w| w.write_data(data).unwrap_or(0));
+            .map_or(0, |w| w.write_data(&mut &*self, data).unwrap_or(0));
         (i32::try_from(written).expect("int cast"), 0)
     }
 
@@ -665,7 +644,7 @@ impl Transport for UpgradedDuplex {
             self.pending_shutdown.set(true);
             return;
         };
-        let _ = w.shutdown(false);
+        let _ = w.shutdown(&mut &*self, false);
         self.call_write_or_end(None, false);
     }
 
@@ -676,7 +655,7 @@ impl Transport for UpgradedDuplex {
             self.pending_close.set(true);
             return;
         };
-        let _ = w.shutdown(true);
+        let _ = w.shutdown(&mut &*self, true);
     }
 
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
@@ -703,7 +682,7 @@ impl Transport for UpgradedDuplex {
     fn flush(&self) {
         let _keep_alive = self.keep_alive();
         if let Some(w) = self.wrapper_ref() {
-            w.flush();
+            w.flush(&mut &*self);
         }
     }
 

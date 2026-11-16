@@ -255,6 +255,20 @@ impl PendingValue {
         self.producer = streams::SourceHandle::None;
     }
 
+    fn new_source<'a>(
+        &self,
+        cx: &'a bun_jsc::JsThread<'_>,
+        drain_result: DrainResult,
+    ) -> bun_jsc::WrapperGuard<'a, webcore::byte_stream::Source> {
+        let source = bun_ptr::RefPtr::new(webcore::byte_stream::Source {
+            context: ByteStream::from_drain_result(drain_result),
+            producer: core::cell::Cell::new(self.producer),
+            global_this: core::cell::Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
+            ..Default::default()
+        });
+        webcore::byte_stream::Source::wrap(source, cx)
+    }
+
     /// `.text()` and friends, `Bun.write`, or a server's render-wait already reads this body.
     pub(crate) fn has_consumer(&self) -> bool {
         self.promise.is_some() || !self.action.is_none() || self.on_receive_value.is_some()
@@ -853,29 +867,15 @@ impl Value {
             return ReadableStream::empty(cx.global());
         }
 
-        // Ownership of the heap `NewSource` transfers to the JS wrapper in
-        // `to_readable_stream()` below (freed by the GC finalizer).
-        let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
-            webcore::readable_stream::NewSource {
-                context: ByteStream::default(),
-                global_this: core::cell::Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
-                ..Default::default()
-            },
-        );
-
-        reader.producer.set(locked.producer);
-
-        reader.context.apply_drain_result(drain_result);
-
-        let context_ptr: *mut ByteStream = &raw mut reader.context;
+        let reader = locked.new_source(cx, drain_result);
         let stream_value = if text_mode {
-            reader.to_text_readable_stream(cx)?
+            ReadableStream::from_native_text(cx.global(), reader.to_js())?
         } else {
-            reader.to_readable_stream(cx)?
+            ReadableStream::from_native(cx.global(), reader.to_js())?
         };
         ReadableStream::set_body_facts(stream_value, locked.facts);
         let readable = ReadableStream {
-            ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+            ptr: webcore::readable_stream::Source::Bytes(reader.as_ptr().cast()),
             value: stream_value,
         };
         locked.readable = webcore::readable_stream::Strong::init(readable, cx.global());
@@ -953,12 +953,7 @@ impl Value {
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
                 let (encoded, mime) = image.encode_for_body(global_this, value)?;
-                // Blob.Store owns a `Vec`, so dupe out of the
-                // codec's allocator here. The hot path (`.bytes()`) hands the
-                // codec buffer to JS without this copy.
-                let owned = encoded.to_vec();
-                drop(encoded);
-                let blob = Blob::init(owned, global_this);
+                let blob = Blob::init(encoded, global_this);
                 blob.content_type
                     .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);

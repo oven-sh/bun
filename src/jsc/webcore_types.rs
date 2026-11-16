@@ -246,8 +246,11 @@ const _: () = {
     unsafe extern "C" {
         safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
         fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
-        -> JSValue;
+        #[allow(improper_ctypes)]
+        safe fn Bun__Bindgen__Blob__create(
+            global: &JSGlobalObject,
+            wrapped: RefPtr<Blob>,
+        ) -> JSValue;
     }
 
     // `JSValue::as(Blob)` special-case: a `BuildArtifact`
@@ -282,19 +285,17 @@ const _: () = {
             // ownership to the codegen wrapper. The S3File fast-path (different
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::into_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
-            let ptr = Blob::new(self);
-            // SAFETY: the new object takes the one ref `Blob::new` made.
-            unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
+            Bun__Bindgen__Blob__create(global, Blob::new(self))
         }
     }
 };
 
 impl Blob {
-    /// Heap-promote, with the one ref that the caller owns.
+    /// Heap-promote.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
+    pub fn new(mut blob: Blob) -> RefPtr<Blob> {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
+        RefPtr::new(blob)
     }
 
     #[inline]

@@ -803,9 +803,8 @@ pub struct HTTPClient<'a> {
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) proxy_authorization: Option<Vec<u8>>,
     /// Set while this request is tunneling through an HTTP proxy (CONNECT);
-    /// moved to the keep-alive pool with the socket. The pointee is also
-    /// recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
-    pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
+    /// moved to the keep-alive pool with the socket.
+    pub(crate) proxy_tunnel: Option<Box<ProxyTunnel>>,
     pub(crate) carrier: Carrier,
     /// Set while this request is the leader of a fresh TLS connect that other
     /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
@@ -830,20 +829,14 @@ pub struct HTTPClient<'a> {
     pub(crate) pool: PoolOptions,
 }
 
-impl<'a> HTTPClient<'a> {
-    /// The `ctx` of a proxy tunnel's TLS callbacks.
-    #[inline(always)]
-    pub(crate) fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
-        NonNull::from(self).cast::<HTTPClient<'static>>()
-    }
-}
-
 /// What the owner does with a request that has left its socket.
 #[derive(Clone, Copy)]
 pub(crate) enum NextStep {
     Finish,
-    /// All of the response has arrived.
+    /// All of the response has arrived, and the socket is closed.
     Deliver,
+    /// All of the response has arrived: pool or close the socket, then deliver.
+    ReleaseSocket,
     /// For a redirect or a retry.
     Connect,
     /// The socket now belongs to an HTTP/2 session.
@@ -903,6 +896,8 @@ use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
 use crate::internal_state::{RequestStage, ResponseStage};
+use crate::proxy_tunnel::TunnelClosed;
+use crate::ssl_wrapper::SSLWrapper;
 use crate::verbose::{CurlFormatter, HeaderFormatter, ResponseFormatter, trace_line_prefix};
 
 bun_core::declare_scope!(fetch, visible);
@@ -1402,19 +1397,6 @@ fn write_to_socket<const IS_SSL: bool>(
     Ok(total_written)
 }
 
-/// Write data to the socket and buffer the unwritten data if there is backpressure
-fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
-    socket: HttpSocket<IS_SSL>,
-    buffer: &mut bun_io::StreamBuffer,
-    data: &[u8],
-) -> crate::Result<usize> {
-    let amount = write_to_socket::<IS_SSL>(socket, data)?;
-    if amount < data.len() {
-        let _ = buffer.write(&data[amount..]);
-    }
-    Ok(amount)
-}
-
 // ── Bridge stubs removed: real impls now live in HTTPContext.rs,
 //    HTTPThread.rs, h2_client/ClientSession.rs, h3_client/ClientContext.rs
 //    and ProxyTunnel.rs.
@@ -1550,20 +1532,6 @@ impl<'a> HTTPClient<'a> {
         // `request_body` is a `RawSlice` into `original_request_body` (sibling
         // field of `self`); the RawSlice invariant centralises the unsafe.
         self.state.request_body.slice()
-    }
-    /// The tunnel handle's pointer, for the entry points that may release the
-    /// handle while they run (`ProxyTunnel::on_writable` / `receive` / `write`).
-    #[inline]
-    pub(crate) fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
-        self.proxy_tunnel.as_ref().map(|p| p.as_non_null())
-    }
-    /// Shut the proxy tunnel down, if one is attached, and drop this client's ref
-    /// on it.
-    #[inline]
-    fn close_proxy_tunnel(&mut self) {
-        if let Some(t) = self.proxy_tunnel.take() {
-            proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());
-        }
     }
     fn report_progress(&self, completed: usize) {
         if let Some(progress) = &self.progress {
@@ -2090,7 +2058,7 @@ impl<'a> HTTPClient<'a> {
 
         match self.state.request_stage {
             RequestStage::Opened | RequestStage::Pending => {
-                self.on_writable::<true, IS_SSL>(socket)
+                self.on_writable::<true, IS_SSL>(socket, None)
             }
             _ => Continue(()),
         }
@@ -2124,7 +2092,7 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::Aborted) {
             return self.fail(crate::Error::Aborted);
         }
-        self.close_proxy_tunnel();
+        self.proxy_tunnel = None;
         if self.state.is_body_complete_on_close() {
             if let Err(err) = self.end_body() {
                 return self.fail(err);
@@ -2965,14 +2933,6 @@ impl<'a> HTTPClient<'a> {
         write_request(writer, &self.build_request(&mut RequestBuffer::default()));
     }
 
-    pub(crate) fn flush_stream<const IS_SSL: bool>(
-        &mut self,
-        socket: HttpSocket<IS_SSL>,
-    ) -> ControlFlow<NextStep> {
-        // only flush the stream if needed no additional data is being added
-        self.write_to_stream::<IS_SSL>(socket, b"")
-    }
-
     /// From the producer of this request's stream body; a no-op once that body was dropped.
     pub(crate) fn on_request_stream_message<const IS_SSL: bool>(
         &mut self,
@@ -2989,46 +2949,33 @@ impl<'a> HTTPClient<'a> {
             return self.close_and_fail::<IS_SSL>(crate::Error::RequestBodyLengthMismatch, socket);
         }
         stream.ended = message == http_thread::WriteMessageType::End;
-        self.flush_stream::<IS_SSL>(socket)
+        self.flush_stream::<IS_SSL>(socket, None)
     }
 
-    /// [`Self::write_to_stream_using_buffer`] through a tunnel. `Continue(true)` is backpressure.
+    /// [`Self::write_to_stream_using_buffer`] through a tunnel.
     fn write_to_tunnel(
-        proxy: NonNull<ProxyTunnel>,
+        proxy: &ProxyTunnel,
+        lent_wrapper: Option<&SSLWrapper>,
         request_sent_len: &mut usize,
+        socket: proxy_tunnel::OuterSocket,
         buffer: &mut bun_io::StreamBuffer,
-        data: &[u8],
-    ) -> ControlFlow<NextStep, bool> {
-        if ProxyTunnel::holds_refused_ciphertext(proxy) {
-            let _ = buffer.write(data);
-            return Continue(true);
+    ) -> Result<bool, TunnelClosed> {
+        if proxy.holds_refused_ciphertext(lent_wrapper) {
+            return Ok(true);
         }
         let pending = buffer.slice().len();
         if pending > 0 {
-            let Some(n) = ProxyTunnel::write(proxy, buffer.slice())? else {
-                let _ = buffer.write(data);
-                return Continue(true);
+            let Some(n) = proxy.write(socket, lent_wrapper, buffer.slice())? else {
+                return Ok(true);
             };
             *request_sent_len += n;
             buffer.cursor += n;
             if n < pending {
-                let _ = buffer.write(data);
-                return Continue(true);
+                return Ok(true);
             }
             buffer.reset();
         }
-        if !data.is_empty() {
-            let Some(n) = ProxyTunnel::write(proxy, data)? else {
-                let _ = buffer.write(data);
-                return Continue(true);
-            };
-            *request_sent_len += n;
-            if n < data.len() {
-                let _ = buffer.write(&data[n..]);
-                return Continue(true);
-            }
-        }
-        Continue(false)
+        Ok(false)
     }
 
     /// Write buffered data to the socket returning true if there is backpressure
@@ -3036,7 +2983,6 @@ impl<'a> HTTPClient<'a> {
         request_sent_len: &mut usize,
         socket: HttpSocket<IS_SSL>,
         buffer: &mut bun_io::StreamBuffer,
-        data: &[u8],
     ) -> crate::Result<bool> {
         let to_send_len = buffer.slice().len();
         if to_send_len > 0 {
@@ -3044,10 +2990,6 @@ impl<'a> HTTPClient<'a> {
             *request_sent_len += amount;
             buffer.cursor += amount;
             if amount < to_send_len {
-                // we could not send all pending data so we need to buffer the extra data
-                if !data.is_empty() {
-                    let _ = buffer.write(data); // OOM/capacity: fire-and-forget
-                }
                 // failed to send everything so we have backpressure
                 return Ok(true);
             }
@@ -3055,23 +2997,14 @@ impl<'a> HTTPClient<'a> {
                 buffer.reset();
             }
         }
-
-        // ok we flushed all pending data so we can reset the backpressure
-        if !data.is_empty() {
-            // no backpressure everything was sended so we can just try to send
-            let sent = write_to_socket_with_buffer_fallback::<IS_SSL>(socket, buffer, data)?;
-            *request_sent_len += sent;
-            // if we didn't send all the data we have backpressure
-            return Ok(sent < data.len());
-        }
         // no data to send so we are done
         Ok(false)
     }
 
-    pub(crate) fn write_to_stream<const IS_SSL: bool>(
+    pub(crate) fn flush_stream<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
-        data: &[u8],
+        lent_wrapper: Option<&SSLWrapper>,
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "flushStream");
         // Never write body bytes before the request headers: drain_queued_writes can
@@ -3095,9 +3028,8 @@ impl<'a> HTTPClient<'a> {
         let Some(stream_buffer) = stream.buffer.as_ref() else {
             return Continue(());
         };
-        let proxy_tunnel = self.proxy_tunnel_ptr();
         let mut locked = stream_buffer.lock();
-        let was_empty = locked.buffer.is_empty() && data.is_empty();
+        let was_empty = locked.buffer.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
             //
@@ -3119,12 +3051,20 @@ impl<'a> HTTPClient<'a> {
         // to simplify things here the buffer contains the raw data we just need to flush to the socket it
         let sent_len = &mut self.state.request_sent_len;
         let buffer = &mut locked.buffer;
-        let result = match proxy_tunnel {
-            None => Self::write_to_stream_using_buffer::<IS_SSL>(sent_len, socket, buffer, data),
+        let result = match &self.proxy_tunnel {
+            None => Self::write_to_stream_using_buffer::<IS_SSL>(sent_len, socket, buffer),
             Some(_) if socket.is_closed() || socket.is_shutdown() => {
                 Err(crate::Error::ConnectionClosed)
             }
-            Some(proxy) => Ok(Self::write_to_tunnel(proxy, sent_len, buffer, data)?),
+            Some(proxy) => {
+                match Self::write_to_tunnel(proxy, lent_wrapper, sent_len, socket.into(), buffer) {
+                    Ok(has_backpressure) => Ok(has_backpressure),
+                    Err(TunnelClosed) => {
+                        drop(locked);
+                        return self.on_proxy_tunnel_close(socket);
+                    }
+                }
+            }
         };
         let has_backpressure = match result {
             Ok(b) => b,
@@ -3163,7 +3103,7 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// Re-borrow `state.original_request_body` and detach the stream variant.
-    /// Factored out so [`write_to_stream`] can drop its body borrow before
+    /// Factored out so [`flush_stream`] can drop its body borrow before
     /// calling `&mut self` methods, then re-acquire only for the detach.
     #[inline]
     fn request_stream_detach(&mut self) {
@@ -3175,6 +3115,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn on_writable<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
+        lent_wrapper: Option<&SSLWrapper>,
     ) -> ControlFlow<NextStep> {
         if self.signals.get(signals::Field::Aborted) {
             return self.close_and_abort::<IS_SSL>(socket);
@@ -3186,8 +3127,10 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if let Some(proxy) = self.proxy_tunnel_ptr() {
-            ProxyTunnel::on_writable(proxy)?;
+        if let Some(proxy) = &self.proxy_tunnel
+            && let Err(TunnelClosed) = proxy.on_writable(socket.into(), lent_wrapper)
+        {
+            return self.on_proxy_tunnel_close(socket);
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer
@@ -3244,7 +3187,7 @@ impl<'a> HTTPClient<'a> {
 
                     // we sent everything, but there's some body left over
                     if try_sending_more_data {
-                        return self.on_writable::<false, IS_SSL>(socket);
+                        return self.on_writable::<false, IS_SSL>(socket, lent_wrapper);
                     }
                 } else {
                     self.state.request_stage = RequestStage::Headers;
@@ -3279,7 +3222,7 @@ impl<'a> HTTPClient<'a> {
                     }
                     HTTPRequestBody::Stream(_) => {
                         // flush without adding any new data
-                        return self.flush_stream::<IS_SSL>(socket);
+                        return self.flush_stream::<IS_SSL>(socket, lent_wrapper);
                     }
                     HTTPRequestBody::Sendfile(sendfile) => {
                         // sendfile(2) can't write through TLS, and XNU's can sleep uninterruptibly when mbufs run out.
@@ -3314,15 +3257,17 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
-                if let Some(proxy) = self.proxy_tunnel_ptr() {
+                if let Some(proxy) = &self.proxy_tunnel {
                     if !self.state.original_request_body.is_stream() {
                         self.set_timeout(&socket);
                     }
                     match &mut self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) => {
-                            let to_send = self.request_body();
-                            // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            let Some(sent) = ProxyTunnel::write(proxy, to_send)? else {
+                            let to_send = self.state.request_body;
+                            // just wait and retry when onWritable!
+                            let Some(sent) =
+                                self.write_to_proxy_tunnel(socket, lent_wrapper, to_send.slice())?
+                            else {
                                 return Continue(());
                             };
 
@@ -3336,23 +3281,21 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
                         HTTPRequestBody::Stream(_) => {
-                            return self.flush_stream::<IS_SSL>(socket);
+                            return self.flush_stream::<IS_SSL>(socket, lent_wrapper);
                         }
                         HTTPRequestBody::Sendfile(sendfile) => {
-                            let mut flow = Continue(());
+                            let mut closed = false;
                             let status = sendfile.write_copy(|chunk| {
-                                if ProxyTunnel::holds_refused_ciphertext(proxy) {
+                                if proxy.holds_refused_ciphertext(lent_wrapper) {
                                     return Ok(0);
                                 }
-                                match ProxyTunnel::write(proxy, chunk) {
-                                    Continue(written) => Ok(written.unwrap_or(0)),
-                                    Break(step) => {
-                                        flow = Break(step);
-                                        Err(crate::Error::ConnectionClosed)
-                                    }
-                                }
+                                let written = proxy.write(socket.into(), lent_wrapper, chunk);
+                                closed = written.is_err();
+                                Ok(written.map_err(|_| Error::ConnectionClosed)?.unwrap_or(0))
                             });
-                            flow?;
+                            if closed {
+                                return self.on_proxy_tunnel_close(socket);
+                            }
                             match status {
                                 crate::send_file::Status::Done => {
                                     self.state.request_stage = RequestStage::Done;
@@ -3369,7 +3312,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
-                if let Some(proxy) = self.proxy_tunnel_ptr() {
+                if self.proxy_tunnel.is_some() {
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
@@ -3404,8 +3347,9 @@ impl<'a> HTTPClient<'a> {
                         return self
                             .close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
                     }
-                    // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    let Some(amount) = ProxyTunnel::write(proxy, to_send)? else {
+                    // just wait and retry when onWritable!
+                    let Some(amount) = self.write_to_proxy_tunnel(socket, lent_wrapper, to_send)?
+                    else {
                         return Continue(());
                     };
 
@@ -3463,7 +3407,7 @@ impl<'a> HTTPClient<'a> {
 
                         // we sent everything, but there's some body leftover
                         if amount == to_send.len() {
-                            return self.on_writable::<false, IS_SSL>(socket);
+                            return self.on_writable::<false, IS_SSL>(socket, lent_wrapper);
                         }
                     } else {
                         self.state.request_stage = RequestStage::ProxyHeaders;
@@ -3489,7 +3433,7 @@ impl<'a> HTTPClient<'a> {
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
         self.state.flags.is_waiting_for_cert_check = false;
-        self.on_writable::<true, IS_SSL>(socket)
+        self.on_writable::<true, IS_SSL>(socket, None)
     }
 
     pub(crate) fn close_and_fail<const IS_SSL: bool>(
@@ -3555,6 +3499,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
         socket: HttpSocket<IS_SSL>,
+        lent_wrapper: Option<&SSLWrapper>,
     ) -> ControlFlow<NextStep> {
         let (mut response, to_read) = match self.parse_response_head(incoming_data) {
             Ok(Some(parsed)) => parsed,
@@ -3571,7 +3516,7 @@ impl<'a> HTTPClient<'a> {
                 return self.close_and_fail::<IS_SSL>(crate::Error::UnrequestedUpgrade, socket);
             }
             self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-            self.flush_stream::<IS_SSL>(socket)?;
+            self.flush_stream::<IS_SSL>(socket, lent_wrapper)?;
         }
 
         let head = match self.handle_response_metadata(&mut response) {
@@ -3658,7 +3603,7 @@ impl<'a> HTTPClient<'a> {
             return self.close_and_abort::<IS_SSL>(socket);
         }
 
-        if let Some(proxy) = self.proxy_tunnel_ptr() {
+        if self.proxy_tunnel.is_some() {
             // Body phase only, mirroring the non-proxy dispatch below (header
             // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
             debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
@@ -3668,7 +3613,7 @@ impl<'a> HTTPClient<'a> {
             ) {
                 self.set_timeout(&socket);
             }
-            return ProxyTunnel::receive(proxy, incoming_data);
+            return ProxyTunnel::receive(self, socket, incoming_data);
         }
 
         // While parked waiting for the JS `checkServerIdentity` verdict, no
@@ -3681,7 +3626,7 @@ impl<'a> HTTPClient<'a> {
 
         match self.state.response_stage {
             ResponseStage::Pending | ResponseStage::Headers => {
-                return self.handle_on_data_headers::<IS_SSL>(incoming_data, socket);
+                return self.handle_on_data_headers::<IS_SSL>(incoming_data, socket, None);
             }
             ResponseStage::Body => {
                 if !self.state.flags.receive_paused {
@@ -3786,7 +3731,7 @@ impl<'a> HTTPClient<'a> {
     fn record_failure(&mut self, err: crate::Error) {
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
-        self.close_proxy_tunnel();
+        self.proxy_tunnel = None;
         self.state.fail.get_or_insert(err);
     }
 
@@ -3962,8 +3907,7 @@ impl<'a> HTTPClient<'a> {
     ) -> ControlFlow<NextStep> {
         // The connection is free for the next request, however long the consumer takes.
         if self.state.is_done() {
-            self.release_socket::<IS_SSL>(socket, false);
-            return Break(NextStep::Deliver);
+            return Break(NextStep::ReleaseSocket);
         }
         let sent = self.send_progress();
         self.after_progress::<IS_SSL>(sent, socket)
@@ -3986,7 +3930,7 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// Lets go of the connection: into the keep-alive pool if another request can use it, else it's closed.
-    fn release_socket<const IS_SSL: bool>(
+    pub(crate) fn release_socket<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
         redirecting: bool,
@@ -3996,9 +3940,7 @@ impl<'a> HTTPClient<'a> {
             // A redirect has already pointed `url` at its target, the wrong name to pool the tunnel under.
             Some(_) if redirecting => false,
             // An early answer (413) leaves request bytes unwritten, and a close-delimited body ends with the inner TLS session shut down.
-            Some(t) => t.wrapper.as_ref().is_some_and(|w| {
-                !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
-            }),
+            Some(t) => t.can_pool(),
         };
         // The hop reuses this socket before a FIN behind the 3xx is read, and `on_close` only retries an idempotent method.
         let hop_can_retry = !redirecting || self.method.is_idempotent();
@@ -4016,10 +3958,9 @@ impl<'a> HTTPClient<'a> {
             && hop_can_retry
         {
             bun_core::scoped_log!(fetch, "release socket");
-            // The pool takes over the client's ref on the tunnel.
-            let tunnel = self.proxy_tunnel.take();
-            if let Some(t) = &tunnel {
-                proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*self);
+            let mut tunnel = self.proxy_tunnel.take();
+            if let Some(t) = &mut tunnel {
+                t.record_verification(self);
             }
             let had_tunnel = tunnel.is_some();
             Self::ssl_ctx_mut(self.get_ssl_ctx::<IS_SSL>()).release_socket(
@@ -4050,7 +3991,7 @@ impl<'a> HTTPClient<'a> {
                 self.pool_for_release(),
             );
         } else {
-            self.close_proxy_tunnel();
+            self.proxy_tunnel = None;
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
     }

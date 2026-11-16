@@ -41,7 +41,7 @@ pub(crate) mod timer;
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    ($T:ident) => {
+    ($T:ident, $js:ident) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
@@ -91,7 +91,7 @@ macro_rules! impl_timer_object {
             }
 
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
-            /// heap-allocate → `to_js_ptr` → `internals.init` →
+            /// heap-allocate → `wrap` → `internals.init` →
             /// inspector `did_schedule_async_call`. The per-type `init` fn
             /// picks `kind`/`interval` and forwards here.
             pub(crate) fn init_with(
@@ -103,20 +103,14 @@ macro_rules! impl_timer_object {
                 arguments: ::bun_jsc::JSValue,
                 clock: super::Clock,
             ) -> ::bun_jsc::JSValue {
-                // Heap-allocate; `*mut Self` is the
-                // pointer the JS wrapper holds. Ownership
-                // transfers to the wrapper via `to_js_ptr`; freed by
-                // `deref`.
-                let payload: *mut Self =
-                    ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
-                // SAFETY: `payload` is a fresh heap allocation whose ownership
-                // transfers to the GC wrapper.
-                let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
-                let _keep = ::bun_jsc::EnsureStillAlive(js_value);
-                // SAFETY: `payload` was just allocated above and is exclusively
-                // owned here.
+                let timer = crate::generated_bindgen::timer::$js::wrap(
+                    ::bun_ptr::RefPtr::new(Self::default()),
+                    cx.global(),
+                );
+                let js_value = timer.to_js();
+                // SAFETY: nothing else has reached the object yet.
                 unsafe {
-                    (*payload).internals.init(
+                    (*timer.as_ptr()).internals.init(
                         js_value, cx, id, kind, interval, callback, arguments, clock,
                     );
                 }

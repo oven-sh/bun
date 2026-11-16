@@ -1145,16 +1145,12 @@ pub(crate) fn readable_stream(
     // store as `'static` for the heap-allocated wrapper.
     let global_static = GlobalRef::from(cx.global());
 
-    // Ownership of the heap-allocated NewSource transfers to the JS wrapper via
-    // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
-    let reader =
-        crate::webcore::byte_stream::Source::new_mut(crate::webcore::readable_stream::NewSource {
-            context: ByteStream::default(),
-            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
-            ..Default::default()
-        });
-
-    let readable_value = reader.to_readable_stream(cx)?;
+    let reader = RefPtr::new(crate::webcore::byte_stream::Source {
+        global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
+        ..Default::default()
+    });
+    let reader = crate::webcore::byte_stream::Source::wrap(reader, cx);
+    let readable_value = ReadableStream::from_native(cx.global(), reader.to_js())?;
 
     let wrapper = AliasableBox::new(S3DownloadStreamWrapper {
         stream: Default::default(),
@@ -1163,7 +1159,7 @@ pub(crate) fn readable_stream(
         task: Cell::new(core::ptr::null_mut()),
     });
     // SAFETY: `reader` is the live source made above.
-    unsafe { wrapper.stream.hold(&raw mut reader.context) };
+    unsafe { wrapper.stream.hold(reader.as_ptr().cast()) };
 
     reader
         .producer

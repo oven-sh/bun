@@ -485,11 +485,10 @@ impl Listener {
         let listen_socket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
-                let host_cstr = hostz.as_zstr().as_cstr();
                 let ls = this_ref.group.listen(
                     kind,
                     secure_ctx_ptr,
-                    Some(host_cstr),
+                    Some(&hostz),
                     *port as c_int,
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
@@ -1068,7 +1067,7 @@ pub(crate) fn add_server_name(listener: TLSListener<'_>, hostname: &[u8], contex
         return;
     };
     let hostname = bun_core::ZBox::from_bytes(hostname);
-    listen_socket.add_server_name(hostname.as_zstr().as_cstr(), context.ctx.as_ptr());
+    listen_socket.add_server_name(&hostname, context.ctx.as_ptr());
 }
 
 /// `setSecureContext()` of a `tls.Server` or an `https.Server` that is listening. Accepted sockets keep their context.

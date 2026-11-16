@@ -12,7 +12,6 @@ use bun_threading::{Guarded, UnboundedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
-use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{AsyncHttp, Carrier, InFlightRequest, InitError, NewHttpContext, h3};
 
@@ -119,9 +118,6 @@ pub struct HttpThread {
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
 
-    /// Refs released on the next loop tick rather than inside the socket
-    /// callback that gave them up.
-    pub(crate) queued_threadlocal_proxy_derefs: Vec<RefPtr<ProxyTunnel>>,
     /// Custom TLS contexts with no ref left, see
     /// `HTTPContext::destroy_between_ticks`.
     pub(crate) dead_ssl_contexts: Vec<NonNull<NewHttpContext<true>>>,
@@ -163,7 +159,6 @@ impl HttpThread {
             lazy_https_init: None,
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            queued_threadlocal_proxy_derefs: Vec::new(),
             dead_ssl_contexts: Vec::new(),
             timer: Instant::now(),
             lazy_libdeflater: None,
@@ -651,8 +646,6 @@ impl HttpThread {
         self.drain_queued_pool_closes();
         h3::PendingConnect::drain_resolved();
 
-        self.queued_threadlocal_proxy_derefs.clear();
-
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
         let max = MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed);
@@ -770,12 +763,6 @@ impl HttpThread {
             async_http_id,
             kind,
         });
-        Self::wakeup();
-    }
-
-    pub(crate) fn schedule_proxy_deref(&mut self, proxy: RefPtr<ProxyTunnel>) {
-        // this is always called on the http thread,
-        self.queued_threadlocal_proxy_derefs.push(proxy);
         Self::wakeup();
     }
 

@@ -44,7 +44,7 @@ pub use bun_spawn_sys::RusageFields;
 pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
+    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_z,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body

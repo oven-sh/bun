@@ -649,7 +649,7 @@ impl UDPSocket {
                 on_drain,
                 on_close,
                 on_recv_error,
-                hostname_z.as_ptr(),
+                &hostname_z,
                 config.port,
                 config.flags | uws::LIBUS_UDP_LINUX_RECVERR,
                 Some(&mut err),
@@ -728,7 +728,7 @@ impl UDPSocket {
             let address_z = connect.address.to_owned_slice_z();
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
-                .connect(address_z.as_ptr(), connect.port as u32);
+                .connect(&address_z, connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
                     return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
@@ -1401,18 +1401,16 @@ impl UDPSocket {
     ) -> JsResult<bool> {
         let _ = self;
         let str = address_val.to_bun_string(global_this)?;
-        let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
-        let bytes_len = address_slice.len() - 1; // exclude trailing NUL
+        let address = str.to_owned_slice_z();
 
-        let Some(ip) = ip_address::to_ip_address(&address_slice[..bytes_len]) else {
+        let Some(ip) = ip_address::to_ip_address(address.as_bytes()) else {
             return Ok(false);
         };
         let mut addr = Address::from_ip(ip, port);
         if ip.is_ipv6() {
-            if let Some(percent) =
-                bun_core::strings::index_of_char_usize(&address_slice[..bytes_len], b'%')
+            if let Some(percent) = bun_core::strings::index_of_char_usize(address.as_bytes(), b'%')
             {
-                if percent + 1 < bytes_len {
+                if percent + 1 < address.len() {
                     let iface_id: u32 = 'blk: {
                         #[cfg(windows)]
                         {
@@ -1421,7 +1419,7 @@ impl UDPSocket {
                             // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
                             // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
                             // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
-                            let zone = &address_slice[percent + 1..bytes_len];
+                            let zone = &address.as_bytes()[percent + 1..];
                             let mut i = 0usize;
                             while i < zone.len()
                                 && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
@@ -1451,12 +1449,9 @@ impl UDPSocket {
                         }
                         #[cfg(not(windows))]
                         {
-                            // SAFETY: address_slice is NUL-terminated; offset is in-bounds.
-                            let index = unsafe {
-                                if_nametoindex(
-                                    address_slice.as_ptr().add(percent + 1).cast::<c_char>(),
-                                )
-                            };
+                            // SAFETY: a `ZStr` ends with a NUL.
+                            let index =
+                                unsafe { if_nametoindex(address.substring(percent + 1).as_ptr()) };
                             if index > 0 {
                                 break 'blk index;
                             }
@@ -1681,7 +1676,7 @@ pub(crate) fn connect(
         return Err(global_this.throw(format_args!("Socket is closed")));
     };
     // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
+    if uws::udp::Socket::opaque_mut(socket).connect(&connect_host, port as u32) == -1 {
         return Err(global_this.throw(format_args!("Failed to connect socket")));
     }
     this.connect_info.set(Some(ConnectInfo { port }));

@@ -6,7 +6,7 @@ use crate::generated_bindgen::timer::js_Timeout as js;
 use super::{Clock, Kind};
 
 // `Timeout`, declared in `Timer.bind.ts`.
-super::impl_timer_object!(TimeoutObject);
+super::impl_timer_object!(TimeoutObject, js_Timeout);
 
 impl TimeoutObject {
     pub(crate) fn init(

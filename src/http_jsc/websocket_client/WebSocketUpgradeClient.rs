@@ -1140,7 +1140,7 @@ where
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
-        WebSocketProxyTunnel::start(tunnel.this_ptr(), ctx, reject_unauthorized, initial_data);
+        WebSocketProxyTunnel::start(&tunnel, ctx, reject_unauthorized, initial_data);
 
         // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
         // can fail the client and take `proxy`.

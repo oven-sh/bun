@@ -40,8 +40,6 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
-type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
-
 use crate::jsc_hooks::timer_all;
 
 /// Live pipes, read by `bun:internal-for-testing` leak tests: `heapStats()` only sees the JS wrappers.
@@ -61,7 +59,7 @@ pub(crate) struct WindowsNamedPipe {
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
     abort_handle: bun_jsc::AbortHandle,
     /// Set before the pipe opens and freed with `self`: a `handle_traffic` frame can be on the stack when the pipe closes.
-    wrapper: OnceCell<WrapperType>,
+    wrapper: OnceCell<SSLWrapper>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Until [`start`](Self::start) hands it to `writer`.
     pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
@@ -174,7 +172,7 @@ impl WindowsNamedPipe {
     }
 
     #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
+    fn wrapper_ref(&self) -> Option<&SSLWrapper> {
         self.wrapper.get()
     }
 
@@ -258,7 +256,7 @@ impl WindowsNamedPipe {
         let mut data = self.incoming.replace(Vec::new());
 
         match self.wrapper_ref() {
-            Some(w) => w.receive_data(data.as_slice()),
+            Some(w) => w.receive_data(&mut &*self, data.as_slice()),
             None => self.on_data(data.as_slice()),
         }
         data.clear();
@@ -309,45 +307,27 @@ impl WindowsNamedPipe {
             NewSocket::on_data(s.this_ptr(), self.handle::<SSL>(), decoded_data)
         });
     }
+}
 
-    // ── SSLWrapper trampolines ───────────────────────────────────────────────
-    // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots.
-    // SAFETY (all): `this` is the `ctx` set in `wrapper_handlers`; the engine
-    // only fires handlers while `self` (its owner) is alive.
-    fn ssl_on_open(this: *mut Self) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_open()
-    }
-    fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_handshake(ok, e)
-    }
-    fn ssl_on_data(this: *mut Self, d: &[u8]) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_data(d)
-    }
-    fn ssl_on_close(this: *mut Self) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_close()
-    }
-    fn ssl_write(this: *mut Self, d: &[u8]) -> usize {
-        // SAFETY: see block note above.
-        unsafe { &*this }.internal_write(d);
-        d.len()
+impl ssl_wrapper::Handler for &WindowsNamedPipe {
+    fn on_open(&mut self) {
+        WindowsNamedPipe::on_open(self)
     }
 
-    fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
-        ssl_wrapper::Handlers {
-            ctx: self.root_ptr(),
-            on_open: Self::ssl_on_open,
-            on_handshake: Self::ssl_on_handshake,
-            on_data: Self::ssl_on_data,
-            on_close: Self::ssl_on_close,
-            write: Self::ssl_write,
-        }
+    fn on_data(&mut self, decoded_data: &[u8]) {
+        WindowsNamedPipe::on_data(self, decoded_data)
     }
 
-    fn on_handshake(&self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_close(&mut self) {
+        WriteHandler::on_close(*self)
+    }
+
+    fn write(&mut self, encoded_data: &[u8]) -> usize {
+        self.internal_write(encoded_data);
+        encoded_data.len()
+    }
+
+    fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
         let _keep_alive = self.keep_alive();
 
@@ -364,7 +344,9 @@ impl WindowsNamedPipe {
             self.dispatch_writable();
         }
     }
+}
 
+impl WindowsNamedPipe {
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
         if let Some(bytes) = data {
             if !bytes.is_empty() {
@@ -382,7 +364,7 @@ impl WindowsNamedPipe {
 
         if !msg_more {
             if let Some(w) = self.wrapper_ref() {
-                let _ = w.shutdown(false);
+                let _ = w.shutdown(&mut &*self, false);
             }
             self.writer.end(self);
         }
@@ -514,8 +496,7 @@ impl WindowsNamedPipe {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let len = path.len().min(path_buf.len() - 1);
         path_buf[..len].copy_from_slice(&path[..len]);
-        path_buf[len] = 0;
-        self.connect(ZStr::from_buf(&path_buf[..], len), ssl_ctx)
+        self.connect(ZStr::nul_terminate(&mut path_buf, len), ssl_ctx)
     }
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
@@ -544,7 +525,7 @@ impl WindowsNamedPipe {
         if self.start() {
             match self.wrapper_ref() {
                 // trigger onOpen and start the handshake
-                Some(w) => w.start(),
+                Some(w) => w.start(&mut &*self),
                 None => self.on_open(),
             }
         }
@@ -570,7 +551,7 @@ impl WindowsNamedPipe {
         if self.start() {
             match self.wrapper_ref() {
                 // trigger onOpen and start the handshake
-                Some(w) => w.start(),
+                Some(w) => w.start(&mut &*self),
                 None => self.on_open(),
             }
         }
@@ -612,7 +593,7 @@ impl WindowsNamedPipe {
     fn init_tls_wrapper(&self, ssl_ctx: Option<boringssl::OwnedSslCtx>, is_client: bool) {
         let Some(ctx) = ssl_ctx else { return };
         self.wrapper
-            .get_or_init(|| WrapperType::init_with_ctx(ctx, is_client, self.wrapper_handlers()));
+            .get_or_init(|| SSLWrapper::init_with_ctx(ctx, is_client));
     }
 
     fn start(&self) -> bool {
@@ -761,7 +742,7 @@ impl Transport for WindowsNamedPipe {
     fn write(&self, data: &[u8]) -> (i32, i32) {
         bun_output::scoped_log!(WindowsNamedPipe, "write (len: {})", data.len());
         if let Some(w) = self.wrapper_ref() {
-            let written = w.write_data(data).unwrap_or(0);
+            let written = w.write_data(&mut &*self, data).unwrap_or(0);
             return (i32::try_from(written).expect("int cast"), 0);
         }
         self.internal_write(data);
@@ -780,7 +761,7 @@ impl Transport for WindowsNamedPipe {
 
     fn shutdown(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(&mut &*self, false);
             return;
         }
         let flags = self.flags.get();
@@ -793,7 +774,7 @@ impl Transport for WindowsNamedPipe {
 
     fn close(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(&mut &*self, false);
         }
         self.writer.end(self);
     }
@@ -834,7 +815,7 @@ impl Transport for WindowsNamedPipe {
 
     fn flush(&self) {
         if let Some(w) = self.wrapper_ref() {
-            w.flush();
+            w.flush(&mut &*self);
         }
         if !self.flags.get().disconnected() {
             let _ = self.writer.flush(self);

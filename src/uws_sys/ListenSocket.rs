@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int};
 
 use bun_boringssl_sys::OwnedSslCtx;
+use bun_core::ZStr;
 
 use crate::{SslCtx, us_socket_t};
 
@@ -65,7 +66,7 @@ impl ListenSocket {
     /// stores the pointer past this call, so the caller cannot legitimately
     /// hold exclusive `&mut` access.
     /// A connection that names `hostname` keeps the listener's verify mode.
-    pub fn add_server_name(&mut self, hostname: &core::ffi::CStr, ssl_ctx: *mut SslCtx) {
+    pub fn add_server_name(&mut self, hostname: &ZStr, ssl_ctx: *mut SslCtx) {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it).

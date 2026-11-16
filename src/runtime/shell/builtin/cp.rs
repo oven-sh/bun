@@ -630,8 +630,8 @@ impl ShellCpTask {
                 break;
             }
             path[..parent.len()].copy_from_slice(parent);
-            path[parent.len()] = 0;
-            if let Ok(stat) = bun_sys::stat(bun_core::ZStr::from_buf(&path[..], parent.len())) {
+            if let Ok(stat) = bun_sys::stat(bun_core::ZStr::nul_terminate(&mut path, parent.len()))
+            {
                 if Self::same_inode(&src_stat, &stat) {
                     return into_itself();
                 }

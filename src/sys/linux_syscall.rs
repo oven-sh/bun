@@ -18,6 +18,7 @@
 //! `linux`/`android`, so the gate must list both.
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
+use core::ffi::CStr;
 use core::mem::MaybeUninit;
 
 use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
@@ -43,6 +44,18 @@ use bun_core::ZStr;
 unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
     // SAFETY: forwarded — see fn doc.
     unsafe { BorrowedFd::borrow_raw(fd) }
+}
+
+/// Not `CStr::from_ptr`: rustix's functions for Android are not `#[inline]`, so only LTO could drop its `strlen`.
+#[inline]
+fn c_path(path: &ZStr) -> &CStr {
+    debug_assert!(
+        !bun_core::strings::contains_char(path, 0),
+        "interior NUL would truncate the C view",
+    );
+    // SAFETY: it ends with a NUL. Only debug builds check that it has no other, as a `CStr` must not.
+    // The result only goes to rustix, which reads nothing of it but the pointer.
+    unsafe { CStr::from_bytes_with_nul_unchecked(path.as_bytes_with_nul()) }
 }
 
 /// rustix `Errno` → raw positive errno (matches `libc::E*` constants on Linux).
@@ -88,7 +101,7 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
+    retry(|| rustix::fs::openat(dir, c_path(path), oflags, mode)).map(own_fd)
 }
 
 /// Android's seccomp answers `openat2`/`fchmodat2` with SIGSYS; Termux runs the linux build.
@@ -122,7 +135,7 @@ pub(crate) fn openat2(
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
+    retry(|| rustix::fs::openat2(dir, c_path(path), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]
@@ -187,12 +200,12 @@ pub(crate) fn fstat(fd: Fd) -> Result<libc::stat, i32> {
 
 #[inline]
 pub(crate) fn stat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::stat(path.as_cstr())).map(stat_to_libc)
+    retry(|| rustix::fs::stat(c_path(path))).map(stat_to_libc)
 }
 
 #[inline]
 pub(crate) fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::lstat(path.as_cstr())).map(stat_to_libc)
+    retry(|| rustix::fs::lstat(c_path(path))).map(stat_to_libc)
 }
 
 #[inline]
@@ -200,7 +213,7 @@ pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i
     // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
     let dir = unsafe { bfd(dir) };
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
-    retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
+    retry(|| rustix::fs::statat(dir, c_path(path), at)).map(stat_to_libc)
 }
 
 /// `faccessat(2)`, the syscall without a `flags` argument. Do not use libc's
@@ -215,7 +228,7 @@ pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
     // libc backend (Android, where bionic's `faccessat` is already flag-less).
     let access = rustix::fs::Access::from_bits_retain(mode as _);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
+    retry(|| rustix::fs::accessat(dir, c_path(path), access, rustix::fs::AtFlags::empty()))
 }
 
 /// Map rustix's kernel `struct stat` → `libc::stat`.

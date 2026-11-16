@@ -2144,9 +2144,7 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let len = output_dir.len().min(buf.0.len() - 1);
             buf.0[..len].copy_from_slice(&output_dir[..len]);
-            buf.0[len] = 0;
-            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
+            let z = bun_core::ZStr::nul_terminate(&mut buf, len);
             if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
                 let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(

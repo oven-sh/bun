@@ -995,15 +995,14 @@ impl Builtin {
 
     /// Shared failure path for builtins whose option parser returns
     /// [`ParseError`]. Formats the canonical three-arm message
-    /// (`illegal option` / usage / `unsupported option`), runs `set_wait_err`
-    /// so the per-builtin state machine can move to its `WaitingWriteErr`
-    /// variant, then writes the message to stderr and finishes with exit 1.
+    /// (`illegal option` / usage / `unsupported option`), writes it to stderr
+    /// and finishes with exit 1. The caller has already moved its own state
+    /// to its `WaitingWriteErr` variant.
     pub(crate) fn fail_parse(
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
         e: &ParseError<'_>,
-        set_wait_err: impl FnOnce(),
     ) -> Yield {
         let buf: Vec<u8> = match e {
             ParseError::IllegalOption(_) => Self::fmt_error_arena(
@@ -1025,7 +1024,6 @@ impl Builtin {
             )
             .to_vec(),
         };
-        set_wait_err();
         Self::write_failing_error(interp, cmd, &buf, 1)
     }
 

@@ -71,6 +71,23 @@ describe("bun exec", () => {
     }
   });
 
+  // `cat` and `cp` are builtins on POSIX only with this flag. Each command reaches the option-error arm of its builtin.
+  describe("option errors of cat and cp", () => {
+    // prettier-ignore
+    const programs = [
+      ["cat -n",    "cat: unsupported option, please open a GitHub issue -- -n\n"],
+      ["cp -Z a b", "cp: illegal option -- Z\n"],
+    ] as const;
+    for (const [command, stderr] of programs) {
+      TestBuilder.command`${BUN} exec ${command}`
+        .env({ ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" })
+        .exitCode(1)
+        .stderr(stderr)
+        .stdout("")
+        .runAsTest(command);
+    }
+  });
+
   TestBuilder.command`${BUN} exec cd`
     .env(bunEnv)
     .exitCode(0)

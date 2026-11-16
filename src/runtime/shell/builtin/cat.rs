@@ -112,9 +112,8 @@ impl Cat {
                 Ok(Some(rest)) => Some(args.len() - rest.len()),
                 Ok(None) => None,
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Cat, &e, || {
-                        Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
-                    });
+                    Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr;
+                    return Builtin::fail_parse(interp, cmd, Kind::Cat, &e);
                 }
             }
         };

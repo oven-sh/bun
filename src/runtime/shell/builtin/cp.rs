@@ -81,9 +81,8 @@ impl Cp {
                     return Builtin::write_failing_error(interp, cmd, Kind::Cp.usage_string(), 1);
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Cp, &e, || {
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    });
+                    Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                    return Builtin::fail_parse(interp, cmd, Kind::Cp, &e);
                 }
             }
         };

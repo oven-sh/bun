@@ -54,9 +54,8 @@ impl Touch {
                     );
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Touch, &e, || {
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    });
+                    Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                    return Builtin::fail_parse(interp, cmd, Kind::Touch, &e);
                 }
             }
         };

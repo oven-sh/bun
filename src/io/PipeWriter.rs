@@ -470,6 +470,14 @@ impl PosixStreamingWriter {
         self.buffered_len()
     }
 
+    pub fn discard_queued(&self) {
+        self.outgoing.take();
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.base.handle.is_closed()
+    }
+
     fn should_buffer(&self, len: usize) -> bool {
         !self.force_sync.get() && len < Self::CHUNK_SIZE
     }
@@ -1364,6 +1372,10 @@ impl WindowsStreamingWriter {
         self.base.is_done.get()
     }
 
+    pub fn is_closed(&self) -> bool {
+        !self.base.has_source()
+    }
+
     pub fn has_pending_data(&self) -> bool {
         self.buffered_len() > 0
     }
@@ -1469,6 +1481,7 @@ impl WindowsStreamingWriter {
             Completion::FileFailed(err) => {
                 self.close(handler);
                 handler.on_error(err);
+                self.discard_failed_payload();
             }
             Completion::VmTeardown => self.close(handler),
         }
@@ -1478,6 +1491,14 @@ impl WindowsStreamingWriter {
         log!("onWrite() = {}", bstr::BStr::new(err.name()));
         handler.on_error(err);
         self.close(handler);
+        self.discard_failed_payload();
+    }
+
+    fn discard_failed_payload(&self) {
+        // A handler can have submitted another write.
+        if !self.base.has_inflight_write.get() {
+            self.base.current_payload.take();
+        }
     }
 
     fn on_write_complete(&self, handler: &impl WriteHandler, written: usize) {

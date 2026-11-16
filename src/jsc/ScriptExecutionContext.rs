@@ -353,6 +353,11 @@ impl AbortHandle {
         self.signal.get_mut().as_deref()
     }
 
+    pub fn signal_aborted(&self) -> bool {
+        self.signal
+            .with_taken(|signal| signal.as_ref().is_some_and(|s| s.aborted()))
+    }
+
     pub fn signal_timeout_deadline(&self) -> Option<bun_core::Timespec> {
         self.signal
             .with_taken(|signal| signal.as_ref()?.timeout_deadline())

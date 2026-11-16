@@ -23906,27 +23906,30 @@ describe.concurrent("--check", () => {
       );
     });
 
-    test.each(["true", "false"])("execArgv stops at the %s entrypoint after optional config flags", async entrypoint => {
-      using dir = project({
-        [entrypoint]: `declare var process: { argv: string[]; execArgv: string[] };\nconsole.log(JSON.stringify({ args: process.argv.slice(2), exec: process.execArgv }));\n`,
-        "bunfig.toml": "",
-      });
-      const flags = [["--config"], ["-c"], ["--config=bunfig.toml"], ["-c=bunfig.toml"]];
-      const cases = [[], ["run"]].flatMap(command =>
-        flags.map(flag => ({
-          command: [...command, "--check", ...flag, entrypoint, "--example"],
-          exec: ["--check", ...flag],
-        })),
-      );
-      const results = await Promise.all(cases.map(({ command }) => run(String(dir), command)));
-      expect(results).toEqual(
-        cases.map(({ exec }) => ({
-          stdout: JSON.stringify({ args: ["--example"], exec }),
-          stderr: "",
-          exitCode: 0,
-        })),
-      );
-    });
+    test.each(["true", "false"])(
+      "execArgv stops at the %s entrypoint after optional config flags",
+      async entrypoint => {
+        using dir = project({
+          [entrypoint]: `declare var process: { argv: string[]; execArgv: string[] };\nconsole.log(JSON.stringify({ args: process.argv.slice(2), exec: process.execArgv }));\n`,
+          "bunfig.toml": "",
+        });
+        const flags = [["--config"], ["-c"], ["--config=bunfig.toml"], ["-c=bunfig.toml"]];
+        const cases = [[], ["run"]].flatMap(command =>
+          flags.map(flag => ({
+            command: [...command, "--check", ...flag, entrypoint, "--example"],
+            exec: ["--check", ...flag],
+          })),
+        );
+        const results = await Promise.all(cases.map(({ command }) => run(String(dir), command)));
+        expect(results).toEqual(
+          cases.map(({ exec }) => ({
+            stdout: JSON.stringify({ args: ["--example"], exec }),
+            stderr: "",
+            exitCode: 0,
+          })),
+        );
+      },
+    );
 
     test.each(["true", "false"])("execArgv preserves the separate --pretty %s value", async value => {
       using dir = project({

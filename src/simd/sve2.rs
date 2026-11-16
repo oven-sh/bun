@@ -6,6 +6,7 @@ use bun_simd_trusted::{SharedOutU8, SharedU8, shared};
 use core::simd::u8x64;
 
 crate::isa::vector_types!(crate::neon::Neon<true>, 16);
+crate::native::x256_in_halves!("neon");
 
 #[inline]
 #[target_feature(enable = "sve")]

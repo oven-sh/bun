@@ -64,8 +64,8 @@ pub(crate) mod simd {
     fn weight(v: U8) -> U8 {
         let by_row = [0, 0, 1, 1, 1, 1, 1, 1, 0, 63, 1, 1, 1, 1, 1, 1];
         let exceptions = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ESC, 0, 0xAD, 0, 0x7F];
-        let is_exception = U8::repeat_16(exceptions).lookup(v & 0x0F).simd_eq(v);
-        U8::repeat_16(by_row).lookup(v >> 4) | is_exception.to_vector() & 63
+        let is_exception = U8::repeat(exceptions).lookup(v & 0x0F).simd_eq(v);
+        U8::repeat(by_row).lookup(v >> 4) | is_exception.to_vector() & 63
     }
 
     #[export]
@@ -122,7 +122,7 @@ pub(crate) mod simd {
     fn escapes_in(block: &[u8; 64], invisible: u64, suspects: u64, state: &mut u64) -> u64 {
         let [csi, csi_ends] = U8::bitmasks(block, |v| {
             let aborts = [1, 0, 0, 0, 0, 0, 0, 0, CAN, 0, SUB, ESC, ST, 0, 0, 0];
-            let aborts = U8::repeat_16(aborts).lookup(v & 0x0F).simd_eq(v);
+            let aborts = U8::repeat(aborts).lookup(v & 0x0F).simd_eq(v);
             [
                 (v & 0x3F).simd_eq(b'[' & 0x3F),
                 aborts | v.in_range(0x40..=0x7E),
@@ -142,7 +142,7 @@ pub(crate) mod simd {
             let string = [0x10, 0, 0, 0, 0, 0, 0, 0, 0x18, 0, 0, 0, 0, 0, 0x1E, 0x1F];
             [
                 (v & 0x3F).simd_eq(b']' & 0x3F),
-                U8::repeat_16(string).lookup(v & 0x0F).simd_eq(v & 0x3F),
+                U8::repeat(string).lookup(v & 0x0F).simd_eq(v & 0x3F),
                 (v & 0xF0).simd_eq(0x20),
                 v.simd_eq(BEL),
                 v.bitcast::<I8>().simd_lt(0).cast(),

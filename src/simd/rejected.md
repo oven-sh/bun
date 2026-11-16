@@ -892,6 +892,16 @@ bun_simd::export! {
 # fn main() {}
 ```
 
+In the arguments of an attribute, which are only compared:
+
+```rust,compile_fail
+macro_rules! item { ($($it:tt)*) => { const _: u8 = { $($it)* }; } }
+macro_rules! nothing { ($($it:tt)*) => {} }
+#[bun_simd::foreach_width(a {} item! { unsafe { 0 } } nothing!)]
+mod width {}
+# fn main() {}
+```
+
 ## What compiles, and does no harm
 
 Another `then`:

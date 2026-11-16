@@ -107,7 +107,7 @@ pub fn copy_to_shared(from: &[impl sealed::Byte], to: &[SharedOutU8]) -> usize {
                     sym memmove,
                 )
             }
-            // SAFETY: both have `len` bytes. `memmove` stores only what it has loaded, and only there.
+            // SAFETY: both have `len` bytes. `memmove` accesses no others, whatever it reads.
             unsafe { jump(to.as_ptr(), from.as_ptr().cast(), len) };
         }
         _ => {

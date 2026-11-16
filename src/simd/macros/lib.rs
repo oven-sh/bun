@@ -55,7 +55,7 @@ fn block(head: &str, body: TokenStream) -> TokenStream {
 }
 
 /// Replaces the body of `mod name { .. }`.
-fn map_module(item: TokenStream, f: fn(TokenStream) -> TokenStream) -> TokenStream {
+fn map_module(item: TokenStream, f: impl Fn(TokenStream) -> TokenStream) -> TokenStream {
     let mut item: Vec<TokenTree> = item.into_iter().collect();
     let is_module = is(item.iter().nth_back(2), "mod");
     let (true, Some(TokenTree::Group(body))) = (is_module, item.pop()) else {
@@ -301,21 +301,26 @@ pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
     })
 }
 
-/// Compiles a nested module as `full`, for whole vectors, and as `x128`, for 128 bits.
+/// Compiles a nested module as `full` and `x128`, or for the widths in the arguments.
 #[proc_macro_attribute]
-pub fn foreach_width(_: TokenStream, item: TokenStream) -> TokenStream {
+pub fn foreach_width(widths: TokenStream, item: TokenStream) -> TokenStream {
+    let widths: &[&str] = match &widths.to_string().replace(' ', "")[..] {
+        "" => &["full", "x128"],
+        "x128,x256" => &["x128", "x256"],
+        "full,x128,x256" => &["full", "x128", "x256"],
+        _ => panic!("expected nothing, `x128, x256` or `full, x128, x256`"),
+    };
     map_module(item, |module| {
-        let with_x128 =
-            |isa| TokenStream::from_iter([TokenTree::from(isa).into(), parse("::x128")]);
-        let x128 = replace_ident(module.clone(), "isa", &with_x128);
-        let copy = |(name, body)| {
+        let copy = |&name| {
             let mut copy = parse("#[allow(unused_imports)] use super::super::*;");
-            copy.extend([body]);
+            let path = parse(&format!("::{name}"));
+            let longer = |isa| TokenStream::from_iter([TokenTree::from(isa).into(), path.clone()]);
+            copy.extend(match name {
+                "full" => module.clone(),
+                _ => replace_ident(module.clone(), "isa", &longer),
+            });
             block(&format!("pub mod {name}"), copy)
         };
-        [("full", module), ("x128", x128)]
-            .into_iter()
-            .map(copy)
-            .collect()
+        widths.iter().map(copy).collect()
     })
 }

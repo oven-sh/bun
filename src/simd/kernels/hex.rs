@@ -6,7 +6,7 @@ pub(crate) mod simd {
     use isa::{I8, I16, U8, U16};
 
     fn digits(v: U8) -> [U8; 2] {
-        let digits = U8::repeat_16(*b"0123456789abcdef");
+        let digits = U8::repeat(*b"0123456789abcdef");
         [digits.lookup(v >> 4), digits.lookup(v & 0x0F)]
     }
 
@@ -49,9 +49,8 @@ pub(crate) mod simd {
             -16, -32, -48, -63, 55, 42, -112, 10, 112, 0, 0, 0, 0, 0, 0, 0,
         ];
         let moved = digits + 15;
-        let add = |by_row: [i8; 16]| {
-            moved + U8::repeat_16(by_row.map(i8::cast_unsigned)).lookup(moved >> 4)
-        };
+        let add =
+            |by_row: [i8; 16]| moved + U8::repeat(by_row.map(i8::cast_unsigned)).lookup(moved >> 4);
         (add(TO_VALUE), add(TO_SIGN).bitcast())
     }
 
@@ -60,7 +59,7 @@ pub(crate) mod simd {
             let (high, low) = a.deinterleave(b);
             return high << 4 | low & 0x0F;
         }
-        let weights = U16::splat(0x0110).bitcast();
+        let weights = I8::repeat([16, 1]);
         let join = |v| I16::saturating_pairwise_dot(v, weights);
         U8::saturating_narrow(join(a), join(b))
     }

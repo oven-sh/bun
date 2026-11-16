@@ -13,4 +13,4 @@ workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_highway.workspace = true
+bun_simd_kernels.workspace = true

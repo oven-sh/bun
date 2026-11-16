@@ -31,7 +31,7 @@ pub mod x86_64;
 #[cfg(target_arch = "aarch64")]
 pub use aarch64::Features;
 pub use atomic_fn::AtomicFn;
-pub use opaque::{opaque, opaque16};
+pub use opaque::{keep16, opaque, opaque16};
 pub use output::{Append, Out, UNROLL, Writer};
 pub use output::{copy_from_shared, extend_vec, quarters, spare_capacity};
 pub use shared_u8::{SharedOutU8, SharedU8, copy_to_shared};

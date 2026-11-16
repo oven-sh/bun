@@ -2,8 +2,8 @@
 
 use crate::block::{self, Block, Zigzag};
 use crate::header::Grid;
-use crate::{Result, filled, wrapped};
-use bun_highway::JPEG_PIXEL_GROUP;
+use crate::{Error, Result, filled, wrapped};
+use bun_simd_kernels::{JPEG_PIXEL_GROUP, jpeg_forward_transform, jpeg_rgba_to_ycc420};
 
 const MCU_SIZE: usize = 16;
 
@@ -78,7 +78,8 @@ impl<'a> Strips<'a> {
             let [y, cb, cr] = &mut self.planes;
             let planes = [(y, 4 * at + x), (cb, at + x / 2), (cr, at + x / 2)]
                 .map(|(plane, at)| plane.get_mut(at..).unwrap_or_default());
-            bun_highway::jpeg_rgba_to_ycc420(pixels, pixel_stride, count, pairs, planes, stride)
+            jpeg_rgba_to_ycc420(pixels, pixel_stride, count, pairs, planes, stride)
+                .ok_or(Error::Internal)
         };
 
         let whole = width - width % JPEG_PIXEL_GROUP;
@@ -123,7 +124,6 @@ impl<'a> Strips<'a> {
         let samples = plane.and_then(|plane| plane.get(8 * (y * stride + x)..));
         let divisors = wrapped(&self.divisors, usize::from(!is_luma));
         let samples = samples.unwrap_or_default();
-        bun_highway::jpeg_forward_transform(samples, stride, divisors, blocks, masks)?;
-        Ok(())
+        jpeg_forward_transform(samples, stride, divisors, blocks, masks).ok_or(Error::Internal)
     }
 }

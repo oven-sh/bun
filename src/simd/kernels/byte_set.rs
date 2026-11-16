@@ -75,7 +75,7 @@ impl ByteSet {
     }
 }
 
-/// How far `prefix_len` looks without a call.
+/// How far `prefix_len` looks without a dispatch.
 const NEAR: usize = 64;
 
 #[bun_simd::foreach_target]
@@ -83,7 +83,7 @@ pub(crate) mod simd {
     use isa::U8;
 
     pub(crate) fn class(v: U8, of: &ByteSet) -> U8 {
-        U8::repeat_16(of.rows).lookup(v >> 4) & U8::repeat_16(of.columns).lookup(v & 15)
+        U8::repeat(of.rows).lookup(v >> 4) & U8::repeat(of.columns).lookup(v & 15)
     }
 
     #[export(up_to = avx2, up_to = neon)]
@@ -92,7 +92,7 @@ pub(crate) mod simd {
         outside.unwrap_or(text.len())
     }
 
-    /// Few runs are long, and a call takes as long as a short one.
+    /// Few runs are long, and a dispatch takes as long as a short one.
     #[export(baseline)]
     #[inline]
     pub fn prefix_len(set: &ByteSet, text: &[u8]) -> usize {

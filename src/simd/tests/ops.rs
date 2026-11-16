@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 mod common;
 
-use bun_simd::{Int, Lane, Out};
+use bun_simd::{Int, Lane, Out, Shuffle};
 use common::on_each_target;
 use std::array::from_fn;
 use std::fmt::Debug;
@@ -49,6 +49,24 @@ impl Random {
 fn saturating_dot(a: [u8; 2], b: [i8; 2]) -> i16 {
     let [first, second] = [0, 1].map(|i| i16::from(a[i]) * i16::from(b[i]));
     first.saturating_add(second)
+}
+
+struct Mixed;
+
+impl<const N: usize> Shuffle<N> for Mixed {
+    const FROM: [usize; N] = {
+        let (mut from, mut i) = ([0; N], 0);
+        while i < N {
+            from[i] = if i % 3 == 0 { 2 * N - 1 - i } else { i / 2 };
+            i += 1;
+        }
+        from
+    };
+}
+
+/// Where lane `i` of `pack` comes from, in the lanes of both arguments.
+fn packed_from(i: usize, len: usize, block: usize) -> usize {
+    i / (block / 2) % 2 * (len / 2) + i / block * (block / 2) + i % (block / 2)
 }
 
 #[bun_simd::foreach_target]
@@ -134,6 +152,8 @@ mod simd {
         let every_other = |first| a.iter().chain(&b).copied().skip(first).step_by(2);
         let even_then_odd: Vec<T> = every_other(0).chain(every_other(1)).collect();
         assert_eq!(joined(x.deinterleave(y)), even_then_odd);
+        let want = from_fn(|i| if i % 3 == 0 { b[N - 1 - i] } else { a[i / 2] });
+        assert_eq!(x.shuffle::<Mixed>(y).to_array(), want);
         let slid = |by| from_fn(|i: usize| i.checked_sub(by).map_or(zero, |i| a[i]));
         assert_eq!(x.shift_elements_right::<1>(zero).to_array(), slid(1));
         assert_eq!(x.shift_elements_right::<2>(zero).to_array(), slid(2));
@@ -154,6 +174,26 @@ mod simd {
         assert_eq!(longer, [&b[..], &[zero]].concat());
     }
 
+    fn moves_in_blocks<T: Number + Int<N>, const N: usize>(random: &mut Random) {
+        let [a, b] = [(); 2].map(|()| random.lanes::<T, N>());
+        let (x, y, block) = (Vector::load(&a), Vector::load(&b), 16 / size_of::<T>());
+        let blocks = |(first, second): (Vector<T, N>, Vector<T, N>), i: usize| {
+            [
+                &first.to_array()[i..][..block],
+                &second.to_array()[i..][..block],
+            ]
+            .concat()
+        };
+        for i in (0..N).step_by(block) {
+            let (a, b) = (&a[i..][..block], &b[i..][..block]);
+            let in_turns: Vec<T> = a.iter().zip(b).flat_map(|(&a, &b)| [a, b]).collect();
+            assert_eq!(blocks(x.interleave_in_blocks(y), i), in_turns);
+            let every_other = |first| a.iter().chain(b).copied().skip(first).step_by(2);
+            let even_then_odd: Vec<T> = every_other(0).chain(every_other(1)).collect();
+            assert_eq!(blocks(x.deinterleave_in_blocks(y), i), even_then_odd);
+        }
+    }
+
     fn any_lanes<T: Number + Int<N>, const N: usize>(random: &mut Random) {
         let (a, b) = (random.lanes::<T, N>(), random.lanes());
         lanewise(a, b);
@@ -162,7 +202,7 @@ mod simd {
         moves(a, b);
     }
 
-    #[bun_simd::foreach_width]
+    #[bun_simd::foreach_width(full, x128, x256)]
     mod width {
         use isa::{F32, I8, I16, I32, I64, U8, U16, U32, U64, Vector};
         const N: usize = U8::LEN;
@@ -180,9 +220,9 @@ mod simd {
                 assert_eq!(x.abs_diff(y).to_array(), each(u8::abs_diff));
                 let average = each(|a, b| (u16::from(a) + u16::from(b)).div_ceil(2) as u8);
                 assert_eq!(x.average_round(y).to_array(), average);
-                let (low, high) = U16::widening_mul(x, y);
-                let products: [u16; N] = from_fn(|i| u16::from(a[i]) * u16::from(b[i]));
-                assert_eq!([low.to_array(), high.to_array()].concat(), products);
+                let (pairs, more) = x.interleave(y);
+                let sums = [pairs, more].map(|it| U16::sums_of_2(it).to_array());
+                assert_eq!(sums.concat(), b.map(|b| u16::from(first) + u16::from(b)));
                 for last in first..=255 {
                     let want = b.map(|b| if (first..=last).contains(&b) { 255 } else { 0 });
                     let got = y.in_range(black_box(first..=last));
@@ -211,6 +251,13 @@ mod simd {
                 let clamped = all.map(|it| (it as i16).clamp(0, 255) as u8);
                 let got = U8::saturating_narrow(a.bitcast::<I16>(), b.bitcast());
                 assert_eq!(got.to_array(), clamped);
+                let packed = from_fn(|i| all[packed_from(i, N, 16)] as i16);
+                let want = packed.map(|it| it.clamp(0, 255) as u8);
+                assert_eq!(U8::pack(a.bitcast::<I16>(), b.bitcast()).to_array(), want);
+                let want = packed.map(|it| it.clamp(-128, 127) as i8);
+                assert_eq!(I8::pack(a.bitcast::<I16>(), b.bitcast()).to_array(), want);
+                let want = a.to_array().map(|it| (it as i16).wrapping_abs());
+                assert_eq!(a.bitcast::<I16>().abs().to_array(), want);
             }
             for (bits, at) in
                 (0..1u64 << 16).flat_map(|it| (0..N).step_by(16).map(move |at| (it, at)))
@@ -235,6 +282,10 @@ mod simd {
             any_lanes::<i32, { I32::LEN }>(random);
             any_lanes::<u64, { U64::LEN }>(random);
             any_lanes::<i64, { I64::LEN }>(random);
+            moves_in_blocks::<u8, { U8::LEN }>(random);
+            moves_in_blocks::<i16, { I16::LEN }>(random);
+            moves_in_blocks::<u32, { U32::LEN }>(random);
+            moves_in_blocks::<u64, { U64::LEN }>(random);
 
             let (a, b) = (random.lanes::<u8, N>(), random.lanes::<i8, N>());
             let (x, y) = (U8::load(&a), I8::load(&b));
@@ -245,8 +296,11 @@ mod simd {
             let dots = from_fn(|i| saturating_dot(a.as_chunks().0[i], b.as_chunks().0[i]));
             assert_eq!(I16::saturating_pairwise_dot(x, y).to_array(), dots);
             assert_eq!(U16::widen_lower(x).to_array(), from_fn(|i| a[i].into()));
-            let repeated = U8::repeat_16(*a.first_chunk().unwrap());
+            let repeated = U8::repeat::<16>(*a.first_chunk().unwrap());
             assert_eq!(repeated.to_array(), from_fn(|i| a[i % 16]));
+            assert_eq!(U8::repeat([a[0], a[1]]).to_array(), from_fn(|i| a[i % 2]));
+            let eight: [u8; 8] = from_fn(|i| a[i]);
+            assert_eq!(U8::repeat(eight).to_array(), from_fn(|i| a[i % 8]));
             let widened: I32 = Vector::from_slice(&a).cast();
             assert_eq!(widened.to_array(), from_fn(|i| a[i].into()));
             let is_negative = y.simd_lt(0).cast::<u8>().select(1, 0);
@@ -258,6 +312,19 @@ mod simd {
             let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
             let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
             assert_eq!(I32::pairwise_dot(x, y).to_array(), dots);
+            let b = b.map(|b| b.max(-i16::MAX));
+            let want = from_fn(|i| ((i32::from(a[i]) * i32::from(b[i]) + (1 << 14)) >> 15) as i16);
+            assert_eq!(x.mul_q15(I16::load(&b)).to_array(), want);
+            let [first, second] = x.halves();
+            assert_eq!([first.to_array(), second.to_array()].concat(), a);
+            assert_eq!(I16::from_halves([first, second]).to_array(), a);
+
+            let all: [i32; N / 2] = random.lanes();
+            let (x, y) = (I32::from_slice(&all), I32::from_slice(&all[N / 4..]));
+            let clamped = all.map(|it| it.clamp(-32768, 32767) as i16);
+            assert_eq!(I16::saturating_narrow(x, y).to_array(), clamped);
+            let packed = from_fn(|i| clamped[packed_from(i, N / 2, 8)]);
+            assert_eq!(I16::pack(x, y).to_array(), packed);
 
             let (a, [p, q]) = (random.lanes::<u16, _>(), random.lanes::<u16, 2>());
             let range = p.min(q)..=p.max(q);
@@ -305,19 +372,25 @@ mod simd {
         }
     }
 
+    fn planes<const N: usize>(quads: &[[u8; 4]; N]) -> [Vector<u8, N>; 4]
+    where
+        u8: Int<N>,
+    {
+        let planes = Vector::load_interleaved4(quads);
+        for (i, plane) in planes.iter().enumerate() {
+            assert_eq!(plane.to_array(), quads.map(|quad| quad[i]));
+        }
+        let pairs = Vector::to_interleaved2([planes[0], planes[3]]);
+        assert_eq!(pairs, quads.map(|[a, .., d]| [a, d]));
+        planes
+    }
+
     fn interleaved<const N: usize>(random: &mut Random)
     where
         u8: Int<N>,
     {
-        let (quads, mut back) = (from_fn(|_| random.lanes()), [[0; 4]; N]);
-        let planes = Vector::<u8, N>::load_interleaved4(&quads);
-        for (i, plane) in planes.iter().enumerate() {
-            assert_eq!(plane.to_array(), quads.map(|quad| quad[i]));
-        }
-        Vector::store_interleaved4(planes, &mut back);
-        assert_eq!(back, quads);
-        let pairs = Vector::to_interleaved2([planes[0], planes[3]]);
-        assert_eq!(pairs, quads.map(|[a, .., d]| [a, d]));
+        let quads: [_; N] = from_fn(|_| random.lanes());
+        assert_eq!(Vector::to_interleaved4(planes(&quads)), quads);
     }
 
     fn bit_indices(random: &mut Random) {
@@ -354,12 +427,14 @@ mod simd {
     pub fn pairs_of_bytes() {
         width::full::pairs_of_bytes();
         width::x128::pairs_of_bytes();
+        width::x256::pairs_of_bytes();
     }
 
     #[export]
     pub fn all_inputs() {
         width::full::all_inputs();
         width::x128::all_inputs();
+        width::x256::all_inputs();
     }
 
     #[export]
@@ -368,6 +443,11 @@ mod simd {
         for _ in 0..rounds {
             width::full::random_inputs(random);
             width::x128::random_inputs(random);
+            width::x256::random_inputs(random);
+            let [a, b] = [(); 2].map(|()| random.lanes::<i16, 8>());
+            let products = from_fn(|i| i32::from(a[i]) * i32::from(b[i]));
+            let got = isa::x128::I16::load(&a).widening_mul(Vector::load(&b));
+            assert_eq!(got.to_array(), products);
             bit_indices(random);
             let (word, lanes) = (random.next(), from_fn(|_| random.next() as i16));
             assert_eq!(bun_simd::opaque(word), word);
@@ -375,7 +455,7 @@ mod simd {
             any_lanes::<u8, 8>(random);
             any_lanes::<u8, 64>(random);
             any_lanes::<i32, 16>(random);
-            interleaved::<8>(random);
+            planes::<8>(&from_fn(|_| random.lanes()));
             interleaved::<16>(random);
             interleaved::<32>(random);
             interleaved::<64>(random);

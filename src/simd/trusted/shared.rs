@@ -4,7 +4,7 @@
 //! wider access that may race. To the CPU it is an ordinary access, which never tears a byte.
 use crate::{SharedOutU8, SharedU8};
 use core::arch::asm;
-use core::simd::u8x16;
+use core::simd::{ToBytes, u8x16};
 #[cfg(target_arch = "x86_64")]
 use core::simd::{u8x32, u8x64};
 
@@ -37,6 +37,28 @@ cfg_select! {
     }
 }
 
+/// For ASan, whose red zones have 16 bytes or more. With a call, a loop takes 20 times as long.
+#[inline(always)]
+fn probes(len: usize) -> impl Iterator<Item = usize> {
+    (0..len).step_by(16).chain([len - 1])
+}
+
+#[inline(always)]
+fn will_load_array<const N: usize>(from: &[SharedU8; N]) {
+    match cfg!(sanitize = "address") {
+        true => probes(N).for_each(|i| _ = from[i].get()),
+        false => will_load(from.as_ptr().cast(), N),
+    }
+}
+
+#[inline(always)]
+fn will_store_array<const N: usize>(bytes: impl Fn(usize) -> u8, to: &[SharedOutU8; N]) {
+    match cfg!(sanitize = "address") {
+        true => probes(N).for_each(|i| to[i].set(bytes(i))),
+        false => will_store(to.as_ptr().cast(), N),
+    }
+}
+
 /// `asm!` needs literals.
 macro_rules! load_and_store {
     ($feature:literal, $T:ty, $class:ident, $load:ident $load_asm:literal, $store:ident $store_asm:literal) => {
@@ -47,7 +69,7 @@ macro_rules! load_and_store {
             from: &[[SharedU8; size_of::<$T>()]; K],
         ) -> $T {
             const { assert!(AT < K) };
-            will_load(from[AT].as_ptr().cast(), size_of::<$T>());
+            will_load_array(&from[AT]);
             let v;
             // SAFETY: reads the bytes of `from[AT]`, with an instruction of the enabled feature.
             unsafe {
@@ -69,7 +91,7 @@ macro_rules! load_and_store {
             to: &[[SharedOutU8; size_of::<$T>()]; K],
         ) {
             const { assert!(AT < K) };
-            will_store(to[AT].as_ptr().cast(), size_of::<$T>());
+            will_store_array(|i| v.to_ne_bytes()[i], &to[AT]);
             // SAFETY: writes the bytes of `to[AT]`, with an instruction of the enabled feature.
             unsafe {
                 asm!(
@@ -111,7 +133,7 @@ cfg_select! {
 
 #[inline(always)]
 pub fn load2(from: &[SharedU8; 2]) -> u16 {
-    will_load(from.as_ptr().cast(), 2);
+    will_load_array(from);
     let v: u32;
     // SAFETY: reads the bytes of `from`, with an instruction that needs no feature.
     unsafe {

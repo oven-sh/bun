@@ -1,5 +1,6 @@
 //! The ops that need no intrinsic. LLVM picks the instructions of the function they are inlined into.
-use crate::swizzle::{Repeat, ShiftRight, SwapPairs};
+use crate::swizzle::{As, DeinterleaveInBlocks, InterleaveInBlocks, Repeat, ShiftRight};
+use crate::swizzle::{Shuffle, SwapPairs};
 use crate::{Isa, Mask};
 use bun_simd_trusted::opaque16;
 use core::array;
@@ -147,6 +148,33 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
         (Self::new(even), Self::new(odd))
     }
 
+    /// Like `interleave` for each block of 16 bytes.
+    #[inline(always)]
+    pub fn interleave_in_blocks(self, other: Self) -> (Self, Self) {
+        (
+            Self::new(InterleaveInBlocks::<T, 0>::concat_swizzle(self.0, other.0)),
+            Self::new(InterleaveInBlocks::<T, 1>::concat_swizzle(self.0, other.0)),
+        )
+    }
+
+    /// Like `deinterleave` for each block of 16 bytes.
+    #[inline(always)]
+    pub fn deinterleave_in_blocks(self, other: Self) -> (Self, Self) {
+        (
+            Self::new(DeinterleaveInBlocks::<T, 0>::concat_swizzle(
+                self.0, other.0,
+            )),
+            Self::new(DeinterleaveInBlocks::<T, 1>::concat_swizzle(
+                self.0, other.0,
+            )),
+        )
+    }
+
+    #[inline(always)]
+    pub fn shuffle<S: Shuffle<N>>(self, other: Self) -> Self {
+        Self::new(As::<S>::concat_swizzle(self.0, other.0))
+    }
+
     /// Moves lane `i` to `i + OFFSET`.
     #[inline(always)]
     pub fn shift_elements_right<const OFFSET: usize>(self, padding: T) -> Self {
@@ -170,7 +198,46 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     }
 }
 
+/// rustc cannot halve a generic `N`.
+macro_rules! impl_halves {
+    ($($N:literal $HALF:literal),*) => {$(
+        impl<T: Lane, I: Isa> Vector<T, $N, I> {
+            #[inline(always)]
+            pub fn halves(self) -> [Vector<T, $HALF, I>; 2] {
+                [
+                    Vector::new(self.0.extract::<0, $HALF>()),
+                    Vector::new(self.0.extract::<$HALF, $HALF>()),
+                ]
+            }
+
+            #[inline(always)]
+            pub fn from_halves([first, second]: [Vector<T, $HALF, I>; 2]) -> Self {
+                Self::new(Repeat::<$N>::concat_swizzle(first.0, second.0))
+            }
+        }
+    )*};
+}
+
+impl_halves!(64 32, 32 16, 16 8, 8 4, 4 2, 2 1);
+
 impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
+    /// Fills every `K` lanes with `lanes`.
+    #[inline(always)]
+    pub fn repeat<const K: usize>(lanes: [T; K]) -> Self
+    where
+        T: Int<K>,
+    {
+        const { assert!(K <= N && matches!(size_of::<[T; K]>(), 2 | 4 | 8 | 16)) };
+        // LLVM does not merge a `splat` of wider lanes with the shuffles after it.
+        let lanes = Vector::<T, K, I>::from_array(lanes);
+        Self::from_first_bytes(match size_of_val(&lanes) {
+            2 => u16x32::splat(u16::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
+            4 => u32x16::splat(u32::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
+            8 => u64x8::splat(u64::from_le_bytes(lanes.first_bytes().into())).to_le_bytes(),
+            _ => Repeat::<16>::swizzle(lanes.first_bytes::<16>()),
+        })
+    }
+
     /// Panics if the vector has fewer than `BYTES` bytes.
     #[inline(always)]
     pub(crate) fn first_bytes<const BYTES: usize>(self) -> Simd<u8, BYTES> {
@@ -247,12 +314,6 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
 }
 
 impl<const N: usize, I: Isa> Vector<u8, N, I> {
-    /// Fills every 16 bytes with `block`.
-    #[inline(always)]
-    pub fn repeat_16(block: [u8; 16]) -> Self {
-        Self::new(Repeat::<16>::swizzle(Simd::from_array(block)))
-    }
-
     #[inline(always)]
     pub fn saturating_add(self, other: impl Into<Self>) -> Self {
         Self::new(self.0.saturating_add(other.into().0))
@@ -298,18 +359,34 @@ impl<const N: usize, I: Isa> Vector<u16, N, I> {
     {
         Self::new(bytes.0.extract::<0, N>().cast())
     }
+}
 
-    /// The full products of the first half of the lanes, and of the second half.
+impl<I: Isa> Vector<i16, 8, I> {
     #[inline(always)]
-    pub fn widening_mul<const M: usize>(a: Vector<u8, M, I>, b: Vector<u8, M, I>) -> (Self, Self)
+    pub(crate) fn full_products(self, other: Self) -> Vector<i32, 8, I> {
+        self.cast() * other.cast()
+    }
+}
+
+impl<const N: usize, I: Isa> Vector<i16, N, I> {
+    #[inline(always)]
+    pub fn abs(self) -> Self {
+        Self::new(self.0.abs())
+    }
+
+    /// The lanes of `first`, then of `second`, clamped.
+    #[inline(always)]
+    pub fn saturating_narrow<const M: usize>(
+        first: Vector<i32, M, I>,
+        second: Vector<i32, M, I>,
+    ) -> Self
     where
-        Simd<u16, N>: ToBytes<Bytes = Simd<u8, M>>,
+        Simd<i32, M>: ToBytes<Bytes = <Simd<i16, N> as ToBytes>::Bytes>,
+        Simd<i16, N>: ToBytes,
     {
-        let products = a.0.cast::<u16>() * b.0.cast();
-        (
-            Self::new(products.extract::<0, N>()),
-            Self::new(products.extract::<N, N>()),
-        )
+        let [min, max] = [i16::MIN, i16::MAX].map(|it| Simd::splat(it.into()));
+        let all = Repeat::<N>::concat_swizzle(first.0, second.0);
+        Self::new(all.simd_max(min).simd_min(max).cast())
     }
 }
 

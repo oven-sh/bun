@@ -1,30 +1,13 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
+mod common;
 use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to};
 use bun_simd_kernels::{self as kernels, Filter, MappingsState};
+use common::{check, check_against_portable, random, sample, targets};
 use core::f64::consts::PI;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 use std::sync::Arc;
-
-fn targets() -> impl Iterator<Item = Target> {
-    // Miri lacks some of the intrinsics.
-    let is_skipped = |target: Target| cfg!(miri) && target.arch() == Some("aarch64");
-    let all = Target::ALL.into_iter();
-    let supported = all.filter(move |&it| it.is_supported() && !is_skipped(it));
-    supported.inspect(|&target| limit_to(target))
-}
-
-/// Returns numbers below its argument.
-fn random() -> impl FnMut(usize) -> usize {
-    let mut x = 88172645463325252u64;
-    move |n| {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        (x % n as u64) as usize
-    }
-}
 
 /// Each has an allocation of its exact size.
 fn texts(alphabet: &[u8]) -> impl Iterator<Item = Vec<u8>> {
@@ -42,22 +25,6 @@ fn all_bytes() -> Vec<u8> {
 }
 
 const MIXED: &[u8] = b"abAZ\"\\\n {},0F</&\xff";
-
-/// Miri gets one in `n`.
-fn sample<T>(all: impl IntoIterator<Item = T>, n: usize) -> impl Iterator<Item = T> {
-    all.into_iter().step_by(if cfg!(miri) { n } else { 1 })
-}
-
-fn check<T: PartialEq + Debug>(want: T, kernel: impl Fn() -> T) {
-    for target in targets() {
-        assert_eq!(kernel(), want, "{target:?}");
-    }
-}
-
-fn check_against_portable<T: PartialEq + Debug>(kernel: impl Fn() -> T) {
-    limit_to(Target::Portable);
-    check(kernel(), kernel);
-}
 
 fn atomic(bytes: &[u8]) -> Vec<AtomicU8> {
     bytes.iter().map(|&byte| AtomicU8::new(byte)).collect()
@@ -429,10 +396,9 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
                 let (from, to) = (below(2) * below(len), len - below(2) * below(len));
                 let start = parts.len();
                 parts.extend(&needle[from.min(to)..to.max(from)]);
-                parts[start..]
-                    .iter_mut()
-                    .nth(below(2 * len))
-                    .map(|it| *it = b'a');
+                if let Some(it) = parts.get_mut(start + below(2 * len)) {
+                    *it = b'a';
+                }
             }
             let mut both = [almost, parts];
             both.rotate_left(usize::from(!is_forward));

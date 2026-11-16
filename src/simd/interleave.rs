@@ -1,6 +1,7 @@
 //! For NEON, LLVM makes `st2`, `ld4` and `st4` of a wide access next to a shuffle.
 use crate::swizzle::{EveryFourth, Interleave, Repeat};
 use crate::{Int, Isa, Vector};
+use bun_simd_trusted::keep16;
 use core::simd::{Swizzle, u8x16, u8x32, u8x64};
 
 impl<const N: usize, I: Isa> Vector<u8, N, I>
@@ -35,6 +36,8 @@ where
                 EveryFourth::<2>::swizzle(all),
                 EveryFourth::<3>::swizzle(all),
             ];
+            // There is no `ld4` unless all of them are used.
+            planes.into_iter().for_each(keep16);
             return planes.map(|plane| Self::new(plane.resize(0)));
         }
         let load = |i: usize| Self::from_slice(&from[i * N..]);
@@ -46,23 +49,26 @@ where
     }
 
     #[inline(always)]
-    pub fn store_interleaved4(vectors: [Self; 4], to: &mut [[u8; 4]; N]) {
-        let to = to.as_flattened_mut();
+    pub fn to_interleaved4([a, b, c, d]: [Self; 4]) -> [[u8; 4]; N] {
+        const { assert!(N.is_multiple_of(16)) };
+        let mut quads = [[0; 4]; N];
+        let to = quads.as_flattened_mut();
         if Self::IS_ONE_ACCESS {
-            let [a, b, c, d] = vectors.map(|v| v.0.resize::<16>(0));
+            let [a, b, c, d] = [a, b, c, d].map(|v| v.0.resize::<16>(0));
             let ab: u8x32 = Repeat::<32>::concat_swizzle(a, b);
             let cd: u8x32 = Repeat::<32>::concat_swizzle(c, d);
             let all: u8x64 = Interleave::<4>::concat_swizzle(ab, cd);
-            return all.copy_to_slice(to);
+            all.copy_to_slice(to);
+            return quads;
         }
-        let [a, b, c, d] = vectors;
-        let (ac_first, ac_second) = a.interleave(c);
-        let (bd_first, bd_second) = b.interleave(d);
-        let (first, second) = ac_first.interleave(bd_first);
-        let (third, fourth) = ac_second.interleave(bd_second);
-        let chunks = to.as_chunks_mut().0;
-        for (v, to) in [first, second, third, fourth].into_iter().zip(chunks) {
-            v.store(to);
+        let (ac_first, ac_second) = a.interleave_in_blocks(c);
+        let (bd_first, bd_second) = b.interleave_in_blocks(d);
+        let (first, second) = ac_first.interleave_in_blocks(bd_first);
+        let (third, fourth) = ac_second.interleave_in_blocks(bd_second);
+        for (i, to) in to.as_chunks_mut::<16>().0.iter_mut().enumerate() {
+            let from = [first, second, third, fourth][i % 4];
+            to.copy_from_slice(&from.0[i / 4 * 16..][..16]);
         }
+        quads
     }
 }

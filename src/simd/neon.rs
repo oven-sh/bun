@@ -15,6 +15,7 @@ compile_error!("these ops assume little-endian lanes");
 pub struct Neon<const HAS_SVE2: bool>;
 
 crate::isa::vector_types!(Neon<false>, 16);
+crate::native::x256_in_halves!("neon");
 
 type Lanes<T, const N: usize, const S: bool> = crate::Vector<T, N, Neon<S>>;
 
@@ -139,9 +140,51 @@ impl<const S: bool> Lanes<u8, 16, S> {
             second.0.into(),
         ))
     }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn pack(first: Lanes<i16, 8, S>, second: Lanes<i16, 8, S>) -> Self {
+        Self::saturating_narrow(first, second)
+    }
+}
+
+impl<const S: bool> Lanes<i8, 16, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn pack(first: Lanes<i16, 8, S>, second: Lanes<i16, 8, S>) -> Self {
+        Self::new(vqmovn_high_s16(vqmovn_s16(first.0.into()), second.0.into()))
+    }
+}
+
+impl<const S: bool> Lanes<u16, 8, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn sums_of_2(bytes: Lanes<u8, 16, S>) -> Self {
+        Self::new(vpaddlq_u8(bytes.0.into()))
+    }
 }
 
 impl<const S: bool> Lanes<i16, 8, S> {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn widening_mul(self, other: Self) -> Lanes<i32, 8, S> {
+        let (a, b) = (self.0.into(), other.0.into());
+        let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
+        Lanes::<_, 8, S>::from_halves([Lanes::new(low), Lanes::new(vmull_high_s16(a, b))])
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn pack(first: Lanes<i32, 4, S>, second: Lanes<i32, 4, S>) -> Self {
+        Self::new(vqmovn_high_s32(vqmovn_s32(first.0.into()), second.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn mul_q15(self, other: Self) -> Self {
+        Self::new(vqrdmulhq_s16(self.0.into(), other.0.into()))
+    }
+
     #[inline(always)]
     pub fn saturating_pairwise_dot(a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
         let (a, b) = (

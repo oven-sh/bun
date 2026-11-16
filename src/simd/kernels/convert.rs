@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicU8;
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I8, U8, U16, U32, Vector};
+    use isa::{I8, U8, U16, Vector};
 
     #[export]
     pub fn lower_ascii<'a>(from: &[u8], to: Out<'a, u8>) -> &'a mut [u8] {
@@ -150,8 +150,7 @@ pub(crate) mod simd {
     ) -> &'a mut [u8] {
         let output = output.take(input.len());
         let (len, mask) = (output.len(), u32::from_le_bytes(mask));
-        let mask_at =
-            |at: usize| U32::splat(mask.rotate_right(8 * (at % 4) as u32)).bitcast::<U8>();
+        let mask_at = |at: usize| U8::repeat(mask.rotate_right(8 * (at % 4) as u32).to_le_bytes());
         if len >= U8::LEN {
             return output.fill_chunks(input, |at, from| {
                 Some((U8::load(from) ^ mask_at(at)).to_array())
@@ -180,7 +179,7 @@ pub(crate) mod simd {
     #[export]
     pub fn mask_in_place(mask: [u8; 4], bytes: &mut [u8]) {
         let (words, rest) = bytes.as_chunks_mut::<4>();
-        let masks: U8 = U32::splat(u32::from_le_bytes(mask)).bitcast();
+        let masks = U8::repeat(mask);
         U8::map_in_place(words.as_flattened_mut(), |v| v ^ masks);
         for (byte, mask) in rest.iter_mut().zip(mask) {
             *byte ^= mask;

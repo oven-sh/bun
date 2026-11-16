@@ -91,7 +91,7 @@ pub(crate) mod simd {
             let high = (a >> 32)
                 .mul_low32(prime)
                 .bitcast::<U8>()
-                .lookup(U8::repeat_16(UP_BY_32));
+                .lookup(U8::repeat(UP_BY_32));
             (a.mul_low32(prime) + high.bitcast::<U64>()).store(acc);
         }
     }

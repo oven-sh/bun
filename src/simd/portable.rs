@@ -45,6 +45,40 @@ impl<const N: usize, const B: usize> Lanes<u8, N, B> {
             [first, second][i / M][i % M].clamp(0, 255) as u8
         }))
     }
+
+    /// Like `saturating_narrow` for each block of 16 bytes.
+    #[inline]
+    pub fn pack<const M: usize>(first: Lanes<i16, M, B>, second: Lanes<i16, M, B>) -> Self
+    where
+        Simd<i16, M>: ToBytes<Bytes = Simd<u8, N>>,
+    {
+        Self::from_array(array::from_fn(|i| {
+            [first, second][i / 8 % 2][i / 16 * 8 + i % 8].clamp(0, 255) as u8
+        }))
+    }
+}
+
+impl<const N: usize, const B: usize> Lanes<i8, N, B> {
+    #[inline]
+    pub fn pack<const M: usize>(first: Lanes<i16, M, B>, second: Lanes<i16, M, B>) -> Self
+    where
+        Simd<i16, M>: ToBytes<Bytes = Simd<u8, N>>,
+    {
+        Self::from_array(array::from_fn(|i| {
+            [first, second][i / 8 % 2][i / 16 * 8 + i % 8].clamp(-128, 127) as i8
+        }))
+    }
+}
+
+impl<const N: usize, const B: usize> Lanes<u16, N, B> {
+    #[inline]
+    pub fn sums_of_2<const M: usize>(bytes: Lanes<u8, M, B>) -> Self
+    where
+        Simd<u16, N>: ToBytes<Bytes = Simd<u8, M>>,
+    {
+        let pairs = Simd::<u16, N>::from_ne_bytes(bytes.0);
+        Self::new((pairs & Simd::splat(0xFF)) + (pairs >> 8))
+    }
 }
 
 impl<const N: usize, const B: usize> Lanes<i16, N, B> {
@@ -57,6 +91,33 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
         let products = a.0.cast::<i16>() * b.0.cast();
         let (even, odd) = products.deinterleave(products);
         Self::new(even.saturating_add(odd).extract::<0, N>())
+    }
+
+    #[inline]
+    pub fn pack<const M: usize>(first: Lanes<i32, M, B>, second: Lanes<i32, M, B>) -> Self
+    where
+        Simd<i32, M>: ToBytes<Bytes = <Simd<i16, N> as ToBytes>::Bytes>,
+        Simd<i16, N>: ToBytes,
+    {
+        Self::from_array(array::from_fn(|i| {
+            [first, second][i / 4 % 2][i / 8 * 4 + i % 4].clamp(-32768, 32767) as i16
+        }))
+    }
+
+    /// `a * b / 2^15`, with halves rounded up. They must not both be `i16::MIN`.
+    #[inline]
+    pub fn mul_q15(self, other: Self) -> Self {
+        let product = self.0.cast::<i32>() * other.0.cast();
+        debug_assert!(product.simd_ne(Simd::splat(1 << 30)).all());
+        Self::new(((product + Simd::splat(1 << 14)) >> 15).cast())
+    }
+}
+
+impl<const B: usize> Lanes<i16, 8, B> {
+    /// The full products.
+    #[inline]
+    pub fn widening_mul(self, other: Self) -> Lanes<i32, 8, B> {
+        self.full_products(other)
     }
 }
 

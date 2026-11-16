@@ -43,10 +43,4 @@ impl From<std::collections::TryReserveError> for Error {
     }
 }
 
-impl From<bun_highway::JpegMisfit> for Error {
-    fn from(_: bun_highway::JpegMisfit) -> Self {
-        Self::Internal
-    }
-}
-
 pub type Result<T, E = Error> = core::result::Result<T, E>;

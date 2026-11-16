@@ -41,7 +41,7 @@ fn main() {
 In a module with `#[foreach_target]`:
 
 - `isa` has the types of the target: `U8`, `I16`, `F32` and so on fill a register. `Vector<T, N>` has up to 64 bytes.
-- `isa::x128` has the same types for 128 bits. A nested module with `#[foreach_width]` is compiled as `full` and as `x128`.
+- `isa::x128` and `isa::x256` have the same types for 128 and 256 bits. The latter can take two registers. A nested module with `#[foreach_width]` is compiled as `full` and as `x128`. `#[foreach_width(x128, x256)]` and `#[foreach_width(full, x128, x256)]` name others.
 - `#[export]` adds a function of the same name to the module itself, which dispatches. It can be generic only over lifetimes. It gets the attributes after `#[export]`, and `cfg` and comments before it. With `#[inline]`, LLVM can inline a direct call unless debug assertions are on.
 - `this_target` is the name of the copy: `use other::simd::this_target::helper;`
 - Trait methods, `const fn` and functions from a macro outside the module do not get the features of the target. They can use only the ops that need no intrinsic, and run baseline code unless they are inlined.
@@ -88,9 +88,11 @@ fn main() {
 }
 ```
 
-`extend_vec` reserves the room. `spare_capacity` does not allocate, and can fill several vectors at once.
+`extend_vec` reserves the room. `spare_capacity` does not allocate, and can fill several vectors at once. A kernel that writes to shared memory returns only a count. With `Out::into_shared`, it can write to plain memory too, but the count does not prove that anything is initialized.
 
 Call ops in `for` loops and in the closures that you pass to `algo.rs`. LLVM may not inline a closure that goes through an adapter of `core`, such as `array::map`. Compile a crate with kernels at `opt-level` 2 or 3. With `-Zshare-generics`, it needs LTO.
+
+Make a table with `const`. At run time, `from_fn` can stay a loop.
 
 How LLVM unrolls a loop depends on the CPU that the build is tuned for. `#[rustc_unroll(never)]` and `#[rustc_unroll(4)]` settle it. If each turn of a loop waits for the one before, `opaque` keeps LLVM from reordering the sum or from moving it to vectors.
 
@@ -190,9 +192,9 @@ What you have to trust:
 
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. SVE does not count on Linux before 6.2 but for 5.14.0, as [for glibc](https://sourceware.org/pipermail/glibc-cvs/2024q2/084813.html): it traps after each system call. Arm requires and LLVM assumes that the length of its vectors is a power of two. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
-- **`opaque`**, which is `asm!` without an instruction.
+- **`opaque` and `keep16`**, which are `asm!` without an instruction.
 - **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
-- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. `copy_from_shared` and `copy_to_shared` jump to `memmove` where LLVM does not see it, and rely on it to store nothing but what it has loaded. Miri runs loops over bytes in place of all this. The loops do not depend on two reads giving the same value.
+- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. `copy_from_shared` and `copy_to_shared` jump to `memmove` where LLVM does not see it, and rely on it to stay in bounds and to store each byte, whatever it reads. Miri runs loops over bytes in place of all this. The loops do not depend on two reads giving the same value.
 
 ## What the ops avoid
 

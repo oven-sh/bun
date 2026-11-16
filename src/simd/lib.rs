@@ -57,6 +57,7 @@ pub use partial::Padded;
 pub use portable::{portable32, portable64};
 pub use sink::{SharedWriter, Sink};
 pub use source::Source;
+pub use swizzle::Shuffle;
 pub use vector::{Int, Lane, Vector};
 #[cfg(target_arch = "x86_64")]
 pub use x86::{avx2, avx512_icl, avx512_skx, sse4};

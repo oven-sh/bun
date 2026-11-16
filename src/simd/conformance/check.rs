@@ -4,6 +4,7 @@ use crate::room::Room;
 use crate::{Random, columns, highway, shared, write_line};
 use bun_simd::{Out, SharedOutU8};
 use bun_simd_kernels::{self as rust, ColumnsFilled, Filter, MappingsState};
+use core::array::from_fn;
 use core::sync::atomic::AtomicU8;
 
 struct Round<'a> {
@@ -608,6 +609,109 @@ impl Round<'_> {
     }
 
     #[optimize(size)]
+    fn jpeg_transforms(&mut self) {
+        let (random, offset) = (&mut *self.random, self.offset);
+        let [a, b, c, d, ..] = &mut *self.rooms;
+        let (count, gap) = (random.below(9), random.below(9));
+        let (one_in, shift) = (random.one_of(&[1, 5, 60, 600]), random.below(15));
+        let mut block = |one_in, shift: usize| -> [i16; 64] {
+            from_fn(|i| match random.below(one_in) * i {
+                0 => random.next() as i16 >> shift,
+                _ => 0,
+            })
+        };
+        let blocks: Vec<_> = (0..count).map(|_| block(one_in, shift)).collect();
+        let [quant, x, y] = [15 - shift / 2, 0, shift].map(|it| block(1, it).map(|it| it & 0x7FFF));
+        let theirs: Vec<_> = blocks.iter().copied().map(highway::JpegBlock).collect();
+        let ours: Vec<_> = blocks.iter().copied().map(rust::JpegBlock).collect();
+        let (mut theirs, ours) = (theirs, a.copy_of(&ours, offset));
+        for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
+            let stride = count * size + rust::JPEG_ROW_SLACK + gap;
+            let mut want = vec![7; size * stride - gap];
+            let got = b.copy_of(&want, offset);
+            let (their_quant, quant) = (&highway::JpegBlock(quant), &rust::JpegBlock(quant));
+            highway::jpeg_inverse_transform(&theirs, their_quant, size, &mut want, stride).unwrap();
+            let fits = rust::jpeg_inverse_transform(ours, quant, size, got, stride).is_some();
+            self.failures
+                .unless(fits && want == got, "jpeg_inverse_transform");
+        }
+
+        let (stride, alphabet) = (
+            8 * count + gap,
+            random.one_of(&[b"", &b"\0\xFF"[..], b"xyz"]),
+        );
+        let samples = random.bytes(8 * stride - gap, alphabet);
+        let fenced = b.copy_of(&samples, offset);
+        let (their_steps, steps) = (
+            &[x, y].map(highway::JpegBlock),
+            &[x, y].map(rust::JpegBlock),
+        );
+        let is_same = |a: &[highway::JpegBlock], b: &[rust::JpegBlock]| {
+            a.iter().map(|it| it.0).eq(b.iter().map(|it| it.0))
+        };
+        let mut want = vec![[0; 1]; count];
+        let got = c.copy_of(&want, offset);
+        highway::jpeg_forward_transform(&samples, stride, their_steps, &mut theirs, &mut want)
+            .unwrap();
+        let fits = rust::jpeg_forward_transform(fenced, stride, steps, ours, got).is_some();
+        let is_ok = fits && want == got && is_same(&theirs, ours);
+        let mut want = vec![[0; 4]; count];
+        let got = d.copy_of(&want, offset);
+        highway::jpeg_forward_transform(&samples, stride, their_steps, &mut theirs, &mut want)
+            .unwrap();
+        let fits = rust::jpeg_forward_transform(fenced, stride, steps, ours, got).is_some();
+        let is_ok = is_ok && fits && want == got && is_same(&theirs, ours);
+        self.failures.unless(is_ok, "jpeg_forward_transform");
+    }
+
+    #[optimize(size)]
+    fn jpeg_colors(&mut self) {
+        let (random, offset) = (&mut *self.random, self.offset);
+        let (width, alphabet) = (random.below(200), random.one_of(&[b"", &b"\0\x80\xFF"[..]]));
+        let padded = width.next_multiple_of(rust::JPEG_PIXEL_GROUP);
+        for kind in 0..3 {
+            let len = if kind == 0 { padded } else { padded / 2 + 4 };
+            let lens = [padded, len, len, len, len];
+            let rows = lens.map(|len| random.bytes(len + rust::JPEG_ROW_SLACK, alphabet));
+            let mut rooms = self.rooms.iter_mut().zip(&rows);
+            let fenced = lens.map(|n| rooms.next().map(|(a, b)| &*a.copy_of(&b[..n], offset)));
+            macro_rules! convert {
+                ($k:ident, $rows:expr) => {{
+                    let ([y, cb, cr, c, d], mut out) = ($rows, Vec::with_capacity(padded));
+                    let chroma = match kind {
+                        0 => $k::JpegChroma::Full { cb, cr },
+                        1 => $k::JpegChroma::HalfWidth { cb, cr },
+                        _ => $k::JpegChroma::HalfSize {
+                            cb: [cb, c],
+                            cr: [cr, d],
+                        },
+                    };
+                    $k::jpeg_ycc_to_rgba(y, chroma, width, &mut out).unwrap();
+                    out
+                }};
+            }
+            let want = convert!(highway, rows.each_ref().map(|row| &row[..]));
+            let got = convert!(rust, fenced.map(Option::unwrap));
+            self.failures.unless(want == got, "jpeg_ycc_to_rgba");
+        }
+
+        let (pairs, gap) = (1 + random.below(3), random.below(5));
+        let (from, to) = (random.one_of(&[0, padded + gap]), padded / 2 + gap);
+        let rgba = random.bytes(4 * ((2 * pairs - 1) * from + padded), alphabet);
+        let mut want =
+            [4 * to * pairs - 2 * gap, to * pairs - gap, to * pairs - gap].map(|len| vec![7; len]);
+        let [a, b, c, d, ..] = &mut *self.rooms;
+        let (rgba, [y, cb, cr]) = (rgba.as_chunks().0, &want);
+        let mut got = [(b, y), (c, cb), (d, cr)].map(|(room, it)| room.copy_of(it, offset));
+        let into = want.each_mut().map(|plane| &mut plane[..]);
+        highway::jpeg_rgba_to_ycc420(rgba, from, padded, pairs, into, to).unwrap();
+        let (rgba, into) = (a.copy_of(rgba, offset), got.each_mut().map(|it| &mut **it));
+        let fits = rust::jpeg_rgba_to_ycc420(rgba, from, padded, pairs, into, to).is_some();
+        self.failures
+            .unless(fits && want == got, "jpeg_rgba_to_ycc420");
+    }
+
+    #[optimize(size)]
     fn some_mappings(&mut self) -> Vec<u8> {
         let (random, mut text) = (&mut *self.random, Vec::new());
         let (is_plain, has_sources) = (random.below(3) == 0, random.below(4) == 0);
@@ -755,6 +859,8 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         round.xml();
         round.moves();
         round.png();
+        round.jpeg_transforms();
+        round.jpeg_colors();
         round.mappings();
         if number % 20 == 0 {
             round.resize();

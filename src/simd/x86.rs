@@ -2,9 +2,8 @@ use crate::native::{self, as_group};
 use crate::{BitIndices, Int, Isa, Mask, Out, Vector};
 use bun_simd_trusted::{SharedOutU8, SharedU8, shared};
 use core::arch::x86_64::*;
-use core::array::from_fn;
+use core::simd::ToBytes;
 use core::simd::prelude::{Simd, SimdPartialOrd, SimdUint, simd_swizzle, u8x64, u64x8};
-use core::simd::{Swizzle, ToBytes};
 
 #[derive(Clone, Copy)]
 pub struct Sse4;
@@ -33,13 +32,6 @@ fn pmovmskb<T: Int<N>, const N: usize, I: Isa>(mask: Mask<T, N, I>) -> (u64, usi
         _ => return (mask.to_bitmask(), 1),
     };
     (bits, size_of::<T>())
-}
-
-/// Interleaves 8 lanes of each block of 16, starting at `FIRST`.
-struct Unpack<const FIRST: usize>;
-
-impl<const FIRST: usize> Swizzle<64> for Unpack<FIRST> {
-    const INDEX: [usize; 64] = from_fn(const |i| i / 16 * 16 + FIRST + i % 16 / 2 + i % 2 * 64);
 }
 
 impl Isa for Sse4 {
@@ -74,9 +66,9 @@ impl Isa for Avx512Skx {
             let (first, second) = a.0.interleave(b.0);
             return (Vector::new(first), Vector::new(second));
         }
-        let (a, b) = (a.first_bytes::<64>(), b.first_bytes::<64>());
-        let low = u64x8::from_ne_bytes(Unpack::<0>::concat_swizzle(a, b));
-        let high = u64x8::from_ne_bytes(Unpack::<8>::concat_swizzle(a, b));
+        let [a, b] = [a, b].map(|it| Vector::<u8, 64, Self>::new(it.first_bytes()));
+        let (low, high) = a.interleave_in_blocks(b);
+        let [low, high] = [low, high].map(|it| u64x8::from_ne_bytes(it.0));
         let first = simd_swizzle!(low, high, [0, 1, 8, 9, 2, 3, 10, 11]);
         let second = simd_swizzle!(low, high, [4, 5, 12, 13, 6, 7, 14, 15]);
         (
@@ -97,6 +89,12 @@ impl Xmm for Avx2 {}
 impl Xmm for Avx512Skx {}
 impl Xmm for Avx512Icl {}
 
+/// Has the 256-bit ops.
+pub trait Ymm: Isa {}
+impl Ymm for Avx2 {}
+impl Ymm for Avx512Skx {}
+impl Ymm for Avx512Icl {}
+
 /// Has the 512-bit ops.
 pub trait Zmm: Isa {}
 impl Zmm for Avx512Skx {}
@@ -114,9 +112,48 @@ impl<I: Xmm> Vector<u8, 16, I> {
     pub fn saturating_narrow(first: Vector<i16, 8, I>, second: Vector<i16, 8, I>) -> Self {
         Self::new(_mm_packus_epi16(first.0.into(), second.0.into()))
     }
+
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn pack(first: Vector<i16, 8, I>, second: Vector<i16, 8, I>) -> Self {
+        Self::new(_mm_packus_epi16(first.0.into(), second.0.into()))
+    }
+}
+
+impl<I: Xmm> Vector<i8, 16, I> {
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn pack(first: Vector<i16, 8, I>, second: Vector<i16, 8, I>) -> Self {
+        Self::new(_mm_packs_epi16(first.0.into(), second.0.into()))
+    }
+}
+
+impl<I: Xmm> Vector<u16, 8, I> {
+    #[inline]
+    #[target_feature(enable = "ssse3")]
+    pub fn sums_of_2(bytes: Vector<u8, 16, I>) -> Self {
+        Self::new(_mm_maddubs_epi16(bytes.0.into(), _mm_set1_epi8(1)))
+    }
 }
 
 impl<I: Xmm> Vector<i16, 8, I> {
+    #[inline(always)]
+    pub fn widening_mul(self, other: Self) -> Vector<i32, 8, I> {
+        self.full_products(other)
+    }
+
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    pub fn pack(first: Vector<i32, 4, I>, second: Vector<i32, 4, I>) -> Self {
+        Self::new(_mm_packs_epi32(first.0.into(), second.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "ssse3")]
+    pub fn mul_q15(self, other: Self) -> Self {
+        Self::new(_mm_mulhrs_epi16(self.0.into(), other.0.into()))
+    }
+
     #[inline]
     #[target_feature(enable = "ssse3")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 16, I>, b: Vector<i8, 16, I>) -> Self {
@@ -153,7 +190,7 @@ impl<I: Xmm> Vector<f32, 4, I> {
     }
 }
 
-impl Vector<u8, 32, Avx2> {
+impl<I: Ymm> Vector<u8, 32, I> {
     #[inline]
     #[target_feature(enable = "avx2")]
     pub fn lookup(self, indices: Self) -> Self {
@@ -162,40 +199,74 @@ impl Vector<u8, 32, Avx2> {
 
     #[inline]
     #[target_feature(enable = "avx2")]
-    pub fn saturating_narrow(first: Vector<i16, 16, Avx2>, second: Vector<i16, 16, Avx2>) -> Self {
+    pub fn saturating_narrow(first: Vector<i16, 16, I>, second: Vector<i16, 16, I>) -> Self {
         let packed = _mm256_packus_epi16(first.0.into(), second.0.into());
         Self::new(_mm256_permute4x64_epi64::<0b11_01_10_00>(packed))
     }
-}
 
-impl Vector<i16, 16, Avx2> {
     #[inline]
     #[target_feature(enable = "avx2")]
-    pub fn saturating_pairwise_dot(a: Vector<u8, 32, Avx2>, b: Vector<i8, 32, Avx2>) -> Self {
+    pub fn pack(first: Vector<i16, 16, I>, second: Vector<i16, 16, I>) -> Self {
+        Self::new(_mm256_packus_epi16(first.0.into(), second.0.into()))
+    }
+}
+
+impl<I: Ymm> Vector<i8, 32, I> {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn pack(first: Vector<i16, 16, I>, second: Vector<i16, 16, I>) -> Self {
+        Self::new(_mm256_packs_epi16(first.0.into(), second.0.into()))
+    }
+}
+
+impl<I: Ymm> Vector<u16, 16, I> {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn sums_of_2(bytes: Vector<u8, 32, I>) -> Self {
+        Self::new(_mm256_maddubs_epi16(bytes.0.into(), _mm256_set1_epi8(1)))
+    }
+}
+
+impl<I: Ymm> Vector<i16, 16, I> {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn pack(first: Vector<i32, 8, I>, second: Vector<i32, 8, I>) -> Self {
+        Self::new(_mm256_packs_epi32(first.0.into(), second.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn mul_q15(self, other: Self) -> Self {
+        Self::new(_mm256_mulhrs_epi16(self.0.into(), other.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn saturating_pairwise_dot(a: Vector<u8, 32, I>, b: Vector<i8, 32, I>) -> Self {
         Self::new(_mm256_maddubs_epi16(a.0.into(), b.0.into()))
     }
 }
 
-impl Vector<i32, 8, Avx2> {
+impl<I: Ymm> Vector<i32, 8, I> {
     #[inline]
     #[target_feature(enable = "avx2")]
-    pub fn pairwise_dot(a: Vector<i16, 16, Avx2>, b: Vector<i16, 16, Avx2>) -> Self {
+    pub fn pairwise_dot(a: Vector<i16, 16, I>, b: Vector<i16, 16, I>) -> Self {
         Self::new(_mm256_madd_epi16(a.0.into(), b.0.into()))
     }
 }
 
-impl Vector<u64, 4, Avx2> {
+impl<I: Ymm> Vector<u64, 4, I> {
     #[inline]
     #[target_feature(enable = "avx2")]
-    pub fn sums_of_8(bytes: Vector<u8, 32, Avx2>) -> Self {
+    pub fn sums_of_8(bytes: Vector<u8, 32, I>) -> Self {
         Self::new(_mm256_sad_epu8(bytes.0.into(), _mm256_setzero_si256()))
     }
 }
 
-impl Vector<f32, 8, Avx2> {
+impl<I: Ymm> Vector<f32, 8, I> {
     #[inline]
     #[target_feature(enable = "avx")]
-    pub fn to_i32(self) -> Vector<i32, 8, Avx2> {
+    pub fn to_i32(self) -> Vector<i32, 8, I> {
         Vector::new(_mm256_cvttps_epi32(self.0.into()))
     }
 
@@ -222,9 +293,43 @@ impl<I: Zmm> Vector<u8, 64, I> {
             packed,
         ))
     }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn pack(first: Vector<i16, 32, I>, second: Vector<i16, 32, I>) -> Self {
+        Self::new(_mm512_packus_epi16(first.0.into(), second.0.into()))
+    }
+}
+
+impl<I: Zmm> Vector<i8, 64, I> {
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn pack(first: Vector<i16, 32, I>, second: Vector<i16, 32, I>) -> Self {
+        Self::new(_mm512_packs_epi16(first.0.into(), second.0.into()))
+    }
+}
+
+impl<I: Zmm> Vector<u16, 32, I> {
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn sums_of_2(bytes: Vector<u8, 64, I>) -> Self {
+        Self::new(_mm512_maddubs_epi16(bytes.0.into(), _mm512_set1_epi8(1)))
+    }
 }
 
 impl<I: Zmm> Vector<i16, 32, I> {
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn pack(first: Vector<i32, 16, I>, second: Vector<i32, 16, I>) -> Self {
+        Self::new(_mm512_packs_epi32(first.0.into(), second.0.into()))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn mul_q15(self, other: Self) -> Self {
+        Self::new(_mm512_mulhrs_epi16(self.0.into(), other.0.into()))
+    }
+
     #[inline]
     #[target_feature(enable = "avx512bw")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 64, I>, b: Vector<i8, 64, I>) -> Self {
@@ -268,6 +373,7 @@ pub mod sse4 {
     pub use crate::portable::{bit_indices, prefix_xor};
 
     crate::isa::vector_types!(super::Sse4, 16);
+    crate::native::x256_in_halves!("ssse3");
 }
 
 pub mod avx2 {

@@ -296,8 +296,8 @@ mod simd {
                 return Some(self);
             }
             if size_of::<Self>() == 32 && size >= 16 {
-                let [first, last] = self.halves();
-                return Some(Self::from_halves(first, slide(last, 32 - size)?));
+                let [first, last] = self.blocks();
+                return Some(Self::with_blocks(first, slide(last, 32 - size)?));
             }
             Some(self.shuffle_16_bytes(&BY_SIZE.get(size)?.join))
         }
@@ -308,21 +308,21 @@ mod simd {
                 return Some(self);
             }
             if size_of::<Self>() == 32 && size >= 16 {
-                let [first, rest] = self.halves();
+                let [first, rest] = self.blocks();
                 let last = slide(first, size - 16)? | slide(rest, size)?;
-                return Some(Self::from_halves(first, last));
+                return Some(Self::with_blocks(first, last));
             }
             Some(self.shuffle_16_bytes(&BY_SIZE.get(size)?.split))
         }
 
         #[inline(always)]
-        fn halves(self) -> [x128::U8; 2] {
+        fn blocks(self) -> [x128::U8; 2] {
             let both = self.first_bytes::<32>();
             [both.extract::<0, 16>(), both.extract::<16, 16>()].map(x128::U8::new)
         }
 
         #[inline(always)]
-        fn from_halves(first: x128::U8, second: x128::U8) -> Self {
+        fn with_blocks(first: x128::U8, second: x128::U8) -> Self {
             Self::from_first_bytes::<32>(Repeat::<32>::concat_swizzle(first.0, second.0))
         }
 

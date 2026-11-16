@@ -21,7 +21,7 @@ compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-The WebP codec is vendored via `scripts/build/deps/libwebp.ts`. JPEG and PNG are `src/jpeg` and `src/png`, in Rust, on the kernels in `src/simd/kernels/{jpeg,png}.rs`.
+The WebP codec is vendored via `scripts/build/deps/libwebp.ts`. JPEG and PNG are `src/jpeg` and `src/png`, in Rust, on the kernels in `src/simd/kernels/{jpeg,jpeg_colors,png}.rs`.
 
 ## Adding a chainable op
 

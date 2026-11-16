@@ -67,7 +67,7 @@ mod simd {
 
     impl Default for Table<{ U8::LEN }> {
         fn default() -> Self {
-            Self(U8::repeat_16([7; 16]))
+            Self(U8::repeat([7; 16]))
         }
     }
 

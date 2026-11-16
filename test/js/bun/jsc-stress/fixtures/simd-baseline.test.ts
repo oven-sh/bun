@@ -245,8 +245,8 @@ function linesOf(file: Uint8Array): Buffer {
   return inflateSync(Buffer.concat(idat));
 }
 
-describe("JPEG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+describe("JPEG codec: bun_simd runtime dispatch", () => {
+  // src/simd/kernels/{jpeg,jpeg_colors}.rs are compiled for SSE4 and for AVX2 on x64, and for NEON on arm64. All
   // three have to give the same bytes. These checksums are from libjpeg-turbo 3.2.0.
   // Two groups of 32 pixels and a remainder, and partial blocks on both edges.
   const width = 75;

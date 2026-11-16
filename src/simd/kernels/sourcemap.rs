@@ -219,7 +219,7 @@ pub(crate) mod simd {
     #[inline(always)]
     fn classify(block: U8) -> (U8, Bits) {
         let is_other = class(block, &NOT_BASE64).simd_ne(0);
-        let roll = U8::repeat_16(LUT_ROLL).lookup((block >> 4) + block.simd_eq(b'/').to_vector());
+        let roll = U8::repeat(LUT_ROLL).lookup((block >> 4) + block.simd_eq(b'/').to_vector());
         let digits = is_other.select(0xFF, block + roll);
         let is_semicolon = block.simd_eq(b';');
         let is_delimiter = block.simd_eq(b',') | is_semicolon;

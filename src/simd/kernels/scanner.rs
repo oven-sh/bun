@@ -87,7 +87,7 @@ pub(crate) mod simd {
 
     /// Not printable ASCII or white space, or a backslash.
     fn has_odd_byte(block: &[u8; 64]) -> bool {
-        let exceptions = U8::repeat_16(*b"\x01\0\0\0\0\0\0\0\0\t\n\0\\\r\0\x7F");
+        let exceptions = U8::repeat(*b"\x01\0\0\0\0\0\0\0\0\t\n\0\\\r\0\x7F");
         let mut is_odd = U8::zero();
         for chunk in block.as_chunks().0 {
             let v = U8::load(chunk);

@@ -3,7 +3,8 @@
 use crate::block::{Block, Zigzag};
 use crate::header::{ColorSpace, Component, Frame};
 use crate::{Error, MAX_COMPONENTS, Result, fill_up, filled};
-use bun_highway::{JPEG_PIXEL_GROUP, JPEG_ROW_SLACK, JpegChroma};
+use bun_simd_kernels::{JPEG_PIXEL_GROUP, JPEG_ROW_SLACK, JpegChroma};
+use bun_simd_kernels::{jpeg_inverse_transform, jpeg_ycc_to_rgba};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Upsampling {
@@ -66,8 +67,7 @@ impl Plane {
         let out = self.rows_from_mut(y * size).get_mut(x * size..);
         let out = out.unwrap_or_default();
         if size > 1 {
-            bun_highway::jpeg_inverse_transform(blocks, quant, size, out, stride)?;
-            return Ok(());
+            return jpeg_inverse_transform(blocks, quant, size, out, stride).ok_or(Error::Internal);
         }
         let out = out.get_mut(..blocks.len()).ok_or(Error::Internal)?;
         for (sample, block) in out.iter_mut().zip(blocks) {
@@ -330,7 +330,7 @@ impl Output {
                         cr: cr.full_row(y),
                     },
                 };
-                bun_highway::jpeg_ycc_to_rgba(luma.full_row(y), chroma, width, pixels)?;
+                jpeg_ycc_to_rgba(luma.full_row(y), chroma, width, pixels).ok_or(Error::Internal)?;
                 if let [k] = k {
                     let row = pixels.get_mut(y * width..).unwrap_or_default();
                     for (pixel, &k) in row.iter_mut().zip(k.full_row(y)) {

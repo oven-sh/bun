@@ -777,6 +777,83 @@ fn conversions(js: &[u8]) {
 }
 
 #[optimize(size)]
+fn jpeg() {
+    const STRIDE: usize = 2048;
+    let random = &mut Random(11);
+    let out = &mut random.bytes(16 * STRIDE, b"");
+    for (name, count, one_in) in [
+        ("flat", 24, 9999),
+        ("busy", 24, 3),
+        ("busy", 2, 3),
+        ("mixed", 128, 90),
+    ] {
+        let mut block = |_| -> [i16; 64] {
+            core::array::from_fn(|i| i16::from(random.below(one_in) * i == 0) * 5)
+        };
+        let blocks: Vec<_> = (0..64 * count).map(&mut block).collect();
+        let theirs: &Vec<_> = &blocks.iter().copied().map(highway::JpegBlock).collect();
+        let ours: &Vec<_> = &blocks.iter().copied().map(rust::JpegBlock).collect();
+        let (their_quant, quant) = (&highway::JpegBlock([3; 64]), &rust::JpegBlock([3; 64]));
+        for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
+            compare!(
+                "jpeg_inverse_transform {size}, {name}, by {count}",
+                theirs.chunks(count).for_each(|it| {
+                    _ = highway::jpeg_inverse_transform(it, their_quant, size, out, STRIDE);
+                }),
+                ours.chunks(count).for_each(|it| {
+                    _ = rust::jpeg_inverse_transform(it, quant, size, out, STRIDE);
+                })
+            );
+        }
+    }
+    let theirs = &mut [highway::JpegBlock([0; 64]); 32];
+    let ours = &mut [rust::JpegBlock([0; 64]); 32];
+    let steps = [[16385; 64], [128; 64]];
+    let (their_steps, steps) = (&steps.map(highway::JpegBlock), &steps.map(rust::JpegBlock));
+    let (masks, planes, rows) = (&mut [[0; 1]; 32], &mut [[0; 4]; 32], &out[..]);
+    for n in [1, 8, 32] {
+        let (theirs, ours) = (&mut theirs[..n], &mut ours[..n]);
+        let (masks, planes) = (&mut masks[..n], &mut planes[..n]);
+        compare!(
+            "jpeg_forward_transform {n}",
+            highway::jpeg_forward_transform(opaque(rows), STRIDE, their_steps, theirs, masks),
+            rust::jpeg_forward_transform(opaque(rows), STRIDE, steps, ours, masks)
+        );
+        compare!(
+            "jpeg_forward_transform {n} with bit planes",
+            highway::jpeg_forward_transform(opaque(rows), STRIDE, their_steps, theirs, planes),
+            rust::jpeg_forward_transform(opaque(rows), STRIDE, steps, ours, planes)
+        );
+    }
+    let [y, cb, cr, c, d] = [0, 1, 2, 3, 4].map(|y| &rows[y * STRIDE..][..STRIDE]);
+    let (pixels, planes) = (
+        &mut Vec::with_capacity(STRIDE),
+        &mut [(); 3].map(|()| rows.to_vec()),
+    );
+    for n in [20, 200, 2000] {
+        compare!("jpeg_ycc_to_rgba {n} 4:4:4", |k| {
+            pixels.clear();
+            k::jpeg_ycc_to_rgba(opaque(y), k::JpegChroma::Full { cb, cr }, n, pixels)
+        });
+        compare!("jpeg_ycc_to_rgba {n} 4:2:2", |k| {
+            pixels.clear();
+            k::jpeg_ycc_to_rgba(opaque(y), k::JpegChroma::HalfWidth { cb, cr }, n, pixels)
+        });
+        compare!("jpeg_ycc_to_rgba {n} 4:2:0", |k| {
+            pixels.clear();
+            let (cb, cr) = ([cb, c], [cr, d]);
+            k::jpeg_ycc_to_rgba(opaque(y), k::JpegChroma::HalfSize { cb, cr }, n, pixels)
+        });
+    }
+    for n in [32, 480] {
+        compare!("jpeg_rgba_to_ycc420 {n}x16", |k| {
+            let into = planes.each_mut().map(|plane| &mut plane[..]);
+            k::jpeg_rgba_to_ycc420(opaque(rows).as_chunks().0, n, n, 8, into, n / 2)
+        });
+    }
+}
+
+#[optimize(size)]
 fn images() {
     const WIDTH: usize = 1024;
     let random = &mut Random(9);
@@ -995,6 +1072,7 @@ pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
     whole_files(js, json, map);
     conversions(js);
     images();
+    jpeg();
     from_shared(js);
     to_shared();
 }

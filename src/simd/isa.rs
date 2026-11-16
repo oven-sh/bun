@@ -11,7 +11,7 @@ pub trait Isa: Copy {
     const IS_SLOW_TO_SKIP_PAGE: bool = true;
     const HAS_UNSIGNED_COMPARE: bool = true;
     const HAS_LEADING_ZEROS: bool = true;
-    /// `load_interleaved4` and `store_interleaved4` take one instruction.
+    /// `load_interleaved4` and `to_interleaved4` take one instruction.
     const HAS_INTERLEAVED_MEMORY: bool = false;
     /// The result of a simple op is there as soon as in a general register.
     const HAS_SINGLE_CYCLE_OPS: bool = true;
@@ -123,6 +123,11 @@ macro_rules! vector_types {
         pub mod x128 {
             pub use super::{Isa, Mask, Vector, bit_indices, prefix_xor};
             crate::isa::vector_types!(16);
+        }
+
+        pub mod x256 {
+            pub use super::{Isa, Mask, Vector, bit_indices, prefix_xor};
+            crate::isa::vector_types!(32);
         }
     };
     ($bytes:literal) => {

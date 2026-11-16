@@ -1,5 +1,6 @@
 //! Bun's kernels on `bun_simd`, checked against those on Highway.
 #![feature(loop_hints, trait_alias)]
+#![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
 #![recursion_limit = "512"]
@@ -10,6 +11,8 @@ mod byte_set;
 mod convert;
 mod hex;
 mod image;
+mod jpeg;
+mod jpeg_colors;
 mod json;
 mod memmem;
 mod paths;
@@ -38,6 +41,12 @@ pub use hex::simd::{
 };
 pub use image::simd::{flip_horizontally, modulate, nearest_in_palette};
 pub use image::{Filter, flip_vertically, resize, rotate_90, rotate_180, rotate_270};
+pub use jpeg::forward_transform as jpeg_forward_transform;
+pub use jpeg::simd::inverse_transform as jpeg_inverse_transform;
+pub use jpeg::{Block as JpegBlock, ROW_SLACK as JPEG_ROW_SLACK};
+pub use jpeg_colors::simd::rgba_to_ycc420 as jpeg_rgba_to_ycc420;
+pub use jpeg_colors::ycc_to_rgba as jpeg_ycc_to_rgba;
+pub use jpeg_colors::{Chroma as JpegChroma, PIXEL_GROUP as JPEG_PIXEL_GROUP};
 pub use json::class as json_class;
 pub use json::simd::index_chunk as json_structural_index_chunk;
 pub use paths::simd::{

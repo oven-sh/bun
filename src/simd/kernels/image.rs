@@ -288,13 +288,13 @@ pub(crate) mod simd {
 
     #[bun_simd::foreach_width]
     mod width {
-        use isa::{I16, I32, U8, U16, U32};
+        use isa::{I16, I32, U8, U16};
 
         /// `None` unless the palette fills a vector.
         #[inline(always)]
         pub fn nearest_in_palette(palette: &[Pixel], color: Pixel) -> Option<u8> {
             let last = palette.split_last_chunk()?.1;
-            let color: U8 = U32::splat(u32::from_le_bytes(color)).bitcast();
+            let color = U8::repeat(color);
             let distance_and_index = |colors: &[Pixel; I32::LEN], index: I32| {
                 let diff: U16 = U8::from_slice(colors.as_flattened())
                     .abs_diff(color)
@@ -525,7 +525,7 @@ fn build_weights(
     } else {
         scale.min(1.0)
     };
-    let support = (filter.radius() / fscale).min(127.0);
+    let support = (filter.radius() / fscale).min((MAX_TAPS / 2 - 1) as f64);
     let mut fw = [0.0; MAX_TAPS];
     for (i, (span, w)) in spans
         .iter_mut()

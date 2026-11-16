@@ -76,11 +76,11 @@ pub(crate) mod simd {
 
     /// Zero unless the byte is ASCII.
     fn row(v: U8, table: u128) -> U8 {
-        U8::repeat_16(table.to_le_bytes()).lookup(v & 0x8F)
+        U8::repeat(table.to_le_bytes()).lookup(v & 0x8F)
     }
 
     fn is_in_row(v: U8, row: U8) -> Test {
-        let bit = U8::repeat_16([1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128]);
+        let bit = U8::repeat([1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128]);
         (row & bit.lookup(v >> 4)).simd_ne(0)
     }
 
@@ -172,7 +172,7 @@ pub(crate) mod simd {
     /// The only byte that starts or ends an escape sequence, and that is `index` above 0x81, or ESC.
     fn escape_at(index: U8) -> U8 {
         let table = *b"\x1B\x1B\x1B\x1B\x1B\x1B\x1B\x98\x1B\x1B\x9B\x9C\x9D\x9E\x9F\x90";
-        U8::repeat_16(table).lookup(index & 0x8F)
+        U8::repeat(table).lookup(index & 0x8F)
     }
 
     #[export]
@@ -186,7 +186,7 @@ pub(crate) mod simd {
     #[export]
     pub fn index_of_escape_char16(text: &[u16]) -> Option<usize> {
         U16::position_refined(text, |v| {
-            let above: U8 = U16::splat(0xFF81).bitcast();
+            let above = U8::repeat(0xFF81u16.to_ne_bytes());
             let escape: U16 = escape_at(v.bitcast::<U8>().saturating_sub(above)).bitcast();
             [(v & 0xFF70).simd_eq(0x10), escape.simd_eq(v ^ 0x1B00)]
         })
@@ -197,7 +197,7 @@ pub(crate) mod simd {
     const EXTRA_LEN: [u8; 16] = [0, 0, 5, 0, 0, 0, 4, 5, 0, 0, 0, 0, 3, 0, 3, 0];
 
     fn is_html_escape8(v: U8) -> Test {
-        U8::repeat_16(HTML_ESCAPES).lookup(v & 0x8F).simd_eq(v)
+        U8::repeat(HTML_ESCAPES).lookup(v & 0x8F).simd_eq(v)
     }
 
     fn low_half(v: U16) -> U8 {
@@ -205,7 +205,7 @@ pub(crate) mod simd {
     }
 
     fn is_html_escape16(v: U16) -> Mask<u16, { U16::LEN }> {
-        let escape = U8::repeat_16(HTML_ESCAPES).lookup(low_half(v));
+        let escape = U8::repeat(HTML_ESCAPES).lookup(low_half(v));
         escape.bitcast::<U16>().simd_eq(v)
     }
 
@@ -222,14 +222,14 @@ pub(crate) mod simd {
     #[export]
     pub fn html_escape_extra_len8(text: &[u8]) -> usize {
         U8::sum_of_bytes::<_, 5>(text, |v| {
-            is_html_escape8(v).select(U8::repeat_16(EXTRA_LEN).lookup(v & 0x8F), 0)
+            is_html_escape8(v).select(U8::repeat(EXTRA_LEN).lookup(v & 0x8F), 0)
         })
     }
 
     #[export]
     pub fn html_escape_extra_len16(text: &[u16]) -> usize {
         U16::sum_of_bytes::<_, 5>(text, |v| {
-            let extra: U16 = U8::repeat_16(EXTRA_LEN).lookup(low_half(v)).bitcast();
+            let extra: U16 = U8::repeat(EXTRA_LEN).lookup(low_half(v)).bitcast();
             is_html_escape16(v).select(extra, 0).bitcast()
         })
     }

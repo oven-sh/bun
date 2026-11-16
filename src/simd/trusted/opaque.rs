@@ -24,9 +24,21 @@ cfg_select! {
             }
             v
         }
+
+        /// Counts as a use of all lanes.
+        #[cfg(target_arch = "aarch64")]
+        #[inline(always)]
+        pub fn keep16(v: u8x16) {
+            // SAFETY: there is no instruction.
+            unsafe { asm!("/* {0:q} */", in(vreg) v, options(nomem, nostack, preserves_flags)) };
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        pub use core::mem::drop as keep16;
     }
     _ => {
         pub use core::convert::identity as opaque16;
+        pub use core::mem::drop as keep16;
 
         #[inline(always)]
         pub fn opaque(word: u64) -> u64 {

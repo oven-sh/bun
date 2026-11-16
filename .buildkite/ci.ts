@@ -1681,6 +1681,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       distros.map(distro => {
         const tests = [
           "cli/run/signed-return-addresses",
+          "aot/fault-inside-a-removed-range",
           ...(profile ? [] : ["aot/what-this-lane-can", "aot/ci-lists"]),
         ];
         const platform: Platform = { os: "linux", arch: "aarch64", profile, ...distro, tier: "latest", tests };

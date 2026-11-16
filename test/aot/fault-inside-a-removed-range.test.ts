@@ -17,7 +17,8 @@ const libc = dlopen(isDarwin ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
   ...(isDarwin && { _dyld_get_image_vmaddr_slide: { args: ["u32"], returns: "i64" } }),
 });
 const slideOfLinux = () => {
-  const ofThisFile = readFileSync("/proc/self/maps", "latin1").split("\\n").find(line => line.endsWith("/main"));
+  // The compiled code is mapped from this file too, below a position-independent executable.
+  const ofThisFile = readFileSync("/proc/self/maps", "latin1").split("\\n").find(line => / 0+ .*[/]main$/.test(line));
   return parseInt(ofThisFile ?? "", 16) - Number(startOfFile);
 }; // @ts-expect-error
 const address = Number(hole) + Number(isDarwin ? libc.symbols._dyld_get_image_vmaddr_slide(0) : slideOfLinux()); // @ts-expect-error
@@ -117,7 +118,29 @@ function middleOfLargestHole(file: Buffer) {
     segment => segment.isCode && cut.some(hole => hole.start + hole.size === segment.start),
   );
   const filled = behindCut.find(isFilled);
-  return { address: middle - (middle % 0x4000), size: largest.size, filled: filled && filled.start + 16 };
+  return {
+    address: middle - (middle % 0x4000),
+    size: largest.size,
+    filled: filled ? filled.start + 16 : filledByListOfRanges(file),
+  };
+}
+
+function filledByListOfRanges(file: Buffer) {
+  const { segments } = segmentsAndHoles(file);
+  const placeOf = (address: number) => {
+    const segment = segments.find(({ start, bytesInFile }) => start <= address && address < start + bytesInFile);
+    return segment && { isCode: segment.isCode, offset: segment.offset + address - segment.start };
+  };
+  for (const state of placesOfState(file)) {
+    const count = file.readUInt32LE(state.offset + 12);
+    const list = placeOf(state.address + Number(file.readBigInt64LE(state.offset + 16)));
+    if (!list || count > 32768) continue;
+    for (let at = list.offset; at < list.offset + count * 16; at += 16) {
+      const start = state.address + Number(file.readBigInt64LE(at));
+      const place = placeOf(start);
+      if (place?.isCode && file.subarray(place.offset, place.offset + filler.length).equals(filler)) return start;
+    }
+  }
 }
 
 // Where Bun can't be cut, the executable gets a list of two removed ranges: 1 GB of addresses that nothing is mapped at, and

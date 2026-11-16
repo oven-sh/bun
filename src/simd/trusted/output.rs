@@ -1,5 +1,7 @@
 //! Output to memory that may be uninitialized.
+use crate::SharedOutU8;
 use alloc::vec::Vec;
+use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::simd::{Simd, SimdElement, cmp::SimdPartialOrd};
 
@@ -87,6 +89,15 @@ impl<'a, T: Copy> Out<'a, T> {
         Out(unsafe { &mut *(chunks as *mut [MaybeUninit<[T; N]>]) })
     }
 
+    /// Its bytes, for what also writes to shared memory.
+    #[inline(always)]
+    pub fn into_shared(self) -> &'a [SharedOutU8]
+    where
+        T: SimdElement,
+    {
+        SharedOutU8::from_cells(Cell::from_mut(self.0).as_slice_of_cells())
+    }
+
     #[inline(always)]
     pub fn into_writer(self) -> Writer<'a, T> {
         Writer {
@@ -158,8 +169,7 @@ impl<'a, T: Copy> Out<'a, T> {
     where
         T: SimdElement,
     {
-        let cells = core::cell::Cell::from_mut(&mut *self.0).as_slice_of_cells();
-        crate::shared::store64_masked::<true>(bytes, cells);
+        crate::shared::store64_masked::<true>(bytes, Out(&mut *self.0).into_shared());
         let len = self.len().min(64 / size_of::<T>());
         Writer { all: self.0, len }.finish()
     }

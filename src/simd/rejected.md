@@ -200,9 +200,9 @@ fn f(bytes: &[[SharedU8; 8]; 1]) {
 A store past the group:
 
 ```rust,compile_fail,E0080
-# use {bun_simd_trusted::shared::*, std::sync::atomic::*};
+# use bun_simd_trusted::{SharedOutU8, shared::*};
 #[target_feature(enable = "sse2")]
-fn f(bytes: &[[AtomicU8; 8]; 1]) {
+fn f(bytes: &[[SharedOutU8; 8]; 1]) {
     store8::<1, 1>(0, bytes);
 }
 # let keep: unsafe fn(_) = f;
@@ -238,9 +238,39 @@ fn f(bytes: &[[SharedU8; 8]; 1]) {
 }
 ```
 
+```rust,compile_fail,E0308
+fn f(bytes: &[bun_simd::SharedU8]) {
+    bun_simd::SharedOutU8::from_slice(bytes);
+}
+```
+
 ```rust,compile_fail,E0616
 fn f(byte: &bun_simd::SharedU8) {
     byte.0.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+```
+
+A load from what can only be written:
+
+```rust,compile_fail,E0308
+# use bun_simd_trusted::{SharedOutU8, shared::*};
+#[target_feature(enable = "sse2")]
+fn f(bytes: &[[SharedOutU8; 8]; 1]) {
+    load8::<1, 0>(bytes);
+}
+```
+
+```rust,compile_fail,E0277
+# use bun_simd_trusted::{SharedOutU8, shared::*};
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[SharedOutU8]) {
+    load64_masked::<false>(bytes);
+}
+```
+
+```rust,compile_fail,E0616
+fn f(byte: &bun_simd::SharedOutU8) {
+    byte.0.get();
 }
 ```
 
@@ -253,14 +283,34 @@ let view = {
 };
 ```
 
+```rust,compile_fail,E0597
+let view = {
+    let mut bytes = [0];
+    bun_simd::Out::from(&mut bytes[..]).into_shared()
+};
+```
+
+A read of plain bytes between two stores:
+
+```rust,compile_fail,E0503
+let mut bytes = [0];
+let view = bun_simd::Out::from(&mut bytes[..]).into_shared();
+let byte = bytes[0];
+view[0].set(byte);
+```
+
 A store to wider atomics:
 
 ```rust,compile_fail,E0308
-# use {bun_simd_trusted::shared::*, std::sync::atomic::*};
-#[target_feature(enable = "sse2")]
-fn f(bytes: &[[AtomicU64; 1]; 1]) {
-    store8::<1, 0>(0, bytes);
+fn f(words: &[std::sync::atomic::AtomicU64]) {
+    bun_simd::SharedOutU8::from_slice(words);
 }
+```
+
+A store to a type that has invalid values:
+
+```rust,compile_fail,E0277
+bun_simd::Out::from(&mut [true][..]).into_shared()[0].set(2);
 ```
 
 ## `Out`
@@ -585,11 +635,11 @@ A load from shared memory that is wider than a register:
 #[bun_simd::foreach_target]
 mod simd {
     #[export]
-    pub fn f(bytes: &[std::sync::atomic::AtomicU8; 32]) -> u8 {
-        isa::Vector::load(bytes)[0]
+    pub fn f(bytes: &[bun_simd::SharedU8]) -> u8 {
+        isa::Vector::<_, 32>::load(bytes.first_chunk().unwrap())[0]
     }
 }
-simd::f(&Default::default());
+simd::f(&[]);
 ```
 
 A limit that is no target of a CPU:

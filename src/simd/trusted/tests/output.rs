@@ -270,3 +270,13 @@ fn not_from_the_start_of_a_writer() {
         .into_writer()
         .append(|rest| &mut pushed(rest, [1, 2])[1..]);
 }
+
+#[test]
+fn into_shared() {
+    let mut bytes = [1u8, 2, 3];
+    Out::from(&mut bytes[..]).into_shared()[1].set(7);
+    assert_eq!(bytes, [1, 7, 3]);
+    let mut words = [0u16; 2];
+    Out::from(&mut words[..]).into_shared()[3].set(1);
+    assert_eq!(words, [0, u16::from_ne_bytes([0, 1])]);
+}

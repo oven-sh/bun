@@ -1,6 +1,5 @@
 //! Ports of highway_strings.cpp: hexadecimal.
-use bun_simd::{Isa, Out, SharedU8, SharedWriter, Sink, Source};
-use core::sync::atomic::AtomicU8;
+use bun_simd::{Isa, Out, SharedOutU8, SharedU8, SharedWriter, Sink, Source};
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
@@ -106,7 +105,7 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn decode_hex_to_shared(src: &[[u8; 2]], dst: &[AtomicU8]) -> usize {
+    pub fn decode_hex_to_shared(src: &[[u8; 2]], dst: &[SharedOutU8]) -> usize {
         let mut dst = SharedWriter::new(dst);
         decode(src, &mut dst);
         dst.len()
@@ -121,7 +120,7 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn decode_hex16_to_shared(src: &[[u16; 2]], dst: &[AtomicU8]) -> usize {
+    pub fn decode_hex16_to_shared(src: &[[u16; 2]], dst: &[SharedOutU8]) -> usize {
         let mut dst = SharedWriter::new(dst);
         decode16(src, &mut dst);
         dst.len()

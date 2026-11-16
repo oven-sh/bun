@@ -1,7 +1,6 @@
 //! What vectors are loaded from.
-use crate::{Lane, SharedU8};
+use crate::{Lane, SharedOutU8, SharedU8};
 use core::array;
-use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 /// A lane in memory: a plain value, or bytes that other threads may write concurrently.
 pub trait Source: Sized {
@@ -47,21 +46,6 @@ impl Source for SharedU8 {
     #[inline(always)]
     fn memory(slice: &[Self]) -> Memory<'_, u8> {
         Memory::Shared(slice)
-    }
-}
-
-impl Source for AtomicU8 {
-    type Lane = u8;
-    const IS_SHARED: bool = true;
-
-    #[inline(always)]
-    fn get(&self) -> u8 {
-        self.load(Relaxed)
-    }
-
-    #[inline(always)]
-    fn memory(slice: &[Self]) -> Memory<'_, u8> {
-        Memory::Shared(SharedU8::from_slice(slice))
     }
 }
 
@@ -137,18 +121,18 @@ mod simd {
     }
 
     impl<const N: usize> Vector<u8, N> {
-        pub fn store_shared(self, to: &[AtomicU8; N]) {
+        pub fn store_shared(self, to: &[SharedOutU8; N]) {
             self.store_nth_shared::<1, 0>(array::from_ref(to));
         }
 
-        pub(crate) fn store4_shared([a, b, c, d]: [Self; 4], to: &[[AtomicU8; N]; 4]) {
+        pub(crate) fn store4_shared([a, b, c, d]: [Self; 4], to: &[[SharedOutU8; N]; 4]) {
             a.store_nth_shared::<4, 0>(to);
             b.store_nth_shared::<4, 1>(to);
             c.store_nth_shared::<4, 2>(to);
             d.store_nth_shared::<4, 3>(to);
         }
 
-        fn store_nth_shared<const K: usize, const AT: usize>(self, to: &[[AtomicU8; N]; K]) {
+        fn store_nth_shared<const K: usize, const AT: usize>(self, to: &[[SharedOutU8; N]; K]) {
             const { assert!(N <= isa::U8::LEN, "wider than a register") };
             shared::store_shared::<N, K, AT>(self.0, to.as_flattened());
         }

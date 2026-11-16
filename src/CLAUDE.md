@@ -192,8 +192,9 @@ of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 `bun_simd` (`src/simd/README.md`) is the only SIMD in use in the Rust sources: both also ban
 `std::simd`, and the source lint bans the `core::arch` intrinsics. A new kernel goes in
 `src/simd/kernels/`. C++ calls one through `src/runtime/simd_exports.rs` and `SIMDKernels.h`.
-Other threads can write the bytes of a JS buffer, so a kernel gets them as `&[SharedU8]` to read and
-as `&[AtomicU8]` to write (`bun_core::ffi::{shared_bytes, atomic_bytes}`, `shared: "atomic"` in bindgen).
+Other threads can write the bytes of a JS buffer, so a kernel gets them as `&[SharedU8]` to read
+(`shared: "atomic"` in bindgen), as `&[SharedOutU8]` to write and as `&[AtomicU8]` to change in place.
+A `HOST_EXPORT` function can take all three.
 In debug and canary builds, `BUN_SIMD_TARGET=avx2` (or `sse4`) runs the kernels of an older CPU.
 
 ```rust

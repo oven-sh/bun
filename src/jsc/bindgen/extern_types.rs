@@ -125,8 +125,8 @@ impl ExternBytes {
     /// As [`get`](Self::get).
     #[inline(always)]
     pub unsafe fn get_atomic<'a>(self, _: &JsHeap<'a>) -> &'a [bun_core::ffi::SharedU8] {
-        // SAFETY: as in `get`.
-        unsafe { bun_core::ffi::shared_bytes(self.data, self.length) }
+        // SAFETY: as in `get`. `SharedU8` has the layout of `u8`.
+        unsafe { bun_core::ffi::slice(self.data.cast::<bun_core::ffi::SharedU8>(), self.length) }
     }
 }
 

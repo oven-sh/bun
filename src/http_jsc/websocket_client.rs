@@ -11,7 +11,6 @@ use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::net::IpAddr;
-use core::sync::atomic::AtomicU8;
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
@@ -22,7 +21,7 @@ use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
-use bun_simd::SharedU8;
+use bun_simd::{Out, SharedU8};
 use bun_simd_kernels as kernels;
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
@@ -2506,7 +2505,7 @@ impl Copy<'_> {
 
         match self {
             Copy::Utf16(utf16) => {
-                let payload = AtomicU8::from_mut_slice(parts.payload);
+                let payload = Out::from(&mut *parts.payload).into_shared();
                 let encoded = strings::copy_utf16_into_utf8_impl::<true>(payload, utf16);
                 debug_assert_eq!(encoded.written, content_byte_len);
                 debug_assert_eq!(encoded.read, utf16.len());

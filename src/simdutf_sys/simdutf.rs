@@ -1,5 +1,5 @@
+use bun_simd::SharedOutU8;
 use core::io::BorrowedCursor;
-use core::sync::atomic::AtomicU8;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -224,7 +224,7 @@ pub mod convert {
                     /// To the bytes of a JS buffer, which an error does not leave as they were.
                     pub fn le_to_shared(
                         input: WithUtf8Len<'_, u16>,
-                        output: &[AtomicU8],
+                        output: &[SharedOutU8],
                     ) -> SIMDUTFResult {
                         assert!(input.utf8_len <= output.len());
                         // SAFETY: simdutf writes at most `utf8_len` bytes and reads none of them, so
@@ -261,7 +261,7 @@ pub mod convert {
             }
 
             /// [`utf8`] for the bytes of a JS buffer. Returns the count.
-            pub fn shared_utf8(input: WithUtf8Len<'_, u8>, output: &[AtomicU8]) -> usize {
+            pub fn shared_utf8(input: WithUtf8Len<'_, u8>, output: &[SharedOutU8]) -> usize {
                 assert!(input.utf8_len <= output.len());
                 // SAFETY: simdutf writes `utf8_len` bytes and reads none of them, so another thread
                 // cannot mislead it. No CPU tears a byte that it stores.

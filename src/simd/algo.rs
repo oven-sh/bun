@@ -1,8 +1,7 @@
 //! Loops over slices of any length.
 use crate::partial::copy_short;
-use crate::{Int, Isa, Matches, Out, Source};
+use crate::{Int, Isa, Matches, Out, SharedOutU8, Source};
 use core::hint::{likely, unlikely};
-use core::sync::atomic::AtomicU8;
 
 #[inline(always)]
 fn index_of<S, const N: usize>(chunk: &[S; N], slice: &[S]) -> usize {
@@ -563,10 +562,10 @@ mod simd {
     where
         u8: Int<N>,
     {
-        /// Like `map`. `from` may be `to`.
+        /// Like `map`. `from` and `to` may be the same bytes.
         pub fn map_to_shared<S: Source<Lane = u8>>(
             from: &[S],
-            to: &[AtomicU8],
+            to: &[SharedOutU8],
             f: impl Fn(Self) -> Self,
         ) {
             Self::map_to_shared_until(from, to, f, |v| v.simd_ne(v));
@@ -575,13 +574,13 @@ mod simd {
         /// The same up to the first element that `stops`. Returns the count.
         pub fn map_to_shared_until<S: Source<Lane = u8>>(
             from: &[S],
-            to: &[AtomicU8],
+            to: &[SharedOutU8],
             f: impl Fn(Self) -> Self,
             stops: impl Fn(Self) -> Mask<u8, N>,
         ) -> usize {
             let len = from.len().min(to.len());
             let (from, to) = (&from[..len], &to[..len]);
-            let (v, rest): (Self, &[AtomicU8]) = 'stopped: {
+            let (v, rest): (Self, &[SharedOutU8]) = 'stopped: {
                 let (Some((_, last)), Some((_, to_last))) =
                     (from.split_last_chunk(), to.split_last_chunk())
                 else {

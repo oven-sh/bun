@@ -1,12 +1,11 @@
 //! Slices that are shorter than a vector.
 use crate::source::Memory;
 use crate::swizzle::Repeat;
-use crate::{Int, Isa, Lane, Mask, Out, Source, Vector};
+use crate::{Int, Isa, Lane, Mask, Out, SharedOutU8, Source, Vector};
 use bun_simd_trusted::quarters;
 use core::array::{from_fn, from_ref};
 use core::hint::unlikely;
 use core::simd::{Simd, Swizzle, ToBytes, u8x32, u8x64, u32x4};
-use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 /// A slice shorter than a vector.
 #[derive(Clone, Copy)]
@@ -420,7 +419,7 @@ mod simd {
         }
 
         #[inline(always)]
-        pub(crate) fn store_halves_shared(self, to: &[AtomicU8]) -> usize {
+        pub(crate) fn store_halves_shared(self, to: &[SharedOutU8]) -> usize {
             _ = self.store_ends_shared::<32>(to)
                 || self.store_ends_shared::<16>(to)
                 || self.store_ends_shared::<8>(to);
@@ -428,7 +427,7 @@ mod simd {
         }
 
         #[inline(always)]
-        fn store_ends_shared<const HALF: usize>(self, to: &[AtomicU8]) -> bool {
+        fn store_ends_shared<const HALF: usize>(self, to: &[SharedOutU8]) -> bool {
             let lanes = self.to_array();
             let ([first, last], Some((start, end))) = (lanes.as_chunks().0, ends::<_, HALF>(to))
             else {
@@ -440,7 +439,7 @@ mod simd {
         }
 
         #[inline(always)]
-        pub(crate) fn store_partial_shared(self, to: &[AtomicU8]) -> usize {
+        pub(crate) fn store_partial_shared(self, to: &[SharedOutU8]) -> usize {
             match self.split(to.len()) {
                 Some(pieces) => pieces.store_pieces_shared(to),
                 None => 0,
@@ -448,7 +447,7 @@ mod simd {
         }
 
         #[inline(always)]
-        pub(crate) fn store_pieces_shared(self, to: &[AtomicU8]) -> usize {
+        pub(crate) fn store_pieces_shared(self, to: &[SharedOutU8]) -> usize {
             debug_assert!(to.len() < N);
             let (len, lanes) = (to.len(), self.to_array());
             if len == 0 {
@@ -466,7 +465,7 @@ mod simd {
                 // Of two bytes, the third lane has been mixed with padding.
                 let middle = if len == 2 { lanes[1] } else { lanes[2] };
                 for (byte, at) in [(lanes[0], 0), (middle, len / 2), (lanes[1], len - 1)] {
-                    to[at].store(byte, Relaxed);
+                    to[at].set(byte);
                 }
             }
             len

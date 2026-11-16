@@ -1,11 +1,10 @@
 use crate::native::{self, as_group};
 use crate::{BitIndices, Int, Isa, Mask, Out, Vector};
-use bun_simd_trusted::{SharedU8, shared};
+use bun_simd_trusted::{SharedOutU8, SharedU8, shared};
 use core::arch::x86_64::*;
 use core::array::from_fn;
 use core::simd::prelude::{Simd, SimdPartialOrd, SimdUint, simd_swizzle, u8x64, u64x8};
 use core::simd::{Swizzle, ToBytes};
-use core::sync::atomic::AtomicU8;
 
 #[derive(Clone, Copy)]
 pub struct Sse4;
@@ -298,7 +297,7 @@ pub mod avx2 {
     #[target_feature(enable = "avx")]
     pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
         v: Simd<u8, N>,
-        to: &[AtomicU8],
+        to: &[SharedOutU8],
     ) {
         match N {
             32 => shared::store32::<K, AT>(v.resize(0), as_group(to)),
@@ -338,7 +337,7 @@ mod avx512 {
     #[target_feature(enable = "avx512f")]
     pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
         v: Simd<u8, N>,
-        to: &[AtomicU8],
+        to: &[SharedOutU8],
     ) {
         match N {
             64 => shared::store64::<K, AT>(v.resize(0), as_group(to)),

@@ -1,8 +1,7 @@
 //! Shared by x86-64 and AArch64.
-use crate::{SharedU8, portable};
+use crate::{SharedOutU8, SharedU8, portable};
 use bun_simd_trusted::shared::{load4, load8, load16, store4, store8, store16};
 use core::simd::{Simd, u8x64};
-use core::sync::atomic::AtomicU8;
 
 /// Panics unless `bytes` has `K * N` bytes.
 #[inline(always)]
@@ -27,7 +26,7 @@ pub(crate) fn load_shared<A, const K: usize, const AT: usize>(from: &[SharedU8])
 #[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
 pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
     v: Simd<u8, N>,
-    to: &[AtomicU8],
+    to: &[SharedOutU8],
 ) {
     match N {
         16 => store16::<K, AT>(v.resize(0), as_group(to)),

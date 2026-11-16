@@ -1,6 +1,6 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
-use bun_simd::{Out, SharedU8, Target, limit_to};
+use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to};
 use bun_simd_kernels::{self as kernels, Filter, MappingsState};
 use core::f64::consts::PI;
 use core::fmt::Debug;
@@ -589,9 +589,9 @@ fn check_written<T>(want: &[u8], from: &[T], kernel: impl Fn(&[T], &mut [u8]) ->
     }
 }
 
-fn check_shared_prefix<T>(want: &[u8], from: &[T], kernel: fn(&[T], &[AtomicU8]) -> usize) {
+fn check_shared_prefix<T>(want: &[u8], from: &[T], kernel: fn(&[T], &[SharedOutU8]) -> usize) {
     check_written(want, from, |from, out| {
-        kernel(from, AtomicU8::from_mut_slice(out))
+        kernel(from, Out::from(out).into_shared())
     });
 }
 
@@ -599,7 +599,7 @@ fn check_prefix<T>(
     want: &[u8],
     from: &[T],
     kernel: for<'a> fn(&[T], Out<'a, u8>) -> &'a mut [u8],
-    kernel_to_shared: fn(&[T], &[AtomicU8]) -> usize,
+    kernel_to_shared: fn(&[T], &[SharedOutU8]) -> usize,
 ) {
     for room in sample(rooms(from.len()).into_iter().rev(), 2) {
         check(want[..room.min(want.len())].to_vec(), || {
@@ -718,7 +718,7 @@ fn few_ascii() {
                 let all = [&from[..copied], &ones[copied..room]].concat();
                 check((is_copied, all), || {
                     to_shared(&ones[..room], |out| {
-                        kernels::copy_few_ascii_to_shared(&from, out)
+                        kernels::copy_few_ascii_to_shared(&from, SharedOutU8::from_slice(out))
                     })
                 });
             }
@@ -1950,8 +1950,9 @@ fn with_a_concurrent_writer() {
                 kernels::xxhash3_64_shared(0, text);
                 kernels::xxhash64_shared(0, text);
                 filled(len, |out| kernels::encode_hex_lower_shared(text, out));
-                kernels::copy_ascii_prefix_to_shared(&vec![0; len], &bytes);
-                kernels::decode_hex_to_shared(&vec![*b"00"; len], &bytes);
+                let out = SharedOutU8::from_slice(&bytes);
+                kernels::copy_ascii_prefix_to_shared(&vec![0; len], out);
+                kernels::decode_hex_to_shared(&vec![*b"00"; len], out);
             }
         });
     }

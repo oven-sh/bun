@@ -2,12 +2,11 @@
 //!
 //! SAFETY: each function behaves like a relaxed atomic access to each of its bytes. Rust has no
 //! wider access that may race. To the CPU it is an ordinary access, which never tears a byte.
-use crate::SharedU8;
+use crate::{SharedOutU8, SharedU8};
 use core::arch::asm;
 use core::simd::u8x16;
 #[cfg(target_arch = "x86_64")]
 use core::simd::{u8x32, u8x64};
-use core::sync::atomic::AtomicU8;
 
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("the instructions use 64-bit addresses");
@@ -59,7 +58,7 @@ macro_rules! load_and_store {
         #[target_feature(enable = $feature)]
         pub fn $store<const K: usize, const AT: usize>(
             v: $T,
-            to: &[[AtomicU8; size_of::<$T>()]; K],
+            to: &[[SharedOutU8; size_of::<$T>()]; K],
         ) {
             const { assert!(AT < K) };
             will_store(to[AT].as_ptr().cast(), size_of::<$T>());
@@ -140,11 +139,6 @@ mod sealed {
     pub trait Readable {}
     impl Readable for SharedU8 {}
     impl<T: core::simd::SimdElement> Readable for T {}
-
-    /// Takes any bytes, through a shared reference.
-    pub trait Writable {}
-    impl Writable for AtomicU8 {}
-    impl<T> Writable for core::cell::Cell<core::mem::MaybeUninit<T>> {}
 }
 
 /// The mask and the address of lane 0. Lane `i` has a bit only if `address + i` is in `slice`.
@@ -184,8 +178,8 @@ pub fn load64_masked<const TO_LAST: bool>(from: &[impl sealed::Readable]) -> u8x
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx512bw")]
-pub fn store64_masked<const FROM_LAST: bool>(v: u8x64, to: &[impl sealed::Writable]) {
-    will_store(to.as_ptr().cast(), size_of_val(to).min(64));
+pub fn store64_masked<const FROM_LAST: bool>(v: u8x64, to: &[SharedOutU8]) {
+    will_store(to.as_ptr().cast(), to.len().min(64));
     let (mask, address) = lanes_for::<_, FROM_LAST>(to);
     // SAFETY: writes the bytes of `to` that the mask has a bit for, and touches no others.
     unsafe {
@@ -225,7 +219,7 @@ pub fn load16_masked(from: &[SharedU8]) -> u8x16 {
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "sve")]
-pub fn store16_masked(v: u8x16, to: &[AtomicU8]) {
+pub fn store16_masked(v: u8x16, to: &[SharedOutU8]) {
     will_store(to.as_ptr().cast(), to.len().min(16));
     // SAFETY: writes the first `len` bytes of `to`, and touches no others.
     unsafe {

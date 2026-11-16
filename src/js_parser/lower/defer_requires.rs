@@ -889,6 +889,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 let loc = assignment.left.loc;
                 let right = self.deferred(record, without_require(assignment.right), None, names);
                 let key = self.new_expr(E::EString::init(left.name.slice()), loc);
+                let value = self.module_scope().strict_mode != js_ast::StrictModeKind::SloppyMode;
+                let is_strict = self.new_expr(E::Boolean { value }, loc);
                 let set = E::Call {
                     target: self.new_expr(
                         E::Dot {
@@ -899,7 +901,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         },
                         loc,
                     ),
-                    args: js_ast::ExprNodeList::from_slice(&[left.target, key, right]),
+                    args: js_ast::ExprNodeList::from_slice(&[left.target, key, right, is_strict]),
                     ..Default::default()
                 };
                 statement.value = self.new_expr(set, loc);

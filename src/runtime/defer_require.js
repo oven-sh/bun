@@ -5,6 +5,7 @@ let $Bun_defer, $Bun_lazy;
   isCaught,
   isLoading,
   isOfKnownPackage,
+  textsOfCallees,
   makeLazy,
   isLazy,
   isPlain,
@@ -16,7 +17,6 @@ let $Bun_defer, $Bun_lazy;
   const { prototype, _cache: cache } = Module;
   const { require: ownRequire } = prototype;
   const { defineProperty, getOwnPropertyDescriptor, hasOwn, isExtensible } = Object;
-  const assign = (object, key, value) => Reflect.set(Object(object), key, value, object);
   // Packages replace the members of these.
   const patched = /^(?:node:)?(?:fs|module|path|process)$/;
   // What these do while they load matters to code that does not require them.
@@ -71,9 +71,15 @@ let $Bun_defer, $Bun_lazy;
   const lazy = new WeakMap();
   const refusal = Symbol();
   let refuses = false;
+  // To leave a function by an exception leaves nothing half done if it only loads, and remembers by `??=`.
+  const loads = /\([\w$]+\?\.\(\)\)|\brequire\("[^"\\]*"\)/g;
+  const onlyRemembers = /^[^(]*\(\)(?!.*(?:[(`]|\+\+|--|\b(?:delete|new)\b))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
+  // @typescript-eslint/eslint-plugin, where `load` is `() => require("./rule")`
+  const lazyRule = /^\(\) => \{\s*rule \?\?= load\(\)\.default;\s*return rule;\s*\}$/;
+  const canBeLeft = text => lazyRule.test(text) || onlyRemembers.test(text.replace(loads, ""));
   function refuse() {
     if (!refuses) return;
-    if (!isLoadingChanged() && !isCaught()) throw refusal;
+    if (!isLoadingChanged() && !isCaught() && textsOfCallees($Bun_lazy.ifLoaded).every(canBeLeft)) throw refusal;
     refuses = false;
   }
 
@@ -174,12 +180,13 @@ let $Bun_defer, $Bun_lazy;
   };
 
   // `object[key] = make()`
-  $Bun_lazy.set = function (object, key, make) {
+  $Bun_lazy.set = function (object, key, make, isStrict) {
     const isNew = () => !(key in object) && isExtensible(object);
     if (isPlain(object) && (isNew() || getOwnPropertyDescriptor(object, key)?.writable)) {
       object[key] = make;
       $Bun_lazy(object, key);
-    } else assign(object, key, make());
+    } else if (isStrict) object[key] = make();
+    else Reflect.set(Object(object), key, make(), object);
   };
 
   // src/runtime/typescript_front.rs
@@ -230,19 +237,11 @@ let $Bun_defer, $Bun_lazy;
   };
 
   const { __lookupGetter__: getterOf } = Object.prototype;
-  // To leave it by an exception leaves nothing half done: it changes nothing but by `??=`, and only loads before its one call.
-  const onlyRemembers = /^(?!.*(?:\.\s*[\w$]+\s*\(|\+\+|--|\bdelete\b|\(.*[(\0]))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
-  function canBeLeft(getter) {
-    const source = sourceOf.call(getter);
-    const parameters = source.indexOf("(");
-    if (source[parameters + 1] !== ")") return false;
-    return onlyRemembers.test(source.slice(parameters + 1).replace(/\([\w$]+\?\.\(\)\)/g, "\0"));
-  }
   // For Bun's own scripts, which go through all that is loaded: the property, or `otherwise` if to read it loads a module.
   $Bun_lazy.ifLoaded = (object, key, otherwise) => {
     if (isLazy(object, key)) return otherwise;
     const getter = getterOf.call(object, key);
-    if (!isOfKnownPackage(getter) || !canBeLeft(getter)) return object[key];
+    if (!isOfKnownPackage(getter) || !canBeLeft(sourceOf.call(getter))) return object[key];
     const resolveFilename = Module._resolveFilename;
     Module._resolveFilename = function () {
       const file = Reflect.apply(resolveFilename, this, arguments);

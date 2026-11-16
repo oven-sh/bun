@@ -11,6 +11,7 @@
 #include "LintHost.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/FunctionExecutableInlines.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Completion.h>
@@ -1039,6 +1040,33 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIsOfKnownPackage, (JSGlobalObject*, CallFrame* ca
     return JSValue::encode(jsBoolean(Bun__Lint__isInKnownPackage(reinterpret_cast<const uint8_t*>(url.data()), url.length())));
 }
 
+// (function) => the texts of the functions, but for Bun's, that are running since it was called
+JSC_DEFINE_HOST_FUNCTION(jsLintTextsOfCallees, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ScriptExecutable* last = uncheckedDowncast<JSFunction>(callFrame->argument(0))->jsExecutable();
+    MarkedArgumentBuffer callees;
+    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock)
+            return IterationStatus::Continue;
+        ScriptExecutable* executable = codeBlock->ownerExecutable();
+        if (executable == last)
+            return IterationStatus::Done;
+        if (!codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !isOfBun(executable->sourceURL()))
+            callees.append(executable);
+        return IterationStatus::Continue;
+    });
+    MarkedArgumentBuffer texts;
+    for (size_t i = 0; i < callees.size(); i++) {
+        auto* function = dynamicDowncast<FunctionExecutable>(callees.at(i));
+        texts.append(function ? function->toString(globalObject) : jsEmptyString(vm));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), texts)));
+}
+
 // One of the functions that src/runtime/defer_require.js returns. Empty in a VM that has not run it.
 static JSValue lintHook(JSGlobalObject* globalObject, unsigned index)
 {
@@ -1186,7 +1214,7 @@ extern "C" bool Bun__Lint__deferRequires(JSGlobalObject* globalObject, const Lat
     if (exception)
         return false;
     MarkedArgumentBuffer arguments;
-    for (auto function : { jsLintIsLoadingChanged, jsLintIsCaught, jsLintIsLoading, jsLintIsOfKnownPackage, jsLintMakeLazy, jsLintIsLazy, jsLintIsPlain, jsLintMakeAllLazy, jsLintSetWantsWhole })
+    for (auto function : { jsLintIsLoadingChanged, jsLintIsCaught, jsLintIsLoading, jsLintIsOfKnownPackage, jsLintTextsOfCallees, jsLintMakeLazy, jsLintIsLazy, jsLintIsPlain, jsLintMakeAllLazy, jsLintSetWantsWhole })
         arguments.append(JSFunction::create(vm, globalObject, 0, String(), function, ImplementationVisibility::Private));
     JSValue make = JSC::call(globalObject, program, getCallData(program), jsUndefined(), arguments, exception);
     if (exception)

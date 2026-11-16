@@ -5903,6 +5903,36 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       "a",
     ],
     [
+      "a getter that calls a function that changes something",
+      {
+        "index.js": `const queue = ["./a"]; function load() { return require(queue.shift()); } let a;
+          module.exports = { get a() { return a ??= load(); }, f() { return this.a; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
+      "a getter of a getter that runs a bundled module",
+      {
+        "index.js": `const b = require("./b"); b.loaded; module.exports = { get a() { return b.default; }, f() { return this.a; } };`,
+        "b.js": `const a = require("./a");
+          const once = (run, module) => () => (module || run((module = { exports: {} })), module.exports);
+          const bundled = once(module => { const it = a.it; module.exports = it; });
+          Object.defineProperty(exports, "default", { get: function () { return bundled(); } });`,
+        "a.js": `exports.it = "a";`,
+      },
+      "a",
+    ],
+    ...["", '"use strict";'].map((mode): [string, Record<string, string>, unknown] => [
+      `an assignment to frozen exports: ${mode}`,
+      {
+        "index.js": `exports.f = () => { try { return typeof require("./b").a; } catch (error) { return error.name; } };`,
+        "b.js": `${mode} Object.freeze(exports); exports.a = require("./a");`,
+        "a.js": `module.exports = "a";`,
+      },
+      mode ? "TypeError" : "undefined",
+    ]),
+    [
       "an extension that's added just before a require",
       {
         "index.js": `require.extensions[".foo"] = module => { module.exports = "foo"; };

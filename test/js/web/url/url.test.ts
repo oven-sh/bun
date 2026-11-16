@@ -420,13 +420,11 @@ describe("url", () => {
       ["file:///a/b", "[::1]::80", "file:///a/b"],
     ] as const;
 
-    for (const [href, value, expected] of cases) {
-      it(`new URL(${JSON.stringify(href)}).host = ${JSON.stringify(value)}`, () => {
-        const url = new URL(href);
-        url.host = value;
-        expect(url.href).toBe(expected);
-      });
-    }
+    it.each(cases)("new URL(%j).host = %j", (href, value, expected) => {
+      const url = new URL(href);
+      url.host = value;
+      expect(url.href).toBe(expected);
+    });
   });
 
   describe("URL.canParse", () => {

@@ -644,7 +644,7 @@ impl JSMySQLConnection {
             columns: &statement.columns,
             binary: !request.is_simple(),
             raw: result_mode == ResultMode::Raw,
-            bigint: request.is_bigint_supported(),
+            decode: request.decode(),
             values: Vec::new(),
         };
         if let Err(e) = row.decode(reader) {

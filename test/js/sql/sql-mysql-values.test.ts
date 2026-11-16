@@ -408,6 +408,49 @@ const refused: [string, unknown, string][] = [
   ["a Map", new Map(), "ERR_INVALID_ARG_TYPE"],
 ];
 
+// With `dates: "string"`: the text the server prints, with the fraction as long as the column's precision.
+// [column type, [SQL literal, text][]]
+const dateStrings: [string, [string, string][]][] = [
+  [
+    "DATE",
+    [
+      ["'2024-02-29'", "2024-02-29"],
+      ["'0001-01-01'", "0001-01-01"],
+      ["'0000-00-00'", "0000-00-00"],
+      ["NULL", "null"],
+    ],
+  ],
+  [
+    "DATETIME",
+    [
+      ["'2024-06-15 12:34:56'", "2024-06-15 12:34:56"],
+      ["'2024-06-15 00:00:00'", "2024-06-15 00:00:00"],
+      ["'0000-00-00 00:00:00'", "0000-00-00 00:00:00"],
+    ],
+  ],
+  [
+    "DATETIME(3)",
+    [
+      ["'2024-06-15 12:34:56.789'", "2024-06-15 12:34:56.789"],
+      ["'2024-06-15 12:34:56'", "2024-06-15 12:34:56.000"],
+    ],
+  ],
+  [
+    "DATETIME(6)",
+    [
+      ["'2024-06-15 12:34:56.789123'", "2024-06-15 12:34:56.789123"],
+      ["'1969-12-31 23:59:59.999999'", "1969-12-31 23:59:59.999999"],
+      ["'2024-06-15 00:00:00'", "2024-06-15 00:00:00.000000"],
+      ["'0000-00-00 00:00:00'", "0000-00-00 00:00:00.000000"],
+    ],
+  ],
+  ["TIMESTAMP NULL", [["'2038-01-19 03:14:07'", "2038-01-19 03:14:07"]]],
+  ["TIMESTAMP(6) NULL", [["'2024-06-15 12:34:56.789123'", "2024-06-15 12:34:56.789123"]]],
+  // The other types are as without the option.
+  ["TIME(3)", [["'12:34:56.789'", "12:34:56.789"]]],
+  ["INT", [["7", "7"]]],
+];
+
 const describeValue = (value: unknown) =>
   typeof value === "string" && value.length > 40
     ? `string of ${value.length}`
@@ -419,8 +462,12 @@ for (const [server, image] of [
 ] as const) {
   describeWithContainer(server, { image, concurrent: true }, container => {
     // The temporary table `t` belongs to the one connection of this client.
-    async function tableOf(type: string, literals: string[] = []) {
-      const sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+    async function tableOf(type: string, literals: string[] = [], options: SQL.Options = {}) {
+      const sql = new SQL({
+        url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        ...options,
+      });
       // Zero dates and '' for an ENUM are refused in strict mode.
       await sql`SET sql_mode = ''`.simple();
       await sql.unsafe(`CREATE TEMPORARY TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, v ${type})`).simple();
@@ -441,6 +488,30 @@ for (const [server, image] of [
         simple: (await sql`SELECT v FROM t ORDER BY id`.simple()).map(row => comparable(row.v)),
         values: (await sql`SELECT v FROM t ORDER BY id`.values()).map(([v]) => comparable(v)),
       }).toEqual({ prepared: expected, simple: expected, values: expected });
+    });
+
+    test.each(dateStrings)(
+      '%s with dates: "string" is the server\'s text in a prepared and a simple query',
+      async (type, rows) => {
+        await using sql = await tableOf(
+          type,
+          rows.map(([literal]) => literal),
+          { dates: "string" },
+        );
+        const expected = rows.map(([, text]) => text);
+        const shown = (value: unknown) => (typeof value === "string" ? value : Bun.inspect(value));
+        expect({
+          prepared: (await sql`SELECT v FROM t ORDER BY id`).map(row => shown(row.v)),
+          simple: (await sql`SELECT v FROM t ORDER BY id`.simple()).map(row => shown(row.v)),
+        }).toEqual({ prepared: expected, simple: expected });
+      },
+    );
+
+    test('a Date parameter with dates: "string" is bound as before and read back with its microseconds', async () => {
+      await using sql = await tableOf("DATETIME(6)", [], { dates: "string" });
+      await sql`INSERT INTO t (v) VALUES (${new Date("2024-06-15T12:34:56.789Z")}), (${"2024-06-15 12:34:56.789123"})`;
+      const rows = await sql`SELECT v FROM t WHERE v >= ${new Date("2024-06-15T12:34:56.789Z")} ORDER BY id`;
+      expect(rows.map(row => row.v)).toEqual(["2024-06-15 12:34:56.789000", "2024-06-15 12:34:56.789123"]);
     });
 
     test("FLOAT is exact in a prepared query and the server's 6 digits in a simple one", async () => {

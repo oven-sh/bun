@@ -6,6 +6,33 @@ use bun_core::UnwrapOrOom as _;
 use bun_core::WTFString;
 use bun_sql::shared::ColumnIdentifier;
 
+/// What a query's options tell the decoders. One byte: a query has no room for more.
+#[repr(transparent)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Decode(u8);
+
+impl Decode {
+    const BIGINT: u8 = 1 << 0;
+    const DATE_STRINGS: u8 = 1 << 1;
+
+    pub fn new(bigint: bool, date_strings: bool) -> Decode {
+        Decode(u8::from(bigint) * Self::BIGINT | u8::from(date_strings) * Self::DATE_STRINGS)
+    }
+
+    /// `int8` (MySQL: a `BIGINT` outside i32) is a BigInt, not a string.
+    #[inline]
+    pub fn bigint(self) -> bool {
+        self.0 & Self::BIGINT != 0
+    }
+
+    /// `date`, `timestamp` and `timestamptz` (MySQL: DATE, DATETIME, TIMESTAMP) are the text the
+    /// server prints, not a `Date`.
+    #[inline]
+    pub fn date_strings(self) -> bool {
+        self.0 & Self::DATE_STRINGS != 0
+    }
+}
+
 /// `DataCell` in SQLClient.cpp, which only reads it.
 #[repr(C)]
 pub struct SQLDataCell {

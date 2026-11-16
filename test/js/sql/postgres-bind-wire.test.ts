@@ -226,6 +226,20 @@ describe("named statements", () => {
     expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0]]);
   });
 
+  test('dates: "string" asks for timestamp and timestamptz in text, the rest as before', async () => {
+    const strings = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1, dates: "string" });
+    try {
+      await strings.unsafe(`select $1 /* string formats: params=${OID.int4} cols=${columns} */`, [1]);
+      expect(resultFormats(drain())).toEqual([[1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0]]);
+      await strings
+        .unsafe(`select $1 /* string raw formats: params=${OID.int4} cols=${columns.slice(0, -1)} */`, [1])
+        .raw();
+      expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0]]);
+    } finally {
+      await strings.close({ timeout: 0 });
+    }
+  });
+
   test("values of an object through the sql() helper", async () => {
     // Literal OIDs: an interpolation in a tagged template is a parameter.
     await sql`insert into t ${sql({ a: 7, b: "seven", c: null })} /* params=23,25,23 cols=25 */`;

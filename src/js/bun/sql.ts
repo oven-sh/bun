@@ -75,10 +75,12 @@ class Client implements Target {
   array = array.bind(this);
   json = json.bind(this);
 
-  constructor(pool: Pool, options: Bun.SQL.__internal.DefinedOptions & { bigint?: boolean }) {
+  constructor(pool: Pool, options: Bun.SQL.__internal.DefinedOptions & { bigint?: boolean; dates?: string }) {
     this.pool = pool;
     this.options = options;
-    this.flags = options.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none;
+    let flags = options.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none;
+    if (options.dates === "string") flags |= SQLQueryFlags.dateStrings;
+    this.flags = flags;
   }
 }
 

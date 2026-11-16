@@ -10,7 +10,7 @@ use bun_sql::mysql::protocol::packet_reader::PacketReader;
 use bun_sql::shared::SQLQueryResultMode;
 
 use crate::shared::CachedStructure;
-use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
+use crate::shared::sql_data_cell::{Decode, Flags as SQLDataCellFlags, SQLDataCell};
 
 use super::decode_binary_value::{self, decode_binary_value};
 
@@ -21,7 +21,7 @@ pub(crate) struct Row<'a> {
     pub columns: &'a [ColumnDefinition41],
     pub binary: bool,
     pub raw: bool,
-    pub bigint: bool,
+    pub decode: Decode,
     pub global_object: &'a JSGlobalObject,
 }
 
@@ -96,7 +96,7 @@ impl<'a> Row<'a> {
                     if val <= u32::MAX as u64 {
                         return SQLDataCell::uint4(u32::try_from(val).expect("int cast"));
                     }
-                    if self.bigint {
+                    if self.decode.bigint() {
                         return SQLDataCell::uint8(val);
                     }
                 } else {
@@ -104,7 +104,7 @@ impl<'a> Row<'a> {
                     if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
                         return SQLDataCell::int4(i32::try_from(val).expect("int cast"));
                     }
-                    if self.bigint {
+                    if self.decode.bigint() {
                         return SQLDataCell::int8(val);
                     }
                 }
@@ -116,6 +116,11 @@ impl<'a> Row<'a> {
             MYSQL_TYPE_TIME => {
                 // lets handle TIME special case as string
                 // -838:59:50 to 838:59:59 is valid
+                SQLDataCell::string(value)
+            }
+            MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP
+                if self.decode.date_strings() =>
+            {
                 SQLDataCell::string(value)
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
@@ -210,7 +215,7 @@ impl<'a> Row<'a> {
             let mut value = if is_null {
                 SQLDataCell::null()
             } else {
-                decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)
+                decode_binary_value(self.global_object, column, self.raw, self.decode, reader)
                     .map_err(|e| match e {
                         crate::Error::MySqlProtocol(e) => e,
                         other => other

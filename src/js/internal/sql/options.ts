@@ -220,6 +220,7 @@ const SERVER_OPTIONS = [
   "maxLifetime",
   "max_lifetime",
   "bigint",
+  "dates",
   "prepare",
   "allowPublicKeyRetrieval",
   "foundRows",
@@ -782,6 +783,11 @@ function parseOptions(
   }
   if (!isPostgres) refuseRequiredChannelBinding(adapter, channelBinding);
 
+  const dates = options.dates ?? "date";
+  if (dates !== "date" && dates !== "string") {
+    throw $ERR_INVALID_ARG_VALUE("dates", dates, "must be one of: date, string");
+  }
+
   const { onconnect, onclose, transform: transformOption } = options;
   if (onconnect !== undefined && !$isCallable(onconnect)) {
     throw $ERR_INVALID_ARG_TYPE("onconnect", "function", onconnect);
@@ -884,6 +890,7 @@ function parseOptions(
     foundRows: !!(options.foundRows ?? queryFlag(query.foundRows)),
     channelBinding,
     bigint: options.bigint,
+    dates,
     sslMode,
     query: startupParameters,
     max,

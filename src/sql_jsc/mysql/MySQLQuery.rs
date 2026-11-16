@@ -4,6 +4,7 @@ use crate::jsc::{JSArrayIterator, JSGlobalObject, JSValue, MarkedArgumentBuffer}
 use bun_core::{String as BunString, strings};
 
 use super::my_sql_value::Value;
+use crate::shared::sql_data_cell::Decode;
 use bun_sql::mysql::mysql_request;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::new_writer::{NewWriterWrap, WriterContext};
@@ -49,10 +50,11 @@ impl Flags {
     /// ends the text and says nothing, after it promised a further result: the reply to a command
     /// written behind it would be taken for that result.
     const SEVERAL_STATEMENTS: u8 = 1 << 5;
+    const DATE_STRINGS: u8 = 1 << 6;
 
     #[inline]
-    fn bigint(self) -> bool {
-        self.0 & Self::BIGINT != 0
+    fn decode(self) -> Decode {
+        Decode::new(self.0 & Self::BIGINT != 0, self.0 & Self::DATE_STRINGS != 0)
     }
     #[inline]
     fn simple(self) -> bool {
@@ -83,10 +85,13 @@ impl Flags {
         self.0 = (self.0 & !Self::RESULT_MODE_MASK) | ((m as u8) << Self::RESULT_MODE_SHIFT);
     }
     #[inline]
-    fn new(bigint: bool, simple: bool) -> Self {
+    fn new(decode: Decode, simple: bool) -> Self {
         let mut f = 0u8;
-        if bigint {
+        if decode.bigint() {
             f |= Self::BIGINT;
+        }
+        if decode.date_strings() {
+            f |= Self::DATE_STRINGS;
         }
         if simple {
             f |= Self::SIMPLE;
@@ -210,13 +215,13 @@ impl MySQLQuery {
         Ok(true)
     }
 
-    pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
+    pub(crate) fn init(query: BunString, decode: Decode, simple: bool) -> Self {
         Self {
             statement: None,
             staged_execute: Vec::new(),
             query,
             status: Status::Pending,
-            flags: Flags::new(bigint, simple),
+            flags: Flags::new(decode, simple),
         }
     }
 
@@ -334,8 +339,8 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.flags.bigint()
+    pub(crate) fn decode(&self) -> Decode {
+        self.flags.decode()
     }
 
     #[inline]

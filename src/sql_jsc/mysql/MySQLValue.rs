@@ -184,7 +184,7 @@ pub struct DateTime {
     hour: u8,
     minute: u8,
     second: u8,
-    microsecond: u32,
+    pub(crate) microsecond: u32,
 }
 
 impl DateTime {
@@ -281,6 +281,25 @@ impl DateTime {
             second: parsed.second,
             microsecond: parsed.microsecond,
         })
+    }
+
+    /// As the text protocol prints it: `YYYY-MM-DD`, or with ` HH:MM:SS` and the fraction padded to
+    /// the column's precision. A 0-byte value prints as the zero date.
+    pub(crate) fn write_text<'b>(
+        &self,
+        date_only: bool,
+        decimals: u8,
+        buffer: &'b mut [u8; 32],
+    ) -> Option<&'b [u8]> {
+        use std::io::Write;
+        let mut w = &mut buffer[..];
+        write!(w, "{:04}-{:02}-{:02}", self.year, self.month, self.day).ok()?;
+        if !date_only {
+            write!(w, " {:02}:{:02}:{:02}", self.hour, self.minute, self.second).ok()?;
+            write_fraction(&mut w, self.microsecond, decimals)?;
+        }
+        let remaining = w.len();
+        Some(&buffer[..buffer.len() - remaining])
     }
 
     fn to_binary<'b>(&self, buffer: &'b mut [u8; 12]) -> &'b [u8] {
@@ -391,6 +410,25 @@ impl Time {
 
         time
     }
+}
+
+/// `.ffffff` cut and padded to the column's `decimals`, nothing for 0. MySQL prints it this way.
+pub(crate) fn write_fraction(
+    w: &mut impl std::io::Write,
+    microseconds: u32,
+    decimals: u8,
+) -> Option<()> {
+    let decimals = u32::from(decimals.min(6));
+    if decimals == 0 {
+        return Some(());
+    }
+    write!(
+        w,
+        ".{:0width$}",
+        microseconds / 10u32.pow(6 - decimals),
+        width = decimals as usize
+    )
+    .ok()
 }
 
 // Helper functions for date calculations

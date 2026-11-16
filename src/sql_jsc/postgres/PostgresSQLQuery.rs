@@ -3,6 +3,7 @@ use core::cell::Cell;
 use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
+use crate::shared::sql_data_cell::Decode;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
@@ -44,6 +45,9 @@ pub struct PostgresSQLQuery {
     pub(crate) flags: Cell<Flags>,
 }
 
+// The flags fill the bytes behind `status` and `ref_count`: one more and the allocation is bigger.
+const _: () = assert!(core::mem::size_of::<PostgresSQLQuery>() == 96);
+
 impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
@@ -63,7 +67,7 @@ impl Default for PostgresSQLQuery {
 pub struct Flags {
     /// What its Bind asked for.
     pub(crate) formats: ResultFormats,
-    pub(crate) bigint: bool,
+    pub(crate) decode: Decode,
     pub(crate) simple: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
@@ -115,7 +119,7 @@ impl Default for Flags {
     fn default() -> Self {
         Self {
             formats: ResultFormats::Text,
-            bigint: false,
+            decode: Decode::default(),
             simple: false,
             describe_first: false,
             staged: false,
@@ -387,6 +391,7 @@ impl PostgresSQLQuery {
         pending_value: JsLocal<'a, JSArray>,
         bigint: bool,
         simple: bool,
+        date_strings: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
@@ -402,7 +407,7 @@ impl PostgresSQLQuery {
             (*ptr).query = query;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
-                bigint,
+                decode: Decode::new(bigint, date_strings),
                 simple,
                 ..Default::default()
             });

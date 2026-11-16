@@ -8,6 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
+use crate::shared::sql_data_cell::Decode;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
@@ -59,6 +60,7 @@ impl JSMySQLQuery {
         pending_value: JsLocal<'a, JSArray>,
         bigint: bool,
         simple: bool,
+        date_strings: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
@@ -68,7 +70,11 @@ impl JSMySQLQuery {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
+            query: JsCell::new(MySQLQuery::init(
+                query,
+                Decode::new(bigint, date_strings),
+                simple,
+            )),
             undescribed: JsCell::new(Undescribed::default()),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
@@ -369,7 +375,11 @@ impl JSMySQLQuery {
     }
     #[inline]
     pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.query.get().is_bigint_supported()
+        self.query.get().decode().bigint()
+    }
+    #[inline]
+    pub(crate) fn decode(&self) -> Decode {
+        self.query.get().decode()
     }
     #[inline]
     pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {

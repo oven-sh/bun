@@ -171,6 +171,8 @@ new Bun.SQL({ adapter: "mariadb", socket: "/run/mysqld/mysqld.sock", foundRows: 
 new Bun.SQL("postgres://localhost", { onconnect: err => expectType(err).is<Error | null>() });
 
 new Bun.SQL({ channelBinding: "require", transform: Bun.SQL.camel });
+new Bun.SQL({ dates: "string" });
+new Bun.SQL("mysql://localhost", { dates: "date" });
 new Bun.SQL({ filename: ":memory:", transform: Bun.SQL.toCamel });
 new Bun.SQL({ transform: { undefined: null, column: { from: name => name.toLowerCase(), to: Bun.SQL.fromKebab } } });
 new Bun.SQL({ transform: { column: name => name.toUpperCase() } });
@@ -190,6 +192,9 @@ new Bun.SQL({ transform: (name: string) => name });
 
 // @ts-expect-error
 new Bun.SQL({ channelBinding: "always" });
+
+// @ts-expect-error - the Temporal mode does not exist yet
+new Bun.SQL({ dates: "temporal" });
 
 // @ts-expect-error - the callbacks get the error only, not the connection
 new Bun.SQL({ onclose: (client: unknown, err: Error | null) => {} });

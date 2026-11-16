@@ -1,6 +1,6 @@
 use crate::jsc::JSGlobalObject;
-use crate::mysql::my_sql_value::{DateTime, Time};
-use crate::shared::sql_data_cell::SQLDataCell;
+use crate::mysql::my_sql_value::{DateTime, Time, write_fraction};
+use crate::shared::sql_data_cell::{Decode, SQLDataCell};
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
@@ -17,7 +17,7 @@ pub(crate) fn decode_binary_value(
     global_object: &JSGlobalObject,
     column: &ColumnDefinition41,
     raw: bool,
-    bigint: bool,
+    decode: Decode,
     reader: PacketReader<'_>,
 ) -> crate::Result<SQLDataCell> {
     bun_core::scoped_log!(
@@ -89,7 +89,7 @@ pub(crate) fn decode_binary_value(
                 if val <= u32::MAX as u64 {
                     return Ok(SQLDataCell::uint4(u32::try_from(val).expect("int cast")));
                 }
-                if bigint {
+                if decode.bigint() {
                     return Ok(SQLDataCell::uint8(val));
                 }
                 let mut buffer = bun_core::fmt::ItoaBuf::new();
@@ -100,7 +100,7 @@ pub(crate) fn decode_binary_value(
             if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
                 return Ok(SQLDataCell::int4(i32::try_from(val).expect("int cast")));
             }
-            if bigint {
+            if decode.bigint() {
                 return Ok(SQLDataCell::int8(val));
             }
             let mut buffer = bun_core::fmt::ItoaBuf::new();
@@ -141,7 +141,6 @@ pub(crate) fn decode_binary_value(
             use std::io::Write;
             let mut buffer = [0u8; 32];
             let mut w = &mut buffer[..];
-            let decimals = u32::from(column.decimals.min(6));
             write!(
                 w,
                 "{}{:02}:{:02}:{:02}",
@@ -151,15 +150,8 @@ pub(crate) fn decode_binary_value(
                 time.seconds
             )
             .map_err(|_| crate::Error::InvalidBinaryValue)?;
-            if decimals > 0 {
-                write!(
-                    w,
-                    ".{:0width$}",
-                    time.microseconds / 10u32.pow(6 - decimals),
-                    width = decimals as usize
-                )
-                .map_err(|_| crate::Error::InvalidBinaryValue)?;
-            }
+            write_fraction(&mut w, time.microseconds, column.decimals)
+                .ok_or(crate::Error::InvalidBinaryValue)?;
             let remaining = w.len();
             Ok(SQLDataCell::string(&buffer[..buffer.len() - remaining]))
         }
@@ -173,6 +165,27 @@ pub(crate) fn decode_binary_value(
             let data = reader.read(length as usize)?;
             if raw {
                 return Ok(SQLDataCell::raw(data));
+            }
+            if decode.date_strings() {
+                // The text protocol prints a DATE without a time, whatever the row holds.
+                // The column's type decides the shape, not the row's length.
+                let date = if length == 0 {
+                    DateTime::default()
+                } else {
+                    DateTime::from_binary(data)
+                };
+                if date.microsecond >= 1_000_000 {
+                    return Err(crate::Error::InvalidBinaryValue);
+                }
+                let mut buffer = [0u8; 32];
+                let text = date
+                    .write_text(
+                        column.column_type == FieldType::MYSQL_TYPE_DATE,
+                        column.decimals,
+                        &mut buffer,
+                    )
+                    .ok_or(crate::Error::InvalidBinaryValue)?;
+                return Ok(SQLDataCell::string(text));
             }
             // A zero-length binary DATETIME is MySQL's "0000-00-00 00:00:00"
             // sentinel — surface it as Invalid Date (NaN), not the Unix epoch,

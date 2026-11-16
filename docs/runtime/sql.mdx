@@ -923,6 +923,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `connectionTimeout`       | `30`                      | Seconds to wait for a new connection                                                                              |
 | `prepare`                 | `true`                    | PostgreSQL. Use named [prepared statements](#prepared-statements)                                                 |
 | `bigint`                  | `false`                   | Return large integers as [`BigInt`](#bigint-instead-of-strings)                                                   |
+| `dates`                   | `"date"`                  | `"string"` returns date and time columns as the [server's text](#dates-as-strings)                                |
 | `connection`              |                           | PostgreSQL. Startup parameters, such as `{ application_name: "api", search_path: "app" }`                         |
 | `channelBinding`          | `disable`                 | PostgreSQL. [Channel binding](#channel-binding): `"disable"`, `"prefer"` or `"require"`                           |
 | `allowPublicKeyRetrieval` | `false`                   | MySQL. Fetch the server's RSA key to log in without TLS                                                           |
@@ -1885,6 +1886,28 @@ row.created_at.toISOString(); // "2024-01-15T12:00:00.000Z" on every host
 
 `pg`, `postgres.js`, `mysql2` and `mariadb` read `timestamp` / `DATETIME` as **local time**. If you migrate from one of them on a host that is not UTC, the same stored value becomes a different instant. `timestamptz` carries an offset and is the same in every driver.
 
+### Dates as strings
+
+A `Date` holds milliseconds. PostgreSQL `timestamp` and `timestamptz` and MySQL `DATETIME(6)` and `TIMESTAMP(6)` hold microseconds, so the last three digits are lost. Set `dates: "string"` to get the text the server prints instead:
+
+```ts
+const sql = new SQL({
+  url: "postgres://user:pass@localhost:5432/db",
+  dates: "string",
+});
+
+const [row] = await sql`SELECT '2026-01-02 03:04:05.123456+00'::timestamptz AS t`;
+row.t; // "2026-01-02 03:04:05.123456+00"
+```
+
+With `dates: "string"`:
+
+- PostgreSQL `date`, `timestamp`, `timestamptz` and their arrays are strings. The text is what the server prints for the session, including the `TimeZone` offset of a `timestamptz`. `infinity` and `-infinity` are those strings. A `timestamp` from a binary cursor rejects with `ERR_POSTGRES_UNKNOWN_FORMAT_CODE`, as `date` does today.
+- MySQL `DATE`, `DATETIME` and `TIMESTAMP` are strings, with the fraction padded to the column's precision: `"2026-01-02 03:04:05.123456"`. A zero date is `"0000-00-00 00:00:00"`.
+- `Date` parameters are bound as before. `.raw()` is unchanged. SQLite ignores the option.
+
+The default, `dates: "date"`, keeps the `Date` values described above. `dates: "temporal"` is not available yet.
+
 ---
 
 ## Roadmap
@@ -1964,22 +1987,22 @@ Bun sends client information to MySQL for monitoring:
 
 Bun converts MySQL types to JavaScript types:
 
-| MySQL Type                              | JavaScript Type          | Notes                                                                                            |
-| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
-| INT, TINYINT, SMALLINT, MEDIUMINT       | number                   | Within safe integer range                                                                        |
-| BIGINT                                  | string, number or BigInt | number if the value fits in i32/u32, otherwise string or BigInt depending on the `bigint` option |
-| DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                            |
-| FLOAT, DOUBLE                           | number                   |                                                                                                  |
-| DATE                                    | Date                     | JavaScript Date object                                                                           |
-| DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
-| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours), with the column's fractional digits        |
-| YEAR                                    | number                   |                                                                                                  |
-| CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
-| TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |
-| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | Buffer                   | Same wire types as TEXT; Bun returns a Buffer when the column uses the binary character set      |
-| JSON                                    | object/array             | Automatically parsed                                                                             |
-| BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
-| GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
+| MySQL Type                              | JavaScript Type          | Notes                                                                                                  |
+| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| INT, TINYINT, SMALLINT, MEDIUMINT       | number                   | Within safe integer range                                                                              |
+| BIGINT                                  | string, number or BigInt | number if the value fits in i32/u32, otherwise string or BigInt depending on the `bigint` option       |
+| DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                                  |
+| FLOAT, DOUBLE                           | number                   |                                                                                                        |
+| DATE                                    | Date                     | JavaScript Date object. A string with `dates: "string"`                                                |
+| DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date. A string with `dates: "string"` |
+| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours), with the column's fractional digits              |
+| YEAR                                    | number                   |                                                                                                        |
+| CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                        |
+| TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                        |
+| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | Buffer                   | Same wire types as TEXT; Bun returns a Buffer when the column uses the binary character set            |
+| JSON                                    | object/array             | Automatically parsed                                                                                   |
+| BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                        |
+| GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                      |
 
 `DATETIME` and `TIMESTAMP` values have no time zone on the wire, so Bun reads them back as **UTC**. See [Dates and time zones](#dates-and-time-zones).
 
@@ -2014,7 +2037,7 @@ Bun converts PostgreSQL types to JavaScript types:
 | `numeric`, `money`                                                 | string           | To preserve precision                                                                    |
 | `boolean`                                                          | boolean          |                                                                                          |
 | `text`, `varchar`, `char`                                          | string           |                                                                                          |
-| `date`, `timestamp`, `timestamptz`                                 | Date             | See [Dates and time zones](#dates-and-time-zones)                                        |
+| `date`, `timestamp`, `timestamptz`                                 | Date             | See [Dates and time zones](#dates-and-time-zones). A string with `dates: "string"`       |
 | `time`, `timetz`, `interval`                                       | string           | As PostgreSQL prints them                                                                |
 | `json`, `jsonb`                                                    | object/array     | Automatically parsed                                                                     |
 | `bytea`                                                            | Buffer           |                                                                                          |

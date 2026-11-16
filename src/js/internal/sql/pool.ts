@@ -67,6 +67,7 @@ export type NativeCreateQuery<QueryHandle> = (
   pendingValue: SQLResultArray<unknown>,
   bigint: boolean,
   simple: boolean,
+  dateStrings: boolean,
 ) => QueryHandle;
 
 type OnConnected = (err: Error | null, connection: any) => void;
@@ -595,6 +596,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       new SQLResultArray(),
       !!(flags & SQLQueryFlags.bigint),
       !!(flags & SQLQueryFlags.simple),
+      !!(flags & SQLQueryFlags.dateStrings),
     );
   }
 

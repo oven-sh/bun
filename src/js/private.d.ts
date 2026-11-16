@@ -16,6 +16,7 @@ declare module "bun" {
 
     type Adapter = NonNullable<Bun.SQL.Options["adapter"]>;
     type ChannelBinding = "disable" | "prefer" | "require";
+    type DateMode = "date" | "string";
 
     type AnyOptions = Omit<Bun.SQL.PostgresOrMySQLOptions, "adapter"> &
       Omit<Bun.SQL.SQLiteOptions, "adapter"> & {
@@ -41,6 +42,7 @@ declare module "bun" {
       sslMode: import("internal/sql/options").SSLMode;
       channelBinding: ChannelBinding;
       foundRows: boolean;
+      dates: DateMode;
       query: string;
       transform?: import("internal/sql/shared").Transform;
     };

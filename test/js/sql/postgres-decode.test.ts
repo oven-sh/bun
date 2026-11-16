@@ -194,6 +194,38 @@ const bigints: Table = [
   [`'{{1},{2}}'::int8[]`, `[[1n],[2n]]`],
 ];
 
+// With `dates: "string"`: what the server prints, whatever the path. Nothing of it is lost.
+const dateStrings: Table = [
+  [`'2024-01-02'::date`, `"2024-01-02"`],
+  [`'0044-03-15 BC'::date`, `"0044-03-15 BC"`],
+  [`'294276-12-31'::date`, `"294276-12-31"`],
+  [`'infinity'::date`, `"infinity"`],
+  [`null::date`, `null`],
+  [`'2024-01-02 03:04:05.678901'::timestamp`, `"2024-01-02 03:04:05.678901"`],
+  [`'1969-12-31 23:59:59.9995'::timestamp`, `"1969-12-31 23:59:59.9995"`],
+  [`'0044-03-15 12:00:00.5 BC'::timestamp`, `"0044-03-15 12:00:00.5 BC"`],
+  [`'294276-12-31 23:59:59'::timestamp`, `"294276-12-31 23:59:59"`],
+  [`'-infinity'::timestamp`, `"-infinity"`],
+  [`'2024-01-02 03:04:05.678901+00'::timestamptz`, `"2024-01-02 03:04:05.678901+00"`],
+  [`'275760-09-14 00:00:00+00'::timestamptz`, `"275760-09-14 00:00:00+00"`],
+  [`'infinity'::timestamptz`, `"infinity"`],
+  [`array['2024-01-02'::date, null, 'infinity']`, `["2024-01-02",null,"infinity"]`],
+  [
+    `array['2024-01-02 03:04:05.678901'::timestamp, null, '-infinity', '10000-01-01 00:00:00']`,
+    `["2024-01-02 03:04:05.678901",null,"-infinity","10000-01-01 00:00:00"]`,
+  ],
+  [
+    `array[array['2024-01-02 03:04:05.678901+00'::timestamptz], array['0044-03-15 12:00:00+00 BC'::timestamptz]]`,
+    `[["2024-01-02 03:04:05.678901+00"],["0044-03-15 12:00:00+00 BC"]]`,
+  ],
+  // The other types are as without the option.
+  [`'03:04:05.000001'::time`, `"03:04:05.000001"`],
+  [`7::int4`, `7`],
+  [`9223372036854775807::int8`, `"9223372036854775807"`],
+  [`'{1,null}'::int2[]`, `[1,null]`],
+  [`'{0.5,null}'::float8[]`, `[0.5,null]`],
+];
+
 // `timestamp` and `date` are UTC whatever the zone of the host is. Under a zone
 // with an offset, a decoder that reads one of them as local time shows.
 const originalTZ = process.env.TZ;
@@ -258,7 +290,77 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     test(`bigint: true: ${title(path)}`, async () => {
       expect(await read(bigints, path[0], { ...path[1], bigint: true })).toEqual(bigints);
     });
+    test(`dates: "string": ${title(path)}`, async () => {
+      expect(await read(dateStrings, path[0], { ...path[1], dates: "string" })).toEqual(dateStrings);
+    });
   }
+
+  describe('dates: "string"', () => {
+    test("a timestamptz is printed in the zone of the session on every path", async () => {
+      await container.ready;
+      await using sql = connect({ dates: "string", connection: { TimeZone: "America/New_York" } });
+      const seen: string[] = [];
+      for (const path of Object.keys(paths)) {
+        seen.push(await paths[path](sql, `'2026-01-02 03:04:05.123456+00'::timestamptz`).then(rows => rows[0].v));
+      }
+      expect(seen).toEqual(Array(seen.length).fill("2026-01-01 22:04:05.123456-05"));
+    });
+
+    test("a Date parameter is bound as before and read back with its microseconds", async () => {
+      await container.ready;
+      await using sql = connect({ dates: "string" });
+      await sql.unsafe("create temp table stamps (at timestamptz, day date)");
+      await sql`insert into stamps values (${new Date("2026-01-02T03:04:05.123Z")}, ${new Date("2026-01-02T00:00:00Z")})`;
+      await sql`insert into stamps values (${"2026-01-02 03:04:05.123456+00"}, ${"2026-01-03"})`;
+      const rows = await sql`select at, day from stamps where day >= ${new Date("2026-01-02T00:00:00Z")} order by day`;
+      expect(rows.map(row => [row.at, row.day])).toEqual([
+        ["2026-01-02 03:04:05.123+00", "2026-01-02"],
+        ["2026-01-02 03:04:05.123456+00", "2026-01-03"],
+      ]);
+    });
+
+    test("raw() hands out the same bytes as without the option", async () => {
+      await container.ready;
+      await using sql = connect({ dates: "string" });
+      const [text] = await sql`select '2024-01-02 03:04:05'::timestamp as v`.raw();
+      const [binary] = await sql`select '2024-01-02 03:04:05'::timestamp as v where ${1} = 1`.raw();
+      expect([show(text[0]), show(binary[0])]).toEqual([
+        `Buffer(${Array.from(Buffer.from("2024-01-02 03:04:05")).join(",")})`,
+        `Buffer(${Array.from(Buffer.from("0002b0ec8515f340", "hex")).join(",")})`,
+      ]);
+    });
+
+    test("a timestamp from a binary cursor rejects, as a date does", async () => {
+      await container.ready;
+      await using sql = connect({ dates: "string" });
+      const fetch = (expression: string) =>
+        sql
+          .unsafe(`begin; declare c binary cursor for select ${expression} as v; fetch all from c; commit`)
+          .simple()
+          .then(
+            results => show(results[2][0].v),
+            async error => {
+              await sql.unsafe("rollback").simple();
+              return `rejected: ${error.code}`;
+            },
+          );
+      const table: Table = [
+        [`7::int4`, `7`],
+        [`'2024-01-02 03:04:05'::timestamp`, `rejected: ERR_POSTGRES_UNKNOWN_FORMAT_CODE`],
+        [`'2024-01-02 03:04:05+00'::timestamptz`, `rejected: ERR_POSTGRES_UNKNOWN_FORMAT_CODE`],
+        [`'2024-01-02'::date`, `rejected: ERR_POSTGRES_UNKNOWN_FORMAT_CODE`],
+      ];
+      const values: Table = [];
+      for (const [expression] of table) values.push([expression, await fetch(expression)]);
+      expect(values).toEqual(table);
+    });
+
+    test.each(["temporal", "string ", true, 1])("%p is not a mode", value => {
+      expect(() => connect({ dates: value as any })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("date, string") }),
+      );
+    });
+  });
 
   // These three read as they always have: by the format that the value arrives in.
   describe("float4, int4[] and float4[]", () => {

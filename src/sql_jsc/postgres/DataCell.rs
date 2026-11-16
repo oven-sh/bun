@@ -8,8 +8,8 @@ use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::AnyPostgresError;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
-use crate::shared::sql_data_cell::Flags;
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
+use crate::shared::sql_data_cell::{Decode, Flags};
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -103,7 +103,7 @@ struct ArrayParser<'a> {
     rest: &'a [u8],
     element: types::Tag,
     delimiter: u8,
-    bigint: bool,
+    decode: Decode,
     global_object: &'a JSGlobalObject,
     unescaped: Vec<u8>,
 }
@@ -195,7 +195,7 @@ impl<'a> ArrayParser<'a> {
                     self.unescaped.extend_from_slice(plain);
                     self.unescaped.as_slice()
                 };
-                return from_text(self.bigint, self.element, text, self.global_object);
+                return from_text(self.decode, self.element, text, self.global_object);
             }
             let escaped = *tail
                 .get(1)
@@ -209,7 +209,7 @@ impl<'a> ArrayParser<'a> {
     fn bare(&mut self) -> Result<SQLDataCell> {
         match self.bare_text()? {
             b"NULL" => Ok(SQLDataCell::null()),
-            text => from_text(self.bigint, self.element, text, self.global_object),
+            text => from_text(self.decode, self.element, text, self.global_object),
         }
     }
 
@@ -228,7 +228,7 @@ fn parse_array(
     bytes: &[u8],
     array: types::Tag,
     element: types::Tag,
-    bigint: bool,
+    decode: Decode,
     global_object: &JSGlobalObject,
 ) -> Result<SQLDataCell> {
     // `[0:2]={1,2,3}`: only the whole value has bounds, and JS arrays start at 0.
@@ -243,7 +243,7 @@ fn parse_array(
         rest,
         element,
         delimiter: array.array_delimiter(),
-        bigint,
+        decode,
         global_object,
         unescaped: Vec::new(),
     };
@@ -357,7 +357,7 @@ fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
 }
 
 /// `ResultFormats::Decodable`, plus the types whose binary form is their text.
-fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
+fn from_binary(decode: Decode, tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
     use types::Tag as T;
     match tag {
         T::int2_array => binary_array(T::int2, bytes),
@@ -383,6 +383,11 @@ fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
                 .map_err(|_| AnyPostgresError::InvalidBinaryData)?;
             Ok(SQLDataCell::float8(f64::from_be_bytes(bytes)))
         }
+        // With `dates: "string"` the Bind asks for text. A binary cursor still sends binary, and
+        // only the server can print it as its text: the same answer as for `date` or `numeric`.
+        T::timestamp | T::timestamptz if decode.date_strings() => {
+            Err(AnyPostgresError::UnknownFormatCode)
+        }
         T::timestamp | T::timestamptz => {
             if bytes.len() != 8 {
                 return Err(AnyPostgresError::InvalidBinaryData);
@@ -399,7 +404,7 @@ fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
 }
 
 fn from_text(
-    bigint: bool,
+    decode: Decode,
     tag: types::Tag,
     bytes: &[u8],
     global_object: &JSGlobalObject,
@@ -413,7 +418,7 @@ fn from_text(
         T::cid | T::xid | T::oid => Ok(SQLDataCell::uint4(
             parse_decimal::<u32>(bytes).ok_or(AnyPostgresError::InvalidCharacter)?,
         )),
-        T::int8 if bigint => Ok(SQLDataCell::int8(
+        T::int8 if decode.bigint() => Ok(SQLDataCell::int8(
             parse_decimal::<i64>(bytes).ok_or(AnyPostgresError::InvalidCharacter)?,
         )),
         T::float4 | T::float8 => Ok(SQLDataCell::float8(
@@ -421,6 +426,9 @@ fn from_text(
         )),
         T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
         T::bool => Ok(SQLDataCell::bool(bytes.first() == Some(&b't'))),
+        T::date | T::timestamp | T::timestamptz if decode.date_strings() => {
+            Ok(SQLDataCell::string(bytes))
+        }
         T::date | T::timestamp | T::timestamptz => {
             if bytes.is_empty() {
                 return Ok(SQLDataCell::null());
@@ -436,7 +444,7 @@ fn from_text(
                 .ok_or(AnyPostgresError::UnsupportedByteaFormat)?,
         ),
         _ => match tag.array_element() {
-            Some(element) => parse_array(bytes, tag, element, bigint, global_object),
+            Some(element) => parse_array(bytes, tag, element, decode, global_object),
             None => Ok(SQLDataCell::string(bytes)),
         },
     }
@@ -447,7 +455,7 @@ pub(crate) struct Putter<'a> {
     pub fields: &'a [protocol::FieldDescription],
     /// What Bind asked for; the `fields` of the Describe before it always say text.
     pub formats: types::ResultFormats,
-    pub bigint: bool,
+    pub decode: Decode,
     pub global_object: &'a JSGlobalObject,
 }
 
@@ -500,8 +508,10 @@ impl<'a> Putter<'a> {
         let mut cell = match optional_bytes {
             None => SQLDataCell::null(),
             Some(data) if IS_RAW => SQLDataCell::raw(data),
-            Some(data) if field.binary || tag.is_binary_in(self.formats) => from_binary(tag, data)?,
-            Some(data) => from_text(self.bigint, tag, data, self.global_object)?,
+            Some(data) if field.binary || tag.is_binary_in(self.formats) => {
+                from_binary(self.decode, tag, data)?
+            }
+            Some(data) => from_text(self.decode, tag, data, self.global_object)?,
         };
         // TODO: when duplicate and we know the result will be an object
         // and not a .values() array, we can discard the data

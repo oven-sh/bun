@@ -1770,10 +1770,13 @@ impl PostgresSQLConnection {
                 }
                 // Whether an unnamed statement is described before its Bind depends on the values.
                 // A statement without parameters is prepared before its RowDescription arrives.
+                let flags = req.flags.get();
                 let formats = if unnamed || statement.fields.is_empty() {
                     ResultFormats::Text
-                } else if req.flags.get().result_mode == SQLQueryResultMode::Raw {
+                } else if flags.result_mode == SQLQueryResultMode::Raw {
                     ResultFormats::Raw
+                } else if flags.decode.date_strings() {
+                    ResultFormats::DecodableDatesText
                 } else {
                     ResultFormats::Decodable
                 };
@@ -1888,7 +1891,7 @@ impl PostgresSQLConnection {
                     list: SmallVec::new(),
                     fields: &statement.fields,
                     formats: request_flags.formats,
-                    bigint: request_flags.bigint,
+                    decode: request_flags.decode,
                     global_object: self.global(),
                 };
                 putter.list.reserve_exact(statement.fields.len());

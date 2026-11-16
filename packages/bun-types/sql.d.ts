@@ -685,6 +685,20 @@ declare module "bun" {
       bigint?: boolean | undefined;
 
       /**
+       * How date and time columns come back.
+       *
+       * - `"date"`: a `Date`. It holds milliseconds, so the microseconds of
+       *   a `timestamp` or `DATETIME(6)` are lost.
+       * - `"string"`: the text the server prints, for example
+       *   `"2026-01-02 03:04:05.123456+00"`. Nothing is lost.
+       *
+       * PostgreSQL: `date`, `timestamp`, `timestamptz` and their arrays.
+       * MySQL: `DATE`, `DATETIME`, `TIMESTAMP`. Ignored by SQLite.
+       * @default "date"
+       */
+      dates?: "date" | "string" | undefined;
+
+      /**
        * PostgreSQL only. Use named prepared statements. Each connection keeps
        * the 1,024 it used last. `false` throws for MySQL and does nothing for
        * MariaDB.

@@ -146,12 +146,16 @@ impl Tag {
             | Tag::int4
             | Tag::float4
             | Tag::float8
-            | Tag::timestamp
-            | Tag::timestamptz
             | Tag::bytea
             | Tag::int4_array
             | Tag::float4_array => formats != ResultFormats::Text,
-            Tag::int2_array | Tag::float8_array => formats == ResultFormats::Decodable,
+            Tag::timestamp | Tag::timestamptz => {
+                matches!(formats, ResultFormats::Decodable | ResultFormats::Raw)
+            }
+            Tag::int2_array | Tag::float8_array => matches!(
+                formats,
+                ResultFormats::Decodable | ResultFormats::DecodableDatesText
+            ),
             Tag::numeric | Tag::time => formats == ResultFormats::Raw,
             _ => false,
         }
@@ -166,6 +170,9 @@ impl Tag {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResultFormats {
     Text,
+    /// `Decodable` without `timestamp` and `timestamptz`: with `dates: "string"` they are the text
+    /// the server prints, offset and all.
+    DecodableDatesText,
     /// Those that `DataCell` decodes from binary.
     Decodable,
     /// Those that `.raw()` has always handed out in binary: programs parse these bytes.

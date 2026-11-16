@@ -1090,6 +1090,85 @@ describe("expect.addEqualityTesters", () => {
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/9089
+  // The diff of a failed toMatchObject() asks some matchers after the first mismatch. A tester is a function of the
+  // user, and what it starts would count for a call that the comparison did not make. So while a tester is registered the
+  // diff asks nothing after the mismatch: no tester and no matcher.
+  describe("a toMatchObject that fails while a tester is registered", () => {
+    const flaggedLines = (received: object, expected: object) =>
+      messageOf(() => expect(received).toMatchObject(expected))
+        .split("\n")
+        .filter(line => /^[-+] {3}/.test(line));
+
+    test("asks no tester and no matcher after the first mismatch", () => {
+      class Part {
+        constructor(public id: number) {}
+      }
+      const calls = { before: 0, after: 0, tester: 0 };
+      const counted = (position: "before" | "after") =>
+        expect.any(
+          class Counted {
+            static [Symbol.hasInstance]() {
+              calls[position]++;
+              return true;
+            }
+          },
+        );
+      expect.addEqualityTesters([
+        (a, b) => {
+          if (!(a instanceof Part && b instanceof Part)) return undefined;
+          calls.tester++;
+          return a.id === b.id;
+        },
+      ]);
+      // The matcher after the mismatch stays flagged, as it is with no diff walk.
+      expect(
+        flaggedLines(
+          { before: 1, a: 1, part: new Part(1), after: 1 },
+          { before: counted("before"), a: 2, part: new Part(1), after: counted("after") },
+        ),
+      ).toEqual(['-   "a": 2,', '-   "after": Any<Counted>,', '+   "a": 1,', '+   "after": 1,']);
+      expect(calls).toEqual({ before: 1, after: 0, tester: 0 });
+      // The comparison asks the tester where it comes to the two parts.
+      flaggedLines({ part: new Part(1), a: 1 }, { part: new Part(1), a: 2 });
+      expect(calls.tester).toBe(1);
+    });
+
+    test("starts no matcher through a tester that calls this.equals()", () => {
+      class Book {
+        constructor(
+          public title: string,
+          public authors: unknown,
+        ) {}
+      }
+      const started = { matcher: 0, method: 0 };
+      expect.extend({
+        toBeStartedInABook() {
+          started.matcher++;
+          return { pass: true, message: () => "" };
+        },
+      });
+      // The tester of the docs: it hands what the two books hold back to the comparison.
+      expect.addEqualityTesters([
+        function (this: any, a: unknown, b: unknown, customTesters: unknown) {
+          if (!(a instanceof Book && b instanceof Book)) return undefined;
+          return a.title === b.title && this.equals(a.authors, b.authors, customTesters);
+        },
+      ]);
+      const answersItself = {
+        asymmetricMatch() {
+          started.method++;
+          return true;
+        },
+      };
+      const inABook = [() => (expect as any).toBeStartedInABook(), () => answersItself];
+      for (const make of inABook) flaggedLines({ a: 1, book: new Book("t", 1) }, { a: 2, book: new Book("t", make()) });
+      expect(started).toEqual({ matcher: 0, method: 0 });
+      for (const make of inABook) flaggedLines({ book: new Book("t", 1), a: 1 }, { book: new Book("t", make()), a: 2 });
+      expect(started).toEqual({ matcher: 1, method: 1 });
+    });
+  });
+
   test("this.equals uses only the testers it is given", () => {
     class Box {
       constructor(public content: unknown) {}

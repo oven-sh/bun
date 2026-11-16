@@ -268,6 +268,8 @@ template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlob
 template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
+// -1 if `value` is no asymmetric matcher. Else whether it is of expect.resolvesTo or expect.rejectsTo.
+extern "C" int8_t Expect__asymmetricMatcherReadsPromise(JSC::EncodedJSValue value);
 
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
@@ -885,6 +887,19 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
     JSValue result = JSC::call(globalObject, isEqualNode, JSC::getCallData(isEqualNode), o1, arguments);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return result.toBoolean(globalObject);
+}
+
+// Whether toMatchObject leaves these two to isEqualNode(). Runs what isDOMNode runs for each, and not isEqualNode().
+static NEVER_INLINE bool bothAreDOMNodes(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2)
+{
+    if (WebCore::builtinNames(globalObject->vm()).isEqualNodePublicName().impl()->hasOneRef())
+        return false;
+    JSValue isEqualNode;
+    bool isNode = isDOMNode(globalObject, scope, o1, isEqualNode);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isNode)
+        return false;
+    return isDOMNode(globalObject, scope, o2, isEqualNode);
 }
 
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
@@ -2561,15 +2576,137 @@ static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, Thr
 }
 #endif
 
-template<bool enableAsymmetricMatchers>
+// The walk for the diff must not ask a matcher again that said no, so the comparison leaves a last record of it: the matcher beside itself, of which matchedRowsFrom() makes no row.
+static COLD NEVER_INLINE void recordMatcherThatSaidNo(Bun::DeepMatchState& state, JSObject* holder, JSObject* pattern, const Identifier& name, JSValue matcher)
+{
+    state.endedAtMatcherThatSaidNo = true;
+    state.recordIfAsked(holder, pattern, name, matcher, matcher);
+}
+
+// The values that matchAsymmetricMatcherAndGetFlags handles. Runs no user code.
+static bool isAsymmetricMatcher(JSValue value)
+{
+    return value.isCell() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType) && Expect__asymmetricMatcherReadsPromise(JSValue::encode(value)) >= 0;
+}
+
+// Whether `exception` says that the stack ran out.
+static bool isStackOverflow(JSC::Exception* exception)
+{
+    auto* error = dynamicDowncast<ErrorInstance>(exception->value());
+    return error && error->isStackOverflowError();
+}
+
+// Whether the comparison hands these two values to an asymmetricMatch() method of one of them, and does not look inside.
+static bool oneAnswersByAsymmetricMatch(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    return oneMayHaveAsymmetricMatchMethod(globalObject, a, b) && !asymmetricMatchMethod(globalObject, a) != !asymmetricMatchMethod(globalObject, b);
+}
+
+// What a walk that collects does at a key of the pattern. `patternWasScanned`: the scan read all of `subsetObj`, so a read of it runs no code.
+static void collectMatchersAtKey(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchStateOfCollector& state, JSObject* obj, JSObject* subsetObj, const Identifier& property, bool patternWasScanned, bool holderIsArray)
+{
+    // The printer lists no private names, and it shows a row of an array only at an index.
+    if (property.isPrivateName() || (holderIsArray && !parseIndex(property)))
+        return;
+
+    JSValue prop;
+    JSValue subsetProp;
+    auto recorded = state.recordOfComparison.find(Bun::DeepMatchStateOfCollector::RecordKey { obj, subsetObj, property.impl() });
+    if (recorded != state.recordOfComparison.end()) {
+        // The comparison was at this key before it failed. The walk takes what it found there, and reads neither value again.
+        Bun::DeepMatchState& comparison = *state.comparison;
+        unsigned record = recorded->value;
+        // It asked a matcher here that said no. The walk does not ask that one again.
+        if (comparison.endedAtMatcherThatSaidNo && record + 1 == comparison.recordedNames.size())
+            return;
+        prop = comparison.recordedAt(record, Bun::DeepMatchState::Value);
+        subsetProp = comparison.recordedAt(record, Bun::DeepMatchState::PatternOfValue);
+        // An answer that passed stays as it is.
+        if (!subsetProp.isObject()) {
+            state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+            return;
+        }
+    } else {
+        // The comparison did not come to this key, so the walk has to read it. It reads a key of a plain object, a class instance and an array only.
+        if (!Bun::diffAsksAtKeysOf(obj->type()))
+            return;
+        // Like the comparison, the walk runs no code of the pattern at a key that the received value lacks.
+        if (!patternWasScanned) {
+            bool has = obj->hasProperty(globalObject, property);
+            RETURN_IF_EXCEPTION(throwScope, );
+            if (!has)
+                return;
+        }
+        subsetProp = subsetObj->get(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, );
+        // Only a matcher or an object leads to a row.
+        if (!subsetProp.isObject())
+            return;
+        if (isAsymmetricMatcher(subsetProp)) {
+            // The walk is for the message alone. It asks five kinds of built-in matcher, and any other stays flagged.
+            if (!Bun::diffMayAsk(asObject(subsetProp)))
+                return;
+            // The comparison did not come to this matcher. It asks none where the received value has no such key.
+            prop = obj->getIfPropertyExists(globalObject, property);
+            RETURN_IF_EXCEPTION(throwScope, );
+            if (prop.isEmpty())
+                return;
+            auto result = matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope);
+            RETURN_IF_EXCEPTION(throwScope, );
+            if (result == AsymmetricMatcherResult::PASS)
+                state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
+            return;
+        }
+    }
+
+    // The scan read this object of the pattern and found no matcher in it.
+    auto scanned = state.patternLeadsToMatcher.find(asObject(subsetProp));
+    if (scanned != state.patternLeadsToMatcher.end() && !scanned->value)
+        return;
+    if (!prop) {
+        prop = obj->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, );
+        if (prop.isEmpty() || !prop.isObject())
+            return;
+        // Where a matcher in the received value or asymmetricMatch() answers for the two values, the comparison does not look inside them. Nor does the walk go into an object at whose keys it reads nothing.
+        if (isAsymmetricMatcher(prop) || oneAnswersByAsymmetricMatch(globalObject, prop, subsetProp) || !Bun::diffAsksAtKeysOf(asObject(prop)->type()))
+            return;
+    }
+
+    state.gcBuffer.append(prop);
+    state.gcBuffer.append(subsetProp);
+    state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+    // The walk is in the two roots, and it was in two values that it has seen: it goes into neither again.
+    std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue> pair { JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) };
+    if (pair == state.roots || !state.seen.insert(pair).second)
+        return;
+    // Only the first time into an object of the pattern that the scan read costs nothing.
+    if (scanned == state.patternLeadsToMatcher.end() || !state.patternsEntered.add(asObject(subsetProp)).isNewEntry) {
+        if (!state.stepsLeft)
+            return;
+        state.stepsLeft--;
+    }
+    Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(prop, subsetProp, globalObject, throwScope, state, false);
+}
+
+namespace Bun {
+void collectMatchersAfterMismatch(JSGlobalObject* globalObject, ThrowScope& throwScope, DeepMatchStateOfCollector& state, JSValue received, JSValue pattern)
+{
+    state.roots = { JSValue::encode(received), JSValue::encode(pattern) };
+    Bun__deepMatch<true, DeepMatchWalk::Collects>(received, pattern, globalObject, throwScope, state, false);
+}
+}
+
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk>
 bool Bun__deepMatch(
     JSValue objValue,
     JSValue subsetValue,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
-    Bun::DeepMatchState& state,
+    Bun::DeepMatchStateOf<walk>& state,
     bool isMatchingObjectContaining)
 {
+    constexpr bool collects = walk == Bun::DeepMatchWalk::Collects;
 
     // Caller must ensure only objects are passed to this function.
     ASSERT(objValue.isCell());
@@ -2582,7 +2719,7 @@ bool Bun__deepMatch(
 
     if constexpr (enableAsymmetricMatchers) {
         // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
-        if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
+        if (!collects && !isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
             if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
                 return *verdict;
         }
@@ -2595,10 +2732,18 @@ bool Bun__deepMatch(
 
     if constexpr (enableAsymmetricMatchers) {
         if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
-            auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            if (nodesEqual)
-                return *nodesEqual;
+            if constexpr (collects) {
+                // The comparison leaves two DOM nodes to isEqualNode(). The walk does not call it, and does not look inside them.
+                bool nodes = bothAreDOMNodes(globalObject, throwScope, obj, subsetObj);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (nodes)
+                    return true;
+            } else {
+                auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (nodesEqual)
+                    return *nodesEqual;
+            }
         }
     }
 
@@ -2612,7 +2757,7 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
+    bool objIsArray = !collects && isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
@@ -2638,7 +2783,25 @@ bool Bun__deepMatch(
         }
     }
 
+    [[maybe_unused]] bool patternWasScanned = false;
+    [[maybe_unused]] bool holderIsArray = false;
+    if constexpr (collects) {
+        patternWasScanned = state.patternLeadsToMatcher.contains(subsetObj);
+        holderIsArray = obj->type() == ArrayType || obj->type() == DerivedArrayType;
+    }
+
     for (const auto& property : subsetProps) {
+        if constexpr (collects) {
+            collectMatchersAtKey(globalObject, throwScope, state, obj, subsetObj, property, patternWasScanned, holderIsArray);
+            if (auto* exception = throwScope.exception()) [[unlikely]] {
+                // What a getter or a matcher throws costs this key its row, and no more. The walk gives up where the stack ran out or the VM terminates.
+                if (isStackOverflow(exception) || !throwScope.tryClearException())
+                    return false;
+            }
+            if (!state.stepsLeft) [[unlikely]]
+                return false;
+            continue;
+        }
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
@@ -2655,6 +2818,8 @@ bool Bun__deepMatch(
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (state.records) [[unlikely]]
+                        recordMatcherThatSaidNo(state, obj, subsetObj, property, subsetProp);
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
@@ -2719,7 +2884,8 @@ bool Bun__deepMatch(
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
-    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+    // A walk that collects has no row to make there.
+    if (!collects && vm.aotState().someClassHasPrivateNames) [[unlikely]] {
         bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
             return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });
@@ -3663,7 +3829,15 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (rows) {
-        *rows = JSValue::encode(matched == rowsWhen ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
+        JSValue matchedRows;
+        if (matched == rowsWhen) {
+            // The rows of a comparison that failed are for its diff, which also shows the matchers after the first mismatch. Not so while an equality tester is registered: the comparison asked it about each pair, and the walk for the diff starts no function of the user.
+            if (rowsWhen || hasEqualityTesters(globalObject)) [[likely]]
+                matchedRows = Bun::matchedRowsFrom(globalObject, state, obj, subset);
+            else
+                matchedRows = Bun::matchedRowsOfFailedMatch(globalObject, state, obj, subset);
+        }
+        *rows = JSValue::encode(matchedRows);
         RETURN_IF_EXCEPTION(scope, false);
     }
     return matched;

@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "GeneratedExpect.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include "headers.h"
@@ -10,6 +11,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/RegExpObject.h>
 #include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
@@ -433,6 +435,193 @@ JSC::JSValue JestMatchedRows::forSerializers(JSC::JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     }
     return merged;
+}
+
+} // namespace Bun
+
+// expect.rs. -1 if `value` is no asymmetric matcher. Else whether it is of expect.resolvesTo or expect.rejectsTo.
+extern "C" int8_t Expect__asymmetricMatcherReadsPromise(JSC::EncodedJSValue value);
+
+namespace Bun {
+
+// A plain object, a class instance and an array. A read at a key of any other kind can be a native getter that changes the object, and at most of them the printer shows no row.
+bool diffAsksAtKeysOf(JSC::JSType type)
+{
+    switch (type) {
+    case JSC::FinalObjectType:
+    case JSC::ArrayType:
+    case JSC::DerivedArrayType:
+#if ENABLE(AOT)
+    case JSC::CompiledObjectType:
+#endif
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether `object` is a plain object or array with no getter, so that a read of what it holds runs no user code.
+static bool isPlainWithNoGetter(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    JSC::JSType type = object->type();
+#if ENABLE(AOT)
+    // The structure of a compiled object does not say what it holds. The engine says that when it lists them.
+    if (type == JSC::CompiledObjectType)
+        return object->getPrototypeDirect() == globalObject->objectPrototype();
+#endif
+    if (type == JSC::ArrayType ? object->getPrototypeDirect() != globalObject->arrayPrototype() : type != JSC::FinalObjectType || object->getPrototypeDirect() != globalObject->objectPrototype())
+        return false;
+    return !object->structure()->hasAnyKindOfGetterSetterProperties();
+}
+
+// Calls `visit` with each value that such an object holds. False, before any call, if it cannot list them with no user code. `visit` must run no user code and must not change `object`.
+template<typename Visit>
+[[nodiscard]] static bool visitValuesOfPlain(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const Visit& visit)
+{
+    using namespace JSC;
+    VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    if (object->type() == CompiledObjectType) {
+        // A compiled object stands in the place of a plain one. The engine lists what it holds, and runs no code for that.
+        MarkedArgumentBuffer values;
+        bool hasAccessor = false;
+        auto listed = AOT::PropertyWalk::forEachOwnProperty(vm, object, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+            hasAccessor |= !!(own.attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue));
+            values.append(own.value);
+            return IterationStatus::Continue;
+        });
+        if (listed != AOT::PropertyWalk::Result::Completed || hasAccessor || values.hasOverflowed())
+            return false;
+        for (size_t index = 0; index < values.size(); index++)
+            visit(values.at(index));
+        return true;
+    }
+#endif
+    // The engine keeps the items of a frozen array in place under --aot only. The scan reads none, so that it answers the same in both modes.
+    if (object->hasFrozenElementsInPlace())
+        return false;
+    switch (object->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_DOUBLE_INDEXING_TYPES:
+        break;
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        Butterfly* butterfly = object->butterfly();
+        for (unsigned index = 0, length = butterfly->publicLength(); index < length; index++)
+            visit(butterfly->contiguous().at(object, index).get());
+        break;
+    }
+    default:
+        return false;
+    }
+    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        visit(object->getDirect(entry.offset()));
+        return true;
+    });
+    return true;
+}
+
+// Whether `value` can lead to a matcher. Runs no user code: it reads plain objects and arrays as they are, and says yes for any other kind of object, which sets `sawOne`. `scanned` gets the answer for each object that it read all of.
+static bool leadsToMatcher(JSC::JSGlobalObject* globalObject, JSC::JSValue value, UncheckedKeyHashMap<JSC::JSObject*, bool>& scanned, bool& sawOne)
+{
+    // An array has an empty value where it has a hole.
+    if (!value || !value.isObject())
+        return false;
+    JSC::JSObject* object = asObject(value);
+    // The elements of a typed array are numbers.
+    if (JSC::isTypedArrayType(object->type())) {
+        scanned.add(object, false);
+        return false;
+    }
+    if (!isPlainWithNoGetter(globalObject, object) || !globalObject->vm().isSafeToRecurse()) {
+        sawOne = true;
+        return true;
+    }
+    // An object that the scan is still inside of counts as one that leads to a matcher. So does each object of a pattern that leads around to it.
+    auto added = scanned.add(object, true);
+    if (!added.isNewEntry)
+        return added.iterator->value;
+
+    bool leads = false;
+    bool listed = visitValuesOfPlain(globalObject, object, [&](JSC::JSValue held) {
+        leads |= leadsToMatcher(globalObject, held, scanned, sawOne);
+    });
+    if (!listed) {
+        scanned.remove(object);
+        sawOne = true;
+        return true;
+    }
+    scanned.set(object, leads);
+    return leads;
+}
+
+bool scanPatternForMatchers(JSC::JSGlobalObject* globalObject, JSC::JSValue received, JSC::JSValue pattern, DeepMatchStateOfCollector& state)
+{
+    if (!received.isObject() || !diffAsksAtKeysOf(asObject(received)->type()))
+        return false;
+    // An object that leads around to itself counts as one that leads to a matcher. A pattern of such objects alone has none, and `sawOne` tells.
+    bool sawOne = false;
+    if (!leadsToMatcher(globalObject, pattern, state.patternLeadsToMatcher, sawOne) || !sawOne)
+        return false;
+    // A matcher that the walk asks can take an object out of the pattern. Kept alive, no other object gets the address of one that the scan read.
+    for (JSC::JSObject* object : state.patternLeadsToMatcher.keys())
+        state.gcBuffer.append(object);
+    if (state.gcBuffer.hasOverflowed()) [[unlikely]]
+        state.patternLeadsToMatcher.clear();
+    return true;
+}
+
+// The walk for the diff asks these five kinds of matcher and no other. None of them compares with what another value holds, so an ask starts no function of expect.extend(), no asymmetricMatch() method and no equality tester. expect.any() of a class still runs its Symbol.hasInstance.
+bool diffMayAsk(JSC::JSObject* matcher)
+{
+    using namespace Bun::Bindgen::Generated;
+    // A matcher of expect.resolvesTo or expect.rejectsTo reads a promise: it can have to wait for it, and it marks it as handled.
+    if (Expect__asymmetricMatcherReadsPromise(JSC::JSValue::encode(matcher)))
+        return false;
+    // A regular expression with a g or y flag keeps where it matched, so a question changes the next answer.
+    if (auto* matching = dynamicDowncast<JSExpectStringMatching>(matcher)) {
+        auto* pattern = dynamicDowncast<JSC::RegExpObject>(matching->m_pattern.get());
+        return !pattern || !pattern->regExp()->globalOrSticky();
+    }
+    return matcher->inherits<JSExpectAny>() || matcher->inherits<JSExpectAnything>() || matcher->inherits<JSExpectStringContaining>() || matcher->inherits<JSExpectCloseTo>();
+}
+
+} // namespace Bun
+
+namespace Bun {
+
+// The second walk is for the message alone: whatever it throws, the match has failed. Out of line: its one caller is the entry of every toMatchObject().
+NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalObject, DeepMatchState& comparison, JSC::JSValue received, JSC::JSValue pattern)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    DeepMatchStateOfCollector state;
+    // Most patterns are plain objects and arrays with no matcher. The walk has none to ask then.
+    if (comparison.recorded.hasOverflowed() || !scanPatternForMatchers(globalObject, received, pattern, state))
+        RELEASE_AND_RETURN(scope, matchedRowsFrom(globalObject, comparison, received, pattern));
+
+    state.records = true;
+    state.comparison = &comparison;
+    for (unsigned record = 0, count = comparison.recordedNames.size(); record < count; record++) {
+        JSC::JSObject* patternOfHolder = asObject(comparison.recordedAt(record, DeepMatchState::PatternOfHolder));
+        // The walk goes into no object of the pattern that leads to no matcher, so it looks up no record there.
+        auto scanned = state.patternLeadsToMatcher.find(patternOfHolder);
+        if (scanned != state.patternLeadsToMatcher.end() && !scanned->value)
+            continue;
+        state.recordOfComparison.set(DeepMatchStateOfCollector::RecordKey { comparison.recordedAt(record, DeepMatchState::Holder).asCell(), patternOfHolder, comparison.recordedNames[record].impl() }, record);
+    }
+
+    collectMatchersAfterMismatch(globalObject, scope, state, received, pattern);
+    JSC::JSValue completed;
+    if (!scope.exception() && state.stepsLeft) [[likely]]
+        completed = matchedRowsFrom(globalObject, state, received, pattern);
+    if (scope.exception() || !state.stepsLeft) [[unlikely]] {
+        // The walk gave up (the stack ran out, the two roots threw, or getters made new objects with no end): the message gets the rows of the comparison. A termination stays.
+        if (scope.exception() && !scope.tryClearException())
+            return {};
+        RELEASE_AND_RETURN(scope, matchedRowsFrom(globalObject, comparison, received, pattern));
+    }
+    return completed;
 }
 
 } // namespace Bun

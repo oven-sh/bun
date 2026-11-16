@@ -4326,11 +4326,12 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
 
-// Whether the caller is code of a CommonJS module, which Bun runs as a program and not as a module.
+// Whether the caller is code of a CommonJS module, which Bun runs as a program and not as a module. A module of Bun itself is a program without a file.
 static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe)
 {
+    String path = callerPath(vm, callframe);
 #if ENABLE(AOT)
-    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(callerPath(vm, callframe)) : std::nullopt)
+    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(path) : std::nullopt)
         return !JSC::AOT::isESModule(*module);
 #endif
     bool isProgram = false;
@@ -4342,7 +4343,7 @@ static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe)
         isProgram = !provider->isModuleType();
         return WTF::IterationStatus::Done;
     });
-    return isProgram;
+    return isProgram && isAbsolutePath(path);
 }
 
 #if ENABLE(AOT)

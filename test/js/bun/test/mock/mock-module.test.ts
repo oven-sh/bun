@@ -2045,6 +2045,12 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
 
   test("jest.requireMock() loads the file of __mocks__ that the calling file would load", async () => {
     const found = `["dual", "./lib", "one"].map(name => jest.requireMock(name).which)`;
+    // Here a module of Bun makes the call. It has no file, and gets what it got before.
+    const withoutFile = `
+      test("a caller without a file", () => {
+        expect(new AsyncResource("resource").runInAsyncScope(jest.requireMock, jest, "dual").which).toBe("manual esm");
+      });
+    `;
     await expectFixturesToPass(
       {
         ...files,
@@ -2055,14 +2061,18 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
         "__mocks__/one.js": `module.exports = { which: "manual one" };`,
         "manual.test.cjs": `
           const { expect, jest, test } = require("bun:test");
+          const { AsyncResource } = require("node:async_hooks");
           test("in a CommonJS file", () => expect(${found}).toEqual(["manual cjs", "manual cjs", "manual one"]));
+          ${withoutFile}
         `,
         "manual.test.mjs": `
           import { expect, jest, test } from "bun:test";
+          import { AsyncResource } from "node:async_hooks";
           test("in an ES module", () => expect(${found}).toEqual(["manual esm", "manual esm", "manual one"]));
+          ${withoutFile}
         `,
       },
-      2,
+      4,
     );
   });
 

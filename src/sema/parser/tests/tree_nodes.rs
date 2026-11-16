@@ -781,7 +781,7 @@ fn legacy_octal_forms_without_an_extension() {
 }
 
 #[test]
-fn octal_escapes_that_bun_run_reports() {
+fn octal_escapes_that_bun_run_once_reported() {
     let reported = [
         (r#"x = "\4";"#, 2),
         (r#"x = '\1';"#, 2),

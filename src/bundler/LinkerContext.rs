@@ -49,6 +49,17 @@ use crate::{
 /// runtime.
 pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 
+/// What makes a chunk strict code as a whole.
+#[derive(Clone, Copy)]
+enum StrictChunk {
+    /// The output format is ESM.
+    EsModule,
+    /// An HTML file loads the chunk with `<script type="module">`.
+    ModuleScript,
+    /// The "use strict" directive of the entry point, at this position, leads the chunk.
+    EntryDirective(Loc),
+}
+
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
@@ -592,6 +603,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
         let mut chunks = compute_chunks(self, log)?;
 
+        self.report_sloppy_only_syntax(&chunks, log);
+
         if log.has_errors() {
             return Err(LinkError::BuildFailed);
         }
@@ -609,6 +622,104 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         self.graph.symbols.follow_all();
 
         Ok(chunks)
+    }
+
+    /// The directives that lead `chunk`: those of its entry point. The dev server gives every module its own
+    /// closure, and the prologue goes there.
+    pub(crate) fn directives_of_chunk(&self, chunk: &Chunk) -> bun_ast::StoreSlice<Stmt> {
+        if chunk.is_entry_point() && self.options.output_format != Format::InternalBakeDev {
+            self.graph.ast.items_directives()[chunk.entry_point.source_index() as usize]
+        } else {
+            bun_ast::StoreSlice::EMPTY
+        }
+    }
+
+    /// Why every file of `chunk` is strict code, if that is so.
+    fn why_chunk_is_strict(&self, chunk: &Chunk) -> Option<StrictChunk> {
+        if !chunk.content.is_javascript() {
+            return None;
+        }
+        if self.options.output_format.is_always_strict_mode() {
+            return Some(StrictChunk::EsModule);
+        }
+        if chunk.flags.contains(crate::chunk::Flags::HAS_HTML_CHUNK) {
+            return Some(StrictChunk::ModuleScript);
+        }
+        self.directives_of_chunk(chunk)
+            .slice()
+            .iter()
+            .find_map(|stmt| match stmt.data {
+                bun_ast::StmtData::SDirective(directive)
+                    if directive.value.slice() == b"use strict" =>
+                {
+                    Some(StrictChunk::EntryDirective(stmt.loc))
+                }
+                _ => None,
+            })
+    }
+
+    /// Sloppy code can hold syntax that strict code cannot (`Ast::sloppy_only_syntax`), and a chunk that is
+    /// strict code as a whole does not parse with it. The parser sees one file. The chunk decides.
+    fn report_sloppy_only_syntax(&self, chunks: &[Chunk<'a>], log: &mut Log) {
+        if self.bundle.sloppy_only_syntax.is_empty() {
+            return;
+        }
+        let sources = self.parse_graph().input_files.items_source();
+        let strict: Vec<Option<StrictChunk>> = chunks
+            .iter()
+            .map(|chunk| self.why_chunk_is_strict(chunk))
+            .collect();
+        let mut files: Vec<_> = self.bundle.sloppy_only_syntax.iter().collect();
+        files.sort_unstable_by_key(|(source_index, _)| *source_index);
+
+        for (source_index, found) in files {
+            let Some((chunk, why)) = chunks.iter().zip(&strict).find_map(|(chunk, why)| {
+                let why = (*why)?;
+                chunk
+                    .files_with_parts_in_chunk
+                    .contains(source_index)
+                    .then_some((chunk, why))
+            }) else {
+                continue;
+            };
+            let source = &sources[*source_index as usize];
+            let entry_point = &sources[chunk.entry_point.source_index() as usize];
+            for syntax in found.iter() {
+                let text = bstr::BStr::new(syntax.text.slice());
+                let (note, message) = match why {
+                    StrictChunk::EsModule => (
+                        bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"ESM output is always strict mode code. Use the \"cjs\" or \"iife\" output format for code that needs sloppy mode.".as_slice(),
+                        ),
+                        format!("{text} cannot be used with the ESM output format due to strict mode"),
+                    ),
+                    StrictChunk::ModuleScript => (
+                        bun_ast::range_data(
+                            Some(entry_point),
+                            Range::NONE,
+                            b"The HTML file loads this bundle as a module script, which is strict mode code.".as_slice(),
+                        ),
+                        format!("{text} cannot be used in strict mode"),
+                    ),
+                    StrictChunk::EntryDirective(loc) => (
+                        bun_ast::range_data(
+                            Some(entry_point),
+                            entry_point.range_of_string(loc),
+                            b"The \"use strict\" directive of the entry point makes the whole bundle strict mode code:".as_slice(),
+                        ),
+                        format!("{text} cannot be used in strict mode"),
+                    ),
+                };
+                log.add_range_error_with_notes(
+                    Some(source),
+                    syntax.range,
+                    message.into_bytes(),
+                    Box::new([note]),
+                );
+            }
+        }
     }
 
     pub(crate) fn tree_shaking_and_code_splitting(&mut self) -> Result<(), AllocError> {

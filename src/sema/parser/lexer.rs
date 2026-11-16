@@ -1490,14 +1490,14 @@ impl<'a> Lexer<'a> {
             &c @ (b'8' | b'9') => (1488, u32::from(c)),
             _ => return None,
         };
-        // `bun run` reports an octal escape of one or two digits before an `8`, a `9` or the end of the string.
+        // What `bun run` once reported in all code: an octal escape of one or two digits before an `8`, a `9` or the end of the string.
         let next = self.at(end);
-        let is_reported_by_bun_run =
+        let was_reported_by_bun_run =
             code == 1487 && digits.len() < 3 && (matches!(next, b'8' | b'9') || next == quote);
         if !self.flag(code, pos, end) {
             return None;
         }
-        if is_reported_by_bun_run && (self.compiles() || self.accepts_legacy_octal) {
+        if was_reported_by_bun_run && (self.compiles() || self.accepts_legacy_octal) {
             self.flagged.push((code, pos as u32, end as u32));
         }
         push_codepoint_wtf8_joined(text, c);

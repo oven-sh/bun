@@ -106,7 +106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The parse pass records a legacy octal number, and `P::report_legacy_octals` reports it.
     }
 
-    /// The renamer leaves an unbound reserved word as written; ESM output would not parse.
+    /// The renamer leaves an unbound reserved word as written; a strict chunk would not parse.
     #[cold]
     #[inline(never)]
     fn report_unbound_reserved_word(p: &mut Self, loc: bun_ast::Loc, name: &[u8]) {
@@ -358,7 +358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if !p.is_strict_mode()
-                && p.is_strict_mode_output_format()
+                && p.options.bundle
                 && js_lexer::is_strict_mode_reserved_word(name)
             {
                 Self::report_unbound_reserved_word(p, expr.loc, name);

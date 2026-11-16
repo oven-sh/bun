@@ -295,8 +295,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Each legacy octal number (`010`) or escape (`"\1"`), with the scope that the parser was in.
     pub(crate) legacy_octals: Vec<(js_ast::StoreRef<Scope>, bun_ast::Range, LegacyOctalKind)>,
 
-    /// Each function declaration that a later one in the same scope replaced, with that scope.
+    /// Each function declaration that a later declaration in the same scope replaced, with that scope.
     pub(crate) replaced_functions: Vec<(js_ast::StoreRef<Scope>, js_ast::scope::Member)>,
+
+    /// See `Ast::sloppy_only_syntax`.
+    pub(crate) sloppy_only_syntax: Vec<js_ast::SloppyOnlySyntax>,
 
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
@@ -4948,6 +4951,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) {
+        let is_strict = scope.strict_mode.has_early_errors();
+        // Sloppy code matters to a bundle only: see `sloppy_only_syntax`.
+        if !is_strict && !self.options.bundle {
+            return;
+        }
         let mut can_be_transformed = false;
         let text: &'a [u8] = match feature {
             StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
@@ -4983,7 +4991,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::LabelFunctionStmt => b"Function declarations inside labels",
         };
 
-        if scope.strict_mode.has_early_errors() {
+        if is_strict {
             let (where_, notes) = self.why_strict_mode(scope);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
@@ -4995,15 +5003,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bstr::BStr::new(where_)
                 ),
             );
-        } else if !can_be_transformed && self.is_strict_mode_output_format() {
-            self.log().add_range_error_fmt(
+        } else if !can_be_transformed {
+            self.sloppy_only_syntax(r, text);
+        }
+    }
+
+    /// `text` names syntax at `r` that strict code cannot hold, in sloppy code. It is an error when the output is
+    /// strict code. For a bundle the linker knows that, chunk by chunk.
+    pub(crate) fn sloppy_only_syntax(&mut self, r: bun_ast::Range, text: &'a [u8]) {
+        if self.options.strict_output {
+            let why: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+                Some(self.source),
+                bun_ast::Range::NONE,
+                b"The development server sends this code to the browser as a module script, which is strict mode code."
+                    .as_slice(),
+            )]);
+            self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
-                format_args!(
-                    "{} cannot be used with the ESM output format due to strict mode",
-                    bstr::BStr::new(text)
-                ),
+                why,
+                format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
             );
+        } else if self.options.bundle {
+            self.sloppy_only_syntax.push(js_ast::SloppyOnlySyntax {
+                range: r,
+                text: js_ast::StoreStr::new(text),
+            });
         }
     }
 
@@ -5074,11 +5099,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn is_strict_mode(&self) -> bool {
         self.current_scope().strict_mode.has_early_errors()
-    }
-
-    #[inline]
-    pub(crate) fn is_strict_mode_output_format(&self) -> bool {
-        self.options.bundle && self.options.output_format.is_esm()
     }
 
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]
@@ -5280,10 +5300,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[symbol_idx].link.set(ref_);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
+                    if existing_kind.is_function() {
+                        self.replaced_functions.push((self.current_scope, existing));
+                    }
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
-                        self.replaced_functions.push((self.current_scope, existing));
                     } else if self.current_scope == self.module_scope
                         && ((existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function())
                             || (existing_kind.is_function()
@@ -5396,7 +5418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         .expect("unreachable");
     }
 
-    /// For ESM output, after the visit pass: the renamer keeps each name that a direct `eval` can reach.
+    /// For a bundle, after the visit pass: the renamer keeps each name that a direct `eval` can reach.
     #[cold]
     fn check_names_that_direct_eval_pins(&mut self, pins_module_scope: bool) {
         let mut reported: Vec<Ref> = Vec::new();
@@ -6287,7 +6309,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn report_invalid_assignment_target(&mut self, expr: &Expr) {
-        // Sloppy code can assign to `eval` and `arguments`: the cause is then the ESM output.
+        // Sloppy code can assign to `eval` and `arguments`: the cause is then a strict chunk.
         if let js_ast::ExprData::EIdentifier(ident) = &expr.data
             && !self.is_strict_mode()
         {
@@ -6309,8 +6331,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
-                // The renamer keeps `eval` and `arguments`, so ESM output is strict here too.
-                !((self.is_strict_mode() || self.is_strict_mode_output_format())
+                // The renamer keeps `eval` and `arguments`, and a bundle can print sloppy code in a strict chunk.
+                !((self.is_strict_mode() || self.options.bundle)
                     && is_eval_or_arguments(self.load_name_from_ref(ident.ref_)))
             }
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
@@ -9363,7 +9385,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.module_scope().contains_direct_eval {
             let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();
-            if self.is_strict_mode_output_format() {
+            if bundling {
                 self.check_names_that_direct_eval_pins(pin);
             }
             for member in module_scope.members.values() {
@@ -9693,6 +9715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
+            sloppy_only_syntax: bun_alloc::AstAlloc::vec_from_slice(&self.sloppy_only_syntax),
 
             symbols,
             parts: parts_list,
@@ -10007,6 +10030,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             legacy_octals: Vec::new(),
             replaced_functions: Vec::new(),
+            sloppy_only_syntax: Vec::new(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,

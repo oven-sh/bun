@@ -173,6 +173,9 @@ pub(crate) struct Success<'a> {
 
     /// Set for a "use client" file, which is parsed once more for another graph.
     pub(crate) client_copy_options: Option<Box<TsconfigOptions>>,
+
+    /// `Ast::sloppy_only_syntax`. It is empty for nearly every file, so it is not a column of `JSAst`.
+    pub(crate) sloppy_only_syntax: bun_alloc::AstVec<ast::SloppyOnlySyntax>,
 }
 
 /// The options of one file that its tsconfig.json decides.
@@ -793,6 +796,7 @@ pub mod parse_worker {
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
         stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
+        sloppy_only_syntax: &mut bun_alloc::AstVec<ast::SloppyOnlySyntax>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
@@ -819,7 +823,10 @@ pub mod parse_worker {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
-                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::Ast(mut ast) => {
+                            core::mem::swap(sloppy_only_syntax, &mut ast.sloppy_only_syntax);
+                            Ok(JSAst::init(*ast))
+                        }
                         bun_js_parser::Result::Cached
                         | bun_js_parser::Result::AlreadyBundled(_) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")
@@ -2287,6 +2294,9 @@ pub mod parse_worker {
             options::Format::Iife => js_parser::options::Format::Iife,
             options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
         };
+        // The development server sends its browser bundle as a module script and has no link step to check it.
+        opts.strict_output =
+            output_format == options::Format::InternalBakeDev && !target.is_server_side();
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.is_library = topts.is_library;
         opts.features.minify_identifiers = topts.minify_identifiers;
@@ -2468,6 +2478,7 @@ pub mod parse_worker {
             content_hash: 0,
         };
         let mut stylesheet = None;
+        let mut sloppy_only_syntax = bun_alloc::AstAlloc::vec();
         let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
@@ -2489,6 +2500,7 @@ pub mod parse_worker {
                     &mut unique_key_for_additional_file,
                     &task_ctx.has_any_css_locals,
                     &mut stylesheet,
+                    &mut sloppy_only_syntax,
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source, &mut stylesheet)
@@ -2540,6 +2552,7 @@ pub mod parse_worker {
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
+            sloppy_only_syntax,
         })
     }
 

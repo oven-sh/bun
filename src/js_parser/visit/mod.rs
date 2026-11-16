@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, ParameterNames,
+    PrependTempRefsOpts, Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature,
+    StringVoidMap, VisitArgsOpts, VisitDeclOpts,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -223,9 +223,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
-        // StringVoidMap::get returns a pool guard; Drop releases.
-        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<StringVoidMap>> =
-            None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
@@ -244,22 +241,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
         // the same BindingIdentifier in a FormalParameterList is only allowed for
         // functions which have simple parameter lists and which are not defined in
-        // strict mode code." The ESM output is strict mode code too.
-        if opts.is_unique_formal_parameters
+        // strict mode code." A bundle can print sloppy code in a strict chunk.
+        let can_repeat = !(opts.is_unique_formal_parameters
             || strict_loc.is_some()
             || !has_simple_args
-            || self.is_strict_mode()
-            || self.is_strict_mode_output_format()
-        {
-            duplicate_args_check = Some(StringVoidMap::get());
-        }
+            || self.is_strict_mode());
+        // The map comes from a pool and goes back to it on `Drop`.
+        let mut names = (!can_repeat || self.options.bundle).then(|| ParameterNames {
+            seen: StringVoidMap::get(),
+            can_repeat,
+        });
 
         for arg in args.iter_mut() {
             self.visit_ts_decorators(arg.ts_decorators);
 
-            // reborrow per-iter.
-            let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
-            self.visit_binding(arg.binding, dup);
+            self.visit_binding(arg.binding, names.as_mut());
             if let Some(default) = arg.default.as_mut() {
                 self.visit_expr(default);
             }
@@ -786,10 +782,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt
     }
 
+    #[cold]
+    #[inline(never)]
+    fn report_duplicate_parameter(&mut self, loc: bun_ast::Loc, name: &'a [u8], can_repeat: bool) {
+        let range = js_lexer::range_of_identifier(self.source, loc);
+        if can_repeat {
+            let text = bun_alloc::arena_format!(
+                in self.arena,
+                "Duplicate parameter \"{}\"",
+                bstr::BStr::new(name)
+            );
+            self.sloppy_only_syntax(range, text.into_bump_str().as_bytes());
+            return;
+        }
+        self.log().add_range_error_fmt(
+            Some(self.source),
+            range,
+            format_args!(
+                "\"{}\" cannot be bound multiple times in the same parameter list",
+                bstr::BStr::new(name)
+            ),
+        );
+    }
+
     pub(crate) fn visit_binding(
         &mut self,
         binding: BindingNodeIndex,
-        mut duplicate_arg_check: Option<&mut StringVoidMap>,
+        mut duplicate_arg_check: Option<&mut ParameterNames>,
     ) {
         if !self.stack_check.is_safe_to_recurse() {
             self.report_stack_overflow(binding.loc);
@@ -816,16 +835,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .original_name
                     .slice();
                 self.validate_declared_symbol_name(binding.loc, name);
-                if let Some(dup) = duplicate_arg_check {
-                    if dup.get_or_put_contains(name) {
-                        self.log().add_range_error_fmt(
-                            Some(self.source),
-                            js_lexer::range_of_identifier(self.source, binding.loc),
-                            format_args!(
-                                "\"{}\" cannot be bound multiple times in the same parameter list",
-                                bstr::BStr::new(name)
-                            ),
-                        );
+                if let Some(names) = duplicate_arg_check {
+                    if names.seen.get_or_put_contains(name) {
+                        self.report_duplicate_parameter(binding.loc, name, names.can_repeat);
                     }
                 }
             }

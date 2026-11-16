@@ -453,31 +453,26 @@ pub(crate) fn post_process_js_chunk(
 
     // Add the top-level directives if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode).
-    // The dev server gives every module its own closure, and the prologue goes there.
-    if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
-        let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
-
-        for stmt in directives.slice() {
-            let js_ast::StmtData::SDirective(directive) = stmt.data else {
-                continue;
-            };
-            let directive = directive.value.slice();
-            if directive == b"use strict" && output_format.is_always_strict_mode() {
-                continue;
-            }
-            let mut buf = MutableString::init_empty();
-            // The printer escapes string literals ASCII-only for the bun target.
-            bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
-            bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
-                b";".as_slice()
-            } else {
-                b";\n".as_slice()
-            }));
-            let quoted = buf.take_slice();
-            line_offset.advance(&quoted);
-            j.push_owned(quoted.into_boxed_slice());
-            newline_before_comment = true;
+    for stmt in c.directives_of_chunk(chunk).slice() {
+        let js_ast::StmtData::SDirective(directive) = stmt.data else {
+            continue;
+        };
+        let directive = directive.value.slice();
+        if directive == b"use strict" && output_format.is_always_strict_mode() {
+            continue;
         }
+        let mut buf = MutableString::init_empty();
+        // The printer escapes string literals ASCII-only for the bun target.
+        bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
+        bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
+            b";".as_slice()
+        } else {
+            b";\n".as_slice()
+        }));
+        let quoted = buf.take_slice();
+        line_offset.advance(&quoted);
+        j.push_owned(quoted.into_boxed_slice());
+        newline_before_comment = true;
     }
 
     let mut preload_registration = module_preload_registration(c, chunk, chunk_index, &ctx.chunks)?;

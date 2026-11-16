@@ -47,14 +47,14 @@ pub(crate) struct InternalMsgHolder {
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
     callbacks: Cell<bun_collections::ArrayHashMap<i32, Strong>>,
-    listener: Cell<Option<ClusterListener>>,
+    listener: Cell<Option<ClusterListener<Strong>>>,
     messages: Cell<Vec<Strong>>,
 }
 
 // TODO: we should not create two jsc.Strong here. If absolutely necessary, a single Array. should be all we use.
-struct ClusterListener {
-    worker: Strong,
-    cb: Strong,
+pub(crate) struct ClusterListener<T> {
+    pub(crate) worker: T,
+    pub(crate) cb: T,
 }
 
 impl InternalMsgHolder {
@@ -65,10 +65,13 @@ impl InternalMsgHolder {
         }));
     }
 
-    pub(crate) fn listener(&self) -> Option<(JSValue, JSValue)> {
+    pub(crate) fn listener(&self) -> Option<ClusterListener<JSValue>> {
         self.listener.with_taken(|listener| {
             let listener = listener.as_ref()?;
-            Some((listener.worker.get(), listener.cb.get()))
+            Some(ClusterListener {
+                worker: listener.worker.get(),
+                cb: listener.cb.get(),
+            })
         })
     }
 
@@ -88,7 +91,7 @@ impl InternalMsgHolder {
     }
 
     pub(crate) fn dispatch(&self, message: JSValue, handle: JSValue, global: &JSGlobalObject) {
-        let Some((worker, cb)) = self.listener() else {
+        let Some(ClusterListener { worker, cb }) = self.listener() else {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
             let message = Strong::create(message, global);

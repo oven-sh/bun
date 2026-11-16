@@ -4,7 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{ClusterListener, IsInternal, SerializeAndSendResult};
 use crate::ipc_host::get_ipc_instance;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -167,7 +167,7 @@ pub(crate) fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
-    let Some((worker, cb)) = ipc_data.internal_msg_queue.listener() else {
+    let Some(ClusterListener { worker, cb }) = ipc_data.internal_msg_queue.listener() else {
         return Ok(());
     };
 

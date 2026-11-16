@@ -2832,55 +2832,14 @@ where
             return;
         }
 
+        // No entry module (`bun bake`): the hash of the project root tells servers apart.
+        let main = self.vm_ref().main().unwrap_or_default();
         let json_string = self
             .dev_server
-            .with_taken(|dev| self.chrome_dev_tools_json(&dev.as_ref().unwrap().graphs.root));
+            .with_taken(|dev| chrome_dev_tools_json(main, &dev.as_ref().unwrap().graphs.root));
         resp.write_status(b"200 OK");
         resp.write_header(b"Content-Type", b"application/json");
         resp.end(&json_string, resp.should_close_connection());
-    }
-
-    fn chrome_dev_tools_json(&self, root: &[u8]) -> Vec<u8> {
-        // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
-
-        // So we first use a hash of the main field:
-        let first_hash_segment: [u8; 8] = 'brk: {
-            let mut buffer = paths::path_buffer_pool::get();
-            // No entry module (`bun bake`): the hash of the project root below tells servers apart.
-            let main = self.vm_ref().main().unwrap_or_default();
-            let len = main.len().min(buffer.len());
-            break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len]))
-                .to_ne_bytes();
-        };
-
-        // And then we use a hash of their project root directory:
-        let second_hash_segment: [u8; 8] = 'brk: {
-            let mut buffer = paths::path_buffer_pool::get();
-            let len = root.len().min(buffer.len());
-            break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
-                .to_ne_bytes();
-        };
-
-        // We combine it together to get a 16 byte uuid.
-        let mut hash_bytes = [0u8; 16];
-        hash_bytes[..8].copy_from_slice(&first_hash_segment);
-        hash_bytes[8..].copy_from_slice(&second_hash_segment);
-        let uuid = UUID::init_with(&hash_bytes);
-
-        // interface DevToolsJSON {
-        //   workspace?: {
-        //     root: string,
-        //     uuid: string,
-        //   }
-        // }
-        let mut json_string = Vec::new();
-        let _ = write!(
-            &mut json_string,
-            "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
-            bun_fmt::format_json_string_utf8(root, Default::default()),
-            uuid,
-        );
-        json_string
     }
 
     pub(crate) fn on_client_error_callback(
@@ -2953,6 +2912,45 @@ where
 
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
+}
+
+fn chrome_dev_tools_json(main: &[u8], root: &[u8]) -> Vec<u8> {
+    // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
+
+    // So we first use a hash of the main field:
+    let first_hash_segment: [u8; 8] = 'brk: {
+        let mut buffer = paths::path_buffer_pool::get();
+        let len = main.len().min(buffer.len());
+        break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len])).to_ne_bytes();
+    };
+
+    // And then we use a hash of their project root directory:
+    let second_hash_segment: [u8; 8] = 'brk: {
+        let mut buffer = paths::path_buffer_pool::get();
+        let len = root.len().min(buffer.len());
+        break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len])).to_ne_bytes();
+    };
+
+    // We combine it together to get a 16 byte uuid.
+    let mut hash_bytes = [0u8; 16];
+    hash_bytes[..8].copy_from_slice(&first_hash_segment);
+    hash_bytes[8..].copy_from_slice(&second_hash_segment);
+    let uuid = UUID::init_with(&hash_bytes);
+
+    // interface DevToolsJSON {
+    //   workspace?: {
+    //     root: string,
+    //     uuid: string,
+    //   }
+    // }
+    let mut json_string = Vec::new();
+    let _ = write!(
+        &mut json_string,
+        "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
+        bun_fmt::format_json_string_utf8(root, Default::default()),
+        uuid,
+    );
+    json_string
 }
 
 // ─── Exported fns ────────────────────────────────────────────────────────────

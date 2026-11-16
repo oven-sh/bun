@@ -14,8 +14,10 @@ use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
-    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, ffi, host_fn,
+    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, host_fn,
 };
+
+const DOUBLE_ENCODE_OFFSET: i64 = 1 << 49;
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
 /// encoded 64-bit word, `Copy`, `!Send`).
@@ -474,7 +476,6 @@ impl JSValue {
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
     pub fn js_double_number(n: f64) -> JSValue {
-        const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
@@ -643,7 +644,7 @@ impl JSValue {
     pub fn as_double(self) -> f64 {
         debug_assert!(self.is_double());
         // Subtract DoubleEncodeOffset, bitcast to f64.
-        f64::from_bits((self.0 as i64).wrapping_sub(ffi::DOUBLE_ENCODE_OFFSET) as u64)
+        f64::from_bits((self.0 as i64).wrapping_sub(DOUBLE_ENCODE_OFFSET) as u64)
     }
     /// Asserts this is a number, undefined, null, or a boolean.
     pub fn as_number(self) -> f64 {

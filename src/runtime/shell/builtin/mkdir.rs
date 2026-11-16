@@ -284,7 +284,7 @@ impl ShellWork for ShellMkdirTask {
             if self.filepath.last() != Some(&0) {
                 self.filepath.push(0);
             }
-            bun_core::ZStr::from_buf(&self.filepath, self.filepath.len() - 1)
+            bun_core::ZStr::from_slice_with_nul(&self.filepath)
         } else {
             resolve_path::join_z_spill::<platform::Auto>(
                 &mut spill,

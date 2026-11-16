@@ -887,9 +887,7 @@ impl WebWorker {
         if !self.name.is_empty() {
             bun_core::output::Source::configure_named_thread(self.name.as_zstr());
         } else {
-            bun_core::output::Source::configure_named_thread(bun_core::ZStr::from_static(
-                b"Worker\0",
-            ));
+            bun_core::output::Source::configure_named_thread(bun_core::zstr!("Worker"));
         }
 
         let exit_code = self.run(init);

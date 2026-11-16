@@ -19,9 +19,7 @@ mod zig_std_debug {
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
-    pub(super) use bun_crash_handler::debug::{
-        Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
-    };
+    pub(super) use bun_crash_handler::debug::{Module, SelfInfo, SourceLocation, SymbolInfo};
 }
 #[cfg(debug_assertions)]
 use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo};
@@ -136,9 +134,8 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let mut result_writer: Vec<u8> = Vec::new();
     let w = &mut result_writer;
 
-    let debug_info: &mut SelfInfo = match get_self_debug_info() {
-        // SAFETY: lazy debug-only singleton; lldb stopped-process, sole `&mut`.
-        Ok(di) => unsafe { &mut *di },
+    let debug_info = &mut match SelfInfo::open() {
+        Ok(di) => di,
         Err(err) => {
             if write!(
                 w,
@@ -446,11 +443,6 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 // ──────────────────────────────────────────────────────────────────────────
 // Thin forwarders to `zig_std_debug`.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(debug_assertions)]
-#[inline]
-fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
-    zig_std_debug::get_self_debug_info()
-}
 #[cfg(debug_assertions)]
 #[inline]
 fn get_module_for_address<'a>(di: &'a mut SelfInfo, addr: usize) -> Result<&'a mut Module, Error> {

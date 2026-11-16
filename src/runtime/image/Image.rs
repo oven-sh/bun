@@ -1718,7 +1718,7 @@ impl PipelineTask {
                         ArrayBuffer::from_default_allocator(global, jsc::JSType::Uint8Array, out),
                     )?,
                     Deliver::Buffer => {
-                        promise.settle(global, JSValue::create_buffer(global, out.leak()))?
+                        promise.settle(global, JSValue::create_buffer(global, out))?
                     }
                     Deliver::Blob => {
                         let blob = Blob::init(out, global);
@@ -1763,7 +1763,7 @@ impl PipelineTask {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        let data = match JSValue::create_buffer(global, out.leak()) {
+                        let data = match JSValue::create_buffer(global, out) {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };

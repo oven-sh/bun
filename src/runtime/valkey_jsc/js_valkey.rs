@@ -1634,7 +1634,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 && !bun_core::ip_address::is_ip_host(sni)
                 && let Some(ssl) = socket.ssl_mut()
             {
-                ssl.set_servername(bun_core::ZBox::from_bytes(sni).as_cstr());
+                ssl.set_servername(&bun_core::ZBox::from_bytes(sni));
             }
         }
         this.client_mut().socket = Self::socket(socket);

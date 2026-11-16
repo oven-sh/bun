@@ -675,6 +675,7 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        "order" if text.is_empty() => {}
         "order" => {
             read_order_file(text, &mut options.order_files).map_err(|error| {
                 OptionError::DeveloperWord {

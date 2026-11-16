@@ -29,20 +29,19 @@ extern "C" void Bun__readOpenSSLDefaultCertFile(const char *default_path, void *
 // A read-only memory BIO over an owned copy of the file. (A writable BIO_s_mem() would memmove the rest of the buffer
 // on every line PEM reads.)
 struct us_cert_file_bio {
-  uint8_t *data = nullptr;
-  BIO *bio = nullptr;
-  ~us_cert_file_bio() {
-    BIO_free(bio);
-    free(data);
-  }
+  us_unique_ptr<uint8_t, free> data;
+  us_unique_ptr<BIO, BIO_free> bio;
 };
+
+static void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
+static void us_x509_crl_stack_free(STACK_OF(X509_CRL) *crls) { sk_X509_CRL_pop_free(crls, X509_CRL_free); }
 
 static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
   us_cert_file_bio *file = static_cast<us_cert_file_bio *>(ctx);
-  file->data = static_cast<uint8_t *>(malloc(len ? len : 1));
+  file->data.reset(static_cast<uint8_t *>(malloc(len ? len : 1)));
   if (file->data == nullptr) return;
-  memcpy(file->data, data, len);
-  file->bio = BIO_new_mem_buf(file->data, len);
+  memcpy(file->data.get(), data, len);
+  file->bio.reset(BIO_new_mem_buf(file->data.get(), len));
 }
 
 // Forward declarations for platform-specific functions
@@ -77,8 +76,7 @@ extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u)
 
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
   BIO *in = NULL;
-  STACK_OF(X509) *certs = NULL;
-  X509 *x = NULL;
+  us_unique_ptr<STACK_OF(X509), us_x509_stack_free> certs;
   unsigned long last_err;
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
@@ -88,24 +86,24 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
     BUN__warn__extra_ca_load_failed(filename, strerror(err));
     return NULL;
   }
-  in = file.bio;
+  in = file.bio.get();
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto end;
   }
 
-  certs = sk_X509_new_null();
+  certs.reset(sk_X509_new_null());
   if (certs == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto end;
   }
 
-  while ((x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL))) {
-    if (!sk_X509_push(certs, x)) {
+  while (us_unique_ptr<X509, X509_free> x{PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL)}) {
+    if (!sk_X509_push(certs.get(), x.get())) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
-      X509_free(x);
       goto end;
     }
+    x.release();
   }
 
   last_err = ERR_peek_last_error();
@@ -116,18 +114,14 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
     goto end;
   }
 
-  if (sk_X509_num(certs) == 0) {
+  if (sk_X509_num(certs.get()) == 0) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
     goto end;
   }
 
-  return certs;
+  return certs.release();
 
 end:
-  if (certs) {
-    sk_X509_pop_free(certs, X509_free);
-  }
-
   char error_msg[256];
   ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
   BUN__warn__extra_ca_load_failed(filename, error_msg);
@@ -193,13 +187,30 @@ struct us_openssl_default_cert_file {
   STACK_OF(X509_CRL) *crls = nullptr;
 };
 
+struct us_pem_block {
+  char *name = nullptr, *header = nullptr;
+  uint8_t *data = nullptr;
+  long len = 0;
+  ~us_pem_block() {
+    OPENSSL_free(name);
+    OPENSSL_free(header);
+    OPENSSL_free(data);
+  }
+};
+
+struct us_crypto_buffers : std::vector<CRYPTO_BUFFER *> {
+  ~us_crypto_buffers() {
+    for (CRYPTO_BUFFER *buf : *this) CRYPTO_BUFFER_free(buf);
+  }
+};
+
 static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
   static us_openssl_default_cert_file result;
   static std::once_flag once;
   std::call_once(once, []() {
     us_cert_file_bio file;
     Bun__readOpenSSLDefaultCertFile(X509_get_default_cert_file(), &file, us_cert_file_into_bio);
-    BIO *in = file.bio;
+    BIO *in = file.bio.get();
     if (in == nullptr) {
       return;
     }
@@ -214,14 +225,13 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       bundled.emplace(reinterpret_cast<const char *>(bundled_certs[i]), bundled_lens[i]);
     }
 
-    std::vector<CRYPTO_BUFFER *> certs;
-    STACK_OF(X509) *trusted = sk_X509_new_null();
-    STACK_OF(X509_CRL) *crls = sk_X509_CRL_new_null();
+    us_crypto_buffers certs;
+    us_unique_ptr<STACK_OF(X509), us_x509_stack_free> trusted{sk_X509_new_null()};
+    us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free> crls{sk_X509_CRL_new_null()};
     bool ok = trusted != nullptr && crls != nullptr;
     while (ok) {
-      char *name = nullptr, *header = nullptr;
-      uint8_t *data = nullptr;
-      long len = 0;
+      us_pem_block block;
+      auto &[name, header, data, len] = block;
       if (!PEM_read_bio(in, &name, &header, &data, &len)) {
         // Running out of blocks is the normal end; anything else fails the whole file, as PEM_X509_INFO_read_bio does.
         uint32_t pem_err = ERR_peek_last_error();
@@ -242,15 +252,14 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
           if (ok) certs.push_back(buf);
         }
       } else if (strcmp(name, PEM_STRING_X509_TRUSTED) == 0) {
-        X509 *cert = d2i_X509_AUX(nullptr, &p, len);
-        ok = cert != nullptr && (sk_X509_push(trusted, cert) || (X509_free(cert), false));
+        us_unique_ptr<X509, X509_free> cert{d2i_X509_AUX(nullptr, &p, len)};
+        ok = cert != nullptr && sk_X509_push(trusted.get(), cert.get());
+        if (ok) cert.release();
       } else if (strcmp(name, PEM_STRING_X509_CRL) == 0) {
-        X509_CRL *crl = d2i_X509_CRL(nullptr, &p, len);
-        ok = crl != nullptr && (sk_X509_CRL_push(crls, crl) || (X509_CRL_free(crl), false));
+        us_unique_ptr<X509_CRL, X509_CRL_free> crl{d2i_X509_CRL(nullptr, &p, len)};
+        ok = crl != nullptr && sk_X509_CRL_push(crls.get(), crl.get());
+        if (ok) crl.release();
       }
-      OPENSSL_free(name);
-      OPENSSL_free(header);
-      OPENSSL_free(data);
     }
     ERR_clear_error();
 
@@ -258,14 +267,11 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       result.certs = X509_LAZY_CERT_SET_new(certs.data(), certs.size());
       ok = result.certs != nullptr;
     }
-    for (CRYPTO_BUFFER *buf : certs) CRYPTO_BUFFER_free(buf);
     if (!ok) {
-      sk_X509_pop_free(trusted, X509_free);
-      sk_X509_CRL_pop_free(crls, X509_CRL_free);
       return;
     }
-    result.trusted = trusted;
-    result.crls = crls;
+    result.trusted = trusted.release();
+    result.crls = crls.release();
   });
   return result;
 }
@@ -291,18 +297,17 @@ const us_system_certs_t &us_get_root_system_certs() {
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {
-  X509_STORE *store = X509_STORE_new();
+  us_unique_ptr<X509_STORE, X509_STORE_free> store{X509_STORE_new()};
   if (store == NULL) {
     return NULL;
   }
-  X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+  X509_STORE_set_flags(store.get(), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
   us_ca_store_t ca_store = us_ca_store();
 
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099
   if (ca_store != us_ca_store_t::openssl) {
     X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
-    if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
-      X509_STORE_free(store);
+    if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store.get(), bundled)) {
       return NULL;
     }
   }
@@ -310,19 +315,17 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   // What X509_STORE_set_default_paths(store) trusts: the default certificate file (above) and the default hashed
   // certificate directory, which BoringSSL already consults lazily per lookup.
   const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
-  if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store, file.certs)) {
-    X509_STORE_free(store);
+  if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store.get(), file.certs)) {
     return NULL;
   }
   for (size_t i = 0; file.trusted != nullptr && i < sk_X509_num(file.trusted); i++) {
-    X509_STORE_add_cert(store, sk_X509_value(file.trusted, i));
+    X509_STORE_add_cert(store.get(), sk_X509_value(file.trusted, i));
   }
   for (size_t i = 0; file.crls != nullptr && i < sk_X509_CRL_num(file.crls); i++) {
-    X509_STORE_add_crl(store, sk_X509_CRL_value(file.crls, i));
+    X509_STORE_add_crl(store.get(), sk_X509_CRL_value(file.crls, i));
   }
-  X509_LOOKUP *hash_dir = X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir());
+  X509_LOOKUP *hash_dir = X509_STORE_add_lookup(store.get(), X509_LOOKUP_hash_dir());
   if (hash_dir == NULL) {
-    X509_STORE_free(store);
     return NULL;
   }
   X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
@@ -331,22 +334,21 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
-      X509_STORE_add_cert(store, sk_X509_value(root_extra_cert_instances, i));
+      X509_STORE_add_cert(store.get(), sk_X509_value(root_extra_cert_instances, i));
     }
   }
 
   if (ca_store == us_ca_store_t::system) {
     const us_system_certs_t &system = us_get_root_system_certs();
-    if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store, system.lazy)) {
-      X509_STORE_free(store);
+    if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store.get(), system.lazy)) {
       return NULL;
     }
     for (size_t i = 0; system.parsed != nullptr && i < sk_X509_num(system.parsed); i++) {
-      X509_STORE_add_cert(store, sk_X509_value(system.parsed, i));
+      X509_STORE_add_cert(store.get(), sk_X509_value(system.parsed, i));
     }
   }
 
-  return store;
+  return store.release();
 }
 
 // Process-wide immutable default store. Safe to share across SSL_CTXs that

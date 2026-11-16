@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "EventLoopKeepAlive.h"
 #include "EventNames.h"
 #include "EventTarget.h"
 #include "ContextDestructionObserver.h"
@@ -16,6 +17,7 @@ class GlobalEventScope : public RefCounted<GlobalEventScope>, public EventTarget
     WTF_MAKE_TZONE_ALLOCATED(GlobalEventScope);
 
     uint32_t m_messageEventCount { 0 };
+    Bun::EventLoopKeepAlive m_keepAlive;
 
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 

@@ -2,6 +2,7 @@
 #include "JSSecretKeyObject.h"
 #include "CryptoUtil.h"
 #include "helpers.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 
 using namespace JSC;
@@ -19,10 +20,6 @@ SecretKeyJobCtx::SecretKeyJobCtx(SecretKeyJobCtx&& other)
 {
 }
 
-extern "C" void Bun__SecretKeyJobCtx__runTask(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject)
-{
-    ctx->runTask(lexicalGlobalObject);
-}
 void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
     Vector<uint8_t> key;
@@ -35,10 +32,6 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = WTF::move(key);
 }
 
-extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(lexicalGlobalObject);
-}
 JSCallbackArgs SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -58,22 +51,6 @@ JSCallbackArgs SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     RETURN_IF_EXCEPTION(scope, {});
 
     return { jsNull(), secretKey };
-}
-
-extern "C" void Bun__SecretKeyJobCtx__deinit(SecretKeyJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void SecretKeyJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__SecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
-void SecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, SecretKeyJobCtx&& ctx, JSC::JSValue callback)
-{
-    SecretKeyJobCtx* ctxCopy = new SecretKeyJobCtx(WTF::move(ctx));
-    return Bun__SecretKeyJob__createAndSchedule(lexicalGlobalObject, ctxCopy, JSValue::encode(callback));
 }
 
 std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue typeValue, JSC::JSValue optionsValue)
@@ -134,7 +111,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKey, (JSC::JSGlobalObject * lexicalGlobalObje
     EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
 
-    SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTF::move(ctx.value()), callbackValue);
+    NodeCryptoJob::schedule<SecretKeyJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(ctx.value()));
 
     return JSValue::encode(jsUndefined());
 }

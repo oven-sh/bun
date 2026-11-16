@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 95ac8d6909365c4356d91fe384a398c9b82408b51da163daaf336ff302afc74f.
+// Written against that file with the SHA-256 b4d5d21f0deca9479130bfe335a47230343e7d350cffa9f7e03ce52484467512.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader
@@ -232,7 +232,7 @@ export function requireESM(this: void, resolved: string, requirer?: JSCommonJSMo
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
-  // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.
+  // Callers run inside a `$require` that removes the require map entry if its load throws: a `Module._extensions` handler, and JSCommonJSModule::load().
   const namespace = $requireESM(id, this);
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.

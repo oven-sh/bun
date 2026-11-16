@@ -170,6 +170,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 - `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). `require.resolve()` returns where the file was when you built, so reading it fails on another machine.
 - `require("./notes.txt")` returns the text itself, as in `bun build --compile`. `bun run` returns an object with the text as its `default`.
 - An `import()` at the top level of an ES module that a `require()` loads runs its module after that `require()` returns, as in Node.js and `bun build --compile`. Under `bun run`, it runs during the `require()`.
+- A `require()` of an ES module, made while another `require()` still loads that module, returns an empty object that stays empty. Under `bun run`, it returns the module's live namespace once the module has started to evaluate.
 - A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?worker` works too. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
 
 ### A file that isn't in the executable

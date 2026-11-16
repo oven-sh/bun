@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test as oneAtATime } from "./supported";
+import { eachRow, gap, test as oneAtATime } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
 raiseDefaultTimeout(120_000);
@@ -35,7 +35,11 @@ const moduleThatLooksAtItself = (name: string) => `
   export const seen = look(require.resolve("./${name}"));
   export const later = () => [look(require.resolve("./${name}")), whileItRan === undefined || whileItRan === require.cache[require.resolve("./${name}")]].join(" ");`;
 
-async function expectCompiledToRunAsPlain(files: Record<string, string>) {
+/** `owed`, of a row of gap(): the line that the plain run prints, and the line that the compiled run prints in its place today. */
+async function expectCompiledToRunAsPlain(
+  files: Record<string, string>,
+  owed?: readonly [plain: string, compiled: string],
+) {
   using dir = tempDir("require-cache-in-test-runs", files);
   const seen = async (words?: string, ...flags: string[]) => {
     const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
@@ -43,8 +47,26 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>) {
     if (exitCode !== 0) console.error(stderr);
     return { stdout, exitCode };
   };
+  if (owed) {
+    // Only that line is owed: a run that throws, or ends or prints otherwise, ends well here, which is red.
+    type Ran = Awaited<ReturnType<typeof seen>>;
+    const prints = (ran: Ran, line: string) => ran.exitCode === 0 && ran.stdout.split("\n").includes(line);
+    let plain: Ran, compiled: Ran;
+    try {
+      plain = await seen();
+      compiled = await seen("TestRunLayers:0", "--aot");
+    } catch (error) {
+      console.error(error);
+      return;
+    }
+    if (prints(plain, owed[0]) && prints(compiled, owed[1])) expect(compiled).toEqual(plain);
+    return;
+  }
   const plain = await seen();
   expect(plain.exitCode).toBe(0);
+  // An AOT build by a debug build of Bun dies in about half of its runs of a race between the threads of the engine
+  // (oven-sh/bun#48169), and a test run has no switch for one thread: there the plain run alone is held.
+  if (isDebug) return;
   for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
 }
 
@@ -131,11 +153,6 @@ test("files that require each other are all listed while the innermost runs", as
     "src/inner.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./outer")), look(require.resolve("./inner"))].join(" | ");`,
     "src/outer.cjs": `exports.before = 1;\nexports.seen = require("./inner.cjs").seen;`,
     "src/inner.cjs": `const { look } = require("./look.cjs");\nexports.seen = [look(require.resolve("./outer.cjs")), look(__filename)].join(" | ");`,
-    "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
-    "src/ring-second.ts": `
-      import { look } from "./look.cjs";
-      const first = require("./ring-first");
-      export const seen = [Object.keys(first).join("+"), require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
     "src/ring-first.cjs": `exports.first = 1;\nexports.seen = require("./ring-second.cjs").seen;`,
     "src/ring-second.cjs": `
       const { look } = require("./look.cjs");
@@ -148,7 +165,6 @@ test("files that require each other are all listed while the innermost runs", as
         console.log(require("./src/outer.cjs").seen);
       });
       test("in a ring", () => {
-        console.log(require("./src/ring-first").seen);
         console.log(require("./src/ring-first.cjs").seen);
       });`,
   });
@@ -245,3 +261,37 @@ test("an ES module whose import fails behind a require() of it that has returned
       });`,
   });
 });
+
+// The file that is required again hands out its namespace, and the names that are not there yet throw where they are read.
+// eachRow() declares a row that runs by itself where no sanitizer is: it stands last, so the cases above run beside one another.
+const ringOfESModules = gap(
+  "compiled, the file that is required again gets the empty object that stands in for it while it runs",
+  [
+    {
+      ...looksAtFiles,
+      "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
+      "src/ring-second.ts": `
+        import { look } from "./look.cjs";
+        const first = require("./ring-first");
+        let names;
+        try { names = Object.keys(first).join("+"); } catch (error) { names = error.name; }
+        export const seen = [names, require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
+      "one.test.ts": `
+        import { test } from "bun:test";
+        test("in a ring", () => {
+          console.log(require("./src/ring-first").seen);
+        });`,
+    },
+    [
+      "ReferenceError true ring-first.ts true,true exports [ReferenceError] true",
+      " true ring-first.ts true,true exports [] true",
+    ],
+  ] as const,
+);
+// The row owes a compiled run, which a debug build of Bun cannot give (expectCompiledToRunAsPlain): it is left out there.
+eachRow(isDebug ? [] : [ringOfESModules])(
+  "ES modules that require each other in a ring are listed while the second runs",
+  async (files, owed) => {
+    await expectCompiledToRunAsPlain(files, owed);
+  },
+);

@@ -221,7 +221,7 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
-  // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.
+  // Callers run inside a `$require` that removes the require map entry if its load throws: a `Module._extensions` handler, and JSCommonJSModule::load().
   const namespace = $requireESM(id, this);
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.

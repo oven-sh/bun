@@ -203,14 +203,10 @@ impl CompileTarget {
                 let Ok(self_exe_path) = bun_core::self_exe_path() else {
                     break 'brk;
                 };
-                if self_exe_path.len() >= buf.len() {
-                    return Err(crate::Error::BufferTooSmall);
-                }
-                buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
-                buf[self_exe_path.len()] = 0;
+                let exe_path =
+                    strings::copy_z(buf, self_exe_path).ok_or(crate::Error::BufferTooSmall)?;
                 *needs_download = false;
-                // SAFETY: buf[self_exe_path.len()] == 0 written above
-                return Ok(ZStr::from_buf(&buf[..], self_exe_path.len()));
+                return Ok(exe_path);
             }
         }
 

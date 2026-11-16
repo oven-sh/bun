@@ -753,24 +753,19 @@ pub(crate) struct NameTooLong;
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub(crate) trait PathLikeExt {
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr
-    where
-        Self: Sized;
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
+    /// Writes the path to the start of `buf`, or "" if it does not fit.
+    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
     #[cfg(windows)]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
+    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
+    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
     fn os_path_kernel32<'a>(
-        &'a self,
+        &self,
         buf: &'a mut PathBuffer,
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
@@ -844,13 +839,7 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike<'_> {
-    // Const-generics can't change return mutability, so this always returns
-    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
-    // separate method.
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr {
+    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
         let sliced = self.slice();
 
         #[cfg(windows)]
@@ -881,42 +870,18 @@ impl PathLikeExt for PathLike<'_> {
                         &mut buf[4..],
                     )
                     .len();
-                    buf[4 + n] = 0;
-                    // SAFETY: buf[4+n] == 0 written above.
-                    return ZStr::from_buf(&buf[..], 4 + n);
+                    return ZStr::nul_terminate(buf, 4 + n);
                 }
-                // reshaped for borrowck — capture the length so
-                // the `Ok` borrow ends at the match, then re-derive.
-                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
-                    Ok(res) => Some(res.len()),
+                match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
+                    buf, sliced,
+                ) {
+                    Ok(res) => return res,
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {}
                     Err(e) => panic!("Error while resolving path: {e:?}"),
-                };
-                if let Some(len) = resolved_len {
-                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
-                    // at `buf[len]`.
-                    return ZStr::from_buf(&buf[..], len);
                 }
-            }
-        }
-
-        if sliced.is_empty() {
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
-        }
-
-        if !FORCE {
-            if sliced[sliced.len() - 1] == 0 {
-                // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(sliced);
             }
         }
 
@@ -926,29 +891,16 @@ impl PathLikeExt for PathLike<'_> {
                 sliced.len(),
                 buf.len()
             );
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
+            return ZStr::nul_terminate(buf, 0);
         }
 
         buf[..sliced.len()].copy_from_slice(sliced);
-        buf[sliced.len()] = 0;
-        // SAFETY: buf[sliced.len()] == 0 written above.
-        ZStr::from_buf(&buf[..], sliced.len())
-    }
-
-    #[inline]
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
-        self.slice_z_with_force_copy::<false>(buf)
+        ZStr::nul_terminate(buf, sliced.len())
     }
 
     #[cfg(windows)]
     #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
         if !strings::fits_in_wide_path_buffer(sliced) {
             return Err(NameTooLong);
@@ -957,20 +909,20 @@ impl PathLikeExt for PathLike<'_> {
     }
 
     #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
+    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            Ok(self.slice_z(buf))
         }
     }
 
     #[inline]
     fn os_path_kernel32<'a>(
-        &'a self,
+        &self,
         buf: &'a mut PathBuffer,
     ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
@@ -1045,7 +997,7 @@ impl PathLikeExt for PathLike<'_> {
 
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            Ok(self.slice_z(buf))
         }
     }
 

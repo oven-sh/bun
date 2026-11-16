@@ -456,7 +456,7 @@ impl<'a> Cmd<'a> {
                 }
                 // NUL-terminated by `child_done`.
                 let path_buf = core::mem::take(&mut interp.as_cmd_mut(this).redirection_file);
-                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+                let path = bun_core::ZStr::from_slice_with_nul(&path_buf);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let shell = Builtin::shell(interp, this);
                 let cwd_fd = shell.cwd_fd.fd();

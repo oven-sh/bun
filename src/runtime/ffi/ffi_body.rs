@@ -2110,7 +2110,6 @@ impl Function {
 
         CompilerRT::define(&mut state);
 
-        // SAFETY: source_code was NUL-terminated above
         if state
             .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
             .is_err()
@@ -2600,8 +2599,6 @@ impl CompilerRT {
         #[cfg(target_arch = "x86_64")]
         {
             state.define_symbol(zstr!("NEEDS_COMPILER_RT_FUNCTIONS"), zstr!("1"));
-            // SAFETY: `libtcc1.c` is embedded with a manual trailing NUL guaranteed
-            // by `include_bytes!` + the explicit length math below.
             const LIBTCC1: &[u8] = include_bytes!("libtcc1.c");
             let libtcc1_z = ZBox::from_bytes(LIBTCC1);
             if state.compile_string(&libtcc1_z).is_err() {

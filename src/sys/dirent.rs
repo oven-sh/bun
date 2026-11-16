@@ -131,15 +131,13 @@ pub(crate) fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
             }
             // C APIs stop at the first NUL, which can come before `d_namlen`.
             let read_by_c = matches!(*name_field, [0, ..] | [b'.', 0, ..] | [b'.', b'.', 0, ..]);
-            (name_field.get(..namlen)?, read_by_c)
+            (ZStr::from_buf(name_field, namlen), read_by_c)
         }
         None => {
             // A scalar loop here is visible in startup profiles for large directories.
-            let nul = bun_core::strings::index_of_char_usize(name_field, 0);
-            let nul = nul.unwrap_or(name_field.len());
-            name_field.get(nul)?;
-            let name = name_field.get(..nul)?;
-            (name, nul <= 2 && matches!(name, b"" | b"." | b".."))
+            let name = ZStr::from_slice_until_nul(name_field)?;
+            let unreported = name.len() <= 2 && matches!(name.as_bytes(), b"" | b"." | b"..");
+            (name, unreported)
         }
     };
     if unreported {
@@ -153,7 +151,7 @@ pub(crate) fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
     Some(Record {
         next: at + reclen,
         entry: Some(Entry {
-            name: ZStr::from_buf(name_field, name.len()),
+            name,
             d_type: *header.get(L::D_TYPE)?,
             ino,
         }),

@@ -2124,16 +2124,14 @@ fn tarball_destination<'a>(
     dest_buf: &'a mut [u8],
 ) -> (&'a ZStr, usize) {
     if !pack_filename.is_empty() {
-        if pack_filename.len() + 1 > dest_buf.len() {
+        let Some(dest) = strings::copy_z(dest_buf, pack_filename) else {
             Output::err_generic(
                 "archive filename too long: \"{}\"",
                 format_args!("{}", bstr::BStr::new(pack_filename)),
             );
             Global::crash();
-        }
-        dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
-        dest_buf[pack_filename.len()] = 0;
-        return (ZStr::from_buf(&dest_buf[..], pack_filename.len()), 0);
+        };
+        return (dest, 0);
     }
 
     #[cold]

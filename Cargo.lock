@@ -1574,7 +1574,6 @@ dependencies = [
  "bun_sys",
  "bun_url",
  "bun_wyhash",
- "scopeguard",
  "strum",
  "thiserror",
 ]

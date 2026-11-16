@@ -4456,24 +4456,17 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
-    let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
-
-    let write_ok = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(file_contents)
-        .is_ok();
-    if !write_ok {
-        let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);
-        return None;
-    }
+    let tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
+    tmpfile.file.write_all(file_contents).ok()?;
 
     // On sticky `/tmp` the rename fails EACCES/EPERM when another user owns
     // the destination; fall back to the scratch file.
-    let rename_ok = tmpfile.finish(canonical_name).is_ok();
-
-    let final_name = if rename_ok {
-        canonical_name
-    } else {
-        scratch_name
+    let final_name = match tmpfile.finish(canonical_name) {
+        Ok(()) => canonical_name,
+        Err((_, scratch)) => {
+            scratch.keep();
+            scratch_name
+        }
     };
     write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
 }

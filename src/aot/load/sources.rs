@@ -9,6 +9,8 @@ use std::sync::{Arc, OnceLock};
 use bun_ast::{Loader, Location};
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
 use bun_paths::is_absolute;
+use bun_sema::atom::{Atom, known};
+use bun_sema::hir::{CallId, ExprId, ExprKind, File, PropKey, UnOp};
 use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
@@ -16,7 +18,8 @@ pub(crate) use self::freeze::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, count_levels_above_root,
     freeze_sources,
 };
-use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
+use crate::builtins::id::BuiltinId;
+use crate::builtins::{Resolved, ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
 use crate::diagnostics::{FileDiagnostic, LoadMessages};
 use crate::load::contents::FileContents;
 use crate::load::contents::load_names::NamedModule;
@@ -134,6 +137,83 @@ impl ParsedSource {
 
 pub(crate) fn parsed_source<'s>(files: &Files<'s>, file: FileId) -> Option<&'s ParsedSource> {
     files.host_payload(file)?.downcast_ref::<ParsedSource>()
+}
+
+/// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
+pub(crate) fn may_evaluate_text(files: &Files<'_>) -> bool {
+    let sources = || {
+        let compiled = files.compiled_files().iter();
+        compiled.filter_map(|&file| Some((file, parsed_source(files, file)?)))
+    };
+    sources().any(|(_, source)| source.builtins.evaluator_comes_out())
+        || (sources().any(|(_, source)| source.builtins.mentions_evaluator())
+            && sources()
+                .any(|(file, source)| source.builtins.may_call_unnamed_evaluator(files.hir(file))))
+}
+
+fn is_name_of_evaluator(name: Atom) -> bool {
+    matches!(name, known::eval | known::Function)
+}
+
+fn writes_evaluator(hir: &File<'_>, source: &ParsedSource) -> bool {
+    let is_global_object = |expression: ExprId| {
+        let found = source
+            .builtins
+            .of_expr(hir.skip_type_assertions(expression));
+        matches!(found, Some(Resolved::Builtin(path)) if table::has_flag(path.id, table::BuiltinFlags::IS_GLOBAL_OBJECT))
+    };
+    let is_key_of_evaluator = |key: ExprId| {
+        let key = hir.skip_type_assertions(key);
+        matches!(hir[key].kind, ExprKind::String(name) if is_name_of_evaluator(name))
+    };
+    let has_key_of_evaluator = |object: ExprId| {
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(object)].kind else {
+            return false;
+        };
+        properties.iter().any(|property| {
+            matches!(hir[property].key, PropKey::Name(name) if is_name_of_evaluator(name))
+        })
+    };
+    let is_write = |call: CallId| {
+        let mut operands = hir.ids(hir[call].args);
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        operands.next().is_some_and(is_global_object)
+            && match source.builtins.builtin_of_expression(callee) {
+                Some(BuiltinId::ReflectSet) => operands.next().is_some_and(is_key_of_evaluator),
+                Some(BuiltinId::ObjectAssign) => operands.any(has_key_of_evaluator),
+                _ => false,
+            }
+    };
+    hir.exprs.iter().any(|expression| {
+        let target = match expression.kind {
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Unary {
+                op: UnOp::Delete,
+                operand,
+            } => operand,
+            ExprKind::Call(call) => return is_write(call),
+            _ => return false,
+        };
+        match hir[hir.skip_type_assertions(target)].kind {
+            ExprKind::Ident(name) => is_name_of_evaluator(name),
+            ExprKind::Dot { obj, name, .. } => is_name_of_evaluator(name) && is_global_object(obj),
+            ExprKind::Index { obj, index, .. } => {
+                is_key_of_evaluator(index) && is_global_object(obj)
+            }
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn may_replace_evaluators(files: &Files<'_>, can_load_code_at_run_time: bool) -> bool {
+    let compiled = || files.compiled_files().iter().copied();
+    compiled().any(|file| !files.hir(file).replaced_evaluations.is_empty())
+        && (can_load_code_at_run_time
+            || may_evaluate_text(files)
+            || compiled().any(|file| {
+                parsed_source(files, file)
+                    .is_some_and(|source| writes_evaluator(files.hir(file), source))
+            }))
 }
 
 pub(crate) fn parsed_source_in<'f>(

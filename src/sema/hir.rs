@@ -2931,6 +2931,13 @@ pub struct FunctionWrittenByLoader {
     pub end_in_text: u32,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ReplacedEvaluation {
+    pub expression: ExprId,
+    pub is_new: bool,
+    pub arguments: IdList<Atom>,
+}
+
 /// `call` evaluates `arguments`, as far as the build can tell, which gives `function`. The functions of a call follow its
 /// written arguments. Their texts follow the written text of the file. Set by the loader.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -3031,6 +3038,7 @@ pub struct FileIn<S: Storage> {
     pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
+    pub replaced_evaluations: S::Few<ReplacedEvaluation>,
     /// Sorted by call and by start.
     pub known_evaluations: S::Few<KnownEvaluation>,
     pub settled_evals: S::Few<CallId>,
@@ -3542,6 +3550,18 @@ impl<S: Storage> FileIn<S> {
         written.any(|it| it.function == function) && self.replaces_evaluation(self[function].start)
     }
 
+    pub fn replaced_evaluation(&self, expression: ExprId) -> Option<&ReplacedEvaluation> {
+        let mut all = self.replaced_evaluations.iter();
+        all.find(|it| it.expression == expression)
+    }
+
+    pub fn replaced_evaluation_of(&self, function: FnId) -> Option<&ReplacedEvaluation> {
+        let mut all = self.replaced_evaluations.iter();
+        all.find(
+            |it| matches!(self[it.expression].kind, ExprKind::Fn(written) if written == function),
+        )
+    }
+
     /// Where the call is that evaluates what is at `pos`, or enters the copy there. `pos` itself in the text that was read.
     pub fn position_of_evaluation(&self, pos: u32) -> u32 {
         if let Some(copied) = self.copied_factory_at(pos) {
@@ -3900,6 +3920,7 @@ macro_rules! file_in_storage {
             exports_that_others_touch: $few!($this.exports_that_others_touch),
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
+            replaced_evaluations: $few!($this.replaced_evaluations),
             known_evaluations: $few!($this.known_evaluations),
             settled_evals: $few!($this.settled_evals),
             copied_factories: $few!($this.copied_factories),
@@ -4058,6 +4079,7 @@ impl FileBuilder {
             exports_that_others_touch,
             texts_written_by_loader,
             functions_written_by_loader,
+            replaced_evaluations,
             known_evaluations,
             settled_evals,
             copied_factories,
@@ -4172,6 +4194,7 @@ impl FileBuilder {
         exports_that_others_touch.clear();
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
+        replaced_evaluations.clear();
         known_evaluations.clear();
         settled_evals.clear();
         copied_factories.clear();

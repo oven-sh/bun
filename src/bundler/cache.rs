@@ -1,5 +1,3 @@
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use bun_alloc::Arena as Bump;
 use bun_core::strings;
 use bun_js_parser as js_parser;
@@ -8,43 +6,6 @@ use bun_js_parser as js_parser;
 // (re-exported via `crate::defines`); `JavaScript::parse`/`scan` and the bundler's
 // `BundleOptions.define` share the same nominal type.
 use js_parser::defines::Define;
-
-// ══════════════════════════════════════════════════════════════════════════
-// B-3 UNIFIED: `RuntimeTranspilerCache` is canonical in `bun_js_parser`
-// (lower tier) so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
-// `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
-// nominal type. This crate adds the env-var-gated `disabled` via
-// the `RuntimeTranspilerCacheExt` trait below — it needs `bun_core::env_var`
-// which sits a tier above js_parser. `Entry` / `Metadata` stay concrete here;
-// the canonical
-// struct stores them type-erased as `*mut ()`.
-// ══════════════════════════════════════════════════════════════════════════
-use bun_ast::RuntimeTranspilerCache;
-
-/// Written by CLI argument parsing and `VirtualMachine` init, and flipped
-/// lazily on cache-dir resolution failure. Module-level so those writers can
-/// reach it; `disabled()` reads it.
-pub(crate) static DISABLED: AtomicBool = AtomicBool::new(false);
-
-/// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
-/// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
-/// this crate without an orphan-rule violation.
-pub trait RuntimeTranspilerCacheExt {
-    /// Kept as an associated fn so call-sites read
-    /// `RuntimeTranspilerCache::disabled()`.
-    fn disabled() -> bool;
-}
-
-impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
-    #[inline]
-    fn disabled() -> bool {
-        DISABLED.load(Ordering::Relaxed)
-            || bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
-                .get()
-                .map(|v| v.is_empty() || v == b"0")
-                .unwrap_or(false)
-    }
-}
 
 pub use bun_resolver::cache::ExternalFreeFunction;
 
@@ -69,6 +30,7 @@ impl JavaScript {
         defines: &'a Define,
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
+        cache: Option<&mut dyn js_parser::TranspilerCache>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
@@ -80,7 +42,7 @@ impl JavaScript {
             }
         };
 
-        let result = match parser.parse() {
+        let result = match parser.parse_with_cache(cache) {
             Ok(r) => {
                 // The parser halts on every logged error.
                 debug_assert_eq!(temp_log.errors, 0);

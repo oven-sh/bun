@@ -622,6 +622,7 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
+        let _watcher;
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
@@ -668,7 +669,8 @@ impl BuildCommand {
             let event_loop = bun_event_loop::AnyEventLoop::init();
 
             if ctx.debug.hot_reload == HotReload::Watch {
-                bun_jsc::hot_reloader::enable_hot_module_reloading_for_bundler(this_transpiler);
+                _watcher =
+                    bun_jsc::hot_reloader::enable_hot_module_reloading_for_bundler(this_transpiler);
             }
 
             let build_result = match BundleV2::generate_from_cli(

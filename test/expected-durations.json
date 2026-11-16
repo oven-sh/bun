@@ -17,8 +17,8 @@
     }
   },
   "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts": {
-    "default": 1000,
-    "asan": 4000
+    "default": 6200,
+    "asan": 24800
   },
   "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts": {
     "default": 4800,

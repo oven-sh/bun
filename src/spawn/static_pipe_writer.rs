@@ -168,7 +168,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // The writer closes it from now on.
             file.into_raw();
             self.writer
-                .handle
+                .handle()
                 .set_poll_flag(bun_io::FilePollFlag::Socket);
         }
         self.start_ref = Some(start_ref);

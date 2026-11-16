@@ -2276,14 +2276,12 @@ mod _async_tasks {
 
         #[inline]
         fn src(&self) -> &OSPathSliceZ {
-            // `create()` invariant — `path_buf[src_len] == 0` (debug-asserted there
-            // and again by `from_buf`).
+            // The caller of `create()` wrote the NUL.
             OSPathSliceZ::from_buf(&self.path_buf, self.src_len)
         }
         #[inline]
         fn dest(&self) -> &OSPathSliceZ {
-            // `create()` invariant — `path_buf[src_len + 1 + dest_len] == 0`
-            // (debug-asserted there and again by `from_buf`).
+            // The caller of `create()` wrote the NUL.
             OSPathSliceZ::from_buf(&self.path_buf[self.src_len + 1..], self.dest_len)
         }
 
@@ -2637,9 +2635,7 @@ mod _async_tasks {
 
             #[cfg(windows)]
             {
-                // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
-                let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
-                if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
+                let Ok(attributes) = windows::GetFileAttributesW(src) else {
                     let err = sys::Error {
                         errno: SystemErrno::ENOENT as _,
                         syscall: sys::Tag::copyfile,
@@ -2652,7 +2648,7 @@ mod _async_tasks {
                     }
                     this.finish_concurrently(copied);
                     return;
-                }
+                };
                 let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
                     || (attributes & bun_sys::c::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
                 if file_or_symlink {
@@ -5898,22 +5894,11 @@ impl NodeFS {
                 args.src.slice(),
             );
             let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
-            // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
-            if unsafe {
-                windows::CopyFileW(
-                    src.as_ptr(),
-                    dest.as_ptr(),
-                    if args.mode.shouldnt_overwrite() { 1 } else { 0 },
-                )
-            } == windows::FALSE
-            {
+            if let Err(err) = windows::CopyFileW(src, dest, args.mode.shouldnt_overwrite()) {
                 return Self::should_ignore_ebusy(
                     &args.src,
                     &args.dest,
-                    Err(sys::Error::from_win32(
-                        windows::Win32Error::get(),
-                        sys::Tag::copyfile,
-                    )),
+                    Err(sys::Error::from_win32(err, sys::Tag::copyfile)),
                 );
             }
             return Ok(());
@@ -8780,15 +8765,14 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let attributes = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
-            if attributes == sys::c::INVALID_FILE_ATTRIBUTES {
+            let Ok(attributes) = windows::GetFileAttributesW(src) else {
                 return Err(sys::Error {
                     errno: SystemErrno::ENOENT as _,
                     syscall: sys::Tag::copyfile,
                     path: self.os_path_into_sync_error_buf(src.as_slice()).into(),
                     ..Default::default()
                 });
-            }
+            };
             if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
                 || attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
             {
@@ -8968,7 +8952,7 @@ impl NodeFS {
                     dest_buf[dd] = paths::SEP as OSPathChar;
                     dest_buf[dd + 1 + name_slice.len()] = 0;
 
-                    // NUL written at [len] above; `from_buf` debug-asserts it.
+                    // NUL written at [len] above.
                     let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
                     let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
                     let r = self.copy_single_file_sync(
@@ -9499,45 +9483,21 @@ impl NodeFS {
             }
             let stat_ = match reuse_stat {
                 Some(a) => a,
-                None => {
-                    let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
-                    if a == sys::c::INVALID_FILE_ATTRIBUTES {
-                        return Err(sys::Error::from_win32(
-                            windows::Win32Error::get(),
-                            sys::Tag::copyfile,
-                        )
-                        .with_path(self.os_path_into_sync_error_buf(src.as_slice())));
-                    }
-                    a
-                }
+                None => windows::GetFileAttributesW(src).map_err(|err| {
+                    sys::Error::from_win32(err, sys::Tag::copyfile)
+                        .with_path(self.os_path_into_sync_error_buf(src.as_slice()))
+                })?,
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-                if unsafe {
-                    sys::c::CopyFileW(
-                        src.as_ptr(),
-                        dest.as_ptr(),
-                        mode.shouldnt_overwrite() as i32,
-                    )
-                } == 0
-                {
-                    let mut err = windows::Win32Error::get();
-                    if err == windows::Win32Error::PATH_NOT_FOUND {
-                        let _ = sys::make_path::make_path_u16(
-                            &sys::Dir::cwd(),
-                            paths::dirname_w(dest.as_slice()),
-                        );
-                        if unsafe {
-                            sys::c::CopyFileW(
-                                src.as_ptr(),
-                                dest.as_ptr(),
-                                mode.shouldnt_overwrite() as i32,
-                            )
-                        } != 0
-                        {
-                            return Ok(());
-                        }
-                        err = windows::Win32Error::get();
-                    }
+                let mut result = windows::CopyFileW(src, dest, mode.shouldnt_overwrite());
+                if result == Err(windows::Win32Error::PATH_NOT_FOUND) {
+                    let _ = sys::make_path::make_path_u16(
+                        &sys::Dir::cwd(),
+                        paths::dirname_w(dest.as_slice()),
+                    );
+                    result = windows::CopyFileW(src, dest, mode.shouldnt_overwrite());
+                }
+                if let Err(err) = result {
                     return Self::should_ignore_ebusy(
                         &args.src,
                         &args.dest,
@@ -9550,22 +9510,11 @@ impl NodeFS {
                 let file =
                     sys::File::from_fd(sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0)?);
                 let mut wbuf = paths::os_path_buffer_pool::get();
-                let len = unsafe {
-                    windows::GetFinalPathNameByHandleW(
-                        file.fd().native(),
-                        wbuf.as_mut_ptr(),
-                        wbuf.len() as u32,
-                        0,
-                    )
-                } as usize;
-                if len == 0 || len >= wbuf.len() {
-                    let err = if len == 0 {
-                        sys::Error::from_win32(windows::Win32Error::get(), sys::Tag::copyfile)
-                    } else {
-                        sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile)
-                    };
-                    return Err(err.with_path(self.os_path_into_sync_error_buf(src.as_slice())));
-                }
+                let len = windows::GetFinalPathNameByHandleW(file.fd().native(), &mut wbuf[..], 0)
+                    .map_err(|err| {
+                        sys::Error::from_win32(err, sys::Tag::copyfile)
+                            .with_path(self.os_path_into_sync_error_buf(src.as_slice()))
+                    })?;
                 wbuf[len] = 0;
                 // `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells network
                 // targets as `\\?\UNC\server\share\…`; rewrite in place to the

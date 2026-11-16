@@ -24,6 +24,7 @@ use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
+use crate::webcore::streams::SourceHandle;
 use crate::webcore::{self, AbortSignal, FileSink};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
@@ -345,7 +346,7 @@ impl Subprocess<'_> {
                 let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
                     unreachable!()
                 };
-                pipe.source.with_mut(|s| s.clear());
+                pipe.source.set(SourceHandle::None);
             }
             Writable::Buffer(_) => drop(core::mem::replace(stdin, Writable::Ignore)),
             _ => {}
@@ -806,33 +807,20 @@ impl Subprocess<'_> {
             self.weak_file_sink_stdin_ptr.set(None);
             self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
-            // `pipe_ptr` came from a live FileSink (either `self.stdin.pipe`'s
-            // +1-intrusive ref or the cached JS sink kept live by GC) and
-            // outlives this scope on the single mutator thread — `BackRef`
-            // invariant. Shared deref via `BackRef::Deref`; the one mutable
-            // call below stays unsafe.
-            let pipe = bun_ptr::BackRef::from(pipe_ptr);
+            // SAFETY: `self.stdin` or the cached JS sink holds a ref.
+            let pipe = unsafe { RefPtr::init_ref(pipe_ptr.as_ptr()) };
 
             // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
             // re-enter Writable.onClose → pipe.deref() on the still-running pipe.
             let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
             if matches!(
-                *pipe.source.get(),
-                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_const_ptr() == self_ptr.cast_const()
+                pipe.source.get(),
+                SourceHandle::Subprocess(p) if p.as_const_ptr() == self_ptr.cast_const()
             ) {
-                // `source` is a `JsCell`; `with_mut` takes `&self`, so the
-                // shared `pipe: &FileSink` deref above is sufficient.
-                pipe.source.with_mut(|s| s.clear());
+                pipe.source.set(SourceHandle::None);
             }
             let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
-
-            // `pipe_ptr` is live (see `pipe` borrow above) and is the canonical
-            // `*mut FileSink` from `FileSink::create*`; pass it straight through —
-            // `on_attached_process_exit` re-enters via the writer backref and may
-            // free `this`, so no `&mut FileSink` is materialized at the boundary.
-            // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
-            // provenance, held live by the `Writable::Pipe`/cache +1.
-            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), status) };
+            pipe.on_attached_process_exit(status);
         }
 
         let mut did_update_has_pending_activity = false;
@@ -957,7 +945,7 @@ impl Subprocess<'_> {
                 if !called {
                     Writable::finalize(self);
                 } else {
-                    self.stdin.with_mut(|s| s.close());
+                    Writable::close(&self.stdin);
                 }
             }
             StdioKind::Stdout => {
@@ -1247,21 +1235,16 @@ pub(crate) mod testing_apis {
         Ok(true)
     }
 
-    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
+    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper.
     pub(crate) fn close_stdin_writer(
         _: &mut JsScope<'_>,
         subprocess: &Subprocess<'static>,
     ) -> bool {
-        #[cfg(windows)]
-        use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-
         let Writable::Pipe(pipe) = subprocess.stdin.get() else {
             return false;
         };
-        let writer = pipe.writer.as_ptr();
-        // SAFETY: the Subprocess's ref keeps the sink and its writer live on entry;
-        // `close()` may free both, and nothing touches them afterwards.
-        unsafe { (*writer).close() };
+        let pipe = pipe.clone();
+        pipe.writer.close(&*pipe);
         true
     }
 }

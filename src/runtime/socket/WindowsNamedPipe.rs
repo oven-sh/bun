@@ -25,8 +25,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_boringssl_sys as boringssl;
 use bun_collections::ByteVecExt;
 use bun_core::{ZStr, timespec};
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{StreamingWriter, WriteStatus};
+use bun_io::{IoEvent, Owner, PollTag, StreamingWriter, WriteHandler, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell, SysErrorJsc};
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
@@ -63,7 +62,6 @@ pub(crate) struct WindowsNamedPipe {
     abort_handle: bun_jsc::AbortHandle,
     /// Set before the pipe opens and freed with `self`: a `handle_traffic` frame can be on the stack when the pipe closes.
     wrapper: OnceCell<WrapperType>,
-    pub(crate) deferred_writer_close: Cell<bool>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Until [`start`](Self::start) hands it to `writer`.
     pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
@@ -71,7 +69,9 @@ pub(crate) struct WindowsNamedPipe {
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
     pub(crate) vm: &'static VirtualMachine,
-    pub(crate) writer: JsCell<StreamingWriter<WindowsNamedPipe>>,
+    writer: StreamingWriter,
+    /// Held while a write is in flight.
+    inflight_write_ref: Cell<Option<RefPtr<Self>>>,
 
     pub(crate) incoming: JsCell<Vec<u8>>, // Maybe we should use IPCBuffer here as well
     pub(crate) connect_req: JsCell<uv::uv_connect_t>,
@@ -147,7 +147,6 @@ bitflags::bitflags! {
         const IS_CLOSED    = 1 << 1;
         /// `writer` has taken the pipe.
         const PIPE_ADOPTED = 1 << 4;
-        const WRITER_BUSY  = 1 << 6;
         /// `shutdown()` ran on a plain pipe. The write side ends once queued data drains, and reads continue.
         const SHUTDOWN_REQUESTED = 1 << 7;
         /// libuv has the `uv_shutdown` request.
@@ -205,7 +204,7 @@ impl WindowsNamedPipe {
     /// event loop before it returns (`expect().resolves` blocks on a promise
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
-    /// callback is done. The writer does the same around an in-flight write,
+    /// callback is done. `inflight_write_ref` does the same around an in-flight write,
     /// and `connect`/`open` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
@@ -236,12 +235,9 @@ impl WindowsNamedPipe {
         uws::NewSocketHandler::from_transport(&raw const self.handle)
     }
 
-    fn on_writable(&self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
-        // flush pending data
-        self.flush();
-        // call onWritable (will flush on demand)
-        self.dispatch_writable();
+    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        let _keep_alive = self.keep_alive();
+        self.writer.on_io(self, event);
     }
 
     fn dispatch_writable(&self) {
@@ -269,61 +265,11 @@ impl WindowsNamedPipe {
         self.incoming.set(data);
     }
 
-    fn on_write(&self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(
-            WindowsNamedPipe,
-            "onWrite {} {}",
-            amount,
-            match status {
-                WriteStatus::Pending => "pending",
-                WriteStatus::Drained => "drained",
-                WriteStatus::EndOfFile => "end_of_file",
-            }
-        );
-
-        match status {
-            WriteStatus::Pending => {}
-            WriteStatus::Drained => {
-                // unref after sending all data
-                self.writer.with_mut(|w| {
-                    if let Some(source) = w.source.as_mut() {
-                        // `Source` is an enum;
-                        // `unref()` matches the active variant (always `Pipe` here
-                        // via `start_with_pipe`).
-                        source.unref();
-                    }
-                });
-                self.send_shutdown_if_drained();
-            }
-            WriteStatus::EndOfFile => {
-                // we send FIN so we close after this
-                self.close_writer();
-            }
-        }
-    }
-
     #[inline]
     fn root_ptr(&self) -> *mut WindowsNamedPipe {
         let p = self.root.get();
         debug_assert!(!p.is_null(), "WindowsNamedPipe root not recorded");
         p
-    }
-
-    fn close_writer(&self) {
-        self.with_writer(|w| w.close());
-    }
-
-    fn with_writer<R>(&self, op: impl FnOnce(&mut StreamingWriter<Self>) -> R) -> R {
-        let was_busy = self.flags.get().contains(Flags::WRITER_BUSY);
-        self.update_flags(|f| f.insert(Flags::WRITER_BUSY));
-        let r = self.writer.with_mut(op);
-        if !was_busy {
-            self.update_flags(|f| f.remove(Flags::WRITER_BUSY));
-            if self.deferred_writer_close.replace(false) {
-                self.on_close();
-            }
-        }
-        r
     }
 
     fn on_read_error(&self, err: bun_sys::E) {
@@ -334,24 +280,11 @@ impl WindowsNamedPipe {
             match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
                 NewSocket::on_end(s.this_ptr(), self.handle::<SSL>())
             });
-            self.close_writer();
+            self.writer.close(self);
             return;
         }
         self.on_error(bun_sys::Error::from_code(err, bun_sys::Tag::read));
-        self.close_writer();
-    }
-
-    fn on_error(&self, err: bun_sys::Error) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onError");
-        let _keep_alive = self.keep_alive();
-        if self.is_open.get() {
-            match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-                s.handle_error(err.to_js(&self.global_this))
-            });
-        } else {
-            self.fail_connect(SystemErrno::from_raw(err.errno));
-        }
-        self.close();
+        self.writer.close(self);
     }
 
     /// `connectError` is the last event of a socket whose connect failed, so this pipe forgets the socket: neither `on_close`, which still fires on the asynchronous failure path, nor `Drop` touches it again.
@@ -432,40 +365,17 @@ impl WindowsNamedPipe {
         }
     }
 
-    fn on_close(&self) {
-        if self.flags.get().contains(Flags::WRITER_BUSY) {
-            self.deferred_writer_close.set(true);
-            return;
-        }
-        bun_output::scoped_log!(WindowsNamedPipe, "onClose");
-        self.pipe.set(None);
-        if !self.flags.get().is_closed() {
-            self.update_flags(|f| f.set(Flags::IS_CLOSED, true)); // only call onClose once
-            match_socket!(self.socket.take(), |s: NewSocket<SSL>| {
-                NewSocket::on_close(s, self.handle::<SSL>(), 0, None)
-            });
-            self.release_resources();
-            self.self_ref.set(None);
-        }
-    }
-
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
         if let Some(bytes) = data {
             if !bytes.is_empty() {
                 // ref because we have pending data
-                self.writer.with_mut(|w| {
-                    if let Some(source) = w.source.as_mut() {
-                        // See `on_write` for the active-variant note.
-                        source.ref_();
-                    }
-                });
+                self.writer.update_ref(true);
                 if self.flags.get().disconnected() {
                     // enqueue to be sent after connecting
-                    self.writer
-                        .with_mut(|w| bun_core::handle_oom(w.outgoing.write(bytes)));
+                    self.writer.enqueue(bytes);
                 } else {
                     // write will enqueue the data if it cannot be sent
-                    let _ = self.writer.with_mut(|w| w.write(bytes));
+                    let _ = self.writer.write(self, bytes);
                 }
             }
         }
@@ -474,7 +384,7 @@ impl WindowsNamedPipe {
             if let Some(w) = self.wrapper_ref() {
                 let _ = w.shutdown(false);
             }
-            self.with_writer(|w| w.end());
+            self.writer.end(self);
         }
     }
 
@@ -520,9 +430,9 @@ impl WindowsNamedPipe {
             abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipe>(),
             pipe: JsCell::new(Some(uv::Owned::zeroed())),
             wrapper: OnceCell::new(),
-            deferred_writer_close: Cell::new(false),
             root: Cell::new(core::ptr::null_mut()),
-            writer: JsCell::new(StreamingWriter::default()),
+            writer: StreamingWriter::default(),
+            inflight_write_ref: Cell::new(None),
             incoming: JsCell::new(Vec::new()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
             connect_ref: Cell::new(None),
@@ -712,15 +622,11 @@ impl WindowsNamedPipe {
         pipe.unref();
         let this: *mut Self = self.root_ptr();
         self.update_flags(|f| f.insert(Flags::PIPE_ADOPTED));
-        let start_pipe_result = self.writer.with_mut(|w| {
-            w.set_parent(this);
-            w.start_with_pipe(pipe)
-        });
-        if let bun_sys::Result::Err(err) = start_pipe_result {
-            self.on_error(err);
-            return false;
-        }
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
+        let owner = Owner::new(PollTag::WindowsNamedPipe, this.cast());
+        // SAFETY: `owner` points to `self`, which is heap-allocated.
+        unsafe { self.writer.set_owner(owner) };
+        self.writer.start_with_pipe(self, pipe);
+        let Some(stream) = self.writer.get_stream() else {
             self.on_error(bun_sys::Error::from_code(
                 bun_sys::E::PIPE,
                 bun_sys::Tag::read,
@@ -766,17 +672,17 @@ impl WindowsNamedPipe {
             || flags.contains(Flags::SHUTDOWN_SENT)
             || flags.is_closed()
             || flags.disconnected()
-            || self.writer.get().has_pending_data()
+            || self.writer.has_pending_data()
         {
             return;
         }
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
-            self.with_writer(|w| w.end());
+        let Some(stream) = self.writer.get_stream() else {
+            self.writer.end(self);
             return;
         };
         self.update_flags(|f| f.insert(Flags::SHUTDOWN_SENT));
         let req = bun_core::heap::alloc(bun_core::ffi::zeroed::<uv::uv_shutdown_t>());
-        // SAFETY: `stream` is the live pipe stream owned by `self.writer.source`. libuv
+        // SAFETY: `stream` is the live pipe stream owned by `self.writer`. libuv
         // owns `req` until it calls `uv_on_shutdown`, with `UV_ECANCELED` if the handle
         // closes first.
         let rc = unsafe { uv::uv_shutdown(req, stream, Some(Self::uv_on_shutdown)) };
@@ -784,7 +690,7 @@ impl WindowsNamedPipe {
             // SAFETY: libuv didn't take `req`, so the callback never runs.
             unsafe { bun_core::heap::destroy(req) };
             // Close the whole handle so the peer still sees EOF.
-            self.with_writer(|w| w.end());
+            self.writer.end(self);
         }
     }
 
@@ -821,28 +727,14 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "deinit");
         // clear the timer
         self.set_timeout(0);
-        // "The source is already
-        // closed by the time on_close reaches here (that close is what fired the
-        // callback)" is true ONLY for the writer-initiated close path
-        // (`WindowsStreamingWriterParent::on_close`). It is FALSE when we arrive
-        // via `ssl_on_close` (TLS close_notify): the underlying `uv_pipe_t` is
-        // still open and in libuv's handle_queue, so without an explicit close
-        // here the HANDLE survives ≥ one extra event-loop tick (until the
-        // pipe's refcount hits 0 and `WindowsStreamingWriter::Drop`
-        // finally runs). Inline `close_without_reporting()` (private on the
-        // writer) so the source pipe is `uv_close`d NOW; the `get_fd() != INVALID`
-        // guard makes this a no-op on the writer-initiated path where the source
-        // was already taken, and `closed_without_reporting = true` keeps
-        // `on_close_source()` from re-entering `Parent::on_close` (we're already
-        // inside it). `current_payload` may still back an in-flight `uv_write`
-        // (cancelled async by `uv_close`) so it is left to the writer's own Drop.
-        if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
+        // After a TLS close_notify the pipe is still open.
+        if let Some(stream) = self.writer.get_stream() {
             // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
             // always succeeds and is a no-op if not reading.
             unsafe { (*stream).read_stop() };
         }
-        self.writer.with_mut(|w| w.close_without_reporting());
-        self.writer.with_mut(|w| w.outgoing = Default::default());
+        self.writer.close_without_reporting(self);
+        self.writer.discard_queued();
         if let Some(w) = self.wrapper_ref() {
             w.deinit();
         }
@@ -863,9 +755,7 @@ impl Transport for WindowsNamedPipe {
         }
 
         let flags = self.flags.get();
-        flags.disconnected()
-            || flags.contains(Flags::SHUTDOWN_REQUESTED)
-            || self.writer.get().is_done
+        flags.disconnected() || flags.contains(Flags::SHUTDOWN_REQUESTED) || self.writer.is_done()
     }
 
     fn write(&self, data: &[u8]) -> (i32, i32) {
@@ -905,11 +795,11 @@ impl Transport for WindowsNamedPipe {
         if let Some(w) = self.wrapper_ref() {
             let _ = w.shutdown(false);
         }
-        self.with_writer(|w| w.end());
+        self.writer.end(self);
     }
 
     fn pause_stream(&self) -> bool {
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
+        let Some(stream) = self.writer.get_stream() else {
             return self.pipe.get().is_some();
         };
         // SAFETY: `stream` is the live pipe stream.
@@ -918,7 +808,7 @@ impl Transport for WindowsNamedPipe {
     }
 
     fn resume_stream(&self) -> bool {
-        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
+        let Some(stream) = self.writer.get_stream() else {
             return false;
         };
         let this: *mut Self = self.root_ptr();
@@ -934,7 +824,7 @@ impl Transport for WindowsNamedPipe {
         if let Some(wrapper) = self.wrapper_ref() {
             wrapper.shutdown_read();
         } else {
-            if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
+            if let Some(stream) = self.writer.get_stream() {
                 // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
                 // always succeeds and is a no-op if not reading.
                 unsafe { (*stream).read_stop() };
@@ -947,7 +837,7 @@ impl Transport for WindowsNamedPipe {
             w.flush();
         }
         if !self.flags.get().disconnected() {
-            let _ = self.writer.with_mut(|w| w.flush());
+            let _ = self.writer.flush(self);
         }
     }
 
@@ -983,48 +873,70 @@ impl bun_event_loop::Taskable for WindowsNamedPipe {
     }
 }
 
-impl bun_io::pipe_writer::WriterParent for WindowsNamedPipe {
-    #[inline]
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: BACKREF set via `set_parent`. Intrusive refcount bump.
-        unsafe { (*this).ref_() };
-    }
-    #[inline]
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see ref_. The last ref queues the free.
-        unsafe { WindowsNamedPipe::deref(this) };
-    }
-}
+impl WriteHandler for WindowsNamedPipe {
+    fn on_write(&self, amount: usize, status: WriteStatus) {
+        bun_output::scoped_log!(
+            WindowsNamedPipe,
+            "onWrite {} {}",
+            amount,
+            match status {
+                WriteStatus::Pending => "pending",
+                WriteStatus::Drained => "drained",
+                WriteStatus::EndOfFile => "end_of_file",
+            }
+        );
 
-impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
-    #[inline]
-    unsafe fn loop_(this: *mut Self) -> &'static bun_uws::Loop {
-        // SAFETY: BACKREF set via `set_parent`; shared-only read.
-        unsafe { (*this).vm.uws_loop() }
+        match status {
+            WriteStatus::Pending => {}
+            WriteStatus::Drained => {
+                // unref after sending all data
+                self.writer.update_ref(false);
+                self.send_shutdown_if_drained();
+            }
+            WriteStatus::EndOfFile => {
+                // we send FIN so we close after this
+                self.writer.close(self);
+            }
+        }
     }
-}
 
-impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
-    const HAS_ON_WRITABLE: bool = true;
-    #[inline]
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: BACKREF set via `set_parent`; the callbacks take `&self`.
-        unsafe { (*this).on_write(amount, status) }
+    fn on_error(&self, err: bun_sys::Error) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onError");
+        let _keep_alive = self.keep_alive();
+        if self.is_open.get() {
+            match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+                s.handle_error(err.to_js(&self.global_this))
+            });
+        } else {
+            self.fail_connect(SystemErrno::from_raw(err.errno));
+        }
+        self.close();
     }
-    #[inline]
-    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_error(err) }
+
+    fn on_close(&self) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        self.pipe.set(None);
+        if !self.flags.get().is_closed() {
+            self.update_flags(|f| f.set(Flags::IS_CLOSED, true)); // only call onClose once
+            match_socket!(self.socket.take(), |s: NewSocket<SSL>| {
+                NewSocket::on_close(s, self.handle::<SSL>(), 0, None)
+            });
+            self.release_resources();
+            self.self_ref.set(None);
+        }
     }
-    #[inline]
-    unsafe fn on_writable(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_writable() }
+
+    fn on_writable(&self) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
+        // flush pending data
+        self.flush();
+        // call onWritable (will flush on demand)
+        self.dispatch_writable();
     }
-    #[inline]
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { (*this).on_close() }
+
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref
+            .set(value.then(|| self.keep_alive()));
     }
 }
 

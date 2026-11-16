@@ -840,6 +840,7 @@ pub mod windows {
             NTSTATUS::DELETE_PENDING => E::BUSY,
             NTSTATUS::SHARING_VIOLATION => E::BUSY,
             NTSTATUS::OBJECT_NAME_INVALID => E::INVAL,
+            NTSTATUS::NAME_TOO_LONG => E::NAMETOOLONG,
             NTSTATUS::CANNOT_DELETE => E::PERM,
             // Any other error status: ask ntdll for the equivalent Win32 error
             // and run it through the same libuv-derived table Node.js uses.

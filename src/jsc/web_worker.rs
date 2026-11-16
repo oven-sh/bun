@@ -1383,12 +1383,12 @@ fn on_unhandled_rejection(
                 ..Default::default()
             },
         );
-        if let Err(err) = format_result {
-            error_instance = global_object.take_exception(err);
+        if format_result.is_err() {
+            global_object.clear_exception_except_termination();
         }
     });
-    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if !vm.script_allowed() {
+    // Formatting ran script; if it was terminated meanwhile there is no error to dispatch.
+    if !vm.script_allowed() || global_object.has_pending_termination_exception() {
         return;
     }
     jsc::mark_binding();

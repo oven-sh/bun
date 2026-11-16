@@ -2183,6 +2183,9 @@ test.concurrent("the setter of a captured stack adds nothing to an object that t
       const receivers = [new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk(), Object.freeze({}), frozen, error];
       heir.stack = "heir";
       for (const receiver of receivers) set.call(receiver, "set");
+      // A bare call of a captured variable passes the scope that holds it.
+      (() => (set("scope"), () => stack))();
+      let stack;
       Bun.gc(true);
       console.log(JSON.stringify([heir, ...receivers].map(receiver => receiver.stack)));
       `,

@@ -417,6 +417,28 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["wrapped", `require.extensions[".js"] = (module, path) => original(module, path);`],
+    ["wrapped and restored", `require.extensions[".js"] = () => {}; require.extensions[".js"] = original;`],
+  ])("with --isolate, a required .js file is cached once its extension hook was %s", async (_, hook) => {
+    using dir = tempDir("isolate-js-extension-hook", {
+      "x.js": `module.exports = 42;`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        test("cached", () => {
+          const original = require.extensions[".js"];
+          ${hook}
+          expect(require("./x.js")).toBe(42);
+          expect(isolatedModuleCacheSourceType(require.resolve("./x.js"))).toBeString();
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33904
   // The linker rewrites an import that a plugin onResolve answers. When the answer has a
   // namespace, the printer emits "namespace:path", and the cached module record has to

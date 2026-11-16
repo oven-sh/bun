@@ -3919,17 +3919,21 @@ fn transpile_file<const DATA_ONLY: bool>(
     let had_blob = lr.is_blob;
 
     // ── force_loader / require.extensions override ──────────────────────────
+    // What parses as JavaScript prints the same under the JSX loader, which is that of `.js`.
+    let prints_differently = |by_path: Option<Loader>, chosen: Loader| {
+        by_path != Some(chosen) && (by_path, chosen) != (Some(Loader::Jsx), Loader::Js)
+    };
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
         debug_assert!(!is_commonjs_require);
-        importer_chose_loader |= lr.loader != Some(loader_type);
+        importer_chose_loader |= prints_differently(lr.loader, loader_type);
         lr.loader = Some(loader_type);
     } else if is_commonjs_require && jsc_vm.has_mutated_built_in_extensions.get() > 0 {
         use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
         if let Some(entry) = find_longest_registered_extension(jsc_vm, _specifier.slice()) {
             match entry {
                 CustomLoader::Loader(loader) => {
-                    importer_chose_loader |= lr.loader != Some(*loader);
+                    importer_chose_loader |= prints_differently(lr.loader, *loader);
                     lr.loader = Some(*loader);
                 }
                 CustomLoader::Custom(strong) => {

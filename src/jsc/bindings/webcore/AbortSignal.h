@@ -124,7 +124,7 @@ public:
     void throwIfAborted(JSC::JSGlobalObject&);
 
     using AbortSignalSet = WeakListHashSet<AbortSignal, WeakPtrImplWithEventTargetData>;
-    // GC marker threads only iterate: isEmptyIgnoringNullReferences() prunes, which is for the owning thread.
+    // A GC marker thread may iterate, with the world stopped: isEmptyIgnoringNullReferences() prunes, which is for the owning thread.
     const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 

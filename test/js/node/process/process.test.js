@@ -246,6 +246,9 @@ it.concurrent.each(["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FE
       ];
       const before = others.map(other => get.call(other));
       for (const other of others) set.call(other, "set");
+      // A bare call of a captured variable passes the scope that holds it.
+      (() => (set("scope"), () => ${name}))();
+      let ${name};
       Bun.gc(true);
       const after = [...others, process.env].map(other => get.call(other));
       const inherited = [Object.create(process.env), new Proxy(process.env, {})].map(env => env.${name});

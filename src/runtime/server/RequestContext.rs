@@ -709,37 +709,39 @@ where
             // server is a BACKREF — valid while this RequestContext is alive
             let global_this: &JSGlobalObject = server.global_this();
 
-            Output::enable_buffering();
-            let mut writer = Output::error_writer();
+            global_this.as_if_beneath_script(|| {
+                Output::enable_buffering();
+                let mut writer = Output::error_writer();
 
-            if class_name == b"Response" {
-                bun_core::err_generic!(
-                    "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
-                );
-            } else if !value.is_empty() && !global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-                formatter.quote_strings = true;
-                let mut received: Vec<u8> = Vec::new();
-                match formatter.format_value::<false>(value, &mut received) {
-                    Ok(()) => bun_core::err_generic!(
-                        "Expected a Response object, but received '{}'",
-                        bstr::BStr::new(&received),
-                    ),
-                    Err(err) => {
-                        bun_core::err_generic!("Expected a Response object");
-                        inspect_error = Some(global_this.take_error(err));
+                if class_name == b"Response" {
+                    bun_core::err_generic!(
+                        "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
+                    );
+                } else if !value.is_empty() && !global_this.has_exception() {
+                    let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+                    formatter.quote_strings = true;
+                    let mut received: Vec<u8> = Vec::new();
+                    match formatter.format_value::<false>(value, &mut received) {
+                        Ok(()) => bun_core::err_generic!(
+                            "Expected a Response object, but received '{}'",
+                            bstr::BStr::new(&received),
+                        ),
+                        Err(err) => {
+                            bun_core::err_generic!("Expected a Response object");
+                            inspect_error = Some(global_this.take_error(err));
+                        }
                     }
+                    // `formatter` drops here.
+                } else {
+                    bun_core::err_generic!("Expected a Response object");
                 }
-                // `formatter` drops here.
-            } else {
-                bun_core::err_generic!("Expected a Response object");
-            }
 
-            Output::flush();
-            if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(&mut writer, global_this);
-            }
-            Output::flush();
+                Output::flush();
+                if !global_this.has_exception() {
+                    jsc::ConsoleObject::write_trace(&mut writer, global_this);
+                }
+                Output::flush();
+            });
         }
         // The formatter and `write_trace` above re-enter JS (getters, proxy
         // traps, Error.prepareStackTrace), which can synchronously abort or

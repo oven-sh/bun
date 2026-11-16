@@ -375,7 +375,7 @@ static void putPrivateValue(VM& vm, JSObject* object, const Identifier& privateN
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    JSC::JSObject* object = JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()).getObject();
     if (!object)
         return false;
     if (!holdsEnvironment(vm, object, propertyName)) [[unlikely]]
@@ -439,7 +439,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    JSC::JSObject* object = JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()).getObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object)
         return false;
@@ -469,7 +469,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    JSC::JSObject* object = JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()).getObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object)
         return false;

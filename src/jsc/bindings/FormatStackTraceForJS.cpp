@@ -855,7 +855,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* object = JSValue::decode(thisValue).getObject();
+    auto* object = JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()).getObject();
     if (!object)
         return true;
     if (object->inherits<ErrorInstance>() && object->isStructureExtensible()) [[likely]]

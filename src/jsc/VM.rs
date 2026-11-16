@@ -139,7 +139,7 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// A script frame is on this VM's stack (JSC::VM::isEntered — a VMEntryScope is live).
+    /// A VMEntryScope is live (JSC::VM::isEntered): script, or `as_if_beneath_script`, is on the stack.
     pub fn is_entered(&self) -> bool {
         JSC__VM__isEntered(self)
     }

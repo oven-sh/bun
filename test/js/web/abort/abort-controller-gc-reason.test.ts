@@ -1,5 +1,6 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
 
 // https://bugs.webkit.org/show_bug.cgi?id=293319
 // AbortController.signal.reason is lost after garbage collection
@@ -199,6 +200,18 @@ describe("AbortController GC", () => {
     client.abort();
     expect((await aborted.promise).name).toBe("AbortError");
     await response.body!.cancel().catch(() => {});
+  });
+
+  test("an abort listener that holds the controller behind its AbortSignal.any() signal is collected", async () => {
+    const baseline = heapStats().objectTypeCounts.AbortSignal || 0;
+
+    function iteration() {
+      const controller = new AbortController();
+      AbortSignal.any([controller.signal]).addEventListener("abort", () => controller);
+    }
+    for (let i = 0; i < 200; i++) iteration();
+
+    await expectMaxObjectTypeCount(expect, "AbortSignal", baseline + 20);
   });
 
   // collectContinuously is very slow on Windows CI; the code under test is

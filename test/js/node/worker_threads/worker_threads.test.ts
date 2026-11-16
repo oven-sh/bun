@@ -783,6 +783,22 @@ test.concurrent.each([
     `worker.on("message", () => worker.terminate());`,
     ["exit 1"],
   ],
+  [
+    "a throw while an uncaught object is printed",
+    `setImmediate(() => { throw { message: "uncaught", [Bun.inspect.custom]() { throw new Error("from inspect"); } }; });`,
+    "",
+    ["error uncaught", "exit 1"],
+  ],
+  [
+    "a node:vm timeout while a reported error is printed",
+    `try {
+       require("node:vm").runInThisContext("reportError({ [Bun.inspect.custom]() { for (;;); } })", { timeout: 50 });
+     } catch (error) {
+       process.exit(error.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" ? 42 : 43);
+     }`,
+    "",
+    ["exit 42"],
+  ],
   // The GC formats the stack of an Error whose `stack` hasn't been read yet.
   [
     "process.exit() in a 'workerMessage' listener",
@@ -814,6 +830,31 @@ test.concurrent.each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ lines: stdout.trim().split("\n").sort(), stderr }).toEqual({ lines, stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("terminate() while what a Bun.serve handler returned is printed", async () => {
+  const source = `
+    const spin = () => { ${spinUntilTerminated} };
+    const fetch = () => ({ a: { [Bun.inspect.custom]: spin }, b: { [Bun.inspect.custom]: spin } });
+    globalThis.fetch(Bun.serve({ port: 0, fetch }).url);`;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const worker = new (require("node:worker_threads").Worker)(${JSON.stringify(source)}, { eval: true });
+       worker.on("message", () => worker.terminate());
+       worker.on("exit", code => console.log("exit", code));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "exit 1\n",
+    stderr: "error: Expected a Response object\n",
+    exitCode: 0,
+  });
 });
 
 describe("getHeapSnapshot", () => {

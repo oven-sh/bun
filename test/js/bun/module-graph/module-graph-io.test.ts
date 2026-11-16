@@ -317,6 +317,22 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     }
   });
 
+  test("dispose() lets the process exit after the graph's open channels were collected", async () => {
+    const dir = fixture({
+      "channels.mjs": `for (let i = 0; i < 20; i++) new BroadcastChannel("module-graph-collected");`,
+      "main.mjs": `
+        const graph = new Bun.ModuleGraph();
+        await graph.import(import.meta.dir + "/channels.mjs");
+        Bun.gc(true);
+        if (require("bun:jsc").heapStats().objectTypeCounts.BroadcastChannel >= 20) console.log("nothing was collected");
+        graph.dispose();
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: dir, env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
   test("dispose() closes the graph's fs watchers and cancels its AbortSignal.timeout", async () => {
     const dir = fixture({
       "watched.txt": "0",

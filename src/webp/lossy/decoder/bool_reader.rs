@@ -120,9 +120,10 @@ impl<'a> BoolReader<'a> {
         self.spare_bits -= (highest_bit ^ 15) as i32;
     }
 
-    /// Gives `magnitude` a sign, both being equally likely.
+    /// Gives `magnitude` a sign, both being equally likely. Not for the first bit, whose range is too large.
     #[inline(always)]
     pub(super) fn read_sign(&mut self, magnitude: i32) -> i32 {
+        debug_assert!(self.range < 254);
         if self.spare_bits < 0 {
             core::hint::cold_path();
             self.refill();
@@ -135,6 +136,12 @@ impl<'a> BoolReader<'a> {
         self.value <<= 1;
         self.spare_bits -= 1;
         (magnitude ^ mask) - mask
+    }
+
+    /// `read_unsigned(8)` for a loop, and not for the first bit either.
+    #[inline(always)]
+    pub(super) fn read_byte(&mut self) -> u8 {
+        (0..8).fold(0, |value, _| value << 1 | u8::from(self.read_sign(1) < 0))
     }
 
     // These three are out of line: the header has many fields, each of which is read once.

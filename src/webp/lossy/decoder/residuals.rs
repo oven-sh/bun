@@ -65,9 +65,7 @@ impl Probabilities {
             .zip(updates.as_flattened())
         {
             if copy.read_unlikely(update) {
-                *reader = copy;
-                *value = reader.read_unsigned(8);
-                copy = *reader;
+                *value = copy.read_byte();
             }
         }
         *reader = copy;

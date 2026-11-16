@@ -204,22 +204,30 @@ fn maximal_suffix<S: Unit, const FORWARD: bool>(needle: &[S], is_ascending: bool
     [start, period]
 }
 
-/// How far to move if only the right half matches, and how much is known to match then.
-fn after_right_half(is_periodic: bool, len: usize, split: usize, period: usize) -> [usize; 2] {
-    match is_periodic {
-        true => [period, len - period],
-        false => [split.max(len - split) + 1, 0],
-    }
-}
-
 /// The algorithm of Crochemore and Perrin. Returns the distance from where the search starts.
 #[inline(never)]
 fn two_way<S: Unit, const FORWARD: bool>(haystack: &[S], needle: &[S]) -> Option<usize> {
-    let (len, nth) = (needle.len(), nth::<S, FORWARD>);
+    let nth = nth::<S, FORWARD>;
     let [ascending, descending] = [true, false].map(|it| maximal_suffix::<S, FORWARD>(needle, it));
     let [split, period] = ascending.max(descending);
     let is_periodic = (0..split).all(|i| nth(needle, i) == nth(needle, period + i));
-    let [shift, known_after_shift] = after_right_half(is_periodic, len, split, period);
+    by_halves::<S, FORWARD>(haystack, needle, split, is_periodic.then_some(period))
+}
+
+/// Takes linear time even if `needle` has changed since it was split.
+#[inline(always)]
+fn by_halves<S: Unit, const FORWARD: bool>(
+    haystack: &[S],
+    needle: &[S],
+    split: usize,
+    period: Option<usize>,
+) -> Option<usize> {
+    let (len, nth) = (needle.len(), nth::<S, FORWARD>);
+    // How far to move if only the right half matches, and how much is known to match then.
+    let (shift, known_after_shift) = match period {
+        Some(period) if split < period => (period, len - period),
+        _ => (split.max(len - split) + 1, 0),
+    };
     let (mut at, mut known) = (0, 0);
     while let Some(left) = haystack.len().checked_sub(at + len) {
         let window = &haystack[if FORWARD { at } else { left }..][..len];
@@ -233,4 +241,39 @@ fn two_way<S: Unit, const FORWARD: bool>(haystack: &[S], needle: &[S]) -> Option
         }
     }
     None
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+    use core::hint::black_box;
+
+    /// All that have three letters at most.
+    fn texts(len: u32) -> impl Iterator<Item = Vec<u8>> {
+        let text = move |n| (0..len).map(|i| (n / 3u32.pow(i) % 3) as u8).collect();
+        (0..3u32.pow(len)).map(text)
+    }
+
+    #[test]
+    fn two_way_of_short_texts() {
+        let needles: Vec<_> = (1..=5).flat_map(texts).collect();
+        for (text, needle) in texts(8).flat_map(|it| needles.iter().map(move |n| (it.clone(), n))) {
+            let last = text.len() - needle.len();
+            let places = || (0..=last).filter(|&at| text[at..].starts_with(needle));
+            assert_eq!(two_way::<_, true>(&text, needle), places().next());
+            let from_end = places().next_back().map(|at| last - at);
+            assert_eq!(two_way::<_, false>(&text, needle), from_end);
+        }
+    }
+
+    /// Does not end unless the time is linear.
+    #[test]
+    fn long_needle_that_has_changed() {
+        let (text, mut needle) = (b"ab".repeat(1 << 21), b"ab".repeat(1 << 19));
+        needle[0] = b'c';
+        assert_eq!(two_way::<_, true>(&text, &needle), None);
+        for (split, period) in [(needle.len() - 1, 1), (1, 2)] {
+            black_box(by_halves::<_, true>(&text, &needle, split, Some(period)));
+        }
+    }
 }

@@ -64,7 +64,6 @@ workerSelf.addEventListener("message", e => {
   tsd.expectType<MessageEvent>(e);
 });
 tsd.expectType<WorkerLocation>(workerSelf.location);
-tsd.expectType<Navigator>(workerSelf.navigator);
 tsd.expectType<WorkerLocation>(workerSelf.self.location);
 
 // On the main thread

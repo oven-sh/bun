@@ -1602,7 +1602,6 @@ interface WorkerGlobalScopeEventMap {
 
 interface WorkerGlobalScope extends EventTarget {
   readonly location: WorkerLocation;
-  readonly navigator: Navigator;
   readonly self: WorkerGlobalScope & typeof globalThis;
   onerror: ((this: WorkerGlobalScope, ev: ErrorEvent) => any) | null;
   addEventListener<K extends keyof WorkerGlobalScopeEventMap>(

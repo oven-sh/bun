@@ -28,5 +28,7 @@ bun_ptr.workspace = true
 bun_removable_features.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
-bun_which.workspace = true
 bun_zlib.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+bun_which.workspace = true

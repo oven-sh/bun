@@ -548,7 +548,9 @@ fn dispatch_frame(
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
-    let mut fields = session.decoder.decode(&session.orphan_header_block);
+    let mut scratch = Vec::new();
+    let block = &session.orphan_header_block;
+    let mut fields = session.decoder.decode(block, &mut scratch);
     loop {
         match fields.next() {
             Ok(Some(_)) => {}
@@ -580,7 +582,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     // applied once decoding completes.
     let mut malformed = false;
 
-    let mut fields = session.decoder.decode(&stream.header_block);
+    let mut scratch = Vec::new();
+    let mut fields = session.decoder.decode(&stream.header_block, &mut scratch);
     loop {
         let result = match fields.next() {
             Ok(Some(field)) => field,

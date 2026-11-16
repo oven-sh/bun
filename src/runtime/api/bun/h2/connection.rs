@@ -394,7 +394,7 @@ pub(crate) struct Connection {
     /// Local-settings snapshots of sent-but-unACKed SETTINGS frames, in send order. §6.5.3:
     /// ACKs apply to outstanding SETTINGS in order, so each inbound ACK pops the front - the
     /// values the peer actually acknowledged - rather than assuming the latest submission.
-    pub pending_local_settings_acks: std::collections::VecDeque<PendingLocalSettings>,
+    pending_local_settings_acks: std::collections::VecDeque<PendingLocalSettings>,
     invalid_frame_count: u32,
     /// Maximum number of entries accepted in a single inbound SETTINGS frame (node's maxSettings
     /// session option, nghttp2's max_settings; not a SETTINGS parameter). Frames carrying more
@@ -817,6 +817,21 @@ impl Connection {
         }
     }
 
+    pub(crate) fn note_settings_sent(&mut self, sent: PendingLocalSettings) {
+        self.pending_local_settings_acks.push_back(sent);
+        self.allow_pending_header_table_sizes();
+    }
+
+    /// Jetty uses a larger table before it acknowledges it, which Node refuses.
+    fn allow_pending_header_table_sizes(&mut self) {
+        for sent in &self.pending_local_settings_acks {
+            if sent.has_header_table_size {
+                self.decoder
+                    .allow_table_size(sent.settings.header_table_size);
+            }
+        }
+    }
+
     fn handle_settings(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
             if hdr.length != 0 {
@@ -852,6 +867,7 @@ impl Connection {
             if acked.has_header_table_size {
                 self.decoder
                     .set_max_table_size(acked.settings.header_table_size);
+                self.allow_pending_header_table_sizes();
             }
             sink.on_local_settings(&acked.settings);
             return false;
@@ -1323,7 +1339,8 @@ impl Connection {
         let mut asterisk_form = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
-        let mut fields = self.decoder.decode(&self.header_block);
+        let mut scratch = Vec::new();
+        let mut fields = self.decoder.decode(&self.header_block, &mut scratch);
         let fatal = loop {
             match fields.next() {
                 Ok(None) => break false,

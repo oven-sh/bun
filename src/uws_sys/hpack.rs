@@ -17,6 +17,7 @@ struct Hpack {
 struct HpackBuffer {
     bytes: Vec<u8>,
     fields: Vec<Header>,
+    scratch: Vec<u8>,
 }
 
 #[repr(C)]
@@ -69,7 +70,7 @@ impl HpackBuffer {
         self.fields.clear();
         let mut room = self.bytes.as_mut_slice();
         let (mut size, mut count) = (0, 0);
-        let mut fields = decoder.decode(block);
+        let mut fields = decoder.decode(block, &mut self.scratch);
         loop {
             let field = match fields.next() {
                 Ok(Some(field)) => field,
@@ -138,7 +139,7 @@ extern "C" fn Bun__Hpack__setPeerTableSize(hpack: &mut Hpack, size: u32) {
 }
 
 /// # Safety
-/// `block` points to `len` bytes, or `len` is 0.
+/// `block` points to `len` bytes. It may be null if there are none.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Hpack__decode(
     hpack: &mut Hpack,
@@ -161,7 +162,7 @@ unsafe extern "C" fn Bun__Hpack__decode(
 }
 
 /// # Safety
-/// `bytes` points to `len` bytes and `fields` to `count` items, or their number is 0.
+/// `bytes` points to `len` bytes and `fields` to `count` items. Either may be null if there are none.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Hpack__encode(
     hpack: &mut Hpack,

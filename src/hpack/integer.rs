@@ -2,6 +2,8 @@
 
 use crate::{Error, Result};
 
+const _: () = assert!(usize::BITS >= 64);
+
 /// `first` holds the prefix, and `rest` is what follows it.
 #[inline(always)]
 pub(crate) fn read(first: u8, prefix_bits: u32, rest: &mut &[u8]) -> Result<usize> {

@@ -176,7 +176,8 @@ fn field(name: impl AsRef<[u8]>, value: impl AsRef<[u8]>) -> Field {
 }
 
 fn decode(decoder: &mut Decoder, block: &[u8]) -> Result<Vec<Field>, Error> {
-    let (mut fields, mut all) = (decoder.decode(block), vec![]);
+    let (mut scratch, mut all) = (vec![], vec![]);
+    let mut fields = decoder.decode(block, &mut scratch);
     while let Some(next) = fields.next()? {
         assert!(!next.name.is_empty());
         if let Some(position) = usize::from(next.static_index).checked_sub(1) {
@@ -513,7 +514,8 @@ mod decoder {
                 (hex("be"), b"v"),
                 (hex("0f2f 0177"), b"w"),
             ] {
-                let mut fields = decoder.decode(&block);
+                let mut scratch = vec![];
+                let mut fields = decoder.decode(&block, &mut scratch);
                 let next = fields.next().unwrap().unwrap();
                 assert_eq!(
                     (next.name, next.value, usize::from(next.static_index)),
@@ -528,7 +530,8 @@ mod decoder {
     fn literal_names_have_no_static_index() {
         let mut decoder = Decoder::new();
         let block = [hex("40"), raw(b"host"), raw(b"a"), hex("be 7e00")].concat();
-        let mut fields = decoder.decode(&block);
+        let mut scratch = vec![];
+        let mut fields = decoder.decode(&block, &mut scratch);
         while let Some(next) = fields.next().unwrap() {
             assert_eq!((next.name, next.static_index), (&b"host"[..], 0));
         }
@@ -551,6 +554,7 @@ mod decoder {
             ("00 0161 0162 be", "Malformed"),
             ("10 0161 0162 be", "Malformed"),
             ("80", "Malformed"),
+            ("80 0161 0162", "Malformed"),
             ("be", "Malformed"),
             ("40 0161 0162 bf", "Malformed"),
             ("7e 0161", "Malformed"),
@@ -644,6 +648,8 @@ mod decoder {
             ("20 3fe11f 82", "[:method=GET]", 0),
             ("20 40 0163 0164", "[c=d]", 0),
             ("20 3f03 40 0163 0164", "[c=d]", 1),
+            ("3f03 20 3f03 3fe11f", "[]", 0),
+            ("3fe11f 3f03 40 0163 0164", "[c=d]", 1),
             ("3f 80 80 80 80 00", "[]", 0),
             ("3fe21f", "Malformed", 1),
             ("3fe21f 20", "Malformed", 1),
@@ -653,6 +659,7 @@ mod decoder {
             ("82 20", "Malformed", 1),
             ("82 20 82", "Malformed", 1),
             ("00 0163 0164 3fe11f 82", "Malformed", 1),
+            ("be 7e 0163 3f00 0164", "Malformed", 2),
         ] {
             let mut decoder = Decoder::new();
             assert_eq!(show(&mut decoder, "40 0161 0162"), "[a=b]");
@@ -702,6 +709,7 @@ mod decoder {
 
     #[test]
     fn longest_field() {
+        assert_eq!(MAX_FIELD_LEN, 65_536);
         for string in [raw, literal] {
             for (first, name) in [(0x00, &b"a"[..]), (0x40, &[b'n'; 40_000])] {
                 let block = |len: usize| {
@@ -764,6 +772,81 @@ mod decoder {
         assert_eq!(decode(&mut decoder, &block), Ok(expected));
         assert_eq!(dynamic_table(&mut decoder), table);
         assert_eq!(show(&mut decoder, "7f01 0166 be"), "[a=f, a=f]");
+    }
+
+    #[test]
+    fn allowed_size_takes_an_update() {
+        let mut decoder = Decoder::new();
+        assert_eq!(show(&mut decoder, "20"), "[]");
+        decoder.allow_table_size(8192);
+        decoder.allow_table_size(100);
+        assert_eq!(show(&mut decoder, "40 0161 0162 be"), "Malformed");
+        assert_eq!(show(&mut decoder, "3fe23f"), "Malformed");
+        assert_eq!(show(&mut decoder, "3fe13f 40 0161 0162 be"), "[a=b, a=b]");
+    }
+
+    #[test]
+    fn scratch_is_for_compressed_strings() {
+        let compressed = |len| with_huffman_prefix(&vec![0; len]);
+        for (block, len) in [
+            ([hex("40"), raw(b"a"), raw(&[0; 1000])].concat(), 0),
+            ([hex("41"), raw(&[0; 1000])].concat(), 0),
+            ([hex("01"), compressed(0)].concat(), 256),
+            ([hex("01"), compressed(155)].concat(), 256),
+            ([hex("01"), compressed(160)].concat(), 264),
+            ([hex("00"), compressed(160), raw(b"")].concat(), 264),
+            ([hex("00"), compressed(160), compressed(5)].concat(), 280),
+            ([hex("01"), compressed(200_000)].concat(), 65_544),
+        ] {
+            let mut scratch = vec![];
+            let _ = Decoder::new().decode(&block, &mut scratch).next();
+            assert_eq!(scratch.len(), len);
+
+            let mut scratch = vec![0xff; 65_544];
+            let before = scratch.as_ptr();
+            let _ = Decoder::new().decode(&block, &mut scratch).next();
+            assert_eq!(scratch.as_ptr(), before);
+        }
+
+        let mut scratch = vec![];
+        for (len, expected) in [
+            (200, 328),
+            (201, 656),
+            (900, 1448),
+            (30_000, 48_008),
+            (30_001, 65_544),
+        ] {
+            let block = [hex("01"), compressed(len)].concat();
+            let _ = Decoder::new().decode(&block, &mut scratch).next();
+            assert_eq!(scratch.len(), expected);
+        }
+    }
+
+    #[test]
+    fn names_of_entries_on_their_way_out() {
+        let mut random = Random(2);
+        for (size, max_len) in [
+            (200, 60),
+            (1000, 200),
+            (4096, 300),
+            (4096, 1500),
+            (9000, 4000),
+        ] {
+            let (mut decoder, mut model) = (decoder_with_table_size(size), Model::new());
+            model.set_max_table_size(size as usize);
+            for _ in 0..1500 {
+                let name = match (model.table.len(), random.below(4)) {
+                    (0, _) | (_, 0) => {
+                        [hex("40"), raw(&[&b"x"[..], &random.text(max_len)].concat())].concat()
+                    }
+                    (len, 1) => integer(0x40, 6, 62 + random.below(len)),
+                    (len, _) => integer(0x40, 6, 61 + len),
+                };
+                let block = [name, raw(&random.text(max_len))].concat();
+                assert_eq!(decode(&mut decoder, &block).ok(), model.decode(&block));
+                assert_eq!(dynamic_table(&mut decoder), model.table);
+            }
+        }
     }
 
     fn random_string(random: &mut Random) -> Vec<u8> {
@@ -1066,6 +1149,13 @@ mod encoder {
         assert_eq!(encode(&mut encoder, &first, "~"), hex("bf"));
         assert_eq!(encode(&mut encoder, &first, "~~"), hex("7f00 027e7e"));
         assert_eq!(encode(&mut encoder, &second, "~~"), hex("7f00 027e7e"));
+
+        let value = "2361700";
+        let hash = |index| Wyhash::hash(index, value.as_bytes()) as u32;
+        assert_eq!(hash(38), hash(47));
+        let mut encoder = Encoder::new();
+        assert_eq!(encode(&mut encoder, "host", value)[0], 0x40 | 38);
+        assert_eq!(encode(&mut encoder, "max-forwards", value)[0], 0x40 | 47);
     }
 
     #[test]
@@ -1093,6 +1183,17 @@ mod encoder {
     }
 
     #[test]
+    fn short_codes_make_up_for_long_ones() {
+        for symbol in [b'$', b'{', b'\\', 0xff, b'\n'] {
+            for (long, short) in (1..20).flat_map(|long| (0..160).map(move |short| (long, short))) {
+                let text = [vec![symbol; long], vec![b'0'; short]].concat();
+                let block = encode_as(&mut Encoder::new(), "via", &text, Indexing::Never);
+                assert_eq!(block, [hex("1f2d"), literal(&text)].concat());
+            }
+        }
+    }
+
+    #[test]
     fn very_long_string() {
         let text = vec![b'~'; 3 << 20];
         let expected = [hex("00"), raw(&text), raw(&text)].concat();
@@ -1114,6 +1215,7 @@ mod encoder {
             (&[200, 100], "3f45"),
             (&[100, 200], "3f45 3fa901"),
             (&[200, 100, 300, 200], "3f45 3fa901"),
+            (&[0, 10], "20 2a"),
             (&[0, 4096], "20 3fe11f"),
             (&[0, 65_536], "20 3fe11f"),
         ] {
@@ -1201,6 +1303,30 @@ mod encoder {
         }
     }
 
+    #[test]
+    fn finds_entries_while_their_numbers_wrap() {
+        let mut encoder = Encoder::new();
+        for number in 0..70_000 {
+            encode(&mut encoder, "age", number.to_string());
+            assert_eq!(encode(&mut encoder, "age", number.to_string()), hex("be"));
+        }
+    }
+
+    #[test]
+    fn link_that_has_come_to_lead_to_a_newer_entry_ends_the_search() {
+        let mut encoder = Encoder::new();
+        encode(&mut encoder, "x-a", "0");
+        for number in 0..65_534 {
+            encode(&mut encoder, "age", number.to_string());
+        }
+        encode(&mut encoder, "x-a", "1");
+        encode(&mut encoder, "x-a", "2");
+        for number in 0..1000 {
+            let block = encode_as(&mut encoder, format!("y-{number}"), "", Indexing::Never);
+            assert_eq!(block[0], 0x10);
+        }
+    }
+
     /// Whether a new field goes into the table.
     fn indexes(encoder: &mut Encoder, value: impl std::fmt::Display) -> bool {
         empty_block(encoder);
@@ -1220,12 +1346,12 @@ mod encoder {
     }
 
     #[test]
-    fn history_starts_empty() {
+    fn history_length_follows_the_table_size() {
         for (size, len) in [(4096, 42), (4095, 42), (1024, 10), (192, 2), (96, 1)] {
             let mut encoder = with_full_history();
-            encoder.set_max_table_size(0);
+            encoder.set_max_table_size(2048);
             encoder.set_max_table_size(size);
-            let count = (0..).take_while(|number| indexes(&mut encoder, number));
+            let count = (0..100).take_while(|number| indexes(&mut encoder, number));
             assert_eq!(count.count(), len - 1);
         }
     }
@@ -1264,6 +1390,29 @@ mod encoder {
             assert_eq!(encode(&mut encoder, "age", "a"), hex("be"));
         }
         assert!(!indexes(&mut encoder, "b"));
+    }
+
+    #[test]
+    fn history_remembers_indexed_fields() {
+        let mut encoder = with_full_history();
+        assert!(!indexes(&mut encoder, "a"));
+        assert!(indexes(&mut encoder, "a"));
+        for _ in 0..42 {
+            encode(&mut encoder, ":status", "200");
+        }
+        assert_eq!(encode(&mut encoder, "age", "a"), hex("be"));
+        let long = "b".repeat(4050);
+        assert!(!indexes(&mut encoder, &long));
+        assert!(indexes(&mut encoder, &long));
+        assert!(indexes(&mut encoder, "a"));
+    }
+
+    #[test]
+    fn history_tells_names_apart() {
+        let mut encoder = with_full_history();
+        for name in ["x-a", "x-b", "via", "vary", ":authority", ":method"] {
+            assert!(encode(&mut encoder, name, "v")[0] < 0x10, "{name}");
+        }
     }
 
     #[test]

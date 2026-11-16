@@ -2640,6 +2640,51 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test.each([
+    ["an open", 3],
+    ["a finished", 1],
+  ])("a header block that does not decode on %s stream ends the connection", async (_, badId) => {
+    await withRawH2Server(
+      (conn, id) => {
+        if (id === 3) conn.headers(badId, Buffer.from([0x80]), { endStream: true });
+        else conn.headers(id, hpackStatus(204), { endStream: true });
+      },
+      async (url, state) => {
+        await using proc = await spawnFetch(`
+          for (let i = 0; i < 3; i++)
+            console.log(await fetch("${url}", { tls: { rejectUnauthorized: false } }).then(r => r.status, e => e.code));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, connections: state.connections, exitCode }).toEqual({
+          stdout: "204\nHTTP2CompressionError\n204\n",
+          stderr: "",
+          connections: 2,
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  test("authorization and cookie are never-indexed literals", async () => {
+    await withRawH2Server(
+      (conn, id) => conn.headers(id, hpackStatus(204), { endStream: true }),
+      async (url, state) => {
+        const blocks: string[] = [];
+        state.onRequest = block => blocks.push(block.toString("hex"));
+        await using proc = await spawnFetch(`
+          const headers = { authorization: "~~", cookie: "~~~" };
+          for (let i = 0; i < 2; i++) console.log((await fetch("${url}", { headers, tls: { rejectUnauthorized: false } })).status);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "204\n204\n", stderr: "", exitCode: 0 });
+        expect(blocks.map(block => [block.includes("1f08027e7e"), block.includes("1f11037e7e7e")])).toEqual([
+          [true, true],
+          [true, true],
+        ]);
+      },
+    );
+  });
+
   test("a request header may take 64 KiB with its name", async () => {
     await withRawH2Server(
       (conn, id) => conn.headers(id, hpackStatus(204), { endStream: true }),

@@ -1293,7 +1293,8 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
     [0, false, 4097, "GOAWAY 9"],
     [0, true, 0, "response"],
     [0, true, 1, "GOAWAY 9"],
-    [8192, false, 4097, "GOAWAY 9"],
+    [8192, false, 8192, "response"],
+    [8192, false, 8193, "GOAWAY 9"],
     [8192, true, 8192, "response"],
     [8192, true, 8193, "GOAWAY 9"],
   ] as const)(
@@ -1322,6 +1323,43 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
       }
     },
   );
+
+  // What the peer sends with none, one and both of them acknowledged.
+  test.each([
+    [[0, 8192], ["", update[8192] + enters, indexed], "response response response"],
+    [[0, 8192], [enters, indexed], "response GOAWAY 9"],
+    [[8192, 0], [update[8192] + enters, indexed, update[0]], "response response response"],
+    [[8192, 0], [update[8192] + enters, indexed, update[1]], "response response GOAWAY 9"],
+    [[8192, 0], [update[8192] + enters, indexed, indexed], "response response GOAWAY 9"],
+    [[100, 8192], [update[0], enters + indexed], "response response"],
+    [[100, 8192], [update[0] + enters + indexed], "GOAWAY 9"],
+  ] as const)("ours is %j, one right after the other (%#)", async (ours, blocks, expected) => {
+    using server = await listen({}, stream => {
+      if (stream.id === 1) for (const headerTableSize of ours) stream.session!.settings({ headerTableSize });
+      stream.respond({}, { endStream: true });
+    });
+    const c = await RawH2.connect(server.port);
+    const request = async (id: number, hex: string) => {
+      const [, sizeUpdate, field] = hex.match(/^(20|21|3fe13f|)(.*)$/)!.map(part => Buffer.from(part, "hex"));
+      c.sendFrame(FrameType.HEADERS, END, id, Buffer.concat([sizeUpdate, requestHeaderBlock("GET"), field]));
+      const answer = await c.waitFor(f => isBlock(id)(f) || f.type === FrameType.GOAWAY);
+      return isBlock(id)(answer) ? "response" : `GOAWAY ${goawayErrorCode(answer)}`;
+    };
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      expect(await request(1, "")).toBe("response");
+      const answers: string[] = [];
+      for (const block of blocks) {
+        answers.push(await request(3 + 2 * answers.length, block));
+        c.sendSettingsAck();
+      }
+      expect(answers.join(" ")).toBe(expected);
+    } finally {
+      c.destroy();
+    }
+  });
 
   test("ours is acknowledged from within the write that sends it", async () => {
     const server = http2.createServer({ settings: { headerTableSize: 0 } });
@@ -1361,8 +1399,19 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
     }
   });
 
-  test("ours is changed from the transport of another session while it is being changed", async () => {
-    using server = await listen({}, stream => stream.respond({ "x-a": "b" }, { endStream: true }));
+  async function withTwoClients(
+    run: (clients: {
+      client: http2.ClientHttp2Session;
+      other: http2.ClientHttp2Session;
+      onOtherWrite: (once: () => void) => void;
+      change: (settings: http2.Settings) => Promise<void>;
+      get: () => Promise<http2.IncomingHttpHeaders>;
+    }) => Promise<void>,
+  ) {
+    using server = await listen({}, stream => {
+      const { headerTableSize, initialWindowSize } = stream.session!.remoteSettings;
+      stream.respond({ "x-sizes": `${headerTableSize} ${initialWindowSize}` }, { endStream: true });
+    });
     let onWrite: (() => void) | undefined;
     const transport = new Duplex({
       read() {},
@@ -1374,21 +1423,83 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
     });
     const client = http2.connect(`http://127.0.0.1:${server.port}`);
     const other = http2.connect("http://localhost", { createConnection: () => transport });
-    const get = () => once(client.request().resume(), "response").then(([headers]) => headers["x-a"]);
-    const change = (settings: http2.Settings) =>
-      new Promise<void>((resolve, reject) => client.settings(settings, error => (error ? reject(error) : resolve())));
+    const get = () => once(client.request().resume(), "response").then(([headers]) => headers);
     try {
-      expect(await get()).toBe("b");
+      expect((await get())["x-sizes"]).toBe("4096 65535");
+      await run({
+        client,
+        other,
+        onOtherWrite: once => (onWrite = once),
+        change: settings =>
+          new Promise((resolve, reject) => client.settings(settings, error => (error ? reject(error) : resolve()))),
+        get,
+      });
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  }
+
+  test("ours is changed from the transport of another session while it is being changed", () =>
+    withTwoClients(async ({ client, other, onOtherWrite, change, get }) => {
       const changes: Promise<void>[] = [];
-      onWrite = () => changes.push(change({ headerTableSize: 0 }));
+      onOtherWrite(() => changes.push(change({ headerTableSize: 0, initialWindowSize: 70000 })));
       other.ping(() => {});
       expect(changes.length).toBe(0);
-      changes.push(change({ headerTableSize: 4096 }));
+      changes.push(change({ headerTableSize: 2048 }));
       expect(changes.length).toBe(2);
       await Promise.all(changes);
-      expect(await get()).toBe("b");
-      await change({ maxConcurrentStreams: 10 });
-      expect(await get()).toBe("b");
+      for (const _ of ["right away", "after an unrelated change"]) {
+        expect(client.localSettings).toMatchObject({ headerTableSize: 2048, initialWindowSize: 70000 });
+        expect((await get())["x-sizes"]).toBe("2048 70000");
+        await change({ maxConcurrentStreams: 10 });
+      }
+    }));
+
+  test("ours is changed from the transport of another session that a getter of the settings writes to", () =>
+    withTwoClients(async ({ other, onOtherWrite, change, get }) => {
+      const changes: Promise<void>[] = [];
+      const customSettings = {
+        get 100() {
+          onOtherWrite(() => changes.push(change({ headerTableSize: 0 })));
+          other.ping(() => {});
+          return 1;
+        },
+      };
+      changes.push(change({ headerTableSize: 2048, customSettings }));
+      // Once after the values are validated, and once after they are read.
+      expect(changes.length).toBe(3);
+      await Promise.all(changes);
+      for (const _ of ["right away", "after an unrelated change", "with the table in use"]) {
+        expect((await get())["x-sizes"]).toBe("2048 65535");
+        await change({ maxConcurrentStreams: 10 });
+      }
+    }));
+
+  test("a client is destroyed from the transport of another session while it reads one", async () => {
+    let onWrite: (() => void) | undefined;
+    const transport = () =>
+      new Duplex({
+        read() {},
+        write(_, __, done) {
+          onWrite?.();
+          onWrite = undefined;
+          done();
+        },
+      });
+    const toClient = transport();
+    const client = http2.connect("http://localhost", { createConnection: () => toClient });
+    const other = http2.connect("http://localhost", { createConnection: transport });
+    try {
+      toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0));
+      await once(client, "remoteSettings");
+      // Out of that read, so that the next push is read at once.
+      await new Promise(setImmediate);
+      onWrite = () => client.destroy();
+      other.ping(() => {});
+      expect(client.destroyed).toBe(false);
+      toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSize(0)));
+      expect(client.destroyed).toBe(true);
     } finally {
       client.destroy();
       other.destroy();
@@ -1419,9 +1530,37 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
 });
 
 test.each([
+  ["respond", 0],
+  ["pushStream", 0],
+  ["sendTrailers", 1],
+])("%s() sends nothing once a header value has destroyed the session", async (method, blocks) => {
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const headers = { "x-a": { toString: () => (stream.session!.destroy(), "b") } as unknown as string };
+    if (method === "respond") return stream.respond(headers);
+    if (method === "pushStream") return stream.pushStream({ ":path": "/", ...headers }, () => {});
+    stream.respond({}, { waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers(headers)).end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+  try {
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.HEADERS, 0x4 | 0x1, 1, requestHeaderBlock("GET"));
+    await c.waitClosed();
+    const sent = c.frames.filter(f => f.type === FrameType.HEADERS || f.type === FrameType.PUSH_PROMISE);
+    expect(sent.length).toBe(blocks);
+  } finally {
+    c.destroy();
+    server.close();
+  }
+});
+
+test.each([
   [-1, "ERR_HTTP2_STREAM_ERROR"],
   [0, 200],
-])("maxSendHeaderBlockLength applies to the block before compression, as in Node (%d)", async (spare, expected) => {
+])("maxSendHeaderBlockLength is measured as in Node (%d)", async (spare, expected) => {
   const headers = { ":method": "GET", ":path": "/", ":scheme": "http", ":authority": "a", "x-a": "b" };
   const estimate = Object.entries(headers).reduce((sum, [name, value]) => sum + 12 + name.length + value.length, 17);
   const client = http2.connect(`http://127.0.0.1:${port}`, { maxSendHeaderBlockLength: estimate + spare });

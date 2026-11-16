@@ -1,6 +1,6 @@
 use bun_wyhash::Wyhash;
 
-use crate::dynamic_table::{DynamicTable, Entry, entry_size};
+use crate::dynamic_table::{self, DynamicTable, Entry, entry_size};
 use crate::{DEFAULT_TABLE_SIZE, equal, huffman, integer, static_table, wrapped, wrapped_mut};
 
 /// The peer may allow more.
@@ -32,8 +32,8 @@ pub struct Encoder {
     /// Without the names of the static table.
     newest_by_name: [u16; 32],
     /// Of those that the peer has asked for since the last block.
-    smallest_size: Option<usize>,
-    history: Option<History>,
+    smallest_size: Option<u32>,
+    history: Option<Box<History>>,
 }
 
 /// A header block in the making. The peer has to get all of them, in order.
@@ -58,7 +58,7 @@ impl Encoder {
 
     /// After the first few fields, indexes only those that it has recently seen.
     pub fn with_history() -> Self {
-        let history = Some(History::new(MAX_TABLE_SIZE));
+        let history = Some(Box::new(History::new(MAX_TABLE_SIZE)));
         Self {
             history,
             ..Self::new()
@@ -67,20 +67,22 @@ impl Encoder {
 
     /// For when the peer sends a `SETTINGS_HEADER_TABLE_SIZE`.
     pub fn set_max_table_size(&mut self, max_table_size: u32) {
+        let smallest = self.smallest_size.unwrap_or(MAX_TABLE_SIZE as u32);
+        self.smallest_size = Some(smallest.min(max_table_size));
         let size = MAX_TABLE_SIZE.min(max_table_size as usize);
         if let Some(history) = &mut self.history
             && size != self.table.max_size()
         {
-            *history = History::new(size);
+            **history = History::new(size);
         }
         self.table.set_max_size(size);
-        self.smallest_size = Some(size.min(self.smallest_size.unwrap_or(size)));
     }
 
     /// Starts a header block, which is appended to `out`.
     #[inline]
     pub fn block<'a>(&'a mut self, out: &'a mut Vec<u8>) -> Block<'a> {
         if let Some(smallest) = self.smallest_size.take() {
+            let smallest = smallest as usize;
             integer::write(0x20, 5, smallest, |byte| out.push(byte));
             if smallest < self.table.max_size() {
                 integer::write(0x20, 5, self.table.max_size(), |byte| out.push(byte));
@@ -119,7 +121,8 @@ impl Encoder {
             |entry| {
                 (entry.links.field_hash, entry.place.static_index) == (hash, name.static_index)
                     && equal(self.table.value(entry.place), value)
-                    && (name.static_index != 0 || equal(self.table.name(entry.place), name.bytes))
+                    && (name.static_index != 0
+                        || equal(self.table.name(entry.place.name()), name.bytes))
             },
         )
     }
@@ -134,40 +137,32 @@ impl Encoder {
             |links| links.older_by_name,
             |entry| {
                 entry.links.name_hash == name.hash
-                    && equal(self.table.name(entry.place), name.bytes)
+                    && equal(self.table.name(entry.place.name()), name.bytes)
             },
         )
     }
 
     #[inline(always)]
     fn insert(&mut self, name: &Name<'_>, value: &[u8], field_hash: u32) {
-        let stored_name = name.stored();
-        self.table.make_room(stored_name.len() + value.len());
-        let (for_name, rest) = self.table.room().split_at_mut(stored_name.len());
-        for_name.copy_from_slice(stored_name);
-        rest.split_at_mut(value.len()).0.copy_from_slice(value);
-
         let number = self.next_number;
         self.next_number = number.wrapping_add(1);
         let newest = wrapped_mut(&mut self.newest_by_field, field_hash as usize);
         let older_by_field = core::mem::replace(newest, number);
-        let older_by_name = match name.static_index {
-            0 => core::mem::replace(
-                wrapped_mut(&mut self.newest_by_name, name.hash as usize),
-                number,
-            ),
-            _ => number,
+        let (table_name, older_by_name) = match name.static_index {
+            0 => {
+                let newest = wrapped_mut(&mut self.newest_by_name, name.hash as usize);
+                let older = core::mem::replace(newest, number);
+                (dynamic_table::Name::New(name.bytes), older)
+            }
+            index => (dynamic_table::Name::Static(index), number),
         };
-        let place = self
-            .table
-            .place_in_room(name.static_index, stored_name.len(), value.len());
         let links = Links {
             field_hash,
             name_hash: name.hash,
             older_by_field,
             older_by_name,
         };
-        self.table.insert(place, links);
+        self.table.insert(table_name, value, links);
     }
 }
 
@@ -176,15 +171,6 @@ struct Name<'a> {
     /// Of the first entry with this name, or 0.
     static_index: u8,
     hash: u32,
-}
-
-impl<'a> Name<'a> {
-    fn stored(&self) -> &'a [u8] {
-        match self.static_index {
-            0 => self.bytes,
-            _ => &[],
-        }
-    }
 }
 
 impl Block<'_> {
@@ -279,7 +265,7 @@ const fn history_len(table_size: usize) -> usize {
 
 /// The hashes of the latest fields.
 struct History {
-    hashes: [u32; history_len(MAX_TABLE_SIZE).next_power_of_two()],
+    hashes: [u32; history_len(MAX_TABLE_SIZE)],
     len: usize,
     next: usize,
     is_full: bool,
@@ -296,8 +282,9 @@ impl History {
     }
 
     #[inline(always)]
+    #[expect(clippy::indexing_slicing, reason = "`next` is 0 or less than `len`")]
     fn add(&mut self, hash: u32) {
-        *wrapped_mut(&mut self.hashes, self.next) = hash;
+        self.hashes[self.next] = hash;
         self.next += 1;
         if self.next >= self.len {
             self.next = 0;
@@ -308,7 +295,7 @@ impl History {
     /// Returns whether to index the field.
     #[inline(always)]
     fn add_and_judge(&mut self, hash: u32) -> bool {
-        let hashes = self.hashes.iter().take(history_len(MAX_TABLE_SIZE));
+        let hashes = self.hashes.iter();
         let is_repeated = hashes.fold(false, |found, &other| found | (other == hash));
         self.add(hash);
         is_repeated || !self.is_full

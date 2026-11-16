@@ -1701,7 +1701,7 @@ fn deflate_bound(fields: &HeaderFields) -> usize {
 }
 
 impl H2FrameParser {
-    /// To be written before JS runs again: the peer has to get all blocks, in order. `None` once detached.
+    /// The caller writes the result right away, see [`bun_hpack::Block`]. `None` once detached.
     fn encode_header_block(&self, fields: &HeaderFields) -> Option<Vec<u8>> {
         // May run JS.
         self.cork();
@@ -3210,7 +3210,7 @@ impl H2FrameParser {
         // Register SETTINGS submissions the legacy encoder sent since the last batch, so the
         // engine attributes each inbound ACK to the right submission (§6.5.3).
         self.pending_settings_window_submissions
-            .with_taken(|v| engine.pending_local_settings_acks.extend(v.drain(..)));
+            .with_taken(|v| v.drain(..).for_each(|sent| engine.note_settings_sent(sent)));
         engine.receive(self, bytes)
     }
 
@@ -4118,6 +4118,8 @@ impl H2FrameParser {
     pub(crate) fn settings(&self, cx: &mut JsScope<'_>, settings: JsLocal<'_>) -> JsResult<bool> {
         let global_object = cx.global();
         let settings = settings.to_js();
+        // May run JS, whose settings these build on.
+        self.cork();
         self.load_settings_from_js_value(global_object, settings)?;
 
         Ok(self.set_settings(self.local_settings.get()))
@@ -5118,9 +5120,7 @@ impl H2FrameParser {
                 if add_outbound_field(&mut fields, validated_name, value, never_index) {
                     return Ok(true);
                 }
-                // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
-                // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
-                // 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
+                // What Node surfaces for such a field (test-http2-exceeds-server-trailer-size.js).
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 self.dispatch_with_2_extra(

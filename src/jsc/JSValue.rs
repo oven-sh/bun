@@ -541,52 +541,27 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
-    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
-    /// allocation: OOM, or a termination request landing in it.
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; slice ptr/len describe a valid range whose
-        // ownership is transferred to JSC (freed via the deallocator).
+    /// A Node `Buffer` that owns `bytes`. Fails like any JS allocation: OOM, or a termination.
+    pub fn create_buffer(global: &JSGlobalObject, bytes: Vec<u8>) -> JsResult<JSValue> {
+        let is_allocated = bytes.capacity() > 0;
+        let bytes = bytes.leak();
+        // SAFETY: a block of the default allocator, which the deallocator frees, or nothing at all.
         host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
-                slice.as_mut_ptr(),
-                slice.len(),
+                bytes.as_mut_ptr(),
+                bytes.len(),
                 core::ptr::null_mut(),
-                if slice.is_empty() {
-                    None
-                } else {
+                if is_allocated {
                     Some(MarkedArrayBuffer_deallocator)
+                } else {
+                    None
                 },
             )
         })
     }
-    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
-    /// `Buffer` without copying. Ownership transfers to JSC; freed via
-    /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
-    /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
     pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
-        let len = bytes.len();
-        // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
-        // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
-        // `Box<[u8]>` has no backing allocation, so the `None` arm leaks
-        // nothing.
-        let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-        // SAFETY: `global` is live; `ptr`/`len` describe the just-released
-        // mimalloc allocation whose ownership is transferred to JSC.
-        host_fn::from_js_host_call(global, || unsafe {
-            JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                global,
-                ptr,
-                len,
-                core::ptr::null_mut(),
-                if len == 0 {
-                    None
-                } else {
-                    Some(MarkedArrayBuffer_deallocator)
-                },
-            )
-        })
+        Self::create_buffer(global, bytes.into_vec())
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`

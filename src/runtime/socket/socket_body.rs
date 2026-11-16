@@ -477,23 +477,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// The wrapper takes over `this`.
     pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        // The codegen wrappers are monomorphic in `TCPSocket`/`TLSSocket`, hence the casts.
         let ptr = this.into_raw();
-        let value = if SSL {
-            js_TLSSocket::to_js(ptr.cast(), global)
-        } else {
-            js_TCPSocket::to_js(ptr.cast(), global)
-        };
-        debug_assert!(
-            Some(ptr.cast::<c_void>())
-                == if SSL {
-                    js_TLSSocket::from_js(&value).map(|p| p.as_ptr().cast())
-                } else {
-                    js_TCPSocket::from_js(&value).map(|p| p.as_ptr().cast())
-                },
-            "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
-        );
-        value
+        // SAFETY: `SSL` tells which of the two types `Self` is, so this is the `RefPtr` given up above.
+        unsafe {
+            if SSL {
+                js_TLSSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+            } else {
+                js_TCPSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+            }
+        }
     }
     pub(crate) fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         jsc::mark_binding!();

@@ -207,9 +207,9 @@ impl TextEncoderStreamEncoder {
 // `runNativeArm` (C++) defers a release that user JS triggers during a call until the call has returned.
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder
+pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> Box<TextEncoderStreamEncoder>
 {
-    Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
+    Box::default()
 }
 
 #[unsafe(no_mangle)]

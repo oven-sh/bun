@@ -2201,7 +2201,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
     thunks += rustThunk(
       classSymbolName(type, "construct"),
       [...(returnsPointer ? [] : ["structure: *mut core::ffi::c_void"]), ...rustExternParameters(signature, scope)],
-      returnsPointer ? "*mut core::ffi::c_void" : "JSValue",
+      returnsPointer ? `Option<bun_ptr::RefPtr<${rustPath}>>` : "JSValue",
       `${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws)};
 ${
   returnsPointer
@@ -2301,7 +2301,7 @@ unsafe impl bindgen::JsCreateWithStructure for ${rustPath} {
         // SAFETY: ${refCounted ? "the object takes over the ref." : "forwarded."}
         unsafe { ${
           refCounted
-            ? `bindgen::JsWrapper::from_extern(${symbolName(type, "createWithStructure")}(heap.global().as_mut_ptr(), structure, wrapped.into_raw().cast()), heap)`
+            ? `bindgen::JsWrapper::from_extern(${symbolName(type, "createWithStructure")}(heap.global().as_mut_ptr(), structure, wrapped), heap)`
             : "bindgen::JsWrapper::create_with_structure(heap, structure, wrapped)"
         } }
     }
@@ -2352,39 +2352,20 @@ pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${ru
 function rustForRefCounted(type: ClassType): string {
   const { name, rustPath } = type;
   return `
+#[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, wrapped: *mut core::ffi::c_void) -> JSValue;${
+    safe fn ${symbolName(type, "create")}(global: &JSGlobalObject, wrapped: bun_ptr::RefPtr<${rustPath}>) -> JSValue;${
       type.passStructure
         ? `
-    fn ${symbolName(type, "createWithStructure")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void, wrapped: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;`
+    fn ${symbolName(type, "createWithStructure")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void, wrapped: bun_ptr::RefPtr<${rustPath}>) -> core::ptr::NonNull<core::ffi::c_void>;`
         : ""
     }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: *mut ${rustPath}) {
-    // SAFETY: the sweeper calls this once, with the pointer the object holds a ref on.
-    unsafe { bun_jsc::host_fn::host_fn_finalize_ref_counted(wrapped, ${type.finalize ? `<${rustPath}>::finalize` : "|_| {}"}) }
+pub extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: bun_ptr::RefPtr<${rustPath}>) {
+    ${type.finalize ? `<${rustPath}>::finalize(&wrapped);\n    ` : ""}drop(wrapped);
 }
-${
-  type.overridesToJS
-    ? ""
-    : `impl ${rustPath} {
-    /// A new JS object that owns the caller's ref on \`ptr\`.
-    ///
-    /// # Safety
-    /// The caller owns a ref on \`ptr\`.
-    #[inline]
-    pub unsafe fn to_js_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-        js_${name}::to_js(ptr, global)
-    }
-    /// As [\`to_js_ptr\`](Self::to_js_ptr), for a \`NonNull\` whose ref the caller owns.
-    #[inline]
-    pub fn to_js_nonnull(ptr: core::ptr::NonNull<Self>, global: &JSGlobalObject) -> JSValue {
-        js_${name}::to_js(ptr.as_ptr(), global)
-    }
-}
-${rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self).into_raw(), global)`)}`
-}
+${type.overridesToJS ? "" : rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self), global)`)}
 `;
 }
 
@@ -2463,11 +2444,17 @@ ${
       : ""
   }${
     type.refCounted
-      ? `    /// A new JS object that owns the caller's ref on \`this\`.
+      ? `    /// A new JS object, which owns \`this\`.
     #[inline]
-    pub fn to_js(this: *mut ${rustPath}, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: the ref becomes the object's.
-        unsafe { ${symbolName(type, "create")}(global.as_mut_ptr(), this.cast()) }
+    pub fn to_js(this: bun_ptr::RefPtr<${rustPath}>, global: &JSGlobalObject) -> JSValue {
+        ${symbolName(type, "create")}(global, this)
+    }
+    /// As \`to_js\`, for code that goes on to use the struct.
+    #[inline]
+    pub fn wrap<'a>(this: bun_ptr::RefPtr<${rustPath}>, global: &'a JSGlobalObject) -> bun_jsc::WrapperGuard<'a, ${rustPath}> {
+        let native = this.as_non_null();
+        // SAFETY: as in \`from_js\`.
+        unsafe { bun_jsc::WrapperGuard::from_parts(to_js(this, global), native) }
     }
     /// As \`from_js\`, a new ref on the struct.
     #[inline]

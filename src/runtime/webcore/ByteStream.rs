@@ -378,28 +378,20 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
-    /// Init-time reset. Runs before the JS
-    /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
-    pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
+    pub(crate) fn from_drain_result(drain_result: DrainResult) -> Self {
+        let mut this = Self::default();
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
-                self.high_water_mark = estimated_size as blob::SizeType;
-                self.size_hint.set(estimated_size as blob::SizeType);
+                this.high_water_mark = estimated_size as blob::SizeType;
+                this.size_hint.set(estimated_size as blob::SizeType);
             }
             DrainResult::Owned { list, size_hint } => {
-                self.buffered.adopt(list, 0);
-                self.size_hint.set(size_hint as blob::SizeType);
+                this.buffered.adopt(list, 0);
+                this.size_hint.set(size_hint as blob::SizeType);
             }
             DrainResult::Aborted => {}
         }
+        this
     }
 
     fn value(&self) -> JSValue {

@@ -5,8 +5,7 @@
     adt_const_params,
     unsized_const_params,
     const_cmp,
-    const_trait_impl,
-    allocator_api
+    const_trait_impl
 )]
 #![allow(incomplete_features)]
 #![warn(unused_must_use)]

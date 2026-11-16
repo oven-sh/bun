@@ -296,18 +296,19 @@ mod simd {
     /// In both ways.
     fn append_plus_one(from: &[u8], to: &mut impl Sink) {
         let from: Vec<u16> = from.iter().map(|&byte| byte.into()).collect();
-        let from = &from[..from.len().min(to.remaining())];
+        let len = from.len().min(to.remaining());
         let plus_one = |from: &[u16]| {
             let [low, high] = U16::load_or_zero(from);
             U8::narrow(low, high) + 1
         };
-        let (first, second) = from.split_at(from.len() / 2);
-        for (part, chunks) in [(first, from.len() % 8), (second, usize::MAX)] {
+        let (first, second) = from.split_at(len / 2);
+        for (part, chunks) in [(first, len % 8), (second, usize::MAX)] {
             let (start, left) = (to.len(), Cell::new(chunks));
             U8::append_chunks(to, part, |chunk| {
                 left.set(left.get().checked_sub(1)?);
                 Some(plus_one(chunk))
             });
+            let part = &part[..part.len().min(len - start)];
             let want = match part.len() {
                 len if len < U8::LEN / 2 => 0,
                 len if len.div_ceil(U8::LEN) > chunks => chunks * U8::LEN,
@@ -323,7 +324,7 @@ mod simd {
             let is_last = rest.len() == to.remaining();
             plus_one(rest).append_partial(to, if is_last { U8::LEN - 1 } else { rest.len() });
         }
-        assert_eq!(to.len(), from.len());
+        assert_eq!(to.len(), len);
     }
 
     /// `view` gives the input.
@@ -421,7 +422,9 @@ mod simd {
             U8::map(shared(from), to.into(), |v| v + 1);
         });
         maps(bytes(), |from, to| {
-            U8::zip_in_place(copy(from, to), from, |a, b| a + a - b + 1)
+            let to = copy(from, to);
+            U8::map_in_place(to, |v| v + v + 1);
+            U8::zip_in_place(to, from, |a, b| a - b)
         });
         maps(bytes(), |from, to| {
             U8::map_in_place(copy(from, to), |v| v + 1)
@@ -461,7 +464,9 @@ mod simd {
             Vector::map_in_place(copy(from, to), |v: Vector<T, N>| v + one)
         });
         maps(ranges(), |from, to| {
-            Vector::zip_in_place(copy(from, to), from, |a: Vector<T, N>, b| a + a - b + one)
+            let to = copy(from, to);
+            Vector::map_in_place(to, |v: Vector<T, N>| v + v + one);
+            Vector::zip_in_place(to, from, |a: Vector<T, N>, b| a - b)
         });
     }
 

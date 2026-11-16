@@ -356,10 +356,10 @@ fn each_sysctl_name() {
 
 #[test]
 fn exynos_9810() {
-    let on = |chip: &[u8]| names(aarch64::on_android(!0, !0, chip));
+    let on = |chip: &[u8]| names(aarch64::on_android(!0, !0xFF, chip));
     assert_eq!(on(b"exynos9810\0\0"), ["neon", "crc", "aes", "sha2"]);
-    assert_eq!(on(b"\0\0"), names(aarch64::from_hwcap(!0, !0)));
-    assert_eq!(on(b"exynos981\0"), names(aarch64::from_hwcap(!0, !0)));
+    assert_eq!(on(b"\0\0"), names(aarch64::from_hwcap(!0, !0xFF)));
+    assert_eq!(on(b"exynos981\0"), names(aarch64::from_hwcap(!0, !0xFF)));
 }
 
 #[test]

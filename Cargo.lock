@@ -465,7 +465,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_ptr",
- "bun_simdutf_sys",
  "bun_wyhash",
  "hashbrown 0.15.5",
  "paste",
@@ -751,10 +750,10 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_sys",
@@ -766,6 +765,15 @@ dependencies = [
  "bun_zstd",
  "scopeguard",
  "strum",
+ "thiserror",
+]
+
+[[package]]
+name = "bun_http1"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_http_types",
  "thiserror",
 ]
 
@@ -783,12 +791,12 @@ dependencies = [
  "bun_errno",
  "bun_highway",
  "bun_http",
+ "bun_http1",
  "bun_http_types",
  "bun_io",
  "bun_jsc",
  "bun_libdeflate_sys",
  "bun_opaque",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_uws",
@@ -971,7 +979,6 @@ dependencies = [
  "criterion",
  "enumset",
  "regex",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
@@ -992,6 +999,7 @@ dependencies = [
  "bun_js_parser",
  "bun_jsc",
  "bun_parsers",
+ "bun_ptr",
  "bun_resolver",
  "strum",
  "thiserror",
@@ -1057,6 +1065,7 @@ dependencies = [
  "bun_resolver",
  "bun_s3_signing",
  "bun_sha_hmac",
+ "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_spawn",
  "bun_sys",
@@ -1085,6 +1094,7 @@ name = "bun_libdeflate_sys"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "bun_opaque",
 ]
 
@@ -1451,15 +1461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_picohttp"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_core",
- "strum",
-]
-
-[[package]]
 name = "bun_platform"
 version = "0.0.0"
 dependencies = [
@@ -1652,7 +1653,6 @@ dependencies = [
  "bun_parsers",
  "bun_patch_jsc",
  "bun_paths",
- "bun_picohttp",
  "bun_platform",
  "bun_png",
  "bun_ptr",
@@ -1713,7 +1713,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_http_types",
- "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
  "strum",
@@ -1957,7 +1956,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_boringssl",
  "bun_collections",
  "bun_core",

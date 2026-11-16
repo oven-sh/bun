@@ -80,7 +80,6 @@ fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
         .resolver
 }
 
-bun_output::declare_scope!(GetAddrInfoRequest, visible);
 bun_output::declare_scope!(DNSLookup, visible);
 bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);
@@ -101,31 +100,6 @@ const CARES_TIMEOUT_CHECK_INTERVAL_MS: i64 = 1000;
 pub(crate) mod dns_sd;
 
 // ──────────────────────────────────────────────────────────────────────────
-// LibC (blocking getaddrinfo on a worker thread; non-Windows)
-// ──────────────────────────────────────────────────────────────────────────
-
-#[cfg(not(windows))]
-mod lib_c {
-    use super::*;
-
-    pub(crate) fn start(
-        this: &Resolver,
-        query: GetAddrInfo,
-        pending: Query,
-        global: &JSGlobalObject,
-    ) {
-        bun_jsc::Job::<get_addr_info_request::LibcLookup>::schedule(
-            // The realm's: lookups of the same name from any context wait on the one in flight.
-            &global.js_thread(this.vm().root_context()),
-            get_addr_info_request::LibcLookup {
-                backend: get_addr_info_request::LibcBackend::Query(query),
-            },
-            get_addr_info_request::LibcRequest(Some(pending)),
-        );
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // LibUVBackend (Windows uv_getaddrinfo)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -137,13 +111,13 @@ pub(crate) mod lib_uv_backend {
     #[repr(C)]
     pub(crate) struct LibuvRequest {
         uv: libuv::uv_getaddrinfo_t,
-        query: Query,
+        query: PendingQuery,
     }
 
     impl LibuvRequest {
         pub(crate) fn run(self: Box<Self>) {
             let (retcode, addrinfo) = (self.uv.retcode.int(), self.uv.addrinfo);
-            bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
+            bun_output::scoped_log!(DNSLookup, "onLibUVComplete: status={}", retcode);
             if addrinfo.is_null() {
                 return self.query.complete_native(Err(retcode));
             }
@@ -181,7 +155,7 @@ pub(crate) mod lib_uv_backend {
         VirtualMachine::get().enqueue_task(jsc::Task::from_boxed(request));
     }
 
-    pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) {
+    pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: PendingQuery) {
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
         let port_len = bun_fmt::print_int(&mut port_buf, query.port);
@@ -272,7 +246,7 @@ pub(crate) trait CAresRecordType: Sized + 'static {
 }
 
 pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
-    query: Query,
+    query: PendingQuery,
     _record: PhantomData<T>,
 }
 
@@ -288,7 +262,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 .resolve(|global| to_js(&mut reply, global, T::TYPE_NAME.as_bytes())),
             Err(err) => self
                 .query
-                .reject(err, T::SYSCALL.as_bytes(), true)
+                .reject(err, T::SYSCALL.as_bytes())
                 .request_completed(),
         }
     }
@@ -304,48 +278,64 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
         T::RAW_CALLBACK;
 }
 
-impl c_ares::HostentHandler for Query {
+impl c_ares::HostentHandler for PendingQuery {
     fn on_hostent(self: Box<Self>, result: Result<&mut c_ares::struct_hostent, c_ares::Error>) {
         match result {
             Ok(host) => {
                 self.resolve(|global| super::cares_jsc::hostent_to_js_response(host, global, b""))
             }
-            Err(err) => drop(self.reject(err, b"getHostByAddr", true)),
+            Err(err) => drop(self.reject(err, b"getHostByAddr")),
         }
     }
 }
 
-impl c_ares::NameinfoHandler for Query {
+impl c_ares::NameinfoHandler for PendingQuery {
     fn on_nameinfo(self: Box<Self>, result: Result<c_ares::struct_nameinfo, c_ares::Error>) {
         match result {
             Ok(mut info) => {
                 self.resolve(|global| super::cares_jsc::nameinfo_to_js_response(&mut info, global))
             }
-            Err(err) => self.reject(err, b"getnameinfo", true).request_completed(),
+            Err(err) => self.reject(err, b"getnameinfo").request_completed(),
         }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// GetAddrInfoRequest
+// LibC (blocking getaddrinfo on a worker thread; non-Windows)
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(not(windows))]
-pub(crate) mod get_addr_info_request {
+mod lib_c {
     use super::*;
 
+    pub(crate) fn start(
+        this: &Resolver,
+        query: GetAddrInfo,
+        pending: PendingQuery,
+        global: &JSGlobalObject,
+    ) {
+        bun_jsc::Job::<LibcLookup>::schedule(
+            // The realm's: lookups of the same name from any context wait on the one in flight.
+            &global.js_thread(this.vm().root_context()),
+            LibcLookup {
+                backend: LibcBackend::Query(query),
+            },
+            LibcRequest(Some(pending)),
+        );
+    }
+
     /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool.
-    pub(crate) struct LibcLookup {
-        pub(crate) backend: LibcBackend,
+    struct LibcLookup {
+        backend: LibcBackend,
     }
 
     /// The query a [`LibcLookup`] completes. If the VM tears down first, nothing is settled.
-    pub(crate) struct LibcRequest(pub(crate) Option<Query>);
+    struct LibcRequest(Option<PendingQuery>);
     // SAFETY: only the JS thread touches the query.
     unsafe impl bun_jsc::job::JsAffine for LibcRequest {}
     impl Drop for LibcRequest {
         fn drop(&mut self) {
-            drop(self.0.take().map(Query::into_waiters));
+            drop(self.0.take().map(PendingQuery::into_waiters));
         }
     }
 
@@ -364,7 +354,7 @@ pub(crate) mod get_addr_info_request {
             mut request: LibcRequest,
             _: &bun_jsc::JsThread<'_>,
         ) -> bun_jsc::JsResult<()> {
-            bun_output::scoped_log!(GetAddrInfoRequest, "then");
+            bun_output::scoped_log!(DNSLookup, "then");
             let query = request.0.take().expect("query");
             query.complete_native(match this.backend {
                 LibcBackend::Success(list) => Ok(list),
@@ -376,14 +366,14 @@ pub(crate) mod get_addr_info_request {
     }
 
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
-    pub(crate) enum LibcBackend {
+    enum LibcBackend {
         Success(GetAddrInfoResultList),
         Err(i32),
         Query(GetAddrInfo),
     }
 
     impl LibcBackend {
-        pub(crate) fn run(&mut self) {
+        fn run(&mut self) {
             let LibcBackend::Query(query) = self else {
                 unreachable!()
             };
@@ -422,14 +412,14 @@ pub(crate) mod get_addr_info_request {
     }
 }
 
-impl c_ares::AddrInfoHandler for Query {
+impl c_ares::AddrInfoHandler for PendingQuery {
     fn on_addr_info(self: Box<Self>, result: Result<&mut c_ares::AddrInfo, c_ares::Error>) {
-        bun_output::scoped_log!(GetAddrInfoRequest, "onCaresComplete");
+        bun_output::scoped_log!(DNSLookup, "onCaresComplete");
         match result {
             Ok(info) => {
                 self.resolve(|global| super::cares_jsc::addr_info_to_js_array(info, global))
             }
-            Err(err) => drop(self.reject(err, b"getaddrinfo", false)),
+            Err(err) => drop(self.reject(err, b"getaddrinfo")),
         }
     }
 }
@@ -527,7 +517,7 @@ impl PendingCache {
     }
 
     /// Gives `waiters` back if every slot is in use.
-    fn put(&self, hash: u64, waiters: Box<Waiters>) -> Result<u8, Box<Waiters>> {
+    fn put(&self, hash: u64, waiters: Box<Waiters>) -> Result<usize, Box<Waiters>> {
         let mut used = self.used.get();
         let Some(slot) = used.iterator::<false, true>().next() else {
             return Err(waiters);
@@ -536,27 +526,33 @@ impl PendingCache {
         self.used.set(used);
         self.hashes[slot].set(hash);
         self.entries[slot].set(Some(waiters));
-        Ok(slot as u8)
+        Ok(slot)
     }
 
-    fn take(&self, slot: u8) -> Box<Waiters> {
-        let waiters = self.entries[slot as usize].take();
+    fn take(&self, slot: usize) -> Box<Waiters> {
+        let waiters = self.entries[slot].take();
         let mut used = self.used.get();
-        used.unset(slot as usize);
+        used.unset(slot);
         self.used.set(used);
         waiters.expect("pending DNS slot")
     }
 }
 
-/// A query in flight, owned by the backend that answers it.
-pub(crate) struct Query {
-    resolver: RefPtr<Resolver>,
-    kind: QueryKind,
-    /// The slot in the pending cache that holds the waiters, unless it was full.
-    waiters: Result<u8, Box<Waiters>>,
+enum QueryWaiters {
+    /// Index in the `PendingCache` of the query's kind.
+    Slot(usize),
+    /// The `PendingCache` was full.
+    Owned(Box<Waiters>),
 }
 
-impl Query {
+/// A query in flight, owned by the backend that answers it.
+pub(crate) struct PendingQuery {
+    resolver: RefPtr<Resolver>,
+    kind: QueryKind,
+    waiters: QueryWaiters,
+}
+
+impl PendingQuery {
     /// The lookup's promise, and the query to send unless it joined one in flight.
     fn join_or_create(
         resolver: &Resolver,
@@ -580,21 +576,26 @@ impl Query {
         let query = Self {
             resolver: resolver.ref_guard(),
             kind,
-            waiters: cache.put(hash, waiters),
+            waiters: cache
+                .put(hash, waiters)
+                .map_or_else(QueryWaiters::Owned, QueryWaiters::Slot),
         };
         (promise, Some(query))
     }
 
     #[cfg(windows)]
     fn slot(&self) -> Option<usize> {
-        self.waiters.as_ref().ok().map(|&slot| slot as usize)
+        match self.waiters {
+            QueryWaiters::Slot(slot) => Some(slot),
+            QueryWaiters::Owned(_) => None,
+        }
     }
 
-    /// Ends the time in which lookups can join.
+    /// Removes the query from the pending cache: later lookups start a new one.
     fn into_waiters(self) -> (Box<Waiters>, RefPtr<Resolver>) {
         let waiters = match self.waiters {
-            Ok(slot) => self.resolver.pending[self.kind].take(slot),
-            Err(waiters) => waiters,
+            QueryWaiters::Slot(slot) => self.resolver.pending[self.kind].take(slot),
+            QueryWaiters::Owned(waiters) => waiters,
         };
         (waiters, self.resolver)
     }
@@ -634,12 +635,8 @@ impl Query {
         }
     }
 
-    fn reject(
-        self,
-        err: c_ares::Error,
-        syscall: &'static [u8],
-        with_hostname: bool,
-    ) -> RefPtr<Resolver> {
+    fn reject(self, err: c_ares::Error, syscall: &'static [u8]) -> RefPtr<Resolver> {
+        let with_hostname = !matches!(self.kind, QueryKind::HostCares | QueryKind::HostNative);
         let (mut waiters, resolver) = self.into_waiters();
         let Waiters {
             name,
@@ -662,7 +659,7 @@ impl Query {
     pub(crate) fn complete_native(self, result: Result<GetAddrInfoResultList, i32>) {
         let list = match result.map_err(c_ares::Error::init_eai) {
             Ok(list) => list,
-            Err(Some(err)) => return drop(self.reject(err, b"getaddrinfo", false)),
+            Err(Some(err)) => return drop(self.reject(err, b"getaddrinfo")),
             // No list and no error is an empty answer.
             Err(None) => Vec::new(),
         };
@@ -1171,20 +1168,8 @@ pub(crate) mod internal {
         Quic(PendingConnect),
     }
 
-    // SAFETY: no VM state is read: `notify_threadsafe` only queues the socket for its loop's thread.
+    // SAFETY: no VM state is read: `after_result_entries` only queues the socket for its loop's thread.
     unsafe impl Send for DNSRequestOwner {}
-
-    impl DNSRequestOwner {
-        fn notify_threadsafe(self) {
-            match self {
-                // SAFETY: a socket lives until it is notified or has cancelled.
-                DNSRequestOwner::Socket(socket) => unsafe {
-                    us_internal_dns_callback_threadsafe(socket)
-                },
-                DNSRequestOwner::Quic(pc) => pc.on_dns_resolved_threadsafe(),
-            }
-        }
-    }
 
     #[repr(C)]
     pub(crate) struct ResultEntry {
@@ -1306,17 +1291,24 @@ pub(crate) mod internal {
     }
 
     fn after_result_entries(req: Arc<Request>, result: Result<Box<[ResultEntry]>, c_int>) {
-        let notify = {
-            let mut notify = req.notify.lock();
-            let _ = req.result.set(result);
-            core::mem::take(&mut *notify)
-        };
-        // Before notifying: `Bun__addrinfo_freeRequest` evicts only if its ref and the cache's are the last two.
-        drop(req);
-
-        for query in notify {
-            query.notify_threadsafe();
+        let guard = global_cache().lock();
+        let mut notify = req.notify.lock();
+        let _ = req.result.set(result);
+        for query in notify.drain(..) {
+            match query {
+                // SAFETY: the contract of `Bun__addrinfo_set`. `Bun__addrinfo_cancel` waits for `notify`,
+                // and `Bun__addrinfo_freeRequest` for `guard`.
+                DNSRequestOwner::Socket(socket) => unsafe {
+                    us_internal_dns_callback_threadsafe(socket)
+                },
+                DNSRequestOwner::Quic(pc) => pc.on_dns_resolved_threadsafe(),
+            }
         }
+        notify.shrink_to_fit();
+        drop(notify);
+        // Before the unlock: `Bun__addrinfo_freeRequest` evicts only if its ref and the cache's are the last two.
+        drop(req);
+        drop(guard);
     }
 
     fn work_pool_callback(req: Arc<Request>) {
@@ -1703,15 +1695,18 @@ pub(crate) mod internal {
         if is_cache_hit { 0 } else { 1 }
     }
 
+    /// SAFETY: on the thread of `socket`'s loop. `socket` lives until it is notified or has cancelled, and
+    /// the loop until `Bun__addrinfo_cancel` or `Bun__addrinfo_freeRequest` has returned for `socket`.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__addrinfo_set(request: &Request, socket: *mut ConnectingSocket) {
-        if let Err(query) = request.join(DNSRequestOwner::Socket(socket)) {
+    unsafe extern "C" fn Bun__addrinfo_set(request: &Request, socket: *mut ConnectingSocket) {
+        if request.join(DNSRequestOwner::Socket(socket)).is_err() {
             // Also wakes the loop: this can run inside the dns_ready_head drain itself.
-            query.notify_threadsafe();
+            // SAFETY: caller contract.
+            unsafe { us_internal_dns_callback_threadsafe(socket) };
         }
     }
 
-    /// 0 once there is a result: the callback has fired or is about to fire on the worker thread.
+    /// 0 once there is a result: `socket` is queued on its loop, and the lookup is done with that loop.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_cancel(request: &Request, socket: *mut ConnectingSocket) -> c_int {
         let mut notify = request.notify.lock();
@@ -1951,7 +1946,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). c-ares
 // completion callbacks re-enter this Resolver (e.g. `request_completed`,
-// `Query::resolve`) while a `&self` borrow is live in `on_dns_poll` /
+// `PendingQuery::resolve`) while a `&self` borrow is live in `on_dns_poll` /
 // `check_timeouts`; UnsafeCell-backed fields suppress `noalias` so LLVM cannot
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
@@ -1973,7 +1968,7 @@ pub(crate) struct Resolver {
     timer_ref: JsCell<Option<RefPtr<Resolver>>>,
 
     pending: enum_map::EnumMap<QueryKind, PendingCache>,
-    /// By slot of the `HostNative` cache.
+    /// Indexed by the slot in `pending[QueryKind::HostNative]`.
     #[cfg(windows)]
     pending_uv_requests: [Cell<*mut libuv::uv_req_t>; PENDING_CACHE_SLOTS],
 
@@ -2199,7 +2194,7 @@ impl Resolver {
         let uws_loop = vm.uws_loop();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
-        // (`request_completed`, `Query::resolve`) may freely re-derive
+        // (`request_completed`, `PendingQuery::resolve`) may freely re-derive
         // `&Resolver` from their stored ctx without aliasing UB.
         let _timer_ref = self.timer_ref.take();
 
@@ -2402,7 +2397,7 @@ impl Resolver {
     /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
     /// synchronously fires c-ares completion callbacks which re-enter this
     /// Resolver via a fresh `&Resolver` (e.g. `request_completed`,
-    /// `Query::resolve`, `ref_guard`). With every mutable field
+    /// `PendingQuery::resolve`, `ref_guard`). With every mutable field
     /// UnsafeCell-backed, LLVM cannot cache `ref_count` across the FFI call —
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
@@ -2607,8 +2602,14 @@ impl Resolver {
             }
         };
 
-        let (promise, query) =
-            Query::join_or_create(self, QueryKind::Addr, wyhash(ip), ip, global_this, context);
+        let (promise, query) = PendingQuery::join_or_create(
+            self,
+            QueryKind::Addr,
+            wyhash(ip),
+            ip,
+            global_this,
+            context,
+        );
         let Some(query) = query else {
             return Ok(promise);
         };
@@ -2702,7 +2703,7 @@ impl Resolver {
 
         let (kind, hash) = (QueryKind::HostNative, query.hash());
         let (promise, pending) =
-            Query::join_or_create(self, kind, hash, &query.name, global_this, context);
+            PendingQuery::join_or_create(self, kind, hash, &query.name, global_this, context);
         let Some(pending) = pending else {
             return Ok(promise);
         };
@@ -2869,7 +2870,7 @@ impl Resolver {
         };
 
         let (promise, query) =
-            Query::join_or_create(self, T::KIND, wyhash(name), name, global_this, context);
+            PendingQuery::join_or_create(self, T::KIND, wyhash(name), name, global_this, context);
         let Some(query) = query else {
             return Ok(promise);
         };
@@ -2907,7 +2908,7 @@ impl Resolver {
 
         let (kind, hash) = (QueryKind::HostCares, query.hash());
         let (promise, pending) =
-            Query::join_or_create(self, kind, hash, &query.name, global_this, context);
+            PendingQuery::join_or_create(self, kind, hash, &query.name, global_this, context);
         let Some(pending) = pending else {
             return Ok(promise);
         };
@@ -3298,7 +3299,7 @@ impl Resolver {
 
         let (kind, hash) = (QueryKind::NameInfo, wyhash(&cache_name));
         let (promise, query) =
-            Query::join_or_create(resolver, kind, hash, &cache_name, global_this, context);
+            PendingQuery::join_or_create(resolver, kind, hash, &cache_name, global_this, context);
         let Some(query) = query else {
             return Ok(promise);
         };

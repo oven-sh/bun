@@ -240,7 +240,7 @@ impl UpdateRequest {
             };
             // scp-style `user@host:path/repo`, where `user` was split off as the alias
             if alias.is_some_and(|alias| !strings::contains_char(alias, b'/'))
-                && version.tag == dependency::version::Tag::Git
+                && version.tag() == dependency::version::Tag::Git
             {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
@@ -253,7 +253,7 @@ impl UpdateRequest {
                 )
                 .filter(|ver| {
                     matches!(
-                        ver.tag,
+                        ver.tag(),
                         dependency::version::Tag::Git | dependency::version::Tag::Github
                     )
                 }) {
@@ -261,11 +261,11 @@ impl UpdateRequest {
                     version = ver;
                 }
             }
-            if match version.tag {
-                dependency::version::Tag::DistTag => {
-                    version.dist_tag().name.eql(placeholder, input, input)
+            if match &version.value {
+                dependency::Value::DistTag(dist_tag) => {
+                    dist_tag.name.eql(placeholder, input, input)
                 }
-                dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
+                dependency::Value::Npm(npm) => npm.name.eql(placeholder, input, input),
                 _ => false,
             } {
                 return Err(unrecognised_format(log, positional, fatal));

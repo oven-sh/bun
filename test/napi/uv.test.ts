@@ -423,6 +423,28 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent.each([
+    ["uv_queue_work", "testDefaultLoopWork"],
+    ["uv_timer_t", "testDefaultLoopTimer"],
+  ])("%s on uv_default_loop calls back in the Worker that started it", async (_, name) => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      new Worker(${JSON.stringify(`require(${JSON.stringify(addonPath)}).${name}();`)}, { eval: true });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("on the calling thread: 1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_queue_work from an addon thread calls back on the loop's thread", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      console.log(JSON.stringify(addon.testQueueWorkFromThread()));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("[0]\non the calling thread: 1\n");
+    expect(exitCode).toBe(0);
+  });
+
   // The handle tests below print the addon's returned state as one JSON line,
   // then one line per event.
   function stateAndEvents(stdout: string) {

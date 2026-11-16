@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
@@ -15,6 +14,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
 use bun_js_parser::Macro::{MacroContext, MacroLoadState};
+use bun_ptr::AliasableBox;
 
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
@@ -191,7 +191,7 @@ fn __bun_macro_drop_source_code_printer() {
     bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
 
-/// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
+/// Exposed for `bun_bundler::ThreadPool::Worker::drop` (which has no
 /// `bun_jsc` dependency) to sweep the per-worker macro VM. See [`collect_macro_vm_garbage`].
 ///
 /// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
@@ -258,18 +258,21 @@ fn init_macro_vm(
 
     // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
     // into its loader, so give the VM its own copy.
-    let owned_env_loader = match env {
-        Some(env) => Some(Box::new(env.clone_loaded()?)),
+    let env_loader = match env {
+        Some(env) => Some(AliasableBox::new(env.clone_loaded()?)),
         None => None,
     };
 
-    Ok(VirtualMachine::init(VirtualMachineInitOptions {
+    let options = VirtualMachineInitOptions {
         transform_options,
-        log: Some(NonNull::from(log)),
-        owned_env_loader,
+        env_loader: env_loader.as_ref().map(AliasableBox::as_non_null),
         is_main_thread: false,
         ..Default::default()
-    })?)
+    };
+    let vm = VirtualMachine::init(log, options)?;
+    // This VM stays until the process exits.
+    let _ = env_loader.map(AliasableBox::into_raw);
+    Ok(vm)
 }
 
 fn load_macro(

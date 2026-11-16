@@ -105,7 +105,7 @@ fn apply_barrel_optimization_impl<'a>(
     this: &mut BundleV2<'a>,
     parse_result: &mut parse_task::Result<'a>,
 ) -> Result<(), AllocError> {
-    let parse_task::ResultValue::Success(result) = &mut *parse_result.value else {
+    let parse_task::ResultValue::Success(result) = &mut parse_result.value else {
         return Ok(());
     };
     let source_index = result.source.index.0;

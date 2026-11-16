@@ -27,6 +27,7 @@ use std::alloc::Global;
 use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use hashbrown::hash_map::RawVacantEntryMut;
 
 use bun_alloc::AllocError;
 
@@ -968,7 +969,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Replaces the entries. No two of `keys` are equal.
+    /// Replaces the entries. `keys` must be distinct.
     pub fn set_entries(&mut self, keys: &[K], values: impl Iterator<Item = V>)
     where
         K: Copy,
@@ -1630,6 +1631,15 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringH
     }
 }
 
+impl<V, A: Allocator + HashbrownAllocator + Clone + Default> IntoIterator for StringHashMap<V, A> {
+    type Item = (StringHashMapKey<A>, V);
+    type IntoIter = hashbrown::hash_map::IntoIter<StringHashMapKey<A>, V, A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Deref for StringHashMap<V, A> {
     type Target = StringHashMapInner<V, A>;
     fn deref(&self) -> &Self::Target {
@@ -1661,6 +1671,23 @@ fn box_key<A: Allocator + Default>(key: &[u8]) -> Box<[u8], A> {
 #[inline]
 fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
     StringHashMapKey::owned(box_key::<A>(key))
+}
+
+pub enum EntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+    Occupied(&'a mut V),
+    Vacant(VacantEntryRef<'a, 'k, V, A>),
+}
+
+pub struct VacantEntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+    entry: RawVacantEntryMut<'a, StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
+    hash: u64,
+    key: &'k [u8],
+}
+
+impl<V, A: Allocator + HashbrownAllocator + Default> VacantEntryRef<'_, '_, V, A> {
+    pub fn insert(self, value: V) {
+        (self.entry).insert_hashed_nocheck(self.hash, owned_key::<A>(self.key), value);
+    }
 }
 
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
@@ -1704,8 +1731,8 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    /// `get_or_put` for a `V` without a default: on a miss, returns what puts the value.
-    pub fn get_or_vacant(&mut self, key: &[u8]) -> Result<&mut V, impl FnOnce(V)> {
+    /// Like hashbrown's, but inserting copies `key`, which need not be `'static`.
+    pub fn entry_ref<'k>(&mut self, key: &'k [u8]) -> EntryRef<'_, 'k, V, A> {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);
         match self
@@ -1713,10 +1740,8 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
             .raw_entry_mut()
             .from_key_hashed_nocheck(hash, key)
         {
-            RawEntryMut::Occupied(e) => Ok(e.into_mut()),
-            RawEntryMut::Vacant(e) => Err(move |value| {
-                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
-            }),
+            RawEntryMut::Occupied(e) => EntryRef::Occupied(e.into_mut()),
+            RawEntryMut::Vacant(entry) => EntryRef::Vacant(VacantEntryRef { entry, hash, key }),
         }
     }
 
@@ -1876,6 +1901,8 @@ pub mod string_hash_map {
     /// Result type alias for `StringHashMap::get_or_put*` so callers can name
     /// it as `string_hash_map::GetOrPutResult<'_, V>`.
     pub type GetOrPutResult<'a, V> = super::StringHashMapGetOrPut<'a, V>;
+
+    pub use super::{EntryRef, VacantEntryRef};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

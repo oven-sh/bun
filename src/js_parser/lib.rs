@@ -5,8 +5,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-#![feature(optimize_attribute)]
-
 pub mod error;
 pub mod function_identities;
 pub use error::Error;
@@ -132,7 +130,7 @@ pub mod Macro {
     /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
     /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
     /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit`, not inside JS execution or a
+    /// `bun_bundler::ThreadPool::Worker::drop`, not inside JS execution or a
     /// GC sweep, where re-entering `run_gc(true)` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {

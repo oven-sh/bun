@@ -9,7 +9,7 @@
 //!
 //! Lifetime: a `Channel` is embedded as a field in an owner that outlives all
 //! uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
-//! `WorkerLink` which lives for the process). `Drop` assumes no write is in flight: true for both
+//! `CoordinatorLink` which lives for the process). `Drop` assumes no write is in flight: true for both
 //! sites (start() errdefer and reap_worker after the peer has exited).
 
 use core::cell::Cell;
@@ -41,7 +41,7 @@ pub(crate) struct Channel {
     /// Incoming bytes that the owner has not read as frames yet.
     r#in: JsCell<Vec<u8>>,
     /// `in` has grown since the owner last took it.
-    has_received: Cell<bool>,
+    has_incoming: Cell<bool>,
     /// Outgoing bytes the kernel didn't accept yet.
     pub out: JsCell<Vec<u8>>,
     pub(crate) done: Cell<bool>,
@@ -52,29 +52,30 @@ pub(crate) struct Channel {
     /// such a worker and reports this rather than the exit status it caused.
     pub(crate) corrupt_frame: Cell<bool>,
     /// A corrupt frame or a failed write that the coordinator has not killed the worker for yet.
-    pub(crate) failed: Cell<bool>,
+    pub(crate) kill_pending: Cell<bool>,
 
     pub(crate) backend: Backend,
 }
 
-/// What a channel has received, out of the channel while its frames are read.
-pub(crate) struct Received {
+/// `in`, taken out while its frames are decoded.
+pub(crate) struct IncomingFrames {
     bytes: Vec<u8>,
     head: usize,
     is_corrupt: bool,
 }
 
-impl Received {
+impl IncomingFrames {
     pub(crate) fn next_frame(&mut self) -> Option<(frame::Kind, frame::Reader<'_>)> {
         loop {
-            let (&[ref len @ .., kind], rest) = self.bytes[self.head..].split_first_chunk::<5>()?;
+            let (&[ref len @ .., kind], rest) =
+                self.bytes[self.head..].split_first_chunk::<{ frame::HEADER_LEN }>()?;
             let len = u32::from_le_bytes(*len);
             if len > frame::MAX_PAYLOAD {
                 self.is_corrupt = true;
                 return None;
             }
             let p = rest.get(..len as usize)?;
-            self.head += 5 + p.len();
+            self.head += frame::HEADER_LEN + p.len();
             if let Ok(kind) = frame::Kind::try_from(kind) {
                 return Some((kind, frame::Reader { p }));
             }
@@ -384,30 +385,30 @@ impl Channel {
             return;
         }
         self.r#in.with_mut(|r#in| r#in.extend_from_slice(data));
-        self.has_received.set(true);
+        self.has_incoming.set(true);
     }
 
-    /// `None` if nothing has arrived since the last call. Goes back through `keep_unread`.
-    pub(crate) fn take_received(&self) -> Option<Received> {
-        self.has_received.take().then(|| Received {
+    /// `None` if nothing has arrived since the last call. Goes back through `restore_incoming`.
+    pub(crate) fn take_incoming(&self) -> Option<IncomingFrames> {
+        self.has_incoming.take().then(|| IncomingFrames {
             bytes: self.r#in.take(),
             head: 0,
             is_corrupt: false,
         })
     }
 
-    pub(crate) fn keep_unread(&self, mut received: Received) {
-        if received.is_corrupt {
+    pub(crate) fn restore_incoming(&self, mut incoming: IncomingFrames) {
+        if incoming.is_corrupt {
             return self.mark_corrupt();
         }
-        received.bytes.drain_front(received.head);
+        incoming.bytes.drain_front(incoming.head);
         debug_assert!(self.r#in.get().is_empty());
-        self.r#in.set(received.bytes);
+        self.r#in.set(incoming.bytes);
     }
 
     fn mark_failed(&self) {
         self.done.set(true);
-        self.failed.set(true);
+        self.kill_pending.set(true);
     }
 
     fn mark_corrupt(&self) {

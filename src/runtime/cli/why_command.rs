@@ -239,7 +239,7 @@ Explain why a package is installed
             all => all,
         };
 
-        let (pm, _cwd) = package_manager::init(&mut *ctx, &cli, Subcommand::Why)?;
+        let (pm, _) = package_manager::init(&mut *ctx, &cli, Subcommand::Why)?;
 
         let Some(&package_pattern) = positionals.first() else {
             Self::print_usage();

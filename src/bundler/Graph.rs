@@ -11,12 +11,15 @@ use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
 use bun_ast::Index;
+use bun_css::BundlerStyleSheet;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
-    /// First, to drop first. Boxed: its threads use it while the bundle thread changes the graph.
+    /// Drops before `pool`, whose workers' arenas hold parts of each stylesheet.
+    pub(crate) css_asts: CssAsts<'a>,
+    /// Drops before the fields below, which tasks borrow. Boxed: its threads use it while the bundle thread changes the graph.
     pool: Box<ThreadPool>,
     pub(crate) heap: &'a ThreadLocalArena,
 
@@ -72,11 +75,11 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: Vec<IndexInt>,
 
-    pub(crate) estimated_file_loader_count: usize,
+    pub(crate) estimated_file_loader_count: u32,
 
     /// For Bake, a count of the CSS asts is used to make precise
     /// pre-allocations without re-iterating the file listing.
-    pub(crate) css_file_count: usize,
+    pub(crate) css_file_count: u32,
 
     pub(crate) kit_referenced_server_data: bool,
     pub(crate) kit_referenced_client_data: bool,
@@ -85,6 +88,30 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+}
+
+/// By source index. The `Vec` ends at the last CSS file; an index past it reads as `None`.
+#[derive(Default)]
+pub(crate) struct CssAsts<'a>(Vec<Option<Box<BundlerStyleSheet<'a>>>>);
+
+impl<'a> CssAsts<'a> {
+    pub(crate) fn put(&mut self, source_index: usize, sheet: Box<BundlerStyleSheet<'a>>) {
+        if self.0.len() <= source_index {
+            self.0.resize_with(source_index + 1, || None);
+        }
+        self.0[source_index] = Some(sheet);
+    }
+
+    pub(crate) fn iter(&self) -> core::slice::Iter<'_, Option<Box<BundlerStyleSheet<'a>>>> {
+        self.0.iter()
+    }
+}
+
+impl<'a> core::ops::Index<usize> for CssAsts<'a> {
+    type Output = Option<Box<BundlerStyleSheet<'a>>>;
+    fn index(&self, source_index: usize) -> &Self::Output {
+        self.0.get(source_index).unwrap_or(&None)
+    }
 }
 
 pub struct InputFile<'a> {
@@ -144,6 +171,7 @@ bitflags::bitflags! {
 impl<'a> Graph<'a> {
     pub(crate) fn new(heap: &'a ThreadLocalArena, pool: ThreadPool) -> Self {
         Self {
+            css_asts: CssAsts::default(),
             pool: Box::new(pool),
             heap,
             entry_points: Vec::new(),

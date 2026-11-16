@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
@@ -413,7 +412,7 @@ pub mod vec {
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
     // `MaybeUninit<u8>` and every C-ABI fill site (simdutf,
-    // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
+    // base64) needs `*mut u8` / `&mut [u8]`.
 
     /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
     /// syscall producer to fill. Pair with [`commit_spare`] (or use
@@ -1434,7 +1433,8 @@ pub(crate) mod strings_impl {
     // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
-    use bun_simdutf_sys::simdutf;
+    use crate::vec::BorrowedBuf;
+    use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
     #[inline]
     pub fn is_all_ascii(slice: &[u8]) -> bool {
@@ -1583,19 +1583,11 @@ pub(crate) mod strings_impl {
         [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
     }
 
-    /// Appends `latin1` as UTF-8, of which it makes `utf8_length` bytes.
-    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: &[u8], utf8_length: usize) {
-        list.reserve(utf8_length);
-        // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` initialized bytes, which were just reserved.
-        unsafe {
-            let written = simdutf::simdutf__convert_latin1_to_utf8(
-                latin1.as_ptr(),
-                latin1.len(),
-                list.as_mut_ptr().add(list.len()),
-            );
-            debug_assert_eq!(written, utf8_length);
-            list.set_len(list.len() + written);
-        }
+    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: WithUtf8Len<'_, u8>) {
+        list.reserve(latin1.utf8_len());
+        crate::vec::append_with(list, usize::MAX, |out| {
+            simdutf::convert::latin1::to::utf8(latin1, out)
+        });
     }
 
     /// Port of `allocateLatin1IntoUTF8WithList`.
@@ -1605,22 +1597,18 @@ pub(crate) mod strings_impl {
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        append_latin1_as_utf8(
-            &mut list,
-            latin1,
-            simdutf::length::utf8::from::latin1(latin1),
-        );
+        append_latin1_as_utf8(&mut list, WithUtf8Len::latin1(latin1));
         list
     }
 
     /// Port of `toUTF8FromLatin1` — None if input is already ASCII.
     pub fn to_utf8_from_latin1(latin1: &[u8]) -> Option<Vec<u8>> {
-        let utf8_length = simdutf::length::utf8::from::latin1(latin1);
-        if utf8_length == latin1.len() {
+        let input = WithUtf8Len::latin1(latin1);
+        if input.utf8_len() == latin1.len() {
             return None;
         }
         let mut utf8 = Vec::new();
-        append_latin1_as_utf8(&mut utf8, latin1, utf8_length);
+        append_latin1_as_utf8(&mut utf8, input);
         Some(utf8)
     }
 
@@ -1637,37 +1625,27 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Port of `convertUTF16ToUTF8Append`. Caller must reserve
-    /// `simdutf::length::utf8::from::utf16::le(utf16)` spare bytes for the fast path.
-    pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
-        // SAFETY: simdutf writes only initialized bytes into the spare slice and
-        // reports the count; on SURROGATE we commit 0 and fall back below.
-        let r = unsafe {
-            crate::vec::fill_spare(list, 0, |spare| {
-                let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
-                    utf16.as_ptr(),
-                    utf16.len(),
-                    spare.as_mut_ptr(),
-                );
-                (
-                    if r.status == simdutf::Status::SURROGATE {
-                        0
-                    } else {
-                        r.count
-                    },
-                    r,
-                )
-            })
-        };
-        if r.status == simdutf::Status::SURROGATE {
-            append_wtf8_from_utf16(list, utf16);
+    pub(crate) fn append_utf16_as_utf8(list: &mut Vec<u8>, utf16: WithUtf8Len<'_, u16>) {
+        list.reserve(utf16.utf8_len());
+        let result = crate::vec::append_with(list, usize::MAX, |out| {
+            simdutf::convert::utf16::to::utf8::with_errors::le(utf16, out)
+        });
+        if !result.is_successful() {
+            append_wtf8_from_utf16(list, utf16.slice());
         }
     }
 
+    /// Unpaired surrogates become U+FFFD.
+    pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
+        let input = WithUtf8Len::utf16_worst_case(utf16, list.capacity() - list.len())
+            .unwrap_or_else(|| WithUtf8Len::utf16(utf16));
+        append_utf16_as_utf8(list, input);
+    }
+
     pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        let mut list = Vec::with_capacity(need + 16);
-        convert_utf16_to_utf8_append(&mut list, utf16);
+        let input = WithUtf8Len::utf16(utf16);
+        let mut list = Vec::with_capacity(input.utf8_len() + 16);
+        append_utf16_as_utf8(&mut list, input);
         list
     }
 
@@ -1692,9 +1670,9 @@ pub(crate) mod strings_impl {
     }
 
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        list.reserve(need + 16);
-        convert_utf16_to_utf8_append(list, utf16);
+        let input = WithUtf8Len::utf16(utf16);
+        list.reserve(input.utf8_len() + 16);
+        append_utf16_as_utf8(list, input);
     }
 
     /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
@@ -1730,35 +1708,26 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
-        let worst_case = utf16.len().saturating_mul(3);
-        let utf8_len = if worst_case <= buf.len() {
-            worst_case
-        } else {
-            element_length_utf16_into_utf8(utf16)
-        };
-        copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
+        let input = WithUtf8Len::utf16_worst_case(utf16, buf.len())
+            .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(utf16));
+        copy_utf16_into_utf8_with_utf8_len(buf, input)
     }
 
     pub fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
-        utf16: &[u16],
-        utf8_len: usize,
+        input: WithUtf8Len<'_, u16>,
     ) -> EncodeIntoResult {
-        debug_assert!(utf8_len >= element_length_utf16_into_utf8(utf16));
+        let utf16 = input.slice();
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
         // Fast path: if buf can definitely hold the whole conversion, try simdutf.
-        if utf8_len > 0 && utf8_len <= buf.len() {
-            // SAFETY: buf has `utf8_len` writable bytes; simdutf reads exactly utf16.len() u16.
-            let r = unsafe {
-                simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
-                    utf16.as_ptr(),
-                    utf16.len(),
-                    buf.as_mut_ptr(),
-                )
-            };
-            if r.status == simdutf::Status::SUCCESS {
+        if input.utf8_len() <= buf.len() {
+            let r = simdutf::convert::utf16::to::utf8::with_errors::le(
+                input,
+                BorrowedBuf::from(&mut *buf).unfilled(),
+            );
+            if r.is_successful() {
                 return EncodeIntoResult {
                     read: utf16.len(),
                     written: r.count,
@@ -1792,21 +1761,16 @@ pub(crate) mod strings_impl {
             };
         }
         const MIN_LEN_FOR_SIMDUTF: usize = 64;
-        if latin1.len() >= MIN_LEN_FOR_SIMDUTF
-            && buf.len() >= simdutf::length::utf8::from::latin1(latin1)
-        {
-            // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` bytes, which `buf` has room for.
-            let written = unsafe {
-                simdutf::simdutf__convert_latin1_to_utf8(
-                    latin1.as_ptr(),
-                    latin1.len(),
-                    buf.as_mut_ptr(),
-                )
-            };
-            return EncodeIntoResult {
-                read: latin1.len(),
-                written,
-            };
+        if latin1.len() >= MIN_LEN_FOR_SIMDUTF {
+            let input = WithUtf8Len::latin1(latin1);
+            if buf.len() >= input.utf8_len() {
+                let mut out = BorrowedBuf::from(buf);
+                simdutf::convert::latin1::to::utf8(input, out.unfilled());
+                return EncodeIntoResult {
+                    read: latin1.len(),
+                    written: out.len(),
+                };
+            }
         }
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
@@ -1816,36 +1780,29 @@ pub(crate) mod strings_impl {
     #[inline(always)]
     fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
         let n = src.len();
-        assert!(n <= 16 && n <= dst.len());
-        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
-        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
-        unsafe {
-            if n >= 8 {
-                let first = from.cast::<u64>().read_unaligned();
-                let last = from.add(n - 8).cast::<u64>().read_unaligned();
-                if (first | last) & 0x8080_8080_8080_8080 != 0 {
-                    return false;
-                }
-                to.cast::<u64>().write_unaligned(first);
-                to.add(n - 8).cast::<u64>().write_unaligned(last);
-            } else if n >= 4 {
-                let first = from.cast::<u32>().read_unaligned();
-                let last = from.add(n - 4).cast::<u32>().read_unaligned();
-                if (first | last) & 0x8080_8080 != 0 {
-                    return false;
-                }
-                to.cast::<u32>().write_unaligned(first);
-                to.add(n - 4).cast::<u32>().write_unaligned(last);
-            } else if n > 0 {
-                // The first, the middle and the last of one, two or three bytes are all of them.
-                let (first, middle, last) = (*from, *from.add(n / 2), *from.add(n - 1));
-                if (first | middle | last) >= 0x80 {
-                    return false;
-                }
-                *to = first;
-                *to.add(n / 2) = middle;
-                *to.add(n - 1) = last;
+        debug_assert!(n <= 16);
+        let dst = &mut dst[..n];
+        if let (Some(&first), Some(&last)) = (src.first_chunk::<8>(), src.last_chunk()) {
+            if (u64::from_ne_bytes(first) | u64::from_ne_bytes(last)) & 0x8080_8080_8080_8080 != 0 {
+                return false;
             }
+            *dst.first_chunk_mut().unwrap() = first;
+            *dst.last_chunk_mut().unwrap() = last;
+        } else if let (Some(&first), Some(&last)) = (src.first_chunk::<4>(), src.last_chunk()) {
+            if (u32::from_ne_bytes(first) | u32::from_ne_bytes(last)) & 0x8080_8080 != 0 {
+                return false;
+            }
+            *dst.first_chunk_mut().unwrap() = first;
+            *dst.last_chunk_mut().unwrap() = last;
+        } else if n > 0 {
+            // The first, the middle and the last of one, two or three bytes are all of them.
+            let (first, middle, last) = (src[0], src[n / 2], src[n - 1]);
+            if (first | middle | last) >= 0x80 {
+                return false;
+            }
+            dst[0] = first;
+            dst[n / 2] = middle;
+            dst[n - 1] = last;
         }
         true
     }
@@ -2240,7 +2197,7 @@ pub(crate) mod strings_impl {
     }
 
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
-    /// the written sub-slice. Infallible. The
+    /// the written sub-slice. Empty if `utf16` has an unpaired surrogate. The
     /// caller is responsible for sizing `out` for the worst case (≤ 3× input
     /// code units).
     ///
@@ -2253,14 +2210,16 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() {
             return &mut out[..0];
         }
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        let input = WithUtf8Len::utf16(utf16);
+        let need = input.utf8_len();
         assert!(
             need <= out.len(),
             "convert_utf16_to_utf8_in_buffer: out too small (need {need}, have {})",
             out.len(),
         );
-        let result = simdutf::convert::utf16::to::utf8::le(utf16, out);
-        &mut out[..result]
+        let mut out = BorrowedBuf::from(out);
+        simdutf::convert::utf16::to::utf8::with_errors::le(input, out.unfilled());
+        out.into_filled_mut()
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0

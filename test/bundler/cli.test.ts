@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, forEachLine, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -527,6 +527,30 @@ describe.concurrent("--no-bundle with --outdir", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toContain("jsx");
     expect(out).toContain("app");
+  });
+
+  test.skipIf(!isLinux)("closes the files it has read", async () => {
+    using dir = tempDir("no-bundle-outdir-closes", { "src/a.ts": `console.log(1);`, "src/b.css": `a { color: red }` });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--watch", "./src/a.ts", "./src/b.css", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // A build that fails keeps watching, so wait for whichever stream prints first.
+    const first = await Promise.race([forEachLine(proc.stdout).next(), forEachLine(proc.stderr).next()]);
+    expect(first.value).toStartWith("Transpiled");
+    const open = fs.readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
+      try {
+        return fs.readlinkSync(`/proc/${proc.pid}/fd/${fd}`);
+      } catch {
+        return [];
+      }
+    });
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.filter(target => /src\/(a\.ts|b\.css)$/.test(target))).toEqual([]);
   });
 
   test("reports the size of the written file", async () => {

@@ -77,29 +77,29 @@ impl core::borrow::Borrow<[u8]> for NameKey {
 #[derive(Clone, Copy)]
 pub struct Renamer<'a> {
     pub(crate) symbols: &'a symbol::Map,
-    names: Names<'a>,
+    kind: RenamerKind<'a>,
 }
 
 #[derive(Clone, Copy)]
-enum Names<'a> {
+enum RenamerKind<'a> {
     Number(&'a NumberRenamer<'a>, &'a CrossChunkNames<'a>),
-    Original(&'a bun_ast::Source<'a>),
+    NoOp(&'a bun_ast::Source<'a>),
     Minify(&'a MinifyRenamer),
 }
 
 impl<'a> Renamer<'a> {
     pub(crate) fn no_op(symbols: &'a symbol::Map, source: &'a bun_ast::Source<'a>) -> Self {
-        let names = Names::Original(source);
-        Renamer { symbols, names }
+        let kind = RenamerKind::NoOp(source);
+        Renamer { symbols, kind }
     }
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &'a [u8] {
-        match self.names {
-            Names::Number(r, cross_chunk_names) => {
+        match self.kind {
+            RenamerKind::Number(r, cross_chunk_names) => {
                 r.name_for_symbol(self.symbols, cross_chunk_names, ref_)
             }
-            Names::Original(source) => original_name_for_symbol(self.symbols, source, ref_),
-            Names::Minify(r) => r.name_for_symbol(self.symbols, ref_),
+            RenamerKind::NoOp(source) => original_name_for_symbol(self.symbols, source, ref_),
+            RenamerKind::Minify(r) => r.name_for_symbol(self.symbols, ref_),
         }
     }
 }
@@ -246,9 +246,9 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn to_renamer<'a>(&'a self, symbols: &'a symbol::Map) -> Renamer<'a> {
-        let names = Names::Minify(self);
-        Renamer { symbols, names }
+    pub fn as_renamer<'a>(&'a self, symbols: &'a symbol::Map) -> Renamer<'a> {
+        let kind = RenamerKind::Minify(self);
+        Renamer { symbols, kind }
     }
 
     fn name_for_symbol<'a>(&'a self, symbols: &'a symbol::Map, ref_: Ref) -> &'a [u8] {
@@ -650,7 +650,7 @@ trait NameScopes {
         let id = self.id_of(name);
         let use_ = self.find(id);
         if let NameUse::Unused = use_ {
-            let unchanged = !normalized || strings::eql_long(name, input_name.slice(), true);
+            let unchanged = !normalized || strings::eql_long(name, input_name.slice());
             let name = if unchanged {
                 input_name
             } else {
@@ -854,13 +854,13 @@ impl<'a> NumberRenamer<'a> {
     }
 
     /// `cross_chunk_names`: this renamer reserves the names of other chunks' symbols and stores no copy.
-    pub fn to_renamer<'r>(
+    pub fn as_renamer<'r>(
         &'r self,
         symbols: &'r symbol::Map,
         cross_chunk_names: &'r CrossChunkNames<'r>,
     ) -> Renamer<'r> {
-        let names = Names::Number(self, cross_chunk_names);
-        Renamer { symbols, names }
+        let kind = RenamerKind::Number(self, cross_chunk_names);
+        Renamer { symbols, kind }
     }
 
     /// The row of `names` for a file of the chunk. `None`: the file is in another chunk.

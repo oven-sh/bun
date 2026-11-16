@@ -23,6 +23,8 @@ use bun_threading::thread_pool as ThreadPool;
 
 use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
+use crate::package_manager::directories::CacheDirectory;
+use crate::package_manager::{INBOX, THREAD_POOL};
 use crate::package_manager_task::{self as Task, Job};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::{Error, PackageManager};
@@ -759,7 +761,7 @@ pub(crate) struct GitSubprocess {
     task: NonNull<Task::Task>,
     name: Box<[u8]>,
     event_loop: EventLoopHandle,
-    cache_dir: Fd,
+    cache_dir: &'static CacheDirectory,
 
     step: JsCell<Step>,
     /// Clone URLs still to try, last first (https before ssh).
@@ -871,7 +873,7 @@ impl GitSubprocess {
     }
 
     fn new_staging(&self) -> Result<Vec<u8>, Error> {
-        let staging = CacheStaging::new(self.cache_dir, &self.manager().cache_directory_path)?;
+        let staging = CacheStaging::new(self.cache_dir.handle.fd(), &self.cache_dir.path)?;
         let tmp_path = staging.tmp_path.clone();
         self.staging.set(Some(staging));
         Ok(tmp_path)
@@ -889,7 +891,7 @@ impl GitSubprocess {
             == crate::package_manager_real::options::OfflineMode::Offline;
         let folder_name = bare_repo_folder_name(this.task().id);
         // If anything other than a usable clone has this name, clone again. `publish` replaces it.
-        match bun_sys::Dir::borrow(&this.cache_dir)
+        match (this.cache_dir.handle)
             .open_at_with(&folder_name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
         {
             Ok(repo) => {
@@ -959,7 +961,7 @@ impl GitSubprocess {
         [
             b"--git-dir=".as_slice(),
             Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                &self.manager().cache_directory_path,
+                &self.cache_dir.path,
                 &[&bare_repo_folder_name(clone_id)],
             ),
         ]
@@ -1081,7 +1083,7 @@ impl GitSubprocess {
             return Err(Error::InstallFailed);
         }
 
-        match bun_sys::Dir::borrow(&this.cache_dir).open_at(&checkout_folder_name(&resolved)) {
+        match (this.cache_dir.handle).open_at(&checkout_folder_name(&resolved)) {
             Ok(dir) => {
                 if is_tagged_checkout(&dir) {
                     let json = read_package_json_in(&dir);
@@ -1185,7 +1187,7 @@ impl GitSubprocess {
         let argv = argv.iter().map(|arg| Some(arg.as_c_str().into()));
         let argv: Vec<_> = argv.chain([None]).collect();
         // Without `variable`, the list ends one place earlier.
-        let envp = [env.envp.entries(), &[variable.map(Into::into), None]].concat();
+        let envp = [env.envp.unterminated(), &[variable.map(Into::into), None]].concat();
 
         let this_ptr: *mut c_void = this.as_ptr().cast();
         this.read_error.set(None);
@@ -1503,18 +1505,16 @@ impl GitSubprocess {
     /// `Task::callback` pushes the task onto `resolve_tasks`. Frees `this`.
     fn finish_on_pool(this: ThisPtr<Self>, finalize: Finalize) {
         debug_assert!(!matches!(this.task().job, Job::GitCommit { .. }));
-        let manager = this.manager;
         let task = this.task;
         this.task().git_finalize = Some(finalize);
         Self::release(this);
         // SAFETY: the task is idle until the pool runs it.
         let batch = ThreadPool::Batch::from(unsafe { &raw mut (*task.as_ptr()).threadpool_task });
-        manager.thread_pool.schedule(batch);
+        THREAD_POOL.schedule(batch);
     }
 
     /// Hands the finished commit lookup to `resolve_tasks`. Frees `this`.
     fn finish_commit(this: ThisPtr<Self>, found: Option<Vec<u8>>) {
-        let manager = this.manager;
         let task_ptr = this.task;
         {
             let task = this.task();
@@ -1530,9 +1530,8 @@ impl GitSubprocess {
             }
         }
         Self::release(this);
-        manager.resolve_tasks.push(task_ptr);
-        // SAFETY: the manager outlives every task; see `wake_raw`.
-        unsafe { PackageManager::wake_raw(manager.as_ptr()) };
+        INBOX.resolve_tasks.push(task_ptr);
+        INBOX.wake();
     }
 }
 

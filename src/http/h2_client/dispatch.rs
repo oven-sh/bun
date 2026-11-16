@@ -6,8 +6,8 @@
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use crate::Headers;
 use crate::h2_frame_parser as wire;
-use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
@@ -583,10 +583,9 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
 pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
-    let mut bounds: Vec<[u32; 3]> = Vec::new();
-    let start_len = stream.decoded_bytes.len();
+    let mut headers = Headers::default();
     // The size cap counts a value before the trim, so whitespace is not free.
-    let mut untrimmed_len = start_len;
+    let mut untrimmed_len = 0;
     let mut seen_regular = false;
     let mut seen_status = false;
     // Stream-level malformations seen mid-decode. The loop MUST consume the
@@ -648,23 +647,12 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             stream.header_block.clear();
             return;
         }
-        let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream.decoded_bytes.extend_from_slice(result.name);
-        let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream
-            .decoded_bytes
-            .extend_from_slice(trim_response_value(result.value));
-        bounds.push([
-            name_start,
-            value_start,
-            u32::try_from(stream.decoded_bytes.len()).expect("int cast"),
-        ]);
+        headers.append(result.name, trim_response_value(result.value));
     }
 
     stream.header_block.clear();
 
     if malformed {
-        stream.decoded_bytes.truncate(start_len);
         session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);
         stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
@@ -682,12 +670,10 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 
     if status == 0 {
-        stream.decoded_bytes.truncate(start_len);
         stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {
-        stream.decoded_bytes.truncate(start_len);
         // Only `100 Continue` is the go-ahead for a withheld body; 102/103
         // are informational and do not satisfy `Expect: 100-continue`.
         if status == 100 {
@@ -701,6 +687,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 
     stream.status_code = status;
+    stream.decoded_headers = headers;
     stream.headers_ready = true;
     if stream.awaiting_continue {
         // Final status without a preceding 100: server has decided without
@@ -715,27 +702,6 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             &[],
         );
         stream.sent_end_stream();
-    }
-    let bytes = stream.decoded_bytes.as_ptr();
-    stream.decoded_headers.reserve_exact(
-        bounds
-            .len()
-            .saturating_sub(stream.decoded_headers.capacity()),
-    );
-    for b in &bounds {
-        // Self-referential — decoded_headers stores raw-ptr slices
-        // borrowing stream.decoded_bytes. picohttp::Header stores raw ptrs so
-        // this is sound as long as decoded_bytes is not reallocated before
-        // delivery (it isn't — only ever appended to once per END_HEADERS).
-        // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
-        let name =
-            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
-        // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
-        let value =
-            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, value));
     }
 }
 

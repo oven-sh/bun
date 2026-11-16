@@ -136,7 +136,7 @@ use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContex
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
-use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
+use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
@@ -152,10 +152,6 @@ use crate::bake::dev_server::source_map_store::SourceMapStore;
 use crate::node::fs::async_ as fs_async;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
-use crate::node::node_zlib_binding;
-use crate::node::zlib::{
-    native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd,
-};
 
 use crate::dns_jsc::Resolver as DNSResolver;
 use crate::server::ServerAllConnectionsClosedTask;
@@ -242,15 +238,6 @@ pub(crate) fn run_task(
             )
         };
     }
-    macro_rules! compression_arm {
-        ($feature:ident, $T:ty) => {
-            feature_arm!([$feature], |stream: $T| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns the ref `write()` took.
-                let write = unsafe { node_zlib_binding::PendingWrite::from_raw(stream) };
-                node_zlib_binding::run_from_js_thread(write);
-            })
-        };
-    }
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
     // eligible, so const patterns work directly.
     match task.tag() {
@@ -267,32 +254,24 @@ pub(crate) fn run_task(
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
             (
-                resolve: *mut bun_bundler::bundle_v2::api::JSBundler::Resolve =
-                    cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve),
+                resolve: Box<bun_bundler::bundle_v2::api::JSBundler::Resolve<'static>> =
+                    boxed!(task, bun_bundler::bundle_v2::api::JSBundler::Resolve),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // `bun_bundler` is JSC-free; the C++ hop it calls answers the request itself when the plugin throws, but can return early with an exception pending (argument conversion), so check the scope here.
-                bun_jsc::call_check_slow(global, || {
-                    // SAFETY: tag identifies pointee — a live `Resolve` owned by the
-                    // plugin dispatch chain.
-                    unsafe { &mut *resolve }.run_on_js_thread()
-                })?;
+                bun_jsc::call_check_slow(global, || resolve.run_on_js_thread())?;
                 Ok(())
             }
         )?,
         task_tag::BundleV2PluginLoad => in_features!(
             [Bundler],
             (
-                load: *mut bun_bundler::bundle_v2::api::JSBundler::Load =
-                    cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load),
+                load: Box<bun_bundler::bundle_v2::api::JSBundler::Load<'static>> =
+                    boxed!(task, bun_bundler::bundle_v2::api::JSBundler::Load),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // As `BundleV2PluginResolve`.
-                bun_jsc::call_check_slow(global, || {
-                    // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
-                    // dispatch chain.
-                    unsafe { &mut *load }.run_on_js_thread()
-                })?;
+                bun_jsc::call_check_slow(global, || load.run_on_js_thread())?;
                 Ok(())
             }
         )?,
@@ -370,19 +349,15 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::BundleV2PluginResolveAnswered => feature_arm!(
+        task_tag::BundleV2PluginResolveAnswered => boxed_arm!(
+            task,
             [Bundler],
-            |answered: bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered| {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *answered }.run();
-            }
+            |answered: bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered| { answered.run() }
         ),
-        task_tag::BundleV2PluginLoadAnswered => feature_arm!(
+        task_tag::BundleV2PluginLoadAnswered => boxed_arm!(
+            task,
             [Bundler],
-            |answered: bun_bundler::bundle_v2::api::JSBundler::LoadAnswered| {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *answered }.run();
-            }
+            |answered: bun_bundler::bundle_v2::api::JSBundler::LoadAnswered| { answered.run() }
         ),
         task_tag::BundleV2PluginLoadDeferred => {
             cast!(bun_bundler::bundle_v2::api::JSBundler::LoadDeferred).run();
@@ -583,14 +558,25 @@ pub(crate) fn run_task(
                 work: *mut napi_async_work = cast_ptr!(napi_async_work),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *work }.run_from_js(global)?;
-                Ok(())
+                // SAFETY: §Dispatch — tag identifies pointee, which the pool posted back.
+                unsafe { napi_async_work::run_from_js(work, global) }
             }
         )?,
-        task_tag::ThreadSafeFunction => {
-            feature_arm!([NativeAddons], |function: ThreadSafeFunction| {
-                ThreadSafeFunction::on_dispatch(function);
+        task_tag::ThreadSafeFunction => in_features!(
+            [NativeAddons],
+            (
+                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                el: &EventLoop = el,
+                vm: &VirtualMachine = vm,
+            ) {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let function = unsafe { std::sync::Arc::from_raw(function) };
+                ThreadSafeFunction::on_dispatch(function, el, vm);
+            }
+        ),
+        task_tag::ThreadSafeFunctionRefRequest => {
+            boxed_arm!(task, [NativeAddons], |request: TsfnRefRequest| {
+                request.run()
             })
         }
         task_tag::NapiFinalizerTask => boxed_arm!(
@@ -600,13 +586,9 @@ pub(crate) fn run_task(
         )?,
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
-            {
-                use crate::napi::uv_posix::UvLoop;
-                feature_arm!([NativeAddons], |uv_loop: UvLoop| {
-                    // SAFETY: `schedule_dispatch` posted this VM's live loop.
-                    unsafe { UvLoop::dispatch(uv_loop) };
-                })
-            }
+            in_features!([NativeAddons], (vm: &VirtualMachine = vm) {
+                crate::jsc_hooks::runtime_state_of(vm).uv_loop.dispatch(vm);
+            });
             #[cfg(not(unix))]
             unreachable!("posix-only");
         }
@@ -614,10 +596,34 @@ pub(crate) fn run_task(
             #[cfg(unix)]
             {
                 use crate::napi::uv_posix::UvHandle;
-                feature_arm!([NativeAddons], |uv_handle: UvHandle| -> JsResult<()> {
-                    // SAFETY: `uv_close` posted this handle.
-                    unsafe { UvHandle::run_close(uv_handle) }
-                })?;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        uv_handle: *mut UvHandle = cast_ptr!(UvHandle),
+                        global: &JSGlobalObject = global,
+                    ) -> JsResult<()> {
+                        // SAFETY: `uv_close` posted this handle.
+                        unsafe { UvHandle::run_close(uv_handle, global) }
+                    }
+                )?;
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
+        }
+        task_tag::UvWorkDone => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvWork;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        uv_work: *mut UvWork = cast_ptr!(UvWork),
+                        vm: &VirtualMachine = vm,
+                    ) -> JsResult<()> {
+                        // SAFETY: the pool posted this request.
+                        unsafe { UvWork::run_done(uv_work, vm) }
+                    }
+                )?;
             }
             #[cfg(not(unix))]
             unreachable!("posix-only");
@@ -691,11 +697,6 @@ pub(crate) fn run_task(
             }
             for_each_fs_uv_op!(__fs_run);
         }
-
-        // ── compression streams ──────────────────────────────────────────
-        task_tag::NativeZlib => compression_arm!(NodeZlib, NativeZlib),
-        task_tag::NativeBrotli => compression_arm!(NodeZlibBrotli, NativeBrotli),
-        task_tag::NativeZstd => compression_arm!(NodeZlibZstd, NativeZstd),
 
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
@@ -835,7 +836,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 85,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1466,9 +1467,12 @@ pub(crate) unsafe fn fire_timer(
                 use crate::napi::uv_posix::UvTimerNode;
                 in_features!(
                     [NativeAddons],
-                    (c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer)) -> JsResult<()> {
+                    (
+                        c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer),
+                        vm: &VirtualMachine = vm,
+                    ) -> JsResult<()> {
                         // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
-                        unsafe { UvTimerNode::on_fire(c) }
+                        unsafe { UvTimerNode::on_fire(c, vm) }
                     }
                 )
             }
@@ -1579,10 +1583,16 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
-            release_in!([Bundler], bun_bundler::bundle_v2::api::JSBundler::Resolve)
+            release_boxed_in!(
+                [Bundler],
+                bun_bundler::bundle_v2::api::JSBundler::Resolve<'static>
+            )
         }
         task_tag::BundleV2PluginLoad => {
-            release_in!([Bundler], bun_bundler::bundle_v2::api::JSBundler::Load)
+            release_boxed_in!(
+                [Bundler],
+                bun_bundler::bundle_v2::api::JSBundler::Load<'static>
+            )
         }
         task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
         task_tag::CppTask => release!(CppTask),
@@ -1605,13 +1615,13 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
-            release_in!(
+            release_boxed_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered
             )
         }
         task_tag::BundleV2PluginLoadAnswered => {
-            release_in!(
+            release_boxed_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::LoadAnswered
             )
@@ -1675,9 +1685,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
                 NativePromiseContextDeferredDerefTask
             )
         }
-        task_tag::NativeBrotli => release_in!([NodeZlibBrotli], NativeBrotli),
-        task_tag::NativeZlib => release_in!([NodeZlib], NativeZlib),
-        task_tag::NativeZstd => release_in!([NodeZlibZstd], NativeZstd),
         task_tag::PosixSignalTask => release!(PosixSignalTask),
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
@@ -1726,6 +1733,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunctionRefRequest => {
+            release_boxed_in!([NativeAddons], TsfnRefRequest)
+        }
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvLoop);
@@ -1735,6 +1745,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::UvHandleClose => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvHandle);
+            #[cfg(not(unix))]
+            unreachable!("posix-only tag");
+        }
+        task_tag::UvWorkDone => {
+            #[cfg(unix)]
+            release_in!([NativeAddons], crate::napi::uv_posix::UvWork);
             #[cfg(not(unix))]
             unreachable!("posix-only tag");
         }

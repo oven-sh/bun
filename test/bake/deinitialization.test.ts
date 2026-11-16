@@ -558,6 +558,169 @@ test.skipIf(isWindows)("a client that leaves while the page of a failed bundle i
   expect(exitCode).toBe(0);
 });
 
+test("pendingRequests counts a request once in the handlers behind the catch-all route", async () => {
+  using dir = tempDir("dev-server-pending-requests", {
+    "server.ts": `export function render(req: Request, meta: any) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `export default () => Response.json(globalThis.server.pendingRequests);`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = (globalThis.server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        app: { framework: { fileSystemRouterTypes: [fsr] } },
+        fetch: () => Response.json(server.pendingRequests),
+      }));
+      const get = async path => (await fetch(new URL(path, server.url))).json();
+      // Bundles the route.
+      await get("/");
+      console.log(JSON.stringify({ page: await get("/"), fetch: await get("/other") }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toEndWith('{"page":1,"fetch":1}\n');
+  expect(exitCode).toBe(0);
+});
+
+// The first request waits for the bundle, the second one is answered at once.
+test.concurrent.each([
+  ["reload", 1, [200, 200]],
+  ["reload", 2, [200, 200]],
+  ["estimate", 2, [200, 200]],
+  ["stop", 1, ["failed", "failed"]],
+  ["stop", 2, [200, "failed"]],
+  ["throw", 1, ["uncaught", 500, 200]],
+])("%s in a getter named like a route parameter, request %d", async (action, request, expected) => {
+  using dir = tempDir("dev-server-params-getter", {
+    "server.ts": `export function render(req: Request, meta: any) { return meta.pageModule.default(req, meta); }`,
+    "routes/[slug].ts": `export default () => new Response("page");`,
+    "fixture.ts": `
+      import { estimateShallowMemoryUsageOf } from "bun:jsc";
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        app: { framework: { fileSystemRouterTypes: [fsr] } },
+      });
+      const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/_bun/hmr");
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = reject;
+      });
+
+      const action = {
+        reload: () => server.reload({ fetch: () => new Response() }),
+        estimate: () => estimateShallowMemoryUsageOf(server),
+        stop: () => server.stop(true),
+        throw() {
+          throw new Error("uncaught");
+        },
+      }[process.argv[2]];
+      let calls = 0;
+      Object.defineProperty(Object.prototype, "slug", {
+        get() {
+          if (++calls === Number(process.argv[3])) action();
+        },
+      });
+
+      const results = [];
+      process.on("uncaughtException", error => results.push(error.message));
+      for (let i = 0; i < 2; i++) {
+        results.push(await fetch(new URL("/a", server.url)).then(response => response.status, () => "failed"));
+      }
+      console.log(JSON.stringify(results));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts", action, String(request)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toEndWith(JSON.stringify(expected) + "\n");
+  expect(exitCode).toBe(0);
+});
+
+// The queued parse tasks read the plugin object, which lives in the worker's JS heap.
+test.skipIf(!isASAN)(
+  "terminating a worker while its dev server has files left to parse",
+  async () => {
+    const names = Array.from({ length: 600 }, (_, i) => `m${i}.js`);
+    using dir = tempDir("bake-terminate-while-parsing", {
+      ...Object.fromEntries(names.map(name => [name, Buffer.alloc(800, "console.log(1);\n").toString()])),
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.js"]\n`,
+      "plugin.js": `
+        export default {
+          name: "signal",
+          setup(build) {
+            build.onResolve({ filter: /^last$/ }, () => {
+              postMessage("queued");
+              return new Promise(() => {});
+            });
+          },
+        };
+      `,
+      "index.html": `<!DOCTYPE html><script type="module" src="./entry.js"></script>`,
+      "entry.js": names.map(name => `import "./${name}";\n`).join("") + `import "last";`,
+      "worker.js": `
+        import html from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        fetch(server.url).catch(() => {});
+      `,
+      "fixture.js": `
+        const worker = new Worker("./worker.js");
+        await new Promise((resolve, reject) => {
+          worker.onmessage = resolve;
+          worker.onerror = reject;
+        });
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.terminate();
+        await closed;
+        // Runs on the pool after what the dev server queued.
+        await Bun.build({ entrypoints: ["./m0.js"] });
+        console.log("done");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        // Few threads, so that the queue outlasts the worker.
+        UV_THREADPOOL_SIZE: "2",
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  },
+  // Parsing has to take longer than tearing down a VM, which can pass the 5s default under ASAN.
+  30_000,
+);
+
 test("dev server does not leak the export names of a bundle", async () => {
   using dir = tempDir("bake-export-names-leak", {
     "index.html": `<!DOCTYPE html><script type="module" src="./entry.js"></script>`,

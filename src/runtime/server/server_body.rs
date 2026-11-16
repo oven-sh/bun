@@ -1049,7 +1049,7 @@ impl ServePlugins {
             bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(route, Some(loaded)));
         }
         if let Some(server) = self.dev_server.take() {
-            server.with_dev_server(|dev| bun_core::handle_oom(dev.on_plugins_resolved(loaded)));
+            server.with_dev_server(|dev| dev.on_plugins_resolved(loaded));
         }
     }
 
@@ -1070,7 +1070,7 @@ impl ServePlugins {
             bun_core::handle_oom(route.on_plugins_rejected(in_handler));
         }
         if let Some(server) = self.dev_server.take() {
-            drop(server.with_dev_server(|dev| dev.on_plugins_rejected(in_handler)));
+            drop(server.with_dev_server(|dev| dev.state_mut().on_plugins_rejected(in_handler)));
         }
     }
 
@@ -1746,8 +1746,7 @@ where
         // These get re-applied when we set the static routes again.
         self.with_dev_server(|dev_server| {
             // Prevent a use-after-free in the hash table keys.
-            dev_server.html_router.clear();
-            dev_server.html_router.fallback = None;
+            dev_server.state_mut().html_router.clear();
         });
 
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
@@ -2732,8 +2731,8 @@ where
         // No entry module (`bun bake`): the hash of the project root tells servers apart.
         let main = self.vm_ref().main().unwrap_or_default();
         let json_string = self
-            .dev_server
-            .with_taken(|dev| chrome_dev_tools_json(main, &dev.as_ref().unwrap().graphs.root));
+            .with_dev_server(|dev| chrome_dev_tools_json(main, &dev.state_mut().graphs.root))
+            .unwrap();
         resp.write_status(b"200 OK");
         resp.write_header(b"Content-Type", b"application/json");
         resp.end(&json_string, resp.should_close_connection());

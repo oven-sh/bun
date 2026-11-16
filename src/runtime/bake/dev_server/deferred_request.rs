@@ -11,8 +11,6 @@ pub(crate) struct DeferredRequest {
 
 bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
 
-use core::cell::Cell;
-
 use super::*;
 
 /// A small maximum is set because development servers are unlikely to
@@ -54,14 +52,14 @@ impl List {
     }
 }
 
-/// A `List` that was moved out of its `DevServer`.
+/// A `List` that was moved out of the `DevServerState`.
 #[must_use]
 pub(crate) struct FailOnDrop {
     pub(super) requests: List,
     /// The request's handler has not returned: it gets the plugin error, like the requests that follow.
     pub(super) in_handler: bool,
     /// Completing the last request on a stopped server frees the DevServer, whose `deferred_request_pool` holds `requests`.
-    pub(super) _pending: Option<PendingRequest>,
+    pub(super) _pending: PendingRequest,
 }
 
 impl Drop for FailOnDrop {
@@ -78,13 +76,14 @@ impl Drop for FailOnDrop {
     }
 }
 
-impl DevServer {
+impl StateGuard<'_> {
     pub(super) fn queue_request(
         &mut self,
         queue: BundleQueueType,
         route_bundle_index: route_bundle::Index,
         handler: Handler,
     ) -> &Handle {
+        let pool = &raw const self.dev_server.deferred_request_pool;
         let list = match queue {
             BundleQueueType::CurrentBundle => {
                 &mut self
@@ -100,10 +99,9 @@ impl DevServer {
             handler: Cell::new(handler),
             next: Cell::new(list.first.take()),
         };
-        // SAFETY: `Drop` empties the lists before the pool goes. Every other handle is held during a
-        // pending request of the server, which keeps `self` until it has none.
-        list.first
-            .insert(unsafe { Handle::new(request, &raw const self.deferred_request_pool) })
+        // SAFETY: the lists drop before the pool goes. Every other handle is held during a
+        // pending request of the server, which keeps the pool until it has none.
+        list.first.insert(unsafe { Handle::new(request, pool) })
     }
 }
 

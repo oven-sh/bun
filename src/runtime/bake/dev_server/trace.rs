@@ -18,7 +18,7 @@ impl Graphs {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// For a framework route. An HTML route is traced from its `bundled_file` in the client graph.
     pub(super) fn trace_all_route_imports(
         &mut self,

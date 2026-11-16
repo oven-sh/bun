@@ -6,7 +6,7 @@ use bun_http::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
-use super::{ASSET_PREFIX, DevServer, FileKind, Magic};
+use super::{ASSET_PREFIX, DevServer, DevServerState, FileKind, Magic};
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 use crate::webcore::AnyBlob;
@@ -37,7 +37,7 @@ impl Assets {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// When an asset is overwritten, it receives a new URL to get around
     /// browser caching. The old URL is immediately revoked.
     ///
@@ -69,8 +69,6 @@ impl DevServer {
             bstr::BStr::new(&*mime_type.value),
         );
 
-        debug_assert!(server.is_some());
-
         // `gop` holds key/value ptrs into `path_map` and cannot stay live
         // across calls that take `&mut Assets`. Capture `index` /
         // `found_existing` and re-derive the value slot at the end instead.
@@ -101,7 +99,7 @@ impl DevServer {
                         contents,
                         InitFromBytesOptions {
                             mime_type: Some(mime_type),
-                            server: *server,
+                            server: Some(*server),
                             ..Default::default()
                         },
                     );
@@ -123,7 +121,7 @@ impl DevServer {
                     contents,
                     InitFromBytesOptions {
                         mime_type: Some(mime_type),
-                        server: *server,
+                        server: Some(*server),
                         ..Default::default()
                     },
                 ));

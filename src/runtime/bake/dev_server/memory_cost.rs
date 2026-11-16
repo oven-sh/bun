@@ -3,7 +3,7 @@ use core::mem::size_of;
 use super::*;
 use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
-    DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
+    DevServer, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
 };
 use bun_collections::ArrayHashMap;
 
@@ -26,7 +26,7 @@ pub(crate) struct MemoryCost {
 /// unlike the HTTP server, it controls a lot of objects that are frequently
 /// being added, removed, and changed (as the developer edits source files). It
 /// is exponentially easy to mess up memory management.
-pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
+pub(crate) fn memory_cost_detailed(dev: &DevServerState) -> MemoryCost {
     let mut other_bytes: usize = size_of::<DevServer>() + size_of::<DevServerTimers>();
     let mut incremental_graph_client: usize = 0;
     let mut incremental_graph_server: usize = 0;
@@ -35,11 +35,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut assets: usize = 0;
 
     // Exhaustiveness check:
-    // destructuring without `..` fails to compile when a DevServer field is
+    // destructuring without `..` fails to compile when a `DevServerState` field is
     // added, removed, or renamed, forcing the accounting below to be updated.
     // All bindings are `_` so nothing is moved or borrowed past this block.
     {
-        let DevServer {
+        let DevServerState {
             magic: _,
             inspector_server_id: _,
             configuration_hash_key: _,
@@ -47,7 +47,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server: _,
             router: _,
             route_bundles: _,
-            graph_safety_lock: _,
             graphs:
                 Graphs {
                     root: _,
@@ -58,8 +57,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
                     assets: _,
                     bundling_failures: _,
                 },
-            barrel_files_with_deferrals: _,
-            barrel_needed_exports: _,
+            barrels: _,
             html_router: _,
             source_maps: _,
             frontend_only: _,
@@ -74,15 +72,12 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            server_transpiler: _,
-            client_transpiler: _,
-            ssr_transpiler: _,
+            transpilers: _,
             log: _,
             plugin_state: _,
             plugins: _,
             current_bundle: _,
             next_bundle: _,
-            deferred_request_pool: _,
             active_websocket_connections: _,
             emit_incremental_visualizer_events: _,
             emit_memory_visualizer_events: _,
@@ -98,12 +93,10 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .bundles_since_last_error
     //   .configuration_hash_key
     //   .inspector_server_id
-    //   .deferred_request_pool
     //   .emit_incremental_visualizer_events
     //   .emit_memory_visualizer_events
     //   .frontend_only
     //   .generation
-    //   .graph_safety_lock
     //   .magic
     //   .plugin_state
     //   .server_register_update_callback
@@ -113,9 +106,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // pointers that are not considered a part of DevServer
     //   .vm
     //   .server
-    //   .server_transpiler
-    //   .client_transpiler
-    //   .ssr_transpiler
+    //   .transpilers
     //   .log
     //   .framework
     //   .broadcast_console_log_from_browser_to_server
@@ -143,12 +134,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         js_code += cost.code;
         source_maps += cost.source_maps;
     }
-    // .barrel_files_with_deferrals
-    // .barrel_needed_exports
+    // .barrels
     // .graphs.assets
     assets += dev.graphs.assets.memory_cost();
     // .active_websocket_connections
-    other_bytes += dev.active_websocket_connections.capacity() * size_of::<*const HmrSocket>();
+    other_bytes += memory_cost_array_list(&dev.active_websocket_connections);
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
@@ -256,7 +246,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
 }
 
-pub(crate) fn memory_cost(dev: &DevServer) -> usize {
+pub(crate) fn memory_cost(dev: &DevServerState) -> usize {
     let cost = memory_cost_detailed(dev);
     // Keep this in sync with the `MemoryCost` struct definition above.
     let mut acc: usize = 0;
@@ -283,7 +273,7 @@ pub(crate) fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -
     map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
 
-impl DevServer {
+impl DevServerState {
     pub(super) fn print_memory_line(&self) {
         if !bun_output::scope_is_visible!(DevServer) {
             return;
@@ -299,7 +289,7 @@ impl DevServer {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     pub(crate) fn emit_memory_visualizer_message_timer(&mut self) {
         debug_assert!(self.magic == Magic::Valid);
         self.emit_memory_visualizer_message();

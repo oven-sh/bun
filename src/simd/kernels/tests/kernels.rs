@@ -325,6 +325,19 @@ fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) 
         );
     }
     check_both(&all_bytes().repeat(2), &all_bytes()[236..]);
+    // So many near copies that it goes on with another algorithm, which has to find the needle.
+    let fib = b"abaababaabaababaababaabaababaa";
+    let (near, dots) = ([&b"#"[..], &fib[1..]].concat().repeat(60), vec![b'.'; 7024]);
+    check_both(&[&near[..], &dots, fib].concat(), fib);
+    check_both(&[fib, &dots[..], &near].concat(), fib);
+    let needle = &b"bcaab".repeat(13)[..63];
+    let cut = |i: usize| &needle[..62 - i % 7];
+    let ends: Vec<u8> = (0..100).flat_map(|i| [cut(i), b"#"].concat()).collect();
+    check_both(&[&ends[..], needle].concat(), needle);
+    let middles: Vec<u8> = (0..100)
+        .flat_map(|i| [&needle[..31], b"#", &cut(i)[32..]].concat())
+        .collect();
+    check_both(&[needle, &middles[..]].concat(), needle);
 }
 
 #[test]

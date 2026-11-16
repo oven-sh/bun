@@ -16,9 +16,7 @@ use bun_core::{WStr, ZStr};
 /// form of [`WStr::from_raw`] for the dominant call shape in this module: a
 /// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
 /// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
-/// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition).
-/// Mirrors [`ZStr::from_buf`].
+/// returned lifetime to it.
 #[inline(always)]
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)

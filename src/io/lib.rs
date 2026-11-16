@@ -56,6 +56,7 @@ pub mod parent_death_watchdog {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::os::windows::io::{AsRawHandle as _, HandleOrNull, IntoRawHandle as _, OwnedHandle};
 
+    use bun_core::wstr;
     use bun_sys::windows;
 
     use crate::posix_event_loop::EventLoopCtx;
@@ -95,17 +96,14 @@ pub mod parent_death_watchdog {
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
-        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
-        unsafe {
-            // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
-            // ...])` self-arms its own Job and parent-watch (POSIX parity).
-            let _ = windows::SetEnvironmentVariableW(
-                bun_core::w!("BUN_FEATURE_FLAG_NO_ORPHANS\0").as_ptr(),
-                bun_core::w!("1\0").as_ptr(),
-            );
-            ensure_kill_on_close_job();
-            arm_parent_watch();
-        }
+        // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
+        // ...])` self-arms its own Job and parent-watch (POSIX parity).
+        let _ = windows::SetEnvironmentVariableW(
+            wstr!("BUN_FEATURE_FLAG_NO_ORPHANS"),
+            Some(wstr!("1")),
+        );
+        ensure_kill_on_close_job();
+        arm_parent_watch();
     }
 
     static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
@@ -123,11 +121,7 @@ pub mod parent_death_watchdog {
         let Some(job) = windows::create_kill_on_close_job() else {
             return;
         };
-        // SAFETY: `job` is open; the other is this process's pseudo-handle.
-        if unsafe {
-            windows::AssignProcessToJobObject(job.as_raw_handle(), windows::GetCurrentProcess())
-        } != 0
-        {
+        if windows::AssignProcessToJobObject(&job, windows::GetCurrentProcess()).is_ok() {
             let _ = job.into_raw_handle();
         }
     }
@@ -139,7 +133,7 @@ pub mod parent_death_watchdog {
     /// creator exists but its DACL denies us (e.g. a SYSTEM service spawned
     /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
     /// Job Object half already covers descendants.
-    unsafe fn arm_parent_watch() {
+    fn arm_parent_watch() {
         const ERROR_INVALID_PARAMETER: u32 = 87;
         let ppid = getppid();
         if ppid == 0 {
@@ -209,32 +203,13 @@ pub mod parent_death_watchdog {
     }
 
     fn is_original_parent(parent: windows::HANDLE) -> bool {
-        let Some(parent_created) = creation_time(parent) else {
+        let Ok(parent_times) = windows::GetProcessTimes(parent) else {
             return false;
         };
-        let Some(self_created) = creation_time(windows::GetCurrentProcess()) else {
+        let Ok(self_times) = windows::GetProcessTimes(windows::GetCurrentProcess()) else {
             return true;
         };
-        parent_created <= self_created
-    }
-
-    fn creation_time(h: windows::HANDLE) -> Option<u64> {
-        let mut t: [windows::FILETIME; 4] = bun_core::ffi::zeroed();
-        // SAFETY: `h` is either the pseudo-handle or a handle we opened; out
-        // params are valid `FILETIME` slots.
-        if unsafe {
-            windows::GetProcessTimes(
-                h,
-                &raw mut t[0],
-                &raw mut t[1],
-                &raw mut t[2],
-                &raw mut t[3],
-            )
-        } == 0
-        {
-            return None;
-        }
-        Some((u64::from(t[0].dwHighDateTime) << 32) | u64::from(t[0].dwLowDateTime))
+        parent_times.creation <= self_times.creation
     }
 
     /// Thread-pool callback: the parent's process object signaled. Matches the

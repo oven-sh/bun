@@ -6318,6 +6318,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 
 #if ENABLE(AOT)
+    JSValue ownFactory = mock->factory.get();
+    bool settlesAtOnce = !mock->importsOriginal && ownFactory && ownFactory.isCallable() && asObject(ownFactory)->getPrototypeDirect() != globalObject->asyncFunctionStructure()->storedPrototype();
+    if (settlesAtOnce && !previous && !keepsLoadedModule && !mock->isFromPreload && loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule && JSC::AOT::failedWithImportInEarlierTestFile(globalObject, *loaded.compiledModule)) [[unlikely]] {
+        clearCompiledProgramFailures(globalObject, std::nullopt);
+        RETURN_IF_EXCEPTION(scope, {});
+        loaded = findLoadedModule(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     // If a load will reach the module, the mock waits for it, as in `bun test`. Also if the end of the earlier mock restored a preload mock.
     // Also if the factory awaits: called here, it would leave nothing to load until it settles.
     if (endedMockModule && (JSC::AOT::willReloadAfterMockRemoval(globalObject, JSC::AOT::ModuleID(*endedMockModule)) || JSC::AOT::hasActiveMock(globalObject, JSC::AOT::ModuleID(*endedMockModule)) || JSC::AOT::hasInstances(globalObject, JSC::AOT::ModuleID(*endedMockModule)) || Bun::hasModuleMockUnsettledAsyncFactory(mock)))

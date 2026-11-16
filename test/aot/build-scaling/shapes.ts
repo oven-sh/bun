@@ -8486,6 +8486,17 @@ export {};
         `  }\n  return sum;\n}\nconsole.log(run(numbers, 3));\n`,
     }),
   },
+  // Each empty literal asked for the type that the pattern implies, which has the shapes of all the defaults.
+  ...([true, undefined] as const).map((isCheckedAlone): Shape => ({
+    name: `parts of one parameter that are patterns, each with an empty literal as its default${isCheckedAlone ? ", in a check" : ""}`,
+    counted: "parts",
+    size: 12,
+    entry: "main.js",
+    isCheckedAlone,
+    write: size => ({
+      "main.js": `export const f = ({ a0 = 1${upTo(size, index => `, p${index}: { a${index + 1} = ${index}, inner: { c${index} = ${index} } = {} } = {}`).join("")} } = {}) => [a0, a1];\nconsole.log(f({}).length);\n`,
+    }),
+  })),
 ];
 
 if (import.meta.main) {

@@ -17,6 +17,7 @@ pub struct InstanceLayout {
     links: Vec<FileId>,
     mocks: Vec<ModuleRef>,
     reexports: Vec<ReexportPath>,
+    found_by_loader: Vec<ModuleRef>,
     places_of_reexports: FxHashMap<ReexportPath, u32>,
 }
 
@@ -64,13 +65,22 @@ impl InstanceLayout {
         }
     }
 
-    pub fn field_of_scope(&self) -> u32 {
+    fn first_field_found_by_loader(&self) -> u32 {
         self.field_of_namespace(ImportPhase::Defer) + 1
+    }
+
+    pub fn field_of_scope(&self) -> u32 {
+        self.first_field_found_by_loader() + self.found_by_loader.len() as u32
     }
 
     pub fn field_of_reexport(&self, path: ReexportPath) -> Option<u32> {
         let place = self.places_of_reexports.get(&path)?;
         Some(self.field_of_scope() + 1 + place)
+    }
+
+    pub fn fields_found_by_loader(&self) -> impl Iterator<Item = (u32, ModuleRef)> + '_ {
+        let found = self.found_by_loader.iter().copied();
+        (self.first_field_found_by_loader()..).zip(found)
     }
 }
 
@@ -113,9 +123,17 @@ impl ModuleGraph {
         let requests = self.requests_of(ModuleRef::File(file)).iter();
         let imported = requests
             .filter(|request| request.kind == ModuleRequestKind::Import && !request.is_hoisted);
+        let mut found_by_loader: Vec<ModuleRef> = Vec::new();
         let targets = imported.filter_map(|request| match request.target {
             ModuleRef::File(target) | ModuleRef::Facade(target) => Some(target),
-            _ => None,
+            module => {
+                if self.is_found_by_loader_for_test_file(module, file)
+                    && !found_by_loader.contains(&module)
+                {
+                    found_by_loader.push(module);
+                }
+                None
+            }
         });
         let mut targets: Vec<FileId> = targets.collect();
         targets.sort_unstable();
@@ -161,6 +179,7 @@ impl ModuleGraph {
             links,
             mocks,
             reexports,
+            found_by_loader,
             places_of_reexports,
         }
     }

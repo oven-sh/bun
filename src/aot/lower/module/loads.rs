@@ -1578,10 +1578,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             false => None,
         };
         let from_created_require = plan.is_from_created_require;
+        let requirer = match plan.records {
+            true => {
+                let file = ModuleRef::File(self.file.file);
+                self.file.fragment.declare_module(file)
+            }
+            false => referrer,
+        };
         if plan.records {
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 false,
@@ -1595,7 +1602,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let names_run = requirer_object.is_some();
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 names_run,

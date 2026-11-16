@@ -1901,6 +1901,8 @@
     "aot/options-of-the-run-that-need-nothing.test.ts",
     "aot/a-constructor-inside-what-an-entry-exports-keeps-its-features.test.ts",
     "aot/order-file.test.ts",
-    "aot/type-errors-that-several-projects-are-asked-about.test.ts"
+    "aot/type-errors-that-several-projects-are-asked-about.test.ts",
+    "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts",
+    "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts"
   ]
 }

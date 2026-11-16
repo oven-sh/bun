@@ -649,7 +649,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = jsc_vm
         .main()
-        .is_some_and(|main| strings::eql_long(specifier, main, true));
+        .is_some_and(|main| strings::eql_long(specifier, main));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -1474,7 +1474,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<std::sync::Arc<crate::bake_types::Framework>>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1679,7 +1679,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             dev_server: self.dev_server,
-            framework: self.framework,
+            framework: self.framework.clone(),
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
@@ -2098,15 +2098,6 @@ impl<'a> BundleOptions<'a> {
             );
         }
         Ok(opts)
-    }
-}
-
-impl Drop for BundleOptions<'_> {
-    fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>).
-        //
-        // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
-        // empty set (nothing to free), `Some` drops the Box here automatically.
     }
 }
 

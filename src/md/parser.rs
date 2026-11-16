@@ -192,7 +192,7 @@ pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len()
 /// never to wrap.
 pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 
-/// The most bytes that ended blocks and their lines may take. It keeps `Container.opener` a `u32`.
+/// The most bytes that ended blocks and their lines may take. It keeps `Container.opener_index` a `u32`.
 const MAX_BLOCK_BYTES: usize = OFF::MAX as usize;
 
 /// The runtime block-metadata cap checked by [`Parser::append_block_header`]:

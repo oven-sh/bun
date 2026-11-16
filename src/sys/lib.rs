@@ -235,7 +235,7 @@ pub mod dir_iterator {
     }
 
     impl<'a> Name<'a> {
-        /// In UTF-8.
+        /// The native bytes on POSIX, UTF-8 on Windows.
         #[inline]
         pub fn slice_u8(&self) -> &'a [u8] {
             self.as_zstr().as_bytes()
@@ -3118,21 +3118,21 @@ mod posix_impl {
     // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
     // exposed for shell/pipe IPC.
-    fn recv(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
+    fn recv_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // macOS: `recvfrom$NOCANCEL`, retried on EINTR.
         let n = check!(sys_recv(fd.native(), &mut buf[..len], flags), Tag::recv);
         Ok(n as usize)
     }
     pub(crate) fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        // `buf.len` is passed un-clamped (only `recv` clamps);
+        // `buf.len` is passed un-clamped (only `recv_uninit` clamps);
         // forward the full length and let the kernel decide.
         // macOS: `sendto$NOCANCEL`, retried on EINTR.
         let n = check!(sys_send(fd.native(), buf, flags), Tag::send);
         Ok(n as usize)
     }
     pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
-        recv(fd, buf, MSG_DONTWAIT)
+        recv_uninit(fd, buf, MSG_DONTWAIT)
     }
     /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
     /// returns EPIPE instead of raising SIGPIPE.
@@ -4442,7 +4442,7 @@ mod windows_impl {
         }
         _umask(mode as core::ffi::c_int) as Mode
     }
-    fn recv(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
+    fn recv_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
         // Winsock `recv`. Winsock's `len` is a
         // signed `int`, so clamp to `i32::MAX` (NOT `MAX_COUNT == u32::MAX`)
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
@@ -4466,7 +4466,7 @@ mod windows_impl {
         Ok(rc as usize)
     }
     pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
-        recv(fd, buf, 0)
+        recv_uninit(fd, buf, 0)
     }
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, 0)
@@ -7687,10 +7687,10 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
     }
 }
 
-/// [`environ()`] with the null pointer behind it.
+/// [`environ()`] including its null terminator.
 #[cfg(windows)]
 pub fn environ_list() -> bun_core::CStrList<'static> {
-    // SAFETY: the contract is about POSIX.
+    // SAFETY: no precondition on Windows.
     let entries = unsafe { environ() };
     if entries.is_empty() {
         return bun_core::CStrList::new(&[None]);
@@ -8591,6 +8591,11 @@ impl CloseOnDrop {
     /// As [`File::into_raw`].
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).0
+    }
+}
+impl From<File> for CloseOnDrop {
+    fn from(file: File) -> Self {
+        Self(file.into_raw())
     }
 }
 impl core::ops::Deref for CloseOnDrop {

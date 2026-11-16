@@ -130,7 +130,7 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 
 // ─── The wait of a resolve ────────────────────────────────────────────────
 
-/// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
+/// Bumped by every `Inbox::wake` of the auto-install manager.
 static WAKES: AtomicU32 = AtomicU32::new(0);
 /// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
@@ -216,10 +216,6 @@ impl hooks::AutoInstaller for PackageManager {
 
     // ── PackageManager ops ────────────────────────────────────────────────
 
-    fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
-        self.on_wake = handler;
-    }
-
     fn project_folder<'b>(
         &mut self,
         name: &[u8],
@@ -233,19 +229,21 @@ impl hooks::AutoInstaller for PackageManager {
             _ => name,
         });
         let links = self.options.link_workspace_packages;
-        let member: Option<SemverString> = match version.tag {
-            dependency::Tag::Workspace => self.lockfile.workspace_paths.get(&name_hash).copied(),
-            // A hoisted install links every workspace into the root's node_modules, whether or not
-            // a package.json lists it, so an import without a declared version finds it too.
-            dependency::Tag::Uninitialized if links => {
+        let member: Option<SemverString> = match &version.value {
+            dependency::Value::Workspace(_) => {
                 self.lockfile.workspace_paths.get(&name_hash).copied()
             }
-            dependency::Tag::Npm => lockfile::linked_workspace_path_in(
+            // A hoisted install links every workspace into the root's node_modules, whether or not
+            // a package.json lists it, so an import without a declared version finds it too.
+            dependency::Value::Uninitialized if links => {
+                self.lockfile.workspace_paths.get(&name_hash).copied()
+            }
+            dependency::Value::Npm(npm) => lockfile::linked_workspace_path_in(
                 links,
                 &self.lockfile.workspace_paths,
                 &self.lockfile.workspace_versions,
                 name_hash,
-                &version.npm().version,
+                &npm.version,
                 version_buf,
                 self.lockfile.buffers.string_bytes.as_slice(),
             ),
@@ -255,10 +253,10 @@ impl hooks::AutoInstaller for PackageManager {
             (self.root_dir.dir, self.lockfile.str(member))
         } else {
             let package_json_dir = package_json_dir?;
-            match version.tag {
-                dependency::Tag::Folder => (package_json_dir, version.folder().slice(version_buf)),
-                dependency::Tag::Symlink => {
-                    let target = version.symlink().slice(version_buf);
+            match &version.value {
+                dependency::Value::Folder(folder) => (package_json_dir, folder.slice(version_buf)),
+                dependency::Value::Symlink(symlink) => {
+                    let target = symlink.slice(version_buf);
                     if dependency::is_link_path(target) {
                         (package_json_dir, target)
                     } else {
@@ -333,8 +331,8 @@ impl hooks::AutoInstaller for PackageManager {
         let mut absolute: Vec<u8> = Vec::new();
         let mut from_package_json_dir = None;
         if let Some(package_json_dir) = package_json_dir
-            && version.tag == dependency::Tag::Tarball
-            && let hooks::URI::Local(path) = version.tarball().uri
+            && let dependency::Value::Tarball(tarball) = &version.value
+            && let hooks::URI::Local(path) = tarball.uri
         {
             let mut buf = bun_paths::path_buffer_pool::get();
             let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(

@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![feature(core_io_borrowed_buf)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
@@ -624,12 +623,12 @@ pub mod SerializedSourceMap {
     /// - all the `StringPointer` payload bytes
     #[repr(C)]
     #[derive(Clone, Copy)]
-    struct Header {
-        source_files_count: u32,
-        map_bytes_length: u32,
+    pub struct Header {
+        pub source_files_count: u32,
+        pub map_bytes_length: u32,
     }
 
-    bun_core::impl_any_bit_pattern!(Header);
+    bun_core::impl_pod!(Header);
 
     /// The on-disk view (`bytes` points into the standalone-graph trailer, so
     /// it lives for the process — modelled as `'static`).

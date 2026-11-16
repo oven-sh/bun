@@ -69,7 +69,6 @@ CPP_DECL void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* arg0, StringP
 CPP_DECL bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* arg0, uint32_t* arg1, uint32_t* arg2);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty();
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg0);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1);
 CPP_DECL void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0);
@@ -384,7 +383,7 @@ extern "C" JSC::EncodedJSValue SYSV_ABI Reader__intptr__slowpath(JSC::JSGlobalOb
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC::JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
+CPP_DECL JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t arg1, bool arg2, bool arg3, void* arg4);
 
 #ifdef __cplusplus
 
@@ -503,19 +502,13 @@ CPP_DECL ZigException ZigException__fromException(JSC::Exception* arg0);
 
 #ifdef __cplusplus
 
-extern "C" SYSV_ABI void Bun__ConsoleObject__count(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__countReset(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC::JSGlobalObject* arg3, JSC::EncodedJSValue* arg4, size_t arg5);
-extern "C" SYSV_ABI void Bun__ConsoleObject__profile(void* arg0, JSC::JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-extern "C" SYSV_ABI void Bun__ConsoleObject__profileEnd(void* arg0, JSC::JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-extern "C" SYSV_ABI void Bun__ConsoleObject__record(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__recordEnd(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__screenshot(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__takeHeapSnapshot(void* arg0, JSC::JSGlobalObject* arg1);
-extern "C" SYSV_ABI void Bun__ConsoleObject__time(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__timeLog(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2, JSC::EncodedJSValue* arg3, size_t arg4);
-extern "C" SYSV_ABI void Bun__ConsoleObject__timeStamp(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__count(JSC::JSGlobalObject* arg1, const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__countReset(JSC::JSGlobalObject* arg1, const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__messageWithTypeAndLevel(uint32_t MessageType1, uint32_t MessageLevel2, JSC::JSGlobalObject* arg3, JSC::EncodedJSValue* arg4, size_t arg5);
+extern "C" SYSV_ABI void Bun__ConsoleObject__takeHeapSnapshot(JSC::JSGlobalObject* arg1);
+extern "C" SYSV_ABI void Bun__ConsoleObject__time(const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeLog(JSC::JSGlobalObject* arg1, const BunString* arg2, JSC::EncodedJSValue* arg3, size_t arg4);
 
 #endif
 

@@ -12,7 +12,7 @@ use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult};
 use bun_collections::HashMap;
-use bun_core::io::WriterWithBuffer;
+use bun_core::io::WriterStorage;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
@@ -78,11 +78,6 @@ macro_rules! pfmt {
 // ConsoleObject
 // ───────────────────────────────────────────────────────────────────────────
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for `Inspector::ScriptArguments`.
-    pub struct ScriptArguments;
-}
-
 /// Default depth for `console.log` object inspection.
 /// Only `--console-depth` CLI flag and `console.depth` bunfig option should modify this.
 const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
@@ -90,8 +85,8 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 type Counter = HashMap<u64, u32>;
 
 pub struct ConsoleObject {
-    error_writer: WriterWithBuffer<4096>,
-    writer: WriterWithBuffer<4096>,
+    error_writer: WriterStorage<4096>,
+    writer: WriterStorage<4096>,
 
     default_indent: Cell<u16>,
 
@@ -110,17 +105,12 @@ impl ConsoleObject {
         Box::write(
             Box::new_uninit(),
             ConsoleObject {
-                error_writer: WriterWithBuffer::new(error_writer.0),
-                writer: WriterWithBuffer::new(writer.0),
+                error_writer: WriterStorage::new(error_writer.0),
+                writer: WriterStorage::new(writer.0),
                 default_indent: Cell::new(0),
                 counts: JsCell::default(),
             },
         )
-    }
-
-    /// What C++ keeps and hands back to `Bun__ConsoleObject__*`.
-    pub(crate) fn as_client_ptr(&self) -> *mut c_void {
-        core::ptr::from_ref(self).cast_mut().cast()
     }
 
     /// Returns the buffered stderr writer interface.
@@ -5626,7 +5616,6 @@ pub mod formatter {
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__count(
-    _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     label: &BunString,
 ) {
@@ -5667,7 +5656,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
-    _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     label: &BunString,
 ) {
@@ -5688,11 +5676,7 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__time(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    label: &BunString,
-) {
+pub(crate) extern "C" fn Bun__ConsoleObject__time(label: &BunString) {
     let id = bun_wyhash::hash(&label.to_utf8());
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
@@ -5709,11 +5693,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    label: &BunString,
-) {
+pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(label: &BunString) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
@@ -5742,7 +5722,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
-    _console: *mut ConsoleObject,
     global: &JSGlobalObject,
     label: &BunString,
     args: *const JSValue,
@@ -5793,47 +5772,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let _ = writer.flush();
 }
 
-/// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's
-/// `ConsoleClient` vtable requires but Bun leaves unimplemented. Two arms cover
-/// the two trailing-arg shapes the C++ side declares in
-/// `bindings/headers.h:686-694`: `(…, *const u8, usize)` for the title-string
-/// hooks and `(…, *mut ScriptArguments)` for the inspector-args hooks.
-///
-/// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
-/// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim.
-macro_rules! console_noop_hooks {
-    (str: $($name:ident),+ $(,)?) => {$(
-        #[unsafe(no_mangle)]
-        #[crate::host_call]
-        pub extern "C" fn $name(
-            _console: *mut ConsoleObject,
-            _global: &JSGlobalObject,
-            _chars: *const u8,
-            _len: usize,
-        ) {
-        }
-    )+};
-    (args: $($name:ident),+ $(,)?) => {$(
-        #[unsafe(no_mangle)]
-        #[crate::host_call]
-        pub extern "C" fn $name(
-            _console: *mut ConsoleObject,
-            _global: &JSGlobalObject,
-            _args: *mut ScriptArguments,
-        ) {
-        }
-    )+};
-}
-
-console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profileEnd);
-
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
-    _console: *mut ConsoleObject,
-    global_this: &JSGlobalObject,
-) {
+pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(global_this: &JSGlobalObject) {
     // TODO: this does an extra JSONStringify and we don't need it to!
     let Ok(result) = global_this.generate_heap_snapshot() else {
         return;
@@ -5845,14 +5786,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
         &[result],
     );
 }
-
-console_noop_hooks!(
-    args:
-    Bun__ConsoleObject__timeStamp,
-    Bun__ConsoleObject__record,
-    Bun__ConsoleObject__recordEnd,
-    Bun__ConsoleObject__screenshot,
-);
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
@@ -5872,7 +5805,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    _console: *mut ConsoleObject,
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an
     // out-of-range discriminant, so accept the raw `u32` (matching the C++

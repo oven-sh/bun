@@ -6,12 +6,11 @@ use std::rc::{Rc, Weak};
 
 use bun_core::{Output, Timespec};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong, StrongCell};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, RefPtr};
 use bun_sema::util::SmallLocalVec;
-use super::cells::{CellExt as _, StrongCell};
 use super::jest::{File, Jest};
 use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
@@ -230,7 +229,7 @@ pub(crate) mod js_fns {
                 ..Default::default()
             };
 
-            let Some(bun_test) = &bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
+            let Some(bun_test) = &bun_test_root.clone_active_file_unless_in_preload(global_this.bun_vm()) else {
                 if tag.deferred().is_some() {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
@@ -311,10 +310,10 @@ pub(crate) mod js_fns {
                         sequence_ref.defer(bun_test, when, callback, cfg.timeout);
                         return Ok(());
                     }
-                    let append_point: StepId = match tag {
+                    let append_point: SequenceEntryId = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => {
                             let active_entry = sequence_ref.active_entry.get();
-                            let test = bun_test.steps_from(active_entry).map(|(id, _)| id).find(|&id| Some(id) == sequence_ref.test_entry);
+                            let test = bun_test.sequence_entries_from(active_entry).map(|(id, _)| id).find(|&id| Some(id) == sequence_ref.test_entry);
                             let Some(append_point) = test.or(active_entry) else {
                                 return Err(global_this.throw(format_args!(
                                     "Cannot call {}() here. Call it inside describe() instead.",
@@ -325,7 +324,7 @@ pub(crate) mod js_fns {
                         }
                         GenericHookTag::OnTestFinished => {
                             // Find the last entry in the sequence
-                            let Some((last_entry, _)) = bun_test.steps_from(sequence_ref.active_entry.get()).last() else {
+                            let Some((last_entry, _)) = bun_test.sequence_entries_from(sequence_ref.active_entry.get()).last() else {
                                 return Err(global_this.throw(format_args!(
                                     "Cannot call {}() here. Call it inside a test instead.",
                                     tag_name
@@ -341,7 +340,7 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = bun_test.create_step(args.callback, cfg, AddedInPhase::Execution);
+                    let new_item = bun_test.create_sequence_entry(args.callback, cfg, AddedInPhase::Execution);
                     bun_test.link_after(append_point, new_item);
 
                     Ok(())
@@ -412,7 +411,7 @@ pub(crate) type BunTestPtrWeak = Weak<BunTest>;
 pub(crate) struct BunTestRoot {
     active_file: Cell<Option<BunTestPtr>>,
     preload: Cell<Option<Rc<Preload>>>,
-    /// One for each promise the runner waits for, whose reactions get the address as a key.
+    /// One per awaited promise; its reactions look it up by address.
     pending_then_refs: Cell<Vec<RefPtr<RefData>>>,
     /// Monotonic per-`enter_file` counter. Exposed to JS so per-file module
     /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
@@ -492,7 +491,7 @@ impl BunTestRoot {
         self.active_file.set(None);
     }
 
-    fn get_active_file_unless_in_preload(&self, vm: &VirtualMachine) -> Option<BunTestPtr> {
+    fn clone_active_file_unless_in_preload(&self, vm: &VirtualMachine) -> Option<BunTestPtr> {
         if vm.is_in_preload.get() {
             return None;
         }
@@ -518,7 +517,7 @@ impl BunTestRoot {
     }
 }
 
-/// Names a `DescribeScope` for `BunTest::scope`.
+/// Index into `BunTest::scopes` plus one, or `PRELOAD`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ScopeId(NonZeroU32);
 
@@ -529,17 +528,17 @@ impl ScopeId {
     const PRELOAD: ScopeId = ScopeId(NonZeroU32::MAX);
 }
 
-/// Names an `ExecutionEntry` for `BunTest::entry`.
+/// Index into `BunTest::entries`, or `Preload::entries` with `PRELOAD_BIT`, plus one.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct EntryId(NonZeroU32);
 
 impl EntryId {
-    const IN_PRELOAD: u32 = 1 << 31;
+    const PRELOAD_BIT: u32 = 1 << 31;
 }
 
-/// Names a `Step` for `BunTest::step`.
+/// Index into `BunTest::sequence_entries`, plus one.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct StepId(NonZeroU32);
+pub(crate) struct SequenceEntryId(NonZeroU32);
 
 /// The hooks that preload scripts register, which every file runs.
 struct Preload {
@@ -561,11 +560,11 @@ impl Preload {
 }
 
 /// An entry's place in a sequence. A `beforeEach` hook has one for each test it runs before.
-pub(crate) struct Step {
+pub(crate) struct SequenceEntry {
     pub(crate) entry: EntryId,
-    pub(crate) next: Cell<Option<StepId>>,
+    pub(crate) next: Cell<Option<SequenceEntryId>>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
-    pub(crate) failure_skip_past: Cell<Option<StepId>>,
+    pub(crate) failure_skip_past: Cell<Option<SequenceEntryId>>,
     /// When the entry began executing, plus its timeout. `EPOCH` = not set.
     pub(crate) timespec: Cell<Timespec>,
 }
@@ -616,18 +615,18 @@ pub(crate) struct BunTest {
     preload: Rc<Preload>,
     scopes: SmallLocalVec<DescribeScope>,
     entries: SmallLocalVec<ExecutionEntry>,
-    steps: SmallLocalVec<Step>,
+    sequence_entries: SmallLocalVec<SequenceEntry>,
     pub(crate) wants_wakeup: Cell<bool>,
     /// The phase passed to the most recent `run_next_tick`.
     pending_phase: Cell<RefDataValue>,
     /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
     pub(crate) is_reporting_uncaught: Cell<bool>,
-    recording_target: Cell<RecordingTarget>,
+    recording_target: Cell<Option<RecordingTarget>>,
     unhandled_failure: Cell<Option<TestFailure>>,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: Cell<bool>,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
-    file_end: OnceCell<StepId>,
+    file_end: OnceCell<SequenceEntryId>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
 
     pub(crate) phase: Cell<Phase>,
@@ -638,7 +637,6 @@ pub(crate) struct BunTest {
 /// Where `BunTest::record_printed_error` puts the errors that are printed.
 #[derive(Copy, Clone)]
 enum RecordingTarget {
-    None,
     Sequence(RefDataValue),
     Unhandled,
 }
@@ -673,14 +671,14 @@ impl BunTest {
             preload,
             scopes,
             entries: SmallLocalVec::new(),
-            steps: SmallLocalVec::new(),
+            sequence_entries: SmallLocalVec::new(),
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: OwnedTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: Cell::new(false),
             pending_phase: Cell::new(RefDataValue::Start),
             is_reporting_uncaught: Cell::new(false),
-            recording_target: Cell::new(RecordingTarget::None),
+            recording_target: Cell::new(None),
             unhandled_failure: Cell::new(None),
             is_loading: Cell::new(true),
             file_end: OnceCell::new(),
@@ -696,16 +694,16 @@ impl BunTest {
     }
 
     pub(crate) fn entry(&self, id: EntryId) -> &ExecutionEntry {
-        let entries = if id.0.get() & EntryId::IN_PRELOAD != 0 { &self.preload.entries } else { &self.entries };
-        entries.get((id.0.get() - 1) & !EntryId::IN_PRELOAD)
+        let entries = if id.0.get() & EntryId::PRELOAD_BIT != 0 { &self.preload.entries } else { &self.entries };
+        entries.get((id.0.get() - 1) & !EntryId::PRELOAD_BIT)
     }
 
-    pub(crate) fn step(&self, id: StepId) -> &Step {
-        self.steps.get(id.0.get() - 1)
+    pub(crate) fn sequence_entry(&self, id: SequenceEntryId) -> &SequenceEntry {
+        self.sequence_entries.get(id.0.get() - 1)
     }
 
-    pub(crate) fn entry_of(&self, id: StepId) -> &ExecutionEntry {
-        self.entry(self.step(id).entry)
+    pub(crate) fn entry_of(&self, id: SequenceEntryId) -> &ExecutionEntry {
+        self.entry(self.sequence_entry(id).entry)
     }
 
     /// `innermost` and the scopes around it, up to the unnamed scopes of the file and of the preload scripts.
@@ -713,14 +711,17 @@ impl BunTest {
         ScopeChain { buntest: self, next: innermost }
     }
 
-    /// `first` and the steps that follow it.
-    pub(crate) fn steps_from(&self, first: Option<StepId>) -> impl Iterator<Item = (StepId, &Step)> {
+    /// `first` and the entries that follow it.
+    pub(crate) fn sequence_entries_from(
+        &self,
+        first: Option<SequenceEntryId>,
+    ) -> impl Iterator<Item = (SequenceEntryId, &SequenceEntry)> {
         let mut next = first;
         core::iter::from_fn(move || {
             let id = next?;
-            let step = self.step(id);
-            next = step.next.get();
-            Some((id, step))
+            let sequence_entry = self.sequence_entry(id);
+            next = sequence_entry.next.get();
+            Some((id, sequence_entry))
         })
     }
 
@@ -728,8 +729,8 @@ impl BunTest {
         self.scope(self.collection.active_scope.get())
     }
 
-    pub(crate) fn push_step(&self, entry: EntryId) -> StepId {
-        StepId(NonZeroU32::MIN.saturating_add(self.steps.push(Step {
+    pub(crate) fn push_sequence_entry(&self, entry: EntryId) -> SequenceEntryId {
+        SequenceEntryId(NonZeroU32::MIN.saturating_add(self.sequence_entries.push(SequenceEntry {
             entry,
             next: Cell::new(None),
             failure_skip_past: Cell::new(None),
@@ -737,14 +738,19 @@ impl BunTest {
         })))
     }
 
-    /// A step for a new entry that is in no scope.
-    pub(crate) fn create_step(&self, callback: Option<JSValue>, cfg: ExecutionEntryCfg, phase: AddedInPhase) -> StepId {
+    /// For a new `ExecutionEntry` that is in no scope.
+    pub(crate) fn create_sequence_entry(
+        &self,
+        callback: Option<JSValue>,
+        cfg: ExecutionEntryCfg,
+        phase: AddedInPhase,
+    ) -> SequenceEntryId {
         let entry = ExecutionEntry::create(None, callback, cfg, None, None, BaseScopeCfg::default(), phase);
-        self.push_step(entry.push_to(&self.entries))
+        self.push_sequence_entry(entry.push_to(&self.entries))
     }
 
-    fn link_after(&self, previous: StepId, step: StepId) {
-        self.step(step).next.set(self.step(previous).next.replace(Some(step)));
+    fn link_after(&self, previous: SequenceEntryId, entry: SequenceEntryId) {
+        self.sequence_entry(entry).next.set(self.sequence_entry(previous).next.replace(Some(entry)));
     }
 
     fn propagate(&self, child: &BaseScope) {
@@ -803,7 +809,7 @@ impl BunTest {
     pub(crate) fn expect_file_scoped_fixtures(&self) {
         self.file_end.get_or_init(|| {
             let cfg = ExecutionEntryCfg { calling: Calling::Vitest { context: false }, ..Default::default() };
-            self.create_step(None, cfg, AddedInPhase::Collection)
+            self.create_sequence_entry(None, cfg, AddedInPhase::Collection)
         });
     }
 
@@ -816,14 +822,14 @@ impl BunTest {
             return false;
         }
         let entry = self.create_vitest_entry(callback, timeout);
-        self.step(entry).failure_skip_past.set(Some(entry));
+        self.sequence_entry(entry).failure_skip_past.set(Some(entry));
         self.link_after(file_end, entry);
         true
     }
 
-    pub(crate) fn create_vitest_entry(&self, callback: JSValue, timeout: u32) -> StepId {
+    pub(crate) fn create_vitest_entry(&self, callback: JSValue, timeout: u32) -> SequenceEntryId {
         let cfg = ExecutionEntryCfg { timeout, calling: Calling::Vitest { context: false }, ..Default::default() };
-        self.create_step(Some(callback), cfg, AddedInPhase::Execution)
+        self.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution)
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {
@@ -867,14 +873,14 @@ impl BunTest {
         }
     }
 
-    pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
+    pub(crate) fn ref_(this: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
         RefPtr::new(RefData {
-            buntest_weak: Rc::downgrade(this_strong),
+            buntest_weak: Rc::downgrade(this),
             phase,
-            timed_out: core::cell::Cell::new(false),
+            timed_out: Cell::new(false),
             ref_count: bun_ptr::RefCount::init(),
         })
     }
@@ -1003,22 +1009,22 @@ impl BunTest {
     }
 
     pub(crate) fn bun_test_timeout_callback(
-        this_strong: &BunTestPtr,
+        this: &BunTestPtr,
         _ts: &Timespec,
         vm: &VirtualMachine,
     ) {
         let _g = group_begin!();
         let global = vm.global();
-        this_strong.timer.next.set(Timespec::EPOCH);
-        this_strong.timer.state.set(EventLoopTimerState::PENDING);
+        this.timer.next.set(Timespec::EPOCH);
+        this.timer.state.set(EventLoopTimerState::PENDING);
 
-        match this_strong.phase.get() {
+        match this.phase.get() {
             Phase::Collection => {}
-            Phase::Execution => this_strong.handle_timeout(global),
+            Phase::Execution => this.handle_timeout(global),
             Phase::Done => {}
         }
         // Not run inline, because `Bun.spawnSync()` can fire this timer with the timed-out test still on the stack.
-        Self::run_next_tick(&Rc::downgrade(this_strong), global, RefDataValue::Done);
+        Self::run_next_tick(&Rc::downgrade(this), global, RefDataValue::Done);
     }
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
@@ -1061,7 +1067,7 @@ impl BunTest {
         self.result_queue.with_taken(|queue| queue.push_back(result));
     }
 
-    pub(crate) fn has_results(&self) -> bool {
+    pub(crate) fn has_queued_results(&self) -> bool {
         self.result_queue.with_taken(|queue| !queue.is_empty())
     }
 
@@ -1378,10 +1384,10 @@ impl BunTest {
         let Some((sequence, _)) = self.execution.get_current_and_valid_execution_sequence(data) else {
             return;
         };
-        let Some(step) = sequence.active_entry.get() else {
+        let Some(active_entry) = sequence.active_entry.get() else {
             return;
         };
-        let hook = self.entry_of(step);
+        let hook = self.entry_of(active_entry);
         if !hook.calling.is_vitest() {
             return;
         }
@@ -1389,7 +1395,7 @@ impl BunTest {
             if let (Some(slot), None) = (hook.teardown, hook.around) {
                 self.entry(slot).callback.set(strong_create(returned));
             }
-        } else if sequence.test_follows(self, step) {
+        } else if sequence.test_follows(self, active_entry) {
             sequence.defer(self, Deferred::Teardown, returned, hook.timeout);
         }
     }
@@ -1444,11 +1450,11 @@ impl BunTest {
         };
 
         let recording_target = if !self.reporter.jest.reports_to_junit {
-            RecordingTarget::None
+            None
         } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
-            RecordingTarget::Sequence(*user_data)
+            Some(RecordingTarget::Sequence(*user_data))
         } else {
-            RecordingTarget::Unhandled
+            Some(RecordingTarget::Unhandled)
         };
 
         self.reporter.jest.bun_test_root.on_before_print();
@@ -1495,8 +1501,7 @@ impl BunTest {
     }
 
     fn recording_slot(&self) -> Option<&Cell<Option<TestFailure>>> {
-        match self.recording_target.get() {
-            RecordingTarget::None => None,
+        match self.recording_target.get()? {
             RecordingTarget::Sequence(data) => Some(&data.sequence(self)?.failure),
             RecordingTarget::Unhandled => Some(&self.unhandled_failure),
         }
@@ -1560,11 +1565,11 @@ pub(crate) fn print_error(
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
-    pub(crate) entry: Option<StepId>,
+    pub(crate) entry: Option<SequenceEntryId>,
     pub(crate) attempt: u32,
 }
 
-/// Only means something to the `BunTest` it was made for.
+/// Holds ids into one `BunTest`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RefDataValue {
     Start,
@@ -1586,7 +1591,7 @@ impl RefDataValue {
         Some(&group.sequences(&buntest.execution)[entry_data.sequence_index])
     }
 
-    pub(crate) fn entry(&self, buntest: &BunTest) -> Option<StepId> {
+    pub(crate) fn entry(&self, buntest: &BunTest) -> Option<SequenceEntryId> {
         if !matches!(self, RefDataValue::Execution { .. }) {
             return None;
         }
@@ -1625,7 +1630,7 @@ pub(crate) struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
     /// The callback ran into its time limit. As in Vitest and Jest, a later rejection of its promise isn't an error.
-    pub(crate) timed_out: core::cell::Cell<bool>,
+    pub(crate) timed_out: Cell<bool>,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
 impl Drop for RefData {
@@ -1676,14 +1681,11 @@ impl RunTestsTask {
     }
 }
 
-impl bun_event_loop::Taskable for RunTestsTask {
+impl bun_event_loop::BoxedTask for RunTestsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `run_next_tick`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -1887,7 +1889,6 @@ impl BaseScope {
         }
     }
 }
-// deinit: only frees `name` → Box<[u8]> drops automatically; no explicit Drop needed.
 
 #[derive(Default)]
 pub(crate) struct Hooks {
@@ -1904,7 +1905,7 @@ pub(crate) struct Hooks {
 }
 
 impl Hooks {
-    fn get_hook_entries(&mut self, tag: HookTag) -> &mut Vec<EntryId> {
+    fn entries_mut(&mut self, tag: HookTag) -> &mut Vec<EntryId> {
         match tag {
             HookTag::BeforeAll => &mut self.before_all,
             HookTag::BeforeEach => &mut self.before_each,
@@ -1947,7 +1948,7 @@ impl DescribeScope {
         }
     }
 
-    /// `entries` is the table of this scope's owner.
+    /// `entries`: `Preload::entries` for the preload scope, else `BunTest::entries`.
     fn append_hook(
         &self,
         entries: &SmallLocalVec<ExecutionEntry>,
@@ -1991,9 +1992,9 @@ impl DescribeScope {
         let entry = entry.push_to(entries);
         match tag {
             // Vitest runs a scope's after-hooks in reverse registration order.
-            HookTag::AfterEach | HookTag::AfterAll if is_vitest => hooks.get_hook_entries(tag).insert(0, entry),
+            HookTag::AfterEach | HookTag::AfterAll if is_vitest => hooks.entries_mut(tag).insert(0, entry),
             HookTag::AfterAll => hooks.after_all.insert(first_teardown_slot, entry),
-            _ => hooks.get_hook_entries(tag).push(entry),
+            _ => hooks.entries_mut(tag).push(entry),
         }
         self.hooks.set(hooks);
     }
@@ -2081,11 +2082,10 @@ impl ExecutionEntry {
     }
 
     fn push_to(self, entries: &SmallLocalVec<ExecutionEntry>) -> EntryId {
-        let table = if self.added_in_phase == AddedInPhase::Preload { EntryId::IN_PRELOAD } else { 0 };
-        EntryId(NonZeroU32::MIN.saturating_add(entries.push(self)) | table)
+        let preload_bit = if self.added_in_phase == AddedInPhase::Preload { EntryId::PRELOAD_BIT } else { 0 };
+        EntryId(NonZeroU32::MIN.saturating_add(entries.push(self)) | preload_bit)
     }
 }
-// destroy → Drop: callback (Strong) and base.name (Box) drop automatically.
 
 #[derive(Copy, Clone)]
 pub(crate) enum TestScheduleEntry {

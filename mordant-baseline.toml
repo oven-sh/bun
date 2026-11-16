@@ -53,9 +53,8 @@
 "safe_fn_returns_shared_mut:src/http/h3_client/AltSvc.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientContext.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientSession.rs" = 5
-"safe_fn_returns_shared_mut:src/http/h3_client/PendingConnect.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/callbacks.rs" = 2
-"safe_fn_returns_shared_mut:src/http/lib.rs" = 9
+"safe_fn_returns_shared_mut:src/http/lib.rs" = 6
 
 [bun_http_jsc]
 "generic_body_not_generic:src/http_jsc/websocket_client.rs" = 6
@@ -192,7 +191,6 @@
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 3
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
-"unsafe_send_covers_more_than_pointers:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/fs_events.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/node_fs.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1

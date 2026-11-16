@@ -58,7 +58,6 @@ bun_output::define_scoped_log!(map_log, crate::bake::dev_server::SourceMapStore)
 use core::sync::atomic::Ordering;
 
 use bun_collections::StringArrayHashMap;
-use bun_sys::FdExt as _;
 
 use super::{Graph, Side};
 
@@ -313,14 +312,6 @@ impl DevServer {
     fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
-
-    #[inline]
-    pub(crate) fn ssr_transpiler_mut(&mut self) -> Option<&mut Transpiler<'static>> {
-        let server_components = self.framework.server_components.as_ref()?;
-        // SAFETY: `init()` writes it if the SSR graph is separate.
-        (server_components.separate_ssr_graph)
-            .then(|| unsafe { self.ssr_transpiler.assume_init_mut() })
-    }
 }
 pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
@@ -359,6 +350,22 @@ pub(crate) enum PluginState {
     /// Currently, this represents a degraded state where no bundle can
     /// be correctly executed because the plugins did not load successfully.
     Err,
+}
+
+pub(crate) enum Plugins {
+    /// From `Options::bundler_options`.
+    Owned(crate::api::js_bundler::OwnedPlugin),
+    /// Owned by the server's `ServePlugins`.
+    Borrowed(::core::ptr::NonNull<crate::api::js_bundler::Plugin>),
+}
+
+impl Plugins {
+    fn as_non_null(&self) -> ::core::ptr::NonNull<crate::api::js_bundler::Plugin> {
+        match self {
+            Plugins::Owned(plugins) => plugins.as_non_null(),
+            Plugins::Borrowed(plugins) => *plugins,
+        }
+    }
 }
 
 pub(crate) enum TestingBatchEvents {
@@ -521,25 +528,21 @@ pub(crate) struct DevServer {
     pub(crate) bundles_since_last_error: usize,
 
     pub(crate) framework: bake::Framework,
-    pub(crate) bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
-    pub(crate) bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
-    pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    // Initialized only with a separate SSR graph.
-    pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub(crate) server_transpiler: Transpiler<'static>,
+    pub(crate) client_transpiler: Transpiler<'static>,
+    /// `Some` with a separate SSR graph.
+    pub(crate) ssr_transpiler: Option<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
-    /// Owned by `bundler_options` or by the server.
-    pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
+    pub(crate) plugins: Option<Plugins>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,

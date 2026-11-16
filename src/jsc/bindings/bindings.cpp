@@ -2745,6 +2745,13 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
 }
 }
 
+// `bun_core::ffi::FfiSlice`
+template<typename T>
+struct FfiSlice {
+    const T* ptr;
+    size_t len;
+};
+
 extern "C" {
 
 bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
@@ -2974,46 +2981,27 @@ bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
     return true;
 }
 
-typedef struct ZigSliceString {
-    const unsigned char* ptr;
-    size_t len;
-} ZigSliceString;
-
-typedef struct PicoHTTPHeader {
-    ZigSliceString name;
-    ZigSliceString value;
-} PicoHTTPHeader;
-
-typedef struct PicoHTTPHeaders {
-    const PicoHTTPHeader* ptr;
-    size_t len;
-} PicoHTTPHeaders;
-
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromHeaders(FfiSlice<StringPointer> names, FfiSlice<StringPointer> values, FfiSlice<Latin1Character> buf)
 {
-    PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
+    RELEASE_ASSERT(names.len == values.len);
+    auto slice = [&](StringPointer pointer) {
+        RELEASE_ASSERT(static_cast<size_t>(pointer.off) + pointer.len <= buf.len);
+        return std::span { buf.ptr + pointer.off, pointer.len };
+    };
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
 
-    if (pico_headers.len > 0) {
+    if (names.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
 
-        size_t end = pico_headers.len;
+        for (size_t j = 0; j < names.len; j++) {
+            StringView nameView { slice(names.ptr[j]) };
 
-        for (size_t j = 0; j < end; j++) {
-            PicoHTTPHeader header = pico_headers.ptr[j];
-            // picohttpparser reports obs-fold continuation lines with an empty
-            // name; skip those. Empty *values* must flow through so duplicate
-            // headers combine per the Fetch spec ("a, , c") and a lone empty
-            // header is still visible to JS, matching the uWS/H3 paths.
-            if (header.name.len == 0)
-                continue;
-
-            StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
-
+            // Empty values count: duplicate headers combine as "a, , c".
+            auto bytes = slice(values.ptr[j]);
             std::span<Latin1Character> data;
-            auto value = String::createUninitialized(header.value.len, data);
-            if (header.value.len > 0)
-                memcpy(data.data(), header.value.ptr, header.value.len);
+            auto value = String::createUninitialized(bytes.size(), data);
+            if (bytes.size() > 0)
+                memcpy(data.data(), bytes.data(), bytes.size());
 
             HTTPHeaderName name;
 
@@ -3916,6 +3904,12 @@ static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::of
 static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSString::MaxLength == std::numeric_limits<int32_t>::max(), "JSString::MaxLength is mirrored in src/jsc/JSString.rs");
 static_assert(WTF::StringImpl::lengthMemoryOffset() == 4 && WTF::StringImpl::dataOffset() == 8 && WTF::StringImpl::flagsOffset() == 16 && WTF::StringImpl::flagIs8Bit() == 4, "StringImpl is mirrored in src/bun_alloc/lib.rs");
+static_assert(WTF::StringImpl::flagIsAtom() == 16 && WTF::StringImpl::flagIsSymbol() == 32 && WTF::StringImpl::refCountOfStaticString() == 1, "StringImpl's flags are mirrored in src/bun_alloc/lib.rs");
+static_assert(JSC::JSValue::ValueEmpty == 0 && JSC::JSValue::ValueNull == 0x2 && JSC::JSValue::ValueDeleted == 0x4 && JSC::JSValue::ValueFalse == 0x6 && JSC::JSValue::ValueTrue == 0x7 && JSC::JSValue::ValueUndefined == 0xa, "JSValue's immediates are mirrored in src/jsc/JSValue.rs and src/runtime/ffi/FFI.h");
+static_assert(JSC::JSValue::NumberTag == 0xfffe000000000000ll && JSC::JSValue::NotCellMask == 0xfffe000000000002ll && JSC::JSValue::DoubleEncodeOffset == 1ll << 49 && JSC::PNaNAsBits == 0x7ff8000000000000ull, "JSValue's number encoding is mirrored in src/jsc/JSValue.rs and src/runtime/ffi/FFI.h");
+static_assert(JSC::JSCell::typeInfoTypeOffset() == 5, "JSCell::m_type is read by JSValue::js_type in src/jsc/JSValue.rs");
+static_assert(static_cast<int>(JSC::CallFrameSlot::firstArgument) == 6, "CallFrameSlot::firstArgument is mirrored in src/jsc/sizes.rs");
+static_assert(sizeof(WTF::NumberToStringBuffer) == 124, "NumberToStringBuffer is mirrored in src/bun_core/fmt.rs");
 
 // Whether the next cell of `space` comes off the free list.
 static ALWAYS_INLINE bool nextCellIsOnFreeList(JSC::GCClient::IsoSubspace& space)

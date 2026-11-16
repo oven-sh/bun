@@ -96,12 +96,12 @@ impl PackageManager {
         }
     }
 
-    /// Callers gate on `options.log_level.show_progress()`, as what sets it does.
+    /// Panics unless a progress bar is running.
     pub(crate) fn downloads_node(&self) -> NodeId {
         self.downloads_node.expect("downloads_node active")
     }
 
-    pub fn start_progress_bar_if_none(&mut self) {
+    pub(crate) fn start_progress_bar_if_none(&mut self) {
         if self.downloads_node.is_none() {
             self.start_progress_bar();
         }
@@ -118,14 +118,14 @@ impl PackageManager {
         );
         let node = self.progress.root();
         node.estimated_total_items
-            .set((self.total_tasks + self.extracted_count) as usize);
+            .set((self.total_tasks.get() + self.extracted_count) as usize);
         node.completed_items
-            .set((self.total_tasks - self.pending_task_count()) as usize);
+            .set((self.total_tasks.get() - self.pending_task_count()) as usize);
         self.progress.refresh();
     }
 
     /// For a linker that has `to_install` packages to install.
-    pub(crate) fn start_link_progress(&mut self, to_install: usize) {
+    pub(crate) fn start_install_progress_bar(&mut self, to_install: usize) {
         let progress = &mut self.progress;
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         progress.start(b"", 0);
@@ -136,7 +136,7 @@ impl PackageManager {
         self.scripts_node = Some(NodeId::Scripts);
     }
 
-    pub fn end_progress_bar(&mut self) {
+    pub(crate) fn end_progress_bar(&mut self) {
         let Some(node) = self.downloads_node else {
             return;
         };

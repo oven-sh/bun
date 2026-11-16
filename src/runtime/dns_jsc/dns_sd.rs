@@ -3,6 +3,9 @@
 use super::*;
 use crate::timer::OwnedTimer;
 use bun_collections::index_sort;
+use bun_ptr::AliasableBox;
+use core::ptr::NonNull;
+use std::sync::Arc;
 
 type DNSServiceRef = *mut c_void;
 type DNSServiceFlags = u32;
@@ -211,7 +214,7 @@ pub(crate) struct QueryState {
 }
 
 impl QueryState {
-    pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
+    fn new(protocol: DNSServiceProtocol, attempt: Attempt, hostname: bun::ZBox) -> Self {
         Self {
             sd_refs: FamilyRefs::default(),
             results: Default::default(),
@@ -219,8 +222,8 @@ impl QueryState {
             awaiting_more: false,
             pending_proto: protocol,
             stragglers: Stragglers::None,
-            attempt: Attempt::Plain,
-            hostname: bun::ZBox::from_bytes(b""),
+            attempt,
+            hostname,
         }
     }
 
@@ -300,7 +303,7 @@ impl QueryState {
         }
     }
 
-    pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
+    fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
         // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
         index_sort::sort_slice_by(&mut results, |a, b| {
@@ -310,66 +313,36 @@ impl QueryState {
     }
 }
 
-pub(crate) struct JscRequest {
-    state: QueryState,
-    query: Query,
+pub(crate) enum Request {
+    Jsc(PendingQuery),
+    Internal(Arc<internal::Request>),
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum Inflight {
-    /// A box that `complete` takes back.
-    Jsc(*mut JscRequest),
-    Internal(*mut internal::Request),
+struct Inflight {
+    /// Its address is the `context` that `on_reply` receives.
+    query: AliasableBox<QueryState>,
+    request: Request,
 }
 
 impl Inflight {
-    fn context(&self) -> *mut c_void {
-        match *self {
-            Inflight::Jsc(r) => r.cast(),
-            Inflight::Internal(r) => r.cast(),
-        }
-    }
-
-    /// The `on_reply` that turns `context()` back into this variant.
-    fn reply_callback(&self) -> QueryRecordReply {
-        match *self {
-            Inflight::Jsc(_) => on_reply::<false>,
-            Inflight::Internal(_) => on_reply::<true>,
-        }
-    }
-
-    fn complete(self) {
-        match self {
-            Inflight::Jsc(r) => {
-                // SAFETY: it left `inflight` and its refs are deallocated, so nothing else reaches it.
-                let mut request = unsafe { bun_core::heap::take(r) };
-                let results = request.state.take_results();
-                bun_output::scoped_log!(GetAddrInfoRequest, "completeDnsSd: {}", results.len());
-                request.query.complete_native(if results.is_empty() {
+    fn complete(mut self) {
+        let results = self.query.take_results();
+        match self.request {
+            Request::Jsc(pending) => {
+                bun_output::scoped_log!(DNSLookup, "completeDnsSd: {}", results.len());
+                pending.complete_native(if results.is_empty() {
                     Err(EMPTY_STATUS)
                 } else {
                     Ok(results)
                 });
             }
-            Inflight::Internal(r) => internal::dns_sd_complete(r),
-        }
-    }
-
-    /// SAFETY: the request behind `self` is live (pinned in `inflight`);
-    /// the `&mut` derives from the stored raw pointer, not from a borrow.
-    unsafe fn query<'a>(self) -> &'a mut QueryState {
-        // SAFETY: caller contract; event-loop thread only.
-        unsafe {
-            match self {
-                Inflight::Jsc(r) => &mut (*r).state,
-                Inflight::Internal(r) => &mut (*r).dns_sd.query,
-            }
+            Request::Internal(request) => internal::dns_sd_complete(request, &results),
         }
     }
 }
 
-/// Records a reply; `on_readable` completes. SAFETY: `context` is a live request of the `INTERNAL` kind; `rdata` spans `rdlen` bytes.
-unsafe extern "C" fn on_reply<const INTERNAL: bool>(
+/// Records a reply; `on_readable` completes. SAFETY: `context` is the `query` of an `Inflight`; `rdata` spans `rdlen` bytes.
+unsafe extern "C" fn on_reply(
     sd_ref: DNSServiceRef,
     flags: DNSServiceFlags,
     interface_index: u32,
@@ -383,15 +356,10 @@ unsafe extern "C" fn on_reply<const INTERNAL: bool>(
     context: *mut c_void,
 ) {
     SharedConnection::note_reply(context);
-    let owner = if INTERNAL {
-        Inflight::Internal(context.cast())
-    } else {
-        Inflight::Jsc(context.cast())
-    };
     // SAFETY: caller contract; the slice is only read before this callback returns.
     let rdata = unsafe { bun::ffi::slice(rdata.cast::<u8>(), rdlen as usize) };
     // SAFETY: caller contract; event-loop thread, and no other borrow of the query is live here.
-    let query = unsafe { owner.query() };
+    let query = unsafe { bun_ptr::callback_ctx::<QueryState>(context) };
     query.record_reply(
         sd_ref,
         flags,
@@ -405,11 +373,12 @@ unsafe extern "C" fn on_reply<const INTERNAL: bool>(
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
 pub(crate) struct SharedConnection {
+    /// Before `main_ref`: it holds the subordinate refs, which have to drop first.
+    inflight: Vec<Inflight>,
     file_poll: bun_io::OwnedFilePoll,
     /// After `file_poll`, whose fd it closes.
     main_ref: OwnedServiceRef,
     ctx: bun_io::EventLoopCtx,
-    inflight: Vec<Inflight>,
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
     /// Early-out timer (JS threads only; the daemon timeout backstops other loops).
@@ -484,45 +453,42 @@ impl SharedConnection {
         Self::current()
     }
 
-    /// Start `owner`'s queries and track it (keeps the process alive); `false` if the daemon refused.
+    /// Sends the queries; the caller passes the result to `track`. `None` if the daemon refused.
     pub(crate) fn start(
         &mut self,
-        owner: Inflight,
         protocol: DNSServiceProtocol,
-        hostname: &ZStr,
-    ) -> bool {
+        hostname: bun::ZBox,
+    ) -> Option<AliasableBox<QueryState>> {
         let suppress = addrconfig_flags(protocol);
-        let Some(sd_refs) = self.issue(owner, protocol, suppress, hostname) else {
-            return false;
-        };
-        if self.inflight.is_empty() {
-            self.file_poll.enable_keeping_process_alive(self.ctx);
-        }
-        // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
-        let q = unsafe { owner.query() };
-        q.sd_refs = sd_refs;
-        q.attempt = if suppress != 0 {
+        let attempt = if suppress != 0 {
             Attempt::Suppressed
         } else {
             Attempt::Plain
         };
-        q.hostname = bun::ZBox::from_bytes(hostname.as_bytes());
-        self.inflight.push(owner);
-        true
+        let mut query = AliasableBox::new(QueryState::new(protocol, attempt, hostname));
+        query.sd_refs = self.issue(&query, protocol, suppress)?;
+        Some(query)
+    }
+
+    /// Adds the query to `inflight`, which keeps the process alive while it is not empty.
+    pub(crate) fn track(&mut self, query: AliasableBox<QueryState>, request: Request) {
+        if self.inflight.is_empty() {
+            self.file_poll.enable_keeping_process_alive(self.ctx);
+        }
+        self.inflight.push(Inflight { query, request });
     }
 
     /// One query per family in `protocol`, as libinfo does; `None`, with none left running, if the daemon refused one.
     fn issue(
         &mut self,
-        owner: Inflight,
+        query: &AliasableBox<QueryState>,
         protocol: DNSServiceProtocol,
         suppress: DNSServiceFlags,
-        hostname: &ZStr,
     ) -> Option<FamilyRefs> {
         let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
         // Sent as given: the daemon tries search domains only for a name with no trailing dot.
-        let name = hostname.as_ptr().cast::<c_char>();
-        let (callback, context) = (owner.reply_callback(), owner.context());
+        let name = query.hostname.as_ptr().cast::<c_char>();
+        let context = query.as_ptr().cast();
         let mut sd_refs = FamilyRefs::default();
         let families = [(PROTOCOL_IPV4, TYPE_A), (PROTOCOL_IPV6, TYPE_AAAA)];
         for (i, (family, rrtype)) in families.into_iter().enumerate() {
@@ -542,7 +508,7 @@ impl SharedConnection {
                         rrtype,
                         CLASS_IN,
                         allow_failover,
-                        callback,
+                        on_reply,
                         context,
                     ),
                     None => DNSServiceQueryRecord(
@@ -552,7 +518,7 @@ impl SharedConnection {
                         name,
                         rrtype,
                         CLASS_IN,
-                        callback,
+                        on_reply,
                         context,
                     ),
                 }
@@ -573,10 +539,9 @@ impl SharedConnection {
         };
         let prev = this.last_ctx;
         if !prev.is_null() && prev != context {
-            for inf in this.inflight.iter() {
-                if inf.context() == prev {
-                    // SAFETY: entries in `inflight` are live requests.
-                    unsafe { inf.query() }.awaiting_more = false;
+            for inf in &mut this.inflight {
+                if inf.query.as_ptr().cast() == prev {
+                    inf.query.awaiting_more = false;
                 }
             }
         }
@@ -619,8 +584,7 @@ impl SharedConnection {
         let mut ready = Vec::new();
         let mut i = 0;
         while i < self.inflight.len() {
-            // SAFETY: entries in `inflight` are live requests.
-            if pred(unsafe { self.inflight[i].query() }) {
+            if pred(&mut self.inflight[i].query) {
                 ready.push(self.inflight.swap_remove(i));
             } else {
                 i += 1;
@@ -639,8 +603,7 @@ impl SharedConnection {
         }
         let mut min_deadline: Option<i64> = None;
         for inf in self.inflight.iter() {
-            // SAFETY: entries in `inflight` are live requests.
-            if let Some(d) = unsafe { inf.query() }.early_out_deadline_ms() {
+            if let Some(d) = inf.query.early_out_deadline_ms() {
                 min_deadline = Some(min_deadline.map_or(d, |m| m.min(d)));
             }
         }
@@ -685,47 +648,37 @@ impl SharedConnection {
         }
     }
 
-    fn finish(inf: Inflight) {
-        // SAFETY: `inf` is a live heap request just removed from `inflight`.
-        let q = unsafe { inf.query() };
-        q.sd_refs = FamilyRefs::default();
-        if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
-            return;
+    fn finish(mut inf: Inflight) {
+        inf.query.sd_refs = FamilyRefs::default();
+        if inf.query.should_retry_unsuppressed()
+            && let Some(this) = Self::current()
+            && this.retry_unsuppressed(&mut inf.query)
+        {
+            return this.track(inf.query, inf.request);
         }
         inf.complete();
     }
 
     /// The connection is going away: drops partial results so the request rejects instead of resolving.
-    fn fail(inf: Inflight) {
-        // SAFETY: `inf` is a live heap request just removed from `inflight`.
-        let q = unsafe { inf.query() };
-        q.sd_refs = FamilyRefs::default();
-        q.results.clear();
+    fn fail(mut inf: Inflight) {
+        inf.query.sd_refs = FamilyRefs::default();
+        inf.query.results.clear();
         inf.complete();
     }
 
-    /// Reissue `inf`'s query without SuppressUnusable; `false` if it couldn't be reissued.
-    fn retry_unsuppressed(inf: Inflight) -> bool {
-        let Some(this) = Self::current() else {
-            return false;
-        };
-        // SAFETY: `inf` is a live heap request removed from `inflight` by the caller.
-        let q = unsafe { inf.query() };
-        let (protocol, hostname) = (protocol_for_pending(q), q.hostname.clone());
+    /// Reissue `q` without SuppressUnusable; `false` if it couldn't be reissued.
+    fn retry_unsuppressed(&mut self, q: &mut AliasableBox<QueryState>) -> bool {
+        let protocol = protocol_for_pending(q);
         q.reset_for_retry(protocol);
-        let Some(sd_refs) = this.issue(inf, protocol, 0, &hostname) else {
+        let Some(sd_refs) = self.issue(q, protocol, 0) else {
             return false;
         };
         bun_output::scoped_log!(
             dns,
             "retrying {} without SuppressUnusable",
-            bstr::BStr::new(hostname.as_bytes())
+            bstr::BStr::new(q.hostname.as_bytes())
         );
         q.sd_refs = sd_refs;
-        if this.inflight.is_empty() {
-            this.file_poll.enable_keeping_process_alive(this.ctx);
-        }
-        this.inflight.push(inf);
         true
     }
 
@@ -738,17 +691,16 @@ impl SharedConnection {
         };
         // Subordinates are dealt with (deallocating them) before the parent.
         while let Some(inf) = conn.inflight.pop() {
-            match inf {
+            match inf.request {
                 // A connect-path lookup lives in the process-wide cache and may
                 // have waiters on other threads (and its outcome is cached): this
                 // thread going away is not an answer. Finish it on the work pool.
-                Inflight::Internal(req) => {
-                    // SAFETY: `inf` is a live heap request just removed from `inflight`.
-                    unsafe { inf.query() }.sd_refs = FamilyRefs::default();
+                Request::Internal(req) => {
+                    drop(inf.query);
                     internal::run_on_work_pool(req);
                 }
                 // A dns.lookup() from this thread's script: only this VM waits on it.
-                Inflight::Jsc(_) => Self::fail(inf),
+                Request::Jsc(_) => Self::fail(inf),
             }
         }
         // SAFETY: `this` is detached and drained.
@@ -761,7 +713,7 @@ fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.
-pub(crate) fn start(query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
+pub(crate) fn start(query: &GetAddrInfo, pending: PendingQuery) -> Result<(), PendingQuery> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
@@ -776,16 +728,9 @@ pub(crate) fn start(query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
     };
 
     let protocol = protocol_for_family(query.options.family);
-    let request = bun_core::heap::into_raw(Box::new(JscRequest {
-        state: QueryState::new(protocol),
-        query: pending,
-    }));
-
-    let name_z = bun::ZBox::from_bytes(query.name.as_ref());
-    if !shared.start(Inflight::Jsc(request), protocol, &name_z) {
-        // SAFETY: request is exclusively owned; dns_sd never accepted it.
-        return Err(unsafe { bun_core::heap::take(request) }.query);
-    }
-
+    let Some(state) = shared.start(protocol, bun::ZBox::from_bytes(query.name.as_ref())) else {
+        return Err(pending);
+    };
+    shared.track(state, Request::Jsc(pending));
     Ok(())
 }

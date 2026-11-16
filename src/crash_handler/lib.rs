@@ -15,7 +15,7 @@
 //!
 //! The remapper is open source: https://github.com/oven-sh/bun.report
 
-// The cfg is the union of the two intrinsic call sites: `abort()` on the
+// The cfg is the union of the two intrinsic call sites: `abort_immediate()` on the
 // non-Windows crash path (all profiles) and `breakpoint()` on Windows debug
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
@@ -2950,35 +2950,19 @@ mod draft {
                 writer.write_byte(b'0')?;
 
                 let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
-                // SAFETY: buffers and lengths are valid
-                let ret = unsafe {
-                    bun_zlib::compress2(
-                        compressed_bytes.as_mut_ptr(),
-                        &raw mut len,
-                        message.as_ptr(),
-                        u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
-                        9,
-                    )
-                };
-                // Match on the raw zlib return code so this stays ABI-correct
-                // regardless of whether the platform `compress2` binding returns
-                // `c_int` (posix) or the `ReturnCode` enum (win32).
-                let compressed = match ret as i32 {
-                    r if r == bun_zlib::ReturnCode::Ok as i32 => {
-                        &compressed_bytes[0..usize::try_from(len).expect("int cast")]
-                    }
+                let compressed = match bun_zlib::compress(&mut compressed_bytes, message, 9) {
+                    Ok(len) => &compressed_bytes[0..len],
                     // Insufficient memory.
-                    r if r == bun_zlib::ReturnCode::MemError as i32 => {
+                    Err(bun_zlib::ReturnCode::MemError) => {
                         return Err(crate::Error::Alloc(bun_alloc::AllocError));
                     }
                     // The buffer dest was not large enough to hold the compressed data.
-                    r if r == bun_zlib::ReturnCode::BufError as i32 => {
+                    Err(bun_zlib::ReturnCode::BufError) => {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                     }
                     // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
                     // This is technically possible but impossible because we pass 9.
-                    _ => return Err(crate::Error::Unexpected),
+                    Err(_) => return Err(crate::Error::Unexpected),
                 };
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
@@ -3290,7 +3274,7 @@ mod draft {
                 libc::SIGFPE,
                 libc::SIGHUP,
                 libc::SIGTERM,
-                // Keep SIGTRAP reset so the `core::intrinsics::abort()`
+                // Keep SIGTRAP reset so the `core::intrinsics::abort_immediate()`
                 // fallback (brk on aarch64) is lethal even when JS installed
                 // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
                 // `signal-exit` package does).
@@ -3317,7 +3301,7 @@ mod draft {
             // With SIG_DFL installed and the signal unblocked this terminates the process.
             raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
-            core::intrinsics::abort();
+            core::intrinsics::abort_immediate();
         }
         #[cfg(windows)]
         {

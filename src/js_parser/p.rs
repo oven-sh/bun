@@ -693,10 +693,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
     pub(crate) ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
-    /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
-    pub(crate) ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
-    /// Companion list (sibling scopes share a map, so the scope list can't free it).
-    pub(crate) ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -722,18 +718,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn drop(&mut self) {
-        // Arena-allocated structs never run Drop; free their global-heap maps here.
-        for mut scope in self.ts_namespace_scopes.drain(..) {
-            drop(core::mem::take(&mut scope.property_accesses));
-        }
-        for mut map in self.ts_namespace_member_maps.drain(..) {
-            drop(core::mem::take(&mut *map));
-        }
-    }
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
@@ -1558,8 +1542,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
-        // Vec::from_owned_slice wants Box<[T]>; init_one is the
-        // single-element equivalent (matches transpose_require below).
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,
@@ -4240,9 +4222,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let macro_remap = if Self::ALLOW_MACROS {
             self.options
-                .macro_context
-                .as_deref()
-                .and_then(|ctx| ctx.get_remap(path.text))
+                .macro_remap
+                .filter(|remap| !remap.is_empty())
+                .and_then(|remap| remap.get(path.text))
         } else {
             None
         };
@@ -4754,7 +4736,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn get_or_create_exported_namespace_members(
-        &mut self,
+        &self,
         name: &[u8],
         is_export: bool,
         is_enum_scope: bool,
@@ -4786,31 +4768,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
-        if let Some(existing) = map {
-            let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
-                exported_members: existing,
-                is_enum_scope,
-                arg_ref: Ref::NONE,
-                property_accesses: Default::default(),
-            }));
-            self.ts_namespace_scopes.push(scope);
-            return scope;
-        }
-
-        // Otherwise, generate a new namespace object.
-        // Two bump allocs from the same arena; `StoreRef` is non-null so the
-        // map field can't be null-then-patched, and same-arena allocation
-        // keeps the locality while avoiding a self-referential init.
-        let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
-        self.ts_namespace_member_maps.push(map);
-        let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
-            exported_members: map,
+        let exported_members = map
+            .unwrap_or_else(|| js_ast::StoreRef::from_bump(self.arena.alloc(Default::default())));
+        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+            exported_members,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
-        }));
-        self.ts_namespace_scopes.push(scope);
-        scope
+        }))
     }
 
     // TODO:
@@ -9481,29 +9446,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Construct a `P` in place at `out`.
-    ///
-    /// PERF: an earlier shape returned `Result<Self, _>` by value. `P`
-    /// is ~5 KiB; the by-value return forced a stack temp inside `init` (5176-B
-    /// frame, ASM-verified) plus a move at the caller's `?` (`_scan_imports`
-    /// 14168-B frame, 5× `memcpy`). Out-pointer init writes the struct exactly
-    /// once at its final address: every pre-computable post-init mutation is
-    /// hoisted above the
-    /// single `out.write(Self { .. })` so there is no stack temporary `Self`
-    /// to relocate.
-    ///
-    /// Returns the initialized `*out`; the caller owns dropping it.
-    /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
-    /// alignment/writability precondition a type guarantee, so this fn is safe.
-    pub fn init<'o>(
-        out: &'o mut core::mem::MaybeUninit<Self>,
+    /// PERF: `P` is over 4 KiB. The literal is the tail expression, with no `Result`, so it is written in the caller's frame.
+    pub fn init(
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
-    ) -> &'o mut Self {
+    ) -> Self {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
         // transpiler showed
@@ -9538,9 +9489,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             true
         };
 
-        // ─── Hoisted post-init mutations (were `this.* = ...` after the
-        // literal in the by-value-return shape; now precomputed so the
-        // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
@@ -9596,9 +9544,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // dispatch). Computed before the literal so it can still read `opts`.
         let jsx_transform = JSXTransformType::from_parse_flag(opts.jsx.parse);
 
-        // Single placement write — no separate stack temp for `Self`.
-        // `MaybeUninit::write` is safe; it overwrites without dropping.
-        out.write(Self {
+        Self {
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,
@@ -9747,8 +9693,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
-            ts_namespace_scopes: Vec::new(),
-            ts_namespace_member_maps: Vec::new(),
             ts_namespace: RecentlyVisitedTSNamespace {
                 expr: null_expr_data(),
                 map: None,
@@ -9763,7 +9707,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
-        })
+        }
 
         // The transposer recursion lives as inherent `P::maybe_transpose_if_*` methods
         // called directly (no stored `*mut P`).

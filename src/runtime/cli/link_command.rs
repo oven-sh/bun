@@ -218,6 +218,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
     if manager.options.positionals.len() == 1 {
         // bun link
+        drop(original_cwd); // `Global::exit` below runs no destructors.
         let (lockfile, package) = load_package_for_link(manager, "linking")?;
         let name = lockfile.str(&package.name);
 

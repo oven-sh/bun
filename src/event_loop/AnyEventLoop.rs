@@ -161,11 +161,6 @@ impl AnyEventLoop {
     pub fn native_loop(&self) -> bun_io::LoopRef {
         bun_io::uws_to_native(self.r#loop())
     }
-
-    #[inline]
-    pub fn wakeup(&self) {
-        self.r#loop().wakeup();
-    }
 }
 
 // ─────────────────────────── EventLoopHandle ───────────────────────────────
@@ -415,20 +410,20 @@ impl EventLoopHandle {
 // bundle owned by a JS loop). Its `post` is deliver-or-refuse: once the VM has
 // closed, the task comes back and the caller releases it — its own payload —
 // on its own thread. Work that a VM must *wait* for holds a `bun_jsc::Ticket`
-// instead (a `Bun.build`'s completion task carries one for the bundle thread).
+// instead, which implements `PostToJs` too and never refuses.
 
 /// Result of a weak post to a JS loop from another thread: it was queued, or
 /// the loop's VM is closed and the caller has the task back to release on this
 /// thread.
 #[must_use = "a refused task must be released by its producer"]
-pub enum Posted {
+pub enum Posted<T = Box<ConcurrentTask>> {
     Queued,
-    Refused(NonNull<ConcurrentTask>),
+    Refused(T),
 }
 
 pub trait PostToJs: Send + Sync {
     /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
-    fn post(&self, task: NonNull<ConcurrentTask>) -> Posted;
+    fn post(&self, task: Box<ConcurrentTask>) -> Posted;
 }
 
 pub type JsPoster = std::sync::Arc<dyn PostToJs>;

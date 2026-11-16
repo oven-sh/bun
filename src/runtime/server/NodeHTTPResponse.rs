@@ -187,14 +187,13 @@ unsafe extern "C" {
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
 
-    // Moves the connection's captured node:http request-trailer section out. `*out` points into
-    // a C++ thread-local valid until the next call on this thread; caller copies immediately.
-    // Returns 0 when nothing captured or socket closed.
-    safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
+    // The connection's captured trailer section; 0 when there is none or the socket is closed.
+    safe fn Bun__NodeHTTP__requestTrailerBytes(
         is_ssl: bool,
         socket: *mut c_void,
         out: *mut *const u8,
     ) -> usize;
+    safe fn Bun__NodeHTTP__clearRequestTrailerBytes(is_ssl: bool, socket: *mut c_void);
     // Parses a raw trailer section into a flat [name, value, ...] JSArray, or
     // jsUndefined() when it contains no fields.
     safe fn Bun__NodeHTTP__parseRequestTrailers(
@@ -467,18 +466,15 @@ impl NodeHTTPResponse {
             return;
         };
         let mut ptr: *const u8 = std::ptr::null();
-        let length = Bun__NodeHTTP__takeRequestTrailerBytes(
-            any_response_is_ssl(&raw),
-            raw.socket().cast(),
-            &raw mut ptr,
-        );
+        let (is_ssl, socket) = (any_response_is_ssl(&raw), raw.socket().cast());
+        let length = Bun__NodeHTTP__requestTrailerBytes(is_ssl, socket, &raw mut ptr);
         if length == 0 {
             return;
         }
-        // SAFETY: C++ handed back a (ptr, length) into a thread-local it keeps
-        // alive until the next call on this thread; copy it out immediately.
+        // SAFETY: the connection owns these bytes, and nothing changes them before the clear below.
         let bytes = unsafe { std::slice::from_raw_parts(ptr, length) };
         self.request_trailers.with_mut(|v| v.append_slice(bytes));
+        Bun__NodeHTTP__clearRequestTrailerBytes(is_ssl, socket);
     }
 
     pub(crate) fn pause_socket(&self) {

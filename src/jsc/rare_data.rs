@@ -9,7 +9,7 @@ use crate::node_path::PathOrFileDescriptor;
 use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::webcore_types::store::{Data, File, IsAllAscii, Store};
+use crate::webcore_types::store::{Data, File, Store};
 use crate::{JSGlobalObject, JsCell};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
@@ -150,15 +150,11 @@ impl EntropyCache {
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
 
-// Safe fn-pointer type: `ctx` is an opaque round-trip pointer the registrant
-// supplied alongside `func`; the caller (`execute`) never dereferences it, only
-// forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
-// cast/deref locally, so invoking the pointer carries no caller-side precondition.
-pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
+pub(crate) type CleanupHookFunction = unsafe extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
-    pub ctx: *mut c_void,
+    pub(crate) ctx: *mut c_void,
     pub(crate) func: CleanupHookFunction,
     // Conceptually a borrow of the JSGlobalObject (JSC_BORROW per
     // LIFETIMES.tsv); a raw ptr avoids threading a lifetime param through
@@ -185,7 +181,7 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    /// By file descriptor.
+    /// Indexed by `Stdio`.
     stdio: [OnceCell<StdioStore>; 3],
 
     entropy_cache: JsCell<Option<Box<EntropyCache>>>,
@@ -691,12 +687,12 @@ impl RareData {
 
     /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
     /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::Decompressor> {
+    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::OwnedDecompressor> {
         let cell = &self.libdeflate_decompressor;
         if cell.get().is_none() {
             let _ = cell.set(libdeflate::OwnedDecompressor::new()?);
         }
-        cell.get().map(|decompressor| &**decompressor)
+        cell.get()
     }
 
     pub fn default_csrf_secret(&self) -> &[u8] {
@@ -728,7 +724,9 @@ impl RareData {
         self.default_client_ssl_ctx.set(None);
     }
 
-    pub fn push_cleanup_hook(
+    /// # Safety
+    /// `func` takes `ctx`, once, when the VM exits.
+    pub unsafe fn push_cleanup_hook(
         &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
@@ -738,7 +736,9 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    pub fn push_cleanup_hook_after_teardown_wait(
+    /// # Safety
+    /// As [`Self::push_cleanup_hook`].
+    pub unsafe fn push_cleanup_hook_after_teardown_wait(
         &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
@@ -837,7 +837,7 @@ impl RareData {
 
 struct StdioStore {
     store: RefPtr<Store>,
-    /// As it was when the store was made.
+    /// `st_mode` when the store was created.
     mode: Mode,
 }
 
@@ -863,17 +863,15 @@ impl RareData {
                 Stdio::StdOut => Output::stdout_descriptor_type() == terminal,
                 Stdio::StdErr => Output::stderr_descriptor_type() == terminal,
             };
-            let store = RefPtr::new(Store {
-                data: Data::File(File {
+            let store = RefPtr::new(Store::new(
+                Data::File(File {
                     pathlike: PathOrFileDescriptor::Fd(fd),
                     is_atty: Some(is_atty),
                     mode,
                     ..Default::default()
                 }),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
-            });
+                bun_http_types::MimeType::NONE,
+            ));
             StdioStore { store, mode }
         })
     }
@@ -937,11 +935,11 @@ pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
-        // tls_default_ciphers / stdio:
-        // all dropped automatically via field Drop.
-
+        // Paired with `VirtualMachine::init_rare_data`.
+        bun_core::asan::unregister_root_region(
+            core::ptr::from_ref(self).cast(),
+            core::mem::size_of::<Self>(),
+        );
         self.default_client_ssl_ctx.set(None);
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

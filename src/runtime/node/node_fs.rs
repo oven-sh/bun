@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
-use bun_core::{String as BunString, Utf8WithString, ZStr};
+use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
@@ -211,8 +211,8 @@ fn read_large_file(fd: FD, buf: &mut Vec<u8>, len: usize, position: u64) -> Mayb
             break;
         }
     }
-    // SAFETY: `total` ends with the first part that is not full.
-    unsafe { buf.set_len(buf.len() + total) };
+    // SAFETY: `total` counts the bytes read, up to and including the first short part.
+    unsafe { bun_core::vec::commit_spare(buf, total) };
     Ok(total)
 }
 
@@ -1250,55 +1250,53 @@ mod _async_tasks {
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
 
         #[cfg(windows)]
-        /// Used internally. Not from JavaScript.
-        pub(crate) struct AsyncMkdirp {
-            pub(crate) completion_ctx: *mut (),
-            /// Pool thread; `ticket` is this task's, for the callee to post its
-            /// hop back through.
-            pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
-            /// Memory is not owned by this struct
-            pub path: *const [u8], // BORROW: not owned
-            pub(crate) ticket: bun_jsc::Ticket,
-            pub task: WorkPoolTask,
+        pub(crate) trait AsyncMkdirpTarget: bun_event_loop::BoxedTask {
+            /// Pool thread.
+            fn directory(&self) -> &[u8];
+            /// Pool thread.
+            fn set_error(&mut self, err: sys::Error);
         }
 
         #[cfg(windows)]
-        bun_threading::owned_task!(AsyncMkdirp, task);
+        /// Used internally. Not from JavaScript.
+        pub(crate) struct AsyncMkdirp<T: AsyncMkdirpTarget> {
+            /// Always posted back to its thread.
+            target: Box<T>,
+            ticket: bun_jsc::Ticket,
+            task: WorkPoolTask,
+        }
 
         #[cfg(windows)]
-        impl AsyncMkdirp {
-            /// Heap-allocate and hand the task to the work pool, which owns the
-            /// allocation and frees it after `run_owned` returns.
-            pub(crate) fn schedule(init: AsyncMkdirp) {
-                WorkPool::schedule_new(init);
+        bun_threading::owned_task!([T: AsyncMkdirpTarget] AsyncMkdirp<T>, task);
+
+        #[cfg(windows)]
+        impl<T: AsyncMkdirpTarget> AsyncMkdirp<T> {
+            pub(crate) fn schedule(target: Box<T>) {
+                WorkPool::schedule_new(Self {
+                    target,
+                    ticket: VirtualMachine::get().ticket(),
+                    task: Default::default(),
+                });
             }
 
             #[allow(clippy::boxed_local)]
-            fn run_owned(self: Box<Self>) {
-                let mut node_fs = NodeFS::default();
-                // SAFETY: the scheduling caller keeps `path` alive until `completion`
-                // runs (it points into caller-owned state, not this box).
-                let path = unsafe { &*self.path };
-                let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::borrowed(path),
-                    recursive: true,
-                    ..Default::default()
-                });
-                match result {
-                    Err(err) => {
-                        (self.completion)(
-                            self.completion_ctx,
-                            // `with_path` already clones into a fresh `Box<[u8]>`; pass the
-                            // existing path slice.
-                            Err(err.with_path(&err.path)),
-                            &self.ticket,
-                        );
-                    }
-                    Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()), &self.ticket);
-                    }
+            fn run_owned(mut self: Box<Self>) {
+                if let Err(err) = mkdirp(self.target.directory()) {
+                    self.target.set_error(err);
                 }
+                self.ticket
+                    .post(ConcurrentTask::ConcurrentTask::create_boxed(self.target));
             }
+        }
+
+        #[cfg(windows)]
+        fn mkdirp(path: &[u8]) -> Maybe<()> {
+            let result = NodeFS::default().mkdir_recursive(&args::Mkdir {
+                path: PathLike::borrowed(path),
+                recursive: true,
+                ..Default::default()
+            });
+            result.map(|_| ()).map_err(|err| err.with_path(&err.path))
         }
     }
 
@@ -2235,7 +2233,7 @@ mod _async_tasks {
         /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
-        /// original write provenance for the `Box` reclaimed after `on_subtask_done`.
+        /// original write provenance for the `Box` that `on_subtask_done` reclaims.
         pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
@@ -2291,7 +2289,7 @@ mod _async_tasks {
 
         fn run_owned(self: Box<Self>) {
             // `ParentRef` preserves the `Box::leak` mutable provenance so
-            // the completion can reclaim the `Box` from `as_mut_ptr()`
+            // `on_subtask_done` can reclaim the `Box` from `as_mut_ptr()`
             // once the refcount reaches zero.
             let cp_task = self.cp_task;
             // Shared borrow only — other workpool threads (and the directory-scan
@@ -2338,7 +2336,7 @@ mod _async_tasks {
         }
     }
 
-    impl<const IS_SHELL: bool> bun_event_loop::Taskable for NewAsyncCpTask<IS_SHELL> {
+    impl<const IS_SHELL: bool> bun_event_loop::BoxedTask for NewAsyncCpTask<IS_SHELL> {
         const TAG: bun_event_loop::TaskTag = if IS_SHELL {
             bun_event_loop::task_tag::ShellAsyncCpTask
         } else {
@@ -2346,13 +2344,9 @@ mod _async_tasks {
         };
         /// A finished fs.cp whose completion will not run: the drop releases
         /// its promise handle, protected arguments and keep-alive.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            unsafe { bun_core::heap::destroy(this) }
-        }
-        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-            // SAFETY: fn contract.
-            unsafe { (*this).context }
+        fn release_unrun(self: Box<Self>) {}
+        fn context(&self) -> bun_event_loop::ContextId {
+            self.context
         }
     }
 
@@ -2510,10 +2504,7 @@ mod _async_tasks {
         /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
         /// and destroys `this`.
         ///
-        /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
-        /// mutable provenance from the original `Box::leak`; the JS-thread
-        /// callback later reclaims the `Box`, which would be UB if the
-        /// pointer were derived from a shared reference.
+        /// Takes the pointer that `schedule_new` leaked, because the last caller reclaims the `Box`.
         fn on_subtask_done(this: *mut Self) {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
@@ -2525,36 +2516,28 @@ mod _async_tasks {
                 return;
             }
 
+            // SAFETY: the count reached zero, so nothing else uses the box that `schedule_new` leaked.
+            let this = unsafe { bun_core::heap::take(this) };
+
             // All subtasks have finished. If none reported an error, the copy succeeded.
-            if !this_ref.has_result.load(Ordering::Relaxed) {
-                this_ref.has_result.store(true, Ordering::Relaxed);
-                // count reached zero ⇒ this thread now has exclusive access.
-                this_ref.result.set(Ok(()));
+            if !this.has_result.load(Ordering::Relaxed) {
+                this.has_result.store(true, Ordering::Relaxed);
+                this.result.set(Ok(()));
             }
 
-            // Count reached zero ⇒ exclusive access. `this` carries mutable
-            // provenance from `Box::leak`, so the enqueued callback may safely
-            // reclaim the `Box` on the JS thread.
-            let poster = this_ref
+            let poster = this
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
             if poster.is_js() {
-                poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
-                    this,
-                )));
+                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             } else {
-                let at =
-                    AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
-                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                        let task = unsafe { bun_core::heap::take(p) };
-                        let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
-                    });
+                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
+                    let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
+                });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
-            // The pool side is done (`this` may already be freed by its loop).
-            drop(poster);
         }
 
         pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
@@ -2761,7 +2744,7 @@ mod _async_tasks {
             if let Err(err) = Self::cp_async_directory(
                 nodefs,
                 // Pass the raw `*mut Self` (Box::leak provenance) so spawned
-                // `CpSingleTask`s store a pointer the completion can reclaim the `Box` from.
+                // `CpSingleTask`s store a pointer that `on_subtask_done` can reclaim the `Box` from.
                 *_done,
                 &mut src_buf,
                 src_len,
@@ -2814,7 +2797,7 @@ mod _async_tasks {
             // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
             // The raw `*mut` is threaded through (instead of `&Self`) so that the
             // `cp_task` pointers stored in subtasks retain mutable provenance for
-            // the `Box` reclaimed after `on_subtask_done`.
+            // the `Box` that `on_subtask_done` reclaims.
             let this_ref = unsafe { &*this };
             // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
             // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
@@ -2949,12 +2932,6 @@ mod _async_tasks {
     pub(crate) struct AsyncReaddirRecursiveTask {
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
-        /// The completion token, finished by whichever subtask ends the scan.
-        pub(crate) done: Option<bun_jsc::Completion<Self>>,
-
-        // It's not 100% clear this one is necessary
-        pub(crate) has_result: AtomicBool,
-
         pub(crate) subtask_count: AtomicUsize,
 
         /// Set once `pending_err` is. From then on `enqueue` schedules nothing
@@ -2964,9 +2941,6 @@ mod _async_tasks {
         /// that frontier 2^41 paths deep before the kernel reports ELOOP.
         pub(crate) has_error: AtomicBool,
 
-        /// The final result list
-        pub(crate) result_list: ResultListEntryValue,
-
         /// When joining the result list, we use this to preallocate the joined array.
         pub(crate) result_list_count: AtomicUsize,
 
@@ -2975,26 +2949,28 @@ mod _async_tasks {
         /// Using a lockless queue instead of mutex + joining the lists as we go was a meaningful performance improvement
         pub(crate) result_list_queue: UnboundedQueue<ResultListEntry>,
 
-        /// All the subtasks will use this fd to open files
-        pub(crate) root_dir: Option<sys::File>,
+        /// `ReaddirState::root_dir`, for the subtasks to open files with.
+        pub(crate) root_fd: FD,
 
         /// This is used when joining the file paths for error messages.
-        /// Heap-owned, NUL-terminated (`[path.., 0]`); freed on drop.
-        pub(crate) root_path: Box<[u8]>,
+        pub(crate) root_path: ZBox,
 
-        pub(crate) pending_err: Option<sys::Error>,
-        pub(crate) pending_err_mutex: bun_threading::Mutex,
+        state: bun_threading::Guarded<ReaddirState>,
     }
+
+    struct ReaddirState {
+        /// Finished by whichever subtask ends the scan.
+        done: Option<bun_jsc::Completion<AsyncReaddirRecursiveTask>>,
+        /// Opened before the first subtask and closed by the last.
+        root_dir: Option<sys::File>,
+        pending_err: Option<sys::Error>,
+        result_list: ResultListEntryValue,
+    }
+
     // SAFETY: shared by the pool subtasks through atomics / the lock-free
     // queue / the mutex; results are owned buffers and WTF strings built
     // off-thread for hand-off.
     unsafe impl Send for AsyncReaddirRecursiveTask {}
-
-    impl Drop for AsyncReaddirRecursiveTask {
-        fn drop(&mut self) {
-            self.clear_result_list();
-        }
-    }
 
     impl bun_jsc::JobContext for AsyncReaddirRecursiveTask {
         type OffThread = Self;
@@ -3004,19 +2980,20 @@ mod _async_tasks {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            this.done = Some(done);
+            match NodeFS::readdir_open(FD::cwd(), &this.root_path) {
+                Ok(fd) => this.root_fd = fd,
+                Err(err) => {
+                    this.state.get_mut().pending_err =
+                        Some(err.with_path(this.root_path.as_bytes()));
+                    return Some(done);
+                }
+            }
+            let state = this.state.get_mut();
+            state.done = Some(done);
+            state.root_dir = Some(sys::File::from_fd(this.root_fd));
             let mut buf = bun_paths::path_buffer_pool::get();
-            let root_path_z = {
-                let bytes: &'static [u8] =
-                    // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` fixed for the
-                    // task's lifetime; `perform_work` mutates other fields only.
-                    unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
-                ZStr::from_buf(bytes, bytes.len() - 1)
-            };
-            // May finish synchronously (no subdirectories) or fan out; the last
-            // subtask finishes the token.
-            this.perform_work(root_path_z, &mut buf, true);
-            None
+            this.perform_work(&this.root_path, &mut buf, true);
+            (this.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1).then(|| this.finish_scan())
         }
 
         fn then(
@@ -3025,13 +3002,14 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
-            let success = this.pending_err.is_none();
+            let state = this.state.get_mut();
+            let success = state.pending_err.is_none();
             let completion = &js.completion;
-            let converted = if let Some(err) = &this.pending_err {
+            let converted = if let Some(err) = &state.pending_err {
                 completion.error_to_js(global_object, err)
             } else {
                 let res = match core::mem::replace(
-                    &mut this.result_list,
+                    &mut state.result_list,
                     ResultListEntryValue::Files(Vec::new()),
                 ) {
                     ResultListEntryValue::WithFileTypes(v) => {
@@ -3073,9 +3051,8 @@ mod _async_tasks {
     }
 
     pub(super) struct ReaddirSubtask {
-        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask, bun_ptr::Mut>,
-        /// Heap-owned, NUL-terminated (`[basename.., 0]`); freed on drop.
-        pub basename: Box<[u8]>,
+        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
+        pub basename: ZBox,
         pub task: WorkPoolTask,
     }
 
@@ -3086,46 +3063,29 @@ mod _async_tasks {
         // is a false positive on this macro contract.
         #[allow(clippy::boxed_local)]
         fn run_owned(self: Box<Self>) {
-            let ReaddirSubtask {
-                readdir_task,
-                basename,
-                task: _,
-            } = *self;
-            // `basename` is a NUL-terminated `Box<[u8]>` (`[bytes.., 0]`) from
-            // `enqueue()`; it frees on scope exit.
-            // SAFETY: `enqueue()` built `basename` with a trailing NUL at
-            // `[len]`, so `ZStr::from_buf` is valid.
-            let basename_z = ZStr::from_buf(&basename, basename.len() - 1);
             let mut buf = bun_paths::path_buffer_pool::get();
-            // SAFETY: readdir_task (ParentRef) outlives subtask via subtask_count
-            // refcount; this work-pool callback is the sole holder of `&mut` to the
-            // parent's per-result fields (it pushes to a lock-free queue).
-            unsafe { readdir_task.assume_mut() }.perform_work(basename_z, &mut buf, false);
+            let scan = self.readdir_task;
+            scan.perform_work(&self.basename, &mut buf, false);
+            // No `&self` here: another thread can free `scan` after this. `AcqRel` publishes every subtask's results to the last.
+            if scan.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+                scan.finish_scan().finish();
+            }
         }
     }
 
     impl AsyncReaddirRecursiveTask {
-        pub(crate) fn enqueue(&mut self, basename: &ZStr) {
+        pub(crate) fn enqueue(&self, basename: &ZStr) {
             if self.has_error.load(Ordering::Relaxed) {
                 return;
             }
-            // The subtask runs on another thread after the caller's `name_to_copy_z`
-            // (which points into a per-iteration buffer) has been overwritten, so we
-            // must heap-own the bytes here. Freed in ReaddirSubtask::call's cleanup.
-            let mut owned = Vec::with_capacity(basename.len() + 1);
-            owned.extend_from_slice(basename.as_bytes());
-            owned.push(0);
-            // NUL-terminated `[bytes.., 0]`; moved into the subtask and freed
-            // when `ReaddirSubtask` drops.
-            let basename_owned: Box<[u8]> = owned.into_boxed_slice();
             // The fetch_add is load-bearing (refcounts the in-flight subtask). It
             // MUST run in release builds; only the `> 0` invariant check is debug-only.
             let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(prev > 0);
             WorkPool::schedule_new(ReaddirSubtask {
                 // `self` lives in its heap `Job`, and the `subtask_count` just bumped keeps it alive.
-                readdir_task: bun_ptr::ParentRef::from_ref_mut(self),
-                basename: basename_owned,
+                readdir_task: bun_ptr::ParentRef::new(self),
+                basename: ZBox::from_bytes(basename.as_bytes()),
                 task: WorkPoolTask::default(),
             });
         }
@@ -3144,13 +3104,7 @@ mod _async_tasks {
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            let root_path = {
-                let src = args.path.slice();
-                let mut owned = Vec::with_capacity(src.len() + 1);
-                owned.extend_from_slice(src);
-                owned.push(0);
-                owned.into_boxed_slice()
-            };
+            let root_path = ZBox::from_bytes(args.path.slice());
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
             let completion = FsCompletion::new(cx.global(), callback);
@@ -3160,17 +3114,18 @@ mod _async_tasks {
                 AsyncReaddirRecursiveTask {
                     tag,
                     encoding,
-                    done: None,
-                    has_result: AtomicBool::new(false),
                     subtask_count: AtomicUsize::new(1),
                     has_error: AtomicBool::new(false),
                     root_path,
-                    result_list,
                     result_list_count: AtomicUsize::new(0),
                     result_list_queue: UnboundedQueue::default(),
-                    root_dir: None,
-                    pending_err: None,
-                    pending_err_mutex: bun_threading::Mutex::default(),
+                    root_fd: FD::INVALID,
+                    state: bun_threading::Guarded::new(ReaddirState {
+                        done: None,
+                        root_dir: None,
+                        pending_err: None,
+                        result_list,
+                    }),
                 },
                 AsyncFSJs {
                     completion,
@@ -3180,14 +3135,8 @@ mod _async_tasks {
             value
         }
 
-        pub(crate) fn perform_work(
-            &mut self,
-            basename: &ZStr,
-            buf: &mut PathBuffer,
-            is_root: bool,
-        ) {
+        fn perform_work(&self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
             if self.has_error.load(Ordering::Relaxed) {
-                self.on_subtask_done();
                 return;
             }
             macro_rules! impl_tag {
@@ -3211,18 +3160,17 @@ mod _async_tasks {
                     match res {
                         Err(err) => {
                             {
-                                let _lock = self.pending_err_mutex.lock_guard();
-                                if self.pending_err.is_none() {
+                                let mut state = self.state.lock();
+                                if state.pending_err.is_none() {
                                     let err_path: &[u8] = if !err.path.is_empty() {
                                         &err.path[..]
                                     } else {
-                                        &self.root_path[..self.root_path.len() - 1]
+                                        self.root_path.as_bytes()
                                     };
-                                    self.pending_err = Some(err.with_path(err_path));
+                                    state.pending_err = Some(err.with_path(err_path));
                                 }
                             }
                             self.has_error.store(true, Ordering::Relaxed);
-                            self.on_subtask_done();
                         }
                         Ok(()) => {
                             self.write_results::<$T>(&mut entries);
@@ -3237,7 +3185,7 @@ mod _async_tasks {
             }
         }
 
-        pub(crate) fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
+        fn write_results<T: IntoResultListEntry>(&self, result: &mut Vec<T>) {
             if !result.is_empty() {
                 // `result` is already a heap `Vec`, so cloning would be a redundant
                 // alloc+memcpy; just take ownership and trim the over-reservation
@@ -3254,72 +3202,30 @@ mod _async_tasks {
                 self.result_list_queue
                     .push(bun_core::heap::into_raw_nn(list));
             }
-
-            self.on_subtask_done();
         }
 
-        /// Drops this subtask's `subtask_count` reference. The last one finishes
-        /// the scan; `AcqRel` publishes every subtask's `pending_err` and queued
-        /// results to it.
-        fn on_subtask_done(&mut self) {
-            if self.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-                self.finish_concurrently();
+        /// For the subtask that takes `subtask_count` to zero.
+        fn finish_scan(&self) -> bun_jsc::Completion<Self> {
+            let mut state = self.state.lock();
+            state.root_dir = None;
+            let success = state.pending_err.is_none();
+            if success {
+                let count = self.result_list_count.load(Ordering::Relaxed);
+                state.result_list.reserve_exact(count);
             }
-        }
-
-        /// May be called from any thread (the subtasks)
-        pub(crate) fn finish_concurrently(&mut self) {
-            if self
-                .has_result
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_err()
-            {
-                return;
-            }
-            debug_assert!(self.subtask_count.load(Ordering::Relaxed) == 0);
-
-            self.root_dir = None;
-
-            if self.pending_err.is_some() {
-                self.clear_result_list();
-            }
-
-            {
-                let list = self.result_list_queue.pop_batch();
-                let mut iter = list.iterator();
-
-                // `reserve_exact`/`append_from` dispatch on the runtime tag.
-                let cap = self.result_list_count.swap(0, Ordering::Relaxed);
-                self.result_list.reserve_exact(cap);
-                loop {
-                    let val = iter.next();
-                    if val.is_null() {
-                        break;
-                    }
-                    // SAFETY: boxed in `write_results`; `next` read its link before returning it.
-                    let mut entry = unsafe { bun_core::heap::take(val) };
-                    self.result_list.append_from(&mut entry.value);
-                }
-            }
-
-            // Hand the scan back to its VM (or, if that is gone, to the release
-            // that frees this off-thread part). Last touch of `self` on this thread.
-            self.done.take().expect("scan finished twice").finish();
-        }
-
-        fn clear_result_list(&mut self) {
-            self.result_list.clear();
-            let batch = self.result_list_queue.pop_batch();
-            let mut iter = batch.iterator();
+            let mut iter = self.result_list_queue.pop_batch().iterator();
             loop {
                 let val = iter.next();
                 if val.is_null() {
                     break;
                 }
                 // SAFETY: boxed in `write_results`; `next` read its link before returning it.
-                drop(unsafe { bun_core::heap::take(val) });
+                let mut entry = unsafe { bun_core::heap::take(val) };
+                if success {
+                    state.result_list.append_from(&mut entry.value);
+                }
             }
-            self.result_list_count.store(0, Ordering::Relaxed);
+            state.done.take().expect("scan finished twice")
         }
     }
 
@@ -3349,13 +3255,6 @@ mod _async_tasks {
     impl ResultListEntryValue {
         fn from_vec<T: IntoResultListEntry>(v: Vec<T>) -> Self {
             T::into_variant(v)
-        }
-        fn clear(&mut self) {
-            match self {
-                Self::WithFileTypes(v) => v.clear(),
-                Self::Buffers(v) => v.clear(),
-                Self::Files(v) => v.clear(),
-            }
         }
         fn reserve_exact(&mut self, n: usize) {
             match self {
@@ -7159,63 +7058,50 @@ impl NodeFS {
         err.with_path(joined.as_bytes())
     }
 
-    pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
-        buf: &mut PathBuffer,
-        async_task: &mut AsyncReaddirRecursiveTask,
-        basename: &ZStr,
-        entries: &mut Vec<T>,
-        is_root: bool,
-    ) -> Maybe<()> {
-        // `root_path` is never mutated for the lifetime of the task, but
-        // borrowck can't see that across `async_task.enqueue(&mut self, …)`. Detach
-        // the slice via raw-pointer round-trip.
-        let root_basename: &[u8] = {
-            // `root_path` is NUL-terminated (`[path.., 0]`); the basename
-            // excludes the trailing NUL.
-            let path = &async_task.root_path;
-            // SAFETY: `async_task.root_path`'s backing storage is fixed at
-            // `create()` and outlives every `enqueue` call below.
-            unsafe { bun_ptr::detach_lifetime(&path[..path.len() - 1]) }
-        };
+    fn readdir_open(atfd: FD, path: &ZStr) -> Maybe<FD> {
         #[cfg(not(windows))]
-        let flags = sys::O::DIRECTORY | sys::O::RDONLY;
-        let atfd = async_task
-            .root_dir
-            .as_ref()
-            .map_or_else(FD::cwd, sys::File::fd);
-        #[cfg(not(windows))]
-        let open_res = Syscall::openat(atfd, basename, flags, 0);
-        #[cfg(windows)]
+        return Syscall::openat(atfd, path, sys::O::DIRECTORY | sys::O::RDONLY, 0);
         // the plain Windows open wrapper does not pass iterable=true
-        let open_res = sys::open_dir_at_windows_a(
+        #[cfg(windows)]
+        sys::open_dir_at_windows_a(
             atfd,
-            basename.as_bytes(),
+            path.as_bytes(),
             sys::WindowsOpenDirOptions {
                 no_follow: true,
                 iterable: true,
                 ..Default::default()
             },
-        );
-        let opened = match open_res {
-            Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => return Ok(()),
-            Err(err) => {
-                return Err(Self::readdir_error(
-                    buf,
-                    root_basename,
-                    basename,
-                    is_root,
-                    &err,
-                ));
-            }
-            Ok(fd) => sys::File::from_fd(fd),
-        };
+        )
+    }
 
-        let root_fd;
+    pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
+        buf: &mut PathBuffer,
+        async_task: &AsyncReaddirRecursiveTask,
+        basename: &ZStr,
+        entries: &mut Vec<T>,
+        is_root: bool,
+    ) -> Maybe<()> {
+        let root_basename = async_task.root_path.as_bytes();
+        let subdir;
         let dir: &sys::File = if is_root {
-            root_fd = async_task.root_dir.insert(opened).fd();
-            sys::File::borrow(&root_fd)
+            sys::File::borrow(&async_task.root_fd)
         } else {
-            &opened
+            match Self::readdir_open(async_task.root_fd, basename) {
+                Err(err) if Self::readdir_skips_subdir(err.get_errno()) => return Ok(()),
+                Err(err) => {
+                    return Err(Self::readdir_error(
+                        buf,
+                        root_basename,
+                        basename,
+                        false,
+                        &err,
+                    ));
+                }
+                Ok(fd) => {
+                    subdir = sys::File::from_fd(fd);
+                    &subdir
+                }
+            }
         };
 
         let mut iterator = DirIterator::iterate(dir.fd());
@@ -8114,7 +8000,7 @@ impl NodeFS {
         let link_path: &[u8] = &outbuf[..link_len];
         if args.encoding == Encoding::Utf8 {
             if let PathLike::String(s) = &args.path {
-                if strings::eql_long(s.slice(), link_path, true) {
+                if strings::eql_long(s.slice(), link_path) {
                     return Ok(StringOrBuffer::String(s.clone()));
                 }
             }
@@ -8196,7 +8082,7 @@ impl NodeFS {
             let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
-                    if strings::eql_long(s.slice(), buf, true) {
+                    if strings::eql_long(s.slice(), buf) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }
@@ -8274,7 +8160,7 @@ impl NodeFS {
 
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
-                    if strings::eql_long(s.slice(), buf, true) {
+                    if strings::eql_long(s.slice(), buf) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }

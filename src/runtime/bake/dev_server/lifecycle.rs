@@ -1,6 +1,7 @@
 //! Creating and destroying the dev server, and loading the framework's server runtime.
 
 use super::*;
+use std::sync::Arc;
 
 /// DevServer is stored on the heap, storing its allocator.
 #[inline(never)]
@@ -18,119 +19,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .map(|sc| sc.separate_ssr_graph)
         .unwrap_or(false);
 
-    // Note: `server_transpiler` / `client_transpiler` / `ssr_transpiler` /
-    // `bun_watcher` / `router` / `watcher_atomics` must be assigned after the
-    // heap address is stable. Rust forbids partial struct literals and
-    // `mem::zeroed()` here is UB (`Box<Watcher>` is `NonNull`-backed;
-    // `Transpiler<'a>` carries `&'a Arena`), so use
-    // `Box::new_uninit()` + per-field `addr_of_mut!().write()`, leaving those
-    // fields uninitialized until their real values are computed against
-    // the stable `*mut DevServer`, then `assume_init()` once every field is valid.
-    use ::core::mem::MaybeUninit;
-    use ::core::ptr::addr_of_mut;
-
-    let mut dev_uninit: Box<MaybeUninit<DevServer>> = Box::new(MaybeUninit::uninit());
-    let p: *mut DevServer = dev_uninit.as_mut_ptr();
-
     let root = paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes());
-
-    /// `addr_of_mut!((*p).$field).write($value)` — writes a single field of the
-    /// partially-initialized `DevServer` without materializing `&mut DevServer`.
-    macro_rules! w {
-        ($($field:ident).+, $value:expr) => {
-            addr_of_mut!((*p).$($field).+).write($value)
-        };
-    }
-
-    // SAFETY: `p` is a freshly-allocated, properly-aligned `*mut DevServer`; each
-    // `addr_of_mut!((*p).field)` computes an in-bounds field address without
-    // creating a reference to the (partially-uninit) whole. Every field is written
-    // at most once before `assume_init()` below.
-    unsafe {
-        w!(magic, Magic::Valid);
-        w!(vm, bun_ptr::BackRef::new(options.vm));
-        w!(vm_handle, options.vm.handle());
-        w!(server, None);
-        w!(directory_watchers, DirectoryWatchStore::default());
-        w!(server_fetch_function_callback, jsc::StrongOptional::empty());
-        w!(
-            server_register_update_callback,
-            jsc::StrongOptional::empty()
-        );
-        w!(generation, 0);
-        w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(emit_incremental_visualizer_events, 0);
-        w!(emit_memory_visualizer_events, 0);
-        w!(
-            memory_visualizer_timer,
-            OwnedTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
-        );
-        // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
-        w!(
-            frontend_only,
-            options.framework.file_system_router_types.is_empty()
-        );
-        w!(graphs.root, Box::from(root));
-        w!(graphs.client, IncrementalGraph::default());
-        w!(graphs.server, IncrementalGraph::default());
-        w!(graphs.incremental_result, IncrementalResult::EMPTY);
-        w!(graphs.route_lookup, Default::default());
-        w!(graphs.assets, Assets::default());
-        w!(graphs.bundling_failures, Default::default());
-        w!(barrel_files_with_deferrals, Default::default());
-        w!(barrel_needed_exports, Default::default());
-        w!(route_bundles, Vec::new());
-        w!(html_router, HTMLRouter::empty());
-        w!(active_websocket_connections, Default::default());
-        w!(current_bundle, None);
-        w!(
-            next_bundle,
-            NextBundle {
-                route_queue: Default::default(),
-                reload_event: None,
-                requests: deferred_request::List::default(),
-            }
-        );
-        w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:
-        w!(source_maps, SourceMapStore::empty());
-        w!(plugin_state, PluginState::Unknown);
-        w!(
-            plugins,
-            (options.bundler_options.plugin.as_ref()).map(|plugin| plugin.as_non_null())
-        );
-        w!(
-            assume_perfect_incremental_bundling,
-            bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
-                .get()
-                .unwrap_or(bun_core::env::IS_DEBUG)
-        );
-        w!(testing_batch_events, TestingBatchEvents::Disabled);
-        w!(
-            broadcast_console_log_from_browser_to_server,
-            options.broadcast_console_log_from_browser_to_server
-        );
-        w!(bundles_since_last_error, 0);
-        w!(has_tailwind_plugin_hack, None);
-        w!(configuration_hash_key, [0; 16]);
-        w!(log, Log::init());
-        w!(deferred_request_pool, HiveArrayFallback::init());
-
-        // `.router = undefined` — placeholder until the real router is built below
-        // (after transpilers + framework.resolve). Constructed empty so the field
-        // is valid for `assume_init()`; overwritten by `dev.router = 'router: {..}`.
-        w!(
-            router,
-            FrameworkRouter {
-                root: Box::from(root),
-                types: Box::new([]),
-                routes: Vec::new(),
-                static_routes: Default::default(),
-                dynamic_routes: Default::default(),
-                pattern_string_arena: Arena::new(),
-            }
-        );
-    }
-
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
@@ -143,11 +32,32 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-    // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
-    // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
-    // not dereference it until `start()` spawns the watcher thread, by which point
-    // `*p` is a valid `DevServer` (`assume_init` below precedes
-    // `bun_watcher.start()`).
+    // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
+    // `Options::arena` doc — "must live until DevServer drops").
+    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let unresolved_view = options.framework.as_bundler_view();
+    let mut log = Log::init();
+    let mut init_transpiler = |renderer, bundler_options| {
+        (options.framework)
+            .init_transpiler(
+                arena,
+                &mut log,
+                bake::Mode::Development,
+                renderer,
+                &unresolved_view,
+                bundler_options,
+            )
+            .map_err(|err| global.throw_error(err, generic_action))
+    };
+    let server_transpiler = init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
+    let client_transpiler = init_transpiler(bake::Graph::Client, &options.bundler_options.client)?;
+    let ssr_transpiler = separate_ssr_graph
+        .then(|| init_transpiler(bake::Graph::Ssr, &options.bundler_options.ssr))
+        .transpose()?;
+
+    let mut slot = Box::<DevServer>::new_uninit();
+    // Not dereferenced before `bun_watcher.start()`.
+    let p: *mut DevServer = slot.as_mut_ptr();
     let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
@@ -157,87 +67,78 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             ));
         }
     };
-    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
-    unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
 
-    // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
-    // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
-    // as a BACKREF for later `concurrent_task.from(dev)` / `run`; not dereferenced
-    // during construction.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
-
-    // This causes a memory leak, but the allocator is otherwise used on multiple threads.
-    // (allocator param dropped — global mimalloc)
-
-    // `.server_transpiler/.client_transpiler/.ssr_transpiler = undefined` →
-    // `Framework.initTranspiler(..., &dev.X_transpiler, ...)`.
-    //
-    // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
-    // `config/transpiler.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
-    // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
-    // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
-    // box. Widen `'a → 'static` here once.
-    // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
-    // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
-    let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
-        Vec::with_capacity(4);
-    // SAFETY: `p` points into the boxed `MaybeUninit<DevServer>`; the fields
-    // accessed below were each written above and are reborrowed disjointly via
-    // `addr_of_mut!`, so no overlapping `&mut` exists. The transpiler fields are
-    // not written yet: `ManuallyDrop<T>` has the layout of `T`, as has the
-    // `MaybeUninit<T>` that `server_transpiler` and `client_transpiler` are cast to.
-    unsafe {
-        // Still in `options`, so that an early return drops them.
-        let framework = &options.framework;
-        let log = &mut *addr_of_mut!((*p).log);
-        let bundler_options = &options.bundler_options;
-
-        match framework.init_transpiler(
-            arena,
+    let mut dev = Box::write(
+        slot,
+        DevServer {
+            magic: Magic::Valid,
+            inspector_server_id: DebuggerId::init(0), // TODO paper clover:
+            configuration_hash_key: [0; 16],
+            vm: bun_ptr::BackRef::new(options.vm),
+            vm_handle: options.vm.handle(),
+            server: None,
+            // Placeholder: the router is built once the framework is resolved.
+            router: FrameworkRouter {
+                root: Box::from(root),
+                types: Box::new([]),
+                routes: Vec::new(),
+                static_routes: Default::default(),
+                dynamic_routes: Default::default(),
+                pattern_string_arena: Arena::new(),
+            },
+            route_bundles: Vec::new(),
+            graph_safety_lock: ThreadLock::init_unlocked(),
+            graphs: Graphs {
+                root: Box::from(root),
+                client: IncrementalGraph::default(),
+                server: IncrementalGraph::default(),
+                incremental_result: IncrementalResult::EMPTY,
+                route_lookup: Default::default(),
+                assets: Assets::default(),
+                bundling_failures: Default::default(),
+            },
+            barrel_files_with_deferrals: Default::default(),
+            barrel_needed_exports: Default::default(),
+            html_router: HTMLRouter::empty(),
+            source_maps: SourceMapStore::empty(),
+            frontend_only: options.framework.file_system_router_types.is_empty(),
+            has_tailwind_plugin_hack: None,
+            server_fetch_function_callback: jsc::StrongOptional::empty(),
+            server_register_update_callback: jsc::StrongOptional::empty(),
+            bun_watcher: ::core::mem::ManuallyDrop::new(bun_watcher),
+            directory_watchers: DirectoryWatchStore::default(),
+            watcher_atomics: WatcherAtomics::init(p),
+            testing_batch_events: TestingBatchEvents::Disabled,
+            generation: 0,
+            bundles_since_last_error: 0,
+            framework: options.framework,
+            plugins: options.bundler_options.plugin.map(Plugins::Owned),
+            server_transpiler,
+            client_transpiler,
+            ssr_transpiler,
             log,
-            bake::Mode::Development,
-            bake::Graph::Server,
-            &mut *addr_of_mut!((*p).server_transpiler).cast::<MaybeUninit<Transpiler<'static>>>(),
-            &bundler_options.server,
-        ) {
-            Ok((_, view)) => bundler_framework_views.push(view),
-            Err(err) => return Err(global.throw_error(err, generic_action)),
-        }
-        match framework.init_transpiler(
-            arena,
-            log,
-            bake::Mode::Development,
-            bake::Graph::Client,
-            &mut *addr_of_mut!((*p).client_transpiler).cast::<MaybeUninit<Transpiler<'static>>>(),
-            &bundler_options.client,
-        ) {
-            Ok((_, view)) => bundler_framework_views.push(view),
-            Err(err) => return Err(global.throw_error(err, generic_action)),
-        }
-        if separate_ssr_graph {
-            match framework.init_transpiler(
-                arena,
-                log,
-                bake::Mode::Development,
-                bake::Graph::Ssr,
-                &mut *addr_of_mut!((*p).ssr_transpiler),
-                &bundler_options.ssr,
-            ) {
-                Ok((_, view)) => bundler_framework_views.push(view),
-                Err(err) => return Err(global.throw_error(err, generic_action)),
-            }
-        }
-
-        w!(bundler_framework_views, bundler_framework_views);
-        w!(framework, options.framework);
-        w!(bundler_options, options.bundler_options);
-    }
-
-    // SAFETY: all fields of `*p` were written exactly once above, except perhaps
-    // `ssr_transpiler`, which is a `MaybeUninit`.
-    let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
+            plugin_state: PluginState::Unknown,
+            current_bundle: None,
+            next_bundle: NextBundle {
+                route_queue: Default::default(),
+                reload_event: None,
+                requests: deferred_request::List::default(),
+            },
+            deferred_request_pool: HiveArrayFallback::init(),
+            active_websocket_connections: Default::default(),
+            emit_incremental_visualizer_events: 0,
+            emit_memory_visualizer_events: 0,
+            memory_visualizer_timer: OwnedTimer::init_paused(
+                EventLoopTimerTag::DevServerMemoryVisualizerTick,
+            ),
+            assume_perfect_incremental_bundling:
+                bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
+                    .get()
+                    .unwrap_or(bun_core::env::IS_DEBUG),
+            broadcast_console_log_from_browser_to_server: options
+                .broadcast_console_log_from_browser_to_server,
+        },
+    );
     let dev_ptr: *mut DevServer = &raw mut *dev;
 
     let _unlock = dev.graph_safety_lock.guard();
@@ -253,14 +154,13 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
     // vtable flows directly into the resolver without conversion.
     let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
-    dev.server_transpiler.options.dev_server = dev_ptr as *const ();
-    dev.server_transpiler.resolver.watcher = Some(resolve_watcher);
-    dev.client_transpiler.options.dev_server = dev_ptr as *const ();
-    dev.client_transpiler.resolver.watcher = Some(resolve_watcher);
-
-    if let Some(ssr_transpiler) = dev.ssr_transpiler_mut() {
-        ssr_transpiler.options.dev_server = dev_ptr as *const ();
-        ssr_transpiler.resolver.watcher = Some(resolve_watcher);
+    // The transpilers still point at the local that `log` moved out of.
+    let log = &raw mut dev.log;
+    for transpiler in dev.transpilers_mut() {
+        transpiler.set_log(log);
+        transpiler.options.log = log;
+        transpiler.options.dev_server = dev_ptr as *const ();
+        transpiler.resolver.watcher = Some(resolve_watcher);
     }
 
     debug_assert!(dev.server_transpiler.resolver.opts.target != bun_ast::Target::Browser);
@@ -283,21 +183,15 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         )?));
     }
 
-    // `init_transpiler` arena-snapshots the framework projection, so the
+    // `unresolved_view` is a snapshot of the framework, so the
     // transpilers do not see the resolved
     // `server_runtime_import` / `react_fast_refresh.import_source`;
     // re-project after resolve so parser-generated imports (e.g.
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
-    {
-        let resolved_view = arena.alloc(dev.framework.as_bundler_view());
-        dev.bundler_framework_views.push(&raw mut *resolved_view);
-        let resolved_view: &'static bun_bundler::bake_types::Framework = resolved_view;
-        dev.server_transpiler.options.framework = Some(resolved_view);
-        dev.client_transpiler.options.framework = Some(resolved_view);
-        if let Some(ssr_transpiler) = dev.ssr_transpiler_mut() {
-            ssr_transpiler.options.framework = Some(resolved_view);
-        }
+    let resolved_view = dev.framework.as_bundler_view();
+    for transpiler in dev.transpilers_mut() {
+        transpiler.options.framework = Some(Arc::clone(&resolved_view));
     }
 
     dev.configuration_hash_key = 'hash_key: {
@@ -533,8 +427,6 @@ impl Drop for DevServer {
                 generation: _,
                 bundles_since_last_error: _,
                 framework: _,
-                bundler_framework_views: _,
-                bundler_options: _,
                 server_transpiler: _,
                 client_transpiler: _,
                 ssr_transpiler: _,
@@ -577,7 +469,7 @@ impl Drop for DevServer {
         let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
         // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
         // transfers to `shutdown`, which reclaims or hands off to the thread.
-        unsafe { Watcher::shutdown(Box::into_raw(watcher), true) };
+        unsafe { Watcher::shutdown(Box::into_raw(watcher)) };
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
@@ -639,27 +531,6 @@ impl Drop for DevServer {
             ));
         }
 
-        let separate_ssr_graph = self
-            .framework
-            .server_components
-            .as_ref()
-            .is_some_and(|sc| sc.separate_ssr_graph);
-        // SAFETY: this is `Drop`, so none of them is used again. `init()` wrote
-        // `ssr_transpiler` if the SSR graph is separate.
-        unsafe {
-            ::core::mem::ManuallyDrop::drop(&mut self.server_transpiler);
-            ::core::mem::ManuallyDrop::drop(&mut self.client_transpiler);
-            if separate_ssr_graph {
-                self.ssr_transpiler.assume_init_drop();
-            }
-        }
-
-        for &ptr in &self.bundler_framework_views {
-            // SAFETY: each ptr is a unique arena slot written once in `init()`.
-            unsafe { ::core::ptr::drop_in_place(ptr) };
-        }
-        self.bundler_framework_views.clear();
-
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.
     }
@@ -668,6 +539,12 @@ impl Drop for DevServer {
 // re-exports from memory_cost module already declared at top
 
 impl DevServer {
+    fn transpilers_mut(&mut self) -> impl Iterator<Item = &mut Transpiler<'static>> {
+        [&mut self.server_transpiler, &mut self.client_transpiler]
+            .into_iter()
+            .chain(&mut self.ssr_transpiler)
+    }
+
     fn init_server_runtime(&mut self) -> JsResult<()> {
         let runtime = BunString::create_static_external(
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)

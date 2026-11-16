@@ -65,14 +65,12 @@
   "src/runtime/api/bun/Terminal.rs": {
     "thread spawn": 1
   },
+  "src/runtime/api/bundle_thread.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/api/glob.rs": {
     "unsafe impl Send": [
       "WalkTask"
-    ]
-  },
-  "src/runtime/api/js_bundle_completion_task.rs": {
-    "unsafe impl Send": [
-      "JSBundleCompletionTask"
     ]
   },
   "src/runtime/bake/production/mod.rs": {
@@ -113,8 +111,11 @@
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
-      "GlobalCache",
-      "SendPtr<T>"
+      "DNSRequestOwner",
+      "ResultEntry"
+    ],
+    "unsafe impl Sync": [
+      "ResultEntry"
     ]
   },
   "src/runtime/image/Image.rs": {
@@ -123,9 +124,24 @@
     ]
   },
   "src/runtime/napi/napi_body.rs": {
+    "VmBound<": [
+      "TsfnJsSide"
+    ],
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
-      "napi_async_work"
+      "AsyncWorkOffThread"
+    ],
+    "unsafe impl Send": [
+      "AddonData"
+    ],
+    "unsafe impl Sync": [
+      "AddonData"
+    ]
+  },
+  "src/runtime/napi/uv_posix.rs": {
+    "WorkPool::schedule*": 1,
+    "unsafe impl Send": [
+      "WorkRef"
     ]
   },
   "src/runtime/node/fs_events.rs": {
@@ -150,6 +166,7 @@
     "WorkPool::schedule*": 4,
     "owned_task!": [
       "AsyncMkdirp",
+      "CpSingleTask",
       "ReaddirSubtask"
     ],
     "unsafe impl Send": [
@@ -167,9 +184,6 @@
     "unsafe impl Sync": [
       "CStrPtr"
     ]
-  },
-  "src/runtime/node/node_zlib_binding.rs": {
-    "WorkPool::schedule*": 1
   },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
@@ -193,11 +207,6 @@
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
-  },
-  "src/runtime/webcore/CompressionStreamCoder.rs": {
-    "unsafe impl Send": [
-      "CompressionAsyncCtx"
-    ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {
     "unsafe impl Send": [

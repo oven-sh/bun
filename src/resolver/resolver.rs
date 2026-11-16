@@ -262,8 +262,7 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 use crate::options;
 use crate::result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -456,7 +455,6 @@ pub struct Resolver<'a> {
     /// factory and caches the pointer here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
-    pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
     // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
@@ -568,12 +566,8 @@ impl<'a> Resolver<'a> {
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
-    ///
-    /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
-    /// loader that `from.env_loader` points to must outlive `'a`.
-    pub unsafe fn for_worker(
-        from: &Resolver<'_>,
+    pub fn for_worker(
+        from: &Resolver<'a>,
         log: NonNull<bun_ast::Log>,
         mut opts: options::BundleOptions,
     ) -> Resolver<'a> {
@@ -595,7 +589,6 @@ impl<'a> Resolver<'a> {
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: from.package_manager,
-            on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
@@ -779,8 +772,7 @@ impl<'a> Resolver<'a> {
     /// [`__bun_resolver_init_package_manager`] (defined `#[no_mangle]` in
     /// `bun_install::auto_installer`). The factory performs
     /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
-    /// process-static singleton as a `dyn AutoInstaller`. We then wire
-    /// `on_wake` and cache the pointer. Reached from
+    /// process-static singleton as a `dyn AutoInstaller`. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
     /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
     /// inside the factory) when the one-time init fails, e.g. the top-level
@@ -821,8 +813,6 @@ impl<'a> Resolver<'a> {
                 importer_dir,
             )
         }?;
-        // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-        unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
         Ok(pm.as_ptr())
     }
@@ -957,7 +947,6 @@ impl<'a> Resolver<'a> {
             watcher: None,
             generation: 0,
             package_manager: None,
-            on_wake_package_manager: Default::default(),
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
@@ -1825,10 +1814,6 @@ impl<'a> Resolver<'a> {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
                 ResultUnion::Failure(e)
             }
-            ResultUnion::Pending(pending) => {
-                let _ = self.flush_debug_logs(FlushMode::Fail);
-                ResultUnion::Pending(pending)
-            }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
                 ResultUnion::NotFound
@@ -1848,7 +1833,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Result<'r>> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
+            ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
     }
@@ -2229,7 +2214,6 @@ impl<'a> Resolver<'a> {
                         let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
                         match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
                             ResultUnion::Success(res) => return ResultUnion::Success(res),
-                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                             ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                             ResultUnion::NotFound => {}
                         }
@@ -2247,7 +2231,6 @@ impl<'a> Resolver<'a> {
             } else {
                 match self.check_relative_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
-                    ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
                 }
@@ -2382,7 +2365,6 @@ impl<'a> Resolver<'a> {
                     let on_disk = self.folder_on_disk_of_given_folder(given);
                     match self.check_package_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
                     }
@@ -2396,7 +2378,6 @@ impl<'a> Resolver<'a> {
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
-                    ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
                 }
@@ -2781,7 +2762,6 @@ impl<'a> Resolver<'a> {
 
                 ResultUnion::Success(result)
             }
-            MatchStatus::Pending(p) => ResultUnion::Pending(*p),
             MatchStatus::Failure(p) => ResultUnion::Failure(p),
             MatchStatus::NotFound => ResultUnion::NotFound,
         }
@@ -3369,8 +3349,7 @@ impl<'a> Resolver<'a> {
                         };
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
-                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name, true)
-                            {
+                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name) {
                                 continue;
                             }
 
@@ -3476,7 +3455,7 @@ impl<'a> Resolver<'a> {
 
                     let resolution: Resolution = 'brk: {
                         if resolved_package_id == Install::INVALID_PACKAGE_ID {
-                            if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                            if dependency_version.tag() == Dependency::version::Tag::Uninitialized {
                                 let sliced_string =
                                     Semver::SlicedString::init(esm.version, esm.version);
                                 string_buf = esm.version;
@@ -3511,19 +3490,13 @@ impl<'a> Resolver<'a> {
                             &esm,
                             dependency_behavior,
                             &mut resolved_package_id,
-                            dependency_version.clone(),
+                            &dependency_version,
                             string_buf,
                         ) {
-                            DependencyToResolve::Resolution(res) => break 'brk res,
-                            DependencyToResolve::Pending(pending) => {
-                                if let Some(d) = self.debug_logs.as_mut() {
-                                    d.decrease_indent();
-                                }
-                                return MatchStatus::Pending(pending);
-                            }
+                            Some(res) => break 'brk res,
                             // The registry has no such package or version, or the install failed.
                             // The reason is already in the log.
-                            DependencyToResolve::NotFound => {
+                            None => {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
@@ -3940,9 +3913,9 @@ impl<'a> Resolver<'a> {
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
-        version: Dependency::Version,
+        version: &Dependency::Version,
         version_buf: &[u8],
-    ) -> DependencyToResolve {
+    ) -> Option<Resolution> {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Enqueueing pending dependency \"{}@{}\"",
@@ -3957,10 +3930,7 @@ impl<'a> Resolver<'a> {
         // Init failure is unreachable in practice (`load_node_modules`
         // initialized the manager before calling here), but propagate rather
         // than unwrap so the invariant isn't load-bearing for safety.
-        let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
-            Ok(pm) => pm,
-            Err(_) => return DependencyToResolve::NotFound,
-        };
+        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager().ok()?;
         macro_rules! pm {
             () => {
                 // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
@@ -3970,16 +3940,16 @@ impl<'a> Resolver<'a> {
         // we should never be trying to resolve a dependency that is already resolved
         debug_assert!(
             pm!()
-                .lockfile_resolve(esm.name, &version, version_buf)
+                .lockfile_resolve(esm.name, version, version_buf)
                 .is_none()
         );
 
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            match pm!().enqueue_dependency_to_root(
+            return match pm!().enqueue_dependency_to_root(
                 esm.name,
-                &version,
+                version,
                 version_buf,
                 package_json_dir,
                 behavior,
@@ -3989,24 +3959,10 @@ impl<'a> Resolver<'a> {
                     resolution,
                 } => {
                     *input_package_id_ = package_id;
-                    return DependencyToResolve::Resolution(resolution);
+                    Some(resolution)
                 }
-                Install::EnqueueResult::Pending(id) => {
-                    let (cloned, string_buf) = esm.copy().expect("unreachable");
-
-                    return DependencyToResolve::Pending(Box::new(PendingResolution {
-                        esm: cloned,
-                        dependency: version,
-                        root_dependency_id: id,
-                        string_buf,
-                        tag: PendingResolutionTag::Resolve,
-                        ..Default::default()
-                    }));
-                }
-                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => {
-                    return DependencyToResolve::NotFound;
-                }
-            }
+                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => None,
+            };
         }
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
@@ -5160,7 +5116,7 @@ impl<'a> Resolver<'a> {
                 .iter()
                 .zip(tsconfig.paths.values().iter())
             {
-                if strings::eql_long(key, path, true) {
+                if strings::eql_long(key, path) {
                     for original_path in value.iter() {
                         if self.is_type_only_tsconfig_path(original_path) {
                             continue;
@@ -6339,8 +6295,8 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
-                    watcher.watch(dir, fd);
+                if let Some(dir) = dir_entry.get().dir() {
+                    watcher.watch(dir);
                 }
             }
         }
@@ -6991,12 +6947,6 @@ impl core::ops::Deref for TSConfigRef {
 }
 
 // ─── nested helper types ───────────────────────────────────────────────────
-
-enum DependencyToResolve {
-    NotFound,
-    Pending(Box<PendingResolution>),
-    Resolution(Resolution),
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum BrowserMapPathKind {

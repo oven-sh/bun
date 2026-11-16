@@ -5,8 +5,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-#![feature(optimize_attribute)]
-
 pub mod error;
 pub mod function_identities;
 pub use error::Error;
@@ -32,11 +30,12 @@ pub use lower::import_meta_glob::*;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 
-// Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
-// placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that
-// only need the namespace strings / a context handle stay unblocked.
+// The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.
 #[allow(non_snake_case)]
 pub mod Macro {
+    use bun_collections::{ArrayHashMap, StringArrayHashMap};
+    use core::cell::RefCell;
+
     pub const NAMESPACE: &[u8] = b"macro";
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
@@ -64,69 +63,57 @@ pub mod Macro {
         }
     }
 
-    /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
-    ///
-    /// Real fields (`env`, `macros`, `remap`, `resolver`, `bump`) reference
-    /// `Transpiler` and JSC types that live in crates which depend on
-    /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
-    /// owns that state behind `data`; the visit pass reaches it via
-    /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` avoids an
-    /// upward import. `javascript_object` is surfaced here so
-    /// `Transpiler::parse` can thread `this_parse.macro_js_ctx` through
-    /// without this crate depending on `bun_jsc::JSValue`.
-    pub struct MacroContext {
+    #[derive(Clone, Copy)]
+    pub enum MacroLoadState {
+        /// The load failed or has not finished.
+        Disabled,
+        Loaded,
+    }
+
+    /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.
+    #[derive(Default)]
+    pub struct MacroLoadStates(RefCell<ArrayHashMap<i32, MacroLoadState>>);
+    impl MacroLoadStates {
+        pub fn get(&self, id: i32) -> Option<MacroLoadState> {
+            self.0.borrow().get(&id).copied()
+        }
+
+        pub fn set(&self, id: i32, state: MacroLoadState) {
+            self.0.borrow_mut().insert(id, state);
+        }
+
+        pub fn clear(&self) {
+            self.0.borrow_mut().clear();
+        }
+
+        pub fn replace(&self, states: Self) -> Self {
+            self.0.swap(&states.0);
+            states
+        }
+    }
+    /// Frees this thread's `SOURCE_CODE_PRINTER` if a macro allocated it.
+    impl Drop for MacroLoadStates {
+        #[inline]
+        fn drop(&mut self) {
+            __bun_macro_drop_source_code_printer();
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct MacroContext<'a> {
+        /// A `bun_bundler::Transpiler`, which this crate cannot name.
+        transpiler: *mut (),
+        pub macro_load_states: &'a MacroLoadStates,
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
-        /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
-        /// `drop`; `bun_js_parser` never dereferences it.
-        data: *mut core::ffi::c_void,
-        /// Set by a build that parses a file more than once, for the length of a parse.
-        pub known_answers: Option<core::ptr::NonNull<dyn KnownAnswers>>,
     }
-    impl Default for MacroContext {
-        #[inline]
-        fn default() -> Self {
-            Self {
-                javascript_object: MacroJSCtx::ZERO,
-                data: core::ptr::null_mut(),
-                known_answers: None,
-            }
-        }
-    }
-    /// Frees the strings of every `Expr` its macros returned, so it has to outlive their ASTs.
-    impl Drop for MacroContext {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: `data` is null, or the box `__bun_macro_context_init` made for `self`.
-            unsafe { __bun_macro_context_deinit(self.data) }
-        }
-    }
-    /// What calls of macros have answered. A macro can keep state and have effects, so a call that is parsed again
-    /// does not run again.
-    pub trait KnownAnswers {
-        fn find(&mut self, source: &bun_ast::Source, call: bun_ast::Loc) -> Option<bun_ast::Expr>;
-        fn add(&mut self, source: &bun_ast::Source, call: bun_ast::Loc, answer: &bun_ast::Expr);
-    }
+
+    // Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`.
     unsafe extern "Rust" {
-        /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
-        /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
-        /// cannot name it (dep-cycle).
-        // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
-        // caller must guarantee it is non-null, exclusively borrowed, and of
-        // that exact concrete type.
-        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
-        // NOT `safe fn`: when non-null, `data` must be the exact `Box::into_raw`
-        // value produced by `__bun_macro_context_init` and uniquely owned
-        // (callee `Box::from_raw`s it → double-free / aliasing UB otherwise).
-        fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
-        // All args are safe Rust-ABI types (refs/slices/by-value); the only
-        // raw pointer involved is `ctx.data`, which is a struct invariant
-        // maintained by `init`/`Default` — not a caller precondition. The
-        // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
         safe fn __bun_macro_context_call(
-            ctx: &mut MacroContext,
+            ctx: MacroContext<'_>,
+            arena: &bun_alloc::Arena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
@@ -135,34 +122,45 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error>;
-        // NOT `safe fn`: callee derefs `data` unconditionally as
-        // `&MacroContext` — caller must guarantee non-null + produced by
-        // `__bun_macro_context_init` + the backing `Transpiler.options` table
-        // outlives the returned `'static` borrow.
-        fn __bun_macro_context_get_remap(
-            data: *mut core::ffi::c_void,
-            path: &[u8],
-        ) -> Option<&'static MacroRemapEntry>;
-        // No raw-pointer args; the body is a safe `pub fn` in
-        // `bun_js_parser_jsc`. See [`collect_vm_garbage`] for the call-site
-        // contract.
+        safe fn __bun_macro_drop_source_code_printer();
+        // See [`collect_vm_garbage`] for the call-site contract.
         safe fn __bun_macro_collect_vm_garbage();
     }
 
     /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
     /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
     /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
-    /// `MacroContext` boxes are freed, not inside JS execution or a GC sweep, where
-    /// re-entering `run_gc(true)` is unsound.
+    /// `bun_bundler::ThreadPool::Worker::drop`, not inside JS execution or a
+    /// GC sweep, where re-entering `run_gc(true)` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {
         __bun_macro_collect_vm_garbage();
     }
-    impl MacroContext {
+    impl<'a> MacroContext<'a> {
+        /// # Safety
+        /// `transpiler` is a `bun_bundler::Transpiler` that is live for `'a`, and nothing else
+        /// uses its resolver, or writes to its options, at the time the parser calls a macro.
+        pub unsafe fn new(
+            transpiler: *mut (),
+            macro_load_states: &'a MacroLoadStates,
+            javascript_object: MacroJSCtx,
+        ) -> Self {
+            Self {
+                transpiler,
+                macro_load_states,
+                javascript_object,
+            }
+        }
+
+        pub fn transpiler(self) -> *mut () {
+            self.transpiler
+        }
+
+        /// The strings of the result are in `arena`.
         #[inline]
-        pub fn call(
-            &mut self,
+        pub(crate) fn call(
+            self,
+            arena: &'a bun_alloc::Arena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
@@ -171,26 +169,9 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error> {
-            let Some(mut known_answers) = self.known_answers else {
-                return __bun_macro_context_call(
-                    self,
-                    import_record_path,
-                    source_dir,
-                    log,
-                    source,
-                    import_range,
-                    caller,
-                    function_name,
-                );
-            };
-            // SAFETY: whoever set it keeps it alive and untouched until it has taken it out again.
-            let known_answers = unsafe { known_answers.as_mut() };
-            let call = caller.loc;
-            if let Some(answer) = known_answers.find(source, call) {
-                return Ok(answer);
-            }
-            let answer = __bun_macro_context_call(
+            __bun_macro_context_call(
                 self,
+                arena,
                 import_record_path,
                 source_dir,
                 log,
@@ -198,55 +179,12 @@ pub mod Macro {
                 import_range,
                 caller,
                 function_name,
-            )?;
-            known_answers.add(source, call, &answer);
-            Ok(answer)
-        }
-        /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
-        /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
-        /// an upward dep on the bundler. The `_jsc` crate reads the concrete
-        /// type back inside `__bun_macro_context_init`.
-        #[inline]
-        pub fn init<T>(transpiler: &mut T) -> Self {
-            // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
-            // aligned) for the duration of the call; the callee casts it back to
-            // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
-            // retain the pointer past return (the boxed state it allocates owns
-            // its own data).
-            let data = unsafe {
-                __bun_macro_context_init(
-                    core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
-                )
-            };
-            Self {
-                javascript_object: MacroJSCtx::ZERO,
-                data,
-                known_answers: None,
-            }
-        }
-        pub fn data(&mut self) -> *mut core::ffi::c_void {
-            self.data
-        }
-        /// Returns `'static` so callers can keep the result across `&mut self`
-        /// parser calls without a borrowck conflict; the table lives in
-        /// `Transpiler.options` which outlives every parse.
-        #[inline]
-        pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
-            if self.data.is_null() {
-                return None;
-            }
-            // SAFETY: `self.data` is non-null (checked above) and was produced by
-            // `__bun_macro_context_init`, so it points at a live `Macro::Data`
-            // whose remap table the callee borrows. The table is owned by
-            // `Transpiler.options` (process-lifetime), justifying the `'static`
-            // return.
-            unsafe { __bun_macro_context_get_remap(self.data, path) }
+            )
         }
     }
 
-    /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
-    /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
-    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
+    /// Matches `bun_resolver::package_json::MacroMap`.
+    pub type MacroRemap = StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>;
 }
 use bun_ast::{Ast, Ref};
 

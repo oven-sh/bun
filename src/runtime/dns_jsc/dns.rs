@@ -2391,8 +2391,7 @@ impl Resolver {
     }
 
     /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
-    /// libuv (`on_dns_poll_uv`) instead, and the only caller
-    /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
+    /// libuv (`on_dns_poll_uv`) instead.
     ///
     /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
     /// synchronously fires c-ares completion callbacks which re-enter this
@@ -2454,23 +2453,20 @@ impl Resolver {
         });
         #[cfg(not(windows))]
         self.polls.with_mut(|polls| {
-            let ctx = bun_io::js_vm_ctx();
-            let owner = bun_io::Owner::new(
-                bun_io::posix_event_loop::poll_tag::DNS_RESOLVER,
-                self.as_ctx_ptr().cast::<()>(),
-            );
-            let loop_ = self.vm().uws_loop();
-            let poll = polls
-                .entry(fd)
-                .or_insert_with(|| PollType::new(ctx, sys::Fd::from_native(fd), owner));
+            let poll = polls.entry(fd).or_insert_with(|| {
+                let owner =
+                    bun_io::Owner::new(bun_io::PollTag::DnsResolver, self.as_ctx_ptr().cast());
+                // SAFETY: `polls` is a field of the owner.
+                unsafe { PollType::new(bun_io::js_vm_ctx(), sys::Fd::from_native(fd), owner) }
+            });
 
             // c-ares reports the full desired (readable, writable) set for this
             // fd; sync the poll's registration to match. FilePoll now supports
             // both directions on one poll (epoll: combined mask via CTL_MOD;
             // kqueue: two filters on the same ident, both EV_DELETEd on
             // unregister).
-            let have_readable = poll.flags.contains(bun_io::PollFlag::PollReadable);
-            let have_writable = poll.flags.contains(bun_io::PollFlag::PollWritable);
+            let have_readable = poll.has_flag(bun_io::PollFlag::PollReadable);
+            let have_writable = poll.has_flag(bun_io::PollFlag::PollWritable);
 
             if (have_readable && !readable) || (have_writable && !writable) {
                 // Dropping a direction. FilePoll has no per-direction
@@ -2479,12 +2475,12 @@ impl Resolver {
                 // direction armed would busy-loop on level-triggered writable
                 // once the socket connects. Full resync is the simplest
                 // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(loop_, false);
+                let _ = poll.unregister(false);
                 if readable {
-                    let _ = poll.register(loop_, bun_io::PollKind::Readable, false);
+                    let _ = poll.register(bun_io::PollKind::Readable, false);
                 }
                 if writable {
-                    let _ = poll.register(loop_, bun_io::PollKind::Writable, false);
+                    let _ = poll.register(bun_io::PollKind::Writable, false);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -2492,10 +2488,10 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, bun_io::PollKind::Readable, false);
+                    let _ = poll.register(bun_io::PollKind::Readable, false);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, bun_io::PollKind::Writable, false);
+                    let _ = poll.register(bun_io::PollKind::Writable, false);
                 }
             }
         });

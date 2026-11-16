@@ -30,7 +30,7 @@ extern crate alloc;
 // inside this crate.
 extern crate self as bun_jsc;
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_call]` is implemented in the `bun_jsc_macros` crate
@@ -1420,8 +1420,6 @@ impl Drop for Ref {
         self.unref(virtual_machine::VirtualMachine::get());
     }
 }
-
-pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
 
 /// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type
 /// under both names.

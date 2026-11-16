@@ -366,6 +366,15 @@ impl HttpThread {
         self.tunnel_ssl_ctx = Some(Box::leak(Box::new(secure)));
     }
 
+    fn set_tunnel_ssl_ctx(&mut self, client: &mut HTTPClient<'_>) {
+        if client.http_proxy.is_some() && client.tls_props.is_none() {
+            if self.tunnel_ssl_ctx.is_none() && client.url.is_https() {
+                self.init_tunnel_ssl_ctx();
+            }
+            client.tunnel_ssl_ctx = self.tunnel_ssl_ctx;
+        }
+    }
+
     pub(crate) fn connect<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
@@ -439,12 +448,7 @@ impl HttpThread {
 
     /// Open the connection for `client`: unix path, HTTP proxy, or direct.
     fn dial<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
-        if client.http_proxy.is_some() && client.tls_props.is_none() {
-            if self.tunnel_ssl_ctx.is_none() && client.url.is_https() {
-                self.init_tunnel_ssl_ctx();
-            }
-            client.tunnel_ssl_ctx = self.tunnel_ssl_ctx;
-        }
+        self.set_tunnel_ssl_ctx(&mut client);
         client.connected_url = client
             .http_proxy
             .clone()

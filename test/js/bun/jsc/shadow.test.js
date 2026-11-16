@@ -125,8 +125,9 @@ describe.concurrent("an unreachable ShadowRealm", () => {
             return new Response(new ReadableStream({ start: controller => controller.enqueue(new Uint8Array(1 << 20)) }));
           },
         });
-        runInRealms(${JSON.stringify(source)}, server.url.href, started.call);
+        const functions = runInRealms(${JSON.stringify(source)}, server.url.href, started.call);
         await Promise.all([requested.promise, started.promise]);
+        functions.length = 0;
         await gcUntil(mostRealmsAreCollected);
         await gcUntil(() => aborted > REALMS / 2);
         await server.stop(true);

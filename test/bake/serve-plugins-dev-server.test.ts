@@ -630,7 +630,7 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
   });
 
   test.each(["./plugin.ts", "./missing.ts"])("responds with 200 if %s fails to load synchronously", async path => {
-    const { stdout, stderr } = await run({
+    const { stdout, stderr, exitCode } = await run({
       "bunfig.toml": `[serve.static]\nplugins = ["${path}"]\n`,
       "plugin.ts": `export default { name: "throws", setup() { throw new Error("plugin failed on purpose"); } };`,
       "server.ts": `
@@ -645,5 +645,6 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
     });
     const response = [200, development === "true" ? "Plugin Error" : ""];
     expect(stdout, stderr).toBe(JSON.stringify([response, response, 0]));
+    expect(exitCode).toBe(1);
   });
 });

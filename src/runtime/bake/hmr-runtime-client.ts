@@ -84,7 +84,15 @@ const scriptTags: Map<string, PendingHmrQueue> =
   ((globalThis as any)[pendingScriptSymbol] as Map<string, PendingHmrQueue> | undefined) ??
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
-const replaceModulesInOrder = createUpdateQueue(replaceModules);
+const applyUpdateInOrder = createUpdateQueue(
+  async (modules: Parameters<typeof replaceModules>[0] | undefined, sourceMapId?: SourceMapURL) => {
+    if (modules === undefined) {
+      emitEvent("bun:afterUpdate", null);
+    } else {
+      await replaceModules(modules, sourceMapId);
+    }
+  },
+);
 
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const queue = scriptTags.get(id);
@@ -106,7 +114,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   };
   addMapping(url, map);
   script.remove();
-  replaceModulesInOrder(modules, map).catch(e => {
+  applyUpdateInOrder(modules, map).catch(e => {
     console.error(e);
     fullReload();
   });
@@ -229,8 +237,11 @@ const handlers = {
       script.onerror = onHmrLoadError;
       document.head.appendChild(script);
     } else {
-      // Needed for testing.
-      emitEvent("bun:afterUpdate", null);
+      // Needed for testing. Complete in order with any pending JavaScript update.
+      applyUpdateInOrder(undefined).catch(e => {
+        console.error(e);
+        fullReload();
+      });
     }
   },
   [MessageId.set_url_response](view) {

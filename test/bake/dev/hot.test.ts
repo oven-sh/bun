@@ -974,6 +974,54 @@ for (const gate of ["load", "dispose"] as const) {
   });
 }
 
+devTest("CSS-only completion waits for an asynchronous JavaScript update", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], styles: ["style.css"], body: "<h1>0</h1>" }),
+    "index.ts": `
+      import './value.ts';
+      globalThis.lifecycle = [];
+      globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+      let completed = 0;
+      import.meta.hot.on('bun:beforeUpdate', () => { globalThis.lifecycle.push('before'); });
+      import.meta.hot.on('bun:afterUpdate', () => {
+        globalThis.lifecycle.push('after:' + globalThis.value);
+        document.querySelector('h1').textContent = String(++completed);
+      });
+      console.log('ready');
+    `,
+    "value.ts": `globalThis.value = 'before'; import.meta.hot.accept();`,
+    "style.css": "body { color: red; }",
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("ready");
+    await client.style("body").color.expect.toBe("red");
+    const batch = await dev.batchChanges({ errors: null });
+    await dev.write(
+      "value.ts",
+      `console.log('holding JS'); await globalThis.gate; globalThis.value = 'after'; import.meta.hot.accept();`,
+    );
+    const applied = batch![Symbol.asyncDispose]();
+    void applied.catch(() => {});
+    let held;
+    try {
+      await client.expectMessage("holding JS");
+      writeFileSync(dev.join("style.css"), "body { color: blue; }");
+      // The style proves the CSS-only payload arrived while the JS body was still waiting.
+      await client.style("body").color.expect.toBe("#00f");
+      held =
+        await client.js`({ value: globalThis.value, lifecycle: globalThis.lifecycle, completed: document.querySelector('h1').textContent })`;
+    } finally {
+      await client.js`globalThis.releaseGate()`;
+      await applied;
+    }
+    await client.expectElemText("h1", "2");
+    expect(held).toEqual({ value: "before", lifecycle: ["before"], completed: "0" });
+    expect(await client.js`globalThis.lifecycle`).toEqual(["before", "after:after", "after:after"]);
+    await client.style("body").color.expect.toBe("#00f");
+  },
+});
+
 test("hot update queues reserve their tail before reentrant callbacks", async () => {
   const events: string[] = [];
   let nested!: Promise<void>;

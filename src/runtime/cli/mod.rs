@@ -1218,10 +1218,6 @@ pub(crate) mod command {
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
-            // The entry point (`bin_entry::main`) defers argv
-            // init to `bun_core::argv()`'s lazy `Once`, so force that init
-            // now — otherwise `bun_options_argc()` reads 0 here and the
-            // standalone executable silently drops `BUN_OPTIONS` flags.
             let original_argv_len = bun::argv().len();
             let bun_options_argc = bun::bun_options_argc();
             if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {

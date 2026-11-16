@@ -892,7 +892,7 @@ mod draft {
                     // checks for this CLI flag.
                     let debug_trace = Environment::SHOW_CRASH_TRACE
                         && 'check_flag: {
-                            for arg in bun_core::argv() {
+                            for arg in bun_core::argv_without_init() {
                                 if arg == &b"--debug-crash-handler-use-trace-string"[..] {
                                     break 'check_flag false;
                                 }
@@ -1562,14 +1562,10 @@ mod draft {
     }
 
     fn report_base_url() -> &'static [u8] {
-        // PORTING.md §Concurrency: OnceLock for lazy global init (was a raw mutable global Option).
-        static BASE_URL: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
-        *BASE_URL.get_or_init(|| {
-            if let Some(url) = env_var::BUN_CRASH_REPORT_URL::get() {
-                return strings::without_trailing_slash(url);
-            }
-            DEFAULT_REPORT_BASE_URL.as_bytes()
-        })
+        match env_var::BUN_CRASH_REPORT_URL::get() {
+            Some(url) => strings::without_trailing_slash(url),
+            None => DEFAULT_REPORT_BASE_URL.as_bytes(),
+        }
     }
 
     const ARCH_DISPLAY_STRING: &str = if cfg!(target_arch = "aarch64") {
@@ -2037,7 +2033,7 @@ mod draft {
 
             let debug_trace = Environment::SHOW_CRASH_TRACE
                 && 'check_flag: {
-                    for arg in bun_core::argv() {
+                    for arg in bun_core::argv_without_init() {
                         if arg == &b"--debug-crash-handler-use-trace-string"[..] {
                             break 'check_flag false;
                         }
@@ -2440,6 +2436,7 @@ mod draft {
     #[unsafe(no_mangle)]
     static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
+    /// Runs on the thread that crashed. Read no once-cell and take no lock here: the interrupted code can be inside it.
     pub(crate) fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
         #[cfg(debug_assertions)]
         {
@@ -2470,7 +2467,8 @@ mod draft {
                     target_os = "freebsd",
                     target_os = "macos"
                 ))]
-                let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
+                let platform =
+                    bun_analytics::GenerateHeader::generate_platform::UncachedPlatform::read();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
                 {
                     let version = gnu_get_libc_version();
@@ -2482,7 +2480,7 @@ mod draft {
                     };
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
-                    if platform.os == bun_analytics::OperatingSystem::Wsl {
+                    if platform.os() == bun_analytics::OperatingSystem::Wsl {
                         writeln!(
                             writer,
                             "WSL Kernel v{}.{}.{} | glibc v{}",
@@ -2531,13 +2529,13 @@ mod draft {
                     write!(
                         writer,
                         "FreeBSD Kernel v{}\n",
-                        bstr::BStr::new(platform.version)
+                        bstr::BStr::new(platform.version())
                     )
                     .map_err(fmt_err)?;
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    writeln!(writer, "macOS v{}", bstr::BStr::new(platform.version))
+                    writeln!(writer, "macOS v{}", bstr::BStr::new(platform.version()))
                         .map_err(fmt_err)?;
                 }
                 #[cfg(windows)]
@@ -2562,7 +2560,7 @@ mod draft {
 
             write!(writer, "Args: ").map_err(fmt_err)?;
             let mut arg_chars_left: usize = if cfg!(debug_assertions) { 4096 } else { 196 };
-            for (i, arg) in bun_core::argv().iter().enumerate() {
+            for (i, arg) in bun_core::argv_without_init().enumerate() {
                 if i != 0 {
                     writer.write_all(b" ")?;
                 }
@@ -3214,32 +3212,61 @@ mod draft {
                 return;
             }
 
-            let argv: [*const c_char; 4] = [
-                curl.as_ptr(),
-                c"-fsSL".as_ptr(),
-                cmd_line.const_slice().as_ptr().cast(),
-                core::ptr::null(),
-            ];
-            // SAFETY: fork is async-signal-safe; we're already in the crash path
-            let result = unsafe { libc::fork() };
-            match result {
-                // child
-                0 => {
-                    for i in 0..2 {
-                        // SAFETY: closing stdin/stdout in child
-                        unsafe {
-                            libc::close(i);
-                        }
-                    }
-                    // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
-                    // process environment block
-                    unsafe {
-                        libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
-                    }
-                    _exit(0);
-                }
+            // The shell closes curl's stdin and stdout. fork() and the file actions of posix_spawn() take allocator locks.
+            #[cfg(not(target_os = "android"))]
+            {
+                let argv: [*const c_char; 6] = [
+                    c"/bin/sh".as_ptr(),
+                    c"-c".as_ptr(),
+                    c"exec \"$0\" -fsSL \"$1\" </dev/null >/dev/null".as_ptr(),
+                    curl.as_ptr(),
+                    cmd_line.const_slice().as_ptr().cast(),
+                    core::ptr::null(),
+                ];
+                let mut pid: libc::pid_t = 0;
+                // SAFETY: `argv` and the environment are NULL-terminated arrays of NUL-terminated strings.
                 // success and failure cases: ignore the result
-                _ => {}
+                let _ = unsafe {
+                    libc::posix_spawn(
+                        &raw mut pid,
+                        argv[0],
+                        core::ptr::null(),
+                        core::ptr::null(),
+                        argv.as_ptr().cast(),
+                        bun_core::c_environ().cast(),
+                    )
+                };
+            }
+            // The `libc` crate declares no posix_spawn() for Android.
+            #[cfg(target_os = "android")]
+            {
+                let argv: [*const c_char; 4] = [
+                    curl.as_ptr(),
+                    c"-fsSL".as_ptr(),
+                    cmd_line.const_slice().as_ptr().cast(),
+                    core::ptr::null(),
+                ];
+                // SAFETY: fork is async-signal-safe; we're already in the crash path
+                let result = unsafe { libc::fork() };
+                match result {
+                    // child
+                    0 => {
+                        for i in 0..2 {
+                            // SAFETY: closing stdin/stdout in child
+                            unsafe {
+                                libc::close(i);
+                            }
+                        }
+                        // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
+                        // process environment block
+                        unsafe {
+                            libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
+                        }
+                        _exit(0);
+                    }
+                    // success and failure cases: ignore the result
+                    _ => {}
+                }
             }
         }
     }
@@ -3291,6 +3318,16 @@ mod draft {
                 let mut set: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut set);
                 libc::sigaddset(&raw mut set, sig);
+                // On Linux the executable defines pthread_sigmask(), and its first call finds libc's with dlsym().
+                #[cfg(target_os = "linux")]
+                libc::syscall(
+                    libc::SYS_rt_sigprocmask,
+                    libc::SIG_UNBLOCK,
+                    &raw const set,
+                    core::ptr::null_mut::<libc::sigset_t>(),
+                    size_of::<libc::c_ulong>(),
+                );
+                #[cfg(not(target_os = "linux"))]
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
             }
 
@@ -3990,4 +4027,35 @@ mod draft {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
     }
     // Rust links #[no_mangle] symbols unconditionally.
+
+    #[cfg(test)]
+    mod tests {
+        use super::{BoundedArray, Write};
+
+        /// The slots of the builtin modules are in the order of their enum. The report lists them by name.
+        #[test]
+        fn builtin_modules_are_listed_by_name() {
+            use bun_analytics::features::BUILTIN_MODULE_SLOTS;
+            let list = || {
+                let mut lines = BoundedArray::<u8, 256>::default();
+                write!(lines.writer(), "{}", bun_analytics::features::formatter()).unwrap();
+                lines
+            };
+            assert_eq!(bstr::BStr::new(list().const_slice()), "");
+
+            for (slot, name) in [
+                (3, "bun:ffi"),
+                (0, "bun"),
+                (1, "abort-controller"),
+                (3, "bun:ffi"),
+                (BUILTIN_MODULE_SLOTS, "a module that has no slot"),
+            ] {
+                bun_analytics::features::insert_builtin_module(slot, name);
+            }
+            assert_eq!(
+                bstr::BStr::new(list().const_slice()),
+                "Builtins: \"abort-controller\" \"bun\" \"bun:ffi\" \n"
+            );
+        }
+    }
 } // end mod draft

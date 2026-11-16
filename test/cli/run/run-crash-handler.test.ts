@@ -13,7 +13,7 @@ import {
   mergeWindowEnvs,
   tempDir,
 } from "harness";
-import { readFileSync, rmSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -200,6 +200,43 @@ test("the crash report lists the CPU features", async () => {
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
+  expect(exitCode).not.toBe(0);
+});
+
+// The module loader records each builtin module that a program loads, and the report lists them by name.
+test("the crash report lists the builtin modules that were loaded", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.split(/\r?\n/).find(line => line.startsWith("Builtins: "))).toBe(
+    'Builtins: "bun:internal-for-testing" "bun:main" ',
+  );
+  expect(exitCode).not.toBe(0);
+});
+
+// The report does not read the arguments as the rest of Bun does. It has to print the same list: after the first
+// argument come those of BUN_OPTIONS. A release build prints the first 196 bytes of the arguments, so the first one
+// is the name of the executable without its directory.
+test("the crash report lists the arguments, with those of BUN_OPTIONS", async () => {
+  const name = path.basename(bunExe());
+  const rest = ["fixture-crash.js", "panic", "--debug-crash-handler-use-trace-string"];
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...rest],
+    argv0: name,
+    cwd: import.meta.dir,
+    env: { ...noReportEnv, BUN_OPTIONS: "--smol --no-deprecation" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const listed = [name, "--smol", "--no-deprecation", ...rest];
+  expect(stderr.split(/\r?\n/).find(line => line.startsWith("Args: "))).toBe(
+    `Args: ${listed.map(arg => JSON.stringify(arg)).join(" ")}`,
+  );
   expect(exitCode).not.toBe(0);
 });
 
@@ -689,6 +726,352 @@ int eventfd(unsigned int initval, int flags) {
     expect({ stdout, stderr }).toEqual({ stdout: "", stderr: expect.stringContaining(message) });
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
+  });
+});
+
+// Where a function of Bun's own code starts, if the executable is not relocated and still has its symbol table.
+function addressOfSymbol(symbol: string): string | undefined {
+  const fd = openSync(bunExe(), "r");
+  try {
+    const read = (offset: number | bigint, length: number | bigint) => {
+      const bytes = Buffer.alloc(Number(length));
+      readSync(fd, bytes, 0, bytes.length, Number(offset));
+      return bytes;
+    };
+    const header = read(0, 64);
+    // ELF, 64-bit, little-endian, ET_EXEC.
+    if (header.readUInt32BE(0) !== 0x7f454c46 || header[4] !== 2 || header[5] !== 1 || header.readUInt16LE(16) !== 2) {
+      return;
+    }
+    const sectionSize = header.readUInt16LE(58);
+    const sections = read(header.readBigUInt64LE(40), sectionSize * header.readUInt16LE(60));
+    const contentsOf = (section: Buffer) => read(section.readBigUInt64LE(24), section.readBigUInt64LE(32));
+    const name = Buffer.from(symbol + "\0");
+    for (let at = 0; at < sections.length; at += sectionSize) {
+      const section = sections.subarray(at, at + sectionSize);
+      if (section.readUInt32LE(4) !== 2 /* SHT_SYMTAB */) continue;
+      const symbols = contentsOf(section);
+      const names = contentsOf(sections.subarray(section.readUInt32LE(40) * sectionSize));
+      for (let entry = 0; entry < symbols.length; entry += 24) {
+        const nameAt = symbols.readUInt32LE(entry);
+        if (names.subarray(nameAt, nameAt + name.length).equals(name)) {
+          return symbols.readBigUInt64LE(entry + 8).toString(16);
+        }
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// The crash report is written on the thread that crashed: in the handler of a signal, or in the hook of a panic!().
+// What it prints it reads from the process, and the code it interrupted can be in the middle of the first read of the
+// same thing. The report must not wait for that read: it does not continue, and the process would never exit.
+// Each case puts a crash inside one such read.
+// The shims are for glibc. On macOS nothing here was run, and the same cases need a dylib that interposes.
+// Not concurrent: the runner ends the process of a test that times out only when one test runs at a time.
+describe.skipIf(!isLinux || !cc)("a crash inside a first read that the crash report repeats", () => {
+  const abort = osConstants.signals.SIGABRT;
+  // Without it a debug build prints a trace of names, not the link that ends a report.
+  const crashHandlerFlag = "--debug-crash-handler-use-trace-string";
+
+  const sendsReportTo = (server: { url: URL }) => ({
+    BUN_CRASH_REPORT_URL: server.url.href,
+    BUN_ENABLE_CRASH_REPORTING: "1",
+    GITHUB_ACTIONS: undefined,
+    CI: undefined,
+  });
+
+  function compile(dir: string, output: string, flags: string[], source: string) {
+    const compiled = Bun.spawnSync({
+      cmd: [cc!, ...flags, "-o", output, source],
+      cwd: dir,
+      stderr: "pipe",
+    });
+    expect(compiled.stderr.toString()).toBe("");
+    return path.join(dir, output);
+  }
+
+  // CRASH: how the crash comes. ARMED: the program makes a file where the crash has to come, and one call finds it.
+  const shimStart = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/utsname.h>
+#include <unistd.h>
+
+_Noreturn void napi_fatal_error(const char *location, size_t location_length, const char *message, size_t length);
+
+#define ARMED (getenv("CRASH_WHEN_THIS_FILE_EXISTS") && unlink(getenv("CRASH_WHEN_THIS_FILE_EXISTS")) == 0)
+`;
+  const arm = `require("node:fs").writeFileSync(process.env.CRASH_WHEN_THIS_FILE_EXISTS, "");`;
+
+  // The shim is loaded into bun alone. The shell, which sets the core limit, has the same arguments.
+  function spawnWithShim(dir: string, crash: string, source: string, argv: string[], cwd = dir) {
+    writeFileSync(path.join(dir, "shim.c"), shimStart + source);
+    const shim = compile(dir, "shim.so", ["-shared", "-fPIC", "-fno-builtin", `-DCRASH=${crash}`], "shim.c");
+    return Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -c 0 && LD_PRELOAD="$0" exec "$@"`, shim, ...argv, crashHandlerFlag],
+      cwd,
+      env: { ...noReportEnv, CRASH_WHEN_THIS_FILE_EXISTS: path.join(dir, "crash-now") },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
+
+  describe.each([
+    // As another process sends one. With ASAN Bun installs no handler for it.
+    ...(isASAN ? [] : [["a signal", "raise(SIGABRT)", "abort() called"]]),
+    // Bun exports this panic!() of Rust to native modules.
+    ["a panic", `napi_fatal_error(NULL, 0, "inside a first read", 19)`, "panic: napi: inside a first read"],
+  ])("%s", (_name, crash, reason) => {
+    test.skipIf(!isGlibc)("the arguments", async () => {
+      // Bun takes the length of each argument when it first reads them.
+      const marker = "--crash-inside-the-first-read-of-the-arguments";
+      using dir = tempDir("crash-inside-arguments", {});
+      const shim = /* c */ `
+static int crashed;
+
+size_t strlen(const char *s) {
+  size_t length = 0;
+  while (s[length]) length++;
+  if (!crashed && length == sizeof("${marker}") - 1 && memcmp(s, "${marker}", length) == 0) {
+    crashed = 1;
+    CRASH;
+  }
+  return length;
+}
+`;
+      // An argv[0] that leaves the other arguments room in the part of them that the report prints.
+      const argv = ["./" + path.basename(bunExe()), "-e", "0", marker];
+      await using proc = spawnWithShim(String(dir), crash, shim, argv, path.dirname(bunExe()));
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // This early Bun has not read NO_COLOR yet.
+      const report = Bun.stripANSI(stderr);
+
+      expect(report).toContain(`Args: ${[...argv, crashHandlerFlag].map(arg => JSON.stringify(arg)).join(" ")}\n`);
+      expect(report).toContain(reason);
+      expect(report).toContain("oh no: Bun has crashed");
+      expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });
+    });
+
+    // The report prints the release of the kernel, from uname(). Bun also keeps one answer of uname() for the
+    // process, and first asks for it when a directory route of Bun.serve opens a file.
+    test.skipIf(!isGlibc)("the release of the kernel", async () => {
+      using dir = tempDir("crash-inside-uname", {
+        "entry.js": `
+          const server = Bun.serve({
+            port: 0,
+            routes: { "/files/*": { dir: import.meta.dir } },
+            fetch: () => new Response("not a file"),
+          });
+          ${arm}
+          console.log(await (await fetch("http://127.0.0.1:" + server.port + "/files/entry.js")).text());
+        `,
+      });
+      const shim = /* c */ `
+int uname(struct utsname *name) {
+  if (ARMED) CRASH;
+  return syscall(SYS_uname, name);
+}
+`;
+      await using proc = spawnWithShim(String(dir), crash, shim, [bunExe(), "entry.js"]);
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toMatch(/^(Linux|WSL) Kernel v\d+\.\d+\.\d+ \| glibc v\d+\.\d+$/m);
+      expect(stderr).toContain(reason);
+      expect(stderr).toContain("oh no: Bun has crashed");
+      expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });
+    });
+  });
+
+  // To send the report Bun starts curl. A fork() for that runs the fork handlers of the process, and the handler of
+  // the allocator takes locks that the crashed thread can hold. The handler of this shim stands for it.
+  test.skipIf(!isGlibc)("the report is sent without a fork()", async () => {
+    const { promise: sent, resolve: onSent } = Promise.withResolvers<string>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        onSent(new URL(request.url).pathname);
+        return new Response("OK");
+      },
+    });
+    using dir = tempDir("crash-report-without-fork", {
+      "shim.c": /* c */ `
+#include <pthread.h>
+#include <unistd.h>
+
+static void never_returns(void) {
+  for (;;) pause();
+}
+
+__attribute__((constructor)) static void add_fork_handler(void) {
+  pthread_atfork(never_returns, NULL, NULL);
+}
+`,
+    });
+    const shim = compile(String(dir), "shim.so", ["-shared", "-fPIC"], "shim.c");
+    const argv = [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "abort", crashHandlerFlag];
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -c 0 && LD_PRELOAD="$0" exec "$@"`, shim, ...argv],
+      env: { ...bunEnv, ...sendsReportTo(server) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("abort() called");
+    expect(stderr).toContain("oh no: Bun has crashed");
+    expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });
+    expect(await sent).toEndWith("/ack");
+  });
+
+  // The rest comes by signal only: what a signal interrupts has to be walked back, frame after frame.
+  describe.skipIf(isASAN)("a signal", () => {
+    // To read a frame the report asks the kernel for the memory. Where a sandbox refuses both ways, it tests the page
+    // of each address, and for that it needs the size of a page, which Bun reads once with sysconf().
+    test.skipIf(!isGlibc)("the size of a page", async () => {
+      using dir = tempDir("crash-inside-page-size", {
+        "entry.js": `${arm} process.stdout.write("the pipe writer asks for the size of a page\\n");`,
+      });
+      const shim = /* c */ `
+long sysconf(int name) {
+  if (name == _SC_PAGESIZE && ARMED) CRASH;
+  return ((long (*)(int)) dlsym(RTLD_NEXT, "sysconf"))(name);
+}
+
+ssize_t process_vm_readv(pid_t pid, const struct iovec *to, unsigned long to_count, const struct iovec *from,
+                         unsigned long from_count, unsigned long flags) {
+  errno = EPERM;
+  return -1;
+}
+
+static int open_unless_memory(const char *file, int flags, mode_t mode) {
+  size_t length = strlen(file);
+  if (strncmp(file, "/proc/", 6) == 0 && length > 4 && strcmp(file + length - 4, "/mem") == 0) {
+    errno = EACCES;
+    return -1;
+  }
+  return syscall(SYS_openat, AT_FDCWD, file, flags, mode);
+}
+
+int open(const char *file, int flags, ...) {
+  va_list arguments;
+  va_start(arguments, flags);
+  mode_t mode = va_arg(arguments, mode_t);
+  va_end(arguments);
+  return open_unless_memory(file, flags, mode);
+}
+
+int open64(const char *file, int flags, ...) {
+  va_list arguments;
+  va_start(arguments, flags);
+  mode_t mode = va_arg(arguments, mode_t);
+  va_end(arguments);
+  return open_unless_memory(file, flags, mode);
+}
+`;
+      await using proc = spawnWithShim(String(dir), "raise(SIGABRT)", shim, [bunExe(), "entry.js"]);
+      const [, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("abort() called");
+      expect(stderr).toContain("oh no: Bun has crashed");
+      expect(exited).toBe(128 + abort);
+    });
+
+    // Bun defines pthread_sigmask() itself and finds the one of libc with dlsym(), which takes the lock of the
+    // loader. The signal comes inside a dlsym() of startup, which holds that lock: the dlsym() of this shim never
+    // returns from then on.
+    test.skipIf(!isGlibc)("a function that dlsym() looks for", async () => {
+      using dir = tempDir("crash-inside-dlsym", {});
+      const shim = /* c */ `
+static int crashed;
+
+void *dlsym(void *handle, const char *name) {
+  static void *(*next)(void *, const char *);
+  if (crashed) for (;;) pause();
+  if (!next) next = dlvsym(RTLD_NEXT, "dlsym", "${isArm64 ? "GLIBC_2.17" : "GLIBC_2.2.5"}");
+  if (strcmp(name, "__cxa_thread_atexit_impl") == 0) {
+    crashed = 1;
+    CRASH;
+  }
+  return next(handle, name);
+}
+`;
+      await using proc = spawnWithShim(String(dir), "raise(SIGABRT)", shim, [bunExe(), "-e", "0"]);
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("abort() called");
+      expect(stderr).toContain("oh no: Bun has crashed");
+      expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });
+    });
+
+    // The list of builtin modules was a sorted set behind a lock, and a module was recorded by a comparison of
+    // names under that lock. A table of slots has no comparison: the signal never comes and the program ends.
+    test.skipIf(!isGlibc)("the list of builtin modules", async () => {
+      using dir = tempDir("crash-inside-builtin-modules", {});
+      const shim = /* c */ `
+static int crashed;
+
+static int compare(const unsigned char *a, const unsigned char *b, size_t size) {
+  for (size_t i = 0; i < size; i++) {
+    if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+static int is(const void *name, const char *start) {
+  return compare(name, (const unsigned char *)start, 8) == 0;
+}
+
+int memcmp(const void *a, const void *b, size_t size) {
+  if (!crashed && size == 8 && ((is(a, "bun:main") && is(b, "node:was")) || (is(b, "bun:main") && is(a, "node:was")))) {
+    crashed = 1;
+    CRASH;
+  }
+  return compare(a, b, size);
+}
+`;
+      const argv = [bunExe(), "-e", `require("node:wasi"); console.log("loaded")`];
+      await using proc = spawnWithShim(String(dir), "raise(SIGABRT)", shim, argv);
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exited }).toEqual({ stdout: "loaded\n", stderr: "", exited: 0 });
+    });
+
+    // Highway finds what the CPU supports at its first call. On x86-64 that asks nothing of the system, so the
+    // signal is put there the way a debugger does it. The report is then sent too: that starts another program.
+    const supportedTargets = isLinux && !isASAN && cc ? addressOfSymbol("_ZN3hwy16SupportedTargetsEv") : undefined;
+    test.skipIf(!supportedTargets).each([false, true])("what the CPU supports, report sent: %p", async isSent => {
+      const { promise: sent, resolve: onSent } = Promise.withResolvers<string>();
+      using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          onSent(new URL(request.url).pathname);
+          return new Response("OK");
+        },
+      });
+      using dir = tempDir("crash-inside-cpu-detection", {});
+      const source = path.join(import.meta.dir, "fixture-signal-at-address.c");
+      const signalAtAddress = compile(String(dir), "signal-at-address", [], source);
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([signalAtAddress, supportedTargets!, String(abort), bunExe(), "-e", "0", crashHandlerFlag]),
+        env: isSent ? { ...bunEnv, ...sendsReportTo(server) } : noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("abort() called");
+      expect(stderr).toContain("oh no: Bun has crashed");
+      expect({ stdout, exited }).toEqual({ stdout: `signaled ${abort}\n`, exited: 0 });
+      if (isSent) expect(await sent).toEndWith("/ack");
+    });
   });
 });
 

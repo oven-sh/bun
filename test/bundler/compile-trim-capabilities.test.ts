@@ -41,7 +41,7 @@ const startsAProgram = {
   features: featuresOf("cli", "spawn", "native-code"),
 };
 
-const sendsACrashReport = ["fork", "execve"];
+const sendsACrashReport = ["posix_spawn"];
 
 const loadsNativeCode = {
   functions: ["dlopen", "dlmopen"],
@@ -98,7 +98,7 @@ if (isASAN)
     test("holds no place that calls a function, or makes a system call, that starts one", async () => {
       const whole = await build([]);
       expect(namesOf(placesThatCall(whole.file, startsAProgram.functions))).toEqual(
-        expect.arrayContaining(["execve", "fork"]),
+        expect.arrayContaining(["execve", "posix_spawn"]),
       );
       if (isLinux) expect(numbersOf(placesThatMakeSystemCalls(whole.file, startsAProgram.systemCalls))).toContain(435);
 

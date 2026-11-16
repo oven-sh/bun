@@ -85,19 +85,17 @@ pub mod features {
 
     // Note (cyclebreak): `bun.jsc.ModuleLoader.HardcodedModule` lives in
     // `bun_resolve_builtins` (T5) and pulling it here would create a forward
-    // dep (analytics is T1). The only operations we need are `insert` and
-    // ordered iteration of the module *names* for the crash-report formatter,
-    // so store the `&'static str` name (= `@tagName(HardcodedModule)`) instead
-    // of the enum value. Writers (`runtime/jsc_hooks.rs`) call
-    // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
-    // PERF: BTreeSet is O(log n) insert — fine for ≤~80 entries written once
-    // each at module-load time.
-    static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
-        bun_core::Mutex::new(std::collections::BTreeSet::new());
+    // dep (analytics is T1), so the writer (`runtime/jsc_hooks.rs`) passes the discriminant and the name.
+    pub const BUILTIN_MODULE_SLOTS: usize = 128;
+    /// The crash handler reads this, and the crash may be in a writer: no lock and no allocation.
+    static BUILTIN_MODULES: [OnceLock<&'static str>; BUILTIN_MODULE_SLOTS] =
+        [const { OnceLock::new() }; BUILTIN_MODULE_SLOTS];
 
-    /// Record a builtin-module load.
-    pub fn insert_builtin_module(name: &'static str) {
-        BUILTIN_MODULES.lock().insert(name);
+    /// Record a builtin-module load. `index` is the discriminant of the `HardcodedModule`.
+    pub fn insert_builtin_module(index: usize, name: &'static str) {
+        if let Some(slot) = BUILTIN_MODULES.get(index) {
+            let _ = slot.set(name);
+        }
     }
 
     macro_rules! define_features {
@@ -201,22 +199,21 @@ pub mod features {
 
                     // See BUILTIN_MODULES above — stores `&'static str` names
                     // directly (cyclebreak), so no `@tagName` conversion needed.
+                    // Sorted by name. Each pass finds the next one, so nothing is collected.
+                    let mut last: Option<&'static str> = None;
+                    while let Some(name) = BUILTIN_MODULES
+                        .iter()
+                        .filter_map(|slot| slot.get().copied())
+                        .filter(|name| last.is_none_or(|last| *name > last))
+                        .min()
                     {
-                        let builtins = BUILTIN_MODULES.lock();
-                        let mut iter = builtins.iter();
-                        if let Some(first) = iter.next() {
-                            writer.write_str("Builtins: \"")?;
-                            writer.write_str(first)?;
-                            writer.write_str("\" ")?;
-
-                            for key in iter {
-                                writer.write_str("\"")?;
-                                writer.write_str(key)?;
-                                writer.write_str("\" ")?;
-                            }
-
-                            writer.write_str("\n")?;
-                        }
+                        writer.write_str(if last.is_none() { "Builtins: \"" } else { "\"" })?;
+                        writer.write_str(name)?;
+                        writer.write_str("\" ")?;
+                        last = Some(name);
+                    }
+                    if last.is_some() {
+                        writer.write_str("\n")?;
                     }
                     Ok(())
                 }
@@ -374,24 +371,27 @@ pub mod generate_header {
         static OSVERSION_NAME: OnceLock<[u8; 32]> = OnceLock::new();
 
         #[cfg(target_os = "macos")]
+        fn read_macos_version() -> [u8; 32] {
+            let mut name = [0u8; 32];
+            let mut len: usize = name.len() - 1;
+            // this previously used "kern.osrelease", which was the darwin xnu kernel version
+            // That is less useful than "kern.osproductversion", which is the macOS version
+            // SAFETY: FFI call; buffer and len are valid for `len` bytes.
+            let rc = unsafe {
+                libc::sysctlbyname(
+                    c"kern.osproductversion".as_ptr(),
+                    name.as_mut_ptr().cast(),
+                    &raw mut len,
+                    core::ptr::null_mut(),
+                    0,
+                )
+            };
+            if rc == -1 { [0u8; 32] } else { name }
+        }
+
+        #[cfg(target_os = "macos")]
         fn for_mac() -> Platform {
-            let buf: &'static [u8; 32] = OSVERSION_NAME.get_or_init(|| {
-                let mut name = [0u8; 32];
-                let mut len: usize = name.len() - 1;
-                // this previously used "kern.osrelease", which was the darwin xnu kernel version
-                // That is less useful than "kern.osproductversion", which is the macOS version
-                // SAFETY: FFI call; buffer and len are valid for `len` bytes.
-                let rc = unsafe {
-                    libc::sysctlbyname(
-                        c"kern.osproductversion".as_ptr(),
-                        name.as_mut_ptr().cast(),
-                        &raw mut len,
-                        core::ptr::null_mut(),
-                        0,
-                    )
-                };
-                if rc == -1 { [0u8; 32] } else { name }
-            });
+            let buf: &'static [u8; 32] = OSVERSION_NAME.get_or_init(read_macos_version);
 
             Platform {
                 os: OperatingSystem::Macos,
@@ -404,7 +404,7 @@ pub mod generate_header {
         // ──────────────────────────────────────────────────────────────────
 
         // All Linux-gated items below are `any(linux, android)` —
-        // `for_linux()` itself branches on Android. The cached `utsname` itself now lives in T1 at
+        // `linux_os()` itself branches on Android. The cached `utsname` itself now lives in T1 at
         // `bun_core::ffi::cached_uname()` so `bun_sys` feature probes share the
         // same single `uname(2)` syscall.
 
@@ -436,6 +436,53 @@ pub mod generate_header {
                     };
                 }
             })
+        }
+
+        /// `for_os()` without its once-cells, for the crash report: the crashed thread can be inside one.
+        #[cfg(unix)]
+        pub struct UncachedPlatform {
+            #[cfg(target_os = "macos")]
+            name: [u8; 32],
+            #[cfg(not(target_os = "macos"))]
+            name: libc::utsname,
+        }
+
+        #[cfg(unix)]
+        impl UncachedPlatform {
+            pub fn read() -> Self {
+                Self {
+                    #[cfg(target_os = "macos")]
+                    name: read_macos_version(),
+                    #[cfg(not(target_os = "macos"))]
+                    name: bun_core::ffi::uname(),
+                }
+            }
+
+            pub fn os(&self) -> OperatingSystem {
+                #[cfg(target_os = "macos")]
+                {
+                    OperatingSystem::Macos
+                }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    linux_os(self.version())
+                }
+                #[cfg(target_os = "freebsd")]
+                {
+                    OperatingSystem::Freebsd
+                }
+            }
+
+            pub fn version(&self) -> &[u8] {
+                #[cfg(target_os = "macos")]
+                {
+                    slice_to_nul(&self.name)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    bun_core::ffi::c_field_bytes(&self.name.release)
+                }
+            }
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -530,27 +577,28 @@ pub mod generate_header {
             let release: &'static [u8] =
                 bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
 
+            Platform {
+                os: linux_os(release),
+                version: release,
+            }
+        }
+
+        /// Which system runs the Linux kernel that names itself `release`.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        fn linux_os(release: &[u8]) -> OperatingSystem {
             #[cfg(target_os = "android")]
             {
-                return Platform {
-                    os: OperatingSystem::Android,
-                    version: release,
-                };
+                let _ = release;
+                OperatingSystem::Android
             }
 
             #[cfg(not(target_os = "android"))]
             {
                 // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
                 if bun_core::strings::index_of(release, b"microsoft").is_some() {
-                    return Platform {
-                        os: OperatingSystem::Wsl,
-                        version: release,
-                    };
-                }
-
-                Platform {
-                    os: OperatingSystem::Linux,
-                    version: release,
+                    OperatingSystem::Wsl
+                } else {
+                    OperatingSystem::Linux
                 }
             }
         }

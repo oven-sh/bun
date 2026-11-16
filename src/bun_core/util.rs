@@ -3544,9 +3544,8 @@ pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c
     OS_ARGV.store(argv.cast_mut(), core::sync::atomic::Ordering::Relaxed);
 }
 
-/// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
+/// The argv of `main` (in the ANSI code page on Windows) if [`init_argv`] was called, else `None`.
 #[inline]
-#[cfg(not(windows))]
 fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     let p = OS_ARGV.load(core::sync::atomic::Ordering::Relaxed);
     if p.is_null() {
@@ -3685,6 +3684,24 @@ pub fn argv() -> Argv {
     Argv(argv_view())
 }
 
+/// `argv()` without allocation or wait, for the crash handler: `main`'s arguments until the first `argv()` call returns.
+pub fn argv_without_init() -> impl Iterator<Item = &'static [u8]> {
+    let is_ready = ARGV_INIT.is_completed();
+    let view: &'static [&'static ZStr] = if is_ready {
+        // SAFETY: as in `argv_view`.
+        unsafe { ARGV.read() }
+    } else {
+        &[]
+    };
+    let of_main = raw_os_argv().filter(|_| !is_ready).unwrap_or(&[]);
+    view.iter()
+        .map(|arg| arg.as_bytes())
+        .chain(of_main.iter().map(|&arg| {
+            // SAFETY: `init_argv` guarantees NUL-terminated strings that live for the process.
+            unsafe { core::ffi::CStr::from_ptr(arg) }.to_bytes()
+        }))
+}
+
 // ─── BUN_OPTIONS argv injection ──────────────────────────────────────────────
 /// Number of arguments injected into `argv` by the `BUN_OPTIONS` environment
 /// variable. Set once during single-threaded startup (`init_argv`).
@@ -3693,8 +3710,7 @@ static BUN_OPTIONS_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::A
 /// Read accessor for the injected-arg count.
 ///
 /// Forces the lazy `argv_view()` init before reading: `argv()` is lazy, so a caller that reads
-/// `bun_options_argc()` *before* `argv()` (e.g. the standalone-executable
-/// path in `Command::start`) would otherwise see 0 and miscount the
+/// `bun_options_argc()` *before* `argv()` (not `main`, which calls `argv()` first) would otherwise see 0 and miscount the
 /// BUN_OPTIONS-injected args when computing the passthrough offset.
 #[inline]
 pub fn bun_options_argc() -> usize {

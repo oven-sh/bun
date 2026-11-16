@@ -12,7 +12,7 @@
 
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
-use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering};
 use std::collections::HashMap;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -495,13 +495,21 @@ pub fn out_of_memory() -> ! {
 }
 
 // ── page_size ─────────────────────────────────────────────────────────────
-// Cached via OnceLock per PORTING.md §Concurrency (was lazy-init in std).
+// An atomic and not a once-cell: the crash report reads it on a thread that can be inside the first read. 0 is "not read".
 
-static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+static PAGE_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
 pub fn page_size() -> usize {
-    *PAGE_SIZE.get_or_init(|| {
+    match PAGE_SIZE.load(Ordering::SeqCst) {
+        0 => read_page_size(),
+        size => size,
+    }
+}
+
+#[cold]
+fn read_page_size() -> usize {
+    let size = {
         #[cfg(unix)]
         {
             // By-value `c_int` in / `c_long` out; POSIX `sysconf` has no
@@ -543,7 +551,10 @@ pub fn page_size() -> usize {
             GetSystemInfo(&mut info);
             info.dw_page_size as usize
         }
-    })
+    };
+    // Threads that get here together store the same value.
+    PAGE_SIZE.store(size, Ordering::SeqCst);
+    size
 }
 
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.

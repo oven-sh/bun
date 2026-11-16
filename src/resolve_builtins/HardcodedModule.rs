@@ -3,7 +3,7 @@ use bun_ast::import_record;
 use bun_core::ZStr;
 use bun_core::zstr;
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumCount)]
 pub enum HardcodedModule {
     #[strum(serialize = "bun")]
     Bun,
@@ -309,6 +309,9 @@ bun_core::comptime_string_map! {
 }
 
 impl HardcodedModule {
+    /// The number of variants. No variant sets its discriminant, so each one `as usize` is less.
+    pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
+
     // Associated `static` is unstable (E0658), so the map lives at module
     // level; this zero-sized const keeps the `HardcodedModule::MAP` call
     // shape stable.

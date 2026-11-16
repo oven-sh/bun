@@ -2435,9 +2435,7 @@ pub mod ffi {
     #[cfg(unix)]
     static UTSNAME: crate::Once<libc::utsname> = crate::Once::new();
 
-    /// Process-lifetime cached `uname(2)` result. Several callers
-    /// (analytics version probe, crash-handler, kernel-version checks) read
-    /// the same struct; cache so the binary issues exactly one syscall.
+    /// Process-lifetime cached `uname(2)` result. Not for the crash report, which can interrupt the first read.
     #[cfg(unix)]
     #[inline]
     pub fn cached_uname() -> &'static libc::utsname {

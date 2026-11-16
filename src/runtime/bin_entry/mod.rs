@@ -167,7 +167,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     }
 
     // 0. Capture argv FIRST — before the crash handler, whose panic path
-    //    dumps the command line via `bun_core::argv()`.
+    //    dumps the command line via `bun_core::argv_without_init()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
@@ -205,6 +205,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         // SAFETY: no thread has been spawned yet.
         bun_core::handle_oom(unsafe { bun_sys::windows::env::convert_env_to_wtf8() });
     }
+
+    // The first read of the arguments. A crash report before it returns has them as `main` received them.
+    let _ = bun_core::argv();
 
     // 2/3. Allocator is static above; argv was captured at step 0; start_time
     //      is lazy in `bun_core::start_time()`.

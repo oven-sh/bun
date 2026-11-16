@@ -1,5 +1,5 @@
 #![feature(inherent_associated_types)]
-#![feature(adt_const_params, allocator_api, thread_local)]
+#![feature(adt_const_params, thread_local)]
 #![cfg_attr(any(test, feature = "test_support"), feature(linkage))]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
@@ -120,8 +120,6 @@ pub mod DeferredBatchTask;
 pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
-
-pub mod BundleThread;
 
 pub mod ServerComponentParseTask;
 

@@ -265,7 +265,8 @@ fn finish_s3_blob(
     Ok(blob)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 enum StatQuery {
     Exists,
     Size,
@@ -315,13 +316,8 @@ impl S3BlobStatTask {
     }
 
     /// Sends the HEAD request behind `exists()`, `size()` and `stat()`.
-    fn start(
-        cx: &bun_jsc::JsThread<'_>,
-        blob: &Blob,
-        verb: &str,
-        query: StatQuery,
-    ) -> JsResult<JSValue> {
-        let store = match s3_store(blob, cx.global(), verb) {
+    fn start(cx: &bun_jsc::JsThread<'_>, blob: &Blob, query: StatQuery) -> JsResult<JSValue> {
+        let store = match s3_store(blob, cx.global(), query.into()) {
             Ok(store) => store,
             Err(err) => {
                 return Ok(bun_jsc::JSPromise::rejected_promise_with_caught_exception(
@@ -351,19 +347,19 @@ impl S3BlobStatTask {
     #[inline(never)]
     pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         bun_removable_features::removable_definition!(S3Client, Self::exists);
-        Self::start(cx, blob, "exists", StatQuery::Exists)
+        Self::start(cx, blob, StatQuery::Exists)
     }
 
     #[inline(never)]
     pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         bun_removable_features::removable_definition!(S3Client, Self::stat);
-        Self::start(cx, blob, "stat", StatQuery::Stat)
+        Self::start(cx, blob, StatQuery::Stat)
     }
 
     #[inline(never)]
     pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
         bun_removable_features::removable_definition!(S3Client, Self::size);
-        Self::start(cx, blob, "size", StatQuery::Size)
+        Self::start(cx, blob, StatQuery::Size)
     }
 }
 

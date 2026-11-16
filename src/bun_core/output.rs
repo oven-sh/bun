@@ -29,8 +29,7 @@ use crate::io;
 // ──────────────────────────────────────────────────────────────────────────
 // Output sink (CYCLEBREAK §Debug-hook / §Dispatch cold path)
 //
-// `bun_sys::{File, make_path, create_file,
-// deprecated::BufferedReader}` are higher-tier I/O primitives that `bun_core`
+// `bun_sys::{File, make_path, create_file}` are higher-tier I/O primitives that `bun_core`
 // cannot name. The `bun_dispatch::link_interface!` `OutputSink[Sys]` (declared
 // at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
 // ──────────────────────────────────────────────────────────────────────────
@@ -199,21 +198,21 @@ pub type StreamType = File;
 pub type StreamType = io::FixedBufferStream; // wasm32 is not built yet; FixedBufferStream is unported.
 
 pub struct Source {
-    buffered_stream: io::WriterWithBuffer<4096>,
-    buffered_error_stream: io::WriterWithBuffer<4096>,
+    buffered_stream: io::WriterStorage<4096>,
+    buffered_error_stream: io::WriterStorage<4096>,
 
-    stream: io::WriterWithBuffer<0>,
-    error_stream: io::WriterWithBuffer<0>,
+    stream: io::WriterStorage<0>,
+    error_stream: io::WriterStorage<0>,
 }
 
 impl Source {
     /// The thread's slot before `init`: what is written is dropped instead of going to fd 0.
     const fn new() -> Self {
         Self {
-            buffered_stream: io::WriterWithBuffer::new(Fd::INVALID),
-            buffered_error_stream: io::WriterWithBuffer::new(Fd::INVALID),
-            stream: io::WriterWithBuffer::new(Fd::INVALID),
-            error_stream: io::WriterWithBuffer::new(Fd::INVALID),
+            buffered_stream: io::WriterStorage::new(Fd::INVALID),
+            buffered_error_stream: io::WriterStorage::new(Fd::INVALID),
+            stream: io::WriterStorage::new(Fd::INVALID),
+            error_stream: io::WriterStorage::new(Fd::INVALID),
         }
     }
 
@@ -561,7 +560,7 @@ pub mod stdio {
         Source::set_init(stdout, stderr);
 
         // `ENABLE_LOGS` gates every reader, but initialize under
-        // `debug_assertions` too so `SCOPED_FILE_WRITER` is never observed
+        // `debug_assertions` too so `SCOPED_FD` is never observed
         // zeroed if a `#[cfg(debug_assertions)]` path reaches it in
         // release-asan/release-assertions. Cheap (one static write).
         if cfg!(debug_assertions) || Environment::ENABLE_LOGS {
@@ -1061,17 +1060,7 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
 // ──────────────────────────────────────────────────────────────────────────
 // Print routing
 //
-// `print` / `printError` / `pretty*` are called from thousands of sites with
-// distinct format strings. They used to be `noinline`, which forced
-// one ~400-byte function body per (fmt, args-type) pair — about 2,650 of them,
-// or ~1 MB of .text in release builds. The bodies were nearly identical: pick
-// buffered-vs-unbuffered writer, then `Writer.print(fmt, args)`.
-//
-// Now the public entry points are `inline` and bottom out in two non-generic
-// helpers (`destWriter`, `writeBytes`). The only per-call-site code is either
-// a `writeBytes` call (when `args` is empty — ~40% of sites) or one
-// `Writer.print` call. The buffering branch lives in `destWriter` so each
-// site formats once instead of twice.
+// `print_to` is inline and ends in `write_bytes` or `write_args`.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Pick the active writer for `dest`, honoring `enable_buffering`.
@@ -1259,7 +1248,7 @@ impl ScopedLogger {
         let mut line = scoped_debug_writer::LineBuffer::new();
         let _ = fmt::Write::write_fmt(&mut line, args);
 
-        let fd = scoped_writer();
+        let fd = scoped_fd();
         let _lock = scoped_debug_writer::WRITE_LOCK.lock();
         if !output_sink().write_all_quiet(fd, line.as_bytes()) {
             // Write failure → disable scope.
@@ -1816,12 +1805,9 @@ pub const fn _needs_nl(fmt: &str) -> &'static str {
 #[doc(hidden)]
 #[inline]
 pub fn _scoped_use_ansi() -> bool {
-    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) && SOURCE_SET.get() && {
-        // SAFETY: `SCOPED_FILE_WRITER` is zero until startup
-        // init; `Fd` is Copy POD so reading it is always sound.
-        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
-        sw == raw_writer().handle()
-    }
+    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+        && SOURCE_SET.get()
+        && Fd(scoped_debug_writer::SCOPED_FD.load(Ordering::Relaxed)) == raw_writer().handle()
 }
 
 /// Internal: bind each `$arg` exactly once into a `match` tuple, then dispatch
@@ -2273,7 +2259,8 @@ impl ErrName for crate::CrateError {
 pub mod scoped_debug_writer {
     use super::*;
 
-    pub(crate) static SCOPED_FILE_WRITER: crate::RacyCell<Fd> = crate::RacyCell::new(Fd(0));
+    /// Written once in `stdio::init`, before other threads start, so `Relaxed` suffices.
+    pub(crate) static SCOPED_FD: AtomicFd = AtomicFd::new(0);
 
     /// Every scope writes to the same fd. Held across the `write(2)` loop of
     /// one line so a short write cannot let another thread's line in.
@@ -2381,31 +2368,24 @@ fn init_scoped_debug_writer_at_startup() {
                     bstr::BStr::new(path),
                 )),
             };
-            // SAFETY: single-threaded startup.
-            unsafe {
-                scoped_debug_writer::SCOPED_FILE_WRITER.write(fd);
-            }
+            scoped_debug_writer::SCOPED_FD.store(fd.0, Ordering::Relaxed);
             return;
         }
     }
 
-    // SAFETY: single-threaded startup.
-    unsafe {
-        scoped_debug_writer::SCOPED_FILE_WRITER.write(Source::get().stream.fd());
-    }
+    scoped_debug_writer::SCOPED_FD.store(Source::get().stream.fd().0, Ordering::Relaxed);
 }
 
-fn scoped_writer() -> Fd {
+fn scoped_fd() -> Fd {
     // All callers are already gated on `Environment::ENABLE_LOGS`; this is a
     // Debug-build self-check (release-asan/release-assertions enable
     // `debug_assertions` with `ENABLE_LOGS == false`, so keying on
     // `debug_assertions` would turn it into a guaranteed abort there).
     #[cfg(bun_debug)]
     if !Environment::ENABLE_LOGS {
-        unreachable!("scopedWriter() should only be called in debug mode");
+        unreachable!("scoped_fd() should only be called in debug mode");
     }
-    // SAFETY: initialized in init_scoped_debug_writer_at_startup; Fd is Copy POD.
-    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
+    Fd(scoped_debug_writer::SCOPED_FD.load(Ordering::Relaxed))
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`

@@ -12,12 +12,14 @@ use bun_threading::thread_pool;
 use bun_wyhash::Wyhash11;
 
 use crate::npm;
+use crate::package_manager::INBOX;
+use crate::package_manager::directories::TemporaryDirectory;
 use crate::{
     DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
 };
 
 /// TODO: lifetime — Task lives in an intrusive cross-thread queue
-/// (`next`, `package_manager` BACKREF). A `&'static mut NetworkTask` cannot soundly
+/// (`next`). A `&'static mut NetworkTask` cannot soundly
 /// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task {
     pub(crate) job: Job,
@@ -29,8 +31,6 @@ pub struct Task {
     pub(crate) id: Id,
     /// default: `None`
     pub(crate) err: Option<crate::Error>,
-    /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
-    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
     pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
@@ -123,7 +123,6 @@ impl Task {
             job,
             log: Log::init(),
             id,
-            package_manager: bun_ptr::ParentRef::from_ref_mut(manager),
             status: Status::Waiting,
             threadpool_task: thread_pool::Task {
                 node: Default::default(),
@@ -180,19 +179,6 @@ impl Task {
         let task = unsafe { NonNull::new_unchecked(this_raw) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task = unsafe { &mut *this_raw };
-        // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
-        // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
-        // shared-read sites below; `manager` is kept as a raw `*mut` for the
-        // whole function because this callback runs on ThreadPool workers
-        // concurrently (and concurrently with the main thread), so binding a
-        // long-lived `&mut PackageManager` here would be aliased-`&mut` UB.
-        // Subfields touched cross-thread (`resolve_tasks`, `wake`) are reached
-        // through raw-ptr/shared accessors below; the few callees whose
-        // signatures still take `&mut PackageManager` (`get_cache_directory`,
-        // `get_package_metadata`) are dereferenced inline at the call boundary
-        // only.
-        let manager_ref = this.package_manager;
-        let manager: *mut PackageManager = manager_ref.as_mut_ptr();
 
         // Body of the switch; arms exit via `break 'body;` so the
         // trailing block (patch + push + wake) and `Output::flush()` run
@@ -202,6 +188,7 @@ impl Task {
                 Job::PackageManifest {
                     name,
                     network,
+                    temp_dir,
                     manifest,
                 } => {
                     // Take ownership so the
@@ -233,31 +220,21 @@ impl Task {
                     let crate::network_task::Callback::PackageManifest {
                         loaded_manifest,
                         is_extended_manifest,
+                        registry,
                         ..
                     } = &mut network.callback
                     else {
                         unreachable!("`NetworkTask::for_manifest` built it");
                     };
 
-                    // Shared read of `manager.options` (never mutated by worker
-                    // threads) via the `ParentRef` safe `Deref`. Wrap as
-                    // `BackRef` so the `&PackageManager` autoref does not stay
-                    // live across the `&mut *manager` below.
-                    let scope =
-                        bun_ptr::BackRef::new(manager_ref.scope_for_package_name(name.slice()));
                     let package_manifest = match npm::Registry::get_package_metadata(
-                        // scope is borrowed from manager.options which is not
-                        // touched by get_package_metadata (only the cache-dir fields are).
-                        scope.get(),
-                        metadata.response,
+                        *registry,
+                        metadata,
                         body.slice(),
                         &mut this.log,
                         name.slice(),
                         loaded_manifest.take(),
-                        // SAFETY: see `manager` decl — short-lived `&mut` at call
-                        // boundary only (callee touches `cache_directory` /
-                        // `get_temporary_directory` lazily).
-                        unsafe { &mut *manager },
+                        *temp_dir,
                         *is_extended_manifest,
                     ) {
                         Ok(v) => v,
@@ -357,12 +334,8 @@ impl Task {
                 let _ = (pt.callback.apply_mut().logger).print(Output::error_writer());
             }
         }
-        // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it
-        // via a shared raw deref — no `&mut PackageManager` is formed.
-        unsafe {
-            (*core::ptr::addr_of!((*manager).resolve_tasks)).push(task);
-            PackageManager::wake_raw(manager);
-        }
+        INBOX.resolve_tasks.push(task);
+        INBOX.wake();
 
         Output::flush();
     }
@@ -405,6 +378,8 @@ pub(crate) enum Job {
     PackageManifest {
         name: StringOrTinyString,
         network: &'static mut NetworkTask,
+        /// `None` if the manifest cache is off or cannot be written.
+        temp_dir: Option<&'static TemporaryDirectory>,
         manifest: Option<npm::PackageManifest>,
     },
     Extract {
@@ -446,7 +421,6 @@ pub(crate) struct GitCommitRequest {
     /// The clone task whose bare repository is searched.
     pub(crate) clone_id: Id,
     pub(crate) name: StringOrTinyString,
-    pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
 }
 

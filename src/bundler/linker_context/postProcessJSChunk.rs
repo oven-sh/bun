@@ -157,7 +157,6 @@ pub(crate) fn post_process_js_chunk(
         ModuleInfo::create(loader.is_type_script())
     });
 
-    // SAFETY: worker.arena is set in Worker::create() before any task runs.
     let worker_arena: &Arena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause
@@ -225,7 +224,7 @@ pub(crate) fn post_process_js_chunk(
         }
 
         let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
-        let ast_view = ast.for_printer();
+        let ast_view = ast.as_printer_view();
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver.opts.target;
 
@@ -1247,7 +1246,7 @@ pub(crate) fn generate_entry_point_tail_js(
         result: js_printer::print::<false>(
             arena,
             c.resolver.opts.target,
-            &ast.for_printer(),
+            &ast.as_printer_view(),
             c.get_source(source_index),
             print_options,
             ast.import_records.as_slice(),

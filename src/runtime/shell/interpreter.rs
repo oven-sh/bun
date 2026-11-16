@@ -2630,7 +2630,7 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
+        use bun_event_loop::EventLoopTask;
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
@@ -2647,8 +2647,7 @@ impl ShellTask {
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
-                    ct.from(ctx, AutoDeinit::ManualDeinit);
-                    poster.post_js(core::ptr::NonNull::from(ct));
+                    poster.post_js_intrusive(core::ptr::NonNull::from(ct.from(ctx)));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.

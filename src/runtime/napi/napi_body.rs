@@ -6,8 +6,7 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, AtomicUsize
 
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_event_loop::ConcurrentTask::AutoDeinit;
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_jsc::StringJsc;
 use bun_jsc::bun_string_jsc;
@@ -41,7 +40,6 @@ impl JSValueNapiExt for JSValue {
     }
 }
 
-// `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
     /// Work the pool handed back during teardown: its `complete` callback is
@@ -70,17 +68,17 @@ impl Taskable for ThreadSafeFunction {
         bun_event_loop::ContextId::NONE
     }
 }
-impl Taskable for NapiFinalizerTask {
+impl BoxedTask for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
     /// A finalizer queued before the loop stopped: Node runs an addon's
     /// finalizers during environment cleanup (script already forbidden), and
     /// an addon counts on them (external buffers freed when a Worker exits).
-    unsafe fn release_unrun(this: *mut Self) {
+    fn release_unrun(self: Box<Self>) {
         // `Err` is left pending for the release dispatcher's fold.
-        let _ = NapiFinalizerTask::run_on_js_thread(this);
+        let _ = self.finalizer.run();
     }
     /// An addon counts on its finalizers running.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2035,11 +2033,8 @@ impl napi_async_work {
     /// (status cancelled if `execute` never ran), as Node does at environment
     /// cleanup.
     fn post_to_js_thread(&mut self, self_ptr: *mut Self, ticket: &bun_jsc::Ticket) {
-        let ct = core::ptr::NonNull::from(
-            self.concurrent_task
-                .from(self_ptr, AutoDeinit::ManualDeinit),
-        );
-        ticket.post(ct);
+        let ct = core::ptr::NonNull::from(self.concurrent_task.from(self_ptr));
+        ticket.post_intrusive(ct);
     }
 
     pub(crate) fn cancel(&mut self) -> bool {
@@ -3034,14 +3029,11 @@ impl ThreadSafeFunction {
                     return;
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
-                if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                    self.handle.post(self.loop_kind, ct)
+                if let bun_jsc::vm_handle::Posted::Refused(_) = self.handle.post(self.loop_kind, ct)
                 {
                     // VM closed before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
-                    // teardown path. Free the task and fall back to Idle.
-                    // SAFETY: refused ⇒ we own the task box.
-                    unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    // teardown path. Fall back to Idle.
                     self.dispatch_state
                         .store(DispatchState::Idle as u8, Ordering::SeqCst);
                 }
@@ -5425,17 +5417,13 @@ impl NapiFinalizerTask {
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
             let handle = self.finalizer.env.vm_handle().clone();
-            let this = bun_core::heap::into_raw(self);
-            let ct = ConcurrentTask::create(Task::init(this));
+            let ct = ConcurrentTask::create_boxed(self);
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
                 handle.post(bun_jsc::LoopKind::Regular, ct)
             {
-                // SAFETY: refused ⇒ we own both boxes.
-                unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
-                    let task = bun_core::heap::take(this);
-                    let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
-                }
+                // SAFETY: the task made above.
+                let task = unsafe { ct.task.into_boxed::<Self>() };
+                let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
             }
             return;
         }
@@ -5463,23 +5451,15 @@ impl NapiFinalizerTask {
                 Self::run_as_cleanup_hook,
             );
         } else {
-            let this = bun_core::heap::into_raw(self);
-            vm.event_loop().enqueue_task(Task::init(this));
+            vm.event_loop().enqueue_task(Task::from_boxed(self));
         }
     }
 
-    pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
-        // SAFETY: `this` was created by heap::alloc in `schedule`.
-        let this_box = unsafe { bun_core::heap::take(this) };
-        this_box.finalizer.run()
-        // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
-    }
-
     extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
-        // SAFETY: opaque_this is the *mut NapiFinalizerTask we registered above (non-null).
-        let this: *mut NapiFinalizerTask = opaque_this.cast();
+        // SAFETY: the box that `schedule` registered; a hook runs once.
+        let this = unsafe { bun_core::heap::take(opaque_this.cast::<NapiFinalizerTask>()) };
         // A cleanup hook returns nothing: `Err` is left pending for the hook
         // runner's fold.
-        let _ = Self::run_on_js_thread(this);
+        let _ = this.finalizer.run();
     }
 }

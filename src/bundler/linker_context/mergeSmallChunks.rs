@@ -764,7 +764,7 @@ pub(crate) fn merge_small_chunks(
     {
         return Ok(());
     }
-    let css_asts = this.graph.ast.items_css();
+    let css_asts = &this.parse_graph().css_asts;
     let ast_targets = this.graph.ast.items_target();
     let import_records = this.graph.ast.items_import_records();
     let parts = this.graph.ast.items_parts();

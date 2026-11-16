@@ -215,7 +215,7 @@ impl EventIterator {
 impl WindowsWatcher {
     // `Self` carries the 64 KiB `DirWatcher` buffer inline; it is moved once
     // into `Box::new(Watcher { .. })` in `Watcher::init`.
-    #[allow(clippy::large_stack_frames)]
+    #[allow(clippy::large_unopt_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
         let mut this = Self::default();
         this.init(root)?;

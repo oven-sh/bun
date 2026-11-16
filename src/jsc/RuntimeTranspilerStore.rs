@@ -29,7 +29,6 @@ use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
-use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
@@ -40,8 +39,11 @@ use crate::runtime_transpiler_cache::{
 };
 use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
+use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, process_fetch_log};
+use crate::{
+    ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
+    ResolvedSource,
+};
 
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
 // lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
@@ -59,7 +61,7 @@ fn dump_source(maps: &SavedSourceMap, specifier: &[u8], printer: &BufferPrinter)
     dump_source_string(maps, specifier, printer.ctx.get_written());
 }
 
-pub(crate) fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], written: &[u8]) {
+fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(maps, specifier, written) {
         bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
@@ -189,7 +191,8 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
-    pub(crate) store: TranspilerJobStore,
+    /// Boxed: 22 KB that `VirtualMachine::init` would otherwise copy.
+    pub(crate) store: Box<TranspilerJobStore>,
     pub enabled: Cell<bool>,
     pub(crate) queue: Queue,
     /// JS thread only.
@@ -203,7 +206,7 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: TranspilerJobStore::init(),
+            store: TranspilerJobStore::new_boxed(),
             enabled: Cell::new(true),
             queue: Queue::new(),
             jobs_scheduled: Cell::new(0),
@@ -475,6 +478,57 @@ fn tls_get_or_leak<T>(
     unsafe { &mut *p.as_ptr() }
 }
 
+/// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
+fn fulfill(
+    global_this: &JSGlobalObject,
+    promise: JSValue,
+    module_loader: JSValue,
+    result: Result<ResolvedSource, crate::CrateError>,
+    specifier: &String,
+    referrer: &String,
+    log: &mut bun_ast::Log,
+) -> JsResult<()> {
+    crate::mark_binding();
+    let mut errorable = match result {
+        Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
+        Err(crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_))) => {
+            ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown))
+        }
+        Err(e) => ErrorableResolvedSource::err(process_fetch_log(
+            global_this,
+            specifier,
+            referrer,
+            log,
+            e,
+        )),
+    };
+    bun_core::scoped_log!(RuntimeTranspilerStore, "fulfill: {}", specifier);
+
+    crate::from_js_host_call_generic(global_this, || {
+        Bun__onFulfillAsyncModule(
+            global_this,
+            promise,
+            module_loader,
+            &mut errorable,
+            specifier,
+            referrer,
+        )
+    })
+}
+
+// C++ takes the fields of `res` that it keeps by zeroing them. The caller drops the rest.
+unsafe extern "C" {
+    #[allow(improper_ctypes)]
+    safe fn Bun__onFulfillAsyncModule(
+        global_object: &JSGlobalObject,
+        promise_value: JSValue,
+        module_loader: JSValue,
+        res: &mut ErrorableResolvedSource,
+        specifier: &String,
+        referrer: &String,
+    );
+}
+
 impl TranspilerJob {
     /// Pool thread: hand the slot back. `ticket` was moved out of `self`
     /// first — the JS thread may reuse the slot the moment it is queued.
@@ -548,7 +602,7 @@ impl TranspilerJob {
             );
         }
 
-        AsyncModule::fulfill(
+        fulfill(
             &global_this,
             promise,
             module_loader,
@@ -571,7 +625,7 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The slot lives inside the VM, which waits for this ticket, so it is
+        // The slot belongs to the VM, which waits for this ticket, so it is
         // alive throughout. Transpile only while the VM still runs script;
         // either way hand the job back to the JS thread, which completes or
         // releases it.
@@ -656,7 +710,7 @@ impl TranspilerJob {
         });
 
         // The whole Transpiler is copied by value here.
-        // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
+        // `Transpiler<'static>` is not `Clone`; we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // a raw pointer; every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
@@ -675,8 +729,7 @@ impl TranspilerJob {
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // The one in the copy is the VM's.
-        let mut macro_context = None;
+        let macro_load_states = transpiler::MacroLoadStates::default();
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -721,11 +774,8 @@ impl TranspilerJob {
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
-        let is_main = vm_main.is_some_and(|vm_main| {
-            vm_main.len() == path.text.len()
-                && vm_main_hash == hash
-                && strings::eql_long(vm_main, path.text, false)
-        });
+        let is_main = vm_main
+            .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
@@ -742,7 +792,7 @@ impl TranspilerJob {
             opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
-            macro_context: Some(&mut macro_context),
+            macro_load_states: &macro_load_states,
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
@@ -798,7 +848,7 @@ impl TranspilerJob {
             // `&ImportWatcher` is live here, and `add_file` is
             // thread-safe via watcher mutex.
             let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+            let _ = iw.add_file(input_file, path.text, hash, package_json);
         }
 
         let Some(mut parse_result) = parse_result else {

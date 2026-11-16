@@ -1,4 +1,4 @@
-use core::cell::{Cell, OnceCell};
+use core::cell::{Cell, OnceCell, RefCell};
 
 use bun_io::Write as _;
 
@@ -22,7 +22,7 @@ use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironmen
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
@@ -753,7 +753,6 @@ if (name === \"\\0never\") (globalThis as any)[name] = require(name);
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::cells::CellExt as _;
 use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
@@ -1792,7 +1791,7 @@ pub(crate) struct CommandLineReporter {
     pub(crate) last_printed_dot: Cell<bool>,
 
     /// Set in a `--parallel` worker, which sends per-test output to the coordinator instead of to stderr.
-    pub(crate) worker: OnceCell<ParallelRunner::WorkerLink>,
+    pub(crate) worker: OnceCell<ParallelRunner::CoordinatorLink>,
 
     pub(crate) failures_to_repeat_buf: Cell<Vec<u8>>,
     pub(crate) skips_to_repeat_buf: Cell<Vec<u8>>,
@@ -2757,10 +2756,10 @@ impl TestCommand {
                     .test_options
                     .test_filter_regex()
                     .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
-                snapshots: Cell::new(Some(Snapshots::init(ctx.test_options.update_snapshots))),
+                snapshots: RefCell::new(Snapshots::init(ctx.test_options.update_snapshots)),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 current_file: jest::CurrentFile::default(),
-                index: Cell::default(),
+                file_ids: Cell::default(),
                 default_timeout_override: Cell::new(u32::MAX),
                 vi_config: Cell::default(),
                 vi_config_of_preload: Cell::default(),
@@ -2808,19 +2807,19 @@ impl TestCommand {
         }
 
         bun_ast::initialize_store();
-        let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
+        let options = jsc::virtual_machine::InitOptions {
             // Clone (not take): build_worker_argv reads ctx.args to forward them to workers.
             transform_options: ctx.args.clone(),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
             env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
             smol: ctx.runtime_options.smol,
             is_main_thread: true,
             graph: run_compiled::graph(),
             ..Default::default()
-        })?;
-        crate::jsc_hooks::state_of(vm)
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
+        crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
@@ -4059,7 +4058,7 @@ impl TestCommand {
                 }
 
                 // Automatically execute bun_test tests
-                if !buntest.has_results() {
+                if !buntest.has_queued_results() {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
                 bun_test::BunTest::run(&buntest, vm.global())?;
@@ -4070,7 +4069,7 @@ impl TestCommand {
                 let mut prev_unhandled_count = vm.unhandled_error_counter.get();
                 while buntest.phase.get() != bun_test::Phase::Done {
                     // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
-                    if buntest.has_results() {
+                    if buntest.has_queued_results() {
                         bun_test::BunTest::run_next_tick(
                             &std::rc::Rc::downgrade(&buntest),
                             global,

@@ -15,6 +15,11 @@ class Isolate;
 namespace shim {
 class GlobalInternals;
 class HandleScopeBuffer;
+
+// What the opaque v8::HeapProfiler* handed to callers points to.
+struct HeapProfilerImpl {
+    bool m_samplingActive { false };
+};
 }
 
 // v8-callbacks.h
@@ -111,10 +116,8 @@ public:
 
     std::array<TaggedPointer, 5> m_roots;
 
-    // Lazily-created shim::HeapProfilerImpl* (opaque here to avoid a shim
-    // include in this layout-sensitive header). Placed after m_roots so the
-    // kIsolateRootsOffset static_assert is unaffected.
-    void* m_heapProfiler { nullptr };
+    // Placed after m_roots so the kIsolateRootsOffset static_assert is unaffected.
+    shim::HeapProfilerImpl m_heapProfiler;
 };
 
 } // namespace v8

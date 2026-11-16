@@ -72,7 +72,10 @@ mod copy_stream;
 use crate::jsc::verify_error_to_js;
 
 /// The `onnotification` callback, with the channel and the payload.
-pub(crate) type ListenerCall = (JSValue, [JSValue; 2]);
+pub(crate) struct PendingNotification {
+    callback: JSValue,
+    arguments: [JSValue; 2],
+}
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
@@ -83,8 +86,8 @@ pub struct PostgresSQLConnection {
 
     pub(crate) write_buffer: JsCell<OffsetByteList>,
     read_buffer: JsCell<OffsetByteList>,
-    /// The parser is not done: what is read while a handler runs the event loop is left to it.
-    pub(crate) reads_wait: Cell<bool>,
+    /// While set, a read from a nested event loop tick only appends to `read_buffer`.
+    pub(crate) defer_reads: Cell<bool>,
     pub(crate) requests: JsCell<PostgresRequest::Queue>,
     /// number of requests in flight whose Bind and Execute are written
     pub(crate) pipelined_requests: Cell<u32>,
@@ -710,7 +713,7 @@ impl PostgresSQLConnection {
             return;
         }
         SocketMonitor::read(data);
-        if self.reads_wait.get() {
+        if self.defer_reads.get() {
             bun_core::handle_oom(self.read_buffer.with_mut(|buffer| buffer.write(data)));
             return;
         }
@@ -719,8 +722,8 @@ impl PostgresSQLConnection {
         let entered = self.event_loop().enter_scope();
 
         let mut result = self.parse(data);
-        while let Ok(Some((listener, arguments))) = result {
-            run_callback(self.global(), listener, &arguments);
+        while let Ok(Some(pending)) = result {
+            run_callback(self.global(), pending.callback, &pending.arguments);
             result = self.parse(b"");
         }
         if let Err(err) = result
@@ -743,7 +746,7 @@ impl PostgresSQLConnection {
     }
 
     /// Handles what is buffered, then `data`, up to a notification. The rest is in `read_buffer`.
-    fn parse(&self, mut data: &[u8]) -> Result<Option<ListenerCall>, AnyPostgresError> {
+    fn parse(&self, mut data: &[u8]) -> Result<Option<PendingNotification>, AnyPostgresError> {
         let mut buffer = self.read_buffer.take();
         let result = loop {
             let cursor = Cell::new(0usize);
@@ -763,13 +766,13 @@ impl PostgresSQLConnection {
             }
             let read_meanwhile = self.read_buffer.take();
             bun_core::handle_oom(buffer.write(read_meanwhile.remaining()));
-            if read_meanwhile.len() == 0 || !matches!(result, Err(AnyPostgresError::ShortRead)) {
+            if read_meanwhile.is_empty() || !matches!(result, Err(AnyPostgresError::ShortRead)) {
                 break result;
             }
             data = b"";
         };
         self.read_buffer.set(buffer);
-        self.reads_wait.set(false);
+        self.defer_reads.set(false);
         result
     }
 }
@@ -1002,7 +1005,7 @@ fn open(
         ref_count: Cell::new(1),
         write_buffer: JsCell::new(OffsetByteList::default()),
         read_buffer: JsCell::new(OffsetByteList::default()),
-        reads_wait: Cell::new(false),
+        defer_reads: Cell::new(false),
         requests: JsCell::new(PostgresRequest::Queue::new()),
         pipelined_requests: Cell::new(0),
         nonpipelinable_requests: Cell::new(0),
@@ -2627,11 +2630,11 @@ impl PostgresSQLConnection {
     }
 
     /// A conversion the VM cut short (OOM, a worker's termination) is this connection's
-    /// failure like any other in [`Self::on`]: `JSError` takes the pending exception.
-    pub(crate) fn listener_call(
+    /// failure like any other in [`Self::on_data`]: `JSError` takes the pending exception.
+    pub(crate) fn prepare_notification(
         &self,
         notification: &protocol::NotificationResponse<'_>,
-    ) -> Result<Option<ListenerCall>, AnyPostgresError> {
+    ) -> Result<Option<PendingNotification>, AnyPostgresError> {
         let Some(this_value) = self.js_value.get().try_get() else {
             return Ok(None);
         };
@@ -2642,7 +2645,10 @@ impl PostgresSQLConnection {
         let channel_js = self.channel_name_js(global, notification.channel)?;
         let payload_js = bun_string_jsc::create_utf8_for_js(global, notification.payload)
             .map_err(crate::jsc::js_error_to_postgres)?;
-        Ok(Some((callback, [channel_js, payload_js])))
+        Ok(Some(PendingNotification {
+            callback,
+            arguments: [channel_js, payload_js],
+        }))
     }
 
     pub(crate) fn consume_on_connect_callback(

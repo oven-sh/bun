@@ -10,10 +10,12 @@ import {
   createSecretKey,
   createSign,
   createVerify,
+  diffieHellman,
   generateKey,
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
+  getDiffieHellman,
   type JsonWebKey,
   type JsonWebKeyInput,
   KeyObject,
@@ -31,6 +33,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { totalmem } from "node:os";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
+import { promisify } from "util";
 
 function readFile(...args: [path: string, encoding: BufferEncoding]) {
   const result = fs.readFileSync(...args);
@@ -2006,6 +2009,29 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+describe("generateKeyPair('dh')", () => {
+  const prime = getDiffieHellman("modp5").getPrime();
+  const secret = (ours: { privateKey: KeyObject }, theirs: { publicKey: KeyObject }) =>
+    diffieHellman({ privateKey: ours.privateKey, publicKey: theirs.publicKey });
+
+  test.each([
+    ["sync", generateKeyPairSync],
+    ["async", promisify(generateKeyPair)],
+  ] as const)("%s: a group and its prime give keys that agree on a secret", async (_, generate) => {
+    const fromGroup = await generate("dh", { group: "modp5" });
+    const fromPrime = await generate("dh", { prime });
+    expect([fromGroup.publicKey.asymmetricKeyType, fromPrime.privateKey.asymmetricKeyType]).toEqual(["dh", "dh"]);
+    expect(secret(fromGroup, fromPrime)).toHaveLength(prime.length);
+    expect(secret(fromGroup, fromPrime)).toEqual(secret(fromPrime, fromGroup));
+  });
+
+  test("uses the generator", () => {
+    const [two, three, alsoThree] = [2, 3, 3].map(generator => generateKeyPairSync("dh", { prime, generator }));
+    expect(secret(three, alsoThree)).toEqual(secret(alsoThree, three));
+    expect(() => secret(two, three)).toThrow();
+  });
+});
 
 test("generateKeyPair passes the thrown Error to the callback when key export fails", async () => {
   const { promise, resolve } = Promise.withResolvers<Error & { code?: string }>();

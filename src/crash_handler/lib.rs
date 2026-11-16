@@ -15,7 +15,7 @@
 //!
 //! The remapper is open source: https://github.com/oven-sh/bun.report
 
-// The cfg is the union of the two intrinsic call sites: `abort()` on the
+// The cfg is the union of the two intrinsic call sites: `abort_immediate()` on the
 // non-Windows crash path (all profiles) and `breakpoint()` on Windows debug
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
@@ -41,7 +41,7 @@ mod compiled_frames;
 ))]
 mod fault_registers;
 mod stopped_builds;
-pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
+pub use compiled_frames::{DecodedReport, ShortBuildId, keep_own_segments, report_compiled_frames};
 pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
@@ -1691,21 +1691,27 @@ mod draft {
         // What Linux says of an instruction that may not be run at all: on x86-64 removed code is filled with `hlt`.
         const SI_KERNEL: c_int = 0x80;
         let pc = context.map(|(pc, _, _)| pc);
-        // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
         // SAFETY: kernel provides a valid siginfo_t.
-        let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
-        let entered = match sig {
-            libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
-            libc::SIGTRAP | libc::SIGILL => pc,
-            libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
-            // SAFETY: kernel provides a valid siginfo_t.
-            libc::SIGSEGV if unsafe { (*info).si_code } == SI_KERNEL => pc,
+        let code = unsafe { (*info).si_code };
+        let is_page_fault = match sig {
+            // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
+            libc::SIGSEGV => cfg!(target_os = "macos") || code == SEGV_MAPERR,
             // macOS raises SIGBUS where something that cannot be run is mapped in their place.
-            libc::SIGBUS if cfg!(target_os = "macos") => pc.filter(|&pc| pc == addr),
+            libc::SIGBUS => cfg!(target_os = "macos"),
+            _ => false,
+        };
+        let entered = match sig {
+            _ if is_page_fault => pc.filter(|&pc| pc == addr),
+            libc::SIGTRAP if cfg!(all(target_os = "macos", target_arch = "x86_64")) => {
+                pc.map(|pc| pc.wrapping_sub(1))
+            }
+            libc::SIGILL if cfg!(target_arch = "aarch64") => pc,
+            libc::SIGSEGV if code == SI_KERNEL => pc,
             _ => None,
         };
         if let Some(entered) = entered
             && let Some(feature) = crate::compiled_frames::removed_feature_entered(entered)
+            && (is_page_fault || crate::compiled_frames::is_at_trap_of_removed_code(entered))
         {
             let return_address = return_address_at_function_entry(ctx);
             bun_removable_features::abort_for_removed_feature_entered(
@@ -1832,6 +1838,11 @@ mod draft {
         if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
             return;
         }
+        let _ = update_posix_segfault_handler(Some(&mut repeated_crash_action()));
+    }
+
+    #[cfg(unix)]
+    fn repeated_crash_action() -> libc::sigaction {
         // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
@@ -1843,7 +1854,43 @@ mod draft {
         unsafe {
             libc::sigemptyset(&raw mut act.sa_mask);
         }
-        let _ = update_posix_segfault_handler(Some(&mut act));
+        act
+    }
+
+    /// # Safety
+    /// `action` must be valid for a write.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__getAction(action: *mut libc::sigaction) -> bool {
+        if Environment::ENABLE_ASAN
+            || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed)
+            || PANIC_STAGE.with(|stage| stage.get()) != 0
+        {
+            return false;
+        }
+        // SAFETY: caller contract.
+        unsafe { action.write(repeated_crash_action()) };
+        true
+    }
+
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__reportOwnCrash(
+        sig: c_int,
+        info: *mut libc::siginfo_t,
+        ctx: *mut c_void,
+    ) {
+        if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some((pc, _, _)) = fault_context_from_ucontext(ctx) else {
+            return;
+        };
+        // SAFETY: kernel provides a valid siginfo_t.
+        let (code, address) = unsafe { ((*info).si_code, (*info).si_addr() as usize) };
+        if crate::compiled_frames::is_own_stop(sig, code, address, pc) {
+            handle_segfault_posix(sig, info, ctx);
+        }
     }
 
     pub fn init() {
@@ -2903,35 +2950,19 @@ mod draft {
                 writer.write_byte(b'0')?;
 
                 let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
-                // SAFETY: buffers and lengths are valid
-                let ret = unsafe {
-                    bun_zlib::compress2(
-                        compressed_bytes.as_mut_ptr(),
-                        &raw mut len,
-                        message.as_ptr(),
-                        u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
-                        9,
-                    )
-                };
-                // Match on the raw zlib return code so this stays ABI-correct
-                // regardless of whether the platform `compress2` binding returns
-                // `c_int` (posix) or the `ReturnCode` enum (win32).
-                let compressed = match ret as i32 {
-                    r if r == bun_zlib::ReturnCode::Ok as i32 => {
-                        &compressed_bytes[0..usize::try_from(len).expect("int cast")]
-                    }
+                let compressed = match bun_zlib::compress(&mut compressed_bytes, message, 9) {
+                    Ok(len) => &compressed_bytes[0..len],
                     // Insufficient memory.
-                    r if r == bun_zlib::ReturnCode::MemError as i32 => {
+                    Err(bun_zlib::ReturnCode::MemError) => {
                         return Err(crate::Error::Alloc(bun_alloc::AllocError));
                     }
                     // The buffer dest was not large enough to hold the compressed data.
-                    r if r == bun_zlib::ReturnCode::BufError as i32 => {
+                    Err(bun_zlib::ReturnCode::BufError) => {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                     }
                     // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
                     // This is technically possible but impossible because we pass 9.
-                    _ => return Err(crate::Error::Unexpected),
+                    Err(_) => return Err(crate::Error::Unexpected),
                 };
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
@@ -3243,7 +3274,7 @@ mod draft {
                 libc::SIGFPE,
                 libc::SIGHUP,
                 libc::SIGTERM,
-                // Keep SIGTRAP reset so the `core::intrinsics::abort()`
+                // Keep SIGTRAP reset so the `core::intrinsics::abort_immediate()`
                 // fallback (brk on aarch64) is lethal even when JS installed
                 // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
                 // `signal-exit` package does).
@@ -3270,7 +3301,7 @@ mod draft {
             // With SIG_DFL installed and the signal unblocked this terminates the process.
             raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
-            core::intrinsics::abort();
+            core::intrinsics::abort_immediate();
         }
         #[cfg(windows)]
         {

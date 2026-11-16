@@ -60,7 +60,7 @@ impl PackageManager {
     /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
     /// `dependency` is the dependency `pkg` is being resolved for.
-    pub fn determine_preinstall_state(
+    pub(crate) fn determine_preinstall_state(
         &mut self,
         pkg: &Package,
         dependency: Behavior,
@@ -125,17 +125,17 @@ impl PackageManager {
                     break 'brk Some(patched_dep.patchfile_hash().unwrap());
                 };
 
-                let buf = &mut **bun_paths::path_buffer_pool::get();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let folder_path: &ZStr = match pkg.resolution.tag {
                     ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
                         self,
-                        buf,
+                        &mut buf,
                         pkg.resolution.git(),
                         patch_hash,
                     ),
                     ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
                         self,
-                        buf,
+                        &mut buf,
                         pkg.resolution.github(),
                         patch_hash,
                     ),
@@ -143,9 +143,9 @@ impl PackageManager {
                         let name = pkg
                             .name
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
-                        directories::cached_npm_package_folder_name_print(
+                        directories::cached_npm_package_folder_name(
                             self,
-                            buf,
+                            &mut buf,
                             name,
                             pkg.resolution.npm().version,
                             patch_hash,
@@ -154,7 +154,7 @@ impl PackageManager {
                     ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                         directories::cached_tarball_folder_name(
                             self,
-                            buf,
+                            &mut buf,
                             &pkg.meta.integrity,
                             &pkg.resolution,
                             patch_hash,
@@ -381,7 +381,7 @@ impl PackageManager {
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `CStringList` by value so its `K=V\0` strings outlive
         // this stack frame (freed by the subprocess's `Drop`).
-        let envp = script_env.create_null_delimited_env_map()?;
+        let envp = script_env.to_envp();
 
         #[cfg(windows)]
         let shell_bin: Option<&ZStr> = None;

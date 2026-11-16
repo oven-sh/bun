@@ -1,3 +1,4 @@
+use crate::Graph::CssAsts;
 use crate::mal_prelude::*;
 use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
@@ -40,7 +41,7 @@ pub(crate) fn generate_code_for_lazy_export(
     }
 
     let all_sources = this.parse_graph().input_files.items_source();
-    let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
+    let all_css_asts = &this.parse_graph().css_asts;
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
     let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
@@ -66,8 +67,7 @@ pub(crate) fn generate_code_for_lazy_export(
 
             struct Graph<'a, 'bump> {
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
-                // `BundledAst.css` SoA column.
-                all_css_asts: &'a [crate::bundled_ast::CssCol<'bump>],
+                all_css_asts: &'a CssAsts<'bump>,
                 all_sources: &'a [Source<'a>],
             }
 

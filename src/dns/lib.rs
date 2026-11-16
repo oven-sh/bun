@@ -493,17 +493,10 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
-/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
-/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
+/// stat counters). `bun_install` reaches it via a link-time extern
 /// rather than a `bun_runtime` crate dep, which would cycle.
 pub mod internal {
     use core::ffi::c_void;
-
-    unsafe extern "C" {
-        // Defined in `bun_runtime::dns_jsc::internal` alongside the other
-        // `Bun__addrinfo_*` exports; resolved at link time.
-        fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
-    }
 
     unsafe extern "Rust" {
         /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
@@ -520,20 +513,5 @@ pub mod internal {
         // SAFETY: link-time extern of this signature. The macOS body dereferences
         // `loop_`, for which the one caller passes its live uws loop.
         unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname, port) }
-    }
-
-    /// Register `pc` to be notified when the addrinfo `request` resolves.
-    /// Mirrors `us_getaddrinfo_set` for the QUIC client connect path, which
-    /// has no `us_connecting_socket_t` to hang the callback on.
-    ///
-    /// SAFETY: `request` must be the live addrinfo request handle returned by
-    /// `us_quic_pending_connect_addrinfo`; `pc` must be a live
-    /// `bun_http::H3::PendingConnect` that stays valid until its
-    /// `on_dns_resolved[_threadsafe]` fires.
-    #[inline]
-    pub unsafe fn register_quic(request: *mut c_void, pc: *mut c_void) {
-        // SAFETY: forwarded to the runtime export; both pointers are opaque on
-        // this side of the crate boundary and re-typed by the callee.
-        unsafe { Bun__addrinfo_registerQuic(request, pc) }
     }
 }

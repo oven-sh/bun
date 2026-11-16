@@ -2,7 +2,9 @@ use core::ptr::NonNull;
 
 use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
+use bun_core::vec::BorrowedBuf;
 use bun_options_types::Format;
+use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
@@ -198,18 +200,19 @@ unsafe extern "C" {
 /// `input` (WTF-8, non-ASCII from `first_non_ascii`) as a UTF-16 string JSC owns, written in place.
 fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
     use bun_core::strings;
-    let tail = &input[first_non_ascii..];
+    let (ascii, tail) = input.split_at(first_non_ascii);
     if strings::is_valid_utf8(tail) {
-        let len = first_non_ascii + strings::element_length_utf8_into_utf16(tail);
-        let (string, units) = BunString::create_uninitialized_utf16(len);
+        let tail = WithUtf16Len::utf8(tail);
+        let (string, units) = BunString::create_uninitialized_utf16(ascii.len() + tail.utf16_len());
         if string.is_dead() {
             bun_alloc::out_of_memory();
         }
-        // SAFETY: valid UTF-8 converts to exactly `len` units; `units` is `len` u16s, 2-byte aligned.
-        let written = unsafe {
-            strings::write_wtf8_as_utf16le(input, first_non_ascii, units.as_mut_ptr().cast::<u8>())
-        };
-        debug_assert_eq!(written, 2 * len);
+        let (ascii_units, tail_units) = units.split_at_mut(ascii.len());
+        strings::copy_u8_into_u16(ascii_units, ascii);
+        let mut tail_units = BorrowedBuf::from(tail_units);
+        let result =
+            simdutf::convert::utf8::to::utf16::with_errors::le(tail, tail_units.unfilled());
+        debug_assert!(result.is_successful());
         return string;
     }
     // A lone surrogate or an invalid byte: the scalar path decides the length.
@@ -474,8 +477,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_destroy_bytecode_cache_vm() {
+pub fn destroy_bytecode_cache_vm() {
     unsafe extern "C" {
         safe fn Bun__destroyBytecodeCacheVM();
     }

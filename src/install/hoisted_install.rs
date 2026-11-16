@@ -69,7 +69,7 @@ fn run_tasks_until_done(
         let pending_task_count = manager.pending_task_count();
         if pending_task_count > 0
             && PackageManager::verbose_install()
-            && PackageManager::has_enough_time_passed_between_waiting_messages()
+            && manager.has_enough_time_passed_between_waiting_messages()
         {
             bun_core::pretty_errorln!(
                 "<d>[PackageManager]<r> waiting for {} tasks\n",
@@ -166,7 +166,7 @@ pub(crate) fn install_hoisted_packages(
 
     if log_level.show_progress() {
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
-        this.start_link_progress(hoisted_len);
+        this.start_install_progress_bar(hoisted_len);
     }
 
     let _restore_manager = RestoreManager {

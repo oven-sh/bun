@@ -12,13 +12,13 @@ use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
     JsClass as _, JsError, JsResult, Strong,
 };
+use bun_ptr::CellExt as _;
 
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
     BunTest, BunTestPtrWeak, Phase, RefDataValue, StepResult,
 };
-use crate::test_runner::cells::CellExt as _;
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
 use crate::test_runner::vi_wait::ViWait;
@@ -207,7 +207,7 @@ impl RunningEntry {
         };
         let limit = self
             .sequence(&buntest)
-            .and_then(|sequence| Some(buntest.step(sequence.active_entry.get()?).timespec.get()));
+            .and_then(|sequence| Some(buntest.sequence_entry(sequence.active_entry.get()?).timespec.get()));
         limit.is_some_and(|limit| {
             !limit.eql(&Timespec::EPOCH)
                 && limit
@@ -758,7 +758,7 @@ impl ExpectDeferred {
                 continue;
             }
             let is_handled = js::promise_get_cached(deferred)
-                .is_some_and(|promise| ExpectDeferred__isHandled(promise));
+                .is_some_and(ExpectDeferred__isHandled);
             // SAFETY: as above; `deferred` is on the stack.
             crate::dispatch::fold(unsafe { &*this }.abandon(global, deferred, Some(buntest)));
             if is_handled {

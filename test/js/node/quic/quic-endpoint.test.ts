@@ -330,6 +330,33 @@ describe("node:quic in a Worker", () => {
   }, 30000);
 });
 
+describe("a handshake in flight", () => {
+  test.concurrent.each(["Bun.serve", "fetch", "node:quic"])(
+    "completes when %s makes its first QUIC engine",
+    async api => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(import.meta.dir, "quic-handshake-in-flight-fixture.ts"),
+          api,
+          join(keysDir, "agent1-key.pem"),
+          join(keysDir, "agent1-cert.pem"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr contains the ExperimentalWarning.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"result":"answered","connections":1}\n',
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 // lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,
 // so on Linux the ICMP port unreachable for one reset fails the next send with ECONNREFUSED.
 describe("endpoint.close() with an unsent stateless reset", () => {

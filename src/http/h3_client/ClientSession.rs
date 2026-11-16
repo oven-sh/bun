@@ -76,7 +76,7 @@ impl ClientSession {
             && self.port == port
             && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
     /// Mutable access to the live lsquic connection handle.

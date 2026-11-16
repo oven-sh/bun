@@ -132,6 +132,7 @@ test/js/bun/test/mock/mock-module.test.ts: a name that import and require() reso
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of the name and a mock of the path that require() resolves it to ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of the name and a mock of the path that require() resolves it to ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of the name and a mock of the path that require() resolves it to []
+test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of the name that ends, loses the path of require(), or waits for a factory while its module loads
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock of the name with a mock of the path of require() beside it, in both orders
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock that a preload made ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a name that import and require() resolve to two files > a mock that a preload made ["--isolate=modules"]

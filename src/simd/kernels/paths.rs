@@ -13,23 +13,39 @@ pub(crate) mod simd {
 
     #[inline(always)]
     fn index_of_untidy<const OR_NON_ASCII: bool>(path: &[u8]) -> Option<usize> {
-        let (last, after_first) = (path.split_last()?.0, &path[1..]);
-        let found = U8::zip_find_map_near(
-            path,
-            after_first,
-            |v, next| {
-                let is_suspect = v.simd_eq(b'/') & (next | 1).simd_eq(b'/');
-                match OR_NON_ASCII {
-                    true => is_suspect | v.bitcast::<I8>().simd_lt(0).cast(),
-                    false => is_suspect,
-                }
-            },
-            |mut suspects| {
-                suspects
-                    .find(|&at| OR_NON_ASCII && path[at] != b'/' || is_untidy_part(path, at + 1))
-            },
-        );
-        found.or_else(|| (OR_NON_ASCII && !last.is_ascii()).then_some(after_first.len()))
+        let test = |[v, next]: [U8; 2]| {
+            let or_non_ascii = |is_suspect| match OR_NON_ASCII {
+                true => is_suspect | v.bitcast::<I8>().simd_lt(0).cast(),
+                false => is_suspect,
+            };
+            let is_suspect = v.simd_eq(b'/') & (next | 1).simd_eq(b'/');
+            if or_non_ascii(is_suspect).none() {
+                return U8::zero().simd_eq(1);
+            }
+            let may_end = |v: U8| v.simd_eq(b'/') | v.simd_eq(0);
+            let second = U8::zero().shift_in::<{ U8::LEN - 1 }>(next);
+            let third = U8::zero().shift_in::<{ U8::LEN - 2 }>(next);
+            let is_short = may_end(second) | second.simd_eq(b'.') & may_end(third);
+            or_non_ascii(is_suspect & (next.simd_eq(b'/') | is_short))
+        };
+        let mut rest = path;
+        loop {
+            let suspect = if rest.len() > U8::LEN {
+                U8::position_near::<_, 2, true>([rest, &rest[1..]], test)
+            } else {
+                let [next] = U8::load_or_zero(rest);
+                let lane = test([next.shift_elements_right::<1>(0), next]).first_set();
+                lane.map(|lane| lane - 1)
+            };
+            let Some(at) = suspect else {
+                let is_last = OR_NON_ASCII && matches!(rest, [.., 0x80..=0xFF]);
+                return is_last.then(|| path.len() - 1);
+            };
+            if OR_NON_ASCII && *rest.get(at)? != b'/' || is_untidy_part(rest, at + 1) {
+                return Some(path.len() - rest.len() + at);
+            }
+            rest = rest.get(at + 1..)?;
+        }
     }
 
     /// The first `/` before a part that is empty, `.` or `..`
@@ -48,20 +64,19 @@ pub(crate) mod simd {
     #[export(baseline)]
     #[inline]
     pub fn last_index_of_slash(path: &[u8]) -> Option<usize> {
-        U8::rposition_near(path, |v| v.simd_eq(b'/'))
+        U8::position_near::<_, 1, false>([path], |[v]| v.simd_eq(b'/'))
     }
 
     #[export(baseline)]
     #[inline]
     pub fn last_index_of_slash_or_dot(path: &[u8]) -> Option<usize> {
-        U8::rposition_near(path, |v| (v | 1).simd_eq(b'/'))
+        U8::position_near::<_, 1, false>([path], |[v]| (v | 1).simd_eq(b'/'))
     }
 
     #[export(baseline)]
     #[inline]
     pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-        let differs =
-            U8::zip_find_map_near(a, b, |a, b| a.simd_ne(b), |mut matches| matches.next());
+        let differs = U8::position_near::<_, 2, true>([a, b], |[a, b]| a.simd_ne(b));
         differs.unwrap_or_else(|| a.len().min(b.len()))
     }
 

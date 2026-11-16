@@ -147,10 +147,6 @@ fn searches(plain: &[u8]) {
         compare!("index_of_not_char miss {n}", |k| {
             k::index_of_not_char(opaque(t), b'a')
         });
-        compare!("memrmem miss {n}", |k| k::memrmem(
-            opaque(t),
-            opaque(b"xyz")
-        ));
         compare!("index_of_char16 miss {n}", |k| k::index_of_char16(
             opaque(wide),
             1
@@ -159,10 +155,6 @@ fn searches(plain: &[u8]) {
             "last_index_of_char16 miss {n}",
             |k| k::last_index_of_char16(opaque(wide), 1)
         );
-        compare!("memrmem16 miss {n}", |k| k::memrmem16(
-            opaque(wide),
-            opaque(&[1, 2, 3])
-        ));
         compare!("common_prefix_length {n}", |k| {
             k::common_prefix_length(opaque(t), opaque(&plain[1..]))
         });
@@ -440,16 +432,29 @@ fn shapes_of_calls(js: &[u8], lockfile: &[u8]) {
     });
 
     let quoted = || split_at_each(lockfile, b'"').map(|(before, _)| before);
-    let packages = quoted().filter(|it| it.starts_with(b"node_modules/"));
-    let files = ["/package.json", "/lib/index.js", "/./a.mjs", "", "/dist/"];
-    let paths: Vec<_> = packages
-        .flat_map(|package| files.map(|file| [b"/home/me/app/", package, file.as_bytes()].concat()))
-        .collect();
+    let paths_to = |files: [&str; 5]| -> Vec<_> {
+        let packages = quoted().filter(|it| it.starts_with(b"node_modules/"));
+        packages
+            .flat_map(|it| files.map(|file| [b"/home/me/app/", it, file.as_bytes()].concat()))
+            .collect()
+    };
+    let all = [
+        paths_to(["/package.json", "/lib/index.js", "/./a.mjs", "", "/dist/"]),
+        paths_to([
+            "/.bin/tsc",
+            "/.cache/.x/a.json",
+            "/..data/key",
+            "/a.js",
+            "/.git",
+        ]),
+    ];
     let random = &mut Random(5);
-    let paths: &Vec<_> = &(0..20_000)
-        .map(|_| &paths[random.below(paths.len())][..])
-        .collect();
+    let [paths, hidden] = &all.each_ref().map(|all| -> Vec<_> {
+        let path = |_| &all[random.below(all.len())][..];
+        (0..20_000).map(path).collect()
+    });
     pairs::of_paths(&mut ("paths", &paths[..]));
+    pairs::of_paths(&mut ("paths with dots", &hidden[..]));
     compare!("last_index_of_char of 20000 paths", |k| {
         each(paths, |t| branch_on(k::last_index_of_char(t, b'.')))
     });
@@ -523,31 +528,116 @@ fn heads() {
 }
 
 #[optimize(size)]
-fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
-    let url = b"//# sourceMappingURL=data:";
-    compare!("memmem miss 1 MB", |k| k::memmem(opaque(js), opaque(url)));
-    compare!("memmem miss 40", |k| {
-        k::memmem(opaque(&js[..40]), opaque(b"xyz"))
-    });
-    for (period, times) in [(&b"a"[..], 3), (b"a", 15), (b"ab", 20), (b"ab", 400)] {
-        let (text, needle) = (&period.repeat(1 << 15), &mut period.repeat(times));
+fn substrings(js: &[u8]) {
+    let (random, all, js) = (&mut Random(7), js, &js[js.len() / 2..]);
+    let miss = |len: usize, needle: &[u8]| (vec![b'a'; len], needle.to_vec());
+    let boundary = b"\r\n--boundary-of-24-bytes";
+    let [url, sentence] = [
+        &b"//# sourceMappingURL=data:"[..],
+        b"the quick brown fox jumps over it",
+    ];
+    let almost = |period: &[u8], times: usize| {
+        let mut needle = period.repeat(times);
         needle[times / 2 * period.len()] = b'b';
-        let len = needle.len();
-        compare!("memmem of {len} that almost match", |k| {
-            k::memmem(opaque(text), opaque(needle))
+        (period.repeat(1 << 15), needle)
+    };
+    let absent = |text: &[u8], needle: &[u8]| (text.to_vec(), [needle, b"\x01", needle].concat());
+    let at = |at: usize, needle: &[u8]| ([&js[..at], needle, &js[..at]].concat(), needle.to_vec());
+    let letters = |len, needle, of| (Random(8).bytes(len, of), Random(9).bytes(needle, of));
+    let broken_runs = |len: usize| {
+        let needle = vec![b'a'; len];
+        (
+            [&needle[1..], b"b"].concat().repeat((1 << 15) / len),
+            needle,
+        )
+    };
+    let mut record = || [&js[..20], &random.bytes(24, b"01")].concat();
+    let records = ((0..1500).flat_map(|_| record()).collect(), record());
+    for (name, (mut text, mut needle)) in [
+        ("miss 12", miss(12, b"xyz")),
+        ("miss 40", miss(40, b"xyz")),
+        ("miss 64", miss(64, b"xyz")),
+        ("miss 100", miss(100, b"xyz")),
+        ("miss 1000", miss(1000, b"xyz")),
+        ("miss 65536", miss(1 << 16, b"xyz")),
+        ("miss 12", miss(12, boundary)),
+        ("miss 1000", miss(1000, boundary)),
+        ("miss 100", (js[..100].to_vec(), sentence.to_vec())),
+        ("miss 1 MB", (all.to_vec(), url.to_vec())),
+        ("miss 1 MB", (all.to_vec(), sentence.to_vec())),
+        ("that almost match", almost(b"a", 2)),
+        ("that almost match", almost(b"a", 3)),
+        ("that almost match", almost(b"a", 15)),
+        ("that almost match", almost(b"ab", 20)),
+        ("that almost match", almost(b"ab", 400)),
+        ("in shorter runs", broken_runs(9)),
+        ("in shorter runs", broken_runs(40)),
+        ("in records that start alike", records),
+        (
+            "of two letters",
+            absent(&random.bytes(1 << 15, b"ab"), b"abbab"),
+        ),
+        ("in 4 letters", letters(1 << 15, 12, b"acgt")),
+        ("in 4 KB of digits", letters(4096, 8, b"0123456789abcdef")),
+        (
+            "in 32 KB of digits",
+            letters(1 << 15, 8, b"0123456789abcdef"),
+        ),
+        ("in random bytes", letters(1 << 16, 24, b"")),
+        ("in 2 KB of source", absent(&js[..2000], &js[3000..3150])),
+        ("in 4 KB of source", absent(&js[..4096], b"e t")),
+        ("in 64 KB of source", absent(&js[..1 << 16], b"e t")),
+        (
+            "in 64 KB of source",
+            absent(&js[..1 << 16], b"\n--boundary-"),
+        ),
+        ("after 100", at(100, b"\r\n")),
+        ("after 300", at(300, b"\r\n\r\n")),
+        ("after 500", at(500, &random.bytes(1000, b""))),
+    ] {
+        let (len, t, n) = (needle.len(), &mut text, &mut needle);
+        compare!("memmem of {len} {name}", |k| k::memmem(
+            opaque(t),
+            opaque(n)
+        ));
+        compare!("memrmem of {len} {name}", |k| k::memrmem(
+            opaque(t),
+            opaque(n)
+        ));
+        compare!(
+            "shared: memmem of {len} {name}",
+            highway::memmem(opaque(t), opaque(n)),
+            rust::memmem_shared(shared(opaque(t)), shared(opaque(n)))
+        );
+        compare!(
+            "shared: memrmem of {len} {name}",
+            highway::memrmem(opaque(t), opaque(n)),
+            rust::memrmem_shared(shared(opaque(t)), shared(opaque(n)))
+        );
+        let widen = |bytes: &[u8]| -> (Vec<u16>, Vec<u8>) {
+            let units = bytes.iter().map(|&byte| byte.into()).collect();
+            (units, bytes.iter().flat_map(|&byte| [byte, 0]).collect())
+        };
+        let [(wide_t, mut t), (wide_n, mut n)] = [widen(t), widen(n)];
+        let [t, n] = [shared(&mut t), shared(&mut n)].map(|it| it.as_chunks().0);
+        compare!("memrmem16 of {len} {name}", |k| {
+            k::memrmem16(opaque(&wide_t), opaque(&wide_n))
         });
-        compare!("memrmem of {len} that almost match", |k| {
-            k::memrmem(opaque(text), opaque(needle))
-        });
+        compare!(
+            "shared: memmem16 of {len} {name}",
+            highway::memmem16(opaque(&wide_t), opaque(&wide_n)),
+            rust::memmem16_shared(opaque(t), opaque(n))
+        );
+        compare!(
+            "shared: memrmem16 of {len} {name}",
+            highway::memrmem16(opaque(&wide_t), opaque(&wide_n)),
+            rust::memrmem16_shared(opaque(t), opaque(n))
+        );
     }
-    let sentence = b"the quick brown fox jumps over it";
-    compare!("memmem of 33 miss 1 MB", |k| k::memmem(
-        opaque(js),
-        opaque(sentence)
-    ));
-    compare!("memmem of 33 miss 100", |k| {
-        k::memmem(opaque(&js[..100]), opaque(sentence))
-    });
+}
+
+#[optimize(size)]
+fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     compare!("line_starts 1 MB", |k| k::line_starts(opaque(js)));
     let one_line = &vec![b'a'; js.len()];
     compare!("line_starts miss 1 MB", |k| k::line_starts(opaque(
@@ -784,36 +874,6 @@ fn from_shared(js: &[u8]) {
             highway::last_index_of_char(opaque(t), b'x'),
             rust::last_index_of_char_shared(shared(opaque(t)), b'x')
         );
-        for needle in [&b"xyz"[..], b"\r\n--boundary-of-24-bytes"] {
-            let (len, needle) = (needle.len(), &mut needle.to_vec());
-            compare!(
-                "shared: memmem of {len} miss {n}",
-                highway::memmem(opaque(t), opaque(needle)),
-                rust::memmem_shared(shared(opaque(t)), shared(opaque(needle)))
-            );
-            compare!(
-                "shared: memrmem of {len} miss {n}",
-                highway::memrmem(opaque(t), opaque(needle)),
-                rust::memrmem_shared(shared(opaque(t)), shared(opaque(needle)))
-            );
-        }
-        let (wide, needle) = (&vec![0x6161; n / 2], &mut [1, 0, 2, 0, 3, 0]);
-        compare!(
-            "shared: memmem16 miss {n}",
-            highway::memmem16(opaque(wide), opaque(&[1, 2, 3])),
-            rust::memmem16_shared(
-                shared(opaque(t)).as_chunks().0,
-                shared(needle).as_chunks().0
-            )
-        );
-        compare!(
-            "shared: memrmem16 miss {n}",
-            highway::memrmem16(opaque(wide), opaque(&[1, 2, 3])),
-            rust::memrmem16_shared(
-                shared(opaque(t)).as_chunks().0,
-                shared(needle).as_chunks().0
-            )
-        );
         compare!(
             "shared: encode_hex_lower {n}",
             highway::encode_hex_lower(opaque(t), out),
@@ -919,6 +979,7 @@ pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
     heads();
     escapes();
     styled_words(js);
+    substrings(js);
     whole_files(js, json, map);
     conversions(js);
     images();
@@ -984,8 +1045,9 @@ pub(crate) fn after_a_pause() {
                     start.elapsed().as_secs_f64() * 1e9
                 };
                 // A tick of the clock can be longer than a search. The mean does not depend on it.
-                let uninterrupted: Vec<_> = (0..1000).map(time).filter(|&it| it < 5e3).collect();
-                uninterrupted.iter().sum::<f64>() / uninterrupted.len() as f64
+                let mut times: Vec<_> = (0..1000).map(time).collect();
+                times.sort_by(f64::total_cmp);
+                times[..990].iter().sum::<f64>() / 990.0
             });
             write_line(format_args!(
                 "index_of_char {n} after {name}\t{first:.2}\t{second:.2}"

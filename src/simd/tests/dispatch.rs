@@ -51,13 +51,16 @@ mod simd {
     }
 
     #[export]
-    pub fn properties() -> ([usize; 2], [bool; 3]) {
+    pub fn properties() -> ([usize; 2], [u8; 6]) {
         let has = [
             isa::Isa::HAS_MASK_REGISTERS,
             isa::Isa::HAS_UNSIGNED_COMPARE,
             isa::Isa::HAS_INTERLEAVED_MEMORY,
+            isa::Isa::HAS_SINGLE_CYCLE_OPS,
+            isa::Isa::HAS_LEADING_ZEROS,
+            isa::Isa::MASKED_BYTES != 0 && isa::Isa::IS_SLOW_TO_SKIP_PAGE,
         ];
-        ([U8::LEN, isa::Isa::MASKED_BYTES], has)
+        ([U8::LEN, isa::Isa::MASKED_BYTES], has.map(u8::from))
     }
 
     struct Table<const N: usize>(isa::Vector<u8, N>);
@@ -166,11 +169,11 @@ fn portable_copies_take_the_paths_of_the_others() {
     for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
         limit_to(target);
         let want = match target {
-            Avx512Icl | Avx512Skx | Portable64 => ([64, 64], [true, true, false]),
-            Avx2 | Portable32 => ([32, 0], [false, false, false]),
-            Sse4 => ([16, 0], [false, false, false]),
-            Sve2 => ([16, 16], [false, true, true]),
-            Neon | Portable => ([16, 0], [false, true, true]),
+            Avx512Icl | Avx512Skx | Portable64 => ([64, 64], [1, 1, 0, 1, 1, 1]),
+            Avx2 | Portable32 => ([32, 0], [0, 0, 0, 1, 1, 0]),
+            Sse4 => ([16, 0], [0, 0, 0, 1, 0, 0]),
+            Sve2 => ([16, 16], [0, 1, 1, 0, 1, 0]),
+            Neon | Portable => ([16, 0], [0, 1, 1, 0, 1, 0]),
         };
         assert_eq!(simd::properties(), want, "{target:?}");
     }

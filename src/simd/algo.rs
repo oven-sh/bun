@@ -1,11 +1,19 @@
 //! Loops over slices of any length.
 use crate::partial::copy_short;
-use crate::{Int, Isa, Matches, Out, SharedOutU8, Source};
-use core::hint::{likely, unlikely};
+use crate::{Int, Isa, Matches, Out, Padded, SharedOutU8, Source};
+use bun_simd_trusted::quarters;
+use core::hint::{cold_path, likely};
+use core::ops::Range;
 
 #[inline(always)]
-fn index_of<S, const N: usize>(chunk: &[S; N], slice: &[S]) -> usize {
-    (chunk.as_ptr().addr() - slice.as_ptr().addr()) / size_of::<S>()
+fn of_same_len<S, const P: usize>(mut slices: [&[S]; P]) -> [&[S]; P] {
+    let len = slices
+        .iter()
+        .fold(usize::MAX, |len, slice| len.min(slice.len()));
+    for slice in &mut slices {
+        *slice = &slice[..len];
+    }
+    slices
 }
 
 /// `slice` in blocks for `bitmasks`. What is left of it is copied to the start of `padding`.
@@ -32,12 +40,21 @@ mod simd {
     use isa::{Mask, U8, U64, Vector};
 
     impl<T: Int<N>, const N: usize> Vector<T, N> {
+        /// The lanes in 64 bytes. Nothing branches on where a match is among them.
+        pub const BLOCK_LEN: usize = 64 / size_of::<T>();
+        const PER_BLOCK: usize = match size_of::<Self>() {
+            16 | 32 | 64 => Self::BLOCK_LEN / N,
+            _ => panic!("needs 16, 32 or 64 bytes"),
+        };
+        /// The chunks that `rposition` and `position` test at once.
+        const PER_STEP: [usize; 2] = [if Self::PER_BLOCK > 1 { 2 } else { 1 }, Self::PER_BLOCK];
+
         /// The first index for which `test` holds.
         pub fn position<S: Source<Lane = T>>(
             slice: &[S],
             test: impl Fn(Self) -> Mask<T, N>,
         ) -> Option<usize> {
-            Self::position_refined(slice, move |v| [test(v); 2])
+            Self::search::<S, true>(slice, move |v| [test(v); 2])
         }
 
         /// `position` for the second test. The first one is cheaper, and holds wherever it does.
@@ -45,107 +62,7 @@ mod simd {
             slice: &[S],
             tests: impl Fn(Self) -> [Mask<T, N>; 2],
         ) -> Option<usize> {
-            match const { size_of::<Self>() } {
-                16 => Self::position_by::<S, 4>(slice, tests),
-                32 => Self::position_by::<S, 2>(slice, tests),
-                _ => Self::position_by::<S, 1>(slice, tests),
-            }
-        }
-
-        /// The tests of `K` chunks that cover `slice`, and where they start.
-        #[inline(always)]
-        fn cover<S: Source<Lane = T>, const K: usize>(
-            slice: &[S],
-            test: &impl Fn(Self) -> Mask<T, N>,
-        ) -> Option<[(Mask<T, N>, usize); K]> {
-            const { assert!(matches!(K, 1 | 2 | 4)) };
-            let room = slice.len().checked_sub(N)?;
-            let at = |at: usize| Some((test(Self::load(slice.get(at..)?.first_chunk()?)), at));
-            let mut all = [at(0)?; K];
-            if K > 1 {
-                all[K - 1] = at(room)?;
-            }
-            if K > 2 {
-                (all[1], all[2]) = (at(N)?, at(room.checked_sub(N)?)?);
-            }
-            Some(all)
-        }
-
-        /// Where a match is within a block of `K` chunks is hard to predict, so nothing branches on it.
-        #[inline(always)]
-        fn position_by<S: Source<Lane = T>, const K: usize>(
-            slice: &[S],
-            tests: impl Fn(Self) -> [Mask<T, N>; 2],
-        ) -> Option<usize> {
-            let test = |v| tests(v)[1];
-            let (len, first_in) = (slice.len(), |block| {
-                Isa::first_set_of(Self::cover::<S, K>(block, &test)?)
-            });
-            let Some(first) = slice.get(..K * N) else {
-                if len < N {
-                    return Self::load_padded_inline(slice)
-                        .and_then(|p| p.first_set(test(p.lanes)));
-                }
-                if K == 4 && len <= 2 * N {
-                    return Isa::first_set_of(Self::cover::<S, 2>(slice, &test)?);
-                }
-                return first_in(slice);
-            };
-            let found = first_in(first);
-            if likely(found.is_some()) {
-                return found;
-            }
-            if len > 2 * K * N {
-                return Self::position_far::<S, K>(slice, tests);
-            }
-            if len == K * N {
-                return None;
-            }
-            first_in(&slice[len - K * N..]).map(|lane| len - K * N + lane)
-        }
-
-        /// After the first block. The registers that it needs cost the other paths nothing.
-        #[inline(never)]
-        fn position_far<S: Source<Lane = T>, const K: usize>(
-            slice: &[S],
-            tests: impl Fn(Self) -> [Mask<T, N>; 2],
-        ) -> Option<usize> {
-            let test = |v| tests(v)[1];
-            let first_at = |at: usize| {
-                let block = slice.get(at..)?.get(..K * N)?;
-                Some(at + Isa::first_set_of(Self::cover::<S, K>(block, &test)?)?)
-            };
-            let (last, mut seen) = (slice.len().checked_sub(K * N)?, K * N);
-            if last >= K * N + 4 * N {
-                if K < 4 {
-                    if let Some(found) = first_at(seen) {
-                        return Some(found);
-                    }
-                    seen += K * N;
-                }
-                // Continue at an aligned address, so that no load crosses a cache line.
-                seen -= slice.as_ptr().addr() % size_of::<[S; N]>() / size_of::<S>();
-                let mut rest = &slice[seen..];
-                while let Some(four) = rest.as_chunks().0.first_chunk() {
-                    let [a, b, c, d] = Self::load4(four);
-                    let holds = |i: usize| {
-                        ((tests(a)[i] | tests(b)[i]) | (tests(c)[i] | tests(d)[i])).any()
-                    };
-                    if holds(0) && holds(1) {
-                        break;
-                    }
-                    rest = &rest[4 * N..];
-                }
-                seen = slice.len() - rest.len();
-            }
-            while seen < slice.len() {
-                let at = seen.min(last);
-                if let Some(found) = first_at(at) {
-                    return Some(found);
-                }
-                seen = at + K * N;
-            }
-            None
+            Self::search::<S, true>(slice, tests)
         }
 
         /// The last index for which `test` holds.
@@ -153,296 +70,302 @@ mod simd {
             slice: &[S],
             test: impl Fn(Self) -> Mask<T, N>,
         ) -> Option<usize> {
-            match const { size_of::<Self>() } {
-                16 | 32 => Self::rposition_by::<S, 2>(slice, test),
-                _ => Self::rposition_by::<S, 1>(slice, test),
-            }
+            Self::search::<S, false>(slice, move |v| [test(v); 2])
         }
 
         #[inline(always)]
-        fn rposition_by<S: Source<Lane = T>, const K: usize>(
+        fn search<S: Source<Lane = T>, const FORWARD: bool>(
             slice: &[S],
-            test: impl Fn(Self) -> Mask<T, N>,
+            tests: impl Fn(Self) -> [Mask<T, N>; 2],
         ) -> Option<usize> {
-            let (len, last_in) = (slice.len(), |block| {
-                Isa::last_set_of(Self::cover::<S, K>(block, &test)?)
-            });
-            let Some(start) = len.checked_sub(K * N) else {
-                if len < N {
-                    return Self::load_padded_inline(slice).and_then(|p| p.last_set(test(p.lanes)));
-                }
-                return last_in(slice);
-            };
-            let found = last_in(&slice[start..]);
+            let (len, test) = (slice.len(), |[v]: [Self; 1]| tests(v)[1]);
+            let k = Self::PER_STEP[usize::from(FORWARD)];
+            if len < k * N {
+                let find = Isa::nearest_set::<T, N, FORWARD>;
+                return match len {
+                    _ if len < N => Self::nearest_in_short::<S, 1, FORWARD>([slice], test),
+                    _ if k == 4 && len <= 2 * N => find(&Self::cover([slice], 2, &test)?[..2], 0),
+                    _ => find(&Self::cover([slice], k, &test)?[..k], 0),
+                };
+            }
+            let last = len - k * N;
+            let [near, far] = if FORWARD { [0, last] } else { [last, 0] };
+            let found = Self::nearest_at::<S, 1, FORWARD>([slice], near, k, &test);
             if likely(found.is_some()) {
-                return found.map(|lane| start + lane);
+                return found;
             }
-            if len > 2 * K * N {
-                return Self::rposition_far::<S, K>(slice, test);
+            if last > k * N {
+                return Self::search_far::<S, FORWARD>(slice, tests);
             }
-            if len == K * N {
+            if last == 0 {
                 return None;
             }
-            last_in(&slice[..K * N])
+            Self::nearest_at::<S, 1, FORWARD>([slice], far, k, &test)
         }
 
+        /// After the first block. The registers that it needs cost the other paths nothing.
         #[inline(never)]
-        fn rposition_far<S: Source<Lane = T>, const K: usize>(
+        fn search_far<S: Source<Lane = T>, const FORWARD: bool>(
             slice: &[S],
-            test: impl Fn(Self) -> Mask<T, N>,
+            tests: impl Fn(Self) -> [Mask<T, N>; 2],
         ) -> Option<usize> {
-            let last_before = |end: usize| {
-                let (before, block) = slice.get(..end)?.split_at(end.checked_sub(K * N)?);
-                Some(before.len() + Isa::last_set_of(Self::cover::<S, K>(block, &test)?)?)
-            };
-            let mut unseen = slice.len().checked_sub(K * N)?;
-            if unseen >= K * N + 4 * N {
-                if let Some(found) = last_before(unseen) {
-                    return Some(found);
-                }
-                let to_aligned = slice.as_ptr_range().end.addr().wrapping_neg();
-                unseen -= K * N - to_aligned % size_of::<[S; N]>() / size_of::<S>();
-                let mut rest = &slice[..unseen];
-                while let Some(before) = rest.len().checked_sub(4 * N) {
-                    let [a, b, c, d] = Self::load4(rest[before..].as_chunks().0.first_chunk()?);
-                    if ((test(a) | test(b)) | (test(c) | test(d))).any() {
-                        break;
+            let (len, test) = (slice.len(), |[v]: [Self; 1]| tests(v)[1]);
+            let k = Self::PER_STEP[usize::from(FORWARD)];
+            let mut seen = k * N;
+            if len >= 2 * k * N + 4 * N {
+                if k < 4 {
+                    let start = if FORWARD { seen } else { len - 2 * seen };
+                    let found = Self::nearest_at::<S, 1, FORWARD>([slice], start, k, &test);
+                    if found.is_some() {
+                        return found;
                     }
-                    rest = &rest[..before];
+                    seen += k * N;
                 }
-                unseen = rest.len();
+                seen = Self::skip::<S, FORWARD>(slice, seen, &tests);
             }
-            while unseen > 0 {
-                let end = unseen.max(K * N);
-                if let Some(found) = last_before(end) {
-                    return Some(found);
-                }
-                unseen = end - K * N;
-            }
-            None
+            Self::nearest_past::<S, 1, FORWARD>([slice], seen, k, &test)
         }
 
-        /// `position` with less code, for a match that is not far from the start.
-        pub fn position_near<S: Source<Lane = T>>(
-            slice: &[S],
-            test: impl Fn(Self) -> Mask<T, N>,
+        /// The first or last `i` for which `test` holds for all `slices[..][i]`, with less code, if it is near.
+        pub fn position_near<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            test: impl Fn([Self; P]) -> Mask<T, N>,
         ) -> Option<usize> {
-            let Some((before_last, last)) = slice.split_last_chunk() else {
-                return Self::load_padded_inline(slice).and_then(|p| p.first_set(test(p.lanes)));
+            let (slices, find) = (of_same_len(slices), Isa::nearest_set::<T, N, FORWARD>);
+            let (len, mut rest) = (slices[0].len(), slices);
+            #[rustc_unroll(never)]
+            while rest[0].len() > N {
+                let left = rest[0].len() - N;
+                let masks = Self::block(rest, if FORWARD { 0 } else { left }, 1, &test)?;
+                let found = find(&masks[..1], if FORWARD { len - N - left } else { left });
+                if found.is_some() {
+                    return found;
+                }
+                for slice in &mut rest {
+                    *slice = if FORWARD {
+                        slice.get(N..)?
+                    } else {
+                        slice.get(..left)?
+                    };
+                }
+            }
+            let Some(last) = len.checked_sub(N) else {
+                return Self::nearest_in_short::<S, P, FORWARD>(slices, test);
             };
-            for (i, chunk) in slice[..slice.len() - 1].as_chunks().0.iter().enumerate() {
-                if let Some(lane) = test(Self::load(chunk)).first_set() {
-                    return Some(N * i + lane);
-                }
-            }
-            Some(before_last.len() + test(Self::load(last)).first_set()?)
+            Self::nearest_at::<S, P, FORWARD>(slices, if FORWARD { last } else { 0 }, 1, &test)
         }
 
-        /// `rposition` with less code, for a match that is not far from the end.
-        pub fn rposition_near<S: Source<Lane = T>>(
-            slice: &[S],
-            test: impl Fn(Self) -> Mask<T, N>,
+        /// The same without the `seen` nearest, but for at least `N`. `None` if there are fewer.
+        pub fn position_past<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            seen: usize,
+            test: impl Fn([Self; P]) -> Mask<T, N>,
         ) -> Option<usize> {
-            let mut rest = slice;
-            while rest.len() > N {
-                let (before, chunk) = rest.split_last_chunk()?;
-                if let Some(lane) = test(Self::load(chunk)).last_set() {
-                    return Some(before.len() + lane);
+            Self::nearest_past::<S, P, FORWARD>(of_same_len(slices), seen, 1, &test)
+        }
+
+        /// Each such `i` in the first or the last block.
+        pub fn matches_near<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            test: impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Matches {
+            let (slices, k) = (of_same_len(slices), Self::PER_BLOCK);
+            let found = match slices[0].len().checked_sub(k * N) {
+                Some(last) => {
+                    let start = if FORWARD { 0 } else { last };
+                    Self::block(slices, start, k, &test).map(|it| Matches::of(&it[..k], start))
                 }
-                rest = before;
+                None if slices[0].len() >= N => {
+                    Self::cover(slices, k, &test).map(|it| Matches::of(&it[..k], 0))
+                }
+                None => Self::test_short(slices, test).map(|(short, mask)| Matches {
+                    bits: short.to_bitmask(mask),
+                    start: 0,
+                }),
+            };
+            found.unwrap_or_default()
+        }
+
+        /// The same in whole blocks only. `range` counts from that end. Its last block may overlap.
+        pub fn matches_in<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            range: Range<usize>,
+            test: impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> impl Iterator<Item = Matches> {
+            let mut slices = of_same_len(slices);
+            let len = slices[0].len().min(range.end);
+            let cut = if FORWARD { 0 } else { slices[0].len() - len };
+            for slice in &mut slices {
+                *slice = &slice[cut..][..len];
             }
-            match slice.first_chunk() {
-                Some(first) => test(Self::load(first)).last_set(),
-                None => Self::load_padded_inline(slice).and_then(|p| p.last_set(test(p.lanes))),
+            let after = |start: usize| match FORWARD {
+                true => start + Self::BLOCK_LEN,
+                false => start.wrapping_sub(Self::BLOCK_LEN),
+            };
+            let mut next = match FORWARD {
+                true => range.start,
+                false => after(len.wrapping_sub(range.start)),
+            };
+            core::iter::from_fn(move || {
+                let (k, last) = (Self::PER_BLOCK, len.checked_sub(Self::BLOCK_LEN)?);
+                #[rustc_unroll(never)]
+                loop {
+                    if next > last {
+                        // Unlike `min`, a branch does not make the next loads wait.
+                        cold_path();
+                        next = match FORWARD {
+                            true => (next < len).then_some(last)?,
+                            false => (next > after(0)).then_some(0)?,
+                        };
+                    }
+                    let masks = Self::block(slices, next, k, &test)?;
+                    let any = masks[1..k].iter().fold(masks[0].0, |any, it| any | it.0);
+                    if any.any() {
+                        let found = Matches::of(&masks[..k], cut + next);
+                        next = after(next);
+                        return Some(found);
+                    }
+                    next = after(next);
+                }
+            })
+        }
+
+        /// How far the tests hold nowhere, counted from the start or the end, or a little less than `seen`.
+        pub fn skip<S: Source<Lane = T>, const FORWARD: bool>(
+            slice: &[S],
+            seen: usize,
+            tests: impl Fn(Self) -> [Mask<T, N>; 2],
+        ) -> usize {
+            let len = slice.len();
+            let seen = Self::aligned::<S, FORWARD>(slice, seen).min(len);
+            let (start, end) = slice.split_at(if FORWARD { seen } else { len - seen });
+            let mut rest = if FORWARD { end } else { start };
+            while let Some(left) = rest.len().checked_sub(4 * N)
+                && let (start, end) = rest.split_at(if FORWARD { 4 * N } else { left })
+                && let Some([a, b, c, d]) = Self::load_chunks(if FORWARD { start } else { end }, 4)
+            {
+                let holds =
+                    |i: usize| ((tests(a)[i] | tests(b)[i]) | (tests(c)[i] | tests(d)[i])).any();
+                if holds(0) && holds(1) {
+                    break;
+                }
+                rest = if FORWARD { end } else { start };
+            }
+            len - rest.len()
+        }
+
+        /// Up to `seen`, from where no load crosses a cache line.
+        #[inline(always)]
+        fn aligned<S, const FORWARD: bool>(slice: &[S], seen: usize) -> usize {
+            let Range { start, end } = slice.as_ptr_range();
+            let address = match FORWARD {
+                true => start.wrapping_add(seen).addr(),
+                false => end.wrapping_sub(seen).addr().wrapping_neg(),
+            };
+            seen.saturating_sub(address % size_of::<Self>() / size_of::<S>())
+        }
+
+        #[inline(always)]
+        fn test_short<S: Source<Lane = T>, const P: usize>(
+            slices: [&[S]; P],
+            test: impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<(Padded<T, N, isa::Isa>, Mask<T, N>)> {
+            let first = Self::load_padded_inline(slices[0])?;
+            let mut all = [first.lanes; P];
+            for p in 1..P {
+                all[p] = Self::load_padded_inline(slices[p])?.lanes;
+            }
+            Some((first, test(all)))
+        }
+
+        #[inline(always)]
+        fn nearest_in_short<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            test: impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<usize> {
+            let (short, mask) = Self::test_short(slices, test)?;
+            if FORWARD {
+                short.first_set(mask)
+            } else {
+                short.last_set(mask)
             }
         }
 
-        /// Gives `f` each `i` for which `test` holds for `a[i]` and `b[i]`, until it returns `Some`.
-        pub fn zip_find_map<S: Source<Lane = T>, R>(
-            a: &[S],
-            b: &[S],
-            test: impl Fn(Self, Self) -> Mask<T, N>,
-            mut f: impl FnMut(Matches) -> Option<R>,
-        ) -> Option<R> {
-            let len = a.len().min(b.len());
-            let (a, b) = (&a[..len], &b[..len]);
-            if len < N {
-                return Self::matches_in_short(a, b, test).and_then(f);
+        /// The tests of `k` chunks from `start` on, and where they are in the block.
+        #[inline(always)]
+        fn block<S: Source<Lane = T>, const P: usize>(
+            slices: [&[S]; P],
+            start: usize,
+            k: usize,
+            test: &impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<[(Mask<T, N>, usize); 4]> {
+            let mut chunks = [[Self::zero(); P]; 4];
+            for p in 0..P {
+                // From this, LLVM sees that the checks below hold.
+                if start > slices[p].len().checked_sub(k * N)? {
+                    return None;
+                }
+                let [a, b, c, d] = Self::load_chunks(slices[p].get(start..)?, k)?;
+                (chunks[0][p], chunks[1][p], chunks[2][p], chunks[3][p]) = (a, b, c, d);
             }
-            let mut seen = 0;
+            let mut all = [(test(chunks[0]), 0); 4];
+            if k > 1 {
+                all[1] = (test(chunks[1]), N);
+            }
+            if k > 2 {
+                (all[2], all[3]) = ((test(chunks[2]), 2 * N), (test(chunks[3]), 3 * N));
+            }
+            Some(all)
+        }
+
+        #[inline(always)]
+        fn nearest_at<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            start: usize,
+            k: usize,
+            test: &impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<usize> {
+            Isa::nearest_set::<T, N, FORWARD>(&Self::block(slices, start, k, test)?[..k], start)
+        }
+
+        /// `block` for `k` chunks that overlap.
+        #[inline(always)]
+        fn cover<S: Source<Lane = T>, const P: usize>(
+            slices: [&[S]; P],
+            k: usize,
+            test: &impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<[(Mask<T, N>, usize); 4]> {
+            let at = |at: usize| Some((Self::block(slices, at, 1, test)?[0].0, at));
+            let (starts, mut all) = (quarters(slices[0].len(), N), [at(0)?; 4]);
+            all[k - 1] = at(starts[3])?;
+            if k > 2 {
+                (all[1], all[2]) = (at(starts[1])?, at(starts[2])?);
+            }
+            Some(all)
+        }
+
+        /// For a few blocks of `k` chunks. The last one overlaps.
+        #[inline(always)]
+        fn nearest_past<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+            slices: [&[S]; P],
+            mut seen: usize,
+            k: usize,
+            test: &impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<usize> {
+            let (len, last) = (slices[0].len(), slices[0].len().checked_sub(k * N)?);
+            #[rustc_unroll(never)]
             while seen < len {
-                let (mask, start) = Self::first_match_from(seen, a, b, &test)?;
-                let matches = Matches::new(mask, start).skip_lanes(seen.saturating_sub(start))?;
-                if let Some(found) = f(matches) {
+                let start = match FORWARD {
+                    true => seen.min(last),
+                    false => last.saturating_sub(seen),
+                };
+                let masks = Self::block(slices, start, k, test)?;
+                if let Some(found) = Isa::nearest_set::<T, N, FORWARD>(&masks[..k], start) {
                     return Some(found);
                 }
-                seen = start + N;
+                seen += k * N;
             }
             None
-        }
-
-        /// `zip_find_map` with less code, for short slices.
-        pub fn zip_find_map_near<S: Source<Lane = T>, R>(
-            a: &[S],
-            b: &[S],
-            test: impl Fn(Self, Self) -> Mask<T, N>,
-            mut f: impl FnMut(Matches) -> Option<R>,
-        ) -> Option<R> {
-            let len = a.len().min(b.len());
-            let (a, b) = (&a[..len], &b[..len]);
-            let (Some((_, last_a)), Some((_, last_b))) =
-                (a.split_last_chunk(), b.split_last_chunk())
-            else {
-                return Self::matches_in_short(a, b, test).and_then(f);
-            };
-            let [chunks_a, chunks_b] = [a, b].map(|it| it[..len - 1].as_chunks().0);
-            for (chunk_a, chunk_b) in chunks_a.iter().zip(chunks_b) {
-                let mask = test(Self::load(chunk_a), Self::load(chunk_b));
-                if unlikely(mask.any())
-                    && let Some(found) = f(Matches::new(mask, index_of(chunk_a, a)))
-                {
-                    return Some(found);
-                }
-            }
-            let mask = test(Self::load(last_a), Self::load(last_b));
-            if mask.none() {
-                return None;
-            }
-            f(Matches::new(mask, len - N).skip_lanes(N - 1 - (len - 1) % N)?)
-        }
-
-        /// The first chunk with a match, and where it starts. The last one may start before `from`.
-        #[inline(always)]
-        fn first_match_from<S: Source<Lane = T>>(
-            from: usize,
-            a: &[S],
-            b: &[S],
-            test: &impl Fn(Self, Self) -> Mask<T, N>,
-        ) -> Option<(Mask<T, N>, usize)> {
-            let chunks_from = |at: usize| [a, b].map(|it| it[at..it.len() - 1].as_chunks().0);
-            let [mut rest_a, mut rest_b] = chunks_from(from);
-            if let ([first_a, _, _, _, ..], [first_b, ..]) = (rest_a, rest_b) {
-                let mask = test(Self::load(first_a), Self::load(first_b));
-                if mask.any() {
-                    return Some((mask, from));
-                }
-                let past_aligned = first_a.as_ptr().addr() % size_of::<[T; N]>() / size_of::<T>();
-                let (pairs_a, pairs_b);
-                [(pairs_a, rest_a), (pairs_b, rest_b)] =
-                    chunks_from(from + N - past_aligned).map(<[_]>::as_chunks);
-                for (pair_a, pair_b) in pairs_a.iter().zip(pairs_b) {
-                    let [first, second] = Self::test_pair(pair_a, pair_b, test);
-                    let either = first | second;
-                    if either.any() {
-                        let start = index_of(&pair_a[0], a);
-                        let is_first = first.any();
-                        return Some(if is_first {
-                            (first, start)
-                        } else {
-                            (either, start + N)
-                        });
-                    }
-                }
-            }
-            for (chunk_a, chunk_b) in rest_a.iter().zip(rest_b) {
-                let mask = test(Self::load(chunk_a), Self::load(chunk_b));
-                if mask.any() {
-                    return Some((mask, index_of(chunk_a, a)));
-                }
-            }
-            let (last_a, last_b) = (a.split_last_chunk()?.1, b.split_last_chunk()?.1);
-            let mask = test(Self::load(last_a), Self::load(last_b));
-            mask.any().then_some((mask, a.len() - N))
-        }
-
-        /// `zip_find_map` from the end.
-        pub fn zip_rfind_map<S: Source<Lane = T>, R>(
-            a: &[S],
-            b: &[S],
-            test: impl Fn(Self, Self) -> Mask<T, N>,
-            mut f: impl FnMut(Matches) -> Option<R>,
-        ) -> Option<R> {
-            let len = a.len().min(b.len());
-            let (a, b) = (&a[..len], &b[..len]);
-            if len < N {
-                return Self::matches_in_short(a, b, test).and_then(f);
-            }
-            let mut unseen = len;
-            while unseen > 0 {
-                let (mask, start) = Self::last_match_until(unseen, a, b, &test)?;
-                let matches = Matches::new(mask, start).take_lanes((unseen - start).min(N))?;
-                if let Some(found) = f(matches) {
-                    return Some(found);
-                }
-                unseen = start;
-            }
-            None
-        }
-
-        /// The last chunk with a match, and where it starts. The first one may end after `until`.
-        #[inline(always)]
-        fn last_match_until<S: Source<Lane = T>>(
-            until: usize,
-            a: &[S],
-            b: &[S],
-            test: &impl Fn(Self, Self) -> Mask<T, N>,
-        ) -> Option<(Mask<T, N>, usize)> {
-            let chunks_until = |at: usize| [a, b].map(|it| it[1..at].as_rchunks().1);
-            let [mut rest_a, mut rest_b] = chunks_until(until);
-            if let ([.., _, _, _, last_a], [.., last_b]) = (rest_a, rest_b) {
-                let mask = test(Self::load(last_a), Self::load(last_b));
-                if mask.any() {
-                    return Some((mask, until - N));
-                }
-                let to_aligned = last_a.as_ptr().addr().wrapping_neg() % size_of::<[T; N]>();
-                let (pairs_a, pairs_b);
-                [(rest_a, pairs_a), (rest_b, pairs_b)] =
-                    chunks_until(until - N + to_aligned / size_of::<T>()).map(<[_]>::as_rchunks);
-                for (pair_a, pair_b) in pairs_a.iter().zip(pairs_b).rev() {
-                    let [first, second] = Self::test_pair(pair_a, pair_b, test);
-                    let either = first | second;
-                    if either.any() {
-                        let start = index_of(&pair_a[0], a);
-                        let is_second = second.any();
-                        return Some(if is_second {
-                            (second, start + N)
-                        } else {
-                            (either, start)
-                        });
-                    }
-                }
-            }
-            for (chunk_a, chunk_b) in rest_a.iter().zip(rest_b).rev() {
-                let mask = test(Self::load(chunk_a), Self::load(chunk_b));
-                if mask.any() {
-                    return Some((mask, index_of(chunk_a, a)));
-                }
-            }
-            let mask = test(Self::load(a.first_chunk()?), Self::load(b.first_chunk()?));
-            mask.any().then_some((mask, 0))
-        }
-
-        #[inline(always)]
-        fn test_pair<S: Source<Lane = T>>(
-            a: &[[S; N]; 2],
-            b: &[[S; N]; 2],
-            test: &impl Fn(Self, Self) -> Mask<T, N>,
-        ) -> [Mask<T, N>; 2] {
-            [
-                test(Self::load_nth::<S, 2, 0>(a), Self::load_nth::<S, 2, 0>(b)),
-                test(Self::load_nth::<S, 2, 1>(a), Self::load_nth::<S, 2, 1>(b)),
-            ]
-        }
-
-        #[inline(always)]
-        fn matches_in_short<S: Source<Lane = T>>(
-            a: &[S],
-            b: &[S],
-            test: impl Fn(Self, Self) -> Mask<T, N>,
-        ) -> Option<Matches> {
-            let (a, b) = (Self::load_padded_inline(a)?, Self::load_padded_inline(b)?);
-            let bits = a.to_bitmask(test(a.lanes, b.lanes));
-            (bits != 0).then(|| Matches::from_bitmask(bits))
         }
 
         /// The number of indices for which `test` holds.
@@ -660,7 +583,7 @@ mod simd {
                 let at = |i: usize| tests(&chunks[i]);
                 let [a, b, c, d] = [at(0), at(1), at(2), at(3)];
                 for k in 0..K {
-                    bits[k] = Isa::bitmask_of_four([a[k], b[k], c[k], d[k]]);
+                    bits[k] = Isa::bitmask_of(&[(a[k], 0), (b[k], 16), (c[k], 32), (d[k], 48)]);
                 }
                 return bits;
             }

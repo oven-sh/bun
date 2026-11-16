@@ -42,12 +42,6 @@ impl<T: Int<N>, const N: usize, I: Isa> Mask<T, N, I> {
         (bits != 0).then(|| bits.trailing_zeros() as usize / bits_per_lane)
     }
 
-    #[inline(always)]
-    pub fn last_set(self) -> Option<usize> {
-        let (bits, bits_per_lane) = I::movemask(self);
-        (bits != 0).then(|| (63 - bits.leading_zeros() as usize) / bits_per_lane)
-    }
-
     /// The number of lanes that are set.
     #[inline(always)]
     pub fn count(self) -> usize {

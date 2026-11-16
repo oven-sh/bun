@@ -81,15 +81,12 @@ mod simd {
         let holds = |name: &str, got: Mask<T, N>, want: fn(i128, i128) -> bool| {
             let want: [bool; N] = from_fn(|i| want(a[i].into(), b[i].into()));
             let bits = (0..N).map(|i| u64::from(want[i]) << i).sum();
-            let (first, last) = (
-                want.iter().position(|&it| it),
-                want.iter().rposition(|&it| it),
-            );
+            let first = want.iter().position(|&it| it);
             let (any, all) = (first.is_some(), !want.contains(&false));
             let vector = want.map(|it| T::wrapping_from(-i128::from(it)));
             let selected = from_fn(|i| if want[i] { a[i] } else { b[i] });
             assert_eq!(got.to_bitmask(), bits, "{name} {a:?} {b:?}");
-            assert_eq!([got.first_set(), got.last_set()], [first, last], "{name}");
+            assert_eq!(got.first_set(), first, "{name}");
             assert_eq!(
                 [got.any(), got.none(), got.all()],
                 [any, !any, all],
@@ -222,7 +219,6 @@ mod simd {
                 let mask = U8::from_array(black_box(from_fn(|i| (bits >> i & 1) as u8))).simd_eq(1);
                 assert_eq!(mask.to_bitmask(), bits);
                 assert_eq!(mask.first_set(), bits.lowest_one().map(|it| it as usize));
-                assert_eq!(mask.last_set(), bits.highest_one().map(|it| it as usize));
                 assert_eq!(
                     [mask.any(), mask.all()],
                     [bits != 0, bits.count_ones() == N as u32]

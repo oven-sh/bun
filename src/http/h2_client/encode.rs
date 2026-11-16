@@ -5,14 +5,13 @@
 use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
-use crate::HTTPClient;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
+use crate::{HTTPClient, Request};
 use bun_core::strings;
 use bun_http_types::h2::flow_control::DEFAULT_WINDOW_SIZE;
 use bun_http_types::h2::frame::{CONNECTION_PREFACE, FrameType, flags};
 use bun_http_types::h2::settings::{self, SettingId};
-use bun_picohttp as picohttp;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(CONNECTION_PREFACE);
@@ -81,7 +80,7 @@ pub(crate) fn write_request(
     session: &mut ClientSession,
     client: &mut HTTPClient,
     stream: &mut Stream,
-    request: &picohttp::Request<'_>,
+    request: &Request<'_>,
 ) -> crate::Result<()> {
     let mut authority: &[u8] = client.url.host;
     let mut has_expect_continue = false;

@@ -355,8 +355,12 @@ impl ClientSession {
             }
             return;
         }
-        let head = (!core::mem::replace(&mut st.headers_delivered, true))
-            .then_some((u32::from(st.status_code), st.decoded_headers.as_slice()));
+        let head = (!core::mem::replace(&mut st.headers_delivered, true)).then(|| {
+            crate::Response::from_fields(
+                u32::from(st.status_code),
+                core::mem::take(&mut st.decoded_headers),
+            )
+        });
         let progress = client.receive_from_stream(head, &st.body_buffer, done);
         st.body_buffer.clear();
         match progress {

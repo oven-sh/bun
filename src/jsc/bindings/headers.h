@@ -67,7 +67,6 @@ CPP_DECL void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* arg0, StringP
 CPP_DECL bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* arg0, uint32_t* arg1, uint32_t* arg2);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty();
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg0);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1);
 CPP_DECL void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0);

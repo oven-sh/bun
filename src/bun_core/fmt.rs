@@ -3556,28 +3556,6 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
-/// `parts` joined into one POSIX shell word: `'...'`, with each `'` written as `'\''`.
-pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
-
-pub fn quote_posix_shell<'a>(parts: &'a [&'a [u8]]) -> QuotePosixShell<'a> {
-    QuotePosixShell(parts)
-}
-
-impl Display for QuotePosixShell<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("'")?;
-        for part in self.0 {
-            let mut remain = *part;
-            while let Some(i) = crate::strings::index_of_char_usize(remain, b'\'') {
-                write!(f, "{}'\\''", bstr::BStr::new(&remain[..i]))?;
-                remain = &remain[i + 1..];
-            }
-            write!(f, "{}", bstr::BStr::new(remain))?;
-        }
-        f.write_str("'")
-    }
-}
-
 /// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)
 /// and U+2066-U+2069 (bidirectional isolates), so that untrusted text cannot alter our output.
 pub struct EscapeControlChars<T>(pub T);

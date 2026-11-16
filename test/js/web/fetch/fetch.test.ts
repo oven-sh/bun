@@ -3976,10 +3976,11 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
       { request: "/204", status: 204, body: "", newConnections: 0 },
       { request: "/304 + trailing bytes", status: 304, body: "", newConnections: 1 },
       { request: "/304", status: 304, body: "", newConnections: 0 },
+      // The origin may still send the chunked body that it announced.
       { request: "/204-chunked + trailing bytes", status: 204, body: "", newConnections: 1 },
-      { request: "/204-chunked", status: 204, body: "", newConnections: 0 },
+      { request: "/204-chunked", status: 204, body: "", newConnections: 1 },
       { request: "/304-chunked + trailing bytes", status: 304, body: "", newConnections: 1 },
-      { request: "/304-chunked", status: 304, body: "", newConnections: 0 },
+      { request: "/304-chunked", status: 304, body: "", newConnections: 1 },
       { request: "/empty + trailing bytes", status: 200, body: "", newConnections: 1 },
       { request: "/empty", status: 200, body: "", newConnections: 0 },
       { request: "/head + trailing bytes", status: 200, body: "", newConnections: 1 },
@@ -4069,7 +4070,7 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       payload,
       Buffer.from("\r\n0\r\n\r\n", "latin1"),
     ]);
-  // The client has two chunked decoders: one for a read that fits its 16 KiB scratch buffer, one for the rest.
+  // More than one read.
   const largeBody = Buffer.alloc(64 * 1024, "x").toString();
   const responses: Record<string, Buffer> = {
     "/legit": chunkedResponse(Buffer.from("legit!")),
@@ -4129,7 +4130,7 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       results.push([path, body === largeBody ? "<large body>" : body, connections]);
     }
     // Each body still arrives in full. Only the request after an overshoot dials a new connection. A repeated
-    // terminator or one empty line isn't an overshoot.
+    // terminator isn't an overshoot.
     expect(results).toEqual([
       ["/overshoot", "hello", 1],
       ["/legit", "legit!", 2],
@@ -4139,10 +4140,10 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       ["/repeated-terminator", "hello", 4],
       ["/legit", "legit!", 4],
       ["/one-crlf", "hello", 4],
-      ["/one-crlf-large", "<large body>", 4],
-      ["/two-crlf", "hello", 4],
-      ["/crlf-overshoot", "hello", 5],
-      ["/legit", "legit!", 6],
+      ["/one-crlf-large", "<large body>", 5],
+      ["/two-crlf", "hello", 6],
+      ["/crlf-overshoot", "hello", 7],
+      ["/legit", "legit!", 8],
     ]);
   } finally {
     for (const socket of sockets) socket.destroy();
@@ -4453,6 +4454,22 @@ it.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+it("verbose fetch logging keeps the quotes of a header value in the curl command", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `await fetch(process.env.SERVER_URL, { verbose: "curl", headers: { "If-Match": '"a"' } });`],
+    env: { ...bunEnv, SERVER_URL: server.url.href },
+    stdout: "inherit",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(String.raw`-H "If-Match: \"a\""`);
+  expect(exitCode).toBe(0);
+});
+
 it("verbose fetch logging escapes control characters coming from the peer", async () => {
   // U+009B is the one-byte form of ESC [ (CSI), so "\u009b31m" written to a terminal as-is turns
   // the rest of the line red. HTTP/1.1 lets a server put any byte >= 0x80 in a reason phrase or
@@ -4504,7 +4521,7 @@ it("verbose fetch logging escapes control characters coming from the peer", asyn
   expect(stderr).toMatch(/^.*authorization: Bea\\u009brer \[redacted\]$/im);
   expect(stderr).toMatch(/^< 500 Server \\u009bError$/m);
   expect(stderr).toMatch(/^< x-evil: a\\u009b31mb$/m);
-  expect(stderr).toContain(isWindows ? `-H "x-req: v\\u009b31mq"` : `-H 'x-req: v\\u009b31mq'`);
+  expect(stderr).toContain(`-H "x-req: v\\u009b31mq"`);
   expect(stderr).not.toMatch(/[\x80-\x9f]/);
   expect(exitCode).toBe(0);
 });
@@ -4553,7 +4570,7 @@ it.skipIf(isWindows)(
     ]);
     const argv = args.split("\n");
     expect(shellStderr).toBe("");
-    expect(argv.slice(0, 5)).toEqual(["--http1.1", url, "--globoff", "-X", "POST"]);
+    expect(argv.slice(0, 5)).toEqual(["--http1.1", url.replace("$", "%24"), "--globoff", "-X", "POST"]);
     expect(argv).toContain(`x-req: ${header}`);
     expect(argv.slice(-3)).toEqual(["--data-raw", body, ""]);
     expect(shellExitCode).toBe(0);

@@ -25,7 +25,10 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{Carrier, HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, StreamProgress};
+use crate::{
+    Carrier, HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, RequestBuffer, Response,
+    StreamProgress,
+};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -544,8 +547,8 @@ impl ClientSession {
             client.fail(e);
             return;
         }
-        let mut header_overflow = Vec::new();
-        let request = client.build_request(client.body_len_for_send(), &mut header_overflow);
+        let mut buffer = RequestBuffer::default();
+        let request = client.build_request(&mut buffer);
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // No RST: the server never saw this stream id, and RST_STREAM on an idle stream is a connection error (RFC 9113 §5.1).
             self.remove_stream(stream);
@@ -1069,8 +1072,12 @@ impl ClientSession {
         if stream.status_code == 0 {
             return false;
         }
-        let head = core::mem::take(&mut stream.headers_ready)
-            .then_some((stream.status_code, stream.decoded_headers.as_slice()));
+        let head = core::mem::take(&mut stream.headers_ready).then(|| {
+            Response::from_fields(
+                stream.status_code,
+                core::mem::take(&mut stream.decoded_headers),
+            )
+        });
         let mut progress =
             client.receive_from_stream(head, &stream.body_buffer, stream.remote_closed());
         stream.body_buffer.clear();

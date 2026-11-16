@@ -501,19 +501,27 @@ impl Expect {
     }
 
     /// A promise that settles the way `await value` would, or `None` if `value` isn't thenable.
+    /// A promise is only marked as handled if this returns it, or returns a promise that follows it.
     #[optimize(size)]
     fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
-        if let Some(promise) = value.as_any_promise() {
+        let promise = value.as_any_promise();
+        if let Some(promise) = promise
+            && promise.status() != js_promise::Status::Pending
+        {
             promise.set_handled(global_this.vm());
-            if promise.status() != js_promise::Status::Pending {
-                return Ok(Some(promise));
-            }
+            return Ok(Some(promise));
         }
         let adopted = bun_jsc::JSPromise::create(global_this);
         adopted.set_handled();
         adopted.resolve(global_this, value)?;
         // A thenable's `then` only runs in a microtask, so `adopted` is already fulfilled only if `value` isn't thenable.
-        Ok((adopted.status() != js_promise::Status::Fulfilled).then_some(bun_jsc::AnyPromise::Normal(adopted)))
+        match (adopted.status(), promise) {
+            (js_promise::Status::Fulfilled, _) => return Ok(None),
+            // `adopted` subscribes to the promise in that microtask. The mark covers a rejection before it.
+            (js_promise::Status::Pending, Some(promise)) => promise.set_handled(global_this.vm()),
+            _ => {}
+        }
+        Ok(Some(bun_jsc::AnyPromise::Normal(adopted)))
     }
 
     fn received_promise(global_this: &JSGlobalObject, received: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
@@ -646,9 +654,7 @@ impl Expect {
         let v = *value;
         let promise = match flags.promise() {
             Promise::None => None,
-            _ => match Pass::settled(global_this, Question { asked: Asked::Promise, who: JSValue::UNDEFINED, what: v }, &mut || {
-                Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
-            }) {
+            _ => match Pass::settled(global_this, v) {
                 Ok(promise) => promise,
                 Err(_) => return false,
             },
@@ -1647,26 +1653,20 @@ impl Expect {
         })?;
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
-            let vm = global_this.vm();
-            promise.set_handled(vm);
-            if promise.status() == js_promise::Status::Pending {
-                return Err(Pass::wait_for(global_this, promise));
-            }
-
-            result = promise.result(vm);
-            result.ensure_still_alive();
-            debug_assert!(!result.is_empty());
-            match promise.status() {
-                js_promise::Status::Pending => unreachable!(),
-                js_promise::Status::Fulfilled => {}
-                js_promise::Status::Rejected => {
-                    bun_test::print_error(VirtualMachine::get(), global_this, result, None);
+            result = match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
+                // Left unmarked: where nothing can wait, `wait_for` throws, and a later rejection is still reported.
+                js_promise::Unwrapped::Pending => return Err(Pass::wait_for(global_this, promise)),
+                js_promise::Unwrapped::Fulfilled(value) => value,
+                js_promise::Unwrapped::Rejected(reason) => {
+                    bun_test::print_error(VirtualMachine::get(), global_this, reason, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,
                     )));
                 }
-            }
+            };
+            result.ensure_still_alive();
+            debug_assert!(!result.is_empty());
         }
 
         let mut pass: bool = false;

@@ -21,6 +21,7 @@ use crate::test_runner::bun_test::{
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
+use crate::test_runner::pretty_format;
 use crate::test_runner::vi_wait::ViWait;
 
 type Matcher<'m, 'a> = &'m dyn Fn(&mut JsScope<'a>) -> JsResult<JSValue>;
@@ -506,12 +507,20 @@ impl Pass {
         Self::return_or_throw(global, threw, value)
     }
 
-    pub(crate) fn settled(
-        global: &JSGlobalObject,
-        question: Question,
-        ask: &mut dyn FnMut() -> JsResult<JSValue>,
-    ) -> JsResult<Option<AnyPromise>> {
-        let Some(promise) = Self::once(global, question, ask)?.as_any_promise() else {
+    /// What `await value` waits on, once it has settled. `None` if `value` isn't thenable. The matcher waits for a
+    /// pending one. Where nothing can wait, this throws and leaves `value` as it was.
+    pub(crate) fn settled(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
+        let question = Question {
+            asked: Asked::Promise,
+            who: JSValue::UNDEFINED,
+            what: value,
+        };
+        let awaited = Self::once(global, question, &mut || match Self::current() {
+            Some(_) => Ok(Expect::promise_to_await(global, value)?
+                .map_or(JSValue::UNDEFINED, AnyPromise::as_value)),
+            None => Self::settled_already(global, value),
+        })?;
+        let Some(promise) = awaited.as_any_promise() else {
             return Ok(None);
         };
         if promise.status() == Status::Pending {
@@ -520,14 +529,49 @@ impl Pass {
         Ok(Some(promise))
     }
 
+    /// `settled()` where nothing can wait. A pending promise or a thenable stays as it was: a handled mark, a
+    /// reaction or a call of `then()` would outlive the throw.
+    #[cold]
+    #[optimize(size)]
+    fn settled_already(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        // Only an object can be a thenable. `member` would search a primitive's prototype, and throw for null.
+        if !value.is_object() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if let Some(promise) = value.as_any_promise()
+            && promise.status() != Status::Pending
+        {
+            // The answer comes from this promise, so a rejection of it is handled.
+            promise.set_handled(global.vm());
+            return Ok(value);
+        }
+        // A plain Get, as in `await`. `JSValue::get` skips `Object.prototype`.
+        match pretty_format::member(global, value, "then") {
+            Ok(then) if then.is_callable() => Err(Self::cannot_wait(global)),
+            Ok(_) => Ok(JSValue::UNDEFINED),
+            // As in `await`, what the `then` getter threw becomes a rejection.
+            Err(thrown) => {
+                let rejected = JSPromise::create(global);
+                rejected.set_handled();
+                rejected.reject(global, Err(thrown))?;
+                Ok(rejected.to_js())
+            }
+        }
+    }
+
+    #[cold]
+    fn cannot_wait(global: &JSGlobalObject) -> JsError {
+        global.throw(format_args!(
+            "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
+        ))
+    }
+
     /// Throws an `ExpectDeferred`, which makes the running matcher return a promise and re-run once `promise` settles.
     /// `promise` must come from `once()`, so the re-run sees the same one.
     #[cold]
     pub(crate) fn wait_for(global: &JSGlobalObject, promise: AnyPromise) -> JsError {
         let Some(pass) = Self::current() else {
-            return global.throw(format_args!(
-                "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
-            ));
+            return Self::cannot_wait(global);
         };
         let journal = match pass.journal(global, pass.cursor.get()) {
             Ok(journal) => journal,

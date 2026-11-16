@@ -186,12 +186,6 @@ extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
-/* crypto/sni_tree.h, the one place server names are compared, as a tree that owns contexts. */
-struct us_sni_tree_t;
-struct us_sni_tree_t *sni_new();
-void sni_free(struct us_sni_tree_t *sni);
-void sni_add(struct us_sni_tree_t *sni, const char *hostname, struct ssl_ctx_st *owned_ctx);
-struct ssl_ctx_st *sni_find(struct us_sni_tree_t *sni, const char *hostname);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
@@ -588,6 +582,15 @@ void us_internal_ssl_loop_state_restore(void **saved);
 }
 
 #include <memory>
+
+/* Leaves `buffer`, a unique_ptr to a block of us_malloc's, as it was when there is no memory. */
+static inline bool us_grow(auto &buffer, size_t size) {
+    auto *grown = (decltype(buffer.get())) us_realloc(buffer.get(), size);
+    if (!grown) return false;
+    buffer.release();
+    buffer.reset(grown);
+    return true;
+}
 
 struct us_poll_deleter_t {
     struct us_loop_t *loop;

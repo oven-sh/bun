@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import diagnostics from "node:diagnostics_channel";
 import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -765,6 +766,155 @@ describe("a response that the server resets after its headers", () => {
     } finally {
       client.destroy();
       server.close();
+    }
+  });
+});
+
+describe.each(["GET", "POST"] as const)("a response to %s whose headers are not sent", method => {
+  type Respond = (stream: http2.ServerHttp2Stream, headers: http2.OutgoingHttpHeaders) => void;
+  const ways: [string, Respond][] = [
+    ["respond()", (stream, headers) => stream.respond(headers)],
+    ["respond() with endStream", (stream, headers) => stream.respond(headers, { endStream: true })],
+    ["respond(), end(body)", (stream, headers) => (stream.respond(headers), stream.end("~"))],
+    [
+      "respond() with waitForTrailers",
+      (stream, headers) => (stream.respond(headers, { waitForTrailers: true }), stream.end()),
+    ],
+    [
+      "respond() with waitForTrailers and a 'wantTrailers' listener",
+      (stream, headers) => {
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.respond(headers, { waitForTrailers: true });
+        stream.end("~");
+      },
+    ],
+    [
+      "additionalHeaders(), respond()",
+      (stream, headers) => (stream.additionalHeaders({ ":status": 103, ...headers }), stream.respond()),
+    ],
+  ];
+  const tooLong = { "x-long": Buffer.alloc(1000, "~").toString() };
+
+  const request = (id: number) =>
+    encodeFrame(FrameType.HEADERS, method === "GET" ? 0x5 : 0x4, id, requestHeaderBlock(method));
+  // Enough for a WINDOW_UPDATE.
+  const body = Array(method === "GET" ? 0 : 3).fill(encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16000)));
+
+  /** The frames of all streams but 3, whose handler calls `respond`. */
+  async function framesOf(options: http2.ServerOptions, respond: (first: any, second: any, onClose: any) => void) {
+    const server = http2.createServer(options);
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    // What _destroy() leaves for the next turn of the event loop is sent by then.
+    const onClose = () => setImmediate(resolve);
+    let first: http2.ServerHttp2Stream;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.id === 1) first = stream.once("close", onClose);
+      else respond(first, stream, onClose);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.send(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1), request(3), ...body]));
+      await closed;
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      return c.frames.filter(f => f.streamId !== 0 && f.streamId !== 3).map(describeFrame);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }
+  const describeFrame = (f: Pick<Frame, "streamId" | "type" | "payload">) =>
+    `${f.streamId} ${Object.keys(FrameType)[f.type]}${f.type === FrameType.RST_STREAM ? " " + f.payload[3] : ""}`;
+
+  test.each(ways)("%s over maxSendHeaderBlockLength resets the stream", async (_, respond) => {
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => respond(first, tooLong));
+    expect(sent).toEqual(["1 RST_STREAM 6"]);
+  });
+
+  test.each(ways)("%s over maxSessionMemory resets the stream", async (_, respond) => {
+    const sent = await framesOf({ maxSessionMemory: 1 }, (first, second) => {
+      second.respond();
+      second.write(Buffer.alloc(2 * 1024 * 1024));
+      respond(first, {});
+    });
+    expect(sent).toEqual(["1 RST_STREAM 11"]);
+  });
+
+  test("read() sends no WINDOW_UPDATE from then on", async () => {
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => {
+      first._readableState.highWaterMark = 1;
+      setImmediate(() => (first.respond(tooLong), first.read(first.readableLength)));
+    });
+    expect(sent).toEqual(["1 RST_STREAM 6"]);
+  });
+
+  test("respond() on a pushed stream resets that one", async () => {
+    let id: number | undefined;
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, (first, _, onClose) =>
+      first.pushStream({}, (_: any, pushed: any) => {
+        id = pushed.id;
+        pushed.on("error", () => {}).once("close", onClose);
+        pushed.respond(tooLong);
+      }),
+    );
+    expect(sent.filter(frame => frame !== "1 WINDOW_UPDATE")).toEqual(["1 PUSH_PROMISE", `${id} RST_STREAM 6`]);
+  });
+
+  test("pushStream() fails from then on", async () => {
+    let code: string | undefined;
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => {
+      first.respond(tooLong);
+      first.pushStream({}, (error: any) => (code = error?.code));
+    });
+    expect({ sent, code }).toEqual({ sent: ["1 RST_STREAM 6"], code: "ERR_HTTP2_INVALID_STREAM" });
+  });
+
+  test("pushStream() releases the streams that it has reserved", async () => {
+    const refs: WeakRef<object>[] = [];
+    const onCreated = ({ stream }: any) => void (stream.id % 2 === 0 && refs.push(new WeakRef(stream)));
+    const transport = new Transport();
+    const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
+    server.emit("connection", transport);
+    diagnostics.subscribe("http2.server.stream.created", onCreated);
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
+      const [stream] = await once(server, "stream");
+      stream.on("error", () => {}).respond(tooLong);
+      for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      expect(refs.length).toBe(32);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      diagnostics.unsubscribe("http2.server.stream.created", onCreated);
+      transport.destroy();
+    }
+  });
+
+  test("RST_STREAM is sent once, also if the server reads right after it", async () => {
+    const chunks: Buffer[] = [];
+    const transport = new Transport(chunk => chunks.push(Buffer.from(chunk)));
+    const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
+    server.emit("connection", transport);
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
+      const [stream] = await once(server, "stream");
+      // Out of that read, so that the next push is read at once.
+      await new Promise(setImmediate);
+      await new Promise(resolve => {
+        stream.on("error", () => {});
+        stream.on("close", () => {
+          transport.push(encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)));
+          setImmediate(resolve);
+        });
+        stream.respond(tooLong);
+      });
+      await new Promise(setImmediate);
+      const reset = encodeFrame(FrameType.RST_STREAM, 0, 1, Buffer.from([0, 0, 0, ErrorCode.FRAME_SIZE_ERROR]));
+      expect(Buffer.concat(chunks).toString("hex").split(reset.toString("hex")).length - 1).toBe(1);
+    } finally {
+      transport.destroy();
     }
   });
 });

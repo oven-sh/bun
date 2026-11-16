@@ -2194,7 +2194,11 @@ impl Connection {
     /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
         let inc = match self.streams.get_mut(&stream_id) {
-            Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
+            Some(s)
+                if s.state != State::Closed
+                    && s.recv_window.needs_update()
+                    && sink.is_stream_reading(stream_id) =>
+            {
                 s.recv_window.take_update()
             }
             _ => return,

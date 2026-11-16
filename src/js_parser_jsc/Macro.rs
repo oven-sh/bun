@@ -519,7 +519,7 @@ impl<'a> Run<'a> {
             T::Private => {
                 self.is_top_level = false;
 
-                let mut blob_: Option<*const WebCore::Blob> = None;
+                let mut blob_ = None;
 
                 if value.js_type() == jsc::JSType::DOMWrapper {
                     // LAYERING: `Response`/`Request` (and their `BodyMixin::
@@ -531,21 +531,16 @@ impl<'a> Run<'a> {
                     let hooks = runtime_hooks().expect("RuntimeHooks not installed");
                     if let Some(body_blob) = (hooks.body_mixin_get_blob)(value, self.global)? {
                         return self.run(body_blob);
-                    } else if let Some(resp) = value.as_::<WebCore::Blob>() {
+                    } else if let Some(resp) = value.as_class_ref::<WebCore::Blob>() {
                         blob_ = Some(resp);
-                    } else if value.as_::<ResolveMessage>().is_some()
-                        || value.as_::<BuildMessage>().is_some()
-                    {
+                    } else if value.is::<ResolveMessage>() || value.is::<BuildMessage>() {
                         let _ = self.vm.uncaught_exception(self.global, value, false);
                         return Err(MacroError::MacroFailed);
                     }
                 }
 
                 if let Some(blob) = blob_ {
-                    // SAFETY: `value` owns `blob` and is live. `expr_from_blob` runs no script
-                    // and copies what it keeps.
-                    let (bytes, ct) =
-                        unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
+                    let (bytes, ct) = (blob.shared_view(), blob.content_type_slice());
                     return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
                         .map_err(|_| MacroError::MacroFailed);
                 }

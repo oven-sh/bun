@@ -7,7 +7,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
-    JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, bun_string_jsc,
+    JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
 };
 use bun_paths::resolve_path;
 use bun_ptr::CellExt as _;
@@ -101,12 +101,8 @@ impl TestContext {
         self.fixtures.with_taken(|fixtures| fixtures.retain(|&fixture| fixture != definition));
     }
 
-    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<&'a TestContext> {
-        match TestContext::from_js(this_value.to_js()) {
-            // SAFETY: the wrapper owns the payload, and the frame keeps the wrapper alive.
-            Some(this) => Ok(unsafe { &*this }),
-            None => Err(global.throw_type_error(format_args!("Expected this to be a test context"))),
-        }
+    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<WrapperGuard<'a, TestContext>> {
+        this_value.as_class_ref().ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a test context")))
     }
 
     /// `buntest` is `self.buntest`.
@@ -203,9 +199,8 @@ impl TestContext {
     }
 
     pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) {
-        if let Some(signal) = js::signal_get_cached(this_value).and_then(AbortSignal::from_js) {
-            // SAFETY: the wrapper in the cached slot keeps the signal alive.
-            unsafe { &*signal }.signal(global, CommonAbortReason::Timeout);
+        if let Some(signal) = js::signal_get_cached(this_value).as_ref().and_then(AbortSignal::from_js) {
+            signal.signal(global, CommonAbortReason::Timeout);
         }
     }
 

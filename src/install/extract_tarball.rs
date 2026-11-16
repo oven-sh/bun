@@ -309,7 +309,7 @@ impl ExtractTarball {
 
             // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
-            // Small tarballs still try libdeflate first for speed; the gzip
+            // Small tarballs still try `bun_deflate` first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
             let mut decompressed_in_memory = false;
             if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
@@ -324,25 +324,15 @@ impl ExtractTarball {
                     } else {
                         let _ = zlib_pool.ensure_unused_capacity(isize as usize);
                     }
-                    if zlib_pool.list.capacity() > 16 {
-                        use bun_libdeflate_sys::libdeflate;
-                        if let Some(decompressor) = libdeflate::OwnedDecompressor::new() {
-                            zlib_pool.list.clear();
-                            let result = decompressor.decompress_to_vec(
-                                tgz_bytes,
-                                &mut zlib_pool.list,
-                                libdeflate::Encoding::Gzip,
-                            );
-                            // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to `extract_to_dir`, which also counts the layers.
-                            if result.status == libdeflate::Status::Success
-                                && result.read == tgz_bytes.len()
-                                && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list)
-                            {
-                                decompressed_in_memory = true;
-                            }
-                        }
-                    }
+                    zlib_pool.list.clear();
+                    let output = bun_deflate::Output::Vec {
+                        limit: zlib_pool.list.capacity(),
+                        vec: &mut zlib_pool.list,
+                    };
+                    // `gunzip` reads one member. More members, or more layers, are left to `extract_to_dir`.
+                    decompressed_in_memory = bun_deflate::gunzip(tgz_bytes, output)
+                        .is_ok_and(|result| result.read == tgz_bytes.len())
+                        && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list);
                 }
             }
 

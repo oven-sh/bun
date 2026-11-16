@@ -2,6 +2,7 @@ import { xxHash3ForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { gcTick, tempDir } from "harness";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 
 it(`Bun.hash()`, () => {
   gcTick();
@@ -17,6 +18,16 @@ it(`Bun.hash.adler32()`, () => {
   expect(Bun.hash.adler32("hello world")).toBe(0x1a0b045d);
   gcTick();
   expect(Bun.hash.adler32(new TextEncoder().encode("hello world"))).toBe(0x1a0b045d);
+});
+it(`Bun.hash.adler32() is what zlib puts at the end of a stream`, () => {
+  const varied = Buffer.from(Uint8Array.from({ length: 140_000 }, (_, i) => (i * 7919) >> 5));
+  const lengths = [0, 1, 31, 32, 127, 128, 129, 511, 512, 513, 5552, 65_536, 131_071, 131_072, 131_073, 140_000];
+  const inputs = [varied, Buffer.alloc(140_000, 255)].flatMap(bytes =>
+    lengths.map(length => bytes.subarray(0, length)),
+  );
+  expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(
+    inputs.map(input => deflateSync(input, { level: 0 }).subarray(-4).readUInt32BE()),
+  );
 });
 it(`Bun.hash.crc32()`, () => {
   expect(Bun.hash.crc32("hello world")).toBe(0x0d4a1185);

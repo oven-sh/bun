@@ -462,7 +462,6 @@ export type DepName =
   | "brotli"
   | "cares"
   | "highway"
-  | "libdeflate"
   | "libuv"
   | "libwebp"
   | "lolhtml"

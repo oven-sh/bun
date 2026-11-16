@@ -15,7 +15,6 @@ import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
-import { libdeflate } from "./libdeflate.ts";
 import { libuv } from "./libuv.ts";
 import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
@@ -45,7 +44,6 @@ export const allDeps: readonly Dependency[] = [
   zlib,
   zstd,
   brotli,
-  libdeflate,
   libwebp,
   cares,
   highway,
@@ -73,7 +71,6 @@ export {
   brotli,
   cares,
   highway,
-  libdeflate,
   libuv,
   libwebp,
   lolhtml,

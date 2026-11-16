@@ -1,7 +1,7 @@
 use bun_core::output as Output;
 use bun_sys::CloseOnDrop;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchList, Watcher, WatcherThread};
+use crate::watcher_impl::{Op, WatchEvent, Watcher, WatcherThread};
 
 pub(crate) type Platform = KEventWatcher;
 
@@ -24,7 +24,7 @@ impl KEventWatcher {
 }
 
 impl Watcher {
-    pub(crate) fn wake(&self, _: &WatchList) {
+    pub(crate) fn wake(&self) {
         let mut add: libc::kevent = bun_core::ffi::zeroed();
         add.filter = libc::EVFILT_USER;
         let mut trigger = add;

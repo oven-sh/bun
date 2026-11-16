@@ -91,9 +91,9 @@ impl core::ops::Deref for OwnedWatcher {
 
 impl Drop for OwnedWatcher {
     fn drop(&mut self) {
-        let state = self.state.lock();
+        let _state = self.state.lock();
         self.running.store(false);
-        self.wake(&state.watchlist);
+        self.wake();
     }
 }
 

@@ -5,7 +5,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::Arc;
 
 use crate::watcher_impl::{
-    Op, WatchEvent, WatchItemColumns, WatchItemIndex, WatchList, Watcher, WatcherThread,
+    Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher, WatcherThread,
 };
 use bun_core::strings;
 use bun_paths::PathBuffer;
@@ -310,7 +310,7 @@ impl Drop for WindowsWatcher {
 }
 
 impl Watcher {
-    pub(crate) fn wake(&self, _: &WatchList) {
+    pub(crate) fn wake(&self) {
         let port = self.port.as_raw_handle();
         // SAFETY: only `WindowsWatcher` dequeues, and `next` fails on a null `OVERLAPPED`.
         unsafe { w::kernel32::PostQueuedCompletionStatus(port, 0, 0, ptr::null_mut()) };

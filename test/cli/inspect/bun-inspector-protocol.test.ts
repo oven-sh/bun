@@ -15,6 +15,7 @@ import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { basename, join } from "node:path";
+import ts from "typescript";
 import {
   domainsWithoutAgent,
   formatProtocol,
@@ -45,10 +46,7 @@ function resolveRef($ref: string, domain: string): { type: Property; domain: str
 }
 
 /** What tsc reports for a .d.ts checked on its own, i.e. what a consumer would see without skipLibCheck. */
-async function typeErrors(dtsPath: string): Promise<string[]> {
-  // Loaded here and not by a module-scope import: a debug build of bun takes longer to load typescript than
-  // a whole test may run by default, and the one test that calls this is skipped there.
-  const ts = (await import("typescript")).default;
+function typeErrors(dtsPath: string): string[] {
   const program = ts.createProgram([dtsPath], {
     strict: true,
     noEmit: true,
@@ -251,8 +249,8 @@ test("generate-protocol.ts carries along the types that the JavaScript domains r
 
 // The two tests above check the same thing at the protocol.json level; this one is what the consumers of the
 // package would see, but typescript is too slow for it in a debug build of bun.
-test.skipIf(isDebug)("the generated index.d.ts type-checks without skipLibCheck", async () => {
-  expect(await typeErrors(join(protocolDir, "jsc/index.d.ts"))).toEqual([]);
+test.skipIf(isDebug)("the generated index.d.ts type-checks without skipLibCheck", () => {
+  expect(typeErrors(join(protocolDir, "jsc/index.d.ts"))).toEqual([]);
 
   using dir = tempDir("bun-inspector-protocol-generated", {
     "selected.d.ts": formatProtocol({
@@ -263,9 +261,11 @@ test.skipIf(isDebug)("the generated index.d.ts type-checks without skipLibCheck"
     // The JavaScript domains on their own, which is what the generator used to emit.
     "debugger-only.d.ts": formatProtocol({ name: "JSC", version, domains: [debuggerDomain] }),
   });
-  expect(await typeErrors(join(String(dir), "selected.d.ts"))).toEqual([]);
+  expect(typeErrors(join(String(dir), "selected.d.ts"))).toEqual([]);
   expect(
-    (await typeErrors(join(String(dir), "debugger-only.d.ts"))).map(error => error.replace(/^.*?:\d+: /, "")).sort(),
+    typeErrors(join(String(dir), "debugger-only.d.ts"))
+      .map(error => error.replace(/^.*?:\d+: /, ""))
+      .sort(),
   ).toEqual([
     "Cannot find namespace 'GenericTypes'.",
     "Cannot find namespace 'Page'.",

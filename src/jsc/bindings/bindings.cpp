@@ -5265,6 +5265,11 @@ extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC::Exception* excepti
     return JSC::JSValue::encode(exception);
 }
 
+void JSC__VM__sanitizeStack(JSC::VM* vm)
+{
+    JSC::sanitizeStackForVM(*vm);
+}
+
 void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
 {
     arg0->finalizeSynchronousJSExecution();

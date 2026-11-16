@@ -973,7 +973,6 @@ enum KnownHeader {
     Connection,
     ContentEncoding,
     ContentLength,
-    ContentType,
     Host,
     IfModifiedSince,
     KeepAlive,
@@ -992,7 +991,6 @@ bun_core::comptime_string_map! {
         b"connection" => KnownHeader::Connection,
         b"content-encoding" => KnownHeader::ContentEncoding,
         b"content-length" => KnownHeader::ContentLength,
-        b"content-type" => KnownHeader::ContentType,
         b"host" => KnownHeader::Host,
         b"if-modified-since" => KnownHeader::IfModifiedSince,
         b"keep-alive" => KnownHeader::KeepAlive,
@@ -4344,7 +4342,6 @@ impl<'a> HTTPClient<'a> {
         }
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
-        let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         let mut has_keep_alive_token = false;
         let mut has_transfer_encoding = false;
@@ -4375,11 +4372,6 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         // ignore body size for HEAD requests
                         self.state.content_length = Some(0);
-                    }
-                }
-                Some(KnownHeader::ContentType) => {
-                    if strings::index_of(header.value(), b"text/event-stream").is_some() {
-                        is_server_sent_events = true;
                     }
                 }
                 Some(KnownHeader::ContentEncoding) => {
@@ -4492,7 +4484,6 @@ impl<'a> HTTPClient<'a> {
         if has_no_body {
             self.state.content_length = Some(0);
             self.state.transfer_encoding = Encoding::Identity;
-            is_server_sent_events = false;
         }
 
         // Don't do this for proxies because those connections will be open for awhile.
@@ -4676,8 +4667,7 @@ impl<'a> HTTPClient<'a> {
         if self.method.has_body()
             && (content_length.is_none()
                 || content_length.unwrap() > 0
-                || self.state.transfer_encoding == Encoding::Chunked
-                || is_server_sent_events)
+                || self.state.transfer_encoding == Encoding::Chunked)
         {
             if follows_redirect {
                 // WHATWG HTTP-redirect fetch runs on the response head; the 3xx

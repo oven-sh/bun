@@ -120,6 +120,7 @@ const EMPTY_RESPONSES = [
   ["delete", "200 OK\r\nContent-Length: 0\r\nConnection: close"],
   ["delete", "204 No Content\r\nTransfer-Encoding: chunked"],
   ["delete", "204 No Content\r\nContent-Type: text/event-stream"],
+  ["write", "200 OK\r\nContent-Length: 0\r\nContent-Type: text/event-stream"],
 ] as const;
 
 describe.each([true, false])("peer sends FIN: %p", sendFin => {

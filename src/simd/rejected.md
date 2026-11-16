@@ -317,6 +317,13 @@ fn f(bytes: &[std::mem::MaybeUninit<u8>]) {
 }
 ```
 
+Of a type of one's own:
+
+```rust,compile_fail,E0603
+struct Padded(u8, u16);
+impl bun_simd_trusted::shared::sealed::Readable for Padded {}
+```
+
 A masked store to plain bytes:
 
 ```rust,compile_fail,E0308
@@ -341,6 +348,50 @@ A store to a type that has invalid values:
 
 ```rust,compile_fail,E0277
 bun_simd::Out::from(&mut [true][..]).into_shared()[0].set(2);
+```
+
+A copy from what can only be written:
+
+```rust,compile_fail,E0277
+fn f(bytes: &[bun_simd::SharedOutU8]) {
+    bun_simd::copy_to_shared(bytes, bytes);
+}
+```
+
+From bytes that are not initialized:
+
+```rust,compile_fail,E0277
+fn f(from: &[std::mem::MaybeUninit<u8>], to: &[bun_simd::SharedOutU8]) {
+    bun_simd::copy_to_shared(from, to);
+}
+```
+
+From what is smaller than a byte:
+
+```rust,compile_fail,E0277
+fn f(to: &[bun_simd::SharedOutU8]) {
+    bun_simd::copy_to_shared(&[(); 100], to);
+}
+```
+
+From a type of one's own:
+
+```rust,compile_fail,E0603
+struct Nothing;
+impl bun_simd_trusted::shared_u8::sealed::Byte for Nothing {
+    fn get(&self) -> u8 {
+        0
+    }
+}
+```
+
+A copy that lives longer than its memory:
+
+```rust,compile_fail,E0597
+let copy = {
+    let mut bytes = [0];
+    bun_simd::copy_from_shared(&[], (&mut bytes[..]).into())
+};
 ```
 
 ## `Out`

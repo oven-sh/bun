@@ -585,6 +585,14 @@ fn byte_set() {
     }
 }
 
+#[test]
+fn byte_set_of_ranges_that_overlap() {
+    let set = kernels::ByteSet::new(&[3..=40, 30..=50]);
+    for byte in 0..=255 {
+        assert_eq!(set.contains(byte), (3..=50).contains(&byte));
+    }
+}
+
 fn diagonal(rows: u8) -> kernels::ByteSet {
     kernels::ByteSet::new(&Vec::from_iter((0..rows).map(|row| 17 * row..=17 * row)))
 }

@@ -18,7 +18,7 @@
 //! with µWebSockets, bridging the gap between libuv's pipe handling and uSockets'
 //! unified socket interface.
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::{c_uint, c_void};
 
 use bun_boringssl_sys as boringssl;
@@ -46,7 +46,7 @@ type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 use crate::jsc_hooks::timer_all;
 
 pub(crate) struct WindowsNamedPipe {
-    pub(crate) wrapper: JsCell<Option<WrapperType>>,
+    pub(crate) wrapper: OnceCell<WrapperType>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Until [`start`](Self::start) hands it to `writer`.
     pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
@@ -82,8 +82,6 @@ bitflags::bitflags! {
         const IS_SSL       = 1 << 3;
         /// `writer` has taken the pipe.
         const PIPE_ADOPTED = 1 << 4;
-        const WRAPPER_BUSY = 1 << 5;
-        // _: u2 padding
     }
 }
 
@@ -117,8 +115,8 @@ pub(crate) struct Handlers {
     pub(crate) on_session: fn(*mut c_void, &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub(crate) on_keylog: fn(*mut c_void, &[u8]),
-    pub(crate) server_identity:
-        fn(*mut c_void, &mut boringssl::SSL) -> bun_boringssl::ServerIdentity,
+    pub(crate) server_identity: fn(*mut c_void, &boringssl::SSL) -> bun_boringssl::ServerIdentity,
+    pub(crate) alpn_select: ssl_wrapper::AlpnSelectFn<*mut c_void>,
 }
 
 impl WindowsNamedPipe {
@@ -129,23 +127,9 @@ impl WindowsNamedPipe {
         self.flags.set(flags);
     }
 
-    #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
-        self.wrapper.get().as_ref()
-    }
-
-    fn with_wrapper<R>(&self, f: impl FnOnce(&WrapperType) -> R) -> Option<R> {
-        let w = self.wrapper_ref()?;
-        let was_busy = self.flags.get().contains(Flags::WRAPPER_BUSY);
-        self.update_flags(|flags| flags.insert(Flags::WRAPPER_BUSY));
-        let result = f(w);
-        if !was_busy {
-            self.update_flags(|flags| flags.remove(Flags::WRAPPER_BUSY));
-            if self.flags.get().is_closed() {
-                self.wrapper.set(None);
-            }
-        }
-        Some(result)
+    fn install_wrapper(&self, wrapper: WrapperType) {
+        debug_assert!(self.wrapper.get().is_none(), "TLS was set up twice");
+        self.wrapper.get_or_init(|| wrapper);
     }
 
     /// Runs `f` on the pipe, which is dropped if that fails.
@@ -178,7 +162,7 @@ impl WindowsNamedPipe {
     /// and `connect`/`open` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
-    /// connection's ref (reads stop and the wrapper goes away in
+    /// connection's ref (reads and the wrapper's callbacks stop in
     /// `release_resources`): `schedule_deinit` can have run by then.
     ///
     /// [`on_close`]: Self::on_close
@@ -203,11 +187,9 @@ impl WindowsNamedPipe {
 
         let mut data = self.incoming.replace(Vec::new());
 
-        if self
-            .with_wrapper(|w| w.receive_data(data.as_slice()))
-            .is_none()
-        {
-            (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
+        match self.wrapper.get() {
+            Some(w) => w.receive_data(data.as_slice()),
+            None => (self.handlers.on_data)(self.handlers.ctx, data.as_slice()),
         }
         data.clear();
         self.incoming.set(data);
@@ -273,13 +255,19 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_session(d)
     }
-    fn ssl_server_identity(
-        this: *mut Self,
-        ssl: &mut boringssl::SSL,
-    ) -> bun_boringssl::ServerIdentity {
+    fn ssl_server_identity(this: *mut Self, ssl: &boringssl::SSL) -> bun_boringssl::ServerIdentity {
         // SAFETY: see block note above.
         let this = unsafe { &*this };
         (this.handlers.server_identity)(this.handlers.ctx, ssl)
+    }
+    fn ssl_alpn_select<'a>(
+        this: *mut Self,
+        ssl: &boringssl::SSL,
+        offered: &'a [u8],
+    ) -> bun_boringssl::AlpnSelection<'a> {
+        // SAFETY: see block note above.
+        let this = unsafe { &*this };
+        (this.handlers.alpn_select)(this.handlers.ctx, ssl, offered)
     }
     fn ssl_on_keylog(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
@@ -305,6 +293,7 @@ impl WindowsNamedPipe {
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
             server_identity: Some(Self::ssl_server_identity),
+            alpn_select: Some(Self::ssl_alpn_select),
         }
     }
 
@@ -346,9 +335,9 @@ impl WindowsNamedPipe {
         }
 
         if !msg_more {
-            let _ = self.with_wrapper(|w| {
+            if let Some(w) = self.wrapper.get() {
                 let _ = w.shutdown(false);
-            });
+            }
             self.writer.end(self);
         }
     }
@@ -390,9 +379,9 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub(crate) fn flush(&self) {
-        let _ = self.with_wrapper(|w| {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.flush();
-        });
+        }
         if !self.flags.get().disconnected() {
             let _ = self.writer.flush(self);
         }
@@ -417,7 +406,7 @@ impl WindowsNamedPipe {
         WindowsNamedPipe {
             vm,
             pipe: JsCell::new(Some(uv::Owned::zeroed())),
-            wrapper: JsCell::new(None),
+            wrapper: OnceCell::new(),
             root: Cell::new(core::ptr::null_mut()),
             handlers,
             // defaults:
@@ -459,7 +448,9 @@ impl WindowsNamedPipe {
         if self.start(true) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
-                let _ = self.with_wrapper(|w| w.start());
+                if let Some(w) = self.wrapper.get() {
+                    w.start();
+                }
             } else {
                 // trigger onOpen
                 self.on_open();
@@ -479,8 +470,8 @@ impl WindowsNamedPipe {
 
         if let Some(tls) = ssl_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
-            match WrapperType::init_with_ctx(tls.clone(), false, self.wrapper_handlers()) {
-                Ok(w) => self.wrapper.set(Some(w)),
+            match WrapperType::init_with_ctx(tls, false, self.wrapper_handlers()) {
+                Ok(w) => self.install_wrapper(w),
                 Err(_) => {
                     self.pipe.set(None);
                     return bun_sys::Result::Err(bun_sys::Error {
@@ -498,7 +489,9 @@ impl WindowsNamedPipe {
         if self.start(false) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
-                let _ = self.with_wrapper(|w| w.start());
+                if let Some(w) = self.wrapper.get() {
+                    w.start();
+                }
             } else {
                 // trigger onOpen
                 self.on_open();
@@ -559,7 +552,7 @@ impl WindowsNamedPipe {
     }
 
     /// Set up the in-process SSL wrapper for `connect`/`open`. Prefers a prebuilt
-    /// `SSL_CTX` (moved into `wrapper`) so a memoised `tls.createSecureContext`
+    /// `SSL_CTX` so a memoised `tls.createSecureContext`
     /// reaches this path with its CA bundle intact; on this branch `[buntls]`
     /// returns `{secureContext}` and no longer spreads `{ca,cert,key}`, so the
     /// `SSLConfig` fallback alone would build a CTX with an empty trust store
@@ -572,8 +565,8 @@ impl WindowsNamedPipe {
     ) -> Option<bun_sys::Result<()>> {
         if let Some(ctx) = owned_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
-            match WrapperType::init_with_ctx(ctx, true, self.wrapper_handlers()) {
-                Ok(w) => self.wrapper.set(Some(w)),
+            match WrapperType::init_with_ctx(&ctx, true, self.wrapper_handlers()) {
+                Ok(w) => self.install_wrapper(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::EPIPE as _,
@@ -587,7 +580,7 @@ impl WindowsNamedPipe {
         if let Some(tls) = ssl_options {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
             match ssl_wrapper::init(&tls, true, self.wrapper_handlers()) {
-                Ok(w) => self.wrapper.set(Some(w)),
+                Ok(w) => self.install_wrapper(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::EPIPE as _,
@@ -640,8 +633,8 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
-        if let Some(r) = self.with_wrapper(|w| w.write_data(data)) {
-            return i32::try_from(r.unwrap_or(0)).expect("int cast");
+        if let Some(w) = self.wrapper.get() {
+            return i32::try_from(w.write_data(data).unwrap_or(0)).expect("int cast");
         }
         self.internal_write(data);
         i32::try_from(data.len()).expect("int cast")
@@ -674,18 +667,17 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub(crate) fn close(&self) {
-        let _ = self.with_wrapper(|w| {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.shutdown(false);
-        });
+        }
         self.writer.end(self);
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub(crate) fn shutdown(&self) {
-        let handled = self.with_wrapper(|w| {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.shutdown(false);
-        });
-        if handled.is_none() {
+        } else {
             // Plain (non-TLS) named pipe: half-close the write side so the peer
             // observes EOF. Without this, Socket.prototype.end() over a Windows
             // named pipe (endNT → shutdown()) never signals the peer, and an
@@ -697,7 +689,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]
     pub(crate) fn shutdown_read(&self) {
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             wrapper.shutdown_read();
         } else {
             if let Some(stream) = self.writer.get_stream() {
@@ -710,7 +702,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             return wrapper.is_shutdown();
         }
 
@@ -719,7 +711,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]
     pub(crate) fn is_closed(&self) -> bool {
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             return wrapper.is_closed();
         }
         self.flags.get().disconnected()
@@ -728,12 +720,6 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_established", no_catch)]
     pub(crate) fn is_established(&self) -> bool {
         !self.is_closed()
-    }
-
-    pub(crate) fn ssl(&self) -> Option<*mut boringssl::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
@@ -788,8 +774,8 @@ impl WindowsNamedPipe {
         }
         self.writer.close_without_reporting(self);
         self.writer.discard_queued();
-        if !self.flags.get().contains(Flags::WRAPPER_BUSY) {
-            self.wrapper.set(None);
+        if let Some(wrapper) = self.wrapper.get() {
+            wrapper.stop();
         }
         self.ssl_error.set(CertError::default());
     }
@@ -801,35 +787,24 @@ impl Drop for WindowsNamedPipe {
     }
 }
 
-// Hand-written `ssl` shim for the `bun_uws` cycle-break extern — the safe
-// method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
-// raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
-// `#[uws_callback(export = …)]` on the inherent methods above.
+// The other `WindowsNamedPipe__*` symbols are emitted by `#[uws_callback(export = …)]` above.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: *const c_void) {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    if let Some(wrapper) = unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() } {
+pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe) {
+    if let Some(wrapper) = this.wrapper.get() {
         wrapper.set_inline_reject();
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__latest_session(
-    this: *const c_void,
-) -> *mut bun_boringssl_sys::SSL_SESSION {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() }
-        .map_or(core::ptr::null_mut(), |wrapper| wrapper.latest_session())
+    this: &WindowsNamedPipe,
+) -> Option<bun_boringssl_sys::OwnedSslSession> {
+    this.wrapper.get()?.latest_session()
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    unsafe {
-        (*this.cast::<WindowsNamedPipe>())
-            .ssl()
-            .unwrap_or(core::ptr::null_mut())
-    }
+pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> Option<&boringssl::SSL> {
+    this.wrapper.get()?.ssl()
 }
 
 impl WriteHandler for WindowsNamedPipe {

@@ -2426,7 +2426,8 @@ impl VirtualMachine {
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        vm.uws_loop().drain_closed_sockets();
+        // SAFETY: no dispatch of the loop resumes, and the owners of those sockets are finalized.
+        unsafe { vm.uws_loop().drain_closed_sockets() };
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {

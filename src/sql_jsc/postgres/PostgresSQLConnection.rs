@@ -611,7 +611,7 @@ impl PostgresSQLConnection {
     }
 
     /// verify-full's name check, asked inside the handshake.
-    pub fn server_identity(&self, ssl: &mut bun_boringssl_sys::SSL) -> BoringSSL::ServerIdentity {
+    pub fn server_identity(&self, ssl: &bun_boringssl_sys::SSL) -> BoringSSL::ServerIdentity {
         BoringSSL::server_identity(ssl, self.native_identity_hostname())
     }
 
@@ -660,13 +660,11 @@ impl PostgresSQLConnection {
                 return;
             }
         } else if let Some(hostname) = self.native_identity_hostname() {
-            let ssl = match &socket {
-                Socket::SocketTls(tls) => tls.ssl_mut(),
-                Socket::SocketTcp(_) => None,
-            };
-            if hostname.is_empty()
-                || !ssl.is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
-            {
+            // SAFETY: this is the handshake handler of `socket`, and `ssl` is used at once.
+            let identity_ok = !hostname.is_empty()
+                && unsafe { socket.ssl() }
+                    .is_some_and(|ssl| uws::check_server_identity(ssl, hostname));
+            if !identity_ok {
                 let v = verify_error_to_js(&ssl_error, self.global());
                 self.fail_with_js_value(v);
                 return;
@@ -2113,15 +2111,11 @@ impl PostgresSQLConnection {
                             debug!("duplicate AuthenticationSASL");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
-                        let socket = self.socket.get();
-                        let tls = match &socket {
-                            Socket::SocketTls(tls) => tls.ssl_mut(),
-                            Socket::SocketTcp(_) => None,
-                        };
                         match SASL::init(
                             *offered,
                             self.channel_binding,
-                            tls,
+                            // SAFETY: `socket` is live, and `SASL::init` cannot close it.
+                            unsafe { self.socket.get().ssl() },
                             self.ssl_mode != SSLMode::Disable,
                         ) {
                             Ok(sasl) => self

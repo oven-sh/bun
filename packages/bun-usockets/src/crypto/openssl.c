@@ -67,6 +67,7 @@ struct loop_ssl_data {
   unsigned int ssl_read_input_length;
   unsigned int ssl_read_input_offset;
 
+  /* NULL or a socket with an SSL: us_internal_ssl_detach clears it, us_internal_ssl_socket_relocated follows it. */
   struct us_socket_t *ssl_socket;
   BIO *shared_rbio;
   BIO *shared_wbio;
@@ -247,6 +248,8 @@ extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
 extern int us_ssl_wrapper_identity_checked(void *wrapper);
 extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
 extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
+extern int us_ssl_wrapper_alpn_select(void *wrapper, SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                                      const unsigned char *in, unsigned int inlen);
 
 static inline void *us_ssl_wrapper(const SSL *ssl) {
   return us_ssl_wrapper_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_wrapper_ex_idx) : NULL;
@@ -492,6 +495,8 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
   }
 }
 
+#define US_SSL_LOOP_STATE_SLOTS 6
+
 /* Save/restore the per-loop BIO routing state around a JS callback that runs
  * from inside SSL_do_handshake/SSL_read: user JS that writes to or destroys a
  * different TLS socket on the same loop re-points loop_ssl_data->ssl_socket
@@ -500,28 +505,42 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * flag is saved-and-zeroed so a write or close_notify for a different socket
  * inside the callback goes to that socket's fd via the per-record BIO path
  * instead of appending to the interrupted handshake's batch. */
-int us_internal_ssl_loop_state_slots(void) { return US_SSL_LOOP_STATE_SLOTS; }
-
-void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
-  SSL *ssl = (SSL *)ssl_ptr;
+static void us_internal_ssl_loop_state_save(SSL *ssl, void **out) {
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   out[0] = d;
-  out[1] = d ? (void *)d->ssl_socket : NULL;
-  out[2] = d ? (void *)d->ssl_read_input : NULL;
-  out[3] = d ? (void *)(uintptr_t)d->ssl_read_input_length : NULL;
-  out[4] = d ? (void *)(uintptr_t)d->ssl_read_input_offset : NULL;
-  out[5] = d ? (void *)(uintptr_t)d->ssl_write_batching : NULL;
-  if (d) d->ssl_write_batching = 0;
+  out[1] = d->ssl_socket;
+  out[2] = d->ssl_read_input;
+  out[3] = (void *)(uintptr_t)d->ssl_read_input_length;
+  out[4] = (void *)(uintptr_t)d->ssl_read_input_offset;
+  out[5] = (void *)(uintptr_t)d->ssl_write_batching;
+  d->ssl_write_batching = 0;
 }
 
-void us_internal_ssl_loop_state_restore(void **saved) {
+static void us_internal_ssl_loop_state_restore(void **saved) {
   struct loop_ssl_data *d = (struct loop_ssl_data *)saved[0];
-  if (!d) return;
   d->ssl_socket = (struct us_socket_t *)saved[1];
   d->ssl_read_input = (char *)saved[2];
   d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
   d->ssl_read_input_offset = (unsigned int)(uintptr_t)saved[4];
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
+}
+
+static int us_ssl_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                                 const unsigned char *in, unsigned int inlen, void *arg) {
+  (void)arg;
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (wrapper) return us_ssl_wrapper_alpn_select(wrapper, ssl, out, outlen, in, inlen);
+  struct us_socket_t *s = us_ssl_socket(ssl);
+  if (!s) return SSL_TLSEXT_ERR_NOACK;
+  void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
+  us_internal_ssl_loop_state_save(ssl, saved_loop_state);
+  int result = us_dispatch_alpn_select(s, ssl, out, outlen, in, inlen);
+  us_internal_ssl_loop_state_restore(saved_loop_state);
+  return result;
+}
+
+void us_ssl_ctx_enable_alpn_select(SSL_CTX *ctx) {
+  SSL_CTX_set_alpn_select_cb(ctx, us_ssl_alpn_select_cb, NULL);
 }
 
 /* A send() that no retry can save loses sealed records: nothing may follow them, but what the peer sent is still read. */
@@ -698,6 +717,9 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
                                       struct us_socket_t *new_s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
   if (!loop_ssl_data) return;
+  if (loop_ssl_data->ssl_socket == old_s) {
+    loop_ssl_data->ssl_socket = new_s;
+  }
   if (loop_ssl_data->ssl_write_batch_owner == old_s) {
     loop_ssl_data->ssl_write_batch_owner = new_s;
   }
@@ -1921,6 +1943,7 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
       loop_ssl_data->ssl_last_fatal_error[0] = 0;
       loop_ssl_data->ssl_last_fatal_error_owner = NULL;
     }
+    if (loop_ssl_data && loop_ssl_data->ssl_socket == s) loop_ssl_data->ssl_socket = NULL;
   }
 }
 

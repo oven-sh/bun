@@ -218,10 +218,10 @@ impl Offsets {
 }
 
 pub(crate) struct FFI {
-    pub dylib: JsCell<Option<bun_sys::DynLib>>,
     /// Leaked when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
+    pub dylib: ManuallyDrop<Cell<Option<bun_sys::DynLib>>>,
+    /// Leaked like `dylib`.
     pub functions: ManuallyDrop<JsCell<StringArrayHashMap<Function>>>,
-    pub closed: Cell<bool>,
     /// Leaked like `functions`, which call into it.
     pub shared_state: ManuallyDrop<Cell<Option<TCC::OwnedState>>>,
 }
@@ -229,9 +229,8 @@ pub(crate) struct FFI {
 impl Default for FFI {
     fn default() -> Self {
         Self {
-            dylib: JsCell::new(None),
+            dylib: ManuallyDrop::new(Cell::new(None)),
             functions: ManuallyDrop::new(JsCell::new(StringArrayHashMap::default())),
-            closed: Cell::new(false),
             shared_state: ManuallyDrop::new(Cell::new(None)),
         }
     }
@@ -1272,10 +1271,9 @@ impl FFI {
         }
 
         let lib = FFI {
-            dylib: JsCell::new(None),
+            dylib: ManuallyDrop::new(Cell::new(None)),
             shared_state: ManuallyDrop::new(Cell::new(Some(tcc_state))),
             functions: ManuallyDrop::new(JsCell::new(core::mem::take(&mut compile_c.symbols.map))),
-            closed: Cell::new(false),
         };
 
         let js_object = lib.to_js(global_this);
@@ -1361,10 +1359,7 @@ impl FFI {
         // that `cc` filled from 0 to its length, which JS never sees.
         let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
-            // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
-            if let Some(state) = self.shared_state.take() {
-                state.leak();
-            }
+            // The running call returns into the compiled code, so leak it.
             self.functions.with_mut(|functions| {
                 let states = functions.values_mut().iter_mut();
                 states
@@ -1372,17 +1367,7 @@ impl FFI {
                     .for_each(TCC::OwnedState::leak);
             });
         }
-        self.do_close();
-    }
-
-    fn do_close(&self) {
-        if self.closed.get() {
-            return;
-        }
-        self.closed.set(true);
-        if let Some(dylib) = self.dylib.replace(None) {
-            dylib.close();
-        }
+        self.dylib.set(None);
         // C code with a `napi_env` can register callbacks into itself that are never unregistered, so leak it.
         let has_napi_env = self
             .functions
@@ -1390,8 +1375,10 @@ impl FFI {
             .values()
             .iter()
             .any(Function::needs_napi_env);
-        if !has_napi_env {
-            self.shared_state.set(None);
+        if let Some(state) = self.shared_state.take()
+            && (is_running || has_napi_env)
+        {
+            state.leak();
         }
         self.functions.set(StringArrayHashMap::default());
     }
@@ -1638,8 +1625,6 @@ impl FFI {
         let _js_object_guard = js_object.protected();
         // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
         let lib = unsafe { this_value.payload_ptr().as_ref() };
-        lib.dylib.set(Some(dylib));
-        let dylib = lib.dylib.get().as_ref().expect("just set");
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1653,7 +1638,6 @@ impl FFI {
                         BStr::new(function_name.as_bytes()),
                         BStr::new(name)
                     ));
-                    lib.do_close();
                     return Ok(ret);
                 };
 
@@ -1662,7 +1646,6 @@ impl FFI {
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                lib.do_close();
                 return Ok(err);
             }
             let target = function
@@ -1681,18 +1664,15 @@ impl FFI {
                                 BStr::new(name)
                             ))
                         });
-                        lib.do_close();
                         return ret;
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
-            if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                lib.do_close();
-                return Err(err);
-            }
+            obj.put_may_be_index(global, &key, cb)?;
         }
 
+        lib.dylib.set(Some(dylib));
         lib.functions.set(symbols);
         js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
@@ -1741,12 +1721,10 @@ impl FFI {
                     "Symbol \"{}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.",
                     BStr::new(function_name.as_bytes())
                 ));
-                lib.do_close();
                 return Ok(ret);
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                lib.do_close();
                 return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
@@ -1762,16 +1740,12 @@ impl FFI {
                                 BStr::new(function_name.as_bytes())
                             ))
                         });
-                        lib.do_close();
                         return err;
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
-            if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                lib.do_close();
-                return Err(err);
-            }
+            obj.put_may_be_index(global, &key, cb)?;
         }
 
         lib.functions.set(symbols);

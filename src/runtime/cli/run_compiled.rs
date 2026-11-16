@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{Evictions, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, OwnedWatcher, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,7 +417,7 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Arc<Watcher>,
+    watcher: OwnedWatcher,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }

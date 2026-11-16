@@ -25,7 +25,7 @@
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
 
-use bun_event_loop::ConcurrentTask::{Task, task_tag};
+use bun_event_loop::ConcurrentTask::task_tag;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -66,8 +66,8 @@ impl bun_event_loop::Taskable for MemoryPressureTask {
     }
 }
 
-fn pressure_task(lvl: i32) -> Task {
-    Task::init(lvl as usize as *mut MemoryPressureTask)
+fn pressure_task(lvl: i32) -> *mut MemoryPressureTask {
+    lvl as usize as *mut MemoryPressureTask
 }
 
 #[cfg(not(windows))]
@@ -294,7 +294,7 @@ mod posix {
             let _ = fflags;
             super::level::CRITICAL
         };
-        vm.enqueue_task(super::pressure_task(lvl));
+        vm.enqueue_task(bun_event_loop::Task::init(super::pressure_task(lvl)));
     }
 }
 
@@ -307,7 +307,6 @@ mod windows {
     use core::ffi::c_void;
     use core::ptr;
 
-    use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
     use std::os::windows::io::{AsRawHandle as _, HandleOrNull, OwnedHandle};
 
@@ -361,7 +360,7 @@ mod windows {
             if rc != WAIT_OBJECT_0 + 1 {
                 break;
             }
-            let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
+            let task = super::pressure_task(super::level::CRITICAL);
             if let bun_jsc::vm_handle::Posted::Refused(_) =
                 vm.post(bun_jsc::LoopKind::Regular, task)
             {

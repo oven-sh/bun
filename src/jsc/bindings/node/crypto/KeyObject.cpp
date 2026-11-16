@@ -6,13 +6,14 @@
 #include "CryptoUtil.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
-#include "AsymmetricKeyValue.h"
 #include "CryptoAlgorithm.h"
 #include "CryptoAlgorithmParameters.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
+#include "CryptoKeyEC.h"
 #include "CryptoKeyHMAC.h"
+#include "CryptoKeyOKP.h"
 #include "CryptoKeyRSA.h"
 #include "CryptoKeyRaw.h"
 #include "CryptoKey.h"
@@ -1063,9 +1064,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
                 return throwDOMException(WebCore::SyntaxError, makeString("Unsupported key usage for a "_s, WebCore::CryptoAlgorithmRegistry::singleton().name(identifier), " key"_s));
             if (EVP_PKEY_id(asymmetricKey().get()) != WebCore::CryptoKeyAKP::nidForIdentifier(identifier))
                 return throwDOMException(WebCore::DataError, "Invalid key type"_s);
-            EVP_PKEY_up_ref(asymmetricKey().get());
-            WebCore::EvpPKeyPtr platformKey(asymmetricKey().get());
-            result = WebCore::CryptoKeyAKP::create(identifier, type(), WTF::move(platformKey), extractable, usagesBitmap);
+            result = WebCore::CryptoKeyAKP::create(identifier, type(), WebCore::EvpPKeyPtr(EVP_PKEY_dup_ref(asymmetricKey().get())), extractable, usagesBitmap);
             if (!result)
                 return throwDOMException(WebCore::OperationError, ""_s);
             break;
@@ -1105,6 +1104,25 @@ static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::Cryp
     }
 }
 
+static ncrypto::EVPKeyPointer getAsymmetricKey(const WebCore::CryptoKey& key)
+{
+    switch (key.keyClass()) {
+    case WebCore::CryptoKeyClass::RSA:
+        return ncrypto::EVPKeyPointer(EVP_PKEY_dup_ref(uncheckedDowncast<CryptoKeyRSA>(key).platformKey()));
+    case WebCore::CryptoKeyClass::EC:
+        return ncrypto::EVPKeyPointer(EVP_PKEY_dup_ref(uncheckedDowncast<CryptoKeyEC>(key).platformKey()));
+    case WebCore::CryptoKeyClass::AKP:
+        return ncrypto::EVPKeyPointer(EVP_PKEY_dup_ref(uncheckedDowncast<CryptoKeyAKP>(key).platformKey()));
+    case WebCore::CryptoKeyClass::OKP:
+        return uncheckedDowncast<CryptoKeyOKP>(key).toEVPKey();
+    case WebCore::CryptoKeyClass::AES:
+    case WebCore::CryptoKeyClass::HMAC:
+    case WebCore::CryptoKeyClass::Raw:
+        break;
+    }
+    return {};
+}
+
 KeyObject KeyObject::create(CryptoKeyType type, RefPtr<KeyObjectData>&& data)
 {
     return KeyObject(type, WTF::move(data));
@@ -1128,28 +1146,20 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
 
     case WebCore::CryptoKeyType::Public: {
         // Extract asymmetric public key data
-        AsymmetricKeyValue keyValue(key);
-        if (!keyValue.key) {
+        auto keyPtr = getAsymmetricKey(key);
+        if (!keyPtr) {
             return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract public key material"_s };
         }
-
-        // Increment ref count because KeyObject will own a reference
-        EVP_PKEY_up_ref(keyValue.key);
-        ncrypto::EVPKeyPointer keyPtr(keyValue.key);
 
         return create(CryptoKeyType::Public, WTF::move(keyPtr));
     }
 
     case WebCore::CryptoKeyType::Private: {
         // Extract asymmetric private key data
-        AsymmetricKeyValue keyValue(key);
-        if (!keyValue.key) {
+        auto keyPtr = getAsymmetricKey(key);
+        if (!keyPtr) {
             return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract private key material"_s };
         }
-
-        // Increment ref count because KeyObject will own a reference
-        EVP_PKEY_up_ref(keyValue.key);
-        ncrypto::EVPKeyPointer keyPtr(keyValue.key);
 
         return create(CryptoKeyType::Private, WTF::move(keyPtr));
     }
@@ -1597,11 +1607,10 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
         }
 
         auto pkey = ncrypto::EVPKeyPointer::New();
-        if (!pkey.assign(eckey)) {
+        if (!pkey.assign(WTF::move(eckey))) {
             throwInvalid();
             return {};
         }
-        eckey.release();
         return create(targetType, WTF::move(pkey));
     }
 

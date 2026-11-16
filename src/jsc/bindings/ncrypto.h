@@ -431,6 +431,8 @@ class DataPointer final {
 public:
     static DataPointer Alloc(size_t len);
     static DataPointer Copy(const Buffer<const void>& buffer);
+    // Null only if `str` has no UTF-8 form.
+    static DataPointer ToUTF8(const ASN1_STRING* str);
 
     static DataPointer FromSpan(std::span<const uint8_t> span)
     {
@@ -444,7 +446,6 @@ public:
 
     DataPointer() = default;
     explicit DataPointer(void* data, size_t len);
-    explicit DataPointer(const Buffer<void>& buffer);
     DataPointer(DataPointer&& other) noexcept;
     DataPointer& operator=(DataPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(DataPointer)
@@ -507,9 +508,8 @@ public:
     {
     }
     explicit BIOPointer(BIO* bio);
-    BIOPointer(BIOPointer&& other) noexcept;
+    BIOPointer(BIOPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(BIOPointer)
-    ~BIOPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return bio_ == nullptr; }
     inline explicit operator bool() const { return bio_ != nullptr; }
@@ -541,10 +541,9 @@ public:
     BignumPointer() = default;
     explicit BignumPointer(BIGNUM* bignum);
     explicit BignumPointer(const unsigned char* data, size_t len);
-    BignumPointer(BignumPointer&& other) noexcept;
-    BignumPointer& operator=(BignumPointer&& other) noexcept;
+    BignumPointer(BignumPointer&& other) noexcept = default;
+    BignumPointer& operator=(BignumPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(BignumPointer)
-    ~BignumPointer();
 
     int operator<=>(const BignumPointer& other) const noexcept;
     int operator<=>(const BIGNUM* other) const noexcept;
@@ -605,9 +604,8 @@ public:
 
     CipherCtxPointer() = default;
     explicit CipherCtxPointer(EVP_CIPHER_CTX* ctx);
-    CipherCtxPointer(CipherCtxPointer&& other) noexcept;
+    CipherCtxPointer(CipherCtxPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(CipherCtxPointer)
-    ~CipherCtxPointer();
 
     inline bool operator==(std::nullptr_t) const noexcept
     {
@@ -656,10 +654,9 @@ class EVPKeyCtxPointer final {
 public:
     EVPKeyCtxPointer();
     explicit EVPKeyCtxPointer(EVP_PKEY_CTX* ctx);
-    EVPKeyCtxPointer(EVPKeyCtxPointer&& other) noexcept;
-    EVPKeyCtxPointer& operator=(EVPKeyCtxPointer&& other) noexcept;
+    EVPKeyCtxPointer(EVPKeyCtxPointer&& other) noexcept = default;
+    EVPKeyCtxPointer& operator=(EVPKeyCtxPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(EVPKeyCtxPointer)
-    ~EVPKeyCtxPointer();
 
     inline bool operator==(std::nullptr_t) const noexcept
     {
@@ -794,12 +791,11 @@ public:
 
     EVPKeyPointer() = default;
     explicit EVPKeyPointer(EVP_PKEY* pkey);
-    EVPKeyPointer(EVPKeyPointer&& other) noexcept;
-    EVPKeyPointer& operator=(EVPKeyPointer&& other) noexcept;
+    EVPKeyPointer(EVPKeyPointer&& other) noexcept = default;
+    EVPKeyPointer& operator=(EVPKeyPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(EVPKeyPointer)
-    ~EVPKeyPointer();
 
-    bool assign(const ECKeyPointer& eckey);
+    bool assign(ECKeyPointer&& eckey);
     bool set(const ECKeyPointer& eckey);
     operator const EC_KEY*() const;
 
@@ -874,10 +870,9 @@ public:
 
     DHPointer() = default;
     explicit DHPointer(DH* dh);
-    DHPointer(DHPointer&& other) noexcept;
-    DHPointer& operator=(DHPointer&& other) noexcept;
+    DHPointer(DHPointer&& other) noexcept = default;
+    DHPointer& operator=(DHPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(DHPointer)
-    ~DHPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return dh_ == nullptr; }
     inline explicit operator bool() const { return dh_ != nullptr; }
@@ -1007,10 +1002,9 @@ public:
 
     X509Pointer() = default;
     explicit X509Pointer(X509* cert);
-    X509Pointer(X509Pointer&& other) noexcept;
-    X509Pointer& operator=(X509Pointer&& other) noexcept;
+    X509Pointer(X509Pointer&& other) noexcept = default;
+    X509Pointer& operator=(X509Pointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(X509Pointer)
-    ~X509Pointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return cert_ == nullptr; }
     inline explicit operator bool() const { return cert_ != nullptr; }
@@ -1035,31 +1029,26 @@ class ECDSASigPointer final {
 public:
     explicit ECDSASigPointer();
     explicit ECDSASigPointer(ECDSA_SIG* sig);
-    ECDSASigPointer(ECDSASigPointer&& other) noexcept;
+    ECDSASigPointer(ECDSASigPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(ECDSASigPointer)
-    ~ECDSASigPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return sig_ == nullptr; }
     inline explicit operator bool() const { return sig_ != nullptr; }
     inline ECDSA_SIG* get() const { return sig_.get(); }
     inline operator ECDSA_SIG*() const { return sig_.get(); }
-    void reset(ECDSA_SIG* sig = nullptr);
-    ECDSA_SIG* release();
 
     static ECDSASigPointer New();
     static ECDSASigPointer Parse(const Buffer<const unsigned char>& buffer);
 
-    inline const BIGNUM* r() const { return pr_; }
-    inline const BIGNUM* s() const { return ps_; }
+    inline const BIGNUM* r() const { return ECDSA_SIG_get0_r(sig_.get()); }
+    inline const BIGNUM* s() const { return ECDSA_SIG_get0_s(sig_.get()); }
 
     bool setParams(BignumPointer&& r, BignumPointer&& s);
 
-    Buffer<unsigned char> encode() const;
+    DataPointer encode() const;
 
 private:
     DeleteFnPtr<ECDSA_SIG, ECDSA_SIG_free> sig_;
-    const BIGNUM* pr_ = nullptr;
-    const BIGNUM* ps_ = nullptr;
 };
 
 class ECGroupPointer final {
@@ -1068,9 +1057,8 @@ class ECGroupPointer final {
 public:
     explicit ECGroupPointer();
     explicit ECGroupPointer(EC_GROUP* group);
-    ECGroupPointer(ECGroupPointer&& other) noexcept;
+    ECGroupPointer(ECGroupPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(ECGroupPointer)
-    ~ECGroupPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return group_ == nullptr; }
     inline explicit operator bool() const { return group_ != nullptr; }
@@ -1091,9 +1079,8 @@ class ECPointPointer final {
 public:
     ECPointPointer();
     explicit ECPointPointer(EC_POINT* point);
-    ECPointPointer(ECPointPointer&& other) noexcept;
+    ECPointPointer(ECPointPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(ECPointPointer)
-    ~ECPointPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return point_ == nullptr; }
     inline explicit operator bool() const { return point_ != nullptr; }
@@ -1118,10 +1105,9 @@ class ECKeyPointer final {
 public:
     ECKeyPointer();
     explicit ECKeyPointer(EC_KEY* key);
-    ECKeyPointer(ECKeyPointer&& other) noexcept;
-    ECKeyPointer& operator=(ECKeyPointer&& other) noexcept;
+    ECKeyPointer(ECKeyPointer&& other) noexcept = default;
+    ECKeyPointer& operator=(ECKeyPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(ECKeyPointer)
-    ~ECKeyPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return key_ == nullptr; }
     inline explicit operator bool() const { return key_ != nullptr; }
@@ -1158,10 +1144,9 @@ class EVPMDCtxPointer final {
 public:
     EVPMDCtxPointer();
     explicit EVPMDCtxPointer(EVP_MD_CTX* ctx);
-    EVPMDCtxPointer(EVPMDCtxPointer&& other) noexcept;
-    EVPMDCtxPointer& operator=(EVPMDCtxPointer&& other) noexcept;
+    EVPMDCtxPointer(EVPMDCtxPointer&& other) noexcept = default;
+    EVPMDCtxPointer& operator=(EVPMDCtxPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(EVPMDCtxPointer)
-    ~EVPMDCtxPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return ctx_ == nullptr; }
     inline explicit operator bool() const { return ctx_ != nullptr; }
@@ -1204,10 +1189,9 @@ class HMACCtxPointer final {
 public:
     HMACCtxPointer();
     explicit HMACCtxPointer(HMAC_CTX* ctx);
-    HMACCtxPointer(HMACCtxPointer&& other) noexcept;
-    HMACCtxPointer& operator=(HMACCtxPointer&& other) noexcept;
+    HMACCtxPointer(HMACCtxPointer&& other) noexcept = default;
+    HMACCtxPointer& operator=(HMACCtxPointer&& other) noexcept = default;
     NCRYPTO_DISALLOW_COPY(HMACCtxPointer)
-    ~HMACCtxPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return ctx_ == nullptr; }
     inline explicit operator bool() const { return ctx_ != nullptr; }
@@ -1252,9 +1236,7 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext);
 
 bool VerifySpkac(const char* input, size_t length);
 BIOPointer ExportPublicKey(const char* input, size_t length);
-
-// The caller takes ownership of the returned Buffer<char>
-Buffer<char> ExportChallenge(const char* input, size_t length);
+DataPointer ExportChallenge(const char* input, size_t length);
 
 // ============================================================================
 // KDF

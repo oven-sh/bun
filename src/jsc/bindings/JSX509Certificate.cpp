@@ -328,13 +328,11 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
             continue;
 
         // Convert the ASN1_STRING to a string value
-        unsigned char* value_str = nullptr;
-        int value_str_size = ASN1_STRING_to_UTF8(&value_str, str);
-        if (value_str_size < 0)
+        auto value_str = ncrypto::DataPointer::ToUTF8(str);
+        if (!value_str)
             continue;
 
-        ncrypto::DataPointer free_value_str(value_str, value_str_size);
-        JSValue jsvalue = jsString(vm, String::fromUTF8(std::span(reinterpret_cast<const char*>(value_str), value_str_size)));
+        JSValue jsvalue = jsString(vm, String::fromUTF8(byteCast<char>(value_str.span())));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         // Check if this key already exists
@@ -505,17 +503,10 @@ JSUint8Array* JSX509Certificate::computeRaw(ncrypto::X509View view, JSGlobalObje
         return nullptr;
     }
 
-    BIO* bio_ptr = bio.release();
-    BUF_MEM* bptr = nullptr;
-    BIO_get_mem_ptr(bio_ptr, &bptr);
+    BUF_MEM* bptr = bio;
 
-    // The ArrayBuffer aliases the BIO's internal buffer; free the BIO (which
-    // owns the buffer) when the ArrayBuffer is destroyed. The destructor is
-    // invoked with the data pointer (bptr->data), not the BIO, so capture
-    // bio_ptr explicitly.
-    Ref<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::createFromBytes(std::span(reinterpret_cast<uint8_t*>(bptr->data), bptr->length), createSharedTask<void(void*)>([bio_ptr](void*) {
-        ncrypto::BIOPointer free_me(bio_ptr);
-    }));
+    // The ArrayBuffer aliases the BIO's internal buffer, so its destructor task owns the BIO.
+    Ref<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::createFromBytes(std::span(reinterpret_cast<uint8_t*>(bptr->data), bptr->length), createSharedTask<void(void*)>([bio = WTF::move(bio)](void*) {}));
     RELEASE_AND_RETURN(scope, Bun::createBuffer(globalObject, WTF::move(buffer)));
 }
 

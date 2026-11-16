@@ -37,6 +37,7 @@ mod simd {
         name()
     }
 
+    /// With a comment.
     #[cfg(false)]
     #[export]
     pub fn left_out() {}
@@ -100,8 +101,9 @@ mod simd {
     function!(pub(crate), from_macro);
 
     #[export]
-    pub fn names_of_the_macro(is_allowed: Kernel, choose: AtomicFn) -> u8 {
-        from_macro(U8::zero())[0] + is_allowed.0 + choose.0
+    pub fn names_of_the_macro(is_allowed: Kernel, mut choose: AtomicFn) -> u8 {
+        choose.0 += is_allowed.0;
+        from_macro(U8::zero())[0] + choose.0
     }
 
     /// With a comment.

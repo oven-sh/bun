@@ -759,6 +759,14 @@ mod simd {
 }
 ```
 
+```rust,compile_fail
+#[bun_simd::foreach_target]
+mod simd {
+    #[export(up_to = avx, up_to = neon)]
+    pub fn f() {}
+}
+```
+
 Two limits for one architecture:
 
 ```rust,compile_fail
@@ -817,18 +825,18 @@ take! {}
 # fn main() {}
 ```
 
-A fragment of a macro, for which `C` would be 3:
+A fragment of a macro, for which `C` would be -4:
 
 ```rust,compile_fail
 macro_rules! make {
     ($e:expr) => {
         #[bun_simd::foreach_target]
         mod simd {
-            pub const C: u8 = $e * 2;
+            pub const C: i8 = $e.pow(2);
         }
     };
 }
-make!(1 + 1);
+make!(-2i8);
 # fn main() {}
 ```
 
@@ -839,11 +847,11 @@ Its neighbour:
 #     ($e:expr) => {
 #         #[bun_simd::foreach_target]
 #         mod simd {
-#             pub const C: u8 = $e * 2;
+#             pub const C: i8 = $e.pow(2);
 #         }
 #     };
 # }
-make!((1 + 1));
+make!((-2i8));
 fn main() {
     assert_eq!(simd::portable::C, 4);
 }

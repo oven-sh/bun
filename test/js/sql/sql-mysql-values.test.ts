@@ -409,15 +409,15 @@ const refused: [string, unknown, string][] = [
 ];
 
 // With `dates: "string"`: the text the server prints, with the fraction as long as the column's precision.
-// [column type, [SQL literal, text][]]
-const dateStrings: [string, [string, string][]][] = [
+// [column type, [SQL literal, value][]]
+const dateStrings: [string, [string, unknown][]][] = [
   [
     "DATE",
     [
       ["'2024-02-29'", "2024-02-29"],
       ["'0001-01-01'", "0001-01-01"],
       ["'0000-00-00'", "0000-00-00"],
-      ["NULL", "null"],
+      ["NULL", null],
     ],
   ],
   [
@@ -448,7 +448,7 @@ const dateStrings: [string, [string, string][]][] = [
   ["TIMESTAMP(6) NULL", [["'2024-06-15 12:34:56.789123'", "2024-06-15 12:34:56.789123"]]],
   // The other types are as without the option.
   ["TIME(3)", [["'12:34:56.789'", "12:34:56.789"]]],
-  ["INT", [["7", "7"]]],
+  ["INT", [["7", 7]]],
 ];
 
 const describeValue = (value: unknown) =>
@@ -498,11 +498,10 @@ for (const [server, image] of [
           rows.map(([literal]) => literal),
           { dates: "string" },
         );
-        const expected = rows.map(([, text]) => text);
-        const shown = (value: unknown) => (typeof value === "string" ? value : Bun.inspect(value));
+        const expected = rows.map(([, value]) => value);
         expect({
-          prepared: (await sql`SELECT v FROM t ORDER BY id`).map(row => shown(row.v)),
-          simple: (await sql`SELECT v FROM t ORDER BY id`.simple()).map(row => shown(row.v)),
+          prepared: (await sql`SELECT v FROM t ORDER BY id`).map(row => row.v),
+          simple: (await sql`SELECT v FROM t ORDER BY id`.simple()).map(row => row.v),
         }).toEqual({ prepared: expected, simple: expected });
       },
     );

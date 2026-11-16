@@ -507,12 +507,12 @@ pub struct IoRequestLoop {
     pub(crate) pending: RequestQueue,
     pub(crate) waker: Waker,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) epoll_fd: Fd,
+    pub(crate) epoll_fd: sys::File,
     /// FreeBSD's `Waker` is `LinuxWaker` (an eventfd), so unlike macOS the
     /// waker fd is NOT itself a kqueue. We create one here and register the
     /// eventfd on it, mirroring how Linux registers the eventfd on epoll_fd.
     #[cfg(target_os = "freebsd")]
-    pub(crate) kqueue_fd: Fd,
+    pub(crate) kqueue_fd: sys::File,
 }
 
 #[cfg(not(windows))]
@@ -524,11 +524,7 @@ static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
 #[cfg(not(windows))]
 impl IoRequestLoop {
-    /// On failure, closes the fds it opened so a later call can retry.
     fn init() -> sys::Result<Self> {
-        #[cfg(not(target_os = "macos"))]
-        use bun_sys::FdExt as _;
-
         let waker = Waker::init().map_err(|err| {
             let errno = match err {
                 crate::Error::Sys(errno) => errno,
@@ -536,18 +532,17 @@ impl IoRequestLoop {
             };
             sys::Error::from_code(errno, sys::Tag::open)
         })?;
-        #[cfg(not(target_os = "macos"))]
-        let waker_fd = waker.get_fd();
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let epoll_fd = {
             let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
-                let err = sys::Error::from_code(sys::get_errno(raw), sys::Tag::epoll_create1);
-                waker_fd.close();
-                return Err(err);
+                return Err(sys::Error::from_code(
+                    sys::get_errno(raw),
+                    sys::Tag::epoll_create1,
+                ));
             }
-            let epoll_fd = Fd::from_native(raw);
+            let epoll_fd = sys::File::from_fd(Fd::from_native(raw));
 
             {
                 // No data: `tick_epoll` skips an event without a `Poll`.
@@ -557,19 +552,15 @@ impl IoRequestLoop {
                 // SAFETY: valid epoll fd + waker fd just created.
                 let rc = unsafe {
                     libc::epoll_ctl(
-                        epoll_fd.native(),
+                        epoll_fd.fd().native(),
                         linux::EPOLL_CTL_ADD,
-                        waker_fd.native(),
+                        waker.get_fd().native(),
                         &raw mut epoll,
                     )
                 };
                 match sys::get_errno(rc) {
                     E::SUCCESS => {}
-                    err => {
-                        epoll_fd.close();
-                        waker_fd.close();
-                        return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl));
-                    }
+                    err => return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
                 }
             }
             epoll_fd
@@ -579,24 +570,22 @@ impl IoRequestLoop {
         let kqueue_fd = {
             let kq = safe_c::kqueue();
             if kq < 0 {
-                let err = sys::Error::from_code(sys::get_errno(kq), sys::Tag::kqueue);
-                waker_fd.close();
-                return Err(err);
+                return Err(sys::Error::from_code(sys::get_errno(kq), sys::Tag::kqueue));
             }
-            let kqueue_fd = Fd::from_native(kq);
+            let kqueue_fd = sys::File::from_fd(Fd::from_native(kq));
             // Register the eventfd waker. udata = 0 → Pollable.tag() == .empty,
             // which onUpdateKQueue treats as a no-op (the wakeup just unblocks
             // the kevent() wait so the pending queue gets drained). EV_CLEAR
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
             let mut change: KEvent = bun_core::ffi::zeroed();
-            change.ident = usize::try_from(waker_fd.native()).expect("int cast");
+            change.ident = usize::try_from(waker.get_fd().native()).expect("int cast");
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
             // SAFETY: valid kqueue fd just created; passing 1 change, 0 events.
             let rc = unsafe {
                 libc::kevent(
-                    kqueue_fd.native(),
+                    kqueue_fd.fd().native(),
                     core::ptr::from_ref::<KEvent>(&change),
                     1,
                     core::ptr::null_mut(),
@@ -606,11 +595,7 @@ impl IoRequestLoop {
             };
             match sys::get_errno(rc as isize) {
                 sys::Errno::SUCCESS => {}
-                err => {
-                    kqueue_fd.close();
-                    waker_fd.close();
-                    return Err(sys::Error::from_code(err, sys::Tag::kevent));
-                }
+                err => return Err(sys::Error::from_code(err, sys::Tag::kevent)),
             }
             kqueue_fd
         };
@@ -797,11 +782,11 @@ impl IoRequestLoop {
     pub(crate) fn pollfd(&self) -> Fd {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return self.epoll_fd;
+            return self.epoll_fd.fd();
         }
         #[cfg(target_os = "freebsd")]
         {
-            return self.kqueue_fd;
+            return self.kqueue_fd.fd();
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
         {
@@ -1517,7 +1502,7 @@ pub enum PathOrFileDescriptor<'a> {
 
 pub mod waker {
     #[cfg(not(windows))]
-    use bun_sys::Fd;
+    use bun_sys::{Fd, File};
     #[cfg(windows)]
     use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -1533,14 +1518,16 @@ pub mod waker {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub struct LinuxWaker {
-        pub(crate) fd: Fd,
+        eventfd: File,
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     impl LinuxWaker {
         pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
-                Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
+                Ok(fd) => Ok(Self {
+                    eventfd: File::from_fd(fd),
+                }),
                 Err(err) => Err(bun_errno::SystemErrno::init(i64::from(err.errno))
                     .map(crate::Error::Sys)
                     .unwrap_or(crate::Error::Unexpected)),
@@ -1549,12 +1536,7 @@ pub mod waker {
 
         #[inline]
         pub(crate) fn get_fd(&self) -> Fd {
-            self.fd
-        }
-
-        #[inline]
-        fn init_with_file_descriptor(fd: Fd) -> Self {
-            Self { fd }
+            self.eventfd.fd()
         }
 
         pub fn wait(&self) {
@@ -1563,14 +1545,14 @@ pub mod waker {
             // on any 32-bit target and needs no `&mut *raw` reborrow here.
             let mut bytes: u64 = 0;
             // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.fd.native(), (&raw mut bytes).cast(), 8) };
+            let _ = unsafe { libc::read(self.get_fd().native(), (&raw mut bytes).cast(), 8) };
         }
 
         pub fn wake(&self) {
             // eventfd writes are always exactly 8 bytes (u64 increment).
             let bytes: u64 = 1;
             // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.fd.native(), (&raw const bytes).cast(), 8) };
+            let _ = unsafe { libc::write(self.get_fd().native(), (&raw const bytes).cast(), 8) };
         }
     }
 
@@ -1581,7 +1563,7 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
-        kq: i32,
+        kq: File,
         machport: libc::mach_port_t,
         pub machport_buf: Box<[u8]>,
     }
@@ -1608,7 +1590,7 @@ pub mod waker {
 
         #[inline]
         pub(crate) fn get_fd(&self) -> Fd {
-            Fd::from_native(self.kq)
+            self.kq.fd()
         }
 
         pub fn wait(&self) {
@@ -1616,7 +1598,7 @@ pub mod waker {
             // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
             unsafe {
                 libc::kevent64(
-                    self.kq,
+                    self.kq.fd().native(),
                     events.as_ptr(),
                     0,
                     events.as_mut_ptr(),
@@ -1636,16 +1618,16 @@ pub mod waker {
                         .unwrap_or(crate::Error::Unexpected),
                 );
             }
-            Self::init_with_file_descriptor(kq)
-        }
-
-        pub(crate) fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {
-            debug_assert!(kq > -1);
+            let kq = File::from_fd(Fd::from_native(kq));
             // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
             // SAFETY: FFI call; buf outlives the machport (owned by the returned Waker).
             let machport = unsafe {
-                io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024)
+                io_darwin_create_machport(
+                    kq.fd().native(),
+                    machport_buf.as_mut_ptr().cast::<c_void>(),
+                    1024,
+                )
             };
             if machport == 0 {
                 return Err(crate::Error::MachportCreationFailed);

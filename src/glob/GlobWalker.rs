@@ -31,7 +31,7 @@ use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
-use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
+use bun_sys::{self as Syscall, Dir, E, Error as SysError, O, Result as Maybe, S, Stat};
 
 // const Codepoint = u32;
 
@@ -42,7 +42,7 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 }
 
 #[cfg(windows)]
-pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+pub(crate) fn statat_windows(fd: Syscall::Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
     // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
@@ -62,33 +62,27 @@ pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
 // Accessor trait
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub trait AccessorHandle: Copy {
-    const EMPTY: Self;
-    fn is_empty(self) -> bool;
-    fn eql(self, other: Self) -> bool;
-}
-
 pub trait Accessor {
-    const COUNT_FDS: bool;
     /// True when the dir iterator's `kind` is resolved through symlinks (a
     /// symlinked directory is reported as `Directory`, never `SymLink`), so the
     /// Directory descent arm must run the followed-link ancestor check itself.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
-    type Handle: AccessorHandle;
+    /// An open directory. Dropping it closes it.
+    type Handle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
 
     fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
-    fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
-    fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
+    fn openat(handle: &Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
+    fn statat(handle: &Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
-    fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
-    fn close(handle: Self::Handle) -> Option<SysError>;
+    fn lstatat(handle: &Self::Handle, path: &ZStr) -> Maybe<Stat>;
 }
 
 pub trait AccessorDirIter {
     type Handle;
     fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>>;
-    fn iterate(dir: Self::Handle) -> Self;
+    /// `dir` stays open for as long as the iterator is used.
+    fn iterate(dir: &Self::Handle) -> Self;
     #[cfg(windows)]
     fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
         // default: no-op (only SyscallAccessor uses this)
@@ -113,29 +107,12 @@ pub struct AccessorDirEntry<'a> {
 
 pub struct SyscallAccessor;
 
-#[derive(Clone, Copy)]
-pub struct SyscallHandle {
-    pub(crate) value: Fd,
-}
-
-impl AccessorHandle for SyscallHandle {
-    const EMPTY: Self = SyscallHandle { value: Fd::INVALID };
-
-    fn is_empty(self) -> bool {
-        !self.value.is_valid()
-    }
-
-    fn eql(self, other: Self) -> bool {
-        self.value == other.value
-    }
-}
-
 pub struct SyscallDirIter {
     value: DirIterator::WrappedIterator,
 }
 
 impl AccessorDirIter for SyscallDirIter {
-    type Handle = SyscallHandle;
+    type Handle = Dir;
 
     #[inline]
     fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>> {
@@ -147,9 +124,9 @@ impl AccessorDirIter for SyscallDirIter {
     }
 
     #[inline]
-    fn iterate(dir: SyscallHandle) -> Self {
+    fn iterate(dir: &Dir) -> Self {
         SyscallDirIter {
-            value: DirIterator::iterate(dir.value),
+            value: DirIterator::iterate(dir.fd()),
         }
     }
 
@@ -161,45 +138,37 @@ impl AccessorDirIter for SyscallDirIter {
 }
 
 impl Accessor for SyscallAccessor {
-    const COUNT_FDS: bool = true;
     // readdir / lstat report symlinks as `SymLink`, so every symlinked
     // directory flows through the (already checked) Symlink work-item arm.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = false;
-    type Handle = SyscallHandle;
+    type Handle = Dir;
     type DirIter = SyscallDirIter;
 
-    fn open(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
-        Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(|fd| SyscallHandle { value: fd }))
+    fn open(path: &ZStr) -> Result<Maybe<Dir>, Error> {
+        Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(Dir::from_fd))
     }
 
-    fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
+    fn statat(handle: &Dir, path: &ZStr) -> Maybe<Stat> {
         #[cfg(windows)]
         {
-            return statat_windows(handle.value, path);
+            return statat_windows(handle.fd(), path);
         }
         #[cfg(not(windows))]
-        Syscall::fstatat(handle.value, path)
+        Syscall::fstatat(handle.fd(), path)
     }
 
     /// Like statat but does not follow symlinks.
-    fn lstatat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
+    fn lstatat(handle: &Dir, path: &ZStr) -> Maybe<Stat> {
         #[cfg(windows)]
         {
-            return statat_windows(handle.value, path);
+            return statat_windows(handle.fd(), path);
         }
         #[cfg(not(windows))]
-        Syscall::lstatat(handle.value, path)
+        Syscall::lstatat(handle.fd(), path)
     }
 
-    fn openat(handle: SyscallHandle, path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
-        Ok(
-            Syscall::openat(handle.value, path, O::DIRECTORY | O::RDONLY, 0)
-                .map(|fd| SyscallHandle { value: fd }),
-        )
-    }
-
-    fn close(handle: SyscallHandle) -> Option<SysError> {
-        handle.value.close_allowing_bad_file_descriptor(None)
+    fn openat(handle: &Dir, path: &ZStr) -> Result<Maybe<Dir>, Error> {
+        Ok(Syscall::openat(handle.fd(), path, O::DIRECTORY | O::RDONLY, 0).map(Dir::from_fd))
     }
 }
 
@@ -322,7 +291,8 @@ pub enum IterState<A: Accessor> {
 }
 
 pub struct Directory<A: Accessor> {
-    pub(crate) fd: A::Handle,
+    /// `None` is the iterator's `cwd_fd`.
+    pub(crate) fd: Option<A::Handle>,
     pub(crate) iter: A::DirIter,
     pub(crate) path: bun_paths::path_buffer_pool::Guard,
     // The dir path is a prefix of `path` (self-referential).
@@ -332,9 +302,6 @@ pub struct Directory<A: Accessor> {
     /// Active component indices. Multiple indices mean one readdir
     /// evaluates all of them instead of revisiting the directory.
     pub(crate) active: ComponentSet,
-
-    pub(crate) iter_closed: bool,
-    pub(crate) at_cwd: bool,
 }
 
 impl<A: Accessor> Directory<A> {
@@ -352,20 +319,11 @@ impl<A: Accessor> Directory<A> {
 pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub(crate) walker: &'a mut GlobWalker<A, SENTINEL>,
     pub(crate) iter_state: IterState<A>,
-    pub(crate) cwd_fd: A::Handle,
-    /// This is to make sure in debug/tests that we are closing file descriptors
-    /// We should only have max 2 open at a time. One for the cwd, and one for the
-    /// directory being iterated on.
-    #[cfg(debug_assertions)]
-    pub(crate) fds_open: usize,
+    /// `init` opens it unless there is nothing to walk.
+    pub(crate) cwd_fd: Option<A::Handle>,
 
     #[cfg(windows)]
     pub(crate) nt_filter_buf: [u16; 256],
-}
-
-#[inline]
-fn count_fds<A: Accessor>() -> bool {
-    A::COUNT_FDS && cfg!(debug_assertions)
 }
 
 impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
@@ -373,9 +331,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Self {
             walker,
             iter_state: IterState::GetNext,
-            cwd_fd: A::Handle::EMPTY,
-            #[cfg(debug_assertions)]
-            fds_open: 0,
+            cwd_fd: None,
             #[cfg(windows)]
             nt_filter_buf: [0; 256],
         }
@@ -432,22 +388,16 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
                     let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
-                    let fd = match A::open(pathz)? {
-                        Err(e) => {
-                            if e.get_errno() == E::ENOTDIR {
-                                self.iter_state = IterState::Matched(path);
-                                return Ok(Ok(()));
-                            }
-                            // Doesn't exist
-                            if e.get_errno() == E::ENOENT {
-                                self.iter_state = IterState::GetNext;
-                                return Ok(Ok(()));
-                            }
-                            return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
+                    if let Err(e) = A::open(pathz)?
+                        && e.get_errno() != E::ENOTDIR
+                    {
+                        // Doesn't exist
+                        if e.get_errno() == E::ENOENT {
+                            self.iter_state = IterState::GetNext;
+                            return Ok(Ok(()));
                         }
-                        Ok(fd) => fd,
-                    };
-                    let _ = A::close(fd);
+                        return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
+                    }
                     self.iter_state = IterState::Matched(path);
                     return Ok(Ok(()));
                 }
@@ -492,14 +442,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             Ok(fd) => fd,
         };
 
-        if count_fds::<A>() {
-            #[cfg(debug_assertions)]
-            {
-                self.fds_open += 1;
-            }
-        }
-
-        self.cwd_fd = cwd_fd;
+        self.cwd_fd = Some(cwd_fd);
 
         let trans = if was_absolute {
             self.transition_to_dir_iter_state::<false>(root_work_item)?
@@ -511,43 +454,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
 
         Ok(Ok(()))
-    }
-
-    pub(crate) fn close_cwd_fd(&mut self) {
-        if self.cwd_fd.is_empty() {
-            return;
-        }
-        let _ = A::close(self.cwd_fd);
-        if count_fds::<A>() {
-            #[cfg(debug_assertions)]
-            {
-                self.fds_open -= 1;
-            }
-        }
-    }
-
-    pub(crate) fn close_disallowing_cwd(&mut self, fd: A::Handle) {
-        if fd.is_empty() || fd.eql(self.cwd_fd) {
-            return;
-        }
-        let _ = A::close(fd);
-        if count_fds::<A>() {
-            #[cfg(debug_assertions)]
-            {
-                self.fds_open -= 1;
-            }
-        }
-    }
-
-    pub(crate) fn bump_open_fds(&mut self) {
-        if count_fds::<A>() {
-            #[cfg(debug_assertions)]
-            {
-                self.fds_open += 1;
-                // If this is over 2 then this means that there is a bug in the iterator code
-                debug_assert!(self.fds_open <= 2);
-            }
-        }
     }
 
     fn transition_to_dir_iter_state<const ROOT: bool>(
@@ -570,9 +476,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
             // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
             if work_item_path.len() >= dir_path_buf.len() {
-                if let Some(fd) = work_item.fd {
-                    self.close_disallowing_cwd(fd);
-                }
                 return Ok(Err(SysError::from_code(
                     E::ENAMETOOLONG,
                     Syscall::Tag::open,
@@ -599,17 +502,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     &mut had_dot_dot,
                 ) {
                     Err(e) => {
-                        if let Some(fd) = work_item.fd {
-                            self.close_disallowing_cwd(fd);
-                        }
                         return Ok(Err(e));
                     }
                     Ok(i) => i,
                 };
                 if norm as usize >= self.walker.pattern_components.len() {
-                    if let Some(fd) = work_item.fd {
-                        self.close_disallowing_cwd(fd);
-                    }
                     self.iter_state = IterState::GetNext;
                     return Ok(Ok(()));
                 }
@@ -622,38 +519,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // SAFETY: dir_path_buf[dir_path_len] == 0 written above (or by collapse_dots)
         let dir_path = ZStr::from_buf(&dir_path_buf[..], dir_path_len);
 
-        let mut at_cwd = false;
-        let fd: A::Handle = 'fd: {
-            if let Some(fd) = work_item.fd {
-                break 'fd fd;
-            }
-            if ROOT {
-                if had_dot_dot {
-                    break 'fd match A::openat(self.cwd_fd, dir_path)? {
-                        Err(err) => {
-                            return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
-                        }
-                        Ok(fd_) => {
-                            self.bump_open_fds();
-                            fd_
-                        }
-                    };
-                }
-
-                at_cwd = true;
-                break 'fd self.cwd_fd;
-            }
-
-            match A::openat(self.cwd_fd, dir_path)? {
+        let cwd_fd = self.cwd_fd.as_ref().expect("opened by init");
+        let opened = match work_item.fd {
+            None if !ROOT || had_dot_dot => match A::openat(cwd_fd, dir_path)? {
                 Err(err) => {
                     return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
-                Ok(fd_) => {
-                    self.bump_open_fds();
-                    fd_
-                }
-            }
+                Ok(fd) => Some(fd),
+            },
+            opened => opened,
         };
+        let fd = opened.as_ref().unwrap_or(cwd_fd);
 
         // Literal-tail optimization: if the only active index is the last
         // component and it is a Literal, statat() instead of iterating.
@@ -663,9 +539,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
                 && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
             {
-                // `close_disallowing_cwd(fd)` is covered explicitly on
-                // both exit paths below (Err arm and post-Ok); no `?` between here
-                // and those calls, so a scopeguard is unnecessary.
                 let pat_slice = self.walker.pattern_components[idx as usize]
                     .pattern_slice(&self.walker.pattern)
                     .to_vec();
@@ -675,7 +548,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 let stat_result: Stat = match A::statat(fd, pathz_ref) {
                     Err(e_) => {
                         let e: SysError = e_;
-                        self.close_disallowing_cwd(fd);
                         if e.get_errno() == E::ENOENT {
                             self.iter_state = IterState::GetNext;
                             return Ok(Ok(()));
@@ -685,7 +557,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     }
                     Ok(stat) => stat,
                 };
-                self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;
                 let matches = (S::ISDIR(mode) && !self.walker.only_files)
                     || S::ISREG(mode)
@@ -733,13 +604,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
 
         self.iter_state = IterState::Directory(Directory {
-            fd,
+            fd: opened,
             iter: iterator,
             path: dir_path_buf,
             dir_path_len,
             active,
-            iter_closed: false,
-            at_cwd,
         });
 
         Ok(Ok(()))
@@ -892,8 +761,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             self.iter_state = IterState::GetNext;
+                            let cwd_fd = self.cwd_fd.as_ref().expect("opened by init");
                             let maybe_dir_fd: Option<A::Handle> =
-                                match A::openat(self.cwd_fd, symlink_full_path_z)? {
+                                match A::openat(cwd_fd, symlink_full_path_z)? {
                                     Err(err) => 'brk: {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
@@ -916,10 +786,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         }
                                         continue 'outer;
                                     }
-                                    Ok(fd) => {
-                                        self.bump_open_fds();
-                                        Some(fd)
-                                    }
+                                    Ok(fd) => Some(fd),
                                 };
 
                             let Some(dir_fd) = maybe_dir_fd else {
@@ -949,9 +816,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     )));
                                     true
                                 } else {
-                                    match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
+                                    match A::statat(&dir_fd, ZStr::from_slice_with_nul(b".\0")) {
                                         Ok(target) => {
-                                            self.walker.resolve_pending_followed_links(self.cwd_fd);
+                                            self.walker.resolve_pending_followed_links(cwd_fd);
                                             match self
                                                 .walker
                                                 .check_followed_link(FollowedLink::Target(target))
@@ -976,8 +843,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     ),
                                     followed_link,
                                 );
-                            } else {
-                                self.close_disallowing_cwd(dir_fd);
                             }
 
                             if add_dir && !self.walker.only_files {
@@ -997,30 +862,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 IterState::Directory(dir) => {
                     let entry = match dir.iter.next() {
                         Err(err) => {
-                            let dir_fd = dir.fd;
-                            let at_cwd = dir.at_cwd;
-                            let dir_path = dir.dir_path();
-                            // Note: reshaped for borrowck
-                            let err = self.walker.handle_sys_err_with_path(&err, dir_path);
-                            if !at_cwd {
-                                self.close_disallowing_cwd(dir_fd);
-                            }
-                            if let IterState::Directory(d) = &mut self.iter_state {
-                                d.iter_closed = true;
-                            }
+                            let err = self.walker.handle_sys_err_with_path(&err, dir.dir_path());
+                            self.iter_state = IterState::GetNext;
                             return Ok(Err(err));
                         }
                         Ok(ent) => ent,
                     };
                     let Some(entry) = entry else {
-                        let dir_fd = dir.fd;
-                        let at_cwd = dir.at_cwd;
-                        if !at_cwd {
-                            self.close_disallowing_cwd(dir_fd);
-                        }
-                        if let IterState::Directory(d) = &mut self.iter_state {
-                            d.iter_closed = true;
-                        }
                         self.iter_state = IterState::GetNext;
                         continue;
                     };
@@ -1033,7 +881,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     );
 
                     let active = dir.active.clone().expect("OOM: ComponentSet::clone");
-                    let dir_fd = dir.fd;
                     match entry.kind {
                         bun_sys::FileKind::File => {
                             if self.walker.eval_file(&active, entry_name) {
@@ -1121,7 +968,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let name_z = dupe_z(entry_name);
                             // SAFETY: dupe_z NUL-terminates
                             let name_z_ref = ZStr::from_slice_with_nul(&name_z[..]);
-                            let stat_result = A::lstatat(dir_fd, name_z_ref);
+                            let dir_fd = dir.fd.as_ref().or(self.cwd_fd.as_ref());
+                            let stat_result =
+                                A::lstatat(dir_fd.expect("opened by init"), name_z_ref);
                             let real_kind = match stat_result {
                                 Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
                                 Err(_) => continue,
@@ -1215,24 +1064,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
 impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
     fn drop(&mut self) {
-        self.close_cwd_fd();
-        if let IterState::Directory(dir) = &self.iter_state {
-            if !dir.iter_closed {
-                let fd = dir.fd;
-                self.close_disallowing_cwd(fd);
-            }
-        }
-
-        while let Some(work_item) = self.walker.workbuf.pop() {
-            if let Some(fd) = work_item.fd {
-                self.close_disallowing_cwd(fd);
-            }
-        }
-
-        if count_fds::<A>() {
-            #[cfg(debug_assertions)]
-            debug_assert!(self.fds_open == 0);
-        }
+        // The walker outlives the walk, and what is left to visit can hold a directory open.
+        self.walker.workbuf.clear();
     }
 }
 
@@ -2023,7 +1856,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Identify `Pending` ancestors in place (each is stat'd at most once) so
     /// the chain can be compared by `(st_dev, st_ino)`. Only called when a
     /// nested followed link actually needs the comparison.
-    fn resolve_pending_followed_links(&mut self, cwd_fd: A::Handle) {
+    fn resolve_pending_followed_links(&mut self, cwd_fd: &A::Handle) {
         for link in &mut self.followed_links {
             if let FollowedLink::Pending(path) = link {
                 // SAFETY: `Pending` paths come from `dupe_z` (NUL-terminated).

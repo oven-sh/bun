@@ -19,14 +19,13 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task,
 };
-use bun_sys::Fd;
-use bun_sys::FdExt;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
+use bun_sys::{CloseOnDrop, Fd};
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
 // (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called
@@ -656,10 +655,12 @@ pub(crate) fn get_nack_packet(mode: Mode) -> &'static [u8] {
 pub(crate) type Socket = bun_uws::SocketHandler<false>;
 
 pub(crate) struct Handle {
+    #[cfg(windows)]
     pub fd: Fd,
+    #[cfg(not(windows))]
+    duplicate: CloseOnDrop,
     pub js: Protected,
     pub close_on_complete: bool,
-    pub owns_fd: bool,
     pub cluster_seq: Option<i32>,
     #[cfg(windows)]
     pub win_export_hex: Option<Box<[u8]>>,
@@ -674,7 +675,6 @@ impl Handle {
             fd,
             js: js.protected(),
             close_on_complete: false,
-            owns_fd: false,
             cluster_seq: None,
             win_export_hex: None,
             peer_pid: 0,
@@ -687,7 +687,6 @@ impl Handle {
             fd,
             js: js.protected(),
             close_on_complete: true,
-            owns_fd: false,
             cluster_seq: None,
             win_export_hex: None,
             peer_pid: 0,
@@ -700,23 +699,19 @@ impl Handle {
         js: JSValue,
         close_on_complete: bool,
     ) -> Result<Self, bun_sys::Error> {
-        let wire_fd = bun_sys::dup(fd)?;
         Ok(Self {
-            fd: wire_fd,
+            duplicate: CloseOnDrop::new(bun_sys::dup(fd)?),
             js: js.protected(),
             close_on_complete,
-            owns_fd: true,
             cluster_seq: None,
         })
     }
-}
 
-impl Drop for Handle {
-    fn drop(&mut self) {
-        if self.owns_fd {
-            // Owned dup/received descriptors may legitimately be 0-2 (stdio closed); close them regardless.
-            let _ = self.fd.close_allowing_standard_io(None);
-        }
+    fn fd(&self) -> Fd {
+        #[cfg(windows)]
+        return self.fd;
+        #[cfg(not(windows))]
+        self.duplicate.fd()
     }
 }
 
@@ -909,7 +904,8 @@ pub(crate) struct SendQueue {
     pub(crate) mode: Mode,
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
-    pub(crate) incoming_fd: Cell<Option<Fd>>,
+    #[cfg(not(windows))]
+    pub(crate) incoming_fd: Cell<Option<CloseOnDrop>>,
 
     pub socket: JsCell<SocketUnion>,
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
@@ -1033,6 +1029,7 @@ impl SendQueue {
             mode,
             internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
+            #[cfg(not(windows))]
             incoming_fd: Cell::new(None),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
@@ -1449,7 +1446,7 @@ impl SendQueue {
                 return Next::EmptyItem(queue.remove(0));
             }
             Next::Send(if first.data.cursor == 0 {
-                first.handle.as_ref().map(|h| h.fd)
+                first.handle.as_ref().map(Handle::fd)
             } else {
                 None
             })
@@ -1852,14 +1849,6 @@ impl Drop for SendQueue {
         log!("SendQueue#deinit");
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
-
-        // queue items / internal_msg_queue / incoming / waiting_for_ack: Drop handles them.
-
-        // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
-        // the `NODE_HANDLE` decoder when the socket closes.
-        if let Some(fd) = self.incoming_fd.take() {
-            let _ = fd.close_allowing_standard_io(None);
-        }
     }
 }
 
@@ -1894,7 +1883,7 @@ pub(crate) const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
 fn import_windows_socket_payload(
     global: &JSGlobalObject,
     msg_data: JSValue,
-) -> JsResult<Option<Fd>> {
+) -> JsResult<Option<CloseOnDrop>> {
     let Some(info_value) = msg_data
         .get(global, WIN_SOCKET_INFO_KEY)?
         .filter(|v| v.is_string())
@@ -1923,14 +1912,9 @@ fn import_windows_socket_payload(
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return Ok(None);
     }
-    let fd = Fd::from_system(sock as *mut c_void);
-    if let Err(err) = msg_data.delete_property(global, WIN_SOCKET_INFO_KEY) {
-        // The imported socket is not owned by anything yet; do not leak it
-        // with the exception.
-        fd.close();
-        return Err(err);
-    }
-    Ok(Some(fd))
+    let socket = CloseOnDrop::new(Fd::from_system(sock as *mut c_void));
+    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY)?;
+    Ok(Some(socket))
 }
 
 fn received_fd_to_js(fd: Fd) -> JSValue {
@@ -2010,13 +1994,11 @@ fn handle_ipc_message(
         match icmd {
             IPCCommand::Handle(msg_data) => {
                 #[cfg(windows)]
-                let imported = import_windows_socket_payload(global_this, msg_data)?;
-                #[cfg(windows)]
-                let ack = imported.is_some();
+                let received = import_windows_socket_payload(global_this, msg_data)?;
                 #[cfg(not(windows))]
-                let ack = send_queue.incoming_fd.get().is_some();
+                let received = send_queue.incoming_fd.take();
 
-                let packet = if ack {
+                let packet = if received.is_some() {
                     get_ack_packet(send_queue.mode)
                 } else {
                     get_nack_packet(send_queue.mode)
@@ -2035,18 +2017,10 @@ fn handle_ipc_message(
                 log!("IPC call continueSend() from handleIPCMessage");
                 send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
 
-                if !ack {
+                let Some(received) = received else {
                     return Ok(());
-                }
-
-                // Get file descriptor and clear it
-                #[cfg(windows)]
-                let fd: Fd = imported.unwrap();
-                #[cfg(not(windows))]
-                let fd: Fd = send_queue.incoming_fd.take().unwrap();
-
+                };
                 let Some(owner) = send_queue.owner_ref() else {
-                    let _ = fd.close_allowing_standard_io(None);
                     return Ok(());
                 };
                 let target: JSValue = match owner.kind() {
@@ -2057,12 +2031,10 @@ fn handle_ipc_message(
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                let fd_js = received_fd_to_js(fd);
-                if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
-                    // ack written already, that's okay.
-                    let _ = fd.close_allowing_standard_io(None);
-                    return Err(e);
-                }
+                let fd_js = received_fd_to_js(received.fd());
+                ipc_parse(global_this, target, msg_data, fd_js)?;
+                // The object that `ipc_parse` made closes it.
+                received.into_raw();
                 drop(_scope);
 
                 // ipc_parse will call the callback which calls handleIPCMessage()
@@ -2082,8 +2054,7 @@ fn handle_ipc_message(
         }
     } else {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
-        let mut handle_js = JSValue::UNDEFINED;
-        let mut received_fd: Option<Fd> = None;
+        let mut received = None;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
@@ -2091,12 +2062,14 @@ fn handle_ipc_message(
                     && marker.to_boolean()
                 {
                     #[cfg(windows)]
-                    let imported = import_windows_socket_payload(global_this, msg_data)?;
-                    #[cfg(windows)]
-                    let ack = imported.is_some();
+                    {
+                        received = import_windows_socket_payload(global_this, msg_data)?;
+                    }
                     #[cfg(not(windows))]
-                    let ack = send_queue.incoming_fd.get().is_some();
-                    let packet = if ack {
+                    {
+                        received = send_queue.incoming_fd.take();
+                    }
+                    let packet = if received.is_some() {
                         get_ack_packet(send_queue.mode)
                     } else {
                         get_nack_packet(send_queue.mode)
@@ -2110,26 +2083,16 @@ fn handle_ipc_message(
                     send_queue.insert_message(reply);
                     log!("IPC call continueSend() from internal $hasHandle ack");
                     send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
-                    if !ack {
+                    if received.is_none() {
                         return Ok(());
                     }
-                    #[cfg(windows)]
-                    let fd = imported.unwrap();
-                    #[cfg(not(windows))]
-                    let fd = send_queue.incoming_fd.take().unwrap();
-                    received_fd = Some(fd);
-                    handle_js = received_fd_to_js(fd);
                 }
             }
         }
-        match send_queue.owner.get() {
-            Some(owner) => owner.handle_ipc_message(&message, handle_js)?,
-            // Owner already torn down: nobody will adopt the descriptor we just acked.
-            None => {
-                if let Some(fd) = received_fd {
-                    let _ = fd.close_allowing_standard_io(None);
-                }
-            }
+        if let Some(owner) = send_queue.owner.get() {
+            let handle_js =
+                received.map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
+            owner.handle_ipc_message(&message, handle_js)?;
         }
     }
     Ok(())
@@ -2351,11 +2314,8 @@ pub(crate) mod IPCHandlers {
             #[cfg(not(windows))]
             {
                 log!("onFd: {}", fd);
-                if let Some(existing_fd) = send_queue.incoming_fd.take() {
-                    log!("onFd: incoming_fd already set; overwriting");
-                    let _ = existing_fd.close_allowing_standard_io(None);
-                }
-                send_queue.incoming_fd.set(Some(Fd::from_native(fd)));
+                let received = CloseOnDrop::new(Fd::from_native(fd));
+                send_queue.incoming_fd.set(Some(received));
             }
         }
 

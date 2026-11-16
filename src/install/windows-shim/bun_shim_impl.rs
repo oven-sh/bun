@@ -512,6 +512,14 @@ impl BunCtx for () {
     }
 }
 
+struct MetadataFile(HANDLE);
+
+impl Drop for MetadataFile {
+    fn drop(&mut self) {
+        let _ = nt::NtClose(self.0);
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet {
     // peb! w.teb is a couple instructions of inline asm
@@ -690,6 +698,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     } else {
         metadata_handle = bun_ctx.handle();
     }
+    let metadata = MetadataFile(metadata_handle);
 
     // get a slice to where the CLI arguments are
     // the slice will have a leading space ' arg arg2' or be empty ''
@@ -808,9 +817,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
             left -= 1;
             if left == 0 {
-                // Ownership contract: launcher consumes `metadata_handle` (see NtClose below).
-                // ReadWithoutLaunch returns to a live process, so close on error too.
-                let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
             ptr = unsafe { ptr.sub(1) };
@@ -829,7 +835,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
             left -= 1;
             if left == 0 {
-                let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
             ptr = unsafe { ptr.sub(1) };
@@ -865,7 +870,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // SAFETY: read_ptr points into buf1 with read_max_len bytes available.
     let read_status = unsafe {
         nt::NtReadFile(
-            metadata_handle,
+            metadata.0,
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             core::ptr::null_mut(),
@@ -897,13 +902,12 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             if DBG {
                 debug!("error reading: {}", rc.0);
             }
-            let _ = nt::NtClose(metadata_handle);
             return LauncherMode::fail(MODE, FailReason::CouldNotReadShim);
         }
     };
 
-    // Handle was opened above (or passed in) and is closed exactly once here.
-    let _ = nt::NtClose(metadata_handle);
+    // Not held while the program runs.
+    drop(metadata);
 
     if DBG {
         let total = (((read_ptr as usize) - (buf1_u8 as usize)) + read_len) / 2;

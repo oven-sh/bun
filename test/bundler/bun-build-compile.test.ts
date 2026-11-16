@@ -65,6 +65,35 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
+  test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {
+    using dir = tempDir("build-compile-closed-stdio", {
+      "build.js": `
+        import { closeSync, writeFileSync } from "node:fs";
+        const options = { entrypoints: ["/virtual/app.js"], files: { "/virtual/app.js": "process.exit(7)" } };
+        // Opens what the bundler keeps open, so that it doesn't take the numbers.
+        await Bun.build(options);
+        for (const fd of [0, 1, 2]) closeSync(fd);
+        await Bun.build({ ...options, compile: { outfile: "app" } });
+        let result;
+        try {
+          result = Bun.spawnSync({ cmd: ["./app"], stdio: ["ignore", "ignore", "ignore"] }).exitCode;
+        } catch (error) {
+          result = error.code;
+        }
+        writeFileSync("result", String(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const exitCode = await proc.exited;
+    expect(readFileSync(join(String(dir), "result"), "utf8")).toBe("7");
+    expect(exitCode).toBe(0);
+  });
+
   // The executable's embedded bytecode is mapped for the life of the process, so decoded instruction streams alias it
   // instead of being copied into private memory. The same bundle run from an on-disk .jsc, whose bytes are an owned buffer
   // the instruction streams are copied out of, is the control.

@@ -2,6 +2,8 @@
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
+#[cfg(windows)]
+use crate::server::file_response_stream::StreamFd;
 #[cfg(not(windows))]
 use crate::webcore::blob::{self, MkdirpTarget, Retry, store};
 use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
@@ -14,8 +16,6 @@ use bun_jsc::{self as jsc, JSPromise, JSValue};
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
-#[cfg(windows)]
-use bun_sys::FdExt as _;
 #[cfg(not(windows))]
 use bun_sys::File;
 #[cfg(windows)]
@@ -943,7 +943,6 @@ pub(crate) struct CopyFileWindows {
 
     pub(crate) size: SizeType,
 
-    /// Bytes written, stored for use after async chmod completes
     pub(crate) written_bytes: usize,
 
     /// For mkdirp
@@ -958,11 +957,8 @@ bun_io::intrusive_uv_fs!(CopyFileWindows, io_request);
 
 #[cfg(windows)]
 pub(crate) struct ReadWriteLoop {
-    pub(crate) source_fd: Fd,
-    pub(crate) must_close_source_fd: bool,
-    pub(crate) destination_fd: Fd,
-    pub(crate) must_close_destination_fd: bool,
-    pub(crate) written: usize,
+    pub(crate) source_fd: StreamFd,
+    pub(crate) destination_fd: StreamFd,
     pub(crate) read_buf: Vec<u8>,
     pub(crate) uv_buf: libuv::uv_buf_t,
 }
@@ -971,11 +967,8 @@ pub(crate) struct ReadWriteLoop {
 impl Default for ReadWriteLoop {
     fn default() -> Self {
         Self {
-            source_fd: Fd::INVALID,
-            must_close_source_fd: false,
-            destination_fd: Fd::INVALID,
-            must_close_destination_fd: false,
-            written: 0,
+            source_fd: StreamFd::Borrowed(Fd::INVALID),
+            destination_fd: StreamFd::Borrowed(Fd::INVALID),
             read_buf: Vec::new(),
             uv_buf: libuv::uv_buf_t {
                 len: 0,
@@ -995,7 +988,7 @@ impl CopyFileWindows {
             len: cap as libuv::ULONG,
             base: self.read_write_loop.read_buf.as_mut_ptr(),
         };
-        let source_fd = self.read_write_loop.source_fd;
+        let source_fd = self.read_write_loop.source_fd.get();
         let loop_ = self.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
@@ -1022,7 +1015,7 @@ impl CopyFileWindows {
     }
 
     fn read_write_loop_write(mut self: Box<Self>) {
-        let destination_fd = self.read_write_loop.destination_fd;
+        let destination_fd = self.read_write_loop.destination_fd.get();
         let loop_ = self.event_loop.uv_loop();
 
         // Re-use the fs request.
@@ -1049,44 +1042,11 @@ impl CopyFileWindows {
 }
 
 #[cfg(windows)]
-impl ReadWriteLoop {
-    pub(crate) fn close(&mut self) {
-        if self.must_close_source_fd {
-            match self.source_fd.make_libuv_owned() {
-                Ok(fd) => {
-                    aio::Closer::close(fd, aio::Loop::get());
-                }
-                Err(_) => {
-                    self.source_fd.close();
-                }
-            }
-            self.must_close_source_fd = false;
-            self.source_fd = Fd::INVALID;
-        }
-
-        if self.must_close_destination_fd {
-            match self.destination_fd.make_libuv_owned() {
-                Ok(fd) => {
-                    aio::Closer::close(fd, aio::Loop::get());
-                }
-                Err(_) => {
-                    self.destination_fd.close();
-                }
-            }
-            self.must_close_destination_fd = false;
-            self.destination_fd = Fd::INVALID;
-        }
-
-        self.read_buf = Vec::new(); // clearAndFree()
-    }
-}
-
-#[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv.
     let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
-    let source_fd = this.read_write_loop.source_fd;
+    let source_fd = this.read_write_loop.source_fd.get();
     // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
     let read_buf = &mut this.read_write_loop.read_buf;
 
@@ -1123,7 +1083,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
     let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
     let buf_len = this.read_write_loop.read_buf.len();
 
-    let destination_fd = this.read_write_loop.destination_fd;
+    let destination_fd = this.read_write_loop.destination_fd.get();
 
     let rc = this.io_request.result;
 
@@ -1141,7 +1101,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
     let wrote: u32 = u32::try_from(rc.int()).expect("int cast");
 
-    this.read_write_loop.written += wrote as usize;
+    this.written_bytes += wrote as usize;
 
     if (wrote as usize) < buf_len {
         if wrote == 0 {
@@ -1168,7 +1128,7 @@ impl CopyFileWindows {
             return;
         }
 
-        let written = self.read_write_loop.written;
+        let written = self.written_bytes;
         self.on_complete(written);
     }
 
@@ -1208,11 +1168,10 @@ impl CopyFileWindows {
 
     fn prepare_pathlike(
         pathlike: &mut PathOrFileDescriptor,
-        must_close: &mut bool,
         is_reading: bool,
-    ) -> bun_sys::Result<Fd> {
+    ) -> bun_sys::Result<StreamFd> {
         if let PathOrFileDescriptor::Path(path) = pathlike {
-            let fd = match bun_sys::openat_windows_a(
+            let fd = bun_sys::openat_windows_a(
                 Fd::INVALID,
                 path.slice(),
                 if is_reading {
@@ -1221,28 +1180,14 @@ impl CopyFileWindows {
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
                 },
                 0,
-            ) {
-                bun_sys::Result::Ok(result) => match result.make_libuv_owned() {
-                    Ok(fd) => fd,
-                    Err(_) => {
-                        result.close();
-                        return bun_sys::Result::Err(bun_sys::Error {
-                            errno: bun_sys::SystemErrno::EMFILE as u16,
-                            syscall: bun_sys::Tag::open,
-                            path: path.slice().into(),
-                            ..Default::default()
-                        });
-                    }
-                },
-                bun_sys::Result::Err(err) => {
-                    return bun_sys::Result::Err(err);
-                }
-            };
-            *must_close = true;
-            bun_sys::Result::Ok(fd)
+            )?;
+            bun_sys::File::from_fd(fd)
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+                .map(StreamFd::from)
+                .map_err(|err| err.with_path(path.slice()))
         } else {
             // We assume that this is already a uv-casted file descriptor.
-            bun_sys::Result::Ok(pathlike.fd())
+            bun_sys::Result::Ok(StreamFd::Borrowed(pathlike.fd()))
         }
     }
 
@@ -1254,7 +1199,6 @@ impl CopyFileWindows {
             &mut Store::data_mut(&self.destination_file_store)
                 .as_file_mut()
                 .pathlike,
-            &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
             bun_sys::Result::Ok(fd) => fd,
@@ -1273,7 +1217,6 @@ impl CopyFileWindows {
             &mut Store::data_mut(&self.source_file_store)
                 .as_file_mut()
                 .pathlike,
-            &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {
             bun_sys::Result::Ok(fd) => fd,
@@ -1553,13 +1496,6 @@ impl CopyFileWindows {
         }
 
         self.copyfile();
-    }
-}
-
-#[cfg(windows)]
-impl Drop for CopyFileWindows {
-    fn drop(&mut self) {
-        self.read_write_loop.close();
     }
 }
 

@@ -105,19 +105,6 @@ pub(crate) enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer<'static>),
 }
 
-impl Drop for BlobOrStringOrBuffer {
-    fn drop(&mut self) {
-        match self {
-            Self::Blob(blob) => {
-                let _ = blob.store.with_mut(|s| s.take());
-            }
-            Self::StringOrBuffer(_) => {
-                // StringOrBuffer's own Drop handles cleanup.
-            }
-        }
-    }
-}
-
 impl BlobOrStringOrBuffer {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
@@ -165,9 +152,6 @@ impl BlobOrStringOrBuffer {
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         match value.js_type() {
             jsc::JSType::DOMWrapper => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack.
                 if let Some(blob) = value.as_class_ref::<Blob>() {
                     return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
                 }
@@ -177,9 +161,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -192,9 +174,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -1142,7 +1122,7 @@ impl PathLikeExt for PathLike<'_> {
                 from_string(str)?
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(arg) {
+                if let Some(domurl) = jsc::DOMURL::cast(&arg) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let str = match domurl.file_system_path() {
                         Ok(s) => s,

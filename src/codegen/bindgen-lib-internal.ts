@@ -1845,10 +1845,10 @@ export class NativePromiseContextType extends PromisePtrType {
     out.add("Bindgen/IDLConvertNativePromiseContext.h");
   }
   rustType(): string {
-    return `Option<core::ptr::NonNull<${this.pointee}>>`;
+    return `Option<bun_ptr::RefPtr<${this.pointee}>>`;
   }
   rustFromExtern(expr: string): string {
-    return `core::ptr::NonNull::new(${super.rustFromExtern(expr)})`;
+    return `core::ptr::NonNull::new(${super.rustFromExtern(expr)}).map(|context| bun_ptr::RefPtr::from_raw(context.as_ptr()))`;
   }
 }
 
@@ -2862,6 +2862,7 @@ export interface SignatureOptions extends SignatureColumns, EntryColumns {
   name?: string;
   /** Its own `name` property says `bound join` where it prints and is traced as `join`, as a bound function does. */
   namedAsBound?: boolean;
+  replacesBoundFunction?: boolean;
 }
 
 /** What `b.fn` takes. */
@@ -2890,6 +2891,7 @@ export class Signature {
   readonly conversionOrder: readonly number[];
   readonly givenName: string | undefined;
   readonly namedAsBound: boolean;
+  readonly replacesBoundFunction: boolean;
   readonly returns: Type;
   readonly capability: Capability;
   readonly throws: boolean;
@@ -2921,6 +2923,7 @@ export class Signature {
       "convertedFirst",
       "name",
       "namedAsBound",
+      "replacesBoundFunction",
       "mutates",
       "passThis",
       "answersThis",
@@ -2933,6 +2936,7 @@ export class Signature {
     this.length = options.length;
     this.givenName = options.name;
     this.namedAsBound = options.namedAsBound ?? false;
+    this.replacesBoundFunction = options.replacesBoundFunction ?? false;
     this.rejects = options.rejects ?? false;
     this.requiredArguments = options.requiredArguments ?? 0;
     const { args = {}, expected = {}, validatorExpects = {}, convertedFirst = [] } = options;
@@ -3170,6 +3174,9 @@ export class FunctionDefinition {
   }
   get namedAsBound(): boolean {
     return this.signatures.some(signature => signature.namedAsBound);
+  }
+  get replacesBoundFunction(): boolean {
+    return this.signatures.some(signature => signature.replacesBoundFunction);
   }
   get length(): number {
     const given = this.signatures.find(signature => signature.length !== undefined);

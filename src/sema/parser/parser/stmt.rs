@@ -1362,7 +1362,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         self.context = self.context & !(ctx::IN_LOOP | ctx::IN_SWITCH) | ctx::IN_NAMESPACE;
         self.open_scope_for_vars();
-        let list = self.statements_until_close_brace(Prologue::None);
+        let prologue = match self.options.compiles {
+            true => Prologue::Directives,
+            false => Prologue::None,
+        };
+        let list = self.statements_until_close_brace(prologue);
         self.close_scope();
         self.context = saved;
         self.expect(T::CloseBrace);

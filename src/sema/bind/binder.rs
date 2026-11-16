@@ -1578,16 +1578,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports.
         if self.f.is_js && (!self.f.has_module_syntax || self.f.is_forced_module) {
-            self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
-                matches!(self.f[e].kind, ExprKind::Call(_) | ExprKind::Assign { .. })
-                    && (require_argument(self.f, e).is_some()
-                        || matches!(
-                            assignment_declaration_kind(self.f, e),
-                            JsDeclarationKind::ModuleExports
-                                | JsDeclarationKind::ExportsProperty(_)
-                                | JsDeclarationKind::ObjectDefinePropertyExports
-                        ))
-            });
+            self.b.commonjs_indicator = find_commonjs_indicator(self.f);
         }
         let is_module = self.f.has_module_syntax || self.b.commonjs_indicator.is_some();
         // `bindSourceFileAsExternalModule`
@@ -2006,7 +1997,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.expando_declarations.push(e);
         }
         self.expando_assignments = assignments;
-        self.b.expando_declarations.as_mut_slice().sort_unstable();
+        self.b.expando_declarations.sort_unstable();
     }
 
     fn list_nested_names(&mut self) {
@@ -2368,16 +2359,16 @@ impl<'f, 's> Binder<'f, 's> {
         }
         self.assigned = assigned;
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
-        self.b.type_query_operands.as_mut_slice().sort_unstable();
+        self.b.type_query_operands.sort_unstable();
         // A pattern with a default is gone through for its own assignment and for the pattern around it.
-        self.b.assignment_patterns.as_mut_slice().sort_unstable();
+        self.b.assignment_patterns.sort_unstable();
         self.b.assignment_patterns.dedup();
         self.b.lists_assignment_patterns = true;
-        self.b.unchecked_exprs.as_mut_slice().sort_unstable();
-        self.b.unchecked_types.as_mut_slice().sort_unstable();
+        self.b.unchecked_exprs.sort_unstable();
+        self.b.unchecked_types.sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
-        self.b.arguments_objects.as_mut_slice().sort_unstable();
+        self.b.arguments_objects.sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
         // strictly.
         let f = self.f;

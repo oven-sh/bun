@@ -108,21 +108,6 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
     this.event_loop().enqueue_task_after_yield(Task::init(task));
 }
 
-/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
-/// debugger and signal threads, work no script initiated), so it lands on the
-/// regular loop: see [`crate::VmHandle::post_cpp_task`].
-// HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
-#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
-pub fn vm_handle_queue_task_concurrently(
-    r: *const crate::vm_handle::Shared,
-    task: *mut crate::cpp_task::CppTask,
-) {
-    crate::mark_binding!();
-    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
-    // hands over a live heap EventLoopTask.
-    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
-}
-
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 /// `rejection_owner`: the `Bun.ModuleGraph` whose code rejected the promise
 /// (decided by promiseRejectionTracker when it happened), or null.
@@ -164,14 +149,11 @@ impl HandledPromiseTask {
     }
 }
 
-impl bun_event_loop::Taskable for HandledPromiseTask {
+impl bun_event_loop::BoxedTask for HandledPromiseTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HandledPromise;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `handle_handled_promise`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

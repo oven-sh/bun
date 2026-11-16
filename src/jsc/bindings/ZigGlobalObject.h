@@ -26,7 +26,6 @@ class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
 class GlobalEventScope;
-class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
@@ -83,7 +82,6 @@ class JSMockFunction;
 
 namespace WebCore {
 class GlobalEventScope;
-class SubtleCrypto;
 class EventTarget;
 }
 
@@ -213,7 +211,6 @@ public:
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
-    void setConsole(void* console);
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
@@ -338,7 +335,6 @@ public:
 
     WebCore::EventTarget& eventTarget();
 
-    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
@@ -715,13 +711,15 @@ public:
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
     // happened: a Bun.ModuleGraph, or null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
+
+    // Last, so that its observers among the other members hear of its destruction before their own.
+    const Ref<WebCore::ScriptExecutionContext> m_scriptExecutionContext;
 };
 
 class EvalGlobalObject : public GlobalObject {

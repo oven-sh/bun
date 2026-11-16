@@ -4137,9 +4137,9 @@ impl ModuleTypes {
 
 fn is_project_source(checker: &Checker<'_, '_>, file: FileId) -> bool {
     let module = checker.p.files.module(file);
-    (matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-        || module.hir.kind == FileKind::Declaration && !module.is_lib && module.is_module())
-        && !module.hir.is_js
+    (matches!(module.facts.kind, FileKind::Ts | FileKind::Tsx)
+        || module.facts.kind == FileKind::Declaration && !module.is_lib && module.is_module())
+        && !module.facts.is_js
         && !module.is_from_external_library
 }
 
@@ -4440,7 +4440,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             };
             if let ModuleName::String(_) = hir[declared].name
                 && let [_, specifier @ .., _] = syntax.word(hir[declared].name_pos)
-                && let Some(path) = services.resolve_module_name(specifier).and_then(&is_source)
+                && let Some(path) = services.resolve_module_name(specifier).and_then(is_source)
             {
                 augmented_modules.push((statement.start, path));
             }

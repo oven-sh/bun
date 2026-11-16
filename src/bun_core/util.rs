@@ -536,13 +536,13 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
+// `.lock()` → guard (no `Result`), `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
-/// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
+/// Guard returned by [`Mutex::lock`]. Re-exported so
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
@@ -559,15 +559,6 @@ impl<T> Mutex<T> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        match self.0.try_lock() {
-            Ok(g) => Some(g),
-            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
     }
 }
 
@@ -991,35 +982,6 @@ impl Fd {
             }
             // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
             FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
-        }
-    }
-
-    /// On Windows, convert a system-kind
-    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
-    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
-    /// On POSIX this is the identity (libuv fd == posix fd).
-    ///
-    /// Returns `Err(())` when
-    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
-    /// the original handle (see `make_libuv_owned_for_syscall`).
-    #[inline]
-    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        match self.kind() {
-            FdKind::Uv => Ok(self),
-            FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
-                }
-            }
         }
     }
 
@@ -1511,54 +1473,87 @@ pub fn kind_from_mode(mode: Mode) -> FileKind {
 }
 
 // ─── io::Writer (from bun_io) ─────────────────────────────────────────────
-// TYPE_ONLY: output.rs holds `*mut io::Writer` opaquely (erased adapter head);
-// real write/flush/print dispatch lives in bun_sys via the OutputSinkVTable.
 pub mod io {
-    /// Opaque writer interface header. bun_sys guarantees this is the first
-    /// `repr(C)` field of every concrete adapter, so `&mut Adapter as &mut Writer`
-    /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
-    #[repr(C)]
-    pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> crate::CrateResult<()>,
-        pub flush: unsafe fn(*mut Writer) -> crate::CrateResult<()>,
+    use core::cell::Cell;
+
+    use crate::Fd;
+    use crate::output::output_sink;
+
+    /// Best-effort writer. Takes `&self` because a `Display` impl can print re-entrantly.
+    pub struct Writer<Buf: ?Sized = [Cell<u8>]> {
+        fd: Cell<Fd>,
+        /// How much of `buf` is waiting to be written.
+        pos: Cell<usize>,
+        buf: Buf,
     }
-    impl Writer {
-        #[inline]
-        pub fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
-            // (see type doc); `self` was produced by upcasting `&mut Adapter`,
-            // so the vtable fn receives the same pointer it was registered with.
-            unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
+
+    /// The storage of a [`Writer`] that buffers up to `N` bytes.
+    pub type WriterStorage<const N: usize> = Writer<[Cell<u8>; N]>;
+
+    impl<const N: usize> WriterStorage<N> {
+        pub const fn new(fd: Fd) -> Self {
+            Self {
+                fd: Cell::new(fd),
+                pos: Cell::new(0),
+                buf: [const { Cell::new(0) }; N],
+            }
         }
-        #[inline]
-        pub fn flush(&mut self) -> crate::CrateResult<()> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
-            // `self` is the same pointer the adapter registered its vtable with,
-            // so the callee's downcast back to the concrete type is sound.
-            unsafe { (self.flush)(std::ptr::from_mut(self)) }
+
+        pub(crate) fn fd(&self) -> Fd {
+            self.fd.get()
+        }
+
+        pub(crate) fn reset(&self, fd: Fd) {
+            self.fd.set(fd);
+            self.pos.set(0);
+        }
+    }
+
+    impl Writer {
+        pub fn write_all(&self, bytes: &[u8]) -> crate::CrateResult<()> {
+            let mut spare = &self.buf[self.pos.get()..];
+            if bytes.len() > spare.len() {
+                self.flush()?;
+                // Large writes bypass the buffer so the next small write still coalesces.
+                if bytes.len() >= self.buf.len() {
+                    let _ = output_sink().write_all_quiet(self.fd.get(), bytes);
+                    return Ok(());
+                }
+                spare = &self.buf;
+            }
+            for (slot, &byte) in spare.iter().zip(bytes) {
+                slot.set(byte);
+            }
+            self.pos.set(self.pos.get() + bytes.len());
+            Ok(())
+        }
+        pub fn flush(&self) -> crate::CrateResult<()> {
+            let pos = self.pos.get();
+            if pos > 0 {
+                // SAFETY: `write_all` keeps `pos` within `buf`. `Self` is not `Sync` and the sink
+                // does not print, so nothing writes to `buf` while this is live.
+                let buffered =
+                    unsafe { core::slice::from_raw_parts(self.buf.as_ptr().cast(), pos) };
+                let _ = output_sink().write_all_quiet(self.fd.get(), buffered);
+                self.pos.set(0);
+            }
+            Ok(())
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
-        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
+        pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.print(args)
         }
         #[inline]
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
-            use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, crate::CrateResult<()>);
-            impl core::fmt::Write for A<'_> {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.1 = self.0.write_all(s.as_bytes());
-                    if self.1.is_err() {
-                        Err(core::fmt::Error)
-                    } else {
-                        Ok(())
-                    }
-                }
-            }
-            let mut a = A(self, Ok(()));
-            let _ = a.write_fmt(args);
-            a.1
+        pub fn print(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
+            let _ = fmt::Write::write_fmt(&mut &*self, args);
+            Ok(())
+        }
+    }
+
+    impl fmt::Write for &Writer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            Writer::write_all(self, s.as_bytes()).map_err(|_| fmt::Error)
         }
     }
 
@@ -1735,9 +1730,8 @@ pub mod io {
         }
     }
 
-    /// Bridge the type-erased vtable header into the generic `Write` trait so
-    /// printers taking `W: io::Write` accept process stdout/stderr sinks.
-    impl Write for Writer {
+    /// So printers taking `W: io::Write` accept process stdout/stderr sinks.
+    impl Write for &Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             Writer::write_all(self, buf)
@@ -2724,27 +2718,23 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+pub fn append_in_parallel(mut to: crate::vec::BorrowedCursor<'_, u8>, from: &[u8]) {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
     let threads = usize::from(get_thread_count())
-        .min(len / MIN_BYTES_PER_THREAD)
+        .min(from.len() / MIN_BYTES_PER_THREAD)
         .min(16);
     if threads < 2 {
-        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
-        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+        return to.append(from);
     }
-    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
-    let (to, from) = (to as usize, from as usize);
-    for_each_in_parallel((0..len).step_by(share), |start| {
-        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                (from + start) as *const u8,
-                (to + start) as *mut u8,
-                share.min(len - start),
-            )
-        }
-    });
+    let share = from.len().div_ceil(threads).next_multiple_of(1 << 16);
+    // SAFETY: each of the first `from.len()` bytes is in one part, and each part is written.
+    unsafe {
+        let parts = to.as_mut()[..from.len()].chunks_mut(share);
+        for_each_in_parallel(parts.zip(from.chunks(share)), |(to, from)| {
+            to.write_copy_of_slice(from);
+        });
+        to.advance(from.len());
+    }
 }
 
 /// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.
@@ -2960,6 +2950,7 @@ pub struct StringPointer {
     pub offset: u32,
     pub length: u32,
 }
+impl_any_bit_pattern!(StringPointer);
 impl StringPointer {
     #[inline]
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
@@ -3018,17 +3009,14 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. `Resolution`, `Bin` and `DependencyVersion` share it.
+// sites stay safe. `Resolution` and `Bin` share it.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
 // `debug_assert!(self.$tag_field == $TagTy::$Variant)`.
 //
 // Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
-// formed (defensive against partially-initialized padding). The trailing
-// `as *const $Ty` cast is identity for plain fields and unwraps
-// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `DependencyVersionValue`
-// case without needing a separate macro arm.
+// formed (defensive against partially-initialized padding).
 //
 // Syntax:
 //   extern_union_accessors! {
@@ -3069,9 +3057,8 @@ macro_rules! extern_union_accessors {
         pub fn $field(&self) -> &$Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
-            // intermediate `&Union`. Cast is identity for plain fields and
-            // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$field) as *const $Ty) }
+            // intermediate `&Union`.
+            unsafe { &*::core::ptr::addr_of!(self.$vf.$field) }
         }
     };
     (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $field_mut:ident, $Ty:ty) => {
@@ -3079,7 +3066,7 @@ macro_rules! extern_union_accessors {
         pub fn $field_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$field) as *mut $Ty) }
+            unsafe { &mut *::core::ptr::addr_of_mut!(self.$vf.$field) }
         }
     };
 }
@@ -3379,6 +3366,7 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
@@ -3391,8 +3379,9 @@ pub mod base64 {
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        let mut dest = BorrowedBuf::from(dest);
+        simdutf::base64::encode(source, dest.unfilled(), false);
+        dest.len()
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.
@@ -3474,33 +3463,69 @@ pub mod base64 {
     }
 }
 
-// ── dupe_z / free_sensitive ───────────────────────────────────────────────
-/// `bun.default_allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated
-/// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
-/// stores C-strings. Caller frees via [`free_sensitive`].
-///
-/// Allocated via the default allocator (`bun_alloc::default_alloc` —
-/// mimalloc, or `std::alloc::System` under `cfg(bun_asan)`), so the
-/// allocation is visible to ASAN's interceptor and LeakSanitizer like every
-/// other heap allocation. Pairs with [`free_sensitive`], which frees through
-/// the same `default_alloc::free`.
-pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    let p = bun_alloc::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
-    if p.is_null() {
-        crate::out_of_memory();
+/// A C string that is zeroed before it is freed. A slice of them is a `char **`.
+#[repr(transparent)]
+pub struct SensitiveCString(core::ptr::NonNull<core::ffi::c_char>);
+
+// SAFETY: it is the only owner of the allocation.
+unsafe impl Send for SensitiveCString {}
+// SAFETY: `&self` only reads.
+unsafe impl Sync for SensitiveCString {}
+
+impl SensitiveCString {
+    /// The string ends at the first NUL in `bytes`.
+    pub fn new(bytes: &[u8]) -> Self {
+        let bytes = crate::slice_to_nul(bytes);
+        let Some(p) = core::ptr::NonNull::new(bun_alloc::default_alloc::malloc(bytes.len() + 1))
+        else {
+            crate::out_of_memory();
+        };
+        let p = p.cast::<u8>();
+        // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), bytes.len());
+            p.add(bytes.len()).write(0);
+        }
+        Self(p.cast())
     }
-    // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-        *p.add(bytes.len()) = 0;
+
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr()
     }
-    p.cast_const().cast::<core::ffi::c_char>()
+
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        // SAFETY: `new` has terminated it, and it lives until `drop`.
+        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_cstr().to_bytes()
+    }
 }
 
-/// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
-/// case used by http SSLConfig — re-exported from `bun_alloc` so the
-/// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
-pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+impl Clone for SensitiveCString {
+    fn clone(&self) -> Self {
+        Self::new(self.as_bytes())
+    }
+}
+
+impl PartialEq for SensitiveCString {
+    fn eq(&self, other: &Self) -> bool {
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes())
+    }
+}
+
+impl Drop for SensitiveCString {
+    fn drop(&mut self) {
+        let len = self.as_bytes().len();
+        // SAFETY: `new` got the allocation from `default_alloc`, whose `free` needs no size.
+        unsafe {
+            secure_zero(core::slice::from_raw_parts_mut(self.0.as_ptr().cast(), len));
+            bun_alloc::default_alloc::free(self.0.as_ptr().cast());
+        }
+    }
+}
+
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
 
@@ -4570,42 +4595,46 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
+            struct FileActions(libc::posix_spawn_file_actions_t);
+            impl Drop for FileActions {
+                fn drop(&mut self) {
+                    // SAFETY: `posix_spawn_file_actions_init` made it.
+                    unsafe { libc::posix_spawn_file_actions_destroy(&raw mut self.0) };
+                }
+            }
             // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
             // stdout/stderr stay inherited.
-            let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
-            let actions_ptr: *const libc::posix_spawn_file_actions_t =
-                if stdin == StdinBehavior::Ignore {
-                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
-                    if rc != 0 {
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    let rc = libc::posix_spawn_file_actions_addopen(
-                        &raw mut actions,
-                        0,
-                        c"/dev/null".as_ptr(),
-                        libc::O_RDONLY,
-                        0,
-                    );
-                    if rc != 0 {
-                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    &raw const actions
-                } else {
-                    core::ptr::null()
-                };
+            let actions = if stdin == StdinBehavior::Ignore {
+                let mut actions = core::ptr::null_mut();
+                if libc::posix_spawn_file_actions_init(&raw mut actions) != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                let mut actions = FileActions(actions);
+                let rc = libc::posix_spawn_file_actions_addopen(
+                    &raw mut actions.0,
+                    0,
+                    c"/dev/null".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                );
+                if rc != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                Some(actions)
+            } else {
+                None
+            };
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions_ptr,
+                actions
+                    .as_ref()
+                    .map_or(core::ptr::null(), |it| &raw const it.0),
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if !actions_ptr.is_null() {
-                libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            }
             if rc != 0 {
                 return Err(crate::CrateError::Unexpected);
             }
@@ -5121,8 +5150,6 @@ pub mod perf {
         unsafe extern "C" {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,

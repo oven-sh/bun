@@ -29,6 +29,10 @@ const SPELL_WHAT_NO_BINDING_STANDS_FOR: &[(&str, BuiltinId)] = &[
         BuiltinId::ArrayIteratorPrototypeNext,
     ),
     (
+        "const steps = Symbol?.iterator; f[steps];",
+        BuiltinId::ArrayIteratorPrototypeNext,
+    ),
+    (
         "const steps = Symbol.iterator; const { [steps]: taken } = f;",
         BuiltinId::ArrayIteratorPrototypeNext,
     ),
@@ -125,6 +129,9 @@ const KEYS_THAT_NOBODY_KNOWS: &[&str] = &[
     "let i = 0; i++; let taken; ({ [i]: taken } = f);",
     "var steps = Symbol.iterator; f[steps];",
     "var steps = Symbol.iterator; const again = steps; f[again];",
+    "f[globalThis.Symbol?.iterator];",
+    "const steps = globalThis?.Symbol.iterator; f[steps];",
+    "const Marks = globalThis.Symbol; const steps = Marks?.iterator; f[steps];",
     "let i = 0; i = g(); f[i];",
     "let i = 0, j = g(); i = j + 1; j = i + 1; f[i];",
     "for (var k = 0 in g) f[k];",
@@ -299,9 +306,13 @@ fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
         assert_eq!(asked.exports_read, not_asked.exports_read, "{source}");
         let AsksOfText {
             members_read,
+            members_named: _,
+            escaped_objects: _,
             reads_by_unknown_key,
             syntax,
             may_hand_values_to_natives: _,
+            roads_to_namespaces: _,
+            namespace_names_read: _,
         } = not_asked.asks;
         assert!(
             members_read.is_empty() && !reads_by_unknown_key && syntax.is_empty(),
@@ -310,12 +321,83 @@ fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
     }
 }
 
+const PROGRAMS_THAT_CHANGE_THE_HOLDER: &[&str] = &[
+    "Object.freeze(Temporal);",
+    "Object.defineProperty(Temporal, 1, { value: 5 });",
+    "Object.defineProperty(Temporal, 'zone', { value: 5 });",
+    "Object.defineProperties(Temporal, { zone: { value: 5 } });",
+    "Object.setPrototypeOf(Temporal, null);",
+    "Temporal.zone = 1;",
+    "Temporal[1] = 1;",
+    "delete Temporal.zone;",
+    "globalThis.Temporal = 5;",
+    "globalThis.Temporal ??= {};",
+    "if (!globalThis.Temporal) globalThis.Temporal = [];",
+    "Temporal = 5;",
+    "const g = globalThis; g.Temporal = 5;",
+    "globalThis['Temporal'] = 5;",
+    "globalThis.Temporal.PlainTime = f();",
+    "const copy = { ...Temporal };",
+    "for (const name in Temporal) f(name);",
+    "f(Temporal);",
+    "Object.freeze(Temporal.PlainTime);",
+    "const { PlainTime } = Temporal; Object.freeze(PlainTime);",
+    "const Times = Temporal; Times.zone = 1;",
+];
+
+/// What such a store lays on the global object may read it as its `this`, and a delete hands it on.
+const HAND_THE_GLOBAL_OBJECT_ON: &[&str] = &[
+    "globalThis.Temporal = f();",
+    "globalThis.Temporal ??= f();",
+    "if (!globalThis.Temporal) globalThis.Temporal = f();",
+    "delete globalThis.Temporal;",
+];
+
+const CHANGE_NO_BUILT_IN: &[&str] = &[
+    "Object.freeze(Math);",
+    "globalThis.__DEV__ = true;",
+    "globalThis.__DEV__ ??= {};",
+    "globalThis.count = (globalThis.count ?? 0) + 1;",
+    "globalThis['__DEV__'] = [];",
+    "const g = globalThis; g.__DEV__ = true;",
+];
+
+#[test]
+fn a_member_of_an_object_that_the_program_changes_asks_for_its_name() {
+    for source in HAND_THE_GLOBAL_OBJECT_ON {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+    }
+    let holds_from = |asks: &AsksOfText| {
+        let uses = RuntimeUses::of_asks(asks, Platforms::LINUX);
+        holds_code_of(&uses, BuiltinId::IteratorFrom)
+    };
+    const CALL: &str = "Temporal.PlainTime.from(a);";
+    let of_call = with_case(PROGRAM, CALL, |case| case.resolved.uses().asks.clone());
+    assert!(!holds_from(&of_call));
+    for source in PROGRAMS_THAT_CHANGE_THE_HOLDER {
+        let mut asks = with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+        assert!(!holds_from(&asks), "{source}");
+        asks.add(&of_call);
+        assert!(holds_from(&asks), "{source}");
+    }
+    for source in CHANGE_NO_BUILT_IN {
+        let mut asks = with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+        asks.add(&of_call);
+        assert!(!holds_from(&asks), "{source}");
+    }
+}
+
 #[test]
 fn a_key_that_is_a_number_asks_nothing() {
     for source in ASK_NOTHING {
         with_case(PROGRAM, source, |case| {
             let expected = uses_of_text_that_only_may_hand_values_to_natives();
-            assert_eq!(*case.resolved.uses(), expected, "{source}");
+            let mut uses = case.resolved.uses().clone();
+            // Names that namespaces have too are told, and ask for nothing where no road leads to a namespace.
+            uses.asks.namespace_names_read.clear();
+            assert_eq!(uses, expected, "{source}");
         });
         with_case(RUNTIME, source, |case| {
             assert_eq!(*case.resolved.uses(), RuntimeUses::default(), "{source}");
@@ -336,6 +418,73 @@ fn a_variable_that_holds_the_global_object_brings_the_members_of_namespaces() {
             assert_eq!(is_found, is_held, "{source}");
         });
     }
+}
+
+const READ_FROM_OFF_A_VARIABLE_THAT_MAY_BE_UNDEFINED: &[&str] = &[
+    "const Kind = globalThis?.Uint8Array; function h() { return Kind.from(f); }",
+    "const Kind = globalThis?.Uint8Array; function h() { return Kind['from'](f); }",
+    "const Kind = globalThis?.Uint8Array; const again = Kind; function h() { return again.from(f); }",
+];
+
+const READ_FROM_OFF_A_KNOWN_BUILTIN: &[&str] = &[
+    "const Kind = Uint8Array; function h() { return Kind.from(f); }",
+    "globalThis?.Uint8Array.from(f);",
+];
+
+#[test]
+fn a_name_off_a_variable_that_may_be_undefined_asks_for_the_members_of_that_name() {
+    for source in READ_FROM_OFF_A_VARIABLE_THAT_MAY_BE_UNDEFINED {
+        with_case(PROGRAM, source, |case| {
+            let uses = answer(case.resolved.uses());
+            assert!(holds_code_of(&uses, BuiltinId::ArrayFrom), "{source}");
+            let flat_map = BuiltinId::ArrayPrototypeFlatMap;
+            assert!(!holds_code_of(&uses, flat_map), "{source}");
+        });
+    }
+    for source in READ_FROM_OFF_A_KNOWN_BUILTIN {
+        with_case(PROGRAM, source, |case| {
+            let uses = answer(case.resolved.uses());
+            assert!(!holds_code_of(&uses, BuiltinId::ArrayFrom), "{source}");
+        });
+    }
+}
+
+const COME_BY_NAMESPACES_AND_READ_GET: &[&str] = &[
+    "Object.getPrototypeOf(Object.getPrototypeOf(parseInt)).get;",
+    "const { getPrototypeOf } = Object; getPrototypeOf(getPrototypeOf(parseInt)).get();",
+    "f(parseInt); const { get } = Object.getPrototypeOf(g);",
+    "f.up = parseInt; g.__proto__['get'];",
+    "parseInt.__proto__.__proto__?.get;",
+];
+
+const COME_BY_NO_NAMESPACE_OR_READ_NO_SUCH_NAME: &[&str] = &[
+    "Object.getPrototypeOf(f) === Object.prototype; g.get();",
+    "f(parseInt).get();",
+    "(() => 1).__proto__.get;",
+    "Object.getPrototypeOf(Object.getPrototypeOf(parseInt)).size;",
+];
+
+#[test]
+fn a_program_that_climbs_off_a_builtin_asks_for_the_members_of_namespaces_that_it_names() {
+    let asks_of =
+        |source: &str| with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+    let held = |asks: &AsksOfText| RuntimeUses::of_asks(asks, Platforms::LINUX);
+    for source in COME_BY_NAMESPACES_AND_READ_GET {
+        let uses = held(&asks_of(source));
+        assert!(holds_code_of(&uses, BuiltinId::ReflectGet), "{source}");
+        assert!(holds_code_of(&uses, BuiltinId::PromiseAll), "{source}");
+    }
+    for source in COME_BY_NO_NAMESPACE_OR_READ_NO_SUCH_NAME {
+        let uses = held(&asks_of(source));
+        assert!(!holds_code_of(&uses, BuiltinId::ReflectGet), "{source}");
+    }
+    let uses = held(&asks_of("Object.getPrototypeOf(parseInt).apply;"));
+    assert!(holds_code_of(&uses, BuiltinId::ReflectApply));
+    assert!(!holds_code_of(&uses, BuiltinId::PromiseAll));
+    let mut of_files = asks_of("export const up = x => Object.getPrototypeOf(x);");
+    of_files.add(&asks_of("f(parseInt);"));
+    of_files.add(&asks_of("f.get();"));
+    assert!(holds_code_of(&held(&of_files), BuiltinId::ReflectGet));
 }
 
 const ONLY_CALL_BUILT_INS_WITH_WRITTEN_PRIMITIVES: &[&str] = &[

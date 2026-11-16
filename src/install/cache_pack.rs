@@ -527,7 +527,7 @@ fn pack_entry(
 /// Write every cache entry the loaded lockfile needs, and the cache has, to `destination`.
 pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, Error> {
     let entries = lockfile_entries(pm);
-    let cache_dir = pm.get_cache_directory();
+    let cache_dir = pm.get_cache_directory().handle.fd();
     let output = if pm.options.dry_run {
         None
     } else {
@@ -871,7 +871,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
     // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
-        let dir = sys::open_dir_at_windows_a(
+        let dir = sys::Dir::from_fd(sys::open_dir_at_windows_a(
             from_dir,
             from.as_bytes(),
             sys::WindowsOpenDirOptions {
@@ -879,9 +879,9 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
                 iterable: false,
                 ..Default::default()
             },
-        )?;
-        let result = sys::windows::move_opened_file_at(dir, to_dir, to_w, false);
-        let _ = sys::close(dir);
+        )?);
+        let result = sys::windows::move_opened_file_at(dir.fd(), to_dir, to_w, false);
+        drop(dir);
         let Err(err) = result else {
             return Ok(true);
         };
@@ -917,7 +917,7 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
 /// Restore the entries of the pack at `pack_path` that the cache does not have.
 pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary, Error> {
     let mut r = Reader::open(pack_path)?;
-    let cache_dir = pm.get_cache_directory();
+    let cache_dir = pm.get_cache_directory().handle.fd();
     let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
     let mut summary = UnpackSummary::default();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();

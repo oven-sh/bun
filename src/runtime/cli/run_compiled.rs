@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,19 +417,21 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Guarded<SharedWatcher>,
+    watcher: Arc<Watcher>,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
 
-struct SharedWatcher(*mut Watcher);
-// SAFETY: the watcher is never freed, and one thread at a time has the pointer.
-unsafe impl Send for SharedWatcher {}
-
 struct RestartOnChange;
 
 impl WatcherContext for RestartOnChange {
-    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {
+    fn on_file_update(
+        &mut self,
+        events: &[WatchEvent],
+        _: &[&[u8]],
+        _: &WatchList,
+        _: &mut Evictions,
+    ) {
         if events.is_empty() {
             return;
         }
@@ -455,13 +457,10 @@ impl WatchedFiles {
         decide_whether_to_clear_terminal();
         let working_directory = super::check_command::working_directory();
         let directory: &'static [u8] = Box::leak(working_directory.clone().into_boxed_slice());
-        let context = Box::leak(Box::new(RestartOnChange));
-        let started = Watcher::init(context, directory)
-            .map(Box::leak)
-            .and_then(|watcher| {
-                watcher.start()?;
-                Ok(watcher)
-            });
+        let started = Watcher::init(Box::new(RestartOnChange), directory).and_then(|watcher| {
+            watcher.start()?;
+            Ok(watcher)
+        });
         let watcher = match started {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -470,7 +469,7 @@ impl WatchedFiles {
             }
         };
         let watched: &'static WatchedFiles = Box::leak(Box::new(WatchedFiles {
-            watcher: Guarded::new(SharedWatcher(watcher)),
+            watcher,
             working_directory,
             paths: Guarded::new(Vec::new()),
         }));
@@ -493,11 +492,7 @@ impl WatchedFiles {
     fn add(&self, path: &[u8]) {
         use bun_paths::{platform::Auto, resolve_path::join_abs_string};
         let path = join_abs_string::<Auto>(&self.working_directory, &[path]);
-        let shared = self.watcher.lock();
-        let watcher = shared.0;
-        // SAFETY: see `SharedWatcher`.
-        let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        drop(shared);
+        let _ = self.watcher.add_file_by_path_slow(path);
         self.paths.lock().push(path.to_vec());
     }
 }
@@ -569,14 +564,10 @@ impl Program<'_> {
             #[cfg(unix)]
             Program::Written(WrittenProgram { descriptor, length }) => {
                 let (access, flags) = (libc::PROT_READ, libc::MAP_SHARED);
-                let mapped =
-                    bun_sys::mmap(core::ptr::null_mut(), length, access, flags, descriptor, 0);
-                let hash = mapped.map_or(0, |start| {
-                    // SAFETY: the mapping has `length` bytes, and nothing writes to the file until it is unmapped.
-                    let hash =
-                        bun_wyhash::hash(unsafe { core::slice::from_raw_parts(start, length) });
-                    let _ = bun_sys::munmap(start, length);
-                    hash
+                let mapped = bun_sys::Mmap::new(length, access, flags, descriptor, 0);
+                let hash = mapped.map_or(0, |mapped| {
+                    // SAFETY: nothing writes to the file until it is unmapped.
+                    bun_wyhash::hash(unsafe { mapped.as_slice() })
                 });
                 (length, hash)
             }
@@ -646,8 +637,7 @@ enum ProgramFile {
 fn can_map_code(descriptor: Fd) -> bool {
     let size = bun_sys::page_size();
     let (access, flags) = (libc::PROT_READ | libc::PROT_EXEC, libc::MAP_PRIVATE);
-    bun_sys::mmap(core::ptr::null_mut(), size, access, flags, descriptor, 0)
-        .is_ok_and(|page| bun_sys::munmap(page, size).is_ok())
+    bun_sys::Mmap::new(size, access, flags, descriptor, 0).is_ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -765,22 +755,15 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
     if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
         return false;
     }
-    let Ok(start) = bun_sys::mmap(
-        core::ptr::null_mut(),
-        length,
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_SHARED,
-        descriptor,
-        0,
-    ) else {
+    let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
+    let Ok(mut mapped) = bun_sys::Mmap::new(length, access, flags, descriptor, 0) else {
         return false;
     };
-    // SAFETY: the mapping has `length` bytes that may be written, and nothing else refers to them until `munmap`.
-    let mapped = unsafe { core::slice::from_raw_parts_mut(start, length) };
     let share = length
         .div_ceil(usize::from(bun_core::get_thread_count()))
         .max(MIN_BYTES_OF_THREAD);
-    let mut room = mapped;
+    // SAFETY: the mapping may be written, and nothing else has the file.
+    let mut room = unsafe { mapped.as_mut_slice() };
     let mut shares = Vec::new();
     for part in parts {
         let (target, behind) = room.split_at_mut(part.len());
@@ -788,7 +771,6 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         room = behind;
     }
     for_each_on_threads(shares, |(target, source)| target.copy_from_slice(source));
-    let _ = bun_sys::munmap(start, length);
     true
 }
 
@@ -973,7 +955,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
     bun_spawn::ctrl_c::install();
     let spawned = sync::spawn(&sync::Options {
         argv,
-        argv0: Some(executable.as_ptr().cast::<core::ffi::c_char>()),
+        argv0: Some(executable.into()),
         cwd: original_cwd.map(Box::<[u8]>::from).unwrap_or_default(),
         envp: None,
         stderr: sync::SyncStdio::Inherit,
@@ -1133,12 +1115,9 @@ pub(crate) fn write_program_alone(
     launcher.extend_from_slice(build_id);
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
     let path = ZBox::from_bytes(path);
-    let file = File::from_fd(close_on_fork::openat(directory, &path, flags, 0o755)?);
-    let written = file
-        .write_all(&launcher)
-        .and_then(|()| file.write_all(program));
-    close_on_fork::close(file.into_raw());
-    written
+    let file = close_on_fork::File::openat(directory, &path, flags, 0o755)?;
+    file.write_all(&launcher)?;
+    file.write_all(program)
 }
 
 #[cfg(not(unix))]
@@ -1387,13 +1366,10 @@ pub(crate) extern "C" fn Bun__AOT__runsTestFilesAgain() -> bool {
 pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
     global: &bun_jsc::JSGlobalObject,
 ) -> bool {
-    let Some(runner) = crate::test_runner::jest::Jest::runner() else {
+    let Some(file) = crate::test_runner::bun_test::clone_active_strong() else {
         return false;
     };
-    let Some(file) = runner.bun_test_root.clone_active_file() else {
-        return false;
-    };
-    file.get().is_loading
+    file.is_loading.get()
         && global
             .bun_vm()
             .pending_internal_promise()

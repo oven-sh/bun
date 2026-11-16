@@ -10,7 +10,7 @@ raiseDefaultTimeout(120_000);
 // `import { x }` without `from "module"` is a syntax error that the parser recovers from, so the build goes on with an import that names no module. Whoever follows `x` to
 // the module it comes from has to find none. A test run also reads the strings of the test files as code, so there the broken text need not even be code.
 // As code it is TypeScript: in a JavaScript file the parser gives up at the error and nothing is left to follow.
-// What crashed the compiler: a require() that follows the name, a call of the name of a macro, a call on the namespace of one.
+// What crashed the compiler: a require() that follows the name, a call of the name of a macro, a call on the namespace of one, an eval() of a known text.
 const programs = [
   { file: "required-through-import-meta", code: `import.meta.require(x);\nimport { x }\n` },
   { file: "a-member-called-for-require", code: `require(x.join("a", "b"));\nimport { x }\n` },
@@ -19,6 +19,7 @@ const programs = [
     file: "a-member-of-a-macros-namespace-called",
     code: `console.log(x.m(1));\nimport * as x from y with { type: "macro" }\n`,
   },
+  { file: "beside-an-eval", code: `import x from y;\neval("1");\n` },
 ];
 
 // A process that a signal ended has 128 + the signal for its exit code.

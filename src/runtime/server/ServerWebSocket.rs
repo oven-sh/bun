@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use bun_core::Utf8Bytes;
 use bun_jsc::JsCell;
@@ -12,8 +11,8 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::generated_bindgen::server::js_ServerWebSocket as js;
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
-    self, AbortSignal, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError,
-    JsRef, JsResult,
+    self, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError, JsRef,
+    JsResult, PendingAbortSignal,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::{Blob, BlobExt};
@@ -29,17 +28,14 @@ use crate::generated_bindgen::server::BinaryType;
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` of the SAME socket. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
-// mutability (`Cell` for `Copy` flags/signal, `JsCell` for the non-`Copy`
+// mutability (`Cell` for flags/signal, `JsCell` for the non-`Copy`
 // `JsRef`) carries the writes.
 pub(crate) struct ServerWebSocket {
     // Lives in `ServerConfig.websocket` for the server's lifetime.
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    // `AbortSignal` is an opaque C++ type
-    // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
-    // caller transfers a +1 ref; `drop`/`on_close` unref it.
-    signal: Cell<Option<NonNull<AbortSignal>>>,
+    signal: Cell<Option<PendingAbortSignal>>,
 }
 
 // We pack the per-socket data into this struct below:
@@ -183,10 +179,9 @@ pub(super) enum Accept {
 /// A converted message argument. Keeps the JS value that owns the bytes alive.
 pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
-    Bytes {
-        bytes: &'a [u8],
-        _owner: jsc::EnsureStillAlive,
-    },
+    /// One whose bytes are in memory.
+    Blob(jsc::WrapperGuard<'a, Blob>),
+    Empty,
     Text(jsc::JSStringView<'a>),
 }
 
@@ -195,7 +190,7 @@ impl Payload<'_> {
     pub(super) fn opcode(&self) -> Opcode {
         match self {
             Payload::Text(_) => Opcode::Text,
-            Payload::Buffer(_) | Payload::Bytes { .. } => Opcode::Binary,
+            Payload::Buffer(_) | Payload::Blob(_) | Payload::Empty => Opcode::Binary,
         }
     }
 
@@ -203,7 +198,8 @@ impl Payload<'_> {
     pub(super) fn bytes(&self) -> Utf8Bytes<'_> {
         match self {
             Payload::Buffer(buffer) => Utf8Bytes::Borrowed(buffer.slice()),
-            Payload::Bytes { bytes, .. } => Utf8Bytes::Borrowed(bytes),
+            Payload::Blob(blob) => Utf8Bytes::Borrowed(blob.shared_view()),
+            Payload::Empty => Utf8Bytes::EMPTY,
             Payload::Text(view) => view.to_utf8(),
         }
     }
@@ -212,20 +208,16 @@ impl Payload<'_> {
 /// Converting an argument can run user JS that closes the socket or stops the
 /// server, so every method converts all of its arguments before it reads native state.
 #[inline]
-pub(super) fn payload_from_js<'a>(
+pub(super) fn payload_from_js<'a, 'b: 'a>(
     global_this: &'a JSGlobalObject,
     fn_name: &'static str,
-    value: JSValue,
+    message: JsLocal<'b>,
     accept: Accept,
 ) -> JsResult<Payload<'a>> {
+    let value = message.to_js();
     if value.is_undefined_or_null() {
         match accept {
-            Accept::Control => {
-                return Ok(Payload::Bytes {
-                    bytes: &[],
-                    _owner: jsc::EnsureStillAlive(value),
-                });
-            }
+            Accept::Control => return Ok(Payload::Empty),
             Accept::Any => {
                 return Err(
                     global_this.throw(format_args!("{fn_name} requires a non-empty message"))
@@ -238,16 +230,13 @@ pub(super) fn payload_from_js<'a>(
         if let Some(buffer) = value.as_array_buffer(global_this) {
             return Ok(Payload::Buffer(buffer));
         }
-        if let Some(blob) = value.as_class_ref::<Blob>() {
-            let Some(bytes) = blob.in_memory_view() else {
+        if let Some(blob) = message.as_class_ref::<Blob>() {
+            if blob.needs_to_read_file() || blob.is_s3() {
                 return Err(global_this.throw(format_args!(
                     "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
                 )));
-            };
-            return Ok(Payload::Bytes {
-                bytes,
-                _owner: jsc::EnsureStillAlive(value),
-            });
+            }
+            return Ok(Payload::Blob(blob));
         }
     }
     let expected = match accept {
@@ -303,23 +292,12 @@ fn compress_from_js(
     Ok(value.to_boolean())
 }
 
-/// Releases the ref and the pending-activity count that `init`'s caller transferred.
-fn release_signal(signal: Option<NonNull<AbortSignal>>) {
-    if let Some(signal) = signal {
-        super::request_context::signal_release(signal);
-    }
-}
-
 /// Runs when `on_close` returns.
-struct OnCloseCleanup<'a> {
-    signal: Option<NonNull<AbortSignal>>,
-    downgrade: Option<&'a JsCell<JsRef>>,
-}
+struct DowngradeOnClose<'a>(Option<&'a JsCell<JsRef>>);
 
-impl Drop for OnCloseCleanup<'_> {
+impl Drop for DowngradeOnClose<'_> {
     fn drop(&mut self) {
-        release_signal(self.signal);
-        if let Some(this_value) = self.downgrade {
+        if let Some(this_value) = self.0 {
             // The `server` traced edge set in `init` must outlive this
             // wrapper: `self.handler` points into the server's allocation
             // and publish()/send() still work on closed sockets (#36788).
@@ -370,7 +348,7 @@ impl ServerWebSocket {
     fn send_message(
         &self,
         global_this: &JSGlobalObject,
-        message_value: JSValue,
+        message_value: JsLocal<'_>,
         compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
@@ -401,7 +379,7 @@ impl ServerWebSocket {
     pub(crate) fn send_frame(
         &self,
         global_this: &JSGlobalObject,
-        data: JSValue,
+        data: JsLocal<'_>,
         opcode: Opcode,
         fin: bool,
         compress: bool,
@@ -424,7 +402,7 @@ impl ServerWebSocket {
     fn send_control(
         &self,
         global_this: &JSGlobalObject,
-        data: JSValue,
+        data: JsLocal<'_>,
         fn_name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
@@ -454,7 +432,7 @@ impl ServerWebSocket {
         &self,
         global_this: &JSGlobalObject,
         topic_value: JSValue,
-        message_value: JSValue,
+        message_value: JsLocal<'_>,
         compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
@@ -516,11 +494,10 @@ impl ServerWebSocket {
     }
 
     /// Initialize a ServerWebSocket with the given handler, data value, signal, and flags.
-    /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
-        signal: Option<NonNull<AbortSignal>>,
+        signal: Option<PendingAbortSignal>,
         flags: Flags,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
@@ -571,7 +548,7 @@ impl ServerWebSocket {
     /// such a socket.
     pub(crate) fn discard_unopened(&self) {
         self.update_flags(|f| f.set_closed(true));
-        release_signal(self.signal.take());
+        self.signal.set(None);
         self.this_value.with_mut(|v| v.downgrade());
     }
 
@@ -643,7 +620,6 @@ impl ServerWebSocket {
                 // accounting because the closed flag is already set.)
                 self.websocket().close();
                 closed_here = true;
-                this_value.unprotect();
             }
 
             let handled =
@@ -861,17 +837,11 @@ impl ServerWebSocket {
                 }
             }
         }
-        let signal = self.signal.take();
 
-        // Downgrade + signal
-        // cleanup runs at fn exit. `this_value` is not mutated between here and
-        // the deferred `downgrade()`, so hoisting these reads is sound.
         let was_not_empty = self.this_value.get().is_not_empty();
         let cached_this = self.js_value().unwrap_or(JSValue::UNDEFINED);
-        let _cleanup = OnCloseCleanup {
-            signal,
-            downgrade: was_not_empty.then_some(&self.this_value),
-        };
+        let _downgrade = DowngradeOnClose(was_not_empty.then_some(&self.this_value));
+        let signal = self.signal.take();
 
         let vm = handler.vm();
 
@@ -891,10 +861,7 @@ impl ServerWebSocket {
 
             let _loop_guard = vm.enter_event_loop_scope();
 
-            if let Some(sig) = signal {
-                // `sig` is held alive by the +1 ref released in `_cleanup`;
-                // BackRef invariant (pointee outlives the temporary) holds.
-                let sig = bun_ptr::BackRef::from(sig);
+            if let Some(sig) = &signal {
                 if !sig.aborted() {
                     sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
@@ -919,12 +886,9 @@ impl ServerWebSocket {
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 return handler.run_error_callback(on_error, global_object, cached_this, err);
             }
-        } else if let Some(sig) = signal {
+        } else if let Some(sig) = &signal {
             let _loop_guard = vm.enter_event_loop_scope();
 
-            // `sig` is held alive by the +1 ref released in `_cleanup`;
-            // BackRef invariant (pointee outlives the temporary) holds.
-            let sig = bun_ptr::BackRef::from(sig);
             if !sig.aborted() {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }
@@ -955,7 +919,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publish",
             Accept::Any,
@@ -972,7 +936,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publishText",
             Accept::Text,
@@ -989,7 +953,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publishBinary",
             Accept::Binary,
@@ -1024,13 +988,7 @@ impl ServerWebSocket {
         data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        self.send_message(
-            cx.global(),
-            data.to_js(),
-            compress.to_js(),
-            "send",
-            Accept::Any,
-        )
+        self.send_message(cx.global(), data, compress.to_js(), "send", Accept::Any)
     }
 
     pub(crate) fn send_text(
@@ -1041,7 +999,7 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "sendText",
             Accept::Text,
@@ -1056,7 +1014,7 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "sendBinary",
             Accept::Binary,
@@ -1064,11 +1022,11 @@ impl ServerWebSocket {
     }
 
     pub(crate) fn ping(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<JSValue> {
-        self.send_control(cx.global(), data.to_js(), "ping", Opcode::Ping)
+        self.send_control(cx.global(), data, "ping", Opcode::Ping)
     }
 
     pub(crate) fn pong(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<JSValue> {
-        self.send_control(cx.global(), data.to_js(), "pong", Opcode::Pong)
+        self.send_control(cx.global(), data, "pong", Opcode::Pong)
     }
 
     pub(crate) fn get_ready_state(&self) -> i32 {
@@ -1266,13 +1224,6 @@ impl ServerWebSocket {
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
         bun_string_jsc::create_utf8_for_js(cx.global(), text)
-    }
-}
-
-impl Drop for ServerWebSocket {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(WebSocketServer, "finalize");
-        release_signal(self.signal.take());
     }
 }
 

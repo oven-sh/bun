@@ -18,6 +18,8 @@
 //! `linux`/`android`, so the gate must list both.
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
+use core::mem::MaybeUninit;
+
 use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
 use rustix::io::Errno;
 
@@ -124,9 +126,9 @@ pub(crate) fn openat2(
 }
 
 #[inline]
-pub(crate) fn read(fd: Fd, buf: &mut [u8]) -> Result<usize, i32> {
+pub(crate) fn read(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Result<usize, i32> {
     let fd = fd.as_borrowed_fd();
-    retry(|| rustix::io::read(fd, buf))
+    retry(|| rustix::io::read_uninit(fd, buf).map(|(read, _)| read.len()))
 }
 
 #[inline]
@@ -136,9 +138,9 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Result<usize, i32> {
 }
 
 #[inline]
-pub(crate) fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Result<usize, i32> {
+pub(crate) fn pread(fd: Fd, buf: &mut [MaybeUninit<u8>], off: i64) -> Result<usize, i32> {
     let fd = fd.as_borrowed_fd();
-    retry(|| rustix::io::pread(fd, buf, off as u64))
+    retry(|| rustix::io::pread_uninit(fd, buf, off as u64).map(|(read, _)| read.len()))
 }
 
 #[inline]

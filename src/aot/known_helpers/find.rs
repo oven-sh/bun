@@ -104,6 +104,51 @@ impl FileHelpers {
     pub fn bindings(&self) -> impl ExactSizeIterator<Item = (SymbolId, &BindingValues)> {
         self.bindings.iter().map(|entry| (entry.0, &entry.1))
     }
+
+    pub(super) fn leave_replaceable_variables(
+        &mut self,
+        is_replaceable: &dyn Fn(SymbolId) -> bool,
+    ) {
+        let FileHelpers {
+            functions,
+            bindings,
+            ..
+        } = self;
+        for (symbol, values) in bindings.iter_mut() {
+            if is_replaceable(*symbol) {
+                values.certainty = Certainty::MayHoldOtherValues;
+                values.holds_from_the_start = false;
+            }
+        }
+        let mut left: SmallVec<[FnId; 4]> = SmallVec::new();
+        loop {
+            let count = left.len();
+            for (function, known) in functions.iter_mut() {
+                let names_replaceable = |reference: &KnownReference| match *reference {
+                    KnownReference::Helper { symbol, .. } => {
+                        let values = find_by_key(bindings, symbol);
+                        is_replaceable(symbol)
+                            || values.is_some_and(|values| {
+                                let mut held = values.functions.iter();
+                                held.any(|held| left.contains(&held.definition))
+                            })
+                    }
+                    KnownReference::Global { symbol, .. } | KnownReference::Holder { symbol } => {
+                        is_replaceable(symbol)
+                    }
+                    KnownReference::Loaded { .. } => false,
+                };
+                if left.contains(function) || !known.references.iter().any(names_replaceable) {
+                    continue;
+                }
+                known.relies_on_facts = false;
+                left.push(*function);
+            }
+            if left.len() == count {
+                return;
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

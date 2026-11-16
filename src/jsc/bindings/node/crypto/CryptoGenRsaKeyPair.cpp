@@ -6,37 +6,6 @@
 using namespace Bun;
 using namespace JSC;
 
-extern "C" void Bun__RsaKeyPairJobCtx__deinit(RsaKeyPairJobCtx* ctx)
-{
-    ctx->deinit();
-}
-
-void RsaKeyPairJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__RsaKeyPairJobCtx__runTask(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
-}
-
-extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
-
-extern "C" void Bun__RsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
-void RsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
-{
-    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(WTF::move(ctx));
-    Bun__RsaKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
 ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_variant == RsaKeyVariant::RSA_PSS ? EVP_PKEY_RSA_PSS : EVP_PKEY_RSA);

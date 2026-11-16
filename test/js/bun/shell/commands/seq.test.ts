@@ -96,6 +96,83 @@ describe("seq", async () => {
 
   TestBuilder.command`seq 4 7 ba`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("invalid arg 3");
 
+  // Operands, and the lines that seq prints. null: seq prints `seq: invalid argument` and exits 1.
+  const operandRows: [string[], string | null][] = [
+    // Hex integers, in each operand position and with a sign.
+    [["0x10", "0x10"], "16"],
+    [["0X10", "0X10"], "16"],
+    [["0xAb", "0xAb"], "171"],
+    [["+0x10", "+0x10"], "16"],
+    [["0x1", "0x3"], "1 2 3"],
+    [["0xA", "0xC"], "10 11 12"],
+    [["-0x2", "0x1"], "-2 -1 0 1"],
+    [["1", "0x2", "5"], "1 3 5"],
+    [["0x3", "-0x1", "0x1"], "3 2 1"],
+    [["-0x3", "0x2", "0x3"], "-3 -1 1 3"],
+    [["1.5", "0x3"], "1.5 2.5"],
+    // Hex floats: a `.`, a `p` exponent, or both.
+    [["0x1p4", "0x1p4"], "16"],
+    [["0x1P4", "0x1P4"], "16"],
+    [["0x1p+4", "0x1p+4"], "16"],
+    [["0x1p-1", "0x1p-1"], "0.5"],
+    [["0x1.8p1", "0x1.8p1"], "3"],
+    [["0x.8p2"], "1 2"],
+    [["0x8.", "0x8."], "8"],
+    [["0x.8", "0x.8"], "0.5"],
+    [["0x1.1", "0x1.1"], "1.0625"],
+    [["0x1.4p-3", "0x1.4p-3"], "0.15625"],
+    // More digits than 64 bits hold.
+    [["0x10000000000000000p-64", "0x10000000000000000p-64"], "1"],
+    [["0x1.00000000000000001", "0x1.00000000000000001"], "1"],
+    [["0x.00000000000000001p68", "0x.00000000000000001p68"], "1"],
+    // Exponents past the range of i32 and of i64.
+    [["0x0p1024", "0x0p1024"], "0"],
+    [["0x1p-2147483649", "0x1p-2147483649"], "0"],
+    [["0x1p-18446744073709551612", "0x1p-18446744073709551612"], "0"],
+    [["0x.8p-9223372036854775807", "0x.8p-9223372036854775807"], "0"],
+    [["0x1p2147483648"], null],
+    [["0x1p18446744073709551620"], null],
+    [["0x10000000000000000p9223372036854775807"], null],
+    // Too large: 2^128 for the f32 that seq stores, 2^1024 for an f64.
+    [["0x1p128"], null],
+    [["0x1p1024"], null],
+    // Not a hex float.
+    [["0x"], null],
+    [["0x."], null],
+    [["0xg"], null],
+    [["0xp1"], null],
+    [["0x1p"], null],
+    [["0x1p+"], null],
+    [["0x0pZ"], null],
+    [["0x1.2.3"], null],
+    [["0x 5"], null],
+    [["0x5 "], null],
+    [["-+0x5"], null],
+    [["- 0x5"], null],
+    // The `_` digit separator of Zig is not taken.
+    [["1_0"], null],
+    [["0x1_0"], null],
+    // A sign alone, and no text.
+    [["-"], null],
+    [["+"], null],
+    [[""], null],
+    // Decimal operands.
+    [["-1", "1"], "-1 0 1"],
+    [["+3"], "1 2 3"],
+    [["010"], "1 2 3 4 5 6 7 8 9 10"],
+    [[".5", "2"], "0.5 1.5"],
+  ];
+  for (const [operands, lines] of operandRows) {
+    const builder = TestBuilder.command`seq ${operands}`;
+    (lines === null
+      ? builder.exitCode(1).stdout("").stderr("seq: invalid argument\n")
+      : builder
+          .exitCode(0)
+          .stdout(lines.replaceAll(" ", "\n") + "\n")
+          .stderr("")
+    ).runAsTest(`seq ${operands.map(operand => JSON.stringify(operand)).join(" ")}`);
+  }
+
   TestBuilder.command`seq 4 0 7`.exitCode(1).stdout("").stderr("seq: zero increment\n").runAsTest("zero increment");
 
   TestBuilder.command`seq 4 -2 7`

@@ -366,13 +366,14 @@ impl CompressionContext for Context {
         match &mut self.state {
             None => self.err = c::ReturnCode::StreamError,
             Some(State::Deflate(encoder)) => {
+                let written = out.written();
                 let consumed;
                 (consumed, self.err) = encoder.step_into(input, out.reborrow(), self.flush);
                 input = &input[consumed..];
                 if self.mode == c::NodeMode::GZIP {
                     if self.err == c::ReturnCode::StreamEnd {
                         self.output_emitted = false;
-                    } else if out.written() != 0 {
+                    } else if out.written() != written {
                         self.output_emitted = true;
                     }
                 }

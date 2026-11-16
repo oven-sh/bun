@@ -147,9 +147,8 @@ pub(crate) fn may_evaluate_text(files: &Files<'_>) -> bool {
     };
     sources().any(|(_, source)| source.builtins.evaluator_comes_out())
         || (sources().any(|(_, source)| source.builtins.mentions_evaluator())
-            && sources().any(|(file, source)| {
-                source.builtins.may_call_unnamed_evaluator(files.hir(file))
-            }))
+            && sources()
+                .any(|(file, source)| source.builtins.may_call_unnamed_evaluator(files.hir(file))))
 }
 
 fn is_name_of_evaluator(name: Atom) -> bool {
@@ -158,7 +157,9 @@ fn is_name_of_evaluator(name: Atom) -> bool {
 
 fn writes_evaluator(hir: &File<'_>, source: &ParsedSource) -> bool {
     let is_global_object = |expression: ExprId| {
-        let found = source.builtins.of_expr(hir.skip_type_assertions(expression));
+        let found = source
+            .builtins
+            .of_expr(hir.skip_type_assertions(expression));
         matches!(found, Some(Resolved::Builtin(path)) if path.id == BuiltinId::GlobalThis)
     };
     hir.exprs.iter().any(|expression| {

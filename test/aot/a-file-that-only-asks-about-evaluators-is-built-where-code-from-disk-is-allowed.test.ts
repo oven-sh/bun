@@ -24,7 +24,10 @@ for (const name of Object.keys(programs)) {
       cwd,
       bunEnv,
     );
-    expect({ errors: build.stderr.match(/^error.*/gm), exitCode: build.exitCode }).toEqual({ errors: null, exitCode: 0 });
+    expect({ errors: build.stderr.match(/^error.*/gm), exitCode: build.exitCode }).toEqual({
+      errors: null,
+      exitCode: 0,
+    });
     expect(await run([executable], cwd, bunEnv)).toEqual(plain);
     expect(plain.exitCode).toBe(0);
   });

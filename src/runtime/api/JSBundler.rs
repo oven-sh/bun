@@ -450,11 +450,7 @@ pub(crate) mod js_bundler {
         }
     }
 
-    fn names_in(
-        global_this: &JSGlobalObject,
-        key: &str,
-        value: JSValue,
-    ) -> JsResult<Vec<Vec<u8>>> {
+    fn names_in(global_this: &JSGlobalObject, key: &str, value: JSValue) -> JsResult<Vec<Vec<u8>>> {
         let mut list = Vec::new();
         if value.is_undefined_or_null() {
             return Ok(list);

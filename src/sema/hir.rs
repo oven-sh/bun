@@ -3557,7 +3557,9 @@ impl<S: Storage> FileIn<S> {
 
     pub fn replaced_evaluation_of(&self, function: FnId) -> Option<&ReplacedEvaluation> {
         let mut all = self.replaced_evaluations.iter();
-        all.find(|it| matches!(self[it.expression].kind, ExprKind::Fn(written) if written == function))
+        all.find(
+            |it| matches!(self[it.expression].kind, ExprKind::Fn(written) if written == function),
+        )
     }
 
     /// Where the call is that evaluates what is at `pos`, or enters the copy there. `pos` itself in the text that was read.

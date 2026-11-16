@@ -319,11 +319,9 @@ pub(crate) fn lower_import_call(
 ) -> ValueId {
     let replaced = lowering.file.hir.replaced_evaluation(call);
     match replaced.filter(|_| lowering.file.inputs.may_replace_evaluators) {
-        Some(replaced) => {
-            lowering.lower_in_place_of_evaluation(replaced, &mut |lowering| {
-                lower_written_import(lowering, call)
-            })
-        }
+        Some(replaced) => lowering.lower_in_place_of_evaluation(replaced, &mut |lowering| {
+            lower_written_import(lowering, call)
+        }),
         None => lower_written_import(lowering, call),
     }
 }

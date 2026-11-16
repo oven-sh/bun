@@ -891,8 +891,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
             ExprKind::Class(class) => self.class_step(file, class),
             ExprKind::Fn(function)
-                if self.context.may_replace_evaluators()
-                    && hir.is_evaluated_function(function) =>
+                if self.context.may_replace_evaluators() && hir.is_evaluated_function(function) =>
             {
                 unknown(UnknownReferent::NotAReference)
             }

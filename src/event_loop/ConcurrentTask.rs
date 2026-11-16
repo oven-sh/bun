@@ -121,7 +121,6 @@ pub mod task_tag {
         ShellMvBatchedTask,
         ShellMvCheckTargetTask,
         ShellRmDirTask,
-        ShellRmTask,
         ShellTouchTask,
         StatFS,
         StatWatcherTimerUpdate,

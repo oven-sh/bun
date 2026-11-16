@@ -107,7 +107,6 @@ use crate::shell::builtins::{
     ls::ShellLsTask,
     mkdir::ShellMkdirTask,
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask},
-    rm::ShellRmTask,
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
 };
@@ -505,10 +504,9 @@ pub(crate) fn run_task(
         | task_tag::ShellLsTask
         | task_tag::ShellMvBatchedTask
         | task_tag::ShellMvCheckTargetTask
-        | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
         | task_tag::ShellGlobTask
-        | task_tag::ShellYesTask => run_task_cold(&task),
+        | task_tag::ShellYesTask => run_task_cold(task),
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => feature_arm!([Fetch], |tasklet: FetchTasklet| -> JsResult<()> {
@@ -762,45 +760,36 @@ pub(crate) fn run_task(
 /// falls through to `Ok(RunTaskResult::Continue)`.
 #[cold]
 #[inline(never)]
-fn run_task_cold(task: &Task) {
+fn run_task_cold(task: Task) {
     bun_removable_features::removable_definition!(Shell, run_task_cold);
-    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
-    macro_rules! cast_ptr {
-        ($ty:ty) => {
-            task.ptr().cast::<$ty>()
-        };
-    }
     macro_rules! shell_dispatch {
         ($ty:ty) => {{
-            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task, which its script waits for.
-            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
+            let task = boxed!(task, $ty);
+            // SAFETY: `ShellTask::on_finish` posted it to this loop.
+            unsafe { ShellTask::run_from_main_thread(task) };
         }};
     }
 
     match task.tag() {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            unsafe { ShellAsyncTask::run_from_main_thread(cast_ptr!(ShellAsyncTask)) };
+            let task = boxed!(task, ShellAsyncTask);
+            // SAFETY: `Async::enqueue_self` queued it on this loop.
+            unsafe { task.run_from_main_thread() };
         }
         task_tag::ShellCondExprStatTask => shell_dispatch!(PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
         task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
         task_tag::ShellMkdirTask => shell_dispatch!(PoolTask<ShellMkdirTask>),
-        task_tag::ShellLsTask => shell_dispatch!(PoolTask<ShellLsTask>),
-        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(PoolTask<ShellMvBatchedTask>),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
-        task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
-        task_tag::ShellRmDirTask => {
-            let t = cast_ptr!(ShellRmDirTask);
-            ShellRmDirTask::run_from_main_thread(t);
-        }
+        task_tag::ShellRmDirTask => shell_dispatch!(ShellRmDirTask),
         task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
         task_tag::ShellYesTask => {
-            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
-            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
-            // interpreter arena and is stable until the builtin deinits.
-            unsafe { ShellYesTask::run_from_main_thread(cast_ptr!(ShellYesTask)) };
+            let task = boxed!(task, ShellYesTask);
+            // SAFETY: `YesTask::enqueue` queued it on this loop.
+            unsafe { task.run_from_main_thread() };
         }
 
         // Any tag the hot path mis-routed: producer bug.
@@ -812,7 +801,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 82,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1601,7 +1590,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
                 bun_bundler::bundle_v2::api::JSBundler::Load<'static>
             )
         }
-        task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
+        task_tag::ShellYesTask => release_boxed_in!([Shell], ShellYesTask),
         task_tag::CppTask => release!(CppTask),
         task_tag::DuplexUpgradeContext => {
             release_in!([Sockets], crate::socket::DuplexUpgradeContext)
@@ -1715,17 +1704,20 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
         }
-        task_tag::ShellAsync => release_in!([Shell], crate::shell::dispatch_tasks::ShellAsyncTask),
-        task_tag::ShellCondExprStatTask => release_in!([Shell], PoolTask<ShellCondExprStatTask>),
-        task_tag::ShellCpTask => release_in!([Shell], ShellCpTask),
-        task_tag::ShellGlobTask => release_in!([Shell], PoolTask<ShellGlobTask>),
-        task_tag::ShellLsTask => release_in!([Shell], PoolTask<ShellLsTask>),
-        task_tag::ShellMkdirTask => release_in!([Shell], PoolTask<ShellMkdirTask>),
-        task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => release_in!([Shell], PoolTask<ShellMvCheckTargetTask>),
-        task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
-        task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
-        task_tag::ShellTouchTask => release_in!([Shell], PoolTask<ShellTouchTask>),
+        task_tag::ShellAsync => release_boxed_in!([Shell], ShellAsyncTask),
+        task_tag::ShellCondExprStatTask => {
+            release_boxed_in!([Shell], PoolTask<ShellCondExprStatTask>)
+        }
+        task_tag::ShellCpTask => release_boxed_in!([Shell], ShellCpTask),
+        task_tag::ShellGlobTask => release_boxed_in!([Shell], PoolTask<ShellGlobTask>),
+        task_tag::ShellLsTask => release_boxed_in!([Shell], ShellLsTask),
+        task_tag::ShellMkdirTask => release_boxed_in!([Shell], PoolTask<ShellMkdirTask>),
+        task_tag::ShellMvBatchedTask => release_boxed_in!([Shell], PoolTask<ShellMvBatchedTask>),
+        task_tag::ShellMvCheckTargetTask => {
+            release_boxed_in!([Shell], PoolTask<ShellMvCheckTargetTask>)
+        }
+        task_tag::ShellRmDirTask => release_boxed_in!([Shell], ShellRmDirTask),
+        task_tag::ShellTouchTask => release_boxed_in!([Shell], PoolTask<ShellTouchTask>),
         task_tag::StatWatcherTimerUpdate => {
             release_boxed_in!(
                 [NodeFs],

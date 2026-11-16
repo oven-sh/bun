@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Enforce elements with aria-activedescendant are tabbable.
 pub struct AriaActivedescendantHasTabindex;
 
-const ARIA_ACTIVEDESCENDANT_HAS_TABINDEX: Message = Message::new("", "Elements with `aria-activedescendant` must be tabbable.");
+const ARIA_ACTIVEDESCENDANT_HAS_TABINDEX: &Message = &Message::new("", "Elements with `aria-activedescendant` must be tabbable.");
 
 impl Rule for AriaActivedescendantHasTabindex {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-activedescendant-has-tabindex", Kind::Problem);

@@ -7,9 +7,6 @@
 namespace Bun {
 
 struct EcKeyPairJobCtx : KeyPairJobCtx {
-    WTF_MAKE_TZONE_ALLOCATED(EcKeyPairJobCtx);
-
-public:
     EcKeyPairJobCtx(int curveNid, int paramEncoding, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
         , m_curveNid(curveNid)
@@ -17,16 +14,12 @@ public:
     {
     }
 
-    void deinit();
+    void runTask(JSC::JSGlobalObject*) { generate(setup()); }
     ncrypto::EVPKeyCtxPointer setup();
     static std::optional<EcKeyPairJobCtx> fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& config);
 
     int m_curveNid;
     int m_paramEncoding;
-};
-
-struct EcKeyPairJob {
-    static void createAndSchedule(JSC::JSGlobalObject*, EcKeyPairJobCtx&&, JSC::JSValue callback);
 };
 
 } // namespace Bun

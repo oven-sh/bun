@@ -1,5 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include "OwnedFd.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -92,11 +93,7 @@ extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC) && !OS(LINUX)
     // musl defines O_EXEC as O_PATH, which opens any file.
-    int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
-    if (fd < 0)
-        return false;
-    close(fd);
-    return true;
+    return !!Bun::OwnedFd { open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0) };
 #endif // defined(O_EXEC) && !OS(LINUX)
 
     struct stat st;
@@ -194,18 +191,18 @@ extern "C" size_t Bun__memoryFootprint()
 extern "C" size_t Bun__memoryFootprint()
 {
     // smaps_rollup (Linux ≥4.14) is one read instead of walking every VMA.
-    int fd;
+    int opened;
     do {
-        fd = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC);
-    } while (fd == -1 && errno == EINTR);
-    if (fd == -1) return 0;
+        opened = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC);
+    } while (opened == -1 && errno == EINTR);
+    Bun::OwnedFd fd { opened };
+    if (!fd) return 0;
 
     char buf[2048];
     ssize_t n;
     do {
-        n = read(fd, buf, sizeof(buf) - 1);
+        n = read(fd.get(), buf, sizeof(buf) - 1);
     } while (n == -1 && errno == EINTR);
-    close(fd);
     if (n <= 0) return 0;
     buf[n] = '\0';
 
@@ -405,18 +402,19 @@ static WTF::Vector<int>& inheritedFileDescriptors()
 
 extern "C" void bun_remember_inherited_file_descriptors()
 {
-    DIR* directory = opendir("/proc/self/fd");
+    std::unique_ptr<DIR, decltype([](DIR* directory) { closedir(directory); })> directory { opendir("/proc/self/fd") };
     if (!directory)
         return;
-    while (struct dirent* entry = readdir(directory)) {
+    while (struct dirent* entry = readdir(directory.get())) {
         char* end = nullptr;
         long fd = strtol(entry->d_name, &end, 10);
-        if (end != entry->d_name && *end == '\0' && fd >= 3 && fd <= INT_MAX && fd != dirfd(directory))
+        if (end != entry->d_name && *end == '\0' && fd >= 3 && fd <= INT_MAX && fd != dirfd(directory.get()))
             inheritedFileDescriptors().append(static_cast<int>(fd));
     }
-    closedir(directory);
 }
 #endif
+
+extern "C" void Bun__willRestartProcess();
 
 extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
@@ -476,6 +474,8 @@ extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheri
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+
+    Bun__willRestartProcess();
 }
 
 #if OS(LINUX)
@@ -494,6 +494,7 @@ static std::atomic<unsigned> execve_generation { 0 };
 static pid_t execve_counting_pid = 0;
 
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
+extern "C" bool CrashHandler__isReloadingProcess();
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
 
 #if defined(BUN_SAFE_STACK)
@@ -673,8 +674,12 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
 {
     if (getpid() != execve_counting_pid)
         return __real_execve(path, argv, envp);
-    // The suspension lock is held over execve.
-    WTF::ThreadSuspendLocker suspendLocker;
+    // execve keeps a signal that is pending on this thread and resets its handler, so a suspend or
+    // resume signal sent now would kill the new image. Senders hold this lock. A thread that
+    // crashed may already hold it, and it is not recursive.
+    std::optional<WTF::ThreadSuspendLocker> suspendLocker;
+    if (!CrashHandler__isReloadingProcess())
+        suspendLocker.emplace();
     threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
     execve_generation.fetch_add(1, std::memory_order_seq_cst);
     int rc = __real_execve(path, argv, envp);
@@ -1000,6 +1005,12 @@ extern "C" void Bun__lockThreadSuspensionForExit()
     new (storage) WTF::ThreadSuspendLocker();
 }
 #endif
+
+// For tests. Never released.
+extern "C" void Bun__lockThreadSuspensionForTesting()
+{
+    new WTF::ThreadSuspendLocker();
+}
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 

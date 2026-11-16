@@ -56,10 +56,6 @@ const patterns = {
   aotPrelude: {
     paths: ["src/aot/prelude/*.ts"],
   },
-  /** the AoT compiler's Rust sources, read by the check that every name of the schema has a use */
-  aotRust: {
-    paths: ["src/aot/**/*.rs"],
-  },
   /** native code that can load a runtime module, scanned by the generator of the table of built-ins */
   nativeModuleLoadSites: {
     paths: ["src/jsc/bindings/**/*.{cpp,h}", "src/jsc/modules/**/*.{cpp,h}", "src/runtime/**/*.{cpp,h}"],
@@ -132,15 +128,19 @@ const patterns = {
       "src/uws_sys/*.cpp",
       "src/simdutf_sys/*.cpp",
       "src/jsc/bindings/vm/*.cpp",
+      "packages/bun-usockets/src/*.cpp",
       "packages/bun-usockets/src/crypto/*.cpp",
     ],
+  },
+  /** the native tests of the AoT compiler that ask bun's table of built-ins: compiled like `cxx`, linked into testaot alone */
+  aotNativeTests: {
+    paths: ["test/aot/native/*.cpp"],
   },
   /** all `*.c` compiled into bun (usockets, llhttp, uv polyfills) */
   c: {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
-      "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
       "src/jsc/bindings/node/http/llhttp/*.c",

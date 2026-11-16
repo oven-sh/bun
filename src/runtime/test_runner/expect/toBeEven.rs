@@ -3,6 +3,7 @@ use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_even(
         &self,
         this_value: JsWrapper<'_, Self>,

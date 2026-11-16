@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): number;
+# type Row = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; i: number; j: number; k: number; l: number; };
+# const seed = sink();
+# const top: Row = { a: (seed + 0) | 0, b: (seed + 1) | 0, c: (seed + 2) | 0, d: (seed + 3) | 0, e: (seed + 4) | 0, f: (seed + 5) | 0, g: (seed + 6) | 0, h: (seed + 7) | 0, i: (seed + 8) | 0, j: (seed + 9) | 0, k: (seed + 10) | 0, l: (seed + 11) | 0 };
+# function make(from: number): Row { return { a: (from + 0) | 0, b: (from + 1) | 0, c: (from + 2) | 0, d: (from + 3) | 0, e: (from + 4) | 0, f: (from + 5) | 0, g: (from + 6) | 0, h: (from + 7) | 0, i: (from + 8) | 0, j: (from + 9) | 0, k: (from + 10) | 0, l: (from + 11) | 0 }; }
+# sink(top.a, top.l, make(1).l, make(2).a);
+# -- end of source
+# What a waiting value costs is a word of frame a level of recursion. The body of a file runs once: there all twelve wait and the birth lists them. A function may recur: eight wait, the rest is defined behind the birth.
+# f1 = make
+# RUN: walk f0 mechanisms=none
+# CHECK: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+# RUN(FUNCTION): walk f1 mechanisms=none
+# FUNCTION: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5, 6, 7]
+# FUNCTION: key="i"
+# FUNCTION: key="l"

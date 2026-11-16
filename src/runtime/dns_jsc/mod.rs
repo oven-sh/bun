@@ -13,7 +13,7 @@ mod dns_body;
 #[cfg(windows)]
 pub(crate) use dns_body::UvDnsPoll;
 #[cfg(windows)]
-pub(crate) use dns_body::lib_uv_backend::LibuvCompleteHolder;
+pub(crate) use dns_body::lib_uv_backend::LibuvRequest;
 pub(crate) use dns_body::netc;
 
 #[path = "cares_jsc.rs"]

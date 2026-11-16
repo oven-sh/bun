@@ -1,17 +1,16 @@
-use bun_sema::bind::{Binding, CodeUnit, Decl, FnOwner};
+use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, FnOwner};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::has_live_await;
-use bun_sema::hir::{self, Flags, FnId, FnKind};
+use bun_sema::hir::{self, ExprKind, Flags, FnBody, FnId, FnKind, StmtKind};
 
+use crate::builtins::SourceDialect;
 use crate::builtins::id::BuiltinClass;
-use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, FunctionSyntax, LimitId, SourceRange,
-};
+use crate::builtins::table::{FramesMark, frames_mark_of};
+use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionSyntax, SourceRange};
 use crate::ir::{
     Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags, Primitives, StringId, Type,
-    TypeTable,
+    TypeRef, TypeTable,
 };
-use crate::load;
 use crate::lower::{FileLowering, class, generator};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -23,17 +22,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             _ => Binding::Free,
         };
-        self.intern_function_name(binding, func.name, func.name_pos)
-    }
-
-    // What an indirect `eval` is given is the body of a function without a name, which is all that its file holds. `Function` makes a function that has a name.
-    fn is_evaluated_script(&self, key: FunctionKey) -> bool {
-        let FunctionKey::Source(source) = key else {
-            return false;
-        };
-        self.inputs.sources.kind(self.file) == load::SourceKind::EvaluatedText
-            && self.hir[source.function].name.is_none()
-            && self.find_enclosing_key(key).is_none()
+        self.intern_function_name(binding, func.name)
     }
 
     pub(in crate::lower) fn is_derived_constructor(&self, function: FnId) -> bool {
@@ -45,6 +34,15 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_enclosing_key(&self, key: FunctionKey) -> Option<FunctionKey> {
         let bound = self.bound;
         let mut scope = match key {
+            FunctionKey::Source(source)
+                if self
+                    .inputs
+                    .modules
+                    .inner_module(self.file, source.function)
+                    .is_some() =>
+            {
+                return None;
+            }
             FunctionKey::Source(source) => {
                 let top = bound.fns[source.function.idx()].scope;
                 bound.scopes[top.idx()].parent
@@ -69,8 +67,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     FunctionKey::StaticInitializer(class) => class.class,
                     enclosing @ (FunctionKey::ModuleBody(_)
                     | FunctionKey::WrappedModuleBody(_)
-                    | FunctionKey::FaceBody(_)
+                    | FunctionKey::FacadeBody(_)
                     | FunctionKey::CheckBody(_)
+                    | FunctionKey::Instantiation(_)
                     | FunctionKey::Source(_)
                     | FunctionKey::Signature(_)
                     | FunctionKey::ClassSignature(_)
@@ -78,7 +77,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::InstanceInitializer(_)
                     | FunctionKey::AccessorGetter { .. }
                     | FunctionKey::AccessorSetter { .. }
-                    | FunctionKey::PrivateNameTest { .. }) => return Some(enclosing),
+                    | FunctionKey::PrivateNameTest { .. }
+                    | FunctionKey::ModuleRequest { .. }
+                    | FunctionKey::CopiedGetter { .. }
+                    | FunctionKey::PrototypeMaker(_)) => return Some(enclosing),
                 },
                 CodeUnit::FieldInitializer(member) => bound.member_class(member)?,
             };
@@ -104,40 +106,51 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The function makes the array itself, so nothing tests that it is one. What an array type says it holds is expected.
     fn compute_rest_position(&mut self, position: DeclaredType) -> DeclaredType {
         let types = &mut self.fragment.types;
         let declared = types.without_primitives(position.ty, Primitives::NULLISH);
-        let (ty, site) = match is_array_type(types.get(declared)) {
-            true => (declared, position.site),
-            false => (TypeTable::ARRAY, None),
+        let ty = match is_array_type(&types.get(declared)) {
+            true => declared,
+            false => TypeTable::ARRAY,
         };
         let flags = position.flags.without(PositionFlags::IS_EXPECTED);
         DeclaredType::new(
             Mapped::checked(ty),
-            site,
+            None,
             flags | PositionFlags::IS_FROM_COMPILER,
         )
     }
 
     pub(in crate::lower) fn find_end_of_function(&self, function: FnId) -> Option<u32> {
-        let hir = self.hir;
-        match self.bound.fns[function.idx()].owner {
-            FnOwner::Expr(expression) => Some(hir[expression].end),
-            FnOwner::Stmt(statement) => Some(hir[statement].loc.end),
-            FnOwner::Member(member) => Some(hir[member].loc.end),
-            FnOwner::Type(_) | FnOwner::None => None,
+        end_of_function(self.hir, self.bound, function)
+    }
+
+    /// Where the file has the text of a function or of a class that may be in a copy.
+    pub(in crate::lower) fn written_range(&self, start: u32, end: u32) -> SourceRange {
+        SourceRange {
+            start: self.hir.written_position(start),
+            end: self.hir.written_position(end),
         }
     }
 
-    fn compute_text_range(&self, function: FnId) -> SourceRange {
+    pub(super) fn compute_text_range(&self, function: FnId) -> SourceRange {
         let Some(end) = self.find_end_of_function(function) else {
             return SourceRange::default();
         };
-        SourceRange {
-            start: self.type_ranges.map_offset(self.hir[function].text_start),
-            end: self.type_ranges.map_offset(end),
-        }
+        self.written_range(self.hir[function].text_start, end)
+    }
+}
+
+pub(in crate::lower) fn end_of_function(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> Option<u32> {
+    match bound.fns[function.idx()].owner {
+        FnOwner::Expr(expression) => Some(hir[expression].end),
+        FnOwner::Stmt(statement) => Some(hir[statement].loc.end),
+        FnOwner::Member(member) => Some(hir[member].loc.end),
+        FnOwner::Type(_) | FnOwner::None => None,
     }
 }
 
@@ -147,7 +160,11 @@ pub(crate) fn create_header(
     kind: FunctionKind,
     position: u32,
 ) -> Function {
-    let (enclosing_runtime_function, inherited_flags) = match file.find_enclosing_key(key) {
+    let mut syntax = FunctionSyntax::default();
+    // A wrapper that another part lowers hands nothing down.
+    let enclosing = file.find_enclosing_key(key);
+    let enclosing = enclosing.filter(|&enclosing| !file.is_key_of_other_part(enclosing));
+    let (enclosing_runtime_function, inherited_flags) = match enclosing {
         Some(enclosing) => {
             let enclosing = file.reference_function(enclosing);
             let header = file.function_header(enclosing);
@@ -155,6 +172,7 @@ pub(crate) fn create_header(
                 true => FunctionFlags::default(),
                 false => header.flags & FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
             };
+            syntax |= header.syntax & FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE;
             (header.enclosing_runtime_function, hidden)
         }
         None => (None, FunctionFlags::default()),
@@ -163,25 +181,16 @@ pub(crate) fn create_header(
     if file.is_checked() {
         flags |= FunctionFlags::IS_CHECKED;
     }
-    if file.scopes.has_too_many_captures(key) {
-        file.gave_up(LimitId::MaxCaptures, position);
-    }
-    if file.scopes.has_fields_for_handlers(key) {
-        file.gave_up(LimitId::MaxHandlerArguments, position);
-    }
     Function {
         name: None,
         module: file.module_id(),
-        position,
-        text: SourceRange::default(),
+        position: file.hir.written_position(position),
+        source_range: SourceRange::default(),
         kind,
         role: file.source.function_role(),
         flags,
         length: 0,
-        syntax: match file.is_evaluated_script(key) {
-            true => FunctionSyntax::IS_EVALUATED_SCRIPT,
-            false => FunctionSyntax::default(),
-        },
+        syntax,
         enclosing_runtime_function,
         captures: file.capture_positions(key),
         this_type: DeclaredType::untyped(),
@@ -190,6 +199,7 @@ pub(crate) fn create_header(
         body: Body::default(),
         function_types: Vec::new(),
         builtin_members: Vec::new(),
+        requested_originals: Vec::new(),
     }
 }
 
@@ -201,6 +211,40 @@ pub(crate) fn declare_source_function(
     declare(file, function, |file| {
         create_source_header(file, function, name)
     })
+}
+
+/// A function that shows itself as `function` and captures nothing.
+pub(in crate::lower) fn create_header_of_copy(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    key: FunctionKey,
+    function: FnId,
+    name: StringId,
+) -> Function {
+    let mut header = create_source_header(file, function, Some(name));
+    header.captures = file.capture_positions(key);
+    header
+}
+
+pub(in crate::lower) fn create_header_of_missing_function(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+    name: Option<StringId>,
+) -> Function {
+    let flags = match file.is_checked() {
+        true => FunctionFlags::IS_CHECKED,
+        false => FunctionFlags::default(),
+    };
+    Function {
+        name,
+        module: file.module_id(),
+        position: file.hir.written_position(file.hir[function].start),
+        kind: FunctionKind::Plain,
+        role: file.source.function_role(),
+        flags,
+        this_type: DeclaredType::untyped(),
+        results: vec![DeclaredType::untyped()],
+        ..Function::default()
+    }
 }
 
 pub(crate) fn declare_source_function_with(
@@ -225,7 +269,7 @@ fn declare(
         function,
     };
     let id = file.declare_function(FunctionKey::Source(source), create);
-    if !file.inputs.library_functions.is_left_out(source) {
+    if !file.inputs.library_functions.is_left_out(source) && !file.is_of_other_part(function) {
         file.constructor_function_layout(source);
     }
     id
@@ -243,9 +287,8 @@ fn create_source_header(
         function,
     };
     let key = FunctionKey::Source(source);
-    let declared = file.function_positions(function);
+    let is_of_other_part = file.is_of_other_part(function);
     let kind = file.compute_function_kind(function);
-    // JSC reports what has no position of its own in a constructor where the parameters start.
     let position = match kind {
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
             file.parameters_position(function)
@@ -253,14 +296,19 @@ fn create_source_header(
         _ => func.start,
     };
     let mut header = create_header(file, key, kind, position);
-    // JSC records no positions in a function that is written inside a built-in function.
-    if header.enclosing_runtime_function.is_some() {
+    match find_frames_mark(file, function) {
+        Some(FramesMark::NativeCode) => header.syntax |= FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE,
+        Some(FramesMark::Hidden) => header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
+        None => {}
+    }
+    if header.enclosing_runtime_function.is_some()
+        || header
+            .syntax
+            .contains(FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE)
+    {
         header.position = file.parameters_position(function);
     }
     header.flags |= compute_source_flags(hir, function);
-    if file.is_anonymous_in_bundle(func.name_pos) {
-        header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
-    }
     if file.inputs.library_functions.is_left_out(source) {
         header.flags = header
             .flags
@@ -270,20 +318,26 @@ fn create_source_header(
         Some(name) => Some(name),
         None if func.name.is_some() => Some(file.intern_own_name(function)),
         None if func.flags.contains(Flags::DEFAULT) => {
-            if file.is_default_export_name_its_own(func.start) {
-                header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
-            }
-            file.default_export_name(func.start)
+            header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
+            file.default_export_name()
         }
         None => None,
     };
     if header.flags.contains(FunctionFlags::IS_ASYNC)
-        && !header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME)
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
-        header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;
+        header.syntax |= FunctionSyntax::HAS_LIVE_AWAIT;
     }
-    header.text = file.compute_text_range(function);
+    let wrapped = file.inputs.modules.wrapped();
+    if wrapped.runs_once_per_closure(source.file, function) {
+        header.syntax |= FunctionSyntax::RUNS_ONCE_PER_CLOSURE;
+    }
+    header.source_range = file.compute_text_range(function);
+    let asked = file.find_originals_asked_for(function, header.source_range);
+    if asked.may_be_own {
+        header.syntax |= FunctionSyntax::MAY_IMPORT_OWN_ORIGINAL;
+    }
+    header.requested_originals = asked.names;
     header.length = func
         .params
         .iter()
@@ -291,6 +345,19 @@ fn create_source_header(
             hir[parameter].default.is_none() && !hir[parameter].flags.contains(Flags::REST)
         })
         .count() as u32;
+    if !is_of_other_part {
+        add_positions(file, function, &mut header);
+    }
+    if hir.runtime_function_kind(function) == FnKind::Constructor {
+        let class = file.bound.function_class(function);
+        let class = class.expect("a constructor has a class");
+        file.finish_constructor_header(class, name, &mut header);
+    }
+    header
+}
+
+fn add_positions(file: &mut FileLowering<'_, '_, '_, '_>, function: FnId, header: &mut Function) {
+    let declared = file.function_positions(function);
     let has_strict_this = header.flags.contains(FunctionFlags::HAS_THIS)
         && !header.flags.contains(FunctionFlags::IS_SLOPPY);
     if has_strict_this {
@@ -302,17 +369,42 @@ fn create_source_header(
     {
         *rest = file.compute_rest_position(*rest);
     }
+    let key = FunctionKey::Source(FunctionRef {
+        file: file.file,
+        function,
+    });
     let undeclared = file.scopes.undeclared_parameters(key) as usize;
     header
         .parameters
         .extend(std::iter::repeat_n(DeclaredType::untyped(), undeclared));
-    header.results = vec![declared.result];
-    if hir.runtime_function_kind(function) == FnKind::Constructor {
-        let class = file.bound.function_class(function);
-        let class = class.expect("a constructor has a class");
-        file.finish_constructor_header(class, name, &mut header);
+    header.results.clear();
+    header.results.push(declared.result);
+}
+
+/// The header of a function that another part lowers has no positions until a call asks for them.
+pub(crate) fn complete_header(file: &mut FileLowering<'_, '_, '_, '_>, id: FunctionId) {
+    let FunctionKey::Source(source) = file.function_key(id) else {
+        return;
+    };
+    let function = source.function;
+    if file.is_of_other_part(function) && file.needs_positions_of_other_part(function) {
+        let mut header = file.function_header(id).clone();
+        add_positions(file, function, &mut header);
+        *file.function_header_mut(id) = header;
     }
-    header
+}
+
+fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Option<FramesMark> {
+    let hir = file.hir;
+    if file.source.dialect() == SourceDialect::Runtime
+        && let FnBody::Block(statements) = hir[function].body
+        && statements.len != 0
+        && let StmtKind::Expr(first) = hir[hir.id_at(statements, 0)].kind
+        && let ExprKind::String(text) = hir[first].kind
+    {
+        return frames_mark_of(file.queries.atom_bytes(text));
+    }
+    None
 }
 
 fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
@@ -338,8 +430,8 @@ fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
     flags
 }
 
-fn is_array_type(ty: &Type) -> bool {
-    let [part] = ty.classes.as_slice() else {
+fn is_array_type(ty: &TypeRef<'_>) -> bool {
+    let [part] = ty.classes else {
         return false;
     };
     part.builtin_class == BuiltinClass::Array

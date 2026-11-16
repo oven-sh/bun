@@ -1,0 +1,9 @@
+# A record of one member and a class of the library share the place of a name, so the type of the slot names the record's function. Under proof checks a read that tests its own guess asks the slot for that type,
+# and in a unit of the library the question may not name a function of the program: the unit cannot reach it. The build died: "the code of function .. 'format' of node:url .. mentions function .. 'search'".
+# -- source: main.js
+# const q = { search: () => "?a=1" };
+# print(q.search() + " " + require("node:url").resolve("http://made.up/a/b", "c"));
+# -- end of source
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(BUILDS): compile OperationsBuilt mechanisms=all
+# BUILDS: statistic OperationsBuilt {{*}}

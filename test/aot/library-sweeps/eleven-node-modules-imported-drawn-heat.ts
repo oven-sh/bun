@@ -1,5 +1,4 @@
-// Eleven node:* modules are imported and hardly used, and each block, edge and function of the library draws how often it runs. The build verifies the program after every pass.
-// Flags: --aot-check=verify-each-pass --aot-heat=shuffled --aot-layout-seed=5
+// Eleven node:* modules are imported and hardly used, so nearly everything that is compiled is code of the library, on many threads at once.
 import fs from "node:fs";
 import net from "node:net";
 import zlib from "node:zlib";

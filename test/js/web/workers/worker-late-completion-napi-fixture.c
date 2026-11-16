@@ -3,6 +3,7 @@
 #define NAPI_EXPERIMENTAL
 #include <node_api.h>
 #include <stdio.h>
+#include <uv.h>
 
 static napi_async_work work;
 
@@ -30,9 +31,27 @@ static napi_value queue_from_finalizer(napi_env env, napi_callback_info info) {
   return external;
 }
 
+static void work_cb(uv_work_t *req) {}
+
+static void finalize_uv_work(node_api_basic_env env, void *loop, void *hint) {
+  static uv_work_t request;
+  printf("cancelled: %d\n", uv_queue_work(loop, &request, work_cb, NULL) == UV_ECANCELED);
+  fflush(stdout);
+}
+
+static napi_value queue_uv_work_from_finalizer(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop;
+  napi_value external;
+  napi_get_uv_event_loop(env, &loop);
+  napi_create_external(env, loop, finalize_uv_work, NULL, &external);
+  return external;
+}
+
 NAPI_MODULE_INIT() {
   napi_value function;
   napi_create_function(env, "queueFromFinalizer", NAPI_AUTO_LENGTH, queue_from_finalizer, NULL, &function);
   napi_set_named_property(env, exports, "queueFromFinalizer", function);
+  napi_create_function(env, "queueUvWorkFromFinalizer", NAPI_AUTO_LENGTH, queue_uv_work_from_finalizer, NULL, &function);
+  napi_set_named_property(env, exports, "queueUvWorkFromFinalizer", function);
   return exports;
 }

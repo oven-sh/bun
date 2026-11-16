@@ -1,8 +1,9 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
+import { afterAll } from "../harness/default-timeout";
 import { beforeAll, describe, test } from "../supported";
 import { findImage, imageHeader } from "./compiled-image";
 import { runCopy, type SpawnResult } from "./edited-executable";

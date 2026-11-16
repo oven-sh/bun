@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# var limit = 6;
+# var name = "abc";
+# var given = Number(process.argv[2]);
+# class Reader { constructor() { this.n = 1; } read() { return limit + name.length + given; } }
+# sink(new Reader().read());
+# class Early { static read() { return late; } }
+# sink(Early.read());
+# var late = 3;
+# -- end of source
+# A class moves to the start of its file. Its methods read the variables where the class is used, not where it is defined: the first three are stored before that, and the first two hold what is written alone.
+# RUN: link
+# CHECK: variable g1 proven=6 writers-known written-at-construction-alone filled
+# CHECK-NEXT: variable g2 proven="abc" writers-known written-at-construction-alone filled
+# CHECK-NEXT: variable g3 proven=number writers-known written-at-construction-alone filled
+# CHECK-NEXT: variable g4 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone

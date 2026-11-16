@@ -152,7 +152,7 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::Extensions, JSC::AOT::hasFileWithExtension(StringView(*name)));
+    Bun::willSetExtensionLoader(globalObject, StringView(*name));
     RETURN_IF_EXCEPTION(scope, void());
     BunString ext = Bun::toString(name);
     JSC::CallData callData = JSC::getCallData(value);
@@ -238,6 +238,10 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    bool hasGoneOn = resumeDelegatedRequire(global, mod, specifierWtfString);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasGoneOn)
+        return JSC::JSValue::encode(jsUndefined());
     if (loaderType != BunLoaderTypeJSON) {
         bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, loaderType == BunLoaderTypeTS);
         RETURN_IF_EXCEPTION(scope, {});

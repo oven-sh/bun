@@ -2,8 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
-import { referenceEnv } from "./harness/shares";
 import { test } from "./supported";
+
+// The reference transpiles on one thread: the texts are read in the order in which they are asked for. An executable reads nothing.
+const referenceEnv = { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
 
 // What an executable prints is held to what `bun run` prints, so `bun run` has to print one thing. Here a module imports two bundles in the CommonJS format of
 // `bun build`, and the first takes far longer to read than the second.

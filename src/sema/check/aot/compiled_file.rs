@@ -3,6 +3,7 @@ use crate::bind::PatParent;
 use crate::check::mapped::AccessNode;
 use crate::check::shape::{Access, Found};
 use crate::check::{Checker, Program, root_declaration};
+use crate::fold::{Constant, FoldedValue};
 use crate::hir::{ExprId, PatId, StmtId, VarKind};
 use crate::module_format::ModuleFormat;
 use crate::program::{FileId, FileRole, Files, Sym};
@@ -99,8 +100,23 @@ impl<'s> Checker<'_, 's> {
         !self.files.options.declarations_of_last_resort.is_empty()
     }
 
+    pub(in crate::check) fn lacks_installed_bun_types(&self) -> bool {
+        self.lacks_bun_types() || self.files.options.type_root_of_last_resort.is_some()
+    }
+
+    pub(in crate::check) fn base_of_interface_without_bun_types(&self, base: TypeId) -> TypeId {
+        match self.lacks_bun_types() && self.is_error_type(base) {
+            true => TypeId::ANY,
+            false => base,
+        }
+    }
+
     pub(in crate::check) fn is_inferred_file(&self, file: FileId) -> bool {
         self.is_in_compile_build(file) && self.files.role(file) == FileRole::Inferred
+    }
+
+    pub(in crate::check) fn is_out_of_sight_of_checked_files(&self, file: FileId) -> bool {
+        self.is_inferred_file(file) && !self.files.module(file).is_in_types_program
     }
 
     pub(in crate::check) fn follows_untyped_variables(&self, file: FileId) -> bool {
@@ -162,10 +178,20 @@ impl<'s> Checker<'_, 's> {
             .is_some_and(|compiled| compiled.analysis.decisions.is_dead_expr(expression))
     }
 
-    #[inline]
-    pub(in crate::check) fn is_short_circuited_link(&self, file: FileId, link: ExprId) -> bool {
-        self.files
-            .compiled(file)
-            .is_some_and(|compiled| compiled.analysis.decisions.is_short_circuited_link(link))
+    pub(in crate::check) fn constant_string(&self, file: FileId, key: ExprId) -> Option<Atom> {
+        let decisions = &self.files.compiled(file)?.analysis.decisions;
+        let constant = match decisions.constant(self.hir(file), key) {
+            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+                Some(constant)
+            }
+            FoldedValue::Unknown => {
+                let constant = decisions.constant_read(key);
+                constant.or_else(|| decisions.constant_of_let(key))
+            }
+        };
+        match constant {
+            Some(Constant::String(text)) => Some(text),
+            _ => None,
+        }
     }
 }

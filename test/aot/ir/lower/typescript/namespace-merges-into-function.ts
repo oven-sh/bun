@@ -10,8 +10,7 @@
 // CHECK: [[created]] = FinishObject [[head]]
 // CHECK: PutModuleVariable [[created]] variable=[[binding]] @
 // CHECK: Jump -> next [[join]]([[created]]
-// CHECK: [[join]](
-// CHECK: [[container]] = GetModuleVariable variable=[[binding]] @
+// CHECK: [[join]]([[container]]
 // CHECK: PropSet [[container]], {{*}}key="a"
 
 export function f() {}

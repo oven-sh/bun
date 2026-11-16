@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""json-stringify-typed-values.py <seed>: JSON.stringify by functions made for the layouts of typed records, with what no function is made for HANDED OVER per value or per list to the engine's stringifier.
-THE ATTACK: well-typed TypeScript made at random: record types and classes that hold each other, lists, unions, optional members, dates, `any` and `unknown` members; values at the edges (numbers, strings that need escapes, halves of pairs, dates out of range); objects made in one piece, built up by stores in any order, with members deleted or set to undefined; and in the untyped places everything JavaScript has: toJSON, accessors, boxed primitives, holes, proxies, keys like indices, symbols, hidden members, cycles, BigInt. Every form of the call: plain, an indent, a list of keys, a replacer; inside a fresh literal; a list at the top.
-NO MODEL: the judge is plain Bun's text, line by line."""
+"""json-stringify-typed-values.py <seed>: JSON.stringify with serializers compiled for the layouts of typed records,
+which fall back to the engine's stringifier per value or per array. Well-typed TypeScript whose values need the
+fallback in every position.
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 NUM = ["0", "-0", "1", "-1", "1.5", "NaN", "Infinity", "-Infinity", "1e21", "1e-7", "123456789012345680000", "2147483647", "-2147483648", "2147483648", "0.1 + 0.2", "5e-324", "4294967295", "9007199254740993", "255", "-128"]

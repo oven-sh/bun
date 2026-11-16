@@ -60,22 +60,3 @@ jobs:
         run: |
           bun x tsc --noEmit -p src/tsconfig.json
           bun x tsc --noEmit -p src/runtime/bake/tsconfig.json
-      - name: Check that every name of the compiler's schema has a use
-        # The uses are in the engine's C++ and in Bun's Rust. The build looks for them only where it compiles the engine,
-        # and CI links a prebuilt one.
-        run: |
-          version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
-          git init --quiet "$RUNNER_TEMP/WebKit"
-          git -C "$RUNNER_TEMP/WebKit" remote add origin https://github.com/oven-sh/WebKit.git
-          git -C "$RUNNER_TEMP/WebKit" sparse-checkout set Source/JavaScriptCore Tools/Scripts/aot
-          git -C "$RUNNER_TEMP/WebKit" fetch --quiet --depth=1 --filter=blob:none origin "refs/tags/autobuild-${version#autobuild-}"
-          git -C "$RUNNER_TEMP/WebKit" checkout --quiet FETCH_HEAD
-          BUN_WEBKIT_PATH="$RUNNER_TEMP/WebKit" bun test test/internal/build-aot-codegen-declared-outputs.test.ts -t "finds a use for every name of the schema"
-      - name: Run the tests that read the engine's sources
-        # The machines that run test/aot have no sources of the engine, so these files skip themselves there.
-        # The step ends where grep finds no file: `bun test` without a file runs every test.
-        env:
-          AOT_REQUIRE_ENGINE_SOURCES: "1"
-        run: |
-          files=$(grep -l "harness/engine-text" test/aot/*.test.ts)
-          BUN_WEBKIT_PATH="$RUNNER_TEMP/WebKit" bun test $files

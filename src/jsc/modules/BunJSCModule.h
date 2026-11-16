@@ -381,11 +381,11 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #endif
 #endif
 
+    using MimallocString = std::unique_ptr<char, decltype([](char* string) { mi_free(string); })>;
     auto scope = DECLARE_THROW_SCOPE(vm);
     mi_collect(false);
-    if (char* json = mi_stats_get_json(0, nullptr)) {
-        JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
-        mi_free(json);
+    if (MimallocString json { mi_stats_get_json(0, nullptr) }) {
+        JSValue parsed = JSONParse(globalObject, String::fromUTF8(json.get()));
         RETURN_IF_EXCEPTION(scope, {});
         object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
             parsed.isEmpty() ? jsNull() : parsed);
@@ -408,9 +408,8 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #else
             const bool hashAddresses = true;
 #endif
-            if (char* json = mi_heap_dump_json(includeBlocks, hashAddresses)) {
-                JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
-                mi_free(json);
+            if (MimallocString json { mi_heap_dump_json(includeBlocks, hashAddresses) }) {
+                JSValue parsed = JSONParse(globalObject, String::fromUTF8(json.get()));
                 RETURN_IF_EXCEPTION(scope, {});
                 object->putDirect(vm, Identifier::fromString(vm, "mimallocDump"_s),
                     parsed.isEmpty() ? jsNull() : parsed);
@@ -999,13 +998,13 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObj
     }
 
     JSObject* result = constructEmptyObject(globalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "hot"_s), jsNumber(statistics->hot.count));
-    result->putDirect(vm, Identifier::fromString(vm, "unknown"_s), jsNumber(statistics->unknown.count));
-    result->putDirect(vm, Identifier::fromString(vm, "cold"_s), jsNumber(statistics->cold.count));
-    result->putDirect(vm, Identifier::fromString(vm, "hotBytes"_s), jsNumber(statistics->hot.bytes));
-    result->putDirect(vm, Identifier::fromString(vm, "unknownBytes"_s), jsNumber(statistics->unknown.bytes));
-    result->putDirect(vm, Identifier::fromString(vm, "coldBytes"_s), jsNumber(statistics->cold.bytes));
-    result->putDirect(vm, Identifier::fromString(vm, "regions"_s), regions);
+    Bun::putDirectNamed(vm, result, "hot"_s, jsNumber(statistics->hot.count));
+    Bun::putDirectNamed(vm, result, "unknown"_s, jsNumber(statistics->unknown.count));
+    Bun::putDirectNamed(vm, result, "cold"_s, jsNumber(statistics->cold.count));
+    Bun::putDirectNamed(vm, result, "hotBytes"_s, jsNumber(statistics->hot.bytes));
+    Bun::putDirectNamed(vm, result, "unknownBytes"_s, jsNumber(statistics->unknown.bytes));
+    Bun::putDirectNamed(vm, result, "coldBytes"_s, jsNumber(statistics->cold.bytes));
+    Bun::putDirectNamed(vm, result, "regions"_s, regions);
     return JSValue::encode(result);
 }
 

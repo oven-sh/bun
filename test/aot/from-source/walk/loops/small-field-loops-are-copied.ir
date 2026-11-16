@@ -1,0 +1,14 @@
+# f1 = run
+# -- source: main.js
+# class Sets { constructor(n) { this.parent = new Int32Array(n); for (let i = 0; i < n; i++) this.parent[i] = i; } find(x) { while (this.parent[x] !== x) { this.parent[x] = this.parent[this.parent[x]]; x = this.parent[x]; } return x; } join(a, b) { a = this.find(a); b = this.find(b); if (a !== b) this.parent[a] = b; return a !== b; } }
+# const sets = new Sets(64);
+# function run(k) { let s = 0; for (let i = 0; i < k; i++) if (sets.join(i & 63, (i * 7) & 63)) s++; return s; }
+# print(run(0), run(10), run(1000), sets.parent.join(""));
+# -- end of source
+# join() calls find() twice. The loop that copies join() copies the small loop over this.parent as well.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : i32 @Int32 @{{*}}) isInLoop=true isLoopHead=true
+# CHECK: : i32 @Int32 @{{*}}) isInLoop=true isLoopHead=true
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0 9 38 0554653285342555663426120614663485562532053585540635861286162633255465360534255406342615261466348556253525358555663586160616263

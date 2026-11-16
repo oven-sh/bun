@@ -16,9 +16,9 @@ export type Invocation = {
 };
 
 const prototypeOf = (value: unknown): object => Reflect.getPrototypeOf(Object(value))!;
-const modulesInPlaceOfPackages = ["utf-8-validate"];
+const modulesInPlaceOfPackages = ["utf-8-validate", "bun:test/vitest"];
 
-const preludeFolder = join(import.meta.dir, "../../../../src/aot/prelude");
+const preludeFolder = join(process.env.AOT_BUILTINS_FOLDER ?? join(import.meta.dir, ".."), "../../../src/aot/prelude");
 
 // The helpers that are written in TypeScript and compiled with a program. Here they run as they are written.
 function loadCompiledHelpers(): object {
@@ -58,11 +58,16 @@ function createHiddenRoots(): Map<string, () => unknown> {
     ["%IntlSegments%.prototype", () => prototypeOf(new Intl.Segmenter().segment(""))],
     ["%IntlSegmentIterator%.prototype", () => prototypeOf(new Intl.Segmenter().segment("")[Symbol.iterator]())],
     ["%HeadersIterator%.prototype", () => prototypeOf(new Headers().entries())],
+    ["%FormDataIterator%.prototype", () => prototypeOf(new FormData().entries())],
+    ["%CookieMapIterator%.prototype", () => prototypeOf(new Bun.CookieMap().entries())],
     ["%URLSearchParamsIterator%.prototype", () => prototypeOf(new URLSearchParams().entries())],
+    // `test`, `describe` and what their modifiers answer are bound functions below it.
+    ["%ScopeFunctions%.prototype", () => prototypeOf(require("bun:test").test)],
     ["%ImportMeta%", () => import.meta],
     ["%ModuleObject%", () => require("./module-object.cjs")],
     ["%CompilerHelpers%", loadCompiledHelpers],
     ["%ModuleRequire%", () => require],
+    ["%ModuleRequirePrototype%", () => prototypeOf(require)],
     // The import and require() each get a function of their own.
     ["utf-8-validate", () => require("utf-8-validate")],
   ]);
@@ -81,6 +86,17 @@ export class Realm {
 
   constructor(table: Table) {
     this.table = table;
+    this.#hiddenRoots.set("%FFICallback%.prototype", () => this.#findPrototypeOfCallbacksOfFFI());
+  }
+
+  // No path and no id leads to it: it is found on what the native binding behind `JSCallback` of bun:ffi makes.
+  #findPrototypeOfCallbacksOfFFI(): object | undefined {
+    const binding = this.table.dump.entries.find(({ path }) => path === "native:Bindgen:ffi.bind.ts:makeCallback");
+    const make = this.valueOf(binding?.token ?? null);
+    if (typeof make !== "function") return undefined;
+    const made = make({ args: [], returns: "void" }, () => {});
+    made.close();
+    return prototypeOf(made);
   }
 
   register(path: string, value: unknown): void {
@@ -262,7 +278,8 @@ export class Realm {
   #nativeClassOf(value: object): string | undefined {
     const name = /\(Structure [^:]+:\[[^,]+, ([^,]+),/.exec(jscDescribe(value))?.[1];
     if (name === undefined || name === "Object") return undefined;
-    return this.table.classes.has(name) ? name : this.#classesByNativeName().get(name.replaceAll(" ", ""));
+    const joined = name.replaceAll(" ", "");
+    return this.table.classes.has(joined) ? joined : this.#classesByNativeName().get(joined);
   }
 
   // Native code names a class by the last word of its path: "Headers Iterator", "StringDecoder".
@@ -292,10 +309,17 @@ export class Realm {
 
 const typedArrayTag = Reflect.getOwnPropertyDescriptor(prototypeOf(Int8Array.prototype), Symbol.toStringTag)!.get!;
 
-// Its cell says Function, as that of every function does.
+const structureOf = (value: object) => /StructureID: (\d+)/.exec(jscDescribe(value))?.[1];
+
+// Its cell says Function, as that of every function does. The functions that the formatters of ECMA-402 bind have the empty name: they are known by the structure,
+// which every bound function of a realm begins with and no other function has.
 function isBoundFunction(value: Function): boolean {
   const name: unknown = Reflect.getOwnPropertyDescriptor(value, "name")?.value;
-  return typeof name === "string" && name.startsWith("bound ") && !Object.hasOwn(value, "prototype");
+  if (typeof name !== "string" || Object.hasOwn(value, "prototype")) return false;
+  if (name.startsWith("bound ")) return true;
+  const bound = function () {}.bind(null);
+  Reflect.getOwnPropertyDescriptor(bound, "name");
+  return structureOf(value) === structureOf(bound);
 }
 
 // Their cells are named "Object". Neither function looks for a formatter that an older program has put on another object.

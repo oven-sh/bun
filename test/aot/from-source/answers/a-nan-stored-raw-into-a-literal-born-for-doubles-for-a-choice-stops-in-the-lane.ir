@@ -1,0 +1,36 @@
+# -- source: main.cjs
+# "use strict";
+# function lesser(given, other, first) {
+#   const kept = [first | 0];
+#   for (let j = 1; j <= 12; j++) { let least = given[j] + 1; const beside = other[j] * 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# const byName = { lesser }, key = JSON.parse('"lesser"');
+# const whole = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], none = typeof fails === "undefined" ? whole : [0, 1, 2, NaN, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+# const made = byName[key](none, none, 7);
+# print(3 in made, made.length, made.join());
+# -- end of source
+# `kept` is allocated with storage for doubles because a value chosen among the numbers that the iteration computes is stored into it. That is a speculation.
+# In an array of doubles a NaN marks a hole, so the specialized version stores a number raw only after it has passed `x === x`. A number that fails the test restarts the iteration as written,
+# and the store as written converts the storage to one for boxed values. That test alone stands between a NaN and a hole here.
+# Fault injection, testing=AssumeNoNaNStores: the test is omitted. In a default build the element would silently disappear.
+# With the switches that make the emitters check proofs, the raw store is checked.
+# RUN(TAKEN): walk f1:Body mechanisms=all
+# TAKEN: NewArray {{*}} arrayStorage=Double
+# TAKEN: isLoopHead=true
+# TAKEN: StrictEq [[stored]], [[stored]] form=Numbers
+# TAKEN: ExtendArrayLength
+# TAKEN-NEXT: PutDoubleIndex
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = "yes";
+# RIGHT: true 13 7,2,3,NaN,5,6,7,8,9,10,11,12,13
+# RIGHT-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores
+# PASSES: true 13 7,2,3,4,5,6,7,8,9,10,11,12,13
+# PASSES-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeNoNaNStores globalThis.fails = "yes";
+# SILENT: false 13 7,2,3,,5,6,7,8,9,10,11,12,13
+# SILENT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores globalThis.fails = "yes";
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: found an unexpected value in the result of an operation
+# HELD: crashed with

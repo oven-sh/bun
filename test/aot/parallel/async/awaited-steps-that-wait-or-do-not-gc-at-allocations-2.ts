@@ -4,7 +4,6 @@
 // Env of the executable: BUN_JSC_useZombieMode=1
 // Env of the executable: BUN_JSC_scribbleFreeCells=1
 // Env of the executable: BUN_JSC_useEdenCollectionsAtSlowPathAllocs=1
-// Erased types: not built: awaited-steps-that-wait-or-do-not is built so
 class NoStore<T> { getStore(): T | undefined { return undefined; } run<R>(_: T, call: () => R): R { return call(); } enterWith(_: T) {} }
 const store = new NoStore<string>();
 const lines: string[] = [];

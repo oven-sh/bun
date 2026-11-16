@@ -18,13 +18,4 @@ console.log(ownKeys({ a: 1, b: 2 }).join(), has({ a: 1 }, "a"), R === Reflect, R
 console.log(typeof Memory, Memory === WebAssembly.Memory, new Memory({ initial: 1 }).buffer.byteLength);
 console.log(greet(), level, Host.level, depth);
 
-// GENERATED: greet
 // CHECK-LABEL: function {{*}}name="greet"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="hello"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

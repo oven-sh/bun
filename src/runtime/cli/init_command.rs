@@ -540,13 +540,10 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
+                let Ok(dir) = bun_sys::Dir::open(b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(dir, |d| {
-                    let _ = bun_sys::close(d);
-                });
-                let mut it = bun_sys::iterate_dir(dir);
+                let mut it = bun_sys::iterate_dir(dir.fd());
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
@@ -655,10 +652,8 @@ impl InitCommand {
             true
         };
 
-        // SAFETY: `fields.object` was set above either from the parsed JSON
-        // (arena-owned, lives for the duration of `exec`) or from a freshly
-        // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
+        let object = &mut *object;
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -805,16 +800,14 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
+            let created;
+            let file: &bun_sys::File = match &package_json_file {
+                Some(file) => file,
                 None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                    created = bun_sys::File::create(Fd::cwd(), b"package.json", true)?;
+                    &created
                 }
             };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -841,7 +834,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+            if let Err(err) = file.write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -850,7 +843,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+                bun_sys::ftruncate(file.fd(), i64::try_from(written.len()).expect("int cast"))
             {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
@@ -1385,15 +1378,14 @@ impl Template {
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
+        use bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
+        let key: &mut Rope<'_> = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
+            next: None,
         });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,

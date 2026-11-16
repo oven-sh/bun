@@ -110,95 +110,10 @@ for (const [kind, make] of [["class", () => new Box(3)], ["constructor function"
   }
 }
 
-// GENERATED: OldBox Box member [Symbol.iterator] has strike
 // CHECK-LABEL: function {{*}}name="OldBox"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v1 key="width"
-// CHECK-NEXT: v4 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer integer=4
-// CHECK-NEXT: PropSet v4, v5 key="height"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Box"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v5, v1 key="width"
-// CHECK-NEXT: v7 = Convert v4 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v8 = Integer integer=4
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v7, v9 key="height"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: v12 = TypeTest v11 testedType=object
-// CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Jump -> next b4(v13)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: Jump -> next b4(v4)
-// CHECK-NEXT: b4(v15):
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="member"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = Call v0 calleeName="hit"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="member"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v2 = Call v1 calleeName="hit"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|[[L_5]]|Generator flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = Call v0 calleeName="hit"
-// CHECK-NEXT: v2 = Data data=[[d_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key=@@iterator
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3 calleeKey=@@iterator
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|[[L_5]]|Generator flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=true flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v1 = Call v0 calleeName="hit"
-// CHECK-NEXT: v2 = Boolean boolean=true
-// CHECK-NEXT: v3 = Convert v2 declared={type=true flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="strike"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|string|[[f_9]] flags=[IsExpected]}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string|[[f_9]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="change"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }

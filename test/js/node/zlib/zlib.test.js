@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
+import * as vm from "node:vm";
 import * as zlib from "node:zlib";
 
 describe("prototype and name and constructor", () => {
@@ -123,7 +124,7 @@ describe("zlib", () => {
 
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
-    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
+    // libdeflate_alloc_compressor_ex returns NULL for level outside [0, 12]; that NULL must
     // surface as an invalid-argument error, not "Out of memory".
     for (const fn of [gzipSync, deflateSync]) {
       it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
@@ -332,6 +333,25 @@ describe("zlib.gunzip", () => {
         resolve(true);
       });
     });
+  });
+});
+
+describe.each(["ArrayBuffer", "SharedArrayBuffer"])("%s of another realm", name => {
+  function fromOtherRealm(text) {
+    return vm.runInNewContext(
+      `const array = new Uint8Array(new ${name}(bytes.length)); array.set(bytes); array.buffer`,
+      { bytes: Buffer.from(text) },
+    );
+  }
+
+  it("is input", async () => {
+    expect(zlib.gunzipSync(zlib.gzipSync(fromOtherRealm("abc"))).toString()).toBe("abc");
+    expect(zlib.gunzipSync(await util.promisify(zlib.gzip)(fromOtherRealm("abc"))).toString()).toBe("abc");
+  });
+
+  it("is a dictionary", () => {
+    const deflated = zlib.deflateSync("abcabc", { dictionary: fromOtherRealm("abc") });
+    expect(zlib.inflateSync(deflated, { dictionary: fromOtherRealm("abc") }).toString()).toBe("abcabc");
   });
 });
 
@@ -992,6 +1012,39 @@ describe("async write buffer lifetime", () => {
       deflate.close();
     }
   });
+});
+
+it.each([
+  ["createGzip", "Z_FINISH", "gunzipSync"],
+  ["createBrotliCompress", "BROTLI_OPERATION_FINISH", "brotliDecompressSync"],
+  ["createZstdCompress", "ZSTD_e_end", "zstdDecompressSync"],
+])("%s treats a chunk that was detached while it was queued as empty", async (create, finish, inverse) => {
+  const chunks = [];
+  const compressor = zlib[create]().on("data", chunk => chunks.push(chunk));
+  const queued = Buffer.from(new ArrayBuffer(16));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  compressor.on("error", reject);
+  compressor.write("first");
+  compressor.write(queued);
+  queued.buffer.transfer();
+  compressor.flush(zlib.constants[finish], resolve);
+  await promise;
+  compressor.close();
+  expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
+});
+
+it("a stream of a ShadowRealm keeps its async context across a write", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  new ShadowRealm().evaluate(
+    `(report, reject) => {
+       const fail = error => reject(String(error));
+       Promise.all([import("node:zlib"), import("node:async_hooks")]).then(([zlib, hooks]) => {
+         const storage = new hooks.AsyncLocalStorage();
+         storage.run("kept", () => zlib.createGzip().on("error", fail).once("data", () => report(storage.getStore())).end("x"));
+       }).catch(fail);
+     }`,
+  )(resolve, reject);
+  expect(await promise).toBe("kept");
 });
 
 describe("async write pins are released", () => {

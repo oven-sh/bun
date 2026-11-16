@@ -294,7 +294,7 @@ impl ThreadPool {
             if !other.run_queue.is_empty() || !other.run_buffer.is_empty() {
                 return true;
             }
-            thread = other.next;
+            thread = other.next.get();
         }
         false
     }
@@ -358,7 +358,7 @@ impl ThreadPool {
             // `Thread::pop` walks the same links.
             let thread = bun_ptr::BackRef::from(thread);
             thread.push_idle_task(new_task());
-            next = thread.next;
+            next = thread.next.get();
         }
         self.wake_for_idle_events();
     }
@@ -367,8 +367,9 @@ impl ThreadPool {
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        self.shutdown();
-        self.join();
+        if self.shutdown().spawned() > 0 {
+            self.join();
+        }
     }
 }
 
@@ -400,7 +401,7 @@ pub struct CountedTask {
 unsafe impl Send for CountedTask {}
 
 impl CountedTask {
-    /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
+    /// `group` must count this task before it runs and outlive its completion (`WaitGroup::wait()`
     /// returning is that completion).
     pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
         Self {
@@ -437,7 +438,7 @@ unsafe impl Send for Task {}
 
 impl Default for Task {
     /// Placeholder for fields where the callback is installed later
-    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
+    /// (e.g. by [`Batch::from_owned`]). The
     /// `unreachable` callback panics if scheduled un-initialized.
     #[inline]
     fn default() -> Self {
@@ -455,9 +456,9 @@ impl Default for Task {
 
 impl Task {
     #[inline]
-    unsafe fn from_node(node: *mut Node) -> *mut Task {
-        // SAFETY: caller guarantees `node` points to the `node` field of a `Task`.
-        unsafe { bun_core::from_field_ptr!(Task, node, node) }
+    fn from_node(node: *mut Node) -> *mut Task {
+        const _: () = assert!(core::mem::offset_of!(Task, node) == 0);
+        node.cast::<Task>()
     }
 
     /// Project `NonNull<Task>` → `NonNull<Node>` for the intrusive `node` field.
@@ -473,7 +474,7 @@ impl Task {
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 pub struct Batch {
     pub len: usize,
     pub(crate) head: Option<NonNull<Task>>,
@@ -481,33 +482,6 @@ pub struct Batch {
 }
 
 impl Batch {
-    pub fn pop(&mut self) -> Option<NonNull<Task>> {
-        // SAFETY: `len` is only read here for the fast-path zero check.
-        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
-        if len == 0 {
-            return None;
-        }
-        let task = self.head.unwrap();
-        // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
-        let next = unsafe { (*Task::node_of(task).as_ptr()).next };
-        if !next.is_null() {
-            // SAFETY: next points to the `node` field of the following Task.
-            self.head = NonNull::new(unsafe { Task::from_node(next) });
-        } else {
-            if task != self.tail.unwrap() {
-                unreachable!();
-            }
-            self.tail = None;
-            self.head = None;
-        }
-
-        self.len -= 1;
-        if len == 0 {
-            self.tail = None;
-        }
-        Some(task)
-    }
-
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
@@ -543,35 +517,6 @@ impl Batch {
     }
 }
 
-/// Dispatch trait for `each_impl`: the by-value vs by-pointer branch as two impls.
-trait EachCall<Ctx, V>: core::marker::Sync {
-    /// SAFETY: `value` must point to a live `V` exclusively owned by this call.
-    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize);
-}
-
-struct ByValue<F>(F);
-impl<Ctx, V: Copy, F> EachCall<Ctx, V> for ByValue<F>
-where
-    F: Fn(&Ctx, V, usize) + core::marker::Sync,
-{
-    #[inline]
-    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize) {
-        // SAFETY: caller guarantees `value` is a live `V`; `V: Copy` so deref is a copy.
-        (self.0)(ctx, unsafe { *value }, i);
-    }
-}
-
-struct ByPtr<F>(F);
-impl<Ctx, V, F> EachCall<Ctx, V> for ByPtr<F>
-where
-    F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
-{
-    #[inline]
-    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize) {
-        (self.0)(ctx, value, i);
-    }
-}
-
 impl ThreadPool {
     /// Loop over an array of tasks and invoke `run_fn` on each one in a different thread.
     /// **Blocks the calling thread** until all tasks are completed.
@@ -579,16 +524,16 @@ impl ThreadPool {
     /// This function does not shut down or deinit the thread pool.
     ///
     /// `V: Send` is required because each `values[i]` is handed (by copy or by
-    /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
+    /// `&mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check.
-    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &[V])
     where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, || {});
+        self.each_while(ctx, run_fn, values, || {});
     }
 
     /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
@@ -597,14 +542,20 @@ impl ThreadPool {
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        values: &[V],
         on_calling_thread: impl FnOnce(),
     ) where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+        self.each_impl(
+            ctx,
+            move |ctx, &mut (i, value)| run_fn(ctx, value, i),
+            values.len(),
+            values.iter().copied().enumerate().rev(),
+            on_calling_thread,
+        );
     }
 
     /// The most threads that this pool starts.
@@ -625,86 +576,80 @@ impl ThreadPool {
         usize::from(sync.idle()) + not_started
     }
 
-    /// Like `each`, but calls `run_fn` with a pointer to the value.
+    /// Like `each`, but calls `run_fn` with a `&mut` to the value.
     ///
-    /// `V: Send` — see [`each`](Self::each); the `*mut V` is dereferenced on a
+    /// `V: Send` — see [`each`](Self::each); the `&mut V` is used on a
     /// worker thread, which is a cross-thread move of the pointee.
     pub fn each_ptr<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
-        F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
+        F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values, || {});
+        self.each_iter(
+            ctx,
+            move |ctx, (i, value)| run_fn(ctx, value, *i),
+            values.len(),
+            values.iter_mut().enumerate().rev(),
+        );
+    }
+
+    /// Like `each_ptr`, for values that exist only for the call. `capacity` is how many to make room for.
+    pub fn each_iter<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        capacity: usize,
+        values: impl Iterator<Item = V>,
+    ) where
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Send,
+    {
+        self.each_impl(ctx, run_fn, capacity, values, || {});
     }
 
     fn each_impl<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        capacity: usize,
+        values: impl Iterator<Item = V>,
         on_calling_thread: impl FnOnce(),
     ) where
-        F: EachCall<Ctx, V>,
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync + core::marker::Send,
+        V: core::marker::Send,
     {
-        if values.is_empty() {
+        struct RunnerTask<'a, Ctx, V, F> {
+            task: CountedTask,
+            shared: &'a (Ctx, F),
+            value: V,
+        }
+
+        unsafe fn call<Ctx, V, F: Fn(&Ctx, &mut V)>(task: *mut Task) {
+            // SAFETY: `task` is the field of an element of `tasks`, which `each_impl` does not
+            // touch between `schedule` and the end of `wait`.
+            let runner_task =
+                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
+            let (ctx, run_fn) = runner_task.shared;
+            run_fn(ctx, &mut runner_task.value);
+        }
+
+        let shared = (ctx, run_fn);
+        let group = WaitGroup::init();
+        let mut tasks = Vec::with_capacity(capacity);
+        tasks.extend(values.map(|value| RunnerTask {
+            task: CountedTask::new(call::<Ctx, V, F>, &group),
+            shared: &shared,
+            value,
+        }));
+        if tasks.is_empty() {
             return on_calling_thread();
         }
 
-        struct WaitContext<Ctx, V, F> {
-            ctx: Ctx,
-            values: *mut [V],
-            run_fn: F,
-        }
-
-        #[repr(C)]
-        struct RunnerTask<Ctx, V, F> {
-            task: CountedTask,
-            // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (`group.wait()` blocks until all
-            // tasks finish), so this is the canonical `BackRef` invariant.
-            ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
-            i: usize,
-        }
-
-        // `run_fn` is stored in WaitContext and dispatched via the `EachCall`
-        // trait (ByValue vs ByPtr).
-        unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
-            // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
-            let runner_task =
-                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
-            let i = runner_task.i;
-            let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
-            // every task finishes); each task owns a distinct index `i`.
-            let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
-            // SAFETY: `value` is live and exclusively owned by this task per the index.
-            unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
-        }
-
-        let wait_context = WaitContext {
-            ctx,
-            values: std::ptr::from_mut::<[V]>(values),
-            run_fn,
-        };
-
-        let group = WaitGroup::init_with_count(values.len());
-        let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
+        group.add(tasks.len());
         let mut batch = Batch::default();
-        let mut offset = values.len();
-
-        for _ in 0..values.len() {
-            offset -= 1;
-            tasks.push(RunnerTask {
-                i: offset,
-                task: CountedTask::new(call::<Ctx, V, F>, &group),
-                ctx: bun_ptr::BackRef::new(&wait_context),
-            });
-        }
-        // Push to the Vec first (no realloc: capacity reserved), then take
-        // stable addresses.
         for runner_task in tasks.iter_mut() {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
@@ -714,8 +659,7 @@ impl ThreadPool {
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, batch: &Batch, try_current: bool) {
-        let Batch { len, head, tail } = *batch;
+    fn schedule_impl(&self, Batch { len, head, tail }: Batch, try_current: bool) {
         // Sanity check
         if len == 0 {
             return;
@@ -762,12 +706,12 @@ impl ThreadPool {
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(&batch, false);
+        self.schedule_impl(batch, false);
     }
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(&batch, true);
+        self.schedule_impl(batch, true);
     }
 
     /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
@@ -907,10 +851,10 @@ impl ThreadPool {
                     // Dropping JoinHandle detaches the thread.
                 }
                 Err(_) => {
-                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                    // SAFETY: `&self` keeps the pool live; `None` makes
                     // `unregister` return right after undoing the `spawned`
                     // increment CAS'd above (no per-thread wait past notify).
-                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                    return unsafe { Self::unregister(self, None) };
                 }
             }
             sync = new_sync;
@@ -989,10 +933,10 @@ impl ThreadPool {
                                     {
                                         exit_spawn_failed(&err);
                                     }
-                                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                                    // SAFETY: `&self` keeps the pool live; `None` makes
                                     // `unregister` return right after undoing the `spawned`
                                     // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                                    return unsafe { Self::unregister(self, None) };
                                 }
                             }
                             return;
@@ -1077,11 +1021,11 @@ impl ThreadPool {
         }
     }
 
-    /// Marks the thread pool as shutdown
+    /// Marks the thread pool as shutdown, and returns the previous `Sync`.
     #[inline(never)]
-    pub(crate) fn shutdown(&self) {
+    fn shutdown(&self) -> Sync {
         let mut sync = self.sync.load(Ordering::Relaxed);
-        while sync.state() != SyncState::Shutdown {
+        loop {
             let mut new_sync = sync;
             new_sync.set_notified(true);
             new_sync.set_state(SyncState::Shutdown);
@@ -1099,27 +1043,9 @@ impl ThreadPool {
                     if sync.idle() > 0 {
                         self.idle_event.shutdown();
                     }
-                    return;
+                    return sync;
                 }
             };
-        }
-    }
-
-    fn register(&self, thread: *mut Thread) {
-        // Push the thread onto the threads stack in a lock-free manner.
-        let mut threads = self.threads.load(Ordering::Relaxed);
-        loop {
-            // SAFETY: thread is the calling worker's own stack-local Thread.
-            unsafe { (*thread).next = threads };
-            match self.threads.compare_exchange_weak(
-                threads,
-                thread,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(cur) => threads = cur,
-            }
         }
     }
 
@@ -1128,7 +1054,7 @@ impl ThreadPool {
     /// the joiner may return and the pool may be **deallocated**, so this fn
     /// takes `*const Self` (no `&self` protector) and never touches `pool`
     /// past that point — the shutdown chain follows worker-stack `.next` links.
-    unsafe fn unregister(pool: *const Self, maybe_thread: *mut Thread) {
+    unsafe fn unregister(pool: *const Self, maybe_thread: Option<&Thread>) {
         // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
         let one_spawned = {
             let mut s = Sync::zero();
@@ -1150,21 +1076,15 @@ impl ThreadPool {
         // ── `*pool` may be invalid past this point. ──
 
         // If this is a thread pool thread, wait for a shutdown signal by the thread pool join()er.
-        let Some(thread) = NonNull::new(maybe_thread) else {
+        let Some(thread) = maybe_thread else {
             return;
         };
-        // `maybe_thread` is the calling worker's own stack-local `Thread`
-        // (set in `ThreadRegistration::new`); it lives on this OS thread's
-        // stack and outlives the entire `unregister` call. BackRef invariant
-        // — pointee outlives holder — covers the `join_event.wait()` and
-        // `.next` reads below.
-        let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait(None);
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
         // So just follow our .next link.
-        let Some(next_thread) = NonNull::new(thread.next) else {
+        let Some(next_thread) = NonNull::new(thread.next.get()) else {
             return;
         };
         // `next_thread` is a registered worker still blocked in
@@ -1173,23 +1093,19 @@ impl ThreadPool {
         bun_ptr::BackRef::from(next_thread).join_event.notify();
     }
 
+    /// For a pool that had threads at `shutdown()`.
     fn join(&self) {
-        // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
-        let mut sync = self.sync.load(Ordering::Relaxed);
-        if !(sync.state() == SyncState::Shutdown && sync.spawned() == 0) {
-            self.join_event.wait(None);
-            sync = self.sync.load(Ordering::Relaxed);
-        }
+        // Also if `spawned` is 0 by now: the last thread uses `join_event` after its decrement.
+        self.join_event.wait(None);
 
+        // Acquire: what each thread did to the pool before its decrement happens before the drop.
+        let sync = self.sync.load(Ordering::Acquire);
         debug_assert!(sync.state() == SyncState::Shutdown);
         debug_assert!(sync.spawned() == 0);
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call sees null and
-        // returns instead of touching freed worker stack memory.
-        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
-        else {
+        let Some(thread) = NonNull::new(self.threads.load(Ordering::Acquire)) else {
             return;
         };
         // `thread` is a registered worker blocked in `join_event.wait()`;
@@ -1213,8 +1129,10 @@ enum WaitError {
 // which profiled ~43% hotter on the steal traversal.
 #[repr(C)]
 pub struct Thread {
-    next: *mut Thread,
-    target: *mut Thread,
+    /// Its worker sets it before the CAS that publishes the `Thread`; after that it is only read.
+    next: Cell<*mut Thread>,
+    /// Only its own worker reads or writes it, in `pop`.
+    target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,
     idle_queue: node::Queue,
@@ -1232,16 +1150,30 @@ thread_local! {
 ///
 /// `pool` is a [`BackRef`]: the pool's `join()` blocks on every registered
 /// worker, so it strictly outlives this guard.
-struct ThreadRegistration {
+struct ThreadRegistration<'a> {
     pool: bun_ptr::BackRef<ThreadPool>,
-    thread: *mut Thread,
+    thread: &'a Thread,
 }
 
-impl ThreadRegistration {
-    /// SAFETY: `thread` must point to the caller's stack-local `Thread`.
-    unsafe fn new(pool: &ThreadPool, thread: *mut Thread) -> Self {
-        CURRENT.with(|c| c.set(thread));
-        pool.register(thread);
+impl<'a> ThreadRegistration<'a> {
+    /// SAFETY: `pool` counts the calling thread in `spawned`. The guard must be dropped, not
+    /// leaked: until then `CURRENT` and `pool` point to `thread`.
+    unsafe fn new(pool: &ThreadPool, thread: &'a Thread) -> Self {
+        CURRENT.with(|c| c.set(ptr::from_ref(thread).cast_mut()));
+        // Push the thread onto the threads stack in a lock-free manner.
+        let mut threads = pool.threads.load(Ordering::Relaxed);
+        loop {
+            thread.next.set(threads);
+            match pool.threads.compare_exchange_weak(
+                threads,
+                ptr::from_ref(thread).cast_mut(),
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(cur) => threads = cur,
+            }
+        }
         Self {
             pool: bun_ptr::BackRef::new(pool),
             thread,
@@ -1249,12 +1181,13 @@ impl ThreadRegistration {
     }
 }
 
-impl Drop for ThreadRegistration {
+impl Drop for ThreadRegistration<'_> {
     fn drop(&mut self) {
-        // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
+        // SAFETY: `pool` is the pool this worker is registered with and counted in
+        // (`new`'s contract). `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), self.thread) };
+        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), Some(self.thread)) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1355,21 +1288,21 @@ impl Thread {
             }
         }
 
-        let mut self_ = Thread {
-            next: ptr::null_mut(),
-            target: ptr::null_mut(),
+        let self_ = Thread {
+            next: Cell::new(ptr::null_mut()),
+            target: Cell::new(ptr::null_mut()),
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             idle_queue: node::Queue::default(),
             run_buffer: node::Buffer::default(),
             thread_pool,
         };
-        let self_ptr: *mut Thread = &raw mut self_;
         // `BackRef` invariant: pool's `join()` waits for every worker, so the
         // pointee outlives this fn. Hoist a single shared ref for the hot loop.
         let pool: &ThreadPool = thread_pool.get();
-        // SAFETY: self_ptr is our stack-local Thread.
-        let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
+        // SAFETY: `warm` and `notify_slow` count a thread in `spawned` before they start it. The
+        // guard is a local declared after `self_`, so it is dropped first.
+        let _registration = unsafe { ThreadRegistration::new(pool, &self_) };
 
         let stats = stats_enabled();
         let mut is_waking = false;
@@ -1379,15 +1312,14 @@ impl Thread {
                 Ok(w) => w,
                 Err(_) => {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
-                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // pushes per-worker `drop_task`s into `idle_queue`, wakes
                     // us, then immediately drops the (CLI-owned) pool — and
                     // `wait()` observes `Shutdown` before it gets to
                     // `drain_idle_events`. Run them once on the way out so the
-                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // worker thread tears down its own `Worker`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
                     // must be freed here, not from the bundler thread).
-                    // SAFETY: self_ptr is our own stack-local Thread.
-                    unsafe { (*self_ptr).drain_idle_events() };
+                    self_.drain_idle_events();
                     return;
                 }
             };
@@ -1397,15 +1329,13 @@ impl Thread {
                     .fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
-            // SAFETY: self_ptr is our own stack-local Thread.
-            while let Some(result) = unsafe { (*self_ptr).pop(pool) } {
+            while let Some(result) = self_.pop(pool) {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
                 is_waking = false;
 
-                // SAFETY: result.node points to the `node` field of a Task.
-                let task = unsafe { Task::from_node(result.node.as_ptr()) };
+                let task = Task::from_node(result.node.as_ptr());
                 let task_start = if stats { now_ns() } else { 0 };
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
                 unsafe { ((*task).callback)(task) };
@@ -1418,8 +1348,7 @@ impl Thread {
             }
 
             Output::flush();
-            // SAFETY: self_ptr is our own stack-local Thread.
-            unsafe { (*self_ptr).drain_idle_events() };
+            self_.drain_idle_events();
         }
     }
 
@@ -1430,8 +1359,7 @@ impl Thread {
         };
         let mut ran = 0;
         while let Some(node) = consumer.pop() {
-            // SAFETY: node points to the `node` field of a Task.
-            let task = unsafe { Task::from_node(node) };
+            let task = Task::from_node(node);
             // SAFETY: `task` was dequeued from this thread's idle queue; it is a
             // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };
@@ -1447,7 +1375,7 @@ impl Thread {
     /// already proved liveness once (`join()` waits on every registered
     /// worker), so the per-access raw-pointer derefs that the `*const`
     /// signature forced are gone.
-    pub(crate) fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
+    pub(crate) fn pop(&self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
             return Some(node::Stole {
@@ -1470,8 +1398,8 @@ impl Thread {
         let mut num_threads = thread_pool.sync.load(Ordering::Relaxed).spawned();
         while num_threads > 0 {
             // Traverse the stack of registered threads on the thread pool
-            let target = if !self.target.is_null() {
-                self.target
+            let target = if !self.target.get().is_null() {
+                self.target.get()
             } else {
                 let t = thread_pool.threads.load(Ordering::Acquire);
                 if t.is_null() {
@@ -1480,7 +1408,7 @@ impl Thread {
                 t
             };
             // SAFETY: target is a registered Thread in the lock-free stack.
-            self.target = unsafe { (*target).next };
+            self.target.set(unsafe { (*target).next.get() });
 
             // Try to steal from their queue first to avoid contention (the target steal's from queue last).
             // SAFETY: target is a registered Thread in the lock-free stack, alive until join().
@@ -1490,7 +1418,7 @@ impl Thread {
 
             // Skip stealing from the buffer if we're the target.
             // We still steal from our own queue above given it may have just been locked the first time we tried.
-            if target == std::ptr::from_mut::<Thread>(self) {
+            if ptr::eq(target, self) {
                 num_threads -= 1;
                 continue;
             }
@@ -1641,6 +1569,8 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
+        // The waiter of a `join_event` frees it once it has the notification.
+        let state_ptr = &raw const self.state;
         let mut word = self.state.load(Ordering::Relaxed);
         loop {
             if word & Self::STATE_MASK == Self::SHUTDOWN {
@@ -1661,7 +1591,7 @@ impl Event {
         // EMPTY or NOTIFIED (a consumer that never parked took a notification and put EMPTY
         // back); the next notify() re-arms and wakes it.
         if word & Self::STATE_MASK == Self::WAITING {
-            Futex::wake(&self.state, 1);
+            Futex::wake_raw(state_ptr, 1);
         }
     }
 

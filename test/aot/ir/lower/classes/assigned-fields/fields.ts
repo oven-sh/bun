@@ -1,17 +1,19 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="C" {{*}}kind=BaseConstructor
 // CHECK: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
 // CHECK: PrivateDefine [[this]], [[token]], [[token]] layout=[[layout]] @
 // CHECK: [[undefined]] = Undefined
 // CHECK: PrivateDefine [[this]], {{*}}, [[undefined]] layout=[[layout]] field=[[p]] @
 // CHECK: = Call {{*}}calleeName="first"
 // CHECK: PropSet [[this]], {{*}}key="q"
-// CHECK: = CallDirect {{*}}function=[[initializer]]
+// CHECK: PropSet [[this]], {{*}}key="a"
+// CHECK: PrivateSet [[this]], {{*}}layout=[[layout]] field=[[p]] @
 // CHECK: = Call {{*}}calleeName="f"
-// CHECK: function [[initializer]] {{*}}kind=Initializer
-// CHECK: PropSet {{*}}key="a"
-// CHECK: PrivateSet {{*}}layout=[[layout]] field=[[p]] @
+
+// The values of the fields are code of the constructor.
+// RUN(FUNCTIONS): lower
+// FUNCTIONS-NOT: kind=Initializer
 
 // RUN(UNINITIALIZED): lower
 // UNINITIALIZED-NOT: key="b"

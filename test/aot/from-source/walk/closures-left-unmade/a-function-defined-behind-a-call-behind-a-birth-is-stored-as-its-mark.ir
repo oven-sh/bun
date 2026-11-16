@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): number;
+# interface Dial { first(): number; second(): number; third(): number; fourth(): number; fifth(): number; sixth(): number; seventh(): number; eighth(): number; ninth(): number; tenth(): number; eleventh(): number; twelfth(): number; step: number }
+# function measure(n: number): number { return sink(n) | 0; }
+# function makeDial(start: number): Dial { let at = start; return { first: () => ++at, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, seventh: () => at + 6, eighth: () => at + 7, ninth: () => at + 8, tenth: () => at + 9, step: measure(at), eleventh: () => at + 10, twelfth: () => at + 11 }; }
+# const dial = makeDial(10); sink(dial.first(), dial.eleventh(), dial.step, Object.keys(dial).join());
+# const other = makeDial(100); sink(other.first(), other.twelfth(), dial.tenth());
+# -- end of source
+# `step: measure(at)` stands behind the tenth of twelve functions: its value is computed behind the birth, so the run that the birth lists ends there and the two functions behind it are stored.
+# The cell is fresh and was born with the environment of its closures: the store takes the mark, no closure is made; and a birth that leaves closures unmade is as allocated, so each store knows the order word.
+# They used to be made and to go through the stub that looks the order up: 75 instructions a call became 512.
+# f2 = makeDial
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-10: isMadeOnDemand
+# CHECK: = NewObject
+# CHECK: = PutSlotOrAdd {{*}}key="step" {{*}}orderWordAfter=
+# CHECK: isMadeOnDemand
+# CHECK: = PutSlotOrAdd {{*}}key="eleventh" {{*}}orderWordAfter=
+# CHECK: isMadeOnDemand
+# CHECK: = PutSlotOrAdd {{*}}key="twelfth" {{*}}orderWordAfter=
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: closureForm=Slim
+# NEVER-NOT: = PropDefine

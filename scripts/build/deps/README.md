@@ -96,12 +96,11 @@ export const mydep: Dependency = {
   // Omit if this dep shouldn't appear there.
   versionMacro: "MYDEP",
 
-  // Optional: .patch files applied after extraction, or overlay files
-  // copied into source root (e.g. inject a CMakeLists.txt).
+  // Optional: .patch files applied after extraction.
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
-  // (for -I cross-dep headers). See libspng for an example.
+  // (for -I cross-dep headers). See lsquic for an example.
   fetchDeps: ["zlib"],
 
   // How to build. `direct` lists sources explicitly; emitDirect compiles

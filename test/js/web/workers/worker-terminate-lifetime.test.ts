@@ -575,6 +575,79 @@ test.skipIf(!isDebug)(
   timeout,
 );
 
+// ASAN builds do not allocate through mimalloc.
+test.skipIf(isASAN)(
+  "a worker's end frees the pool of request contexts its Bun.serve() made",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { once } = require("node:events");
+        const held = () => require("bun:jsc").heapStats().mimalloc.malloc_huge.current / 1024 / 1024;
+        const src = "const s = Bun.serve({ port: 0, fetch: () => new Response('x') }); await fetch(s.url); await s.stop();";
+        await once(new Worker(src, { eval: true }), "exit");
+        const before = held();
+        for (let i = 0; i < 16; i++) await once(new Worker(src, { eval: true }), "exit");
+        console.log(held() - before);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Unfixed: 16 MiB.
+    expect(parseFloat(stdout)).toBeLessThan(8);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+test.skipIf(!isASAN)(
+  "terminate() while formData() waits for a fetch() body does not leak its boundary",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(new ReadableStream({ start: c => c.enqueue(new Uint8Array(1)) }), {
+          headers: { "content-type": "multipart/form-data; boundary=abcdefgh" },
+        }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        // leaksan.supp hides what module evaluation allocates.
+        const w = new Worker(
+          'const { parentPort, workerData } = require("worker_threads");' +
+          'setImmediate(async () => {' +
+          '  (await fetch(workerData)).formData().catch(() => {});' +
+          '  parentPort.postMessage(0);' +
+          '});',
+          { eval: true, workerData: "${server.url}" },
+        );
+        w.on("message", () => w.terminate().then(() => console.log("ok")));
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // WebCore-style callbacks (PerformanceObserver, abort algorithms)
 // were still invoked from the task queue after terminate() had stopped the
 // worker's VM mid-tick, entering JS with the TerminationException a previous
@@ -1210,10 +1283,10 @@ test(
 
 // A worker that ends while a stream is still being piped into a FileSink (Bun.write(file, body), a
 // Bun.spawn() stdin). The pipe's controller cell holds no ref on the sink and dies attached only in
-// the VM's last sweep, where its destructor ran the JS wrapper's FileSink::finalize: that releases
+// the VM's last sweep, where its destructor ran the JS wrapper's teardown: that releases
 // the keep-alive ref and then a ref of its own. For a native source (a fetch() body, a child's
-// stdout) the keep-alive ref was the last one, so the rest of finalize ran on the freed sink (ASAN
-// heap-use-after-free in FileSink::finalize), and for every source the freed sink's Drop detached
+// stdout) the keep-alive ref was the last one, so the rest of it ran on the freed sink (ASAN
+// heap-use-after-free), and for every source the freed sink's Drop detached
 // the cell being destroyed (debug JSC "ASSERTION FAILED: decontaminate()").
 test(
   "a worker ends while a stream is still being piped into a FileSink",
@@ -1301,6 +1374,79 @@ test(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(JSON.stringify({ failures: [], leakedFileSinks: 0 }) + "\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+test.skipIf(!isASAN).concurrent.each([
+  [
+    "the strings its FileSystemRouter interned",
+    `new Bun.FileSystemRouter({ dir: __dirname + "/pages", style: "nextjs" })`,
+  ],
+  ["the entry points of its macros", `require("./imports-macro.js")`],
+  ["its require.extensions", `require.extensions[".foo"] = () => {}`],
+])(
+  "a worker's end frees %s",
+  async (_, code) => {
+    using dir = tempDir("worker-end-frees", {
+      "pages/index.js": "",
+      "macro.js": `export const one = () => 1;`,
+      "imports-macro.js": `import { one } from "./macro.js" with { type: "macro" }; one();`,
+      "main.js": `
+        const { Worker, isMainThread } = require("node:worker_threads");
+        if (isMainThread) new Worker(__filename).on("exit", () => console.log("ok"));
+        // leaksan.supp hides what module evaluation allocates.
+        else setImmediate(() => { ${code} });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds print each macro call.
+    expect({ stdout: stdout.replace("[macro] call one\n", ""), stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  timeout,
+);
+
+test.concurrent.each(["Bun.TOML.parse('a = 1')", "new Bun.Transpiler({ macro: { a: { b: 'c' } } })"])(
+  "a worker's end frees the heap that %s keeps",
+  async code => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { once } = require("node:events");
+        const heaps = () => require("bun:jsc").heapStats().mimalloc.heaps.current;
+        const run = () => once(new Worker(${JSON.stringify(code)}, { eval: true }), "exit");
+        await run();
+        const before = heaps();
+        for (let i = 0; i < 8; i++) await run();
+        console.log(heaps() - before);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Unfixed: 8.
+    expect(parseInt(stdout)).toBeLessThan(4);
     expect(exitCode).toBe(0);
   },
   timeout,

@@ -19,27 +19,27 @@ pub struct OnlyExportComponents {
     check_js: bool,
 }
 
-const EXPORT_ALL_COMPONENTS: Message = Message::new(
+const EXPORT_ALL_COMPONENTS: &Message = &Message::new(
     "",
     "This rule can't verify that `export *` only exports components.",
 );
-const NAMED_EXPORT_COMPONENTS: Message = Message::new(
+const NAMED_EXPORT_COMPONENTS: &Message = &Message::new(
     "",
     "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
 );
-const ANONYMOUS_COMPONENTS: Message = Message::new(
+const ANONYMOUS_COMPONENTS: &Message = &Message::new(
     "",
     "Fast refresh can't handle anonymous components. Add a name to your export.",
 );
-const LOCAL_COMPONENTS: Message = Message::new(
+const LOCAL_COMPONENTS: &Message = &Message::new(
     "",
     "Fast refresh only works when a file only exports components. Move your component(s) to a separate file.",
 );
-const NO_EXPORT: Message = Message::new(
+const NO_EXPORT: &Message = &Message::new(
     "",
     "Fast refresh only works when a file has exports. Move your component(s) to a separate file.",
 );
-const REACT_CONTEXT: Message = Message::new(
+const REACT_CONTEXT: &Message = &Message::new(
     "",
     "Fast refresh only works when a file only exports components. Move your React context(s) to a separate file.",
 );

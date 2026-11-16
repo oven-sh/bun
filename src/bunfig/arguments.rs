@@ -264,7 +264,7 @@ fn report_bunfig_load_failure_as(
                 .to_vec()
                 .into();
         }
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
         if is_of_tool {
             Global::exit(exit_code_of_failure(cmd));
         }
@@ -366,6 +366,9 @@ pub fn load_config_for_tool(
         );
     };
 
+    if !auto_loaded {
+        ctx.test_options.config_file = Some(config_path.as_bytes().into());
+    }
     if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, tool) {
         report_bunfig_load_failure(cmd, ctx.log, err);
     }

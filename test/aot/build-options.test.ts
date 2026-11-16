@@ -5,6 +5,13 @@ import { buildBothWays } from "./build-both-ways";
 const tellEverything = `build.onResolve({ filter: /.*/ }, (args: any) => void tell("onResolve", args));
 build.onLoad({ filter: /.*/ }, (args: any) => void tell("onLoad", args));`;
 
+const countsStoresOfField = `let count = 0;
+class Base {}
+Object.defineProperty(Base.prototype, "level", { set(value: number) { count++; }, configurable: true });
+class Derived extends Base { level = 5; }
+new Derived();
+export const stores = count;`;
+
 buildBothWays("compile/aot/options of Bun.build", {
   "files: modules that are only in memory": {
     files: {
@@ -17,6 +24,15 @@ buildBothWays("compile/aot/options of Bun.build", {
     files: { "main.ts": `import { a } from "./lib"; console.log(a);`, "lib.ts": `export const a: string = "disk";` },
     options: `files: { [join(folder, "lib.ts")]: "export const a: number = 42;" }`,
     prints: "42\n",
+  },
+  "files: no tsconfig.json says how a module in memory is compiled": {
+    files: {
+      "tsconfig.json": `{ "compilerOptions": { "useDefineForClassFields": false, "allowImportingTsExtensions": true, "noEmit": true } }`,
+      "main.ts": `import { stores as inMemory } from "./memory.ts"; import { stores as onDisk } from "./disk.ts"; console.log(inMemory, onDisk);`,
+      "disk.ts": countsStoresOfField,
+    },
+    options: `files: { [join(folder, "memory.ts")]: ${JSON.stringify(countsStoresOfField)} }`,
+    prints: "0 1\n",
   },
   "files: the entry point is in memory": {
     alone: true,
@@ -55,6 +71,7 @@ buildBothWays("compile/aot/options of Bun.build", {
       "macro.ts": `export function stamp() { return "made at the build " + typeof Bun; } export function sum(a: number, b: number) { return a + b; } export async function table(...names: string[]) { return Object.fromEntries(names.map((name, index) => [name, index])); }\ndeclare const Bun: unknown;`,
     },
     prints: `made at the build object 3 {"a":0,"b":1}\n`,
+    refused: "Macros are disabled",
   },
   "macros: a plugin is not asked for the file of a macro": {
     files: {
@@ -65,6 +82,7 @@ buildBothWays("compile/aot/options of Bun.build", {
       tellEverything,
       `build.onLoad({ filter: /macro\\.ts$/ }, () => ({ contents: "export function word() { return 'plugin'; }", loader: "ts" }));`,
     ],
+    refused: "Macros are disabled",
   },
   "macros in the text that a plugin yields": {
     files: {
@@ -76,6 +94,7 @@ buildBothWays("compile/aot/options of Bun.build", {
       `build.onLoad({ filter: /lib\\.ts$/ }, () => ({ contents: 'import { word } from "./macro" with { type: "macro" }; export const made: string = word();', loader: "ts" }));`,
     ],
     prints: "from the macro\n",
+    refused: "Macros are disabled",
   },
   "define reaches the text that a plugin yields": {
     files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "disk";` },

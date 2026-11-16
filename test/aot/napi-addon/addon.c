@@ -139,6 +139,20 @@ FN(dateOfBits) { ARGS(2); uint32_t upper, lower; napi_get_value_uint32(env, a[0]
 FN(handNumberOfBitsTo) { ARGS(3); uint32_t upper, lower; napi_get_value_uint32(env, a[1], &upper); napi_get_value_uint32(env, a[2], &lower); napi_value self, r, handed = number(env, number_of_bits(upper, lower));
   napi_get_undefined(env, &self); TRY(napi_call_function(env, self, a[0], 1, &handed, &r)); return r; }
 
+// Objects with members that the host looks for. The addon alone names them.
+static napi_value memberOfSymbol(napi_env env, const char* name) { napi_value global, symbol, member; napi_get_global(env, &global); napi_get_named_property(env, global, "Symbol", &symbol); napi_get_named_property(env, symbol, name, &member); return member; }
+static napi_value registeredSymbol(napi_env env, const char* name) { napi_value global, symbol, key, operand = text(env, name); napi_get_global(env, &global); napi_get_named_property(env, global, "Symbol", &symbol); napi_call_function(env, symbol, memberOfSymbol(env, "for"), 1, &operand, &key); return key; }
+static napi_value functionOf(napi_env env, const char* name, napi_callback code) { napi_value f; napi_create_function(env, name, NAPI_AUTO_LENGTH, code, NULL, &f); return f; }
+FN(printsWithThirdOperand) { ARGS(3); napi_value self, made, r; napi_get_undefined(env, &self); napi_create_object(env, &made); napi_set_named_property(env, made, "fromTheAddon", number(env, 1));
+  TRY(napi_call_function(env, self, a[2], 1, &made, &r)); return r; }
+FN(answersText) { return text(env, "text of the addon"); }
+FN(settles) { ARGS(2); napi_value self, r, value = text(env, "settled by the addon"); napi_get_undefined(env, &self); TRY(napi_call_function(env, self, a[0], 1, &value, &r)); return self; }
+FN(makePrinted) { napi_value o; napi_create_object(env, &o); TRY(napi_set_property(env, o, registeredSymbol(env, "nodejs.util.inspect.custom"), functionOf(env, "printed", printsWithThirdOperand))); return o; }
+FN(makeWithToJSON) { napi_value o; napi_create_object(env, &o); TRY(napi_set_named_property(env, o, "toJSON", functionOf(env, "toJSON", answersText))); return o; }
+FN(makeWithToPrimitive) { napi_value o; napi_create_object(env, &o); TRY(napi_set_property(env, o, memberOfSymbol(env, "toPrimitive"), functionOf(env, "toPrimitive", answersText))); return o; }
+FN(makeWithTag) { napi_value o; napi_create_object(env, &o); TRY(napi_set_property(env, o, memberOfSymbol(env, "toStringTag"), text(env, "TagOfTheAddon"))); return o; }
+FN(makeThenable) { napi_value o; napi_create_object(env, &o); TRY(napi_set_named_property(env, o, "then", functionOf(env, "then", settles))); return o; }
+
 NAPI_MODULE_INIT() {
 #define EXPORT(name) do { napi_value f; napi_create_function(env, #name, NAPI_AUTO_LENGTH, name, NULL, &f); napi_set_named_property(env, exports, #name, f); } while (0)
   EXPORT(names); EXPORT(allNames); EXPORT(getNamed); EXPORT(get); EXPORT(has); EXPORT(hasOwn); EXPORT(hasNamed); EXPORT(setNamed); EXPORT(set); EXPORT(del);
@@ -146,6 +160,7 @@ NAPI_MODULE_INIT() {
   EXPORT(wrap); EXPORT(unwrap); EXPORT(removeWrap); EXPORT(tag); EXPORT(checkTag); EXPORT(instanceOf); EXPORT(strictEquals); EXPORT(coerceToObject); EXPORT(coerceToString); EXPORT(prototypeOf); EXPORT(typeOf); EXPORT(kinds);
   EXPORT(sumBytesOf); EXPORT(lengthOfArrayAt); EXPORT(keep); EXPORT(keptValue); EXPORT(dropKept); EXPORT(addFinalizer); EXPORT(construct); EXPORT(call); EXPORT(callMethod); EXPORT(readOptions); EXPORT(makeRow); EXPORT(makeRows); EXPORT(finalizedSoFar);
   EXPORT(valueAt); EXPORT(makeExternal); EXPORT(fill); EXPORT(numberOfBits); EXPORT(dateOfBits); EXPORT(handNumberOfBitsTo);
+  EXPORT(makePrinted); EXPORT(makeWithToJSON); EXPORT(makeWithToPrimitive); EXPORT(makeWithTag); EXPORT(makeThenable);
   napi_property_descriptor members[] = {
     { "increment", NULL, counterIncrement, NULL, NULL, NULL, napi_default_method, NULL },
     { "value", NULL, NULL, counterGet, counterSet, NULL, napi_default_jsproperty, NULL },

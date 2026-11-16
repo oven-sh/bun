@@ -1,8 +1,8 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 
-use super::declines::write_limit;
 use super::format::{lower_camel_case, write_count, write_parts};
+use super::names::Names;
 use super::positions::{
     PathStyle, Positions, is_listed_site, resolve_ascending, write_shown_position,
 };
@@ -11,15 +11,13 @@ use super::{ReportEntry, ReportInput};
 use crate::diagnostics::SourcePosition;
 use crate::engine::{AllocationRemarkRecord, Position, position_of};
 use crate::ir::generated::{AllocationEscapeReason, AllocationOutcome};
-use crate::link::ProgramNames;
 
 fn write_heap_outcome(out: &mut Vec<u8>, record: &AllocationRemarkRecord, operation: &[u8]) {
-    if record.copies <= 1 {
-        out.extend_from_slice(b"heap");
-    } else {
-        out.extend_from_slice(b"allocated at ");
+    out.extend_from_slice(b"heap");
+    if record.copies > 1 {
+        out.extend_from_slice(b" in ");
         write_count(out, u64::from(record.copies));
-        out.extend_from_slice(b" sites");
+        out.extend_from_slice(b" copies");
     }
     if !operation.is_empty() {
         write_parts(out, &[b": ", operation]);
@@ -35,12 +33,6 @@ fn write_outcome(out: &mut Vec<u8>, record: &AllocationRemarkRecord, operation: 
         AllocationOutcome::Unknown => out.extend_from_slice(b"unknown"),
         AllocationOutcome::Removed => out.extend_from_slice(b"removed"),
         AllocationOutcome::Heap => write_heap_outcome(out, record, operation),
-        AllocationOutcome::Frame => out.extend_from_slice(b"stack"),
-        AllocationOutcome::FrameUntilMaterialized => {
-            out.extend_from_slice(b"stack, moved to the heap if it escapes");
-        }
-        AllocationOutcome::Slim => out.extend_from_slice(b"closure without a function object"),
-        AllocationOutcome::Deferred => out.extend_from_slice(b"created lazily"),
     }
 }
 
@@ -69,7 +61,6 @@ fn write_remark_line(
     operation: &[u8],
     location: Option<&SourcePosition>,
     forced_by: Option<&SourcePosition>,
-    limit_value: u64,
 ) {
     let kind = lower_camel_case(record.kind.name());
     write_parts(out, &[b"allocation: ", &kind, b" at "]);
@@ -85,7 +76,6 @@ fn write_remark_line(
         write_reasons(out, record.reasons);
         out.push(b')');
     }
-    write_limit(out, record.limit, limit_value);
     if let Some(forced_by) = forced_by.filter(|_| forced_by != location) {
         out.extend_from_slice(b", escapes at ");
         write_shown_position(out, Some(forced_by));
@@ -94,7 +84,7 @@ fn write_remark_line(
 
 fn listed_remarks<'r>(
     records: &'r [AllocationRemarkRecord],
-    names: &ProgramNames,
+    names: Names<'_>,
 ) -> Vec<&'r AllocationRemarkRecord> {
     let mut listed: Vec<&AllocationRemarkRecord> = records
         .iter()
@@ -108,7 +98,7 @@ fn listed_remarks<'r>(
 }
 
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
-    let records = listed_remarks(input.engine.allocation_remarks(), input.names);
+    let records = listed_remarks(input.engine.allocation_remarks(), Names::new(input));
     if records.is_empty() {
         let text = b"allocations: none".to_vec();
         out.push(ReportEntry::line(ExplainSet::ALLOCATIONS, text));
@@ -119,14 +109,13 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
         .iter()
         .flat_map(|record| [record.location, record.forced_by].map(position_of))
         .collect();
-    let mut positions = Positions::new(input, PathStyle::Native);
+    let mut positions = Positions::new(input, PathStyle::Posix);
     let resolved = resolve_ascending(&wanted, |position| positions.resolve(position));
     for (record, shown) in records.iter().zip(resolved.as_chunks::<2>().0) {
         let (location, forced_by) = (shown[0].as_ref(), shown[1].as_ref());
         let operation = input.engine.text(record.forcing_operation);
-        let limit = input.engine.limit_value(record.limit);
         let mut text = Vec::new();
-        write_remark_line(&mut text, record, operation, location, forced_by, limit);
+        write_remark_line(&mut text, record, operation, location, forced_by);
         let position = position_of(record.location);
         out.push(ReportEntry::at(ExplainSet::ALLOCATIONS, text, position));
     }
@@ -137,16 +126,22 @@ mod tests {
     use bstr::BString;
 
     use super::*;
+    use crate::engine::testing::ResultRecords;
     use crate::engine::{SourceLocation, TextRange};
-    use crate::ir::generated::{AllocationHeapCause, AllocationKind, LimitId};
-    use crate::ir::ids::{ABSENT_WORD, ModuleId};
-    use crate::link::ModuleOrigin;
+    use crate::ir::generated::{AllocationHeapCause, AllocationKind};
+    use crate::ir::ids::ABSENT_WORD;
+    use crate::report::testing::{
+        DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, PROGRAM, RUNTIME, ReportFixture,
+    };
 
     const NO_LOCATION: SourceLocation = SourceLocation {
         module: ABSENT_WORD,
         position: 0,
     };
     const NO_REASON: AllocationEscapeReason = AllocationEscapeReason(0);
+    const PROGRAM_FUNCTION: u32 = 0;
+    const RUNTIME_FUNCTION: u32 = 1;
+    const UNNAMED_FUNCTION: u32 = 9;
 
     fn remark(
         outcome: AllocationOutcome,
@@ -163,7 +158,6 @@ mod tests {
                 length: 0,
             },
             reasons,
-            limit: LimitId::None,
             function: ABSENT_WORD,
             kind: AllocationKind::Object,
             cause: AllocationHeapCause::None,
@@ -182,19 +176,6 @@ mod tests {
             function,
             ..remark(AllocationOutcome::Heap, 1, NO_REASON)
         }
-    }
-
-    fn names() -> ProgramNames {
-        let module = |word| Some(ModuleId::from_word(word));
-        ProgramNames::from_lists(
-            &[(&b"main"[..], module(0)), (&b"request"[..], module(2))],
-            &[],
-            &[
-                (&b"/p/a.ts"[..], ModuleOrigin::Program),
-                (&b"/p/node_modules/b/b.js"[..], ModuleOrigin::Dependency),
-                (&b"node:http"[..], ModuleOrigin::Runtime),
-            ],
-        )
     }
 
     fn shown(line: u32, column: u32) -> SourcePosition {
@@ -223,8 +204,33 @@ mod tests {
         forced_by: Option<&SourcePosition>,
     ) -> BString {
         let mut out = Vec::new();
-        write_remark_line(&mut out, record, b"Call", location, forced_by, 1024);
+        write_remark_line(&mut out, record, b"Call", location, forced_by);
         BString::from(out)
+    }
+
+    fn listed(records: &[AllocationRemarkRecord]) -> Vec<&AllocationRemarkRecord> {
+        ReportFixture::new(ResultRecords::default())
+            .with_input(|input| listed_remarks(records, Names::new(input)))
+    }
+
+    fn collected(
+        text: &[u8],
+        remarks: &[AllocationRemarkRecord],
+    ) -> Vec<(BString, Option<Position>)> {
+        let records = ResultRecords {
+            text,
+            allocation_remarks: remarks,
+            ..ResultRecords::default()
+        };
+        let mut entries = Vec::new();
+        ReportFixture::new(records).with_input(|input| collect(input, &mut entries));
+        entries
+            .into_iter()
+            .map(|entry| {
+                assert_eq!(entry.kind, ExplainSet::ALLOCATIONS);
+                (BString::from(entry.text), entry.position)
+            })
+            .collect()
     }
 
     #[test]
@@ -233,13 +239,6 @@ mod tests {
             (AllocationOutcome::Unknown, "unknown"),
             (AllocationOutcome::Removed, "removed"),
             (AllocationOutcome::Heap, "heap"),
-            (AllocationOutcome::Frame, "stack"),
-            (
-                AllocationOutcome::FrameUntilMaterialized,
-                "stack, moved to the heap if it escapes",
-            ),
-            (AllocationOutcome::Slim, "closure without a function object"),
-            (AllocationOutcome::Deferred, "created lazily"),
         ];
         assert_eq!(expected.map(|(outcome, _)| outcome), AllocationOutcome::ALL);
         for (outcome, text) in expected {
@@ -250,7 +249,7 @@ mod tests {
     #[test]
     fn heap_with_copies_names_operation() {
         let record = remark(AllocationOutcome::Heap, 2, NO_REASON);
-        assert_eq!(outcome_text(&record, b"Call"), "allocated at 2 sites: Call");
+        assert_eq!(outcome_text(&record, b"Call"), "heap in 2 copies: Call");
     }
 
     #[test]
@@ -292,30 +291,26 @@ mod tests {
     #[test]
     fn remark_line_has_every_clause() {
         let record = AllocationRemarkRecord {
-            kind: AllocationKind::IteratorResult,
-            ..remark(
-                AllocationOutcome::Heap,
-                1,
-                AllocationEscapeReason::RETAINED_BY_CALLEE,
-            )
+            kind: AllocationKind::Closure,
+            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::RETURNED)
         };
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), Some(&shown(9, 1))),
-            "allocation: iteratorResult at a.ts:3:5: heap: Call (a callee keeps a reference to it), escapes at a.ts:9:1"
+            "allocation: closure at a.ts:3:5: heap: Call (it is returned), escapes at a.ts:9:1"
         );
     }
 
     #[test]
     fn cause_without_reasons_explains_heap() {
         let record = AllocationRemarkRecord {
-            cause: AllocationHeapCause::SeveralLiveInstances,
+            cause: AllocationHeapCause::LiveAcrossSuspension,
             ..remark(AllocationOutcome::Heap, 1, NO_REASON)
         };
         let mut out = Vec::new();
-        write_remark_line(&mut out, &record, b"", Some(&shown(3, 5)), None, 0);
+        write_remark_line(&mut out, &record, b"", Some(&shown(3, 5)), None);
         assert_eq!(
             BString::from(out),
-            "allocation: object at a.ts:3:5: heap (more than one object created here can be live at the same time)"
+            "allocation: object at a.ts:3:5: heap (it is live across an await or a yield)"
         );
     }
 
@@ -323,15 +318,11 @@ mod tests {
     fn cause_precedes_reasons() {
         let record = AllocationRemarkRecord {
             cause: AllocationHeapCause::Escapes,
-            ..remark(
-                AllocationOutcome::Heap,
-                1,
-                AllocationEscapeReason::RETAINED_BY_CALLEE,
-            )
+            ..remark(AllocationOutcome::Heap, 1, AllocationEscapeReason::RETURNED)
         };
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), None),
-            "allocation: object at a.ts:3:5: heap: Call (it can outlive the call that creates it: a callee keeps a reference to it)"
+            "allocation: object at a.ts:3:5: heap: Call (it can outlive the call that creates it: it is returned)"
         );
     }
 
@@ -346,74 +337,92 @@ mod tests {
 
     #[test]
     fn remark_line_omits_forcing_location_equal_to_allocation() {
-        let record = remark(AllocationOutcome::Frame, 1, NO_REASON);
+        let record = remark(AllocationOutcome::Heap, 1, NO_REASON);
         assert_eq!(
             remark_line(&record, Some(&shown(3, 5)), Some(&shown(3, 5))),
-            "allocation: object at a.ts:3:5: stack"
+            "allocation: object at a.ts:3:5: heap: Call"
         );
     }
 
     #[test]
     fn remark_line_without_location() {
-        let record = remark(AllocationOutcome::Frame, 1, NO_REASON);
+        let record = remark(AllocationOutcome::Heap, 1, NO_REASON);
         assert_eq!(
             remark_line(&record, None, Some(&shown(9, 1))),
-            "allocation: object at (no location): stack, escapes at a.ts:9:1"
-        );
-    }
-
-    #[test]
-    fn limit_clause_follows_reasons() {
-        let limit = LimitId::MaxTypeNodes;
-        let record = AllocationRemarkRecord {
-            limit,
-            ..remark(
-                AllocationOutcome::Heap,
-                1,
-                AllocationEscapeReason::LIMIT_REACHED,
-            )
-        };
-        let expected = format!(
-            "allocation: object at a.ts:3:5: heap: Call (escape analysis hit a limit), limit {} = 1,024 (limits {}), escapes at a.ts:9:1",
-            limit.name(),
-            limit.purpose(),
-        );
-        assert_eq!(
-            remark_line(&record, Some(&shown(3, 5)), Some(&shown(9, 1))),
-            expected
+            "allocation: object at (no location): heap: Call, escapes at a.ts:9:1"
         );
     }
 
     #[test]
     fn runtime_allocations_are_skipped() {
-        let records = [remark_at(2, 4), remark_at(1, 4), remark_at(0, 4)];
-        assert_eq!(
-            listed_remarks(&records, &names()),
-            [&records[2], &records[1]]
-        );
+        let records = [
+            remark_at(RUNTIME, 4),
+            remark_at(DEPENDENCY, 4),
+            remark_at(PROGRAM, 4),
+        ];
+        assert_eq!(listed(&records), [&records[2], &records[1]]);
     }
 
     #[test]
     fn allocation_without_location_uses_function_module() {
         let records = [
-            remark_in_function(1),
-            remark_in_function(0),
+            remark_in_function(RUNTIME_FUNCTION),
+            remark_in_function(PROGRAM_FUNCTION),
             remark_in_function(ABSENT_WORD),
-            remark_in_function(9),
+            remark_in_function(UNNAMED_FUNCTION),
         ];
-        let listed = listed_remarks(&records, &names());
-        assert_eq!(listed, [&records[1], &records[2], &records[3]]);
+        assert_eq!(listed(&records), [&records[1], &records[2], &records[3]]);
     }
 
     #[test]
     fn remarks_ascend_by_position() {
         let records = [
-            remark_in_function(0),
-            remark_at(1, 0),
-            remark_at(0, 9),
-            remark_at(0, 2),
+            remark_in_function(PROGRAM_FUNCTION),
+            remark_at(DEPENDENCY, 0),
+            remark_at(PROGRAM, 9),
+            remark_at(PROGRAM, 2),
         ];
-        let listed = listed_remarks(&records, &names());
-        assert_eq!(listed, [&records[3], &records[2], &records[1], &records[0]]);
+        assert_eq!(
+            listed(&records),
+            [&records[3], &records[2], &records[1], &records[0]]
+        );
+    }
+
+    #[test]
+    fn report_without_listed_allocations_says_none() {
+        assert_eq!(
+            collected(b"", &[remark_at(RUNTIME, 0)]),
+            [(BString::from("allocations: none"), None)]
+        );
+    }
+
+    #[test]
+    fn each_entry_has_position_of_its_allocation() {
+        let in_dependency = remark_at(DEPENDENCY, 0);
+        let in_program = AllocationRemarkRecord {
+            forced_by: SourceLocation {
+                module: PROGRAM,
+                position: LINE_2_COLUMN_14,
+            },
+            forcing_operation: TextRange {
+                offset: 1,
+                length: 4,
+            },
+            ..remark_at(PROGRAM, LINE_1_COLUMN_5)
+        };
+        let expected = [
+            (
+                "allocation: object at src/a.ts:1:5: heap: Call, escapes at src/a.ts:2:14",
+                in_program,
+            ),
+            (
+                "allocation: object at node_modules/b/b.js:1:1: heap",
+                in_dependency,
+            ),
+        ];
+        assert_eq!(
+            collected(b"-Call", &[in_dependency, in_program]),
+            expected.map(|(text, record)| (BString::from(text), position_of(record.location)))
+        );
     }
 }

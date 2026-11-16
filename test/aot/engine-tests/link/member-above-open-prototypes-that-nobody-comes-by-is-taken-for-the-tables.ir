@@ -1,0 +1,30 @@
+# performance.isPrototypeOf(second)
+# The twin of name-nobody-knows-laid-on-a-holder-on-the-way-up-through-a-value-nobody-follows-is-not-taken-for-the-tables.ir without the store: it says whether the call is taken for its row at all: where this one is red too, the other holds nothing.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="performance" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
+    v3 = PropGet v2 key="isPrototypeOf"
+    v4 = Convert v3 declared={type=builtin(ObjectPrototypeIsPrototypeOf) flags=[IsExpected]}
+    v5 = NewClosure function=f2
+    v6 = Call v4, v2, v5 calleeKey="isPrototypeOf" calleeName="performance.isPrototypeOf"
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

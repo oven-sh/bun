@@ -1,4 +1,4 @@
-// A seeded generator of random numbers: the same seed gives the same program on every machine and every version of Bun.
+// A seeded random number generator: the same seed gives the same program on every machine and every version of Bun.
 export class Random {
   #state: number;
 

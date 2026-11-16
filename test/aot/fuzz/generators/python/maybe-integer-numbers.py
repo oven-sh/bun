@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""maybe-integer-numbers.py <seed>: random strict TypeScript programs about numbers that an analysis may show to be integers: counters, lengths, sums held against
-bounds, steps up and down, products, remainders, shifts, negation, Math.floor | min | max | abs, char codes, indexOf: with literals at the ends of int32, uint32 and 2^53, so that a variable
-"shown" to fit leaves its range, becomes -0, a fraction, NaN or Infinity. Every variable is printed exactly (-0 too) and used as an index of arrays and strings."""
+"""maybe-integer-numbers.py <seed>: Random strict TypeScript programs about numbers that an analysis may prove to be
+integers: counters, lengths, bounded sums, steps up and down, products, remainders, shifts, negation, Math.floor and
+friends.
+"""
 import random, sys, os
 
 HEAD = r'''const lines: string[] = [];

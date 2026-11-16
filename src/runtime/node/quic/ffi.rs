@@ -36,16 +36,16 @@ macro_rules! lsquic_callback {
     (
         $(#[$meta:meta])*
         $vis:vis fn $name:ident(
-            $ctx:ident: *mut c_void as $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
+            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
         ) -> $ret:ty = $default:expr; $body:block
         $($rest:tt)*
     ) => {
         $(#[$meta])*
         $vis unsafe extern "C" fn $name(
-            $ctx: *mut ::core::ffi::c_void $(, $arg: $argty)*
+            ctx: *mut ::core::ffi::c_void $(, $arg: $argty)*
         ) -> $ret {
             // SAFETY: `ctx_ref` documents the shim's context-pointer contract.
-            let Some($r) = (unsafe { $crate::node::quic::ffi::ctx_ref::<$ty>($ctx) }) else {
+            let Some($r) = (unsafe { $crate::node::quic::ffi::ctx_ref::<$ty>(ctx) }) else {
                 return $default;
             };
             $body
@@ -56,45 +56,17 @@ macro_rules! lsquic_callback {
     (
         $(#[$meta:meta])*
         $vis:vis fn $name:ident(
-            $ctx:ident: *mut c_void as $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
+            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
         ) $body:block
         $($rest:tt)*
     ) => {
         $(#[$meta])*
-        $vis unsafe extern "C" fn $name($ctx: *mut ::core::ffi::c_void $(, $arg: $argty)*) {
+        $vis unsafe extern "C" fn $name(ctx: *mut ::core::ffi::c_void $(, $arg: $argty)*) {
             // SAFETY: `ctx_ref` documents the shim's context-pointer contract.
-            let Some($r) = (unsafe { $crate::node::quic::ffi::ctx_ref::<$ty>($ctx) }) else {
+            let Some($r) = (unsafe { $crate::node::quic::ffi::ctx_ref::<$ty>(ctx) }) else {
                 return;
             };
             $body
-        }
-        lsquic_callback! { $($rest)* }
-    };
-
-    (
-        $(#[$meta:meta])*
-        $vis:vis fn $name:ident(
-            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
-        ) -> $ret:ty = $default:expr; $body:block
-        $($rest:tt)*
-    ) => {
-        lsquic_callback! {
-            $(#[$meta])*
-            $vis fn $name(ctx: *mut c_void as $r: &$ty $(, $arg: $argty)*) -> $ret = $default; $body
-        }
-        lsquic_callback! { $($rest)* }
-    };
-
-    (
-        $(#[$meta:meta])*
-        $vis:vis fn $name:ident(
-            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
-        ) $body:block
-        $($rest:tt)*
-    ) => {
-        lsquic_callback! {
-            $(#[$meta])*
-            $vis fn $name(ctx: *mut c_void as $r: &$ty $(, $arg: $argty)*) $body
         }
         lsquic_callback! { $($rest)* }
     };

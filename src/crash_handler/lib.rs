@@ -15,11 +15,13 @@
 //!
 //! The remapper is open source: https://github.com/oven-sh/bun.report
 
-// The cfg is the union of the two intrinsic call sites: `abort()` on the
+// The cfg is the union of the two intrinsic call sites: `abort_immediate()` on the
 // non-Windows crash path (all profiles) and `breakpoint()` on Windows debug
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
+// `stopped_builds::end_build_where_allocation_fails`.
+#![feature(alloc_error_hook)]
 #![allow(internal_features)]
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
@@ -39,7 +41,7 @@ mod compiled_frames;
 ))]
 mod fault_registers;
 mod stopped_builds;
-pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
+pub use compiled_frames::{DecodedReport, ShortBuildId, keep_own_segments, report_compiled_frames};
 pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
@@ -515,6 +517,13 @@ mod draft {
             libc::abort()
         }
     }
+
+    #[cfg(not(windows))]
+    unsafe extern "C" {
+        // safe: by-value `c_int` only; no memory-safety preconditions.
+        safe fn _exit(code: c_int) -> !;
+        safe fn raise(sig: c_int) -> c_int;
+    }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
@@ -606,7 +615,7 @@ mod draft {
         static PANIC_STAGE: Cell<usize> = const { Cell::new(0) };
 
         static INSIDE_NATIVE_PLUGIN: Cell<Option<*const c_char>> = const { Cell::new(None) };
-        static UNSUPPORTED_UV_FUNCTION: Cell<Option<*const c_char>> = const { Cell::new(None) };
+        static UNSUPPORTED_UV_FUNCTION: Cell<Option<&'static [u8]>> = const { Cell::new(None) };
 
         /// This can be set by various parts of the codebase to indicate a broader
         /// action being taken. It is printed when a crash happens, which can help
@@ -794,9 +803,26 @@ mod draft {
         None,
     }
 
-    /// Too little memory for a build is an error of the build: a message and exit code 1.
+    /// A thread that has used up its stack faults on the guard page below it: at the stack pointer, or inside the frame
+    /// that was just laid there. Wherever else the stack pointer stands, the memory around it is mapped.
+    fn has_run_out_of_stack(reason: &CrashReason<'_>, seed: &TraceSeed) -> bool {
+        match (reason, seed) {
+            (CrashReason::StackOverflow, _) => true,
+            #[cfg(unix)]
+            (
+                &(CrashReason::SegmentationFault(address) | CrashReason::BusError(address)),
+                &TraceSeed::FaultOnStack { sp, .. },
+            ) => {
+                const LARGEST_FRAME: usize = 64 << 10;
+                address.wrapping_sub(sp.wrapping_sub(LARGEST_FRAME)) < 2 * LARGEST_FRAME
+            }
+            _ => false,
+        }
+    }
+
+    /// Too little memory or stack for a build is an error of the build: a message and exit code 1.
     #[cold]
-    fn end_build_out_of_memory(place: &crate::stopped_builds::PlaceInBuild) -> ! {
+    fn end_build_out_of(lacked: &[u8], place: &crate::stopped_builds::PlaceInBuild) -> ! {
         // Held until the process ends: of the threads that stop together, the first one speaks.
         let _speaker = PANIC_MUTEX.lock();
         Output::flush();
@@ -807,15 +833,14 @@ mod draft {
         } else {
             b"error".as_slice()
         });
-        let _ = writer.write_all(b": Out of memory while compiling\n");
+        let _ = writer.write_all(b": Out of ");
+        let _ = writer.write_all(lacked);
+        let _ = writer.write_all(b" while compiling\n");
         let _ = writer.write_all(place.lines());
         #[cfg(windows)]
         bun_sys::windows::kernel32::ExitProcess(1);
         #[cfg(not(windows))]
-        // SAFETY: `_exit` has no preconditions and never returns.
-        unsafe {
-            libc::_exit(1)
-        }
+        _exit(1)
     }
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
@@ -835,7 +860,12 @@ mod draft {
                 if matches!(reason, CrashReason::OutOfMemory)
                     && let Some(place) = crate::stopped_builds::place_of_this_thread()
                 {
-                    end_build_out_of_memory(&place);
+                    end_build_out_of(b"memory", &place);
+                }
+                if has_run_out_of_stack(&reason, &seed)
+                    && let Some(place) = crate::stopped_builds::place_of_this_thread()
+                {
+                    end_build_out_of(b"stack", &place);
                 }
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
                 let addresses_in_trace: [usize; 20];
@@ -914,10 +944,6 @@ mod draft {
                         {
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                 .with(|c| c.get())
-                                .map(|p| {
-                                    // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-                                })
                                 .unwrap_or(b"<unknown>");
                             if write!(
                                 writer,
@@ -1161,10 +1187,6 @@ mod draft {
                             {
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                     .with(|c| c.get())
-                                    .map(|p| {
-                                        // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                        unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-                                    })
                                     .unwrap_or(b"<unknown>");
                                 if write!(
                                     writer,
@@ -1287,6 +1309,7 @@ mod draft {
                     Output::flush();
 
                     bun_removable_features::removable_body!(HotReload, Abort, {
+                        IS_RELOADING_PROCESS.store(true, Ordering::Relaxed);
                         bun_core::reload_process(false, true);
                     });
                 }
@@ -1665,20 +1688,30 @@ mod draft {
 
         // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
         const SEGV_MAPERR: c_int = 1;
+        // What Linux says of an instruction that may not be run at all: on x86-64 removed code is filled with `hlt`.
+        const SI_KERNEL: c_int = 0x80;
         let pc = context.map(|(pc, _, _)| pc);
-        // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
         // SAFETY: kernel provides a valid siginfo_t.
-        let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
-        let entered = match sig {
-            libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
-            libc::SIGTRAP | libc::SIGILL => pc,
-            libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
+        let code = unsafe { (*info).si_code };
+        let is_page_fault = match sig {
+            // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
+            libc::SIGSEGV => cfg!(target_os = "macos") || code == SEGV_MAPERR,
             // macOS raises SIGBUS where something that cannot be run is mapped in their place.
-            libc::SIGBUS if cfg!(target_os = "macos") => pc.filter(|&pc| pc == addr),
+            libc::SIGBUS => cfg!(target_os = "macos"),
+            _ => false,
+        };
+        let entered = match sig {
+            _ if is_page_fault => pc.filter(|&pc| pc == addr),
+            libc::SIGTRAP if cfg!(all(target_os = "macos", target_arch = "x86_64")) => {
+                pc.map(|pc| pc.wrapping_sub(1))
+            }
+            libc::SIGILL if cfg!(target_arch = "aarch64") => pc,
+            libc::SIGSEGV if code == SI_KERNEL => pc,
             _ => None,
         };
         if let Some(entered) = entered
             && let Some(feature) = crate::compiled_frames::removed_feature_entered(entered)
+            && (is_page_fault || crate::compiled_frames::is_at_trap_of_removed_code(entered))
         {
             let return_address = return_address_at_function_entry(ctx);
             bun_removable_features::abort_for_removed_feature_entered(
@@ -1731,6 +1764,14 @@ mod draft {
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {
         bun_core::CRASH_HANDLER_SIGNALS.contains(&signal)
+    }
+
+    static IS_RELOADING_PROCESS: AtomicBool = AtomicBool::new(false);
+
+    /// On Linux, `execve` must not wait for a lock that the crashed thread may hold.
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__isReloadingProcess() -> bool {
+        IS_RELOADING_PROCESS.load(Ordering::Relaxed)
     }
 
     #[cfg(unix)]
@@ -1797,6 +1838,11 @@ mod draft {
         if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
             return;
         }
+        let _ = update_posix_segfault_handler(Some(&mut repeated_crash_action()));
+    }
+
+    #[cfg(unix)]
+    fn repeated_crash_action() -> libc::sigaction {
         // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
@@ -1808,7 +1854,43 @@ mod draft {
         unsafe {
             libc::sigemptyset(&raw mut act.sa_mask);
         }
-        let _ = update_posix_segfault_handler(Some(&mut act));
+        act
+    }
+
+    /// # Safety
+    /// `action` must be valid for a write.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__getAction(action: *mut libc::sigaction) -> bool {
+        if Environment::ENABLE_ASAN
+            || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed)
+            || PANIC_STAGE.with(|stage| stage.get()) != 0
+        {
+            return false;
+        }
+        // SAFETY: caller contract.
+        unsafe { action.write(repeated_crash_action()) };
+        true
+    }
+
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__reportOwnCrash(
+        sig: c_int,
+        info: *mut libc::siginfo_t,
+        ctx: *mut c_void,
+    ) {
+        if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some((pc, _, _)) = fault_context_from_ucontext(ctx) else {
+            return;
+        };
+        // SAFETY: kernel provides a valid siginfo_t.
+        let (code, address) = unsafe { ((*info).si_code, (*info).si_addr() as usize) };
+        if crate::compiled_frames::is_own_stop(sig, code, address, pc) {
+            handle_segfault_posix(sig, info, ctx);
+        }
     }
 
     pub fn init() {
@@ -1947,6 +2029,8 @@ mod draft {
         let reason = CrashReason::Panic(msg_buf.const_slice());
 
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let addresses_in_trace: [usize; 20];
+        let trace_address_count: usize;
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -1965,6 +2049,9 @@ mod draft {
                 };
 
             Output::flush();
+            if crate::build_id::build_id().is_some() {
+                Output::source::stdio::restore();
+            }
             let _ =
                 writer.write_all(b"============================================================\n");
             let _ = print_metadata(writer);
@@ -1989,6 +2076,8 @@ mod draft {
                 index: idx,
                 instruction_addresses: &addr_buf,
             };
+            addresses_in_trace = addr_buf;
+            trace_address_count = idx.min(addr_buf.len());
 
             if debug_trace {
                 dump_stack_trace(&trace, WriteStackTraceLimits::default());
@@ -2036,6 +2125,13 @@ mod draft {
         }
 
         report(trace_str_buf.const_slice());
+
+        crate::compiled_frames::write_frames_on_stack(
+            &addresses_in_trace[..trace_address_count],
+            &mut |text| {
+                let _ = stderr_writer().write_all(text);
+            },
+        );
 
         // A Rust `panic!` is a bug. The process must not continue — with
         // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
@@ -2500,19 +2596,16 @@ mod draft {
             let mut current_commit: usize = 0;
             let mut peak_commit: usize = 0;
             let mut page_faults: usize = 0;
-            // SAFETY: all out-pointers are valid
-            unsafe {
-                bun_alloc::mimalloc::mi_process_info(
-                    &raw mut elapsed_msecs,
-                    &raw mut user_msecs,
-                    &raw mut system_msecs,
-                    &raw mut current_rss,
-                    &raw mut peak_rss,
-                    &raw mut current_commit,
-                    &raw mut peak_commit,
-                    &raw mut page_faults,
-                );
-            }
+            bun_alloc::mimalloc::mi_process_info(
+                Some(&mut elapsed_msecs),
+                Some(&mut user_msecs),
+                Some(&mut system_msecs),
+                Some(&mut current_rss),
+                Some(&mut peak_rss),
+                Some(&mut current_commit),
+                Some(&mut peak_commit),
+                Some(&mut page_faults),
+            );
             writeln!(
                 writer,
                 "Elapsed: {}ms | User: {}ms | Sys: {}ms",
@@ -2651,18 +2744,10 @@ mod draft {
     // The v1/v2 trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
     // shift every following VLQ byte, making bun.report unable to decode the URL.
-    const GIT_SHA: &str = {
-        const fn sha7(s: &'static str) -> &'static str {
-            let (head, _) = s.as_bytes().split_at(7);
-            // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8
-            // prefix. `split_at` const-panics if the input is shorter than 7.
-            unsafe { core::str::from_utf8_unchecked(head) }
-        }
-        if !Environment::GIT_SHA.is_empty() {
-            sha7(Environment::GIT_SHA)
-        } else {
-            "unknown"
-        }
+    const GIT_SHA: &str = if !Environment::GIT_SHA.is_empty() {
+        Environment::GIT_SHA.split_at(7).0
+    } else {
+        "unknown"
     };
 
     struct StackLine {
@@ -2865,35 +2950,19 @@ mod draft {
                 writer.write_byte(b'0')?;
 
                 let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
-                // SAFETY: buffers and lengths are valid
-                let ret = unsafe {
-                    bun_zlib::compress2(
-                        compressed_bytes.as_mut_ptr(),
-                        &raw mut len,
-                        message.as_ptr(),
-                        u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
-                        9,
-                    )
-                };
-                // Match on the raw zlib return code so this stays ABI-correct
-                // regardless of whether the platform `compress2` binding returns
-                // `c_int` (posix) or the `ReturnCode` enum (win32).
-                let compressed = match ret as i32 {
-                    r if r == bun_zlib::ReturnCode::Ok as i32 => {
-                        &compressed_bytes[0..usize::try_from(len).expect("int cast")]
-                    }
+                let compressed = match bun_zlib::compress(&mut compressed_bytes, message, 9) {
+                    Ok(len) => &compressed_bytes[0..len],
                     // Insufficient memory.
-                    r if r == bun_zlib::ReturnCode::MemError as i32 => {
+                    Err(bun_zlib::ReturnCode::MemError) => {
                         return Err(crate::Error::Alloc(bun_alloc::AllocError));
                     }
                     // The buffer dest was not large enough to hold the compressed data.
-                    r if r == bun_zlib::ReturnCode::BufError as i32 => {
+                    Err(bun_zlib::ReturnCode::BufError) => {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                     }
                     // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
                     // This is technically possible but impossible because we pass 9.
-                    _ => return Err(crate::Error::Unexpected),
+                    Err(_) => return Err(crate::Error::Unexpected),
                 };
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
@@ -3171,10 +3240,7 @@ mod draft {
                     unsafe {
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
-                    // SAFETY: _exit is async-signal-safe in the forked child
-                    unsafe {
-                        libc::_exit(0);
-                    }
+                    _exit(0);
                 }
                 // success and failure cases: ignore the result
                 _ => {}
@@ -3208,7 +3274,7 @@ mod draft {
                 libc::SIGFPE,
                 libc::SIGHUP,
                 libc::SIGTERM,
-                // Keep SIGTRAP reset so the `core::intrinsics::abort()`
+                // Keep SIGTRAP reset so the `core::intrinsics::abort_immediate()`
                 // fallback (brk on aarch64) is lethal even when JS installed
                 // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
                 // `signal-exit` package does).
@@ -3232,13 +3298,10 @@ mod draft {
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
             }
 
-            // SAFETY: raise has no preconditions; with SIG_DFL installed and
-            // the signal unblocked this terminates the process.
-            unsafe {
-                libc::raise(sig);
-            }
+            // With SIG_DFL installed and the signal unblocked this terminates the process.
+            raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
-            core::intrinsics::abort();
+            core::intrinsics::abort_immediate();
         }
         #[cfg(windows)]
         {
@@ -3877,14 +3940,18 @@ mod draft {
     /// # Safety
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
+    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) -> ! {
+        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
+        // This function never returns, so the string outlives every read on this thread.
+        unsupported_uv_function(unsafe { bun_core::ffi::cstr(name) }.to_bytes())
+    }
+
+    pub fn unsupported_uv_function(name_bytes: &'static [u8]) -> ! {
         bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
-        UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
+        UNSUPPORTED_UV_FUNCTION.with(|c| c.set(Some(name_bytes)));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();
         }
-        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
-        let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),
@@ -3912,19 +3979,16 @@ mod draft {
     #[unsafe(no_mangle)]
     unsafe extern "C" fn CrashHandler__beginDlOpenAction(
         path: *const c_char,
-    ) -> *mut ActionGuard<'static> {
+    ) -> Box<ActionGuard<'static>> {
         // SAFETY: path is a valid NUL-terminated C string that outlives the guard (caller contract)
         let s: &'static [u8] = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
         // SAFETY: `CrashHandler__endDlOpenAction` drops it (caller contract)
-        bun_core::heap::into_raw(Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) }))
+        Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) })
     }
 
-    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    /// On the thread that called `CrashHandler__beginDlOpenAction`.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard<'static>) {
-        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
-        unsafe { bun_core::heap::destroy(guard) };
-    }
+    extern "C" fn CrashHandler__endDlOpenAction(_: Box<ActionGuard<'static>>) {}
 
     pub fn fix_dead_code_elimination() {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);

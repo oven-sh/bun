@@ -1,3 +1,4 @@
+// A list of programs from ../generators/operands.ts, which describes them.
 import { program, sources } from "../generators/operands";
 import { family } from "../family";
 

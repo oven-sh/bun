@@ -7,8 +7,6 @@ import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
-const root = isWindows ? "B:\\~BUN\\root\\" : "/$bunfs/root/";
-
 if (isASAN)
   console.error(
     "SKIPPED: compile-aot-crash.test.ts: in a Bun built with AddressSanitizer its handler answers a segmentation fault, not Bun's",
@@ -26,21 +24,21 @@ class Reader {
   byteAt(offset: number): number {
     return read.u8(this.base + offset, 0) + 1;
   }
-  peek(offset: number): number {
+  peekByte(offset: number): number {
     return this.byteAt(offset);
   }
 }
-function sum(reader: Reader): number {
+function sumBytes(reader: Reader): number {
   let total = 0;
-  for (let i = 0; i < 3; i++) total += reader.peek(i);
+  for (let i = 0; i < 3; i++) total += reader.peekByte(i);
   return total;
 }
-function start(): number {
-  const total = sum(new Reader(8));
+function startReading(): number {
+  const total = sumBytes(new Reader(8));
   return total + 1;
 }
 console.log("before");
-console.log(start());
+console.log(startReading());
 `,
   "tsconfig.json": JSON.stringify({
     compilerOptions: {
@@ -95,13 +93,14 @@ test.if(!isASAN)("a crash in compiled code lists the compiled functions on the s
     .slice(1)
     .filter(line => line.startsWith("    at "));
   expect(frames).toEqual([
-    `    at byteAt (${root}app.ts:6:17)`,
-    `    at sum (${root}app.ts:14:47)`,
-    `    at start (${root}app.ts:18:17)`,
-    `    at ${root}app.ts:22:13`,
+    `    at byteAt (./app.ts:6:17)`,
+    `    at sumBytes (./app.ts:14:47)`,
+    `    at startReading (./app.ts:18:17)`,
+    `    at ./app.ts:22:13`,
   ]);
   const url = stderr.match(/^ (\S*CGaot\S*)$/m)![1];
-  for (const word of ["byteAt", "peek", "sum", "start", "app.ts"]) expect(url).not.toContain(word);
+  // The URL is some 190 letters of an alphabet of 64, so a name of three letters stands in one build in 1,400 by chance.
+  for (const word of ["byteAt", "peekByte", "sumBytes", "startReading", "app.ts"]) expect(url).not.toContain(word);
 
   const decoded = async (report: string) => {
     await using proc = spawn({

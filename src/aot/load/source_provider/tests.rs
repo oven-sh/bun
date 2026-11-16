@@ -140,7 +140,7 @@ fn invalid_json_fails() {
     };
     let mut log = Log::init();
     let result = WithoutServices.parse_data(&file, session.arena(), &atoms, &mut log);
-    assert!(result.is_err());
+    assert!(matches!(result, Err(DataFailure::InvalidText)));
     assert_eq!((log.msgs.len(), log.errors), (1, 1));
     assert_eq!(
         &*log.msgs[0].data.text,
@@ -166,48 +166,9 @@ fn other_loaders_are_unsupported() {
         };
         let mut log = Log::init();
         let result = WithoutServices.parse_data(&file, session.arena(), &atoms, &mut log);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(DataFailure::Build)));
         assert_unsupported(&log, feature);
     }
-}
-
-#[test]
-fn macros_are_unsupported() {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let call = MacroCall {
-        importer: b"/project/a.ts",
-        macro_path: b"/project/macro.ts",
-        export_name: b"value",
-        arguments: &[],
-    };
-    let mut log = Log::init();
-    let result = WithoutServices.run_macro(&call, session.arena(), &atoms, &mut log);
-    assert!(result.is_err());
-    assert_unsupported(&log, b"macros");
-}
-
-#[test]
-fn no_pages_need_no_bundler() {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let mut log = Log::init();
-    let manifests = WithoutServices
-        .bundle_pages(&[], session.arena(), &atoms, &mut log)
-        .unwrap();
-    assert!(manifests.is_empty());
-    assert!(log.msgs.is_empty());
-}
-
-#[test]
-fn pages_need_the_bundler() {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let pages: [&[u8]; 1] = [b"/project/index.html"];
-    let mut log = Log::init();
-    let result = WithoutServices.bundle_pages(&pages, session.arena(), &atoms, &mut log);
-    assert!(result.is_err());
-    assert_unsupported(&log, b"HTML pages");
 }
 
 #[test]

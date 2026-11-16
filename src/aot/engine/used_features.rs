@@ -1,12 +1,15 @@
 use bun_sema::util::SharedSort;
 use bun_trim::{
     FeatureSet, LocaleTag, UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales,
-    WitnessIndex, features_kept_only_when_named,
+    WitnessIndex, features_retained_by_name,
 };
 
 use super::{
-    EngineResult, FeatureUseRecord, LocaleUseRecord, TextRange, UnseenCodeRecord, feature_of,
+    EngineResult, FeatureUseRecord, LocaleUseRecord, TextRange, UnseenCodeRecord, builtin_of,
+    feature_of,
 };
+use crate::builtins::id::{BuiltinId, Feature};
+use crate::builtins::table;
 use crate::ir::generated::{FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause};
 
 pub fn used_features(result: &EngineResult) -> UsedFeatures {
@@ -27,16 +30,21 @@ fn from_records(
     locales: &[LocaleUseRecord],
     text_of: &dyn Fn(TextRange) -> Vec<u8>,
 ) -> UsedFeatures {
-    let only_when_named = features_kept_only_when_named();
+    let only_when_named = features_retained_by_name();
     let mut seen = FeatureSet::EMPTY;
     let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();
     for (index, record) in features.iter().enumerate() {
-        // An undeclared word can stand for any feature, so nothing may be removed.
         let Some(feature) = feature_of(record.feature) else {
             return UsedFeatures::default();
         };
-        let is_named = record.kind == FeatureUseKind::Named;
+        if record.kind == FeatureUseKind::NamedAtRunTime || is_entered_by_bun_build(record) {
+            continue;
+        }
+        let is_named = matches!(
+            record.kind,
+            FeatureUseKind::Named | FeatureUseKind::FoundByName
+        );
         if is_named {
             named.insert(feature);
         }
@@ -62,7 +70,34 @@ fn from_records(
         causes: causes.collect(),
         locales: used_locales(locales, text_of),
         starts_workers_from_unseen_code: true,
+        names_bun_build: features.iter().any(names_bun_build),
+        can_reach_test_runner: !unseen.is_empty() || features.iter().any(leads_to_test_runner),
     }
+}
+
+fn is_entered_by_bun_build(record: &FeatureUseRecord) -> bool {
+    let stands_outside_programs =
+        |feature| Feature::all_outside_compiled_programs().contains(feature);
+    builtin_of(record.builtin).is_none_or(|builtin| builtin == BuiltinId::BunBuild)
+        && feature_of(record.feature).is_some_and(stands_outside_programs)
+}
+
+fn names_bun_build(record: &FeatureUseRecord) -> bool {
+    record.kind == FeatureUseKind::Named
+        && builtin_of(record.builtin).is_some()
+        && is_entered_by_bun_build(record)
+}
+
+fn leads_to_test_runner(record: &FeatureUseRecord) -> bool {
+    if feature_of(record.feature) != Some(Feature::Test) {
+        return false;
+    }
+    let is_named = matches!(
+        record.kind,
+        FeatureUseKind::Named | FeatureUseKind::FoundByName
+    );
+    let hangs_under_no_name = |builtin| table::text_of(builtin).starts_with('%');
+    is_named || !builtin_of(record.builtin).is_some_and(hangs_under_no_name)
 }
 
 fn cause_of(cause: EngineCause) -> UnseenCodeCause {
@@ -75,7 +110,6 @@ fn cause_of(cause: EngineCause) -> UnseenCodeCause {
         EngineCause::RunsUnseenCode => UnseenCodeCause::RunsUnseenCode,
         EngineCause::RunsMachineCode => UnseenCodeCause::RunsMachineCode,
         EngineCause::OptionAdmitsCode => UnseenCodeCause::OptionAdmitsCode,
-        EngineCause::LimitReached => UnseenCodeCause::FlowGaveUp,
         EngineCause::FlowResultDisabled => UnseenCodeCause::FlowResultDisabled,
     }
 }

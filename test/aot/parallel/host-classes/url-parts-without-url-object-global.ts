@@ -1,5 +1,5 @@
 // `new URL(x)` that is only read for pathname, search or a search parameter is compiled without allocating the URL. For any input the results and errors are those of plain Bun, also where the object escapes and where `URL` is another class. Here nothing ever replaces the global, so the compiler knows the constructor.
-// STATISTIC: URLsLeftUnbuilt >= 8
+// STATISTIC: URLAllocationsElided >= 8
 const lines: string[] = [];
 function say(label: string, work: () => unknown) {
   let text: string;

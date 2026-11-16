@@ -1,10 +1,11 @@
 // The `jsc` shell makes its own import.meta, module and require, without the functions that Bun puts on them. Compiled code calls such a
 // function without testing that it is there, so the shell puts one in its place that names the function the program needs, and
 // shell/quick.py skips the program. shell/tools.ts says what the scripts need.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
@@ -91,6 +92,28 @@ test.skipIf(!!scriptSkipReason)(
     expect(stdout.split("\n").filter(line => line !== "")).toEqual([
       "host/looks-at-import-meta: same (1 lines)",
       "host/looks-at-require: same (1 lines)",
+    ]);
+    expect(exitCode).toBe(0);
+  },
+  290_000,
+);
+
+// The shell throws an Error for the module while `import()` loads what the imported file needs.
+test.skipIf(!!scriptSkipReason)(
+  "a program whose import() reaches a module only Bun has is skipped by the name of the module",
+  async () => {
+    using folder = tempDir("aot-missing-host-module", {
+      "programs/host/imports/main.mjs": `await import("./needs.mjs");\n`,
+      "programs/host/imports/needs.mjs": `import { existsSync } from "node:fs";\nconsole.log(typeof existsSync);\n`,
+    });
+    const { stdout, stderr, exitCode } = await run(
+      [python!, join(import.meta.dir, "shell", "quick.py"), "host/imports"],
+      undefined,
+      { ...scriptEnvironment(), PROGRAMS: join(String(folder), "programs"), WORK: join(String(folder), "work") },
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(line => line !== "")).toEqual([
+      "host/imports: skipped: it needs the host's node:fs",
     ]);
     expect(exitCode).toBe(0);
   },

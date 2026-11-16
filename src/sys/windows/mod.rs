@@ -9,6 +9,9 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr;
+use std::os::windows::io::{
+    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, OwnedHandle,
+};
 
 use bun_windows_sys as win32;
 use bun_windows_sys as windows;
@@ -160,7 +163,6 @@ pub use bun_windows_sys::FILE_DEVICE_CONSOLE;
 pub use bun_windows_sys::FILE_DEVICE_NAMED_PIPE;
 pub use bun_windows_sys::FILE_DEVICE_NULL;
 pub use bun_windows_sys::FILE_DIRECTORY_FILE;
-pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
 pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
 pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
@@ -418,34 +420,40 @@ pub fn last_system_errno() -> SystemErrno {
 
 pub use bun_libuv_sys as libuv;
 
+/// This process's access token, opened for `TOKEN_QUERY`.
+pub(crate) fn process_token() -> Option<OwnedHandle> {
+    let mut token: HANDLE = ptr::null_mut();
+    // SAFETY: this process's pseudo-handle, and an out-param that success fills with a new handle.
+    unsafe {
+        (win32::OpenProcessToken(
+            win32::GetCurrentProcess(),
+            win32::TOKEN_QUERY,
+            &raw mut token,
+        ) != 0)
+            .then(|| OwnedHandle::from_raw_handle(token))
+    }
+}
+
 /// True when the process token is a Windows AppContainer (lowbox) token.
 /// Cached for the process lifetime; the token's AppContainer bit is immutable.
 pub fn is_app_container() -> bool {
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| {
-        let mut token: win32::HANDLE = core::ptr::null_mut();
-        // SAFETY: GetCurrentProcess() is the pseudo-handle; TOKEN_QUERY
-        // suffices for GetTokenInformation(TokenIsAppContainer).
-        if unsafe {
-            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
-        } == 0
-        {
+        let Some(token) = process_token() else {
             return false;
-        }
+        };
         let mut is_ac: win32::DWORD = 0;
         let mut ret_len: win32::DWORD = 0;
-        // SAFETY: `token` is live from OpenProcessToken above.
+        // SAFETY: `token` is open; the buffer is writable for the length given.
         let ok = unsafe {
             win32::GetTokenInformation(
-                token,
+                token.as_raw_handle(),
                 win32::TOKEN_IS_APP_CONTAINER,
                 (&raw mut is_ac).cast(),
                 size_of::<win32::DWORD>() as win32::DWORD,
                 &mut ret_len,
             )
         };
-        // SAFETY: `token` is a real handle (not the pseudo-handle); close it.
-        unsafe { win32::CloseHandle(token) };
         ok != 0 && is_ac != 0
     })
 }
@@ -572,8 +580,6 @@ pub fn GetCurrentProcessId() -> DWORD {
 
 pub use bun_windows_sys::{PEB, RTL_USER_PROCESS_PARAMETERS, TEB, teb};
 
-pub use bun_windows_sys::externs::CreateJobObjectA;
-
 pub use bun_windows_sys::externs::AssignProcessToJobObject;
 
 pub use bun_windows_sys::externs::GetCurrentProcess;
@@ -590,8 +596,6 @@ pub use bun_windows_sys::externs::{
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
     JobObjectExtendedLimitInformation,
 };
-
-pub use bun_windows_sys::externs::SetInformationJobObject;
 
 pub use bun_windows_sys::externs::OpenProcess;
 
@@ -672,11 +676,11 @@ fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
 /// Attribute-only `CreateFileW` (0 access): exempt from share-mode arbitration
 /// and the smallest ACL surface — don't add access bits. `pathz` must be
 /// NUL-terminated; `FILE_FLAG_BACKUP_SEMANTICS` covers directories, harmless on files.
-fn attr_only_open(pathz: &[u16]) -> HANDLE {
+fn attr_only_open(pathz: &[u16]) -> Option<OwnedHandle> {
     debug_assert_eq!(pathz.last(), Some(&0));
     // SAFETY: `pathz` is NUL-terminated (caller contract, debug-asserted).
     unsafe {
-        CreateFileW(
+        HandleOrInvalid::from_raw_handle(CreateFileW(
             pathz.as_ptr(),
             0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -684,8 +688,10 @@ fn attr_only_open(pathz: &[u16]) -> HANDLE {
             OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS,
             core::ptr::null_mut(),
-        )
+        ))
     }
+    .try_into()
+    .ok()
 }
 
 /// `(\Device\<volume>, letter)` for the system volume, resolved once via
@@ -712,27 +718,19 @@ fn system_volume_device() -> Option<&'static (Vec<u16>, u16)> {
                 return None;
             }
             sysdir.0[n] = 0;
-            let h = attr_only_open(&sysdir.0[..=n]);
-            if h == INVALID_HANDLE_VALUE {
-                return None;
-            }
+            let h = attr_only_open(&sysdir.0[..=n])?;
             let mut nt = bun_paths::w_path_buffer_pool::get();
             let mut none = bun_paths::w_path_buffer_pool::get();
-            let got = final_name_raw(
-                h,
+            let (nt_len, none_len) = final_name_raw(
+                h.as_raw_handle(),
                 win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
                 &mut nt.0[..],
             )
             .zip(final_name_raw(
-                h,
+                h.as_raw_handle(),
                 win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
                 &mut none.0[..],
-            ));
-            // SAFETY: `h` is the live handle opened above.
-            unsafe {
-                let _ = externs::CloseHandle(h);
-            }
-            let (nt_len, none_len) = got?;
+            ))?;
             if none_len >= nt_len {
                 return None;
             }
@@ -910,7 +908,7 @@ pub(crate) fn GetFinalPathNameByHandle(
         bun_core::fmt::utf16(ret)
     );
 
-    if bun_core::strings::has_prefix_comptime_type::<u16>(ret, &LONG_PATH_PREFIX) {
+    if ret.starts_with(&LONG_PATH_PREFIX) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = &mut ret[4..];
         if bun_core::has_prefix_comptime_utf16(ret, b"UNC\\") {
@@ -1071,10 +1069,8 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::open) {
         return err;
     }
-    // SAFETY: tmp_handle is valid; closed at scope exit
-    let _close_guard = scopeguard::guard(tmp_handle, |h| unsafe {
-        let _ = externs::CloseHandle(h);
-    });
+    // SAFETY: `NtCreateFile` succeeded, so this is a new handle.
+    let handle = unsafe { OwnedHandle::from_raw_handle(tmp_handle) };
 
     // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
     // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
@@ -1089,10 +1085,10 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
     };
 
-    // SAFETY: tmp_handle and io are valid
+    // SAFETY: handle and io are valid
     rc = unsafe {
         ntdll::NtSetInformationFile(
-            tmp_handle,
+            handle.as_raw_handle(),
             &mut io,
             core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
@@ -1118,10 +1114,10 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             DeleteFile: TRUE as BOOLEAN,
         };
 
-        // SAFETY: tmp_handle and io are valid
+        // SAFETY: handle and io are valid
         rc = unsafe {
             ntdll::NtSetInformationFile(
-                tmp_handle,
+                handle.as_raw_handle(),
                 &mut io,
                 core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
                 size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
@@ -1270,9 +1266,27 @@ pub(crate) const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
 /// inheritance (`--no-orphans`, the parallel-test coordinator). Omits
 /// `SILENT_BREAKAWAY_OK` on purpose: that would make every child escape the
 /// Job. libuv's global job sets it because libuv assigns each child itself.
-pub const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
     | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+
+/// An anonymous Job. Dropping it ends its members.
+pub fn create_kill_on_close_job() -> Option<OwnedHandle> {
+    let mut jeli: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
+    jeli.BasicLimitInformation.LimitFlags = JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
+    // SAFETY: null arguments ask for an anonymous Job; `jeli` is readable for the size given.
+    unsafe {
+        let job = externs::CreateJobObjectA(ptr::null_mut(), ptr::null());
+        let job = OwnedHandle::try_from(HandleOrNull::from_raw_handle(job)).ok()?;
+        (externs::SetInformationJobObject(
+            job.as_raw_handle(),
+            JobObjectExtendedLimitInformation,
+            (&raw mut jeli).cast(),
+            size_of_val(&jeli) as u32,
+        ) != 0)
+            .then_some(job)
+    }
+}
 
 pub mod rescle {
     use super::*;
@@ -1538,7 +1552,6 @@ pub fn is_watcher_child() -> bool {
 
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
-    let mut procinfo: PROCESS_INFORMATION = bun_core::ffi::zeroed();
     unsafe extern "C" {
         // safe: no args; C++ shim mutates process-global stdio inheritance
         // flags — no preconditions.
@@ -1578,7 +1591,7 @@ pub fn become_watcher_manager() -> ! {
     }
 
     loop {
-        if let Err(code) = spawn_watcher_child(&mut procinfo, job) {
+        let child = spawn_watcher_child(job).unwrap_or_else(|code| {
             // The executable can be renamed or replaced while `--watch` runs.
             bun_core::err_generic!(
                 "Failed to start \"<b>{}<r>\": {} <d>(CreateProcessW)<r>",
@@ -1587,10 +1600,11 @@ pub fn become_watcher_manager() -> ! {
             );
             bun_core::Output::flush();
             bun_core::Global::exit(1);
-        }
+        });
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
         // (by-value `HANDLE`/`DWORD` only); check `WAIT_FAILED` inline.
-        if kernel32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) == externs::WAIT_FAILED
+        if kernel32::WaitForSingleObject(child.as_raw_handle(), win32::INFINITE)
+            == externs::WAIT_FAILED
         {
             let err = Win32Error::get();
             bun_core::Output::panic(format_args!(
@@ -1599,17 +1613,13 @@ pub fn become_watcher_manager() -> ! {
             ));
         }
         let mut exit_code: DWORD = 0;
-        if kernel32_2::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) == 0 {
-            // Capture before NtClose — closing the handle may overwrite the
-            // thread's last-error.
+        if kernel32_2::GetExitCodeProcess(child.as_raw_handle(), &mut exit_code) == 0 {
             let err = Win32Error::get();
-            let _ = kernel32_2::NtClose(procinfo.hProcess);
             bun_core::Output::panic(format_args!(
                 "Failed to get exit code of child process: {:?}\n",
                 err
             ));
         }
-        let _ = kernel32_2::NtClose(procinfo.hProcess);
 
         // magic exit code to indicate that the child process should be re-spawned
         if exit_code == WATCHER_RELOAD_EXIT {
@@ -1621,10 +1631,7 @@ pub fn become_watcher_manager() -> ! {
 }
 
 /// Returns the failing call's `GetLastError()` as `Err`.
-pub(crate) fn spawn_watcher_child(
-    procinfo: &mut PROCESS_INFORMATION,
-    job: HANDLE,
-) -> Result<(), Win32Error> {
+fn spawn_watcher_child(job: HANDLE) -> Result<OwnedHandle, Win32Error> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
@@ -1667,15 +1674,10 @@ pub(crate) fn spawn_watcher_child(
     // SAFETY: NUL written at [len]
     let image_path_z = bun_core::WStr::from_buf(&wbuf[..], image_path.len());
 
-    let kernelenv = kernel32_2::GetEnvironmentStringsW();
-    let _free_env = scopeguard::guard(kernelenv, |envptr| {
-        if !envptr.is_null() {
-            // SAFETY: envptr was returned from GetEnvironmentStringsW and is non-null
-            unsafe {
-                let _ = kernel32_2::FreeEnvironmentStringsW(envptr);
-            }
-        }
-    });
+    let environment = EnvironmentStrings::get();
+    let kernelenv = environment
+        .as_ref()
+        .map_or(ptr::null(), EnvironmentStrings::as_ptr);
 
     let mut size: usize = 0;
     if !kernelenv.is_null() {
@@ -1729,9 +1731,7 @@ pub(crate) fn spawn_watcher_child(
         },
         lpAttributeList: p.as_mut_ptr(),
     };
-    // `PROCESS_INFORMATION: bun_core::ffi::Zeroable` — all-zero is a valid
-    // value, so the safe `zeroed()` constructor replaces `ptr::write_bytes`.
-    *procinfo = bun_core::ffi::zeroed();
+    let mut procinfo: PROCESS_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: all pointers valid; envbuf double-NUL terminated
     let rc = unsafe {
         kernel32::CreateProcessW(
@@ -1744,17 +1744,23 @@ pub(crate) fn spawn_watcher_child(
             envbuf.as_mut_ptr().cast::<c_void>(),
             ptr::null(),
             core::ptr::from_mut(&mut startupinfo).cast::<STARTUPINFOW>(),
-            procinfo,
+            &raw mut procinfo,
         )
     };
     if rc == 0 {
         return Err(Win32Error::get());
     }
+    // SAFETY: `CreateProcessW` succeeded, so both are new handles.
+    let (process, _thread) = unsafe {
+        (
+            OwnedHandle::from_raw_handle(procinfo.hProcess),
+            OwnedHandle::from_raw_handle(procinfo.hThread),
+        )
+    };
     let mut is_in_job: BOOL = 0;
-    let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
+    let _ = kernel32_2::IsProcessInJob(process.as_raw_handle(), job, &mut is_in_job);
     debug_assert!(is_in_job != 0);
-    let _ = kernel32_2::NtClose(procinfo.hThread);
-    Ok(())
+    Ok(process)
 }
 
 /// Returns null on error. Use windows API to lookup the actual error.
@@ -1919,7 +1925,7 @@ pub(crate) fn rename_at_w(
     new_path_w: &[u16],
     replace_if_exists: bool,
 ) -> bun_sys::Result<()> {
-    let src_fd = 'brk: {
+    let src = bun_sys::CloseOnDrop::new('brk: {
         match bun_sys::open_file_at_windows(
             old_dir_fd,
             old_path_w,
@@ -1952,10 +1958,9 @@ pub(crate) fn rename_at_w(
             }
             bun_sys::Result::Ok(fd) => break 'brk fd,
         }
-    };
-    let _close = bun_sys::CloseOnDrop::new(src_fd);
+    });
 
-    move_opened_file_at(src_fd, new_dir_fd, new_path_w, replace_if_exists)
+    move_opened_file_at(src.fd(), new_dir_fd, new_path_w, replace_if_exists)
 }
 
 mod kernel32_2 {
@@ -1984,27 +1989,28 @@ mod kernel32_2 {
             hJob: HANDLE,
             result: &mut BOOL,
         ) -> BOOL;
-        // safe: by-value `HANDLE` only; bad/stale handle →
-        // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX `close(fd)` →
-        // `EBADF`, which is `safe fn` in `safe_libc`).
-        pub(super) safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
     }
 }
 
-pub(crate) type GetEnvironmentStringsError = bun_alloc::AllocError;
+/// A copy of the environment block: NUL-terminated strings, the last one empty.
+pub(crate) struct EnvironmentStrings(ptr::NonNull<u16>);
 
-pub(crate) fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> {
-    let p = kernel32_2::GetEnvironmentStringsW();
-    if p.is_null() {
-        return Err(bun_alloc::AllocError);
+impl EnvironmentStrings {
+    pub(crate) fn get() -> Option<Self> {
+        ptr::NonNull::new(kernel32_2::GetEnvironmentStringsW()).map(Self)
     }
-    Ok(p)
+
+    pub(crate) fn as_ptr(&self) -> *const u16 {
+        self.0.as_ptr()
+    }
 }
 
-pub(crate) fn FreeEnvironmentStringsW(penv: *mut u16) {
-    // SAFETY: penv from GetEnvironmentStringsW
-    let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(penv) };
-    debug_assert!(rc != 0);
+impl Drop for EnvironmentStrings {
+    fn drop(&mut self) {
+        // SAFETY: from `GetEnvironmentStringsW`, and freed nowhere else.
+        let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(self.0.as_ptr()) };
+        debug_assert!(rc != 0);
+    }
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]

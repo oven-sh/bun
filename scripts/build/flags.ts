@@ -15,19 +15,11 @@ import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
+import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies = [
-  "brotli",
-  "libdeflate",
-  "libjpeg-turbo",
-  "libspng",
-  "libwebp",
-  "lshpack",
-  "zlib",
-  "zstd",
-];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "lshpack", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -43,11 +35,16 @@ export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fu
   ];
 }
 
-export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: string): string[] {
+export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: DepName): string[] {
   return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
+
+const keepTrimmedFunctions = (c: Config): string[] =>
+  [...new Set(loadFeatures(c.cwd).features.flatMap(feature => feature.cFunctions ?? []))]
+    .sort()
+    .flatMap(name => ["-mllvm", `-force-attribute=${name}:noinline`]);
 
 /**
  * Main-thread stack size for darwin executables (18 MB — JSC's interpreter
@@ -90,8 +87,13 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android",
+    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android" && !c.hardened,
     desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
+  },
+  {
+    flag: "-march=armv8-a+crc",
+    when: c => c.linux && c.arm64 && c.abi !== "android" && c.hardened,
+    desc: "ARM64 Linux, hardened: ARMv8-A base + CRC. No -mtune: it keeps the fortified wrappers out of line",
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
@@ -639,10 +641,7 @@ export const globalFlags: Flag[] = [
     // A `c-function` of src/trim/features is cut where it is defined. ThinLTO inlines a small one into its callers in
     // other files, also into Rust: then no function is left to cut, and all that it calls stays with the callers.
     // The attribute has to be in the bitcode: the pipeline that the link runs does not read the option.
-    flag: c =>
-      [...new Set(loadFeatures(c.cwd).features.flatMap(feature => feature.cFunctions ?? []))]
-        .sort()
-        .flatMap(name => ["-mllvm", `-force-attribute=${name}:noinline`]),
+    flag: keepTrimmedFunctions,
     when: c => c.trimmable && c.lto,
     lang: "c",
     desc: "Keep the C functions that trimming cuts as functions",
@@ -1060,6 +1059,15 @@ export const linkerFlags: Flag[] = [
     desc: "LTO level: IR pipeline and code generation (lld)",
   },
   {
+    // By default the inliner still takes a callee of up to 45 cost units at a call site it knows is cold: behind
+    // [[unlikely]], or on the way to a crash. Across the whole program that copies out-of-line slow paths into every
+    // caller: VM::hasExceptionsAfterHandlingTraps() alone was 0.8 MB behind RETURN_IF_EXCEPTION. At 0 a cold call
+    // site takes only what is cheaper than the call. -0.9 MB on linux-x64, no instructions more.
+    flag: "-Wl,-mllvm,-inline-cold-callsite-threshold=0",
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c),
+    desc: "LTO: inline at a cold call site only what is cheaper than the call (lld)",
+  },
+  {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
@@ -1079,11 +1087,17 @@ export const linkerFlags: Flag[] = [
     flag: c => (icfMode(c) === "safe" ? "/OPT:SAFEICF" : "/OPT:NOICF"),
     when: c => c.windows,
     desc: "Identical-code-folding (safe in release)",
+    toolchain: true,
   },
   {
     flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
     when: c => c.windows && linkRunsLto(c),
     desc: "LTO level: IR pipeline and code generation (lld-link)",
+  },
+  {
+    flag: "/mllvm:-inline-cold-callsite-threshold=0",
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO: inline at a cold call site only what is cheaper than the call (lld-link)",
   },
 
   // ─── PGO (link-side) ───
@@ -1407,6 +1421,13 @@ export const linkerFlags: Flag[] = [
     flag: ["-Wl,--wrap=execve", "-Wl,--wrap=pthread_create"],
     when: c => c.linux,
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
+  },
+  {
+    // BunSignalActions.cpp: __wrap_abort puts the crash handler back, so that a
+    // failed assertion is reported under a listener for SIGABRT.
+    flag: "-Wl,--wrap=abort",
+    when: c => c.aot && (c.linux || c.freebsd) && !c.asan,
+    desc: "Report abort() in a compiled program whatever handles SIGABRT",
   },
   {
     flag: ["-static-libstdc++", "-static-libgcc"],
@@ -1914,7 +1935,6 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,
-    join(vendorDir, "picohttpparser"),
     join(vendorDir, "zlib"),
     // NODEJS_HEADERS_PATH comes from the nodejs dep; added separately
   ];
@@ -1959,10 +1979,40 @@ export const fileOverrides: FileOverride[] = [
     desc: "Disable LTO: LLD (first seen with 21; not re-checked on 23) emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {
+    file: "packages/bun-usockets/src/crypto/openssl.cpp",
+    extraFlags: keepTrimmedFunctions,
+    when: c => c.trimmable && c.lto,
+    desc: "Defines the C functions that trimming cuts to remove TLS",
+  },
+  {
+    file: "packages/bun-usockets/src/quic.cpp",
+    extraFlags: keepTrimmedFunctions,
+    when: c => c.trimmable && c.lto,
+    desc: "Defines the C functions that trimming cuts to remove HTTP/3",
+  },
+  {
     file: "src/jsc/bindings/windows/rescle.cpp",
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
+  {
+    file: "src/jsc/bindings/highway_byte_set.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
+  },
+  {
+    file: "src/jsc/bindings/highway_jpeg.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every sample of a JPEG image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_png.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

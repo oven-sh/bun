@@ -77,10 +77,8 @@ impl MemoryAccessor {
             match self.mem {
                 -2 => break,
                 -1 => {
-                    // SAFETY: getpid has no preconditions. Don't cache across
-                    // calls — it's served from the vDSO and a stale cache after
-                    // fork() would target the wrong process.
-                    let pid = unsafe { libc::getpid() };
+                    // Not cached: after fork() a stale pid would target the wrong process.
+                    let pid = crate::output::getpid();
                     let local = libc::iovec {
                         iov_base: buf.as_mut_ptr().cast(),
                         iov_len: buf.len(),
@@ -327,6 +325,132 @@ fn caller_of_faulting_stub(
     None
 }
 
+static HOLDS_COMPILED_CODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// For whoever takes up a compiled program.
+pub fn note_compiled_code() {
+    HOLDS_COMPILED_CODE.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a call instruction ends at `address`.
+#[cfg(target_arch = "x86_64")]
+fn is_behind_call(address: usize, mut load: impl FnMut(usize) -> Option<usize>) -> bool {
+    const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
+    const OPCODE_OF_GROUP_5: u8 = 0xff;
+    let Some(bytes) = load(address - core::mem::size_of::<usize>()).map(usize::to_le_bytes) else {
+        return false;
+    };
+    let calls_through =
+        |length: usize| bytes[8 - length] == OPCODE_OF_GROUP_5 && bytes[9 - length] >> 3 & 7 == 2;
+    bytes[3] == OPCODE_OF_NEAR_CALL || [2, 3, 4, 6, 7].into_iter().any(calls_through)
+}
+
+/// The registers of the caller of native code that keeps a frame record, given its own: (pc, sp, fp).
+#[cfg(target_arch = "x86_64")]
+fn caller_by_frame_record(
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    if fp < sp || !fp.is_multiple_of(WORD) {
+        return None;
+    }
+    let caller_fp = load(fp)?;
+    if caller_fp != 0 && caller_fp <= fp {
+        return None;
+    }
+    Some((
+        load(fp.checked_add(WORD)?)?,
+        fp.checked_add(2 * WORD)?,
+        caller_fp,
+    ))
+}
+
+/// Through how many frames the registers of one lead, that one counted, up to `most`.
+#[cfg(target_arch = "x86_64")]
+fn number_of_frames_from(
+    (mut pc, mut sp, mut fp): (usize, usize, usize),
+    most: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> usize {
+    let mut frames = 1;
+    while frames < most {
+        let caller = match compiled_frame_at_return_address(pc) {
+            Some(frame) => caller_of_compiled_frame(frame, sp, fp, &mut load),
+            None => caller_by_frame_record(sp, fp, &mut load),
+        };
+        let Some(caller) = caller else { break };
+        (pc, sp, fp) = caller;
+        frames += 1;
+    }
+    frames
+}
+
+/// The registers in the lowest frame of compiled code above `sp`: (pc, sp, fp). For code that faulted and keeps no frame record,
+/// as glibc's raise() under abort(). The native frames between are lost. What compiled code calls saves the frame pointer first.
+/// `load` answers `None` where nothing is mapped, so the search ends with the stack.
+///
+/// A slot that native code has not written since an earlier, deeper call still holds the return address and the frame pointer of
+/// that call. The frames that those name are gone. Followed, they end in whatever has been written over them, or they join the
+/// frames that are there further up and pass the lowest ones by. So each word that may be the one is followed, and the one that
+/// leads through the most frames is taken: every frame that is there lies on the way from the lowest. Of two that lead through as
+/// many the upper one is taken: what is left over lies below what is there.
+#[cfg(target_arch = "x86_64")]
+fn lowest_compiled_frame(
+    sp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WORDS_SEARCHED: usize = 8192;
+    const MOST_FOLLOWED: usize = 16;
+    const MOST_FRAMES_FOLLOWED: usize = 256;
+    if !sp.is_multiple_of(WORD) {
+        return None;
+    }
+    let mut best: Option<(usize, (usize, usize, usize))> = None;
+    let mut followed = 0;
+    for place in (1..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {
+        let Some(word) = load(place) else { break };
+        if compiled_frame_at_return_address(word).is_none() || !is_behind_call(word, &mut load) {
+            continue;
+        }
+        let Some(fp) = load(place - WORD) else { break };
+        let found = (word, place + WORD, fp);
+        let frames = number_of_frames_from(found, MOST_FRAMES_FOLLOWED, &mut load);
+        // Where the stack is deeper than is followed nothing tells two apart, and the lower one stays.
+        if best.is_none_or(|(most, _)| {
+            frames > most || (frames == most && frames < MOST_FRAMES_FOLLOWED)
+        }) {
+            best = Some((frames, found));
+        }
+        followed += 1;
+        if followed == MOST_FOLLOWED {
+            break;
+        }
+    }
+    best.map(|(_, found)| found)
+}
+
+/// Code compiled with `-mbranch-protection=pac-ret` (an addon, a system
+/// library, Bun itself) saves its return addresses signed, in the bits above
+/// the address. An address without a signature stays as it is.
+#[inline(always)]
+pub fn strip_return_address_signature(#[allow(unused_mut)] mut address: usize) -> usize {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: XPACLRI works on x30 alone, and is a no-op on a processor
+    // without pointer authentication.
+    unsafe {
+        core::arch::asm!(
+            "hint #7", // XPACLRI
+            inout("x30") address,
+            options(pure, nomem, nostack, preserves_flags),
+        )
+    };
+    address
+}
+
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
@@ -366,6 +490,22 @@ impl StackIterator {
     }
 
     pub fn next(&mut self) -> Option<usize> {
+        #[cfg(target_arch = "x86_64")]
+        if HOLDS_COMPILED_CODE.load(core::sync::atomic::Ordering::Relaxed)
+            && let (true, Some((_, sp))) = (self.is_at_fault, self.returned_to)
+        {
+            return self.caller().or_else(|| {
+                let ma = &mut self.ma;
+                let (pc, sp, fp) = lowest_compiled_frame(sp, |address| ma.load_usize(address))?;
+                self.fp = fp;
+                self.returned_to = Some((pc, sp));
+                Some(pc)
+            });
+        }
+        self.caller()
+    }
+
+    fn caller(&mut self) -> Option<usize> {
         if let Some((pc, sp)) = self.returned_to {
             let is_at_fault = core::mem::take(&mut self.is_at_fault);
             if let Some(frame) = compiled_frame_at_return_address(pc) {
@@ -399,6 +539,14 @@ impl StackIterator {
         if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
             return None;
         }
+        // A frame record lies in its frame, so not below the stack pointer. Code that keeps none has anything in the register: glibc's
+        // raise() has the id of the thread there, which every eighth time is aligned, and is an address in the image of a
+        // compiled executable, which is loaded low.
+        if HOLDS_COMPILED_CODE.load(core::sync::atomic::Ordering::Relaxed)
+            && self.returned_to.is_some_and(|(_, sp)| fp < sp)
+        {
+            return None;
+        }
         let new_fp = self.ma.load_usize(fp)?;
 
         // The stack grows down, so parent frames must be at addresses strictly
@@ -407,7 +555,8 @@ impl StackIterator {
         if new_fp != 0 && new_fp <= self.fp {
             return None;
         }
-        let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
+        let new_pc =
+            strip_return_address_signature(self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?);
 
         self.returned_to = Some((
             new_pc,
@@ -419,7 +568,15 @@ impl StackIterator {
     }
 }
 
-pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
+/// The return address in the frame record at `fp`, as `StackIterator` gives it.
+///
+/// # Safety
+/// `fp` is the address of a frame record.
+pub unsafe fn return_address_of_frame(fp: usize) -> usize {
+    // SAFETY: the caller's.
+    let saved = unsafe { *((fp + StackIterator::PC_OFFSET) as *const usize) };
+    strip_return_address_signature(saved)
+}
 
 /// Capture the current thread's call stack.
 ///
@@ -435,7 +592,7 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     // Miri can neither execute `frame_address`'s inline asm nor follow the
     // frame-pointer chain it returns. An empty trace keeps the debug-only
     // `StoredTrace` captures on the refcount paths interpretable. `cfg!` rather
-    // than `#[cfg]` so the walk below stays compiled (and `PC_OFFSET` live).
+    // than `#[cfg]` so the walk below stays compiled.
     if cfg!(miri) {
         return 0;
     }

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""regular-expression-literals.py <seed>: random programs about regular expression LITERALS (their code is made at build time): characters, classes, ranges, negations, the dot, anchors, word boundaries, groups (capturing, not,
-named), alternatives of like and unlike lengths, greedy and lazy counts, back references, lookahead and lookbehind, flags g i m s u y in combinations; bodies made for the search loops (several alternatives of fixed text, candidates all among digits and
-punctuation or all among letters, first characters that dispatch); subjects made from the pattern's own characters: empty, short, long, 16-bit, with characters that are equal to a candidate modulo 128 or 256, matches at the very start and the very end.
-Each pattern: exec with every capture and index, test, search, match, matchAll, replace, split, lastIndex walks. JUDGE AGAINST THE INTERPRETER (plain Bun with BUN_JSC_useRegExpJIT=0) OR AN OLDER Bun: plain Bun of the same build has the same code generator."""
+"""regular-expression-literals.py <seed>: Random programs about regular expression literals, whose matchers are compiled
+at build time: characters, classes, ranges, negations, dot, anchors, word boundaries, groups, alternations,
+quantifiers, backreferences, flags.
+"""
 import random, sys, os
 
 HEAD = r'''const lines = [];

@@ -1,0 +1,22 @@
+# `if (this.cells[i]) continue;` where the element is a number or undefined and lies in a box. A box that holds a number was asked for its truth as it is: an int32 is compared with zero.
+# A box that may also hold undefined or null was first taken apart into a double with a marker (a test of the tag, a conversion of the int32, a marker for nothing) and that was asked: some ten instructions for two.
+# The emitter of the truth of a box serves every type: an int32, a double, and what is left is false. So the box is asked.
+# -- source: the-truth-of-a-box-that-holds-a-number-or-nothing-is-asked-of-the-box.ts
+# declare function say(x: number): void;
+# function truth(x: number | undefined | null): number { return x ? 1 : 2; }
+# const all = [1, 0, -0, NaN, 0.5, undefined, null, -1, 4294967296];
+# for (let k = 0; k < 9; k++) say(truth(all[k]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: = Unbox
+# CHECK: = ToBoolean v0 form=Numbers
+# RUN(SHELL): run-in-shell globalThis.say = (x) => print(String(x));
+# SHELL: 1
+# SHELL-NEXT: 2
+# SHELL-NEXT: 2
+# SHELL-NEXT: 2
+# SHELL-NEXT: 1
+# SHELL-NEXT: 2
+# SHELL-NEXT: 2
+# SHELL-NEXT: 1
+# SHELL-NEXT: 1

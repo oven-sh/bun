@@ -4,7 +4,6 @@ use bun_sema::fold::{FoldError, FoldErrorKind};
 use bun_sema::hir::{ExprId, ExprKind, File, ParenId, PatId};
 use bun_sema::module_format::CommonJsEvidence;
 use bun_sema::node::NodeData;
-use bun_sema::program::FileId;
 use bun_sema::resolve::CodeFailure;
 use bun_sema_driver::{EntryPointFailure, Incomplete, LoadFailure};
 
@@ -14,10 +13,13 @@ use super::{
     checker_error, describe, kinds_and_codes, kinds_and_texts, take_diagnostics, text, with_effect,
     written,
 };
-use crate::compile::testing::{default_settings, with_loaded_build, with_project_view};
+use crate::compile::link_program;
+use crate::compile::testing::{
+    BUNDLED_LIBS, TestProject, default_settings, with_loaded_build, with_project_view,
+};
 use crate::emit::EmitError;
 use crate::link::LinkError;
-use crate::load::{ProgramFile, ProjectId};
+use crate::load::source_provider::WithoutServices;
 use crate::statistics::{LimitId, LimitValues, Stage};
 
 fn find_expr(hir: &File<'_>, is_wanted: impl Fn(&ExprKind) -> bool) -> ExprId {
@@ -32,11 +34,20 @@ fn bind(files: &[(&str, &str)]) -> Log {
     })
 }
 
+fn written_for_failed_build(files: &[(&str, &str)]) -> Log {
+    let project = TestProject::new(files, &default_settings());
+    let mut log = Log::init();
+    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log);
+    let Err(failed) = result else {
+        panic!("the build went through");
+    };
+    assert!(!failed.is_internal_error, "{:?}", describe(&log));
+    log
+}
+
 fn written_link_error(error: LinkError, limits: &LimitValues) -> (bool, Vec<(Kind, String)>) {
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_link_errors(vec![error], limits, &|error| {
-        format!("{error:?}").into_bytes()
-    });
+    diagnostics.add_link_errors(vec![error], limits);
     let is_internal = diagnostics.has_internal_errors();
     (is_internal, kinds_and_texts(&written(diagnostics)))
 }
@@ -126,8 +137,8 @@ fn warning_effect_does_not_fail_build() {
 
 #[test]
 #[cfg(debug_assertions)]
-#[should_panic(expected = "report_package_errors groups these by package")]
-fn withdrawn_trust_is_grouped_before_sink() {
+#[should_panic(expected = "the driver decides the roles by these and returns none")]
+fn withdrawn_trust_does_not_reach_sink() {
     let error = checker_error("/project/a.ts", (3, 7), 2322, "wrong type");
     let reported = vec![with_effect(error, Effect::WithdrawsTrust)];
     Diagnostics::new().add_build_diagnostics(Stage::Check, reported);
@@ -259,8 +270,7 @@ fn resolved_imports_report_nothing() {
 }
 
 #[test]
-#[should_panic(expected = "the build failed in stage \"Load\":\n/project/main.js:1:1: TS100106: ")]
-fn fold_errors_stop_load() {
+fn fold_errors_stop_build() {
     let files = [
         (
             "main.js",
@@ -268,14 +278,15 @@ fn fold_errors_stop_load() {
         ),
         ("b.js", "export const b = 1;\n"),
     ];
-    with_project_view(&files, |_| {});
+    assert_eq!(
+        describe(&written_for_failed_build(&files)),
+        ["/project/main.js:1:1 Err TS100106: \
+             Cannot use import statement with CommonJS-only features"]
+    );
 }
 
 #[test]
-#[should_panic(expected = "the build failed in stage \"Load\":\n\
-                           /project/main.ts:1:1: TS100113: cannot use macro in export statement\n\
-                           /project/main.ts:2:1: TS100114: export from cannot be used with")]
-fn macro_exports_stop_load() {
+fn macro_exports_stop_build() {
     let files = [
         (
             "main.ts",
@@ -284,7 +295,14 @@ fn macro_exports_stop_load() {
         ),
         ("b.ts", "export const b = 1;\n"),
     ];
-    with_project_view(&files, |_| {});
+    assert_eq!(
+        describe(&written_for_failed_build(&files)),
+        [
+            "/project/main.ts:1:1 Err TS100113: cannot use macro in export statement",
+            "/project/main.ts:2:1 Err TS100114: \
+             export from cannot be used with \"type\": \"macro\"",
+        ]
+    );
 }
 
 #[test]
@@ -295,8 +313,9 @@ fn incomplete_files_stop_build() {
             path: b"/project/a.ts".to_vec(),
             is_nested_too_deeply,
             deepest_nesting,
+            nested_too_deeply_at: None,
         };
-        diagnostics.add_incomplete_files(&[incomplete], 2000);
+        diagnostics.add_incomplete_files(&[incomplete]);
         let is_internal = diagnostics.has_internal_errors();
         (is_internal, kinds_and_texts(&written(diagnostics)))
     };
@@ -320,7 +339,7 @@ fn incomplete_files_stop_build() {
 }
 
 #[test]
-fn only_link_limits_are_user_errors() {
+fn exceeded_link_limit_is_user_error() {
     let limits = LimitValues::for_host();
     let limit = LimitId::MaxProgramIds;
     let limit_message = format!(
@@ -333,20 +352,6 @@ fn only_link_limits_are_user_errors() {
     assert_eq!(
         written_link_error(LinkError::LimitExceeded { limit, count }, &limits),
         (false, vec![(Kind::Err, limit_message)])
-    );
-    let missing_unit = || LinkError::MissingUnit {
-        file: ProgramFile {
-            project: ProjectId::Application,
-            file: FileId(3),
-        },
-    };
-    let missing = format!(
-        "internal compiler error (LinkAndEmit): {:?}",
-        missing_unit()
-    );
-    assert_eq!(
-        written_link_error(missing_unit(), &limits),
-        (true, vec![(Kind::Err, missing)])
     );
 }
 

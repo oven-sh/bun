@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""infinite-types.py <seed>: TYPES THAT NEED NOT END: a generic type that holds a LARGER instantiation of itself: every level is a new type, so a walk that remembers where it has been by type never comes back. Four lines of it once overflowed the stack of the front end.
-CROSSED: what the growth goes through (itself, an array, a tuple, an object type, an intersection, an intersection in which the parameter stands twice (two kinds), Map, Set, a function's result | parameter, Partial, Readonly, an index signature, an object of a generic class, a union with null (which ends: the control), two parameters that change places, two interfaces that take turns, an alias, a class in place of the interface, a conditional type) x how the value gets there (a literal, a result, JSON.parse with a cast | through a generic function, a spread, Object.assign, a cast from any, a field of a class, a parameter, built by stores, back from untyped code) x what is done with it (the leaf read at every level, stored over, put into an array | Map, compared, handed to untyped code, walked by a generic function that calls itself at the larger type, copied, destructured) x how deep (1 .. 11: the limits 4, 8 and 9 lie inside), also as a type WRITTEN OUT with 2 .. 10 applications.
-ONLY=<family number> keeps one family. As plain Bun or a throw; a front end that dies is the find."""
+"""infinite-types.py <seed>: Types that never end: a generic type that contains a larger instantiation of itself, so
+every level is a new type and a traversal that detects cycles by type never terminates on its own.
+"""
 import os, random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

@@ -1,6 +1,5 @@
 use bun_collections::VecExt;
 use core::ffi::c_char;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
@@ -35,7 +34,7 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         ),
         ..Default::default()
     }
@@ -178,8 +177,7 @@ impl UpgradeCommand {
 
     pub(crate) fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
-        refresher: Option<&mut Progress::Progress>,
-        mut progress: Option<&mut Progress::Node>,
+        mut refresher: Option<&mut Progress::Progress>,
         use_profile: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
@@ -256,8 +254,7 @@ impl UpgradeCommand {
             crate::cli::cli_arena().alloc(MutableString::init(2048)?);
         let headers_buf: &'static [u8] = crate::cli::cli_dupe(&headers_buf);
 
-        // ensure very stable memory address
-        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             header_entries,
@@ -266,14 +263,11 @@ impl UpgradeCommand {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
-        ));
+        );
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
-            // `progress_node` stores an untracked NonNull borrow of the caller's
-            // `progress`; sound because `send_sync` below completes before this
-            // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
+            async_http.client.progress = refresher.as_deref_mut();
         }
         let response = async_http.send_sync(metadata_body)?;
 
@@ -297,11 +291,12 @@ impl UpgradeCommand {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
-                    progress.expect("infallible: progress active").end();
-                    refresher.expect("infallible: progress active").refresh();
+                    let refresher = refresher.expect("infallible: progress active");
+                    refresher.end();
+                    refresher.refresh();
 
                     if log.errors > 0 {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = log.print(Output::error_writer());
                         Global::exit(1);
                     } else {
                         bun_core::pretty_errorln!(
@@ -318,10 +313,11 @@ impl UpgradeCommand {
 
         if log.errors > 0 {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.end();
+                refresher.refresh();
 
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print(Output::error_writer());
                 Global::exit(1);
             }
 
@@ -337,8 +333,9 @@ impl UpgradeCommand {
 
         if !expr.is_object() {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.end();
+                refresher.refresh();
 
                 bun_core::pretty_errorln!(
                     "JSON error - expected an object but received {:?}",
@@ -358,8 +355,9 @@ impl UpgradeCommand {
 
         if version.tag.is_empty() {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.end();
+                refresher.refresh();
 
                 bun_core::pretty_errorln!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
@@ -452,8 +450,9 @@ impl UpgradeCommand {
         }
 
         if !SILENT {
-            progress.expect("infallible: progress active").end();
-            refresher.expect("infallible: progress active").refresh();
+            let refresher = refresher.expect("infallible: progress active");
+            refresher.end();
+            refresher.refresh();
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
                     "Bun v{} is out, but not for this platform ({}) yet.",
@@ -556,33 +555,20 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
-            // `Progress::start` returns `&mut Node` borrowing `refresher`;
-            // leak the Progress and use raw pointers so we can pass both
-            // `&mut refresher` and `&mut progress` to `get_latest_version`.
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Fetching version tags", 0) };
+            let refresher = &mut Progress::Progress::default();
+            refresher.start(b"Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
                 &mut env_loader,
-                // SAFETY: refresher/progress point into the same leaked allocation;
-                // `get_latest_version` only touches them on the !SILENT error
-                // path (no overlapping live borrows).
-                Some(unsafe { &mut *refresher }),
-                // SAFETY: progress points into the same leaked allocation (see above).
-                Some(unsafe { &mut *progress }),
+                Some(&mut *refresher),
                 use_profile,
             )?
             else {
                 return Ok(());
             };
 
-            // SAFETY: see above.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            refresher.end();
+            refresher.refresh();
 
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {
@@ -636,20 +622,15 @@ impl UpgradeCommand {
         let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Downloading", version.size as usize) };
-            // SAFETY: see above.
-            unsafe { (*progress).unit = Progress::Unit::Bytes };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            let refresher = &mut Progress::Progress::default();
+            refresher.start(b"Downloading", version.size as usize);
+            refresher.root().unit.set(Progress::Unit::Bytes);
+            refresher.refresh();
             // Store in the process-lifetime CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
 
-            let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+            let mut async_http = HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
                 zip_url,
                 headers::EntryList::default(),
@@ -658,11 +639,8 @@ impl UpgradeCommand {
                 http_proxy,
                 HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
-            ));
-            // `progress` is intentionally leaked (process-lifetime), so the
-            // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node =
-                Some(NonNull::new(progress).expect("leaked Box is non-null"));
+            );
+            async_http.client.progress = Some(refresher);
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;
@@ -685,16 +663,11 @@ impl UpgradeCommand {
                 200 => {}
                 _ => return Err(crate::Error::HTTPError),
             }
-            // Release the immutable borrow of `env_loader` (via `http_proxy`)
-            // before the map mutations below.
-            drop(async_http);
 
             let bytes = zip_file_buffer.slice();
 
-            // SAFETY: refresher/progress are leaked allocations.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            refresher.end();
+            refresher.refresh();
 
             if bytes.is_empty() {
                 bun_core::pretty_errorln!(
@@ -807,7 +780,7 @@ impl UpgradeCommand {
                     );
                     Global::exit(1);
                 }
-                let _ = zip_file.close();
+                drop(zip_file);
             }
 
             {
@@ -1083,51 +1056,14 @@ impl UpgradeCommand {
             if destination_executable.len() >= bun_paths::MAX_PATH_BYTES {
                 return Err(crate::Error::PathTooLong);
             }
-            // Reshaped for borrowck — use stack-local buffer.
-            // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
-            // route every read/write through it. Indexing the `PathBuffer`
-            // directly (via Deref/DerefMut) would materialize a fresh `&[u8]`
-            // or `&mut [u8]` over the *whole* array, retagging it and
-            // invalidating the raw-pointer-derived `&ZStr` views below. The
-            // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = bun_paths::path_buffer_pool::get();
-            let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
-            // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
-            // came from `self_exe_path()` which is bounded by that.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    destination_executable.as_ptr(),
-                    buf_ptr,
-                    destination_executable.len(),
-                );
-                *buf_ptr.add(destination_executable.len()) = 0;
-            }
 
-            let target_filename_ = bun_paths::basename(destination_executable);
-            // SAFETY: buf[destination_executable.len()] == 0 written above; the
-            // view is derived from `buf_ptr` so later disjoint writes through
-            // `buf_ptr` (at `target_dir_len`, outside this range) don't pop it.
-            let target_filename = unsafe {
-                ZStr::from_raw(
-                    buf_ptr.add(destination_executable.len() - target_filename_.len()),
-                    target_filename_.len(),
-                )
-            };
-            let target_dir_ = bun_core::dirname(destination_executable)
+            // NUL is no separator, so the base name of the path with its NUL keeps the NUL.
+            let target_filename = ZStr::from_slice_with_nul(bun_paths::basename(
+                destination_executable_z.as_bytes_with_nul(),
+            ));
+            let target_dirname = bun_core::dirname(destination_executable)
                 .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
-            // safe because the slash will no longer be in use
-            let target_dir_len = target_dir_.len();
-            // SAFETY: in-bounds; write is at the separator byte between dirname
-            // and basename, disjoint from both `&ZStr` views' ranges.
-            unsafe { *buf_ptr.add(target_dir_len) = 0 };
-            // SAFETY: buf[target_dir_len]==0 (just written). Derived from
-            // `buf_ptr`; the Windows block below toggles the byte at
-            // `target_dir_len` (outside `[0, target_dir_len)`) through the same
-            // raw pointer, so this view's provenance stays valid across those
-            // writes. Each mutation re-establishes the NUL before
-            // `target_dirname` is read again.
-            let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
-            let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
+            let target_dir_it = match sys::Dir::open(target_dirname) {
                 Ok(d) => d,
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
@@ -1182,11 +1118,8 @@ impl UpgradeCommand {
                     let target_hash = hash(
                         match target_dir
                             .open_file(target_filename.as_bytes(), sys::O::RDONLY, 0)
-                            .and_then(|f| {
-                                let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable
-                                n
-                            }) {
+                            .and_then(|f| f.read_all(&mut input_buf))
+                        {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1200,11 +1133,10 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(|f| {
-                            let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable
-                            n
-                        }) {
+                        match save_dir
+                            .open_file(exe, sys::O::RDONLY, 0)
+                            .and_then(|f| f.read_all(&mut input_buf))
+                        {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1238,15 +1170,11 @@ impl UpgradeCommand {
                     // On Windows, we cannot replace the running executable directly.
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
-                    // SAFETY: see `buf_ptr` note above — write through the shared
-                    // raw provenance root, not via DerefMut (which would retag
-                    // the whole buffer and invalidate `target_filename`/`target_dirname`).
-                    unsafe { *buf_ptr.add(target_dir_len) = b'\\' };
                     let mut buf = Vec::new();
                     write!(
                         &mut buf,
                         "{}\\{}.outdated",
-                        bstr::BStr::new(target_dirname.as_bytes()),
+                        bstr::BStr::new(target_dirname),
                         bstr::BStr::new(target_filename.as_bytes())
                     )
                     .expect("oom");
@@ -1263,8 +1191,6 @@ impl UpgradeCommand {
                         );
                         Global::exit(1);
                     }
-                    // SAFETY: restore NUL via `buf_ptr` (see aliasing note above).
-                    unsafe { *buf_ptr.add(target_dir_len) = 0 };
                 }
 
                 if let Err(err) =
@@ -1315,22 +1241,19 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // `spawn_sync` takes the C-style `[*:null]?[*:0]const u8` envp
-                // directly, so build it from the DotEnv map. Output is buffered and
-                // silently dropped along with any spawn error.
-                if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
-                    let _ = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_ptr().cast::<*const c_char>()),
-                        cwd: Box::<[u8]>::from(target_dirname.as_bytes()),
-                        stdout: spawn_sync::SyncStdio::Buffer,
-                        stderr: spawn_sync::SyncStdio::Buffer,
-                        stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                }
+                let envp = env_loader.map.to_envp();
+                // Output is buffered and silently dropped along with any spawn error.
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: build_argv(&completions_argv),
+                    envp: Some(envp.as_list()),
+                    cwd: Box::<[u8]>::from(target_dirname),
+                    stdout: spawn_sync::SyncStdio::Buffer,
+                    stderr: spawn_sync::SyncStdio::Buffer,
+                    stdin: spawn_sync::SyncStdio::Ignore,
+                    #[cfg(windows)]
+                    windows: spawn_windows_options(),
+                    ..Default::default()
+                });
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
@@ -1388,7 +1311,7 @@ pub(crate) mod upgrade_js_bindings {
     // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
     // effectively single-threaded.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::File>> = bun_core::RacyCell::new(None);
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
@@ -1455,7 +1378,7 @@ pub(crate) mod upgrade_js_bindings {
                     // System-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
                     unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
+                        TEMPDIR_FD.write(Some(sys::File::from_fd(sys::Fd::from_system(fd))));
                     }
                 }
                 _ => {}
@@ -1466,13 +1389,8 @@ pub(crate) mod upgrade_js_bindings {
     pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
-            use bun_sys::FdExt as _;
             // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
-            // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
-                fd.close();
-            }
+            unsafe { TEMPDIR_FD.write(None) };
         }
     }
 }

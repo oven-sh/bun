@@ -9,7 +9,7 @@ pub struct NoCallbackInPromise {
     timeouts_err: bool,
 }
 
-const NO_CALLBACK_IN_PROMISE: Message = Message::new("", "Avoid calling back inside of a promise");
+const NO_CALLBACK_IN_PROMISE: &Message = &Message::new("", "Avoid calling back inside of a promise");
 
 const TIMEOUT_WHITELIST: [&str; 4] = ["setImmediate", "setTimeout", "requestAnimationFrame", "nextTick"];
 

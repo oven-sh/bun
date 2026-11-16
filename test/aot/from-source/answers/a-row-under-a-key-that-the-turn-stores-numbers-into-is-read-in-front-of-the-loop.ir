@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse('{"rows":[1,2,3,4,5,6,7,8,9,10,11,12]}');
+# function row(data, w) { let s = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; data[w][i] = data[w][i] + 2; } return s; }
+# print(row([held][zero], ["rows"][zero]), row([held][zero], ["rows"][zero]), held.rows.join());
+# -- end of source
+# `s = s + data[w][i]; data[w][i] = data[w][i] + 2`, holder and key parameters of which nobody knows anything. A loop that stores by key once asked for no row: every copy by member read generically behind the store.
+# A store into an element of the row itself lays nothing under a name of the holder. Where what is stored is a number as soon as the row holds numbers, the row is asked for; the look for lists takes `data[w]` for the row
+# that was found in front, as it takes `const r = data[w]`: it is tested, its storage is converted and it is stored into by the typed form. The conversion writes shape words, so the row is read once more behind it, by the
+# operation that runs no code, and held against the row in front: in front of the typed copy, for no turn writes what that read reads. 70,025 > 3,057 instructions three hundred turns (by hand 2,690, plain Bun 3,980).
+# RUN(EVENT): compile KeyedRowLookupsHoisted KeyedRowLookupsRevalidated mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# EVENT: statistic KeyedRowLookupsRevalidated 1
+# RUN(CHECKED): compile KeyedRowLookupsHoisted KeyedRowLookupsRevalidated mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic KeyedRowLookupsHoisted 1
+# CHECKED: statistic KeyedRowLookupsRevalidated 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 78 102 5,6,7,8,9,10,11,12,13,14,15,16
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 78 102 5,6,7,8,9,10,11,12,13,14,15,16
+# HELD-NEXT: exited with 0

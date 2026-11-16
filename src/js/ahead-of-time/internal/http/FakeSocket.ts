@@ -8,6 +8,11 @@ const { kAutoDestroyed } = require("internal/shared");
 const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
 const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
 const Duplex = require("internal/streams/duplex");
+// The other text takes what lies under `Duplex` on node:stream when it is loaded. Here the class above the socket is written into the compiled program.
+if (require("internal/stream").Duplex !== Duplex)
+  throw new TypeError(
+    "stream.Duplex was replaced before node:http was loaded. In a compiled executable the classes of node:http extend the one that Bun made: add to stream.Duplex.prototype instead, or load node:http first.",
+  );
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {

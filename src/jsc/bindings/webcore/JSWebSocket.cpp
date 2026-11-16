@@ -68,6 +68,7 @@
 #include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
+#include "PinnedArrayBuffer.h"
 #include "ErrorCode.h"
 #include "blob.h"
 #include "ModuleGraph.h"
@@ -184,7 +185,7 @@ static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocket
     if (rejectUnauthorizedValue.isBoolean())
         result.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
 
-    result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
+    result.sslConfig.reset(Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)));
     RETURN_IF_EXCEPTION(throwScope, );
 
     // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
@@ -908,11 +909,12 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
     return false;
 }
 
-void JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsWebSocket = static_cast<JSWebSocket*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsWebSocket->wrapped(), jsWebSocket);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)
@@ -1122,12 +1124,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketFeedForWs, (JSGlobalObject * lexicalGlobalOb
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Expected a Uint8Array"_s);
 
     // Pin the buffer. Handlers run while the parser is still reading the chunk, so they must not be able to detach it.
-    RefPtr buffer = view->unsharedBuffer();
+    Bun::PinnedArrayBuffer buffer { view->unsharedBuffer() };
     if (!buffer) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    buffer->pin();
     socket->wrapped().feed(view->span());
-    buffer->unpin();
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -1208,9 +1208,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketRemoteAddressForWs, (JSGlobalObject * lexica
         return JSValue::encode(jsUndefined());
 
     auto* result = constructEmptyObject(lexicalGlobalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "address"_s), jsString(vm, remoteAddress->address));
-    result->putDirect(vm, Identifier::fromString(vm, "family"_s), jsNontrivialString(vm, remoteAddress->isIPv6 ? "IPv6"_s : "IPv4"_s));
-    result->putDirect(vm, Identifier::fromString(vm, "port"_s), jsNumber(remoteAddress->port));
+    Bun::putDirectNamed(vm, result, "address"_s, jsString(vm, remoteAddress->address));
+    Bun::putDirectNamed(vm, result, "family"_s, jsNontrivialString(vm, remoteAddress->isIPv6 ? "IPv6"_s : "IPv4"_s));
+    Bun::putDirectNamed(vm, result, "port"_s, jsNumber(remoteAddress->port));
     return JSValue::encode(result);
 }
 
@@ -1218,14 +1218,14 @@ JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* binding = constructEmptyObject(globalObject);
-    binding->putDirect(vm, Identifier::fromString(vm, "createWebSocket"_s), JSFunction::create(vm, globalObject, 4, "createWebSocket"_s, jsCreateWebSocketForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "createWebSocketOverStream"_s), JSFunction::create(vm, globalObject, 3, "createWebSocketOverStream"_s, jsCreateWebSocketOverStreamForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "sendFrame"_s), JSFunction::create(vm, globalObject, 5, "sendFrame"_s, jsWebSocketSendFrameForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "setRef"_s), JSFunction::create(vm, globalObject, 2, "setRef"_s, jsWebSocketSetRefForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "detach"_s), JSFunction::create(vm, globalObject, 1, "detach"_s, jsWebSocketDetachForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "remoteAddress"_s), JSFunction::create(vm, globalObject, 1, "remoteAddress"_s, jsWebSocketRemoteAddressForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "feed"_s), JSFunction::create(vm, globalObject, 2, "feed"_s, jsWebSocketFeedForWs, ImplementationVisibility::Public));
-    binding->putDirect(vm, Identifier::fromString(vm, "streamClosed"_s), JSFunction::create(vm, globalObject, 1, "streamClosed"_s, jsWebSocketStreamClosedForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "createWebSocket"_s, JSFunction::create(vm, globalObject, 4, "createWebSocket"_s, jsCreateWebSocketForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "createWebSocketOverStream"_s, JSFunction::create(vm, globalObject, 3, "createWebSocketOverStream"_s, jsCreateWebSocketOverStreamForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "sendFrame"_s, JSFunction::create(vm, globalObject, 5, "sendFrame"_s, jsWebSocketSendFrameForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "setRef"_s, JSFunction::create(vm, globalObject, 2, "setRef"_s, jsWebSocketSetRefForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "detach"_s, JSFunction::create(vm, globalObject, 1, "detach"_s, jsWebSocketDetachForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "remoteAddress"_s, JSFunction::create(vm, globalObject, 1, "remoteAddress"_s, jsWebSocketRemoteAddressForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "feed"_s, JSFunction::create(vm, globalObject, 2, "feed"_s, jsWebSocketFeedForWs, ImplementationVisibility::Public));
+    Bun::putDirectNamed(vm, binding, "streamClosed"_s, JSFunction::create(vm, globalObject, 1, "streamClosed"_s, jsWebSocketStreamClosedForWs, ImplementationVisibility::Public));
     return binding;
 }
 

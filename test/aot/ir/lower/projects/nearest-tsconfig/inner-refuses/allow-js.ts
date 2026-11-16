@@ -1,5 +1,5 @@
 // RUN: lower
-// DIAGNOSTIC: TS2305 inner/lib.ts:1
+// STATISTIC: SourceFilesDemoted = 2
 
 // FILE: main.ts
 import "./inner/lib.ts";

@@ -1,7 +1,6 @@
 //! This namespace is used to test binding generator
 
 use core::cell::{Cell, RefCell};
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
@@ -16,7 +15,7 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
     js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
+use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult, WrapperGuard};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -128,8 +127,7 @@ pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
         TestAnything::Integer(integer) => format!("integer {integer}").into_bytes(),
         TestAnything::Text(text) => format!("text {text}").into_bytes(),
         TestAnything::Bytes(buffer) => {
-            // SAFETY: `buffer` holds a ref on it, and nothing else borrows it here.
-            let buffer: crate::ArrayBuffer = unsafe { (*buffer.get()).as_array_buffer() };
+            let buffer: crate::ArrayBuffer = buffer.as_array_buffer();
             format!("bytes {}", buffer.byte_slice().len()).into_bytes()
         }
         TestAnything::Blob(_) => b"blob".to_vec(),
@@ -641,7 +639,7 @@ impl TestRefCounted {
     }
 
     pub(crate) fn value_from_js(object: JsLocal<'_>) -> Option<i32> {
-        Some(object.to_js().as_class_ref::<Self>()?.value.get())
+        Some(object.as_class_ref::<Self>()?.value.get())
     }
 }
 
@@ -746,6 +744,82 @@ impl TestBoundThis {
     }
 }
 
+pub(crate) struct TestProtoCaller {
+    calls: Cell<u32>,
+}
+
+impl TestProtoCaller {
+    pub(crate) fn constructor() -> Self {
+        Self {
+            calls: Cell::new(0),
+        }
+    }
+
+    pub(crate) fn describe_call<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        callee: JsLocal<'a>,
+        arguments: &'a [JsLocal<'a>],
+        function: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
+        self.calls.set(self.calls.get() + 1);
+        let returned = function(this_value, cx, arguments)?;
+        JSValue::create_array_from_slice(
+            cx.global(),
+            &[
+                this_value.to_js(),
+                callee.to_js(),
+                JSValue::from(arguments.len() as u32),
+                returned,
+            ],
+        )
+    }
+
+    pub(crate) fn get_calls(&self) -> u32 {
+        self.calls.get()
+    }
+
+    pub(crate) fn first(&self, _: &mut JsScope<'_>, first: JsLocal<'_>) -> JsResult<JSValue> {
+        Ok(first.to_js())
+    }
+
+    pub(crate) fn rest(
+        &self,
+        _: &mut JsScope<'_>,
+        _first: JsLocal<'_>,
+        rest: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::from(rest.len() as u32))
+    }
+
+    pub(crate) fn fail(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Err(cx.global().throw(format_args!("fail() failed")))
+    }
+
+    pub(crate) fn second(_first: i32, second: i32) -> i32 {
+        second
+    }
+}
+
+pub(crate) struct TestCallable {
+    value: i32,
+}
+
+impl TestCallable {
+    pub(crate) fn constructor(value: i32) -> Self {
+        Self { value }
+    }
+
+    pub(crate) fn call_instance(&self, other: i32) -> i32 {
+        self.value.wrapping_add(other)
+    }
+
+    pub(crate) fn get_value(&self) -> i32 {
+        self.value
+    }
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct TestNonFinal {
     ref_count: Cell<u32>,
@@ -784,12 +858,12 @@ impl JsClass for TestNonFinal {
         js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
     }
 
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_TestNonFinal::from_js(value).map(NonNull::as_ptr)
+    fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        js_TestNonFinal::from_js(value)
     }
 
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_TestNonFinal::from_js_direct(value).map(NonNull::as_ptr)
+    fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
+        js_TestNonFinal::from_js_direct(value)
     }
 }
 
@@ -852,9 +926,9 @@ pub(crate) fn make_square_wrapper<'a>(cx: &mut JsScope<'a>, side: u32) -> JSValu
 pub(crate) fn shape_from_js(shape: JsLocal<'_>) -> [bool; 3] {
     let shape = shape.to_js();
     [
-        js_TestShape::from_js(shape).is_some(),
-        js_TestSquare::from_js(shape).is_some(),
-        shape.is_cell() && js_TestShape::from_js_direct(shape).is_some(),
+        js_TestShape::from_js(&shape).is_some(),
+        js_TestSquare::from_js(&shape).is_some(),
+        js_TestShape::from_js_direct(&shape).is_some(),
     ]
 }
 
@@ -863,14 +937,12 @@ pub(crate) fn dropped_shapes() -> usize {
 }
 
 pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
-    Some(token.to_js().as_class_ref::<TestToken>()?.id)
+    Some(token.as_class_ref::<TestToken>()?.id)
 }
 
 pub(crate) fn is_note_from_js_direct(note: JsLocal<'_>) -> bool {
     let note = note.to_js();
-    note.is_cell()
-        && (note.as_direct::<TestNote>().is_some()
-            || note.as_direct::<TestRefCountedNote>().is_some())
+    note.is_direct::<TestNote>() || note.is_direct::<TestRefCountedNote>()
 }
 
 pub(crate) fn error_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {
@@ -932,15 +1004,14 @@ pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
     Bun__NativePromiseContext__create(
         cx.global(),
-        PROMISE_CONTEXT.as_ptr().cast(),
+        TestRefCounted::constructor(42).cast(),
         0,
         JSValue::ZERO,
     )
 }
 
-pub(crate) fn read_native_promise_context(context: Option<NonNull<AtomicI32>>) -> Option<i32> {
-    // SAFETY: `make_native_promise_context` made the cell of a static.
-    context.map(|context| unsafe { context.as_ref() }.load(Ordering::Relaxed))
+pub(crate) fn read_native_promise_context(context: Option<RefPtr<TestRefCounted>>) -> Option<i32> {
+    context.map(|context| context.get_value())
 }
 
 pub(crate) fn primes() -> [u32; 3] {

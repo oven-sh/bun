@@ -1,10 +1,11 @@
-// The mutation source: takes a program that exists and does to it what a proof about it may have overlooked. A statement is
-// inserted that changes an object, array, class or function in scope (another type in a field, a getter, a deleted key, another
-// prototype, a frozen object, a hole, a patched built-in, `this` leaking from a constructor, a throw, a re-entrant call ..), or an
-// expression is rewritten to mean the same by another route (`f(a)` as `Reflect.apply(f, undefined, [a])`, `o.k` as `o["k"]`).
+// The mutation source: takes an existing program and does something to it that a compiler proof may have overlooked. It
+// inserts a statement that changes an object, array, class or function in scope (a value of another type in a field, a
+// getter, a deleted key, another prototype, a frozen object, a hole, a patched built-in, `this` leaking from a
+// constructor, a throw, a re-entrant call ..), or rewrites an expression into an equivalent one (`f(a)` as
+// `Reflect.apply(f, undefined, [a])`, `o.k` as `o["k"]`).
 //
-// TypeScript is mutated in two forms: erased to JavaScript first, or as it is, with everything inserted going through `as any`.
-// A mutant that does not parse is dropped here; one that does not type-check is dropped by the build.
+// TypeScript is mutated in two forms: with its types erased first, or as it is, with all inserted code going through
+// `as any`. A mutant that does not parse is dropped here; one that does not type-check is dropped by the build.
 import { Random } from "./random";
 import { isKeyword, model, type Binding, type Gap, type Model } from "./tokens";
 
@@ -20,7 +21,7 @@ export const values = [
 // prettier-ignore
 const keys = ['"0"', '"1"', '"-0"', '"01"', '"1.5"', '"4294967294"', '"4294967295"', '"length"', '"constructor"', '"__proto__"', '"prototype"', '"then"', '"toJSON"', '"valueOf"', '"toString"', '"name"',
   "Symbol.iterator", "Symbol.toPrimitive", "Symbol.toStringTag", "Symbol.hasInstance", "Symbol.species", "Symbol.isConcatSpreadable", "Symbol.asyncIterator", 'Symbol.for("fuzz")', "0", "1", "-1", "1.5", "2 ** 32"];
-// Functions of built-in objects that a program may replace.
+// Built-in functions that a program may replace.
 // prettier-ignore
 const patchable = ["Math.max", "Math.min", "Math.floor", "Math.abs", "Math.round", "Math.trunc", "Math.imul", "JSON.stringify", "JSON.parse", "Object.keys", "Object.assign", "Object.entries", "Object.values",
   "Object.freeze", "Object.create", "Object.getPrototypeOf", "Object.defineProperty", "Object.is", "Array.isArray", "Array.from", "Array.of", "Number.isInteger", "Number.parseFloat", "Number.isNaN", "String.fromCharCode",
@@ -34,11 +35,12 @@ interface Context {
   typed: boolean;
   program: Model;
   gap: Gap;
-  /** A number that no other inserted text of this mutant uses. */
+  /** A number that no other inserted code of this mutant uses. */
   id: number;
 }
 
-// Written with loops and natives only: the engine bed has no built-in that is itself written in JavaScript (map, forEach ..).
+// Uses only loops and native functions: the engine runner has no built-ins that are written in JavaScript (map, forEach
+// ..).
 const helpers: Record<string, string> = {
   fuzzLeaked: "const fuzzLeaked = [];",
   fuzzCount: "const fuzzCount = {};",
@@ -78,7 +80,8 @@ const helpers: Record<string, string> = {
     }
     const prototype = Object.getPrototypeOf(value);
     const name = prototype === null ? "null" : prototype === Object.prototype ? "" : prototype === Array.prototype ? "array" : typeof prototype.constructor === "function" ? prototype.constructor.name : "?";
-    // Built-in prototypes and namespaces are locked in a compiled program: whether one is extensible differs by design. The prototypes of the program's own classes go without the letter too.
+    // Built-in prototypes and namespaces are locked in a compiled program, so whether one is extensible differs by
+    // design. The prototypes of the program's own classes skip that letter too.
     if (Object.hasOwn(value, "constructor") || Object.hasOwn(value, Symbol.toStringTag)) return name + "{" + text + "}";
     return name + "{" + text + "}" + (Object.isFrozen(value) ? "F" : Object.isSealed(value) ? "S" : Object.isExtensible(value) ? "" : "P");
   } catch (error) {
@@ -92,23 +95,29 @@ const typedHelpers: Record<string, string> = {
   fuzzKeys: helpers.fuzzKeys.replace("(value)", "(value: any): string"),
   fuzzTry: helpers.fuzzTry.replace("(run)", "(run: () => any): any"),
   fuzzSame: helpers.fuzzSame.replace("(value)", "<T>(value: T): T"),
-  fuzzText: helpers.fuzzText.replace("(value, depth = 0)", "(value: any, depth = 0): string").replace("const own =", "const own: any ="),
+  fuzzText: helpers.fuzzText
+    .replace("(value, depth = 0)", "(value: any, depth = 0): string")
+    .replace("const own =", "const own: any ="),
 };
 
 const ofKind = (gap: Gap, ...kinds: Binding["kind"][]) => gap.bindings.filter(binding => kinds.includes(binding.kind));
 
 function pickBinding({ random, gap }: Context, ...kinds: Binding["kind"][]): Binding | undefined {
   const exact = ofKind(gap, ...kinds);
-  // A parameter or a variable with an unknown initializer may hold anything: it stands in now and then.
+  // A parameter, or a variable with an unknown initializer, may hold anything, so it is picked now and then.
   const loose = ofKind(gap, "parameter", "unknown");
   if (exact.length && (!loose.length || random.chance(0.75))) return random.pick(exact);
   return loose.length ? random.pick(loose) : undefined;
 }
 
 const anyOf = (context: Context, name: string) => (context.typed ? `(${name} as any)` : name);
-const value = (context: Context) => (context.typed ? `(${context.random.pick(values)} as any)` : context.random.pick(values));
-const property = ({ random, program }: Context) => (program.properties.length && random.chance(0.85) ? random.pick(program.properties) : random.pick(["x", "y", "value", "length", "name", "next", "size"]));
-// The same key spelled so that only evaluation finds it.
+const value = (context: Context) =>
+  context.typed ? `(${context.random.pick(values)} as any)` : context.random.pick(values);
+const property = ({ random, program }: Context) =>
+  program.properties.length && random.chance(0.85)
+    ? random.pick(program.properties)
+    : random.pick(["x", "y", "value", "length", "name", "next", "size"]);
+// The same key, written so that it is only known at run time.
 function spelled(context: Context, key: string): string {
   const { random } = context;
   const half = key.length >> 1;
@@ -124,7 +133,7 @@ function spelled(context: Context, key: string): string {
 
 type Insertion = (context: Context) => string | undefined;
 
-// Each returns the statements to insert, or undefined when nothing in scope fits.
+// Each returns the statements to insert, or undefined if nothing in scope fits.
 const insertions: Record<string, Insertion> = {
   storeOtherType: c => {
     const o = pickBinding(c, "object", "instance", "array", "function", "class");
@@ -132,25 +141,41 @@ const insertions: Record<string, Insertion> = {
   },
   storeByComputedKey: c => {
     const o = pickBinding(c, "object", "instance", "array", "function");
-    return o && `${anyOf(c, o.name)}[${c.random.chance(0.5) ? spelled(c, property(c)) : c.random.pick(keys)}] = ${value(c)};`;
+    return (
+      o && `${anyOf(c, o.name)}[${c.random.chance(0.5) ? spelled(c, property(c)) : c.random.pick(keys)}] = ${value(c)};`
+    );
   },
   deleteKey: c => {
     const o = pickBinding(c, "object", "instance", "array");
-    return o && (c.random.chance(0.7) ? `delete ${anyOf(c, o.name)}.${property(c)};` : `delete ${anyOf(c, o.name)}[${spelled(c, property(c))}];`);
+    return (
+      o &&
+      (c.random.chance(0.7)
+        ? `delete ${anyOf(c, o.name)}.${property(c)};`
+        : `delete ${anyOf(c, o.name)}[${spelled(c, property(c))}];`)
+    );
   },
-  deleteAndAddAgain: c => {
+  deleteAndReadd: c => {
     const o = pickBinding(c, "object", "instance");
     const k = property(c);
-    return o && `{\n  const kept = ${anyOf(c, o.name)}.${k};\n  delete ${anyOf(c, o.name)}.${k};\n  ${anyOf(c, o.name)}.${k} = kept;\n}`;
+    return (
+      o &&
+      `{\n  const kept = ${anyOf(c, o.name)}.${k};\n  delete ${anyOf(c, o.name)}.${k};\n  ${anyOf(c, o.name)}.${k} = kept;\n}`
+    );
   },
   defineAccessor: c => {
     const o = pickBinding(c, "object", "instance", "array", "function", "class");
     const k = property(c);
-    return o && `Object.defineProperty(${o.name}, ${spelled(c, k)}, { get() { console.log("get ${k}"); return ${value(c)}; }, set(stored) { console.log("set ${k}"); }, configurable: true, enumerable: ${c.random.chance(0.5)} });`;
+    return (
+      o &&
+      `Object.defineProperty(${o.name}, ${spelled(c, k)}, { get() { console.log("get ${k}"); return ${value(c)}; }, set(stored) { console.log("set ${k}"); }, configurable: true, enumerable: ${c.random.chance(0.5)} });`
+    );
   },
   defineData: c => {
     const o = pickBinding(c, "object", "instance", "array", "function", "class");
-    return o && `Object.defineProperty(${o.name}, ${spelled(c, property(c))}, { value: ${value(c)}, writable: ${c.random.chance(0.5)}, enumerable: ${c.random.chance(0.5)}, configurable: ${c.random.chance(0.5)} });`;
+    return (
+      o &&
+      `Object.defineProperty(${o.name}, ${spelled(c, property(c))}, { value: ${value(c)}, writable: ${c.random.chance(0.5)}, enumerable: ${c.random.chance(0.5)}, configurable: ${c.random.chance(0.5)} });`
+    );
   },
   defineOnPrototype: c => {
     const k = property(c);
@@ -179,8 +204,23 @@ const insertions: Record<string, Insertion> = {
     const o = pickBinding(c, "object", "instance", "array", "function");
     if (!o) return;
     const k = property(c);
-    const target = c.random.pick([`{ ${k}: ${value(c)} }`, "null", "[]", "Array.prototype", "Object.create(null)", `{ get ${k}() { return ${value(c)}; }, set ${k}(stored) { console.log("set ${k}"); } }`, `new Proxy({}, { get: (target, key) => (console.log("trap " + String(key)), undefined) })`, "Function.prototype", "Map.prototype"]);
-    return c.random.pick([`Object.setPrototypeOf(${o.name}, ${target});`, `${anyOf(c, o.name)}.__proto__ = ${target};`, `${anyOf(c, o.name)}[${spelled(c, "__proto__")}] = ${target};`, `Reflect.setPrototypeOf(${o.name}, ${target});`]);
+    const target = c.random.pick([
+      `{ ${k}: ${value(c)} }`,
+      "null",
+      "[]",
+      "Array.prototype",
+      "Object.create(null)",
+      `{ get ${k}() { return ${value(c)}; }, set ${k}(stored) { console.log("set ${k}"); } }`,
+      `new Proxy({}, { get: (target, key) => (console.log("trap " + String(key)), undefined) })`,
+      "Function.prototype",
+      "Map.prototype",
+    ]);
+    return c.random.pick([
+      `Object.setPrototypeOf(${o.name}, ${target});`,
+      `${anyOf(c, o.name)}.__proto__ = ${target};`,
+      `${anyOf(c, o.name)}[${spelled(c, "__proto__")}] = ${target};`,
+      `Reflect.setPrototypeOf(${o.name}, ${target});`,
+    ]);
   },
   assignInto: c => {
     const o = pickBinding(c, "object", "instance", "array");
@@ -201,7 +241,7 @@ const insertions: Record<string, Insertion> = {
       `console.log("text " + fuzzTry(() => String(${o.name})).slice(0, 60));`,
     ]);
   },
-  handToTheHost: c => {
+  passToHost: c => {
     const o = pickBinding(c, "object", "instance", "array", "function", "class");
     if (!o) return;
     const change = `${anyOf(c, o.name)}.${property(c)} = ${value(c)}`;
@@ -226,7 +266,10 @@ const insertions: Record<string, Insertion> = {
   changeLeaked: c => `for (const leaked of fuzzLeaked) fuzzTry(() => { leaked.${property(c)} = ${value(c)}; });`,
   arrayLength: c => {
     const a = pickBinding(c, "array");
-    return a && `${anyOf(c, a.name)}.length = ${c.random.pick(["0", "1", `${a.name}.length + 3`, `${a.name}.length - 1`, "2 ** 32 - 1", "100000"])};`;
+    return (
+      a &&
+      `${anyOf(c, a.name)}.length = ${c.random.pick(["0", "1", `${a.name}.length + 3`, `${a.name}.length - 1`, "2 ** 32 - 1", "100000"])};`
+    );
   },
   arrayElement: c => {
     const a = pickBinding(c, "array");
@@ -262,33 +305,59 @@ const insertions: Record<string, Insertion> = {
       `${name}.extra = ${value(c)};`,
     ]);
   },
-  // Index keys on Array.prototype and every key on Object.prototype are refused in a compiled program; other names are not.
-  nameOnArrayPrototype: c => c.random.pick([`${anyOf(c, "Array.prototype")}.fuzzExtra = ${value(c)};`, `Object.defineProperty(Array.prototype, "fuzzExtra", { get() { return ${value(c)}; }, configurable: true });`]),
+  // A compiled program rejects index keys on Array.prototype and every key on Object.prototype; other names are
+  // allowed.
+  nameOnArrayPrototype: c =>
+    c.random.pick([
+      `${anyOf(c, "Array.prototype")}.fuzzExtra = ${value(c)};`,
+      `Object.defineProperty(Array.prototype, "fuzzExtra", { get() { return ${value(c)}; }, configurable: true });`,
+    ]),
   patchBuiltin: c => {
     const target = anyOf(c, c.random.pick(patchable)).replace(/^\((.*)\.(\w+) as any\)$/, "($1 as any).$2");
-    const replacement = c.random.pick([`() => ${value(c)}`, `function (...rest${c.typed ? ": any[]" : ""}) { console.log("patched"); return saved${c.id}.apply(this, rest); }`.replace("function (", c.typed ? "function (this: any, " : "function (")]);
-    // Built-in objects are locked in a compiled program. The refusal is printed in the engine's words: around the mutation there may be a handler that swallows it, and nothing would say why the output differs.
-    return `const saved${c.id} = ${target};\ntry {\n  ${target} = ${replacement};\n} catch (error) {\n  console.log(String(error));\n  throw error;\n}` + (c.random.chance(0.3) ? `\n${target} = saved${c.id};` : "");
+    const replacement = c.random.pick([
+      `() => ${value(c)}`,
+      `function (...rest${c.typed ? ": any[]" : ""}) { console.log("patched"); return saved${c.id}.apply(this, rest); }`.replace(
+        "function (",
+        c.typed ? "function (this: any, " : "function (",
+      ),
+    ]);
+    // Built-in objects are locked in a compiled program. The error is printed with the engine's message, because a
+    // handler around the mutation may swallow it and then nothing would explain the different output.
+    return (
+      `const saved${c.id} = ${target};\ntry {\n  ${target} = ${replacement};\n} catch (error) {\n  console.log(String(error));\n  throw error;\n}` +
+      (c.random.chance(0.3) ? `\n${target} = saved${c.id};` : "")
+    );
   },
   storeVariable: c => {
-    const targets = c.gap.bindings.filter(binding => !binding.constant && binding.kind !== "class" && binding.kind !== "function");
+    const targets = c.gap.bindings.filter(
+      binding => !binding.constant && binding.kind !== "class" && binding.kind !== "function",
+    );
     return targets.length ? `${c.random.pick(targets).name} = ${value(c)};` : undefined;
   },
   replaceFunction: c => {
     const f = ofKind(c.gap, "function").filter(binding => !binding.constant);
-    return f.length ? `${anyOf(c, c.random.pick(f).name).replace(/^\((.*) as any\)$/, "$1")} = ${c.typed ? "(" : ""}function () { return ${value(c)}; }${c.typed ? " as any)" : ""};` : undefined;
+    return f.length
+      ? `${anyOf(c, c.random.pick(f).name).replace(/^\((.*) as any\)$/, "$1")} = ${c.typed ? "(" : ""}function () { return ${value(c)}; }${c.typed ? " as any)" : ""};`
+      : undefined;
   },
-  throwOnce: c => `if ((fuzzCount.t${c.id} = (fuzzCount.t${c.id} | 0) + 1) === ${c.random.pick([1, 1, 2, 3, 10])}) throw ${c.random.pick(['new RangeError("fuzz")', 'new Error("fuzz")', '"thrown text"', "null", "undefined", "{ thrown: 1 }"])};`,
+  throwOnce: c =>
+    `if ((fuzzCount.t${c.id} = (fuzzCount.t${c.id} | 0) + 1) === ${c.random.pick([1, 1, 2, 3, 10])}) throw ${c.random.pick(['new RangeError("fuzz")', 'new Error("fuzz")', '"thrown text"', "null", "undefined", "{ thrown: 1 }"])};`,
   leaveEarly: c => {
     const guard = `if ((fuzzCount.l${c.id} = (fuzzCount.l${c.id} | 0) + 1) === ${c.random.pick([1, 2, 3])}) `;
     if (c.gap.inLoop && c.random.chance(0.6)) return guard + c.random.pick(["break;", "continue;"]);
-    if (c.gap.inFunction && !c.gap.inConstructor) return guard + (c.random.chance(0.5) ? "return;" : `return ${value(c)};`);
-    if (c.gap.inConstructor) return guard + `return ${c.random.pick(["{}", "[]", "Object.create(null)", "fuzzLeaked", "function () {}"])}${c.typed ? " as any" : ""};`;
+    if (c.gap.inFunction && !c.gap.inConstructor)
+      return guard + (c.random.chance(0.5) ? "return;" : `return ${value(c)};`);
+    if (c.gap.inConstructor)
+      return (
+        guard +
+        `return ${c.random.pick(["{}", "[]", "Object.create(null)", "fuzzLeaked", "function () {}"])}${c.typed ? " as any" : ""};`
+      );
   },
   reenter: c => {
     const f = pickBinding(c, "function", "class");
     if (!f) return;
-    const call = f.kind === "class" ? `new ${anyOf(c, f.name)}()` : `${anyOf(c, f.name)}(${c.random.chance(0.5) ? value(c) : ""})`;
+    const call =
+      f.kind === "class" ? `new ${anyOf(c, f.name)}()` : `${anyOf(c, f.name)}(${c.random.chance(0.5) ? value(c) : ""})`;
     return `if ((fuzzCount.r${c.id} = (fuzzCount.r${c.id} | 0) + 1) <= ${c.random.pick([1, 2])}) fuzzTry(() => ${call});`;
   },
   leakThis: c => {
@@ -309,30 +378,70 @@ const insertions: Record<string, Insertion> = {
       `fuzzTry(() => ${anyOf(c, "this")}.${k}());`,
     ]);
   },
-  changeArguments: c => (c.gap.inFunction ? c.random.pick([`fuzzTry(() => { arguments[0] = ${value(c)}; });`, "fuzzTry(() => { arguments.length = 0; });", `console.log("arguments " + fuzzTry(() => arguments.length));`, "fuzzTry(() => fuzzLeaked.push(arguments));"]) : undefined),
-  wait: c => (c.gap.inAsync ? c.random.pick(["await null;", `await { then(resolve${c.typed ? ": any" : ""}) { resolve(${value(c)}); } };`, "await Promise.resolve();", `await new Promise(resolve => setTimeout(resolve, 0));`, `await fuzzTry(async () => { throw new Error("rejected"); });`]) : undefined),
+  changeArguments: c =>
+    c.gap.inFunction
+      ? c.random.pick([
+          `fuzzTry(() => { arguments[0] = ${value(c)}; });`,
+          "fuzzTry(() => { arguments.length = 0; });",
+          `console.log("arguments " + fuzzTry(() => arguments.length));`,
+          "fuzzTry(() => fuzzLeaked.push(arguments));",
+        ])
+      : undefined,
+  wait: c =>
+    c.gap.inAsync
+      ? c.random.pick([
+          "await null;",
+          `await { then(resolve${c.typed ? ": any" : ""}) { resolve(${value(c)}); } };`,
+          "await Promise.resolve();",
+          `await new Promise(resolve => setTimeout(resolve, 0));`,
+          `await fuzzTry(async () => { throw new Error("rejected"); });`,
+        ])
+      : undefined,
   yieldMore: c => (c.gap.inGenerator ? `yield ${value(c)};` : undefined),
   subclassInstance: c => {
     const classes = ofKind(c.gap, "class");
-    const targets = c.gap.bindings.filter(binding => !binding.constant && (binding.kind === "instance" || binding.kind === "parameter" || binding.kind === "unknown"));
+    const targets = c.gap.bindings.filter(
+      binding =>
+        !binding.constant &&
+        (binding.kind === "instance" || binding.kind === "parameter" || binding.kind === "unknown"),
+    );
     if (!classes.length || !targets.length) return;
     const k = property(c);
     return `${c.random.pick(targets).name} = fuzzTry(() => new (class extends ${c.random.pick(classes).name} { ${k} = ${value(c)}; })());`;
   },
   wrapInProxy: c => {
-    const targets = c.gap.bindings.filter(binding => !binding.constant && binding.kind !== "number" && binding.kind !== "string" && binding.kind !== "class");
+    const targets = c.gap.bindings.filter(
+      binding =>
+        !binding.constant && binding.kind !== "number" && binding.kind !== "string" && binding.kind !== "class",
+    );
     if (!targets.length) return;
     const name = c.random.pick(targets).name;
-    const handler = c.random.pick(["{}", `{ get(target, key, receiver) { console.log("get " + String(key)); return Reflect.get(target, key, receiver); } }`, `{ has: () => false }`, `{ ownKeys: () => [] }`, `{ set() { return true; } }`, `{ getPrototypeOf: () => null }`]);
+    const handler = c.random.pick([
+      "{}",
+      `{ get(target, key, receiver) { console.log("get " + String(key)); return Reflect.get(target, key, receiver); } }`,
+      `{ has: () => false }`,
+      `{ ownKeys: () => [] }`,
+      `{ set() { return true; } }`,
+      `{ getPrototypeOf: () => null }`,
+    ]);
     return `if (typeof ${name} === "object" && ${name} !== null || typeof ${name} === "function") ${name} = new Proxy(${anyOf(c, name)}, ${handler});`;
   },
   runtimeText: c => {
     const o = pickBinding(c, "object", "instance", "array", "function");
-    return o && c.random.pick([`fuzzTry(() => new Function("held", "held.${property(c)} = 1.5;")(${o.name}));`, `fuzzTry(() => (0, eval)("1 + 1"));`]);
+    return (
+      o &&
+      c.random.pick([
+        `fuzzTry(() => new Function("held", "held.${property(c)} = 1.5;")(${o.name}));`,
+        `fuzzTry(() => (0, eval)("1 + 1"));`,
+      ])
+    );
   },
 };
 
-type Rewrite = (context: Omit<Context, "gap">, source: string) => { start: number; end: number; text: string } | undefined;
+type Rewrite = (
+  context: Omit<Context, "gap">,
+  source: string,
+) => { start: number; end: number; text: string } | undefined;
 
 function sites(program: Model, test: (index: number) => boolean): number[] {
   const found: number[] = [];
@@ -348,7 +457,13 @@ const isPlainName = (program: Model, index: number) => {
 
 const rewrites: Record<string, Rewrite> = {
   number: ({ random, program }) => {
-    const found = sites(program, i => program.tokens[i].kind === "number" && !program.tokens[i].text.endsWith("n") && program.tokens[i + 1]?.text !== ":");
+    const found = sites(
+      program,
+      i =>
+        program.tokens[i].kind === "number" &&
+        !program.tokens[i].text.endsWith("n") &&
+        program.tokens[i + 1]?.text !== ":",
+    );
     if (!found.length) return;
     const token = program.tokens[random.pick(found)];
     const numbers = values.filter(text => /^-?[\d.e+-]+$|^NaN$|Infinity$/.test(text));
@@ -356,20 +471,49 @@ const rewrites: Record<string, Rewrite> = {
   },
   literalOfOtherType: c => {
     const { random, program } = c;
-    const found = sites(program, i => (program.tokens[i].kind === "number" || program.tokens[i].kind === "string") && /^[=(,\[:?]|return|=>$/.test(program.tokens[i - 1]?.text ?? "") && /^[;,)\]]$/.test(program.tokens[i + 1]?.text ?? "") && program.tokens[i - 1]?.text !== "from" && program.tokens[i - 2]?.text !== "case");
+    const found = sites(
+      program,
+      i =>
+        (program.tokens[i].kind === "number" || program.tokens[i].kind === "string") &&
+        /^[=(,\[:?]|return|=>$/.test(program.tokens[i - 1]?.text ?? "") &&
+        /^[;,)\]]$/.test(program.tokens[i + 1]?.text ?? "") &&
+        program.tokens[i - 1]?.text !== "from" &&
+        program.tokens[i - 2]?.text !== "case",
+    );
     if (!found.length) return;
     const token = program.tokens[random.pick(found)];
     return { start: token.start, end: token.end, text: `(${random.pick(values)}${c.typed ? " as any" : ""})` };
   },
   operator: ({ random, program }) => {
-    const found = sites(program, i => program.tokens[i].kind === "punctuator" && operatorGroups.some(group => group.includes(program.tokens[i].text)) && /^(name|number|string)$|^punctuator$/.test(program.tokens[i - 1]?.kind ?? "") && /^[\w$)\]"'`]/.test(program.tokens[i - 1]?.text.slice(-1) ?? ""));
+    const found = sites(
+      program,
+      i =>
+        program.tokens[i].kind === "punctuator" &&
+        operatorGroups.some(group => group.includes(program.tokens[i].text)) &&
+        /^(name|number|string)$|^punctuator$/.test(program.tokens[i - 1]?.kind ?? "") &&
+        /^[\w$)\]"'`]/.test(program.tokens[i - 1]?.text.slice(-1) ?? ""),
+    );
     if (!found.length) return;
     const token = program.tokens[random.pick(found)];
-    return { start: token.start, end: token.end, text: random.pick(operatorGroups.find(group => group.includes(token.text))!) };
+    return {
+      start: token.start,
+      end: token.end,
+      text: random.pick(operatorGroups.find(group => group.includes(token.text))!),
+    };
   },
   call: (c, source) => {
     const { random, program } = c;
-    const found = sites(program, i => isPlainName(program, i) && program.tokens[i + 1]?.text === "(" && program.partner[i + 1] > 0 && !/^[{]|=>$/.test(program.tokens[program.partner[i + 1] + 1]?.text ?? "") && program.tokens[i].text !== "super" && program.tokens[i].text !== "import" && program.tokens[i].text !== "require");
+    const found = sites(
+      program,
+      i =>
+        isPlainName(program, i) &&
+        program.tokens[i + 1]?.text === "(" &&
+        program.partner[i + 1] > 0 &&
+        !/^[{]|=>$/.test(program.tokens[program.partner[i + 1] + 1]?.text ?? "") &&
+        program.tokens[i].text !== "super" &&
+        program.tokens[i].text !== "import" &&
+        program.tokens[i].text !== "require",
+    );
     if (!found.length) return;
     const at = random.pick(found);
     const f = c.typed ? `(${program.tokens[at].text} as any)` : program.tokens[at].text;
@@ -399,7 +543,17 @@ const rewrites: Record<string, Rewrite> = {
   },
   methodCall: (c, source) => {
     const { random, program } = c;
-    const found = sites(program, i => isPlainName(program, i) && program.tokens[i + 1]?.text === "." && program.tokens[i + 2]?.kind === "name" && !program.tokens[i + 2].text.startsWith("#") && program.tokens[i + 3]?.text === "(" && program.partner[i + 3] > 0 && program.tokens[i].text !== "console");
+    const found = sites(
+      program,
+      i =>
+        isPlainName(program, i) &&
+        program.tokens[i + 1]?.text === "." &&
+        program.tokens[i + 2]?.kind === "name" &&
+        !program.tokens[i + 2].text.startsWith("#") &&
+        program.tokens[i + 3]?.text === "(" &&
+        program.partner[i + 3] > 0 &&
+        program.tokens[i].text !== "console",
+    );
     if (!found.length) return;
     const at = random.pick(found);
     const o = c.typed ? `(${program.tokens[at].text} as any)` : program.tokens[at].text;
@@ -430,7 +584,14 @@ const rewrites: Record<string, Rewrite> = {
   },
   construct: (c, source) => {
     const { random, program } = c;
-    const found = sites(program, i => program.tokens[i].text === "new" && program.tokens[i + 1]?.kind === "name" && program.tokens[i + 2]?.text === "(" && program.partner[i + 2] > 0);
+    const found = sites(
+      program,
+      i =>
+        program.tokens[i].text === "new" &&
+        program.tokens[i + 1]?.kind === "name" &&
+        program.tokens[i + 2]?.text === "(" &&
+        program.partner[i + 2] > 0,
+    );
     if (!found.length) return;
     const at = random.pick(found);
     const name = c.typed ? `(${program.tokens[at + 1].text} as any)` : program.tokens[at + 1].text;
@@ -451,25 +612,65 @@ const rewrites: Record<string, Rewrite> = {
       `Object.create(${name}.prototype)`,
       `fuzzTry(() => ${name}(${list}))`,
     ]);
-    return { start: program.tokens[at].start, end: program.tokens[close].end, text: c.typed ? `(${text} as any)` : `(${text})` };
+    return {
+      start: program.tokens[at].start,
+      end: program.tokens[close].end,
+      text: c.typed ? `(${text} as any)` : `(${text})`,
+    };
   },
   read: c => {
     const { random, program } = c;
-    const found = sites(program, i => isPlainName(program, i) && program.tokens[i + 1]?.text === "." && program.tokens[i + 2]?.kind === "name" && !program.tokens[i + 2].text.startsWith("#") && /^[;,)\]+\-*/<>]|^===|^!==|^&&|^\|\|$/.test(program.tokens[i + 3]?.text ?? "") && !/^(\+\+|--)$/.test(program.tokens[i + 3]?.text ?? "") && !/^(\+\+|--|delete|typeof)$/.test(program.tokens[i - 1]?.text ?? ""));
+    const found = sites(
+      program,
+      i =>
+        isPlainName(program, i) &&
+        program.tokens[i + 1]?.text === "." &&
+        program.tokens[i + 2]?.kind === "name" &&
+        !program.tokens[i + 2].text.startsWith("#") &&
+        /^[;,)\]+\-*/<>]|^===|^!==|^&&|^\|\|$/.test(program.tokens[i + 3]?.text ?? "") &&
+        !/^(\+\+|--)$/.test(program.tokens[i + 3]?.text ?? "") &&
+        !/^(\+\+|--|delete|typeof)$/.test(program.tokens[i - 1]?.text ?? ""),
+    );
     if (!found.length) return;
     const at = random.pick(found);
     const o = c.typed ? `(${program.tokens[at].text} as any)` : program.tokens[at].text;
     const k = program.tokens[at + 2].text;
-    const text = random.pick([`${o}[${JSON.stringify(k)}]`, `${o}[${spelled({ ...c, gap: undefined! }, k)}]`, `Reflect.get(${o}, ${JSON.stringify(k)})`, `${o}?.${k}`, `(({ ${k}: read }) => read)(${o})`, `Object.getOwnPropertyDescriptor(${o}, ${JSON.stringify(k)})?.value`, `Object.create(${o}).${k}`, `fuzzSame(${o}).${k}`]);
+    const text = random.pick([
+      `${o}[${JSON.stringify(k)}]`,
+      `${o}[${spelled({ ...c, gap: undefined! }, k)}]`,
+      `Reflect.get(${o}, ${JSON.stringify(k)})`,
+      `${o}?.${k}`,
+      `(({ ${k}: read }) => read)(${o})`,
+      `Object.getOwnPropertyDescriptor(${o}, ${JSON.stringify(k)})?.value`,
+      `Object.create(${o}).${k}`,
+      `fuzzSame(${o}).${k}`,
+    ]);
     return { start: program.tokens[at].start, end: program.tokens[at + 2].end, text };
   },
   argument: c => {
     const { random, program } = c;
-    const found = sites(program, i => isPlainName(program, i) && /^[(,]$/.test(program.tokens[i - 1]?.text ?? "") && /^[),]$/.test(program.tokens[i + 1]?.text ?? "") && insideCall(program, i));
+    const found = sites(
+      program,
+      i =>
+        isPlainName(program, i) &&
+        /^[(,]$/.test(program.tokens[i - 1]?.text ?? "") &&
+        /^[),]$/.test(program.tokens[i + 1]?.text ?? "") &&
+        insideCall(program, i),
+    );
     if (!found.length) return;
     const token = program.tokens[random.pick(found)];
     const name = c.typed ? `(${token.text} as any)` : token.text;
-    const text = random.pick([`fuzzSame(${name})`, `fuzzTry(() => new Proxy(${name}, {}))`, `fuzzTry(() => Object.create(${name}))`, `fuzzTry(() => Object.freeze(${name}))`, `{ ...${name} }`, `fuzzTry(() => structuredClone(${name}))`, `[${name}][0]`, `(fuzzLeaked.push(${name}), ${name})`, random.pick(values)]);
+    const text = random.pick([
+      `fuzzSame(${name})`,
+      `fuzzTry(() => new Proxy(${name}, {}))`,
+      `fuzzTry(() => Object.create(${name}))`,
+      `fuzzTry(() => Object.freeze(${name}))`,
+      `{ ...${name} }`,
+      `fuzzTry(() => structuredClone(${name}))`,
+      `[${name}][0]`,
+      `(fuzzLeaked.push(${name}), ${name})`,
+      random.pick(values),
+    ]);
     return { start: token.start, end: token.end, text: c.typed ? `(${text} as any)` : text };
   },
 };
@@ -485,7 +686,14 @@ function insideCall(program: Model, index: number): boolean {
       if (depth-- > 0) continue;
       const close = program.partner[i];
       const callee = program.tokens[i - 1];
-      return !!callee && (callee.kind === "name" ? !isKeyword(callee.text) || callee.text === "super" : callee.text === ")" || callee.text === "]") && !/^[{]|=>$/.test(program.tokens[close + 1]?.text ?? "") && program.tokens[i - 2]?.text !== "function";
+      return (
+        !!callee &&
+        (callee.kind === "name"
+          ? !isKeyword(callee.text) || callee.text === "super"
+          : callee.text === ")" || callee.text === "]") &&
+        !/^[{]|=>$/.test(program.tokens[close + 1]?.text ?? "") &&
+        program.tokens[i - 2]?.text !== "function"
+      );
     }
   }
   return false;
@@ -495,7 +703,7 @@ export const mutationNames = [...Object.keys(insertions), ...Object.keys(rewrite
 
 export interface Mutant {
   text: string;
-  /** The names of the mutations that were applied. */
+  /** The names of the applied mutations. */
   applied: string[];
 }
 
@@ -503,19 +711,28 @@ let parser: Bun.Transpiler | undefined;
 let typedParser: Bun.Transpiler | undefined;
 export function parses(text: string, typed: boolean): boolean {
   try {
-    (typed ? (typedParser ??= new Bun.Transpiler({ loader: "ts" })) : (parser ??= new Bun.Transpiler({ loader: "js" }))).transformSync(text);
+    (typed
+      ? (typedParser ??= new Bun.Transpiler({ loader: "ts" }))
+      : (parser ??= new Bun.Transpiler({ loader: "js" }))
+    ).transformSync(text);
     return true;
   } catch {
     return false;
   }
 }
 
-/** TypeScript without its types, printed by Bun's transpiler: one statement per line. JavaScript is printed the same way. */
+/**
+ * TypeScript without its types, as printed by Bun's transpiler: one statement per line. JavaScript is printed the same
+ * way.
+ */
 export function erased(text: string, loader: "ts" | "js"): string {
   return new Bun.Transpiler({ loader, target: "bun" }).transformSync(text);
 }
 
-/** JavaScript as Bun's transpiler prints it. Plain Bun shows that as the text of a function and a compiled program shows the source, so only a program in this form prints the same text in both. */
+/**
+ * JavaScript as printed by Bun's transpiler. Function.prototype.toString returns that text in plain Bun and the source
+ * text in a compiled program, so only a program in this form prints the same in both.
+ */
 export function reprinted(text: string): string {
   try {
     return erased(text, "js");
@@ -529,11 +746,17 @@ export interface MutationOptions {
   count?: number;
   /** The names of the mutations to choose from. */
   only?: string[];
-  /** Says whether the bed can run the inserted text. */
+  /** Whether the runner can run the inserted code. */
   allows?: (inserted: string) => boolean;
 }
 
-function once(source: string, random: Random, typed: boolean, id: number, { only, allows }: MutationOptions): { text: string; name: string } | undefined {
+function once(
+  source: string,
+  random: Random,
+  typed: boolean,
+  id: number,
+  { only, allows }: MutationOptions,
+): { text: string; name: string } | undefined {
   const program = model(source);
   const wanted = (name: string) => !only || only.includes(name);
   const insert = program.gaps.length > 0 && random.chance(0.65);
@@ -543,8 +766,21 @@ function once(source: string, random: Random, typed: boolean, id: number, { only
     if (!name) return;
     let text = insertions[name]({ random, typed, program, gap, id });
     if (!text || allows?.(text) === false) return;
-    if (random.chance(0.25) && !/^(const|let|if .* (break|continue|return)|yield|await|return)/.test(text) && !/\b(break|continue|return)\b/.test(text)) text = `try {\n  ${text.replaceAll("\n", "\n  ")}\n} catch (error) {\n  console.log("refused " + (error instanceof Error ? error.constructor.name + (error.message.includes("checks types at run time") ? " of a type check" : error.message.includes("compiled executable") ? " of a locked built-in" : "") : typeof error));\n}`;
-    return { text: source.slice(0, gap.offset) + "\n" + gap.indent + text.replaceAll("\n", "\n" + gap.indent) + source.slice(gap.offset), name };
+    if (
+      random.chance(0.25) &&
+      !/^(const|let|if .* (break|continue|return)|yield|await|return)/.test(text) &&
+      !/\b(break|continue|return)\b/.test(text)
+    )
+      text = `try {\n  ${text.replaceAll("\n", "\n  ")}\n} catch (error) {\n  console.log("refused " + (error instanceof Error ? error.constructor.name + (error.message.includes("checks types at run time") ? " of a type check" : error.message.includes("compiled executable") ? " of a locked built-in" : "") : typeof error));\n}`;
+    return {
+      text:
+        source.slice(0, gap.offset) +
+        "\n" +
+        gap.indent +
+        text.replaceAll("\n", "\n" + gap.indent) +
+        source.slice(gap.offset),
+      name,
+    };
   }
   const name = random.pick(Object.keys(rewrites).filter(wanted));
   if (!name) return;
@@ -554,8 +790,20 @@ function once(source: string, random: Random, typed: boolean, id: number, { only
 }
 
 /** Applies up to `count` mutations. Returns undefined if none could be applied. */
-export function mutate(source: string, random: Random, typed: boolean, options: MutationOptions = {}): Mutant | undefined {
-  const count = options.count ?? random.weighted([[5, 1], [3, 2], [2, 3], [1, 5]]);
+export function mutate(
+  source: string,
+  random: Random,
+  typed: boolean,
+  options: MutationOptions = {},
+): Mutant | undefined {
+  const count =
+    options.count ??
+    random.weighted([
+      [5, 1],
+      [3, 2],
+      [2, 3],
+      [1, 5],
+    ]);
   let text = source;
   const applied: string[] = [];
   for (let attempt = 0; attempt < count * 6 && applied.length < count; attempt++) {
@@ -565,12 +813,21 @@ export function mutate(source: string, random: Random, typed: boolean, options: 
     applied.push(next.name);
   }
   if (!applied.length) return;
-  // What the top level still holds at the end is printed, so that a change nobody reads afterwards shows too.
+  // Prints what the top level still holds at the end, so that a change nothing reads afterwards is also visible.
   const program = model(text);
-  const seen = random.sample(program.top.filter(binding => binding.kind !== "function" && binding.kind !== "class" && !binding.ambient), 3);
-  for (const binding of seen) text += `\nconsole.log("at the end ${binding.name} " + fuzzTry(() => fuzzText(${binding.name})));`;
+  const seen = random.sample(
+    program.top.filter(binding => binding.kind !== "function" && binding.kind !== "class" && !binding.ambient),
+    3,
+  );
+  for (const binding of seen)
+    text += `\nconsole.log("at the end ${binding.name} " + fuzzTry(() => fuzzText(${binding.name})));`;
   const needed = Object.keys(helpers).filter(name => new RegExp(`\\b${name}\\b`).test(text));
   const imports = /^(?:import\b.*\n|\/\/.*\n|\s*\n)*/.exec(text)![0];
-  text = imports + needed.map(name => (typed ? typedHelpers : helpers)[name]).join("\n") + "\n" + text.slice(imports.length) + "\n";
+  text =
+    imports +
+    needed.map(name => (typed ? typedHelpers : helpers)[name]).join("\n") +
+    "\n" +
+    text.slice(imports.length) +
+    "\n";
   return parses(text, typed) ? { text, applied } : undefined;
 }

@@ -58,6 +58,7 @@ const symbolNumber = (word: number) => word & 0xffffff;
 const signed64At = (bytes: Buffer, at: number) => bytes.readUInt32LE(at) + bytes.readInt32LE(at + 4) * 0x100000000;
 
 export interface MachOReferences {
+  /** Of each atom. "L", "G": a local, a global name. "S": a string. "W": a literal. "U": why a literal was not read. */
   references: Map<string, Set<string>>;
   externals: string[];
   retained: string[];
@@ -65,7 +66,6 @@ export interface MachOReferences {
   unreadStrings: number;
   /** Where each of `unreadStrings` is, for the report of the link. */
   unreadStringPlaces: string[];
-  unreadLiterals: number;
   textOfExternalName: Map<string, string>;
   recordSections: { bytes: Buffer; references: Map<number, string> }[];
 }
@@ -260,10 +260,13 @@ function readSectionReferences(
 ): void {
   const { atomAt, sectionNumberAt, isCStringSection, literalSize, literalAt, enclosingString } = lookup;
   const section = sections[index]!;
-  const addLiteralReference = (from: string, literalSection: number, address: number) => {
+  const addLiteralReference = (from: string, literalSection: number, address: number, name?: string) => {
     const literal = literalAt(literalSection, address);
-    if (literal === undefined) result.unreadLiterals++;
-    else addReference(result, from, "W" + literal);
+    if (literal !== undefined) addReference(result, from, "W" + literal);
+    else {
+      const place = name ?? `0x${address.toString(16)}`;
+      addReference(result, from, `U${place} is behind the last whole literal of its section`);
+    }
   };
   const runsBeforeMain = sectionsRunBeforeMain.includes(section.name);
   if (runsBeforeMain || (section.flags & S_ATTR_NO_DEAD_STRIP && section.name !== "__bun_builtins"))
@@ -313,7 +316,8 @@ function readSectionReferences(
         } else addReference(result, from, "S" + named);
         if (reached !== undefined && reached !== named) addReference(result, from, "S" + reached);
       } else if (literalSize(target.section) !== undefined) {
-        addLiteralReference(from, target.section, target.value + addend + embeddedAddend(word, field));
+        // The linker does the same here: Rust's `vec.extend_from_slice(&[0; 4])` passes the end of the four bytes.
+        addLiteralReference(from, target.section, target.value, target.name);
       } else {
         addReference(result, from, "L" + (atomAt(target.section, target.value) ?? target.name));
       }
@@ -323,12 +327,12 @@ function readSectionReferences(
     // `.long L_string - _symbol`, which only the x86-64 assembler takes: as the linker does, read the field as the address.
     const isShortAddress = isX64 && type === RELOC_UNSIGNED && relocationLength(word) === LENGTH_LONG;
     if (bytesAfterField === undefined && !isPointer && !isShortAddress) {
+      const relocation = `a relocation of type ${type} and length ${relocationLength(word)}`;
       if (isCStringSection(symbolNumber(word))) {
         result.unreadStrings++;
-        result.unreadStringPlaces.push(
-          `${from}: a relocation of type ${type} and length ${relocationLength(word)} against the section of strings`,
-        );
-      } else if (literalSize(symbolNumber(word)) !== undefined) result.unreadLiterals++;
+        result.unreadStringPlaces.push(`${from}: ${relocation} against the section of strings`);
+      } else if (literalSize(symbolNumber(word)) !== undefined)
+        addReference(result, from, `U${relocation} against a section of literals`);
       continue;
     }
     const address =
@@ -369,7 +373,6 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
     liveWithoutReference: [],
     unreadStrings: 0,
     unreadStringPlaces: [],
-    unreadLiterals: 0,
     textOfExternalName: new Map(),
     recordSections: [],
   };

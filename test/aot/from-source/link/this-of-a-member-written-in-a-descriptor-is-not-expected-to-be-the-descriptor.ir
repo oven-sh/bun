@@ -1,0 +1,20 @@
+# The members `get` and `set` are written in literals that are DESCRIPTORS: one held by a constant (its own layout, L1), two written in the map of Object.defineProperties, one of them under a computed key (the layout that all written descriptors share, L2). They run on the object defined upon, never on the descriptor: the literal is not written of their `this`.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 cycle
+# CHECK-NOT: parameter 0 expected=L1 declared
+# CHECK: function f3 cycle
+# CHECK-NOT: parameter 0 expected=L2 declared
+# CHECK: function f6 cycle
+# -- source: descriptors.js
+# function Reply() { this.sent = false; this.code = 200; }
+# const byName = { get() { return this.code; } };
+# Object.defineProperty(Reply.prototype, "status", byName);
+# Object.defineProperties(Reply.prototype, {
+#   done: { get() { return this.sent; }, set(value) { this.sent = value; } },
+#   ["computed" + 1]: { get() { return this.code + 1; } },
+# });
+# globalThis.kept = Reply;
+# const reply = new Reply();
+# reply.done = true;
+# console.log(reply.status, reply.done, reply.computed1);
+# -- end of source

@@ -11,15 +11,11 @@
 // RUN(META): lower
 // META-LABEL: function {{*}}name="readOthers"
 // META-NOT: isFreeName
-// META-COUNT-3: = ModuleBuiltin
+// META: = ModuleBuiltin
+// META: = String string="{{*}}commonjs-names-in-es-module.js"
+// META: = String string="{{*}}modules"
 // META-NOT: isFreeName
 // META: Return
-
-// RUN(STORE): lower
-// STORE-LABEL: function {{*}}name="store"
-// STORE: [[meta]] = ModuleBuiltin builtin=ImportMeta
-// STORE: PropSet [[meta]]{{*}}key="require"
-// STORE: Return
 
 // RUN(KIND): lower
 // KIND-NOT: kind=CommonJsModule
@@ -34,8 +30,4 @@ export function readExports() {
 
 export function readOthers() {
   return [require, __filename, __dirname];
-}
-
-export function store(loader) {
-  require = loader;
 }

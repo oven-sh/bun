@@ -147,7 +147,7 @@ pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 /// the receive backpressure. It roots the wrapper only for a native sink or a whole-body read.
 #[derive(Default)]
 pub(crate) struct ProducerHold {
-    source: Cell<Option<core::ptr::NonNull<Source>>>,
+    source: JsCell<Option<RefPtr<Source>>>,
     parked: Cell<bool>,
 }
 
@@ -169,22 +169,23 @@ impl ProducerHold {
     /// `bytes` is the live ByteStream of a stream the caller holds.
     pub(crate) unsafe fn hold(&self, bytes: *mut ByteStream) {
         self.release();
-        // SAFETY: fn contract; the ref keeps the Source alive past this call.
-        unsafe {
+        // SAFETY: fn contract.
+        let source = unsafe {
             let source = Source::from_context_ptr(bytes);
-            self.source.set(core::ptr::NonNull::new(source));
             // Before the ref, so `increment_count` only roots a wrapper that stays rooted.
-            self.sync_wrapper_root();
-            (*source).increment_count();
-        }
+            Self::sync_root(&*source);
+            RefPtr::init_ref(source)
+        };
+        self.source.set(Some(source));
     }
 
     fn sync_wrapper_root(&self) {
-        let Some(source) = self.source.get() else {
-            return;
-        };
-        // SAFETY: live through our ref.
-        let source = unsafe { source.as_ref() };
+        if let Some(source) = self.source.get() {
+            Self::sync_root(source);
+        }
+    }
+
+    fn sync_root(source: &Source) {
         let bytes = &source.context;
         if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
             source.root_wrapper();
@@ -200,9 +201,7 @@ impl ProducerHold {
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and the wrapper is not always rooted.
     pub(crate) fn bytes(&self) -> Option<PinnedBytes> {
-        let source = self.source.get()?;
-        // SAFETY: live through our ref.
-        Some(PinnedBytes(unsafe { RefPtr::init_ref(source.as_ptr()) }))
+        self.source.get().clone().map(PinnedBytes)
     }
 
     /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
@@ -210,8 +209,6 @@ impl ProducerHold {
     pub(crate) fn take(&self) -> Option<PinnedBytes> {
         let source = self.source.take()?;
         self.parked.set(false);
-        // SAFETY: still pinned by our ref, which the guard now owns.
-        let source = unsafe { RefPtr::from_raw(source.as_ptr()) };
         source.producer.set(streams::SourceHandle::None);
         source.wrapper_unrooted.set(false);
         Some(PinnedBytes(source))
@@ -275,7 +272,7 @@ impl readable_stream::SourceContext for ByteStream {
             if self.buffered.is_empty() {
                 return streams::Start::Empty;
             }
-            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(self.buffered.take()));
+            return streams::Start::OwnedAndDone(self.buffered.take());
         }
 
         if self.high_water_mark == 0 {
@@ -338,15 +335,11 @@ impl readable_stream::SourceContext for ByteStream {
 
     fn deinit_fn(&self) {
         bun_jsc::mark_binding!();
-        self.buffered.clear();
-
-        self.pending_value.with_mut(|pv| pv.deinit());
         if !self.done.get() {
             self.done.set(true);
 
             self.pending_buffer.set(Self::empty_pending_buffer());
             let is_promise = self.pending.with_mut(|p| {
-                p.result.release();
                 p.result = streams::Result::Done;
                 p.state == streams::PendingState::Pending
                     && matches!(p.future, streams::PendingFuture::Promise { .. })
@@ -359,11 +352,6 @@ impl readable_stream::SourceContext for ByteStream {
                 // nothing to settle, so nothing can be left pending.
                 self.pending.with_mut(|p| p.run());
             }
-        }
-        if let Some(action) = self.buffer_action.replace(None) {
-            // JSPromiseStrong implements Drop, so dropping the enum releases
-            // each variant's JSPromiseStrong payload.
-            drop(action);
         }
     }
 
@@ -560,7 +548,7 @@ impl ByteStream {
 
     /// Take the untaken bytes. The caller calls [`Self::signal_drained`] after it writes them.
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        Vec::<u8>::move_from_list(self.buffered.take())
+        self.buffered.take()
     }
 
     /// Called by native fast-paths after wiring `self.sink`: a consumer now
@@ -644,10 +632,7 @@ impl ByteStream {
                 action.reject(global, err);
 
                 self.buffered.clear();
-                self.pending.with_mut(|p| {
-                    p.result.release();
-                    p.result = streams::Result::Done;
-                });
+                self.pending.with_mut(|p| p.result = streams::Result::Done);
                 self.buffer_action.set(None);
 
                 return;
@@ -675,7 +660,7 @@ impl ByteStream {
                     return;
                 }
                 if self.buffered.capacity() == 0 {
-                    if let streams::Result::OwnedAndDone(mut owned) = stream {
+                    if let streams::Result::OwnedAndDone(owned) = stream {
                         bun_output::scoped_log!(
                             ByteStream,
                             "ByteStream.onData owned_and_done and action.fulfill()"
@@ -684,7 +669,7 @@ impl ByteStream {
                         // Move the owned Vec<u8> into the buffer
                         // directly instead of round-tripping through `chunk` (which would borrow
                         // `stream`).
-                        self.buffered.adopt(owned.move_to_list_managed(), 0);
+                        self.buffered.adopt(owned, 0);
                         let mut blob = self.to_any_blob().unwrap();
                         action.fulfill(self.parent_const().global_this(), &mut blob);
                         return;
@@ -803,9 +788,8 @@ impl ByteStream {
     fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
         if self.buffered.capacity() == 0 {
             match stream {
-                streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
-                    // `move_to_list_managed` moves the buffer, no copy.
-                    self.buffered.adopt(owned.move_to_list_managed(), offset);
+                streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
+                    self.buffered.adopt(owned, offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
                     let chunk = &temp.slice()[offset..];
@@ -874,7 +858,7 @@ impl ByteStream {
         let view = self.value();
         self.buffered.clear();
         self.done.set(true);
-        self.pending_value.with_mut(|pv| pv.deinit());
+        self.pending_value.set(Default::default());
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
         let sink = *self.sink.get();
@@ -887,10 +871,7 @@ impl ByteStream {
 
         if !view.is_empty() {
             self.pending_buffer.set(Self::empty_pending_buffer());
-            self.pending.with_mut(|p| {
-                p.result.release();
-                p.result = streams::Result::Done;
-            });
+            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.pending.with_mut(|p| p.run());
         }
 
@@ -950,10 +931,7 @@ impl ByteStream {
         if self.has_received_last_chunk.get() && !self.has_pending_error() {
             let buffer = self.buffered.take();
             self.done.set(true);
-            self.pending.with_mut(|p| {
-                p.result.release();
-                p.result = streams::Result::Done;
-            });
+            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.parent_const().is_closed.set(true);
             return Some(blob::Any::InternalBlob(blob::Internal {
                 bytes: buffer,

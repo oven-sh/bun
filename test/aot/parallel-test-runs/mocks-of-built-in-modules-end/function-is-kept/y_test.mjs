@@ -1,0 +1,1 @@
+import { test, vi } from 'bun:test'; test('y', async () => { vi.doMock('node:path', () => ({ basename: () => 'Y' })); const m = await import('./d.mjs'); globalThis.kept = m.d; console.log('R y', m.d()); });

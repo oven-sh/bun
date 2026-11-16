@@ -1,5 +1,5 @@
 use super::{CompileRequest, FileWork, LoadedProgram};
-use crate::{LoadedFiles, PlanOptions, Report, Request, check_loaded_files};
+use crate::{LoadedFiles, PlanOptions, Report, Request, TaskSize, check_loaded_files};
 use bun_sema::program::FileId;
 use bun_sema::resolve::Host;
 use std::time::Instant;
@@ -23,6 +23,7 @@ pub(super) fn run_queue<'s>(
         report: Report::default(),
         config_path: files.options.config_path.clone(),
         to_check,
+        with_include_problems: Vec::new(),
         threads: request.threads.get(),
         in_room: None,
         is_reached: None,
@@ -33,6 +34,7 @@ pub(super) fn run_queue<'s>(
         always_reported: 0,
         checking: Instant::now(),
         file_work: Some(work),
+        files_left_to_loader: loaded.files_left_to_loader(),
     })
 }
 
@@ -52,9 +54,11 @@ fn queue_request<'a>(request: &CompileRequest<'a, '_>) -> Request<'a> {
         threads: request.threads.get(),
         libs: request.libs,
         progress: request.progress,
-        order: 1,
+        order: request.order,
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
+            task_size: TaskSize::ByCostAndThreads,
+            discards_first_visits: request.discards_first_visits,
             ..PlanOptions::default()
         },
         stops_like_tsc: false,

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""unescaped-constructor-functions.py: each row has a constructor function P of its own, used by `new P(1, "s")` in plain sight twice, and ONE MORE THING that a layout agreed ahead must survive or give up on. What is printed: own keys in order, every member, the prototype's identity, instanceof, constructor, JSON, for-in. Untyped JavaScript: every line as plain Bun's."""
+"""unescaped-constructor-functions.py: Each row has its own constructor function P, visibly used twice as `new P(1,
+"s")`, and one more thing that a precomputed layout must survive or give up on. Prints own keys in order, values and
+prototypes.
+"""
 BASE = 'function P$(a, b) { this.x = a; this.y = b; }'
 ROWS = [
  ('nothing more', BASE, ''), ('called without new, on an object', BASE, 'const o = {}; P$.call(o, 3, "c"); see(o);'), ('called without new, this undefined', BASE, 'P$(3, "c");'), ('apply with arguments', BASE, 'const o = { z: 0 }; P$.apply(o, [4, "d"]); see(o);'),

@@ -19,7 +19,7 @@
 //     build many executables`, then `[N/M] <path> (X.XXs)` per file once it has passed,
 //     `[N/M] <path> - <error>` where a try fails and `[N/M] <path> [attempt #K]` where the
 //     next begins (neither is a path, and neither opens a group)
-//   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
+//   - other startGroup phases: `--- napi prebuild: ...`, `--- Disk and memory pressure`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.
 //
@@ -36,6 +36,6 @@
  * @returns {boolean}
  */
 export const isPhaseGroupHeader = body =>
-  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled|files that build)|End\b|Summary\b|Received \w+, exiting)/.test(
+  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled|files that build)|Disk and memory pressure\b|End\b|Summary\b|Received \w+, exiting)/.test(
     body,
   );

@@ -1,0 +1,30 @@
+spyOn(.., "get") on getters that the host declares read-only: of a generated class, of Headers, of TextDecoder, and under a name that the build can't read; the next test file reads the getters again.
+#### a.test.js
+import { spyOn, test } from "bun:test";
+import { count, encoding, ok, status } from "./lib.js";
+const made = (process.env.NO_SUCH_NAME ?? ["o", "k"].join(""));
+const spied = (name, read, make) => {
+  const before = read();
+  try {
+    make().mockReturnValue("spied");
+  } catch (error) {
+    console.log("| CASE", name, error.name, error.message.split(" because ")[0]);
+    return;
+  }
+  console.log("| CASE", name, before, read());
+};
+test("a", () => {
+  spied("status", status, () => spyOn(Response.prototype, "status", "get"));
+  spied("count", count, () => spyOn(Headers.prototype, "count", "get"));
+  spied("encoding", encoding, () => spyOn(TextDecoder.prototype, "encoding", "get"));
+  spied("a made name", ok, () => spyOn(Response.prototype, made, "get"));
+});
+#### b.test.js
+import { test } from "bun:test";
+import { count, encoding, ok, status } from "./lib.js";
+test("b", () => { console.log("| CASE next", status(), count(), encoding(), ok()); });
+#### lib.js
+export const status = () => new Response(null, { status: 201 }).status;
+export const count = () => new Headers({ a: "1" }).count;
+export const encoding = () => new TextDecoder().encoding;
+export const ok = () => new Response(null).ok;

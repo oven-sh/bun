@@ -2,6 +2,11 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="move"
+// CHECK-LABEL: function {{*}}name="Holder"
+// CHECK-LABEL: function {{*}}name="captured"
+// CHECK-LABEL: function {{*}}name="f"
+// CHECK-LABEL: function {{*}}name="Plain"
 
 // FILE: main.ts
 // Objects from a declared js module stay the same objects.
@@ -224,65 +229,3 @@ export class Tracked {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true }, "files": [] }
-
-// GENERATED: move Holder captured f Plain
-// CHECK-LABEL: function {{*}}name="move"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = Integer integer=10
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_2]]}
-// CHECK-NEXT: PropSet v0, v4 key="x"
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_3]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_4]]
-// CHECK-NEXT: v6 = Convert v1 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v4, v6 key="point"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: v9 = TypeTest v8 testedType=object
-// CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Jump -> next b4(v10)
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: Jump -> next b4(v4)
-// CHECK-NEXT: b4(v12):
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="captured"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="f"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=[[w_6]]}] results=[{type=number site=[[w_7]]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Plain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

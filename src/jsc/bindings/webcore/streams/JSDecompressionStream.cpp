@@ -84,8 +84,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDecompressionStreamPrototype_inspectCustom, (JSGlobal
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "DecompressionStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "DecompressionStream"_s, data));
 }
 
@@ -156,22 +156,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     if (*format == CompressionFormat::Brotli && JSC::isFeatureRemoved(Bun::Feature::BrotliDecoder)) [[unlikely]]
         RELEASE_AND_RETURN(scope, Bun__throwForRemovedFeature(lexicalGlobalObject, static_cast<uint16_t>(Bun::Feature::BrotliDecoder)));
 
-    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0);
+    std::unique_ptr<CompressionStreamCoder> coder { CompressionStreamCoder__create(static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0) };
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize decompressor"_s);
         return {};
     }
 
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
-    if (scope.exception()) [[unlikely]] {
-        CompressionStreamCoder__destroy(coder);
-        return {};
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSDecompressionStream::create(vm, structure);
-    stream->m_coder = coder;
-    vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
-        CompressionStreamCoder__destroy(std::exchange(static_cast<JSDecompressionStream*>(cell)->m_coder, nullptr));
-    }));
+    stream->m_coder = WTF::move(coder);
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression);
     RETURN_IF_EXCEPTION(scope, {});
@@ -220,7 +214,7 @@ JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* glob
 
 GCClient::IsoSubspace* JSDecompressionStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDecompressionStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDecompressionStream, m_subspaceForDecompressionStream));
+    return WebCore::subspaceForImpl<JSDecompressionStream, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDecompressionStream, m_subspaceForDecompressionStream));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

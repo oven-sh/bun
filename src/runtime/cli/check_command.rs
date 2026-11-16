@@ -11,9 +11,10 @@ use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
-    Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
-    Request, ScriptKind,
+    Category, CommandLine, CompilerOption, Diagnostic, FlagError, PlanOptions, Progress,
+    RejectedFlag, Report, Request, ScriptKind,
 };
+use bun_threading::ResetEvent;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
@@ -44,12 +45,12 @@ struct Options {
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
+    /// `--no-follow-imports`
+    only_named_files: bool,
     aot: bool,
     explain: Vec<&'static [u8]>,
     code_generation_flag: Option<&'static [u8]>,
     defines: Vec<&'static [u8]>,
-    report_path: Option<&'static [u8]>,
-    report_detail: Option<&'static [u8]>,
     trim: bool,
 }
 
@@ -77,19 +78,20 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
         "--all              Show every error <d>(above 50, identical errors are grouped)<r>"
     ),
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
-    clap::param!("--timing           Print load and check times"),
+    clap::param!(
+        "--no-follow-imports  Report only the errors of the files you name, not of the files they import"
+    ),
+    clap::param!("--timing           Print load and check times, and the slowest files"),
     clap::param!(
         "--aot              Also report the errors <b>bun compile<r> would report for these entry points"
     ),
     clap::param!(
-        "--explain <report>?...  With --aot: print a report. <b>guards<r> lists every type guard that can fail at run time"
+        "--explain <report>?...  With --aot: list the code that would compile to a slow path and how to fix it, worst first. Other reports: <b>guards<r>, <b>json<r>, <b>trim<r>"
     ),
     clap::param!(
         "--define <k=v>...  With --aot: substitute k with v while parsing, like <b>bun compile --define<r>"
     ),
     clap::param!("--disallow-code-generation-from-strings <level>?"),
-    clap::param!("--aot-report <path>"),
-    clap::param!("--aot-report-detail <detail>"),
     clap::param!("--trim"),
     clap::param!("--cwd <path>       Set the working directory"),
     // Handled by `script_or_command`.
@@ -161,12 +163,11 @@ fn parse(args: &[&ZStr]) -> Options {
     let mut options = Options {
         all: parsed.flag(b"--all"),
         timing: parsed.flag(b"--timing"),
+        only_named_files: parsed.flag(b"--no-follow-imports"),
         aot: parsed.flag(b"--aot"),
         explain: parsed.options(b"--explain").to_vec(),
         code_generation_flag: parsed.option(b"--disallow-code-generation-from-strings"),
         defines: parsed.options(b"--define").to_vec(),
-        report_path: parsed.option(b"--aot-report"),
-        report_detail: parsed.option(b"--aot-report-detail"),
         trim: parsed.flag(b"--trim"),
         ..Default::default()
     };
@@ -207,6 +208,19 @@ fn parse(args: &[&ZStr]) -> Options {
     if command_line.build && projects > 1 {
         usage_error(format_args!("--build takes one project"));
     }
+    if options.only_named_files {
+        for (is_given, flag) in [(command_line.build, "--build"), (options.aot, "--aot")] {
+            if is_given {
+                usage_error(format_args!(
+                    "--no-follow-imports does not work with {flag}"
+                ));
+            }
+        }
+        // No path means the whole project. An `@file` without a line gives none.
+        if command_line.paths.is_empty() && command_line.errors.is_empty() {
+            usage_error(format_args!("--no-follow-imports needs the files to check"));
+        }
+    }
     options.pretty = match parsed.flag(b"--no-pretty") {
         true => Some(false),
         false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
@@ -245,17 +259,18 @@ pub(crate) fn working_directory() -> Vec<u8> {
     }
 }
 
-/// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
-/// user to notice.
-fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
+/// Displays `progress` on stderr until `is_done`, starting after `initial_delay`. Sets
+/// `first_frame` once the line is on the screen.
+fn show_progress(
+    progress: &Progress,
+    is_done: &AtomicBool,
+    style: &Style,
+    initial_delay: Duration,
+    first_frame: &ResetEvent,
+) {
     const BETWEEN: Duration = Duration::from_millis(80);
     // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool.
     Output::Source::configure_thread_no_js();
-    let initial_delay = Duration::from_millis(
-        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
-            .get()
-            .unwrap_or(300),
-    );
     let began = std::time::Instant::now();
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {
@@ -264,6 +279,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);
             Output::flush();
+            first_frame.set();
             tick += 1;
         }
         std::thread::park_timeout(BETWEEN);
@@ -278,7 +294,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
 #[derive(Clone, Copy)]
 enum Paths<'a> {
     /// `bun check`'s arguments.
-    Arguments(&'a CommandLine),
+    Arguments(&'a Options),
     /// See `Request::are_entry_points`.
     EntryPoints(Entries<'a>),
 }
@@ -316,8 +332,21 @@ fn run<R>(
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(cwd, Some(true), Destination::stderr(), false);
+    // Long enough for a user to notice.
+    let initial_delay = Duration::from_millis(
+        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
+            .get()
+            .unwrap_or(300),
+    );
+    let first_frame = ResetEvent::default();
     std::thread::scope(|scope| {
-        let progress_thread = scope.spawn(|| show_progress(&progress, &is_done, &style));
+        let progress_thread = scope.spawn(|| {
+            show_progress(&progress, &is_done, &style, initial_delay, &first_frame);
+        });
+        // Without a delay, the check starts once the line is drawn, however late its thread runs.
+        if initial_delay.is_zero() {
+            first_frame.wait();
+        }
         let progress = Some(&progress);
         run_quietly(
             cwd,
@@ -377,15 +406,21 @@ fn request<'a>(
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
-    let (entries, command_line) = match *paths {
-        Paths::Arguments(command_line) => {
+    let (entries, command_line, plan_options) = match *paths {
+        Paths::Arguments(options) => {
+            let command_line = &options.command_line;
             let paths = Entries {
                 paths: &command_line.paths,
                 ..Default::default()
             };
-            (paths, Some(command_line))
+            let plan_options = PlanOptions {
+                reports_only_requested_paths: options.only_named_files,
+                times_files: options.timing,
+                ..Default::default()
+            };
+            (paths, Some(command_line), plan_options)
         }
-        Paths::EntryPoints(entries) => (entries, None),
+        Paths::EntryPoints(entries) => (entries, None, PlanOptions::default()),
     };
     Request {
         cwd,
@@ -403,7 +438,7 @@ fn request<'a>(
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         progress,
         order: 1,
-        plan_options: bun_sema_driver::PlanOptions::default(),
+        plan_options,
         stops_like_tsc: true,
         uses_typescript_wording: false,
         after_file: None,
@@ -504,7 +539,7 @@ impl CheckCommand {
         let (exit_code, _report) = run(
             &cwd,
             command_line.project.as_deref(),
-            &Paths::Arguments(command_line),
+            &Paths::Arguments(options),
             &command_line.compiler_options,
             options.threads,
             // Only set here, because this function never returns.
@@ -521,6 +556,16 @@ impl CheckCommand {
 /// Prints the report. Returns the exit code.
 fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
     let display_cwd = bun_sema_driver::host::from_native(cwd);
+    let summary_style = Style {
+        color: Output::enable_ansi_colors_stderr(),
+        is_case_sensitive: report.is_case_sensitive,
+        ..style_for(
+            &display_cwd,
+            options.pretty,
+            Destination::stderr(),
+            options.all,
+        )
+    };
     // Errors go to stdout, like `tsc`'s. The summary goes to stderr.
     let mut out = Vec::new();
     format::write_diagnostics(
@@ -537,20 +582,7 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
         },
     );
     let mut summary = Vec::new();
-    format::write_summary(
-        &mut summary,
-        report,
-        &Style {
-            color: Output::enable_ansi_colors_stderr(),
-            is_case_sensitive: report.is_case_sensitive,
-            ..style_for(
-                &display_cwd,
-                options.pretty,
-                Destination::stderr(),
-                options.all,
-            )
-        },
-    );
+    format::write_summary(&mut summary, report, &summary_style);
     if options.timing {
         use std::io::Write;
         let _ = writeln!(
@@ -570,6 +602,7 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
                 report.shared_parses,
             );
         }
+        format::write_slowest_files(&mut summary, report, &summary_style);
     }
     super::lint_command::print(&out, &summary, u8::from(!report.is_ok()))
 }
@@ -655,11 +688,12 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
-    let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
+    let (watcher, cwd) = (vm.bun_watcher.get().clone()?, working_directory());
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.
-            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            let _ =
+                watcher.add_file_by_path_slow(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
         }
     }))
 }

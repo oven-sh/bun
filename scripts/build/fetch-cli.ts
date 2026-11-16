@@ -70,7 +70,7 @@ async function main(): Promise<void> {
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
       // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (libspng ← zlib.h) don't
+      // unchanged so depfile-tracked .o files (lsquic ← zlib.h) don't
       // recompile after a no-op re-fetch.
       writeIfChanged(outPath, text);
       return;
@@ -327,19 +327,11 @@ async function fetchDep(
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
   await extractTarGz(tarballPath, dest);
 
-  // ─── Apply patches / overlays ───
+  // ─── Apply patches ───
   for (let i = 0; i < patches.length; i++) {
     const p = patches[i]!;
-    const name = basename(p);
-    if (p.endsWith(".patch")) {
-      console.log(`applying ${name}`);
-      applyPatch(dest, p, patchContents[i]!);
-    } else {
-      // Overlay file: copy into source root. Used for e.g. injecting a
-      // CMakeLists.txt into a project that doesn't have one (tinycc).
-      console.log(`overlay ${name}`);
-      await writeFile(join(dest, name), patchContents[i]!);
-    }
+    console.log(`applying ${basename(p)}`);
+    applyPatch(dest, p, patchContents[i]!);
   }
 
   // ─── Write stamp ───

@@ -1,4 +1,4 @@
-// `process.chdir(__dirname)`, as many servers begin. In an executable that folder is in the executable alone. The call succeeds, and process.cwd(), path.resolve() and every relative path
+// `process.chdir(module.path)`: in an executable that folder is in the executable alone. (`process.chdir(__dirname)`, as many servers begin, goes there too where the folder of the build is not on the machine: an-executable-finds-what-lay-beside-its-source.test.ts.) The call succeeds, and process.cwd(), path.resolve() and every relative path
 // given to node:fs, Bun.file() and require.resolve() start there, as under `bun run`. The folder `data` is embedded with --asset.
 // Flags: --asset ./data
 // Entry points: ./worker.cjs ./data/module.cjs
@@ -13,16 +13,16 @@ const show = (what, action) => {
     console.log(what + ": threw", error.code, error.syscall);
   }
 };
-show("chdir", () => (process.chdir(__dirname), "done"));
-show("cwd", () => process.cwd() === __dirname);
-show("path.resolve", () => path.resolve("data", "note.txt") === path.join(__dirname, "data", "note.txt"));
-show("path.relative", () => path.relative(".", path.join(__dirname, "data")));
+show("chdir", () => (process.chdir(module.path), "done"));
+show("cwd", () => process.cwd() === module.path);
+show("path.resolve", () => path.resolve("data", "note.txt") === path.join(module.path, "data", "note.txt"));
+show("path.relative", () => path.relative(".", path.join(module.path, "data")));
 show("readFileSync", () => fs.readFileSync("data/note.txt", "utf8").trim());
 show("readFileSync with dots", () => fs.readFileSync("./data/sub/../note.txt", "utf8").trim());
 show("existsSync", () => [fs.existsSync("data/note.txt"), fs.existsSync("data/none.txt")].join());
 show("statSync", () => [fs.statSync("data/note.txt").size, fs.statSync("data").isDirectory()].join());
 show("readdirSync", () => fs.readdirSync("data").sort().join());
-show("realpathSync", () => fs.realpathSync("data/note.txt") === path.join(__dirname, "data", "note.txt"));
+show("realpathSync", () => fs.realpathSync("data/note.txt") === path.join(module.path, "data", "note.txt"));
 show("accessSync", () => fs.accessSync("data/note.txt", fs.constants.R_OK));
 show("openSync and readSync", () => {
   const descriptor = fs.openSync("data/note.txt", "r");
@@ -32,12 +32,12 @@ show("openSync and readSync", () => {
   return bytes.toString("utf8", 0, count);
 });
 show("require.resolve with paths", () => require.resolve("./data/module.cjs", { paths: [process.cwd()] }) === path.join(__dirname, "data", "module.cjs"));
-show("chdir further in", () => (process.chdir("data"), process.cwd() === path.join(__dirname, "data")));
+show("chdir further in", () => (process.chdir("data"), process.cwd() === path.join(module.path, "data")));
 show("readFileSync there", () => fs.readFileSync("note.txt", "utf8").trim());
-show("chdir to a folder above", () => (process.chdir(".."), process.cwd() === __dirname));
+show("chdir to a folder above", () => (process.chdir(".."), process.cwd() === module.path));
 show("chdir to what is not there", () => process.chdir("none"));
 show("chdir to a file", () => process.chdir("data/note.txt"));
-show("cwd is as it was", () => process.cwd() === __dirname);
+show("cwd is as it was", () => process.cwd() === module.path);
 (async () => {
   console.log("promises.readFile:", (await fs.promises.readFile("data/note.txt", "utf8")).trim());
   console.log("Bun.file:", (await Bun.file("data/note.txt").text()).trim(), Bun.file("data/note.txt").size);
@@ -51,5 +51,5 @@ show("cwd is as it was", () => process.cwd() === __dirname);
   }));
   show("chdir out", () => (process.chdir(started), process.cwd() === started));
   show("path.resolve outside", () => path.resolve("x") === path.join(started, "x"));
-  show("and in again by the whole path", () => (process.chdir(path.join(__dirname, "data", "sub")), fs.readFileSync("../note.txt", "utf8").trim()));
+  show("and in again by the whole path", () => (process.chdir(path.join(module.path, "data", "sub")), fs.readFileSync("../note.txt", "utf8").trim()));
 })();

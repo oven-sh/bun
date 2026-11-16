@@ -10,10 +10,9 @@ use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
-    PackageManager, ResolutionTag, dependency, invalid_package_id,
+    Dependency, DependencyID, Features, GetJsonResult, PackageID, PackageManager, ResolutionTag,
+    dependency, invalid_package_id,
 };
 
 struct Pass<'a> {
@@ -255,7 +254,7 @@ impl<'a> Pass<'a> {
                         self.required.set(cur_c);
                     }
                     Some(range) => {
-                        let query = &range.npm().version;
+                        let query = &range.npm.version;
                         // The candidates are sorted, so the ones that an exact version can match
                         // are next to each other.
                         let in_question = match query.get_exact_version() {
@@ -700,13 +699,22 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
     }
 }
 
+/// A `dependency::Version` that is an npm range.
+pub(crate) struct NpmRange {
+    pub literal: bun_semver::String,
+    pub npm: dependency::NpmInfo,
+}
+
 pub(crate) fn effective_npm_range(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
-) -> Option<dependency::Version> {
-    effective_version(lockfile, dep_id, dep)
-        .filter(|version| version.tag == DependencyVersionTag::Npm)
+) -> Option<NpmRange> {
+    let dependency::Version { literal, value } = effective_version(lockfile, dep_id, dep)?;
+    match value {
+        dependency::Value::Npm(npm) => Some(NpmRange { literal, npm }),
+        _ => None,
+    }
 }
 
 /// Like the resolver, never overrides a `workspace:` edge.
@@ -810,8 +818,7 @@ pub fn dedupe_before_install(
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) =
         match manager
             .workspace_package_json_cache

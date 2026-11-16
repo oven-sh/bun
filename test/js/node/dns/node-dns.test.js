@@ -1,5 +1,5 @@
 import { dnsGetaddrinfoError } from "bun:internal-for-testing";
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -1171,6 +1171,262 @@ describe("getaddrinfo status mapping", () => {
       code: "ENOTFOUND",
       syscall: "getaddrinfo",
       hostname: "redis.example",
+    });
+  });
+});
+
+// A name that exists without the queried record type is NODATA; NXDOMAIN is
+// ENOTFOUND. Bun.dns.lookup with the c-ares backend reports both as ENOTFOUND.
+// https://github.com/oven-sh/bun/issues/48928
+describe("resolve* ENODATA vs ENOTFOUND", () => {
+  const A_ONLY = "a-only.test.";
+  const AAAA_ONLY = "aaaa-only.test.";
+  const NO_ANY = "no-any.test.";
+  const NON_PTR_ADDRESS = "192.0.2.8";
+  const MISSING = "missing.test.";
+  const DUAL = "dual.test.";
+  let socket;
+  let resolver;
+  let promises;
+  let previousServers;
+
+  function parseQuestion(query) {
+    const labels = [];
+    let off = 12;
+    while (off < query.length && query[off] !== 0) {
+      const len = query[off];
+      labels.push(query.toString("latin1", off + 1, off + 1 + len));
+      off += len + 1;
+    }
+    if (off + 5 > query.length) return null;
+    return {
+      qname: labels.join("."),
+      qtype: query.readUInt16BE(off + 1),
+      question: query.subarray(12, off + 5),
+    };
+  }
+
+  function reply(query, rcode, rdata, rrtype) {
+    const { question } = parseQuestion(query);
+    const header = Buffer.alloc(12);
+    header[0] = query[0];
+    header[1] = query[1];
+    header[2] = 0x81;
+    header[3] = 0x80 | rcode;
+    header.writeUInt16BE(1, 4);
+    header.writeUInt16BE(rdata ? 1 : 0, 6);
+    if (!rdata) return Buffer.concat([header, question]);
+    const answer = Buffer.alloc(12);
+    answer[0] = 0xc0;
+    answer[1] = 0x0c;
+    answer.writeUInt16BE(rrtype, 2);
+    answer.writeUInt16BE(1, 4);
+    answer.writeUInt32BE(60, 6);
+    answer.writeUInt16BE(rdata.length, 10);
+    return Buffer.concat([header, question, answer, rdata]);
+  }
+
+  function answerFor(qname, qtype) {
+    const base = qname.replace(/\.$/, "");
+    const A = Buffer.from([192, 0, 2, 10]);
+    const AAAA = Buffer.from([0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    if (base === "missing.test" || base.endsWith(".missing.test")) return { rcode: 3 };
+    if (base === "dual.test") {
+      if (qtype === 1) return { rcode: 0, rdata: A, rrtype: 1 };
+      if (qtype === 28) return { rcode: 0, rdata: AAAA, rrtype: 28 };
+      if (qtype === 255) return { rcode: 0, rdata: A, rrtype: 1 };
+      return { rcode: 0 };
+    }
+    if (base === "a-only.test") {
+      if (qtype === 1 || qtype === 255) return { rcode: 0, rdata: A, rrtype: 1 };
+      return { rcode: 0 };
+    }
+    if (base === "aaaa-only.test") {
+      if (qtype === 28 || qtype === 255) return { rcode: 0, rdata: AAAA, rrtype: 28 };
+      return { rcode: 0 };
+    }
+    if (base === "no-any.test") return { rcode: 0 };
+    // Empty NOERROR for this PTR: the name's zone exists and has no PTR.
+    // Node's dns.reverse reports that as ENOTFOUND (gethostbyaddr), not ENODATA.
+    if (qtype === 12 && base === "9.2.0.192.in-addr.arpa") return { rcode: 0 };
+    // An answer that is not a PTR is a parse failure, so it stays ENODATA.
+    if (qtype === 12 && base === "8.2.0.192.in-addr.arpa") return { rcode: 0, rdata: A, rrtype: 1 };
+    // Search-domain probes must not hang.
+    return { rcode: 3 };
+  }
+
+  beforeAll(async () => {
+    previousServers = dns.getServers();
+    socket = dgram.createSocket("udp4");
+    socket.on("message", (query, rinfo) => {
+      const q = parseQuestion(query);
+      if (!q) return;
+      const ans = answerFor(q.qname, q.qtype);
+      socket.send(reply(query, ans.rcode, ans.rdata, ans.rrtype ?? q.qtype), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    dns.setServers(["127.0.0.1:" + socket.address().port]);
+    resolver = new dns.Resolver();
+    promises = new dns_promises.Resolver();
+    resolver.setServers(dns.getServers());
+    promises.setServers(dns.getServers());
+  });
+
+  afterAll(() => {
+    try {
+      if (previousServers) dns.setServers(previousServers);
+    } finally {
+      try {
+        socket?.close();
+      } catch {}
+    }
+  });
+
+  function errorOf(err) {
+    return { code: err.code, syscall: err.syscall, hostname: err.hostname, message: err.message };
+  }
+
+  function callbackResult(fn, ...args) {
+    const { promise, resolve } = Promise.withResolvers();
+    fn(...args, (err, value) => resolve(err ? errorOf(err) : { ok: value }));
+    return promise;
+  }
+
+  async function promiseResult(promise) {
+    try {
+      return { ok: await promise };
+    } catch (err) {
+      return errorOf(err);
+    }
+  }
+
+  const nodata = (syscall, hostname) => ({
+    code: "ENODATA",
+    syscall,
+    hostname,
+    message: `${syscall} ENODATA ${hostname}`,
+  });
+  const notFound = (syscall, hostname) => ({
+    code: "ENOTFOUND",
+    syscall,
+    hostname,
+    message: `${syscall} ENOTFOUND ${hostname}`,
+  });
+
+  test("NODATA is ENODATA and NXDOMAIN is ENOTFOUND for each record type", async () => {
+    expect(await promiseResult(promises.resolve4(A_ONLY))).toEqual({ ok: ["192.0.2.10"] });
+    expect(await callbackResult(resolver.resolve4.bind(resolver), A_ONLY)).toEqual({ ok: ["192.0.2.10"] });
+    expect(await promiseResult(dns_promises.resolve4(A_ONLY))).toEqual({ ok: ["192.0.2.10"] });
+    expect(await callbackResult(dns.resolve4, A_ONLY)).toEqual({ ok: ["192.0.2.10"] });
+
+    expect(await promiseResult(dns_promises.resolve6(A_ONLY))).toEqual(nodata("queryAaaa", A_ONLY));
+    expect(await callbackResult(dns.resolve6, A_ONLY)).toEqual(nodata("queryAaaa", A_ONLY));
+
+    const any = await promiseResult(promises.resolveAny(A_ONLY));
+    expect(any.ok).toEqual([expect.objectContaining({ address: "192.0.2.10", type: "A" })]);
+    expect(await callbackResult(resolver.resolveAny.bind(resolver), A_ONLY)).toEqual(any);
+
+    const recordTypes = [
+      ["resolve4", "queryA"],
+      ["resolve6", "queryAaaa"],
+      ["resolveAny", "queryAny"],
+      ["resolveCaa", "queryCaa"],
+      ["resolveCname", "queryCname"],
+      ["resolveMx", "queryMx"],
+      ["resolveNaptr", "queryNaptr"],
+      ["resolveNs", "queryNs"],
+      ["resolvePtr", "queryPtr"],
+      ["resolveSoa", "querySoa"],
+      ["resolveSrv", "querySrv"],
+      ["resolveTxt", "queryTxt"],
+    ];
+
+    for (const [method, syscall] of recordTypes) {
+      expect(await promiseResult(promises[method](MISSING))).toEqual(notFound(syscall, MISSING));
+      expect(await callbackResult(resolver[method].bind(resolver), MISSING)).toEqual(notFound(syscall, MISSING));
+    }
+
+    for (const [method, syscall] of recordTypes) {
+      if (method === "resolve4" || method === "resolveAny") continue;
+      expect(await promiseResult(promises[method](A_ONLY))).toEqual(nodata(syscall, A_ONLY));
+      expect(await callbackResult(resolver[method].bind(resolver), A_ONLY)).toEqual(nodata(syscall, A_ONLY));
+    }
+
+    expect(await promiseResult(promises.resolve6(DUAL))).toEqual({ ok: ["2001:db8::1"] });
+    expect(await callbackResult(resolver.resolve6.bind(resolver), DUAL)).toEqual({ ok: ["2001:db8::1"] });
+  });
+
+  test("resolvePtr and resolve(rrtype) report ENODATA", async () => {
+    const PTR = "9.2.0.192.in-addr.arpa";
+    expect(await promiseResult(promises.resolvePtr(PTR))).toEqual(nodata("queryPtr", PTR));
+    expect(await callbackResult(resolver.resolvePtr.bind(resolver), PTR)).toEqual(nodata("queryPtr", PTR));
+
+    expect(await promiseResult(dns_promises.resolve(A_ONLY, "AAAA"))).toEqual(nodata("queryAaaa", A_ONLY));
+    expect(await promiseResult(promises.resolve(A_ONLY, "AAAA"))).toEqual(nodata("queryAaaa", A_ONLY));
+    expect(await callbackResult(resolver.resolve.bind(resolver), A_ONLY, "AAAA")).toEqual(nodata("queryAaaa", A_ONLY));
+  });
+
+  test("resolve4 of an AAAA-only name is ENODATA", async () => {
+    expect(await promiseResult(promises.resolve4(AAAA_ONLY))).toEqual(nodata("queryA", AAAA_ONLY));
+    expect(await callbackResult(resolver.resolve4.bind(resolver), AAAA_ONLY)).toEqual(nodata("queryA", AAAA_ONLY));
+    expect(await promiseResult(promises.resolve6(AAAA_ONLY))).toEqual({ ok: ["2001:db8::1"] });
+    expect(await callbackResult(resolver.resolve6.bind(resolver), AAAA_ONLY)).toEqual({ ok: ["2001:db8::1"] });
+  });
+
+  test("resolveAny of a name with no records is ENODATA", async () => {
+    expect(await promiseResult(promises.resolveAny(NO_ANY))).toEqual(nodata("queryAny", NO_ANY));
+    expect(await callbackResult(resolver.resolveAny.bind(resolver), NO_ANY)).toEqual(nodata("queryAny", NO_ANY));
+  });
+
+  test("lookup reports ENOTFOUND for both NXDOMAIN and NODATA", async () => {
+    // c-ares lookup of the fixture's NXDOMAIN name. System getaddrinfo's
+    // EAI_NONAME → ENOTFOUND mapping is the test above; it does not query DNS.
+    const caresMissing = await Bun.dns.lookup(MISSING, { backend: "c-ares" }).then(
+      value => ({ ok: value }),
+      err => err.code,
+    );
+    expect(caresMissing).toBe("DNS_ENOTFOUND");
+
+    const caresV6 = await Bun.dns.lookup(A_ONLY, { backend: "c-ares", family: 6 }).then(
+      value => ({ ok: value }),
+      err => err.code,
+    );
+    expect(caresV6).toBe("DNS_ENOTFOUND");
+
+    const caresNoAny = await Bun.dns.lookup(NO_ANY, { backend: "c-ares" }).then(
+      value => ({ ok: value }),
+      err => err.code,
+    );
+    expect(caresNoAny).toBe("DNS_ENOTFOUND");
+
+    const caresV4 = await Bun.dns.lookup(A_ONLY, { backend: "c-ares", family: 4 });
+    expect(caresV4.map(row => row.address)).toEqual(["192.0.2.10"]);
+  });
+
+  test("reverse of an address with no PTR is still ENOTFOUND", async () => {
+    expect(await promiseResult(promises.reverse("192.0.2.9"))).toEqual(notFound("getHostByAddr", "192.0.2.9"));
+    expect(await callbackResult(resolver.reverse.bind(resolver), "192.0.2.9")).toEqual(
+      notFound("getHostByAddr", "192.0.2.9"),
+    );
+  });
+
+  test("reverse of a non-PTR answer is ENODATA", async () => {
+    expect(await promiseResult(promises.reverse(NON_PTR_ADDRESS))).toEqual(nodata("getHostByAddr", NON_PTR_ADDRESS));
+    expect(await callbackResult(resolver.reverse.bind(resolver), NON_PTR_ADDRESS)).toEqual(
+      nodata("getHostByAddr", NON_PTR_ADDRESS),
+    );
+  });
+
+  test("lookupService of an address whose PTR answer is not a PTR is ENOTFOUND", async () => {
+    // Only the code is under test: Bun's getnameinfo hostname is "addr|port" (Node: addr).
+    expect(await promiseResult(dns_promises.lookupService(NON_PTR_ADDRESS, 80))).toMatchObject({
+      code: "ENOTFOUND",
+      syscall: "getnameinfo",
+    });
+    expect(await callbackResult(dns.lookupService, NON_PTR_ADDRESS, 80)).toMatchObject({
+      code: "ENOTFOUND",
+      syscall: "getnameinfo",
     });
   });
 });

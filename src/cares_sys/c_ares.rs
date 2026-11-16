@@ -563,7 +563,7 @@ impl struct_nameinfo {
         // SAFETY: `ctx` is the box that `Channel` released for this query, which c-ares answers once.
         let this = unsafe { bun_core::heap::take(ctx.cast::<T>()) };
         this.on_nameinfo(match Error::get(status) {
-            Some(err) => Err(err),
+            Some(err) => Err(err.for_name_lookup()),
             None => Ok(struct_nameinfo { node, service }),
         });
     }
@@ -630,7 +630,7 @@ impl AddrInfo {
         let this = unsafe { bun_core::heap::take(ctx.cast::<T>()) };
         if let Some(err) = Error::get(status) {
             // A failure comes without an `addr_info`.
-            return this.on_addr_info(Err(err));
+            return this.on_addr_info(Err(err.for_name_lookup()));
         }
         // SAFETY: c-ares hands `addr_info` over, and the handler's borrow ends with its call.
         unsafe {
@@ -1822,9 +1822,29 @@ impl Error {
         }
     }
 
+    /// `dns.lookup` / `dns.lookupService` report libuv `UV_EAI_NODATA` as
+    /// `ENOTFOUND`. c-ares uses `ARES_ENODATA` for that same NODATA result.
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L811-L816
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.cc#L1786-L1787
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/dns.js#L111
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/dns.js#L263
+    pub fn for_name_lookup(self) -> Self {
+        if self == Self::ENODATA {
+            Self::ENOTFOUND
+        } else {
+            self
+        }
+    }
+
     pub fn get(rc: i32) -> Option<Error> {
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-        if rc == ARES_ENODATA || rc == ARES_ENONAME {
+        // `ARES_ENONAME` only comes from `ares_getaddrinfo`/`ares_getnameinfo`
+        // (`UV_EAI_NONAME` -> `ENOTFOUND` in Node). `ARES_ENODATA` is not mapped
+        // here: `ares_query` passes `"ENODATA"` from `ToErrorCodeString` through
+        // `DNSException`, and name lookups map it in `for_name_lookup`.
+        // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.h#L61-L63
+        // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/dns/callback_resolver.js#L44-L45
+        // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L807-L815
+        if rc == ARES_ENONAME {
             return Self::get(ARES_ENOTFOUND);
         }
 

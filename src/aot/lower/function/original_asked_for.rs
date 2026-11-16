@@ -640,11 +640,6 @@ impl FileLowering<'_, '_, '_, '_> {
                         StmtKind::Block(_) => lists_of_statements.push(whole),
                         _ => statements.push(whole),
                     }
-                    let is_directive = matches!(hir[statement].kind, StmtKind::Directive { .. });
-                    if is_directive && !self.removes_no_code() {
-                        not_printed.push((hir[statement].loc.pos, hir[statement].loc.end));
-                        continue;
-                    }
                     let is_in_dead_flow = in_dead_flow.contains(&statement);
                     let is_behind_a_jump = behind_a_jump.contains(&statement);
                     if is_in_dead_flow {

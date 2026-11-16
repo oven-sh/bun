@@ -63,7 +63,6 @@ impl<'a, 's> NeverRun<'a, 's> {
         let left = match node.kind {
             StmtKind::Empty
             | StmtKind::Debugger
-            | StmtKind::Directive { .. }
             | StmtKind::Expr(_)
             | StmtKind::Class(_)
             | StmtKind::Interface(_)
@@ -120,7 +119,9 @@ impl<'a, 's> NeverRun<'a, 's> {
                 finalizer,
                 ..
             } => self.most_left([block, handler, finalizer].into_iter(), first_that_stays),
-            StmtKind::Switch { .. } | StmtKind::With { .. } => Left::InPlace,
+            StmtKind::Directive { .. } | StmtKind::Switch { .. } | StmtKind::With { .. } => {
+                Left::InPlace
+            }
             // No file that `bun run` loads holds one of these below an `if`.
             StmtKind::Module(_)
             | StmtKind::Import(_)

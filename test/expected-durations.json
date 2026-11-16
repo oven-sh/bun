@@ -17,8 +17,8 @@
     }
   },
   "aot/fold/never-run-code.test.ts": {
-    "default": 10000,
-    "asan": 40000
+    "default": 2000,
+    "asan": 13000
   },
   "aot/type-errors-that-several-projects-are-asked-about.test.ts": {
     "default": 30000,

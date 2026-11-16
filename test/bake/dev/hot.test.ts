@@ -738,8 +738,7 @@ for (const [file, text] of [
   });
 }
 
-// The update has `data.json` and `pool.ts`, and reaches `pool.ts` from both.
-devTest("server: a module that an update reaches twice is disposed of once", {
+devTest("server: a module that an update reaches from two saved files is disposed of once", {
   framework: minimalFramework,
   files: {
     "routes/index.ts": `
@@ -747,20 +746,26 @@ devTest("server: a module that an update reaches twice is disposed of once", {
       export default () => new Response(pool());
     `,
     "pool.ts": `
-      import data from './data.json';
-      globalThis.disposed ??= 0;
-      export const pool = () => 'value: ' + data.value + ' disposed: ' + globalThis.disposed;
+      import { a } from './a';
+      import { b } from './b';
+      globalThis.open = (globalThis.open ?? 0) + 1;
+      export const pool = () => a + ' ' + b + ' open: ' + globalThis.open;
       import.meta.hot.accept();
-      import.meta.hot.dispose(() => { globalThis.disposed++; });
+      import.meta.hot.dispose(() => { globalThis.open--; });
     `,
-    "data.json": `{ "value": 1 }`,
+    "a.ts": `export const a = 'a1';`,
+    "b.ts": `export const b = 'b1';`,
   },
   async test(dev) {
-    await dev.fetch("/").equals("value: 1 disposed: 0");
-    await dev.write("data.json", `{ "value": 2 }`);
-    await dev.fetch("/").equals("value: 2 disposed: 1");
-    await dev.write("data.json", `{ "value": 3 }`);
-    await dev.fetch("/").equals("value: 3 disposed: 2");
+    await dev.fetch("/").equals("a1 b1 open: 1");
+    for (const n of [2, 3]) {
+      {
+        await using batch = await dev.batchChanges();
+        await dev.write("a.ts", `export const a = 'a${n}';`);
+        await dev.write("b.ts", `export const b = 'b${n}';`);
+      }
+      await dev.fetch("/").equals(`a${n} b${n} open: 1`);
+    }
   },
 });
 

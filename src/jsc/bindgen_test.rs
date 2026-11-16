@@ -560,13 +560,13 @@ impl TestRefCounted {
         self.finalized.set(true);
     }
 
-    pub(crate) fn constructor(value: i32) -> *mut Self {
+    pub(crate) fn constructor(value: i32) -> RefPtr<Self> {
         REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
-        bun_core::heap::into_raw(Box::new(TestRefCounted {
+        RefPtr::new(TestRefCounted {
             ref_count: Cell::new(1),
             value: Cell::new(value),
             finalized: Cell::new(false),
-        }))
+        })
     }
 
     pub(crate) fn get_value(&self) -> i32 {
@@ -827,15 +827,15 @@ pub(crate) struct TestNonFinal {
 }
 
 pub(crate) trait TestNonFinalExt {
-    fn constructor(value: i32) -> *mut Self;
+    fn constructor(value: i32) -> RefPtr<TestNonFinal>;
     fn get_value(&self) -> i32;
     fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a>;
 }
 
 impl TestNonFinalExt for TestNonFinal {
-    fn constructor(value: i32) -> *mut Self {
+    fn constructor(value: i32) -> RefPtr<Self> {
         let ref_count = Cell::new(1);
-        RefPtr::new(Self { ref_count, value }).into_raw()
+        RefPtr::new(Self { ref_count, value })
     }
 
     fn get_value(&self) -> i32 {
@@ -855,7 +855,7 @@ impl TestNonFinalExt for TestNonFinal {
 impl JsClass for TestNonFinal {
     fn to_js(mut self, global: &JSGlobalObject) -> JSValue {
         self.value = self.value.wrapping_mul(2);
-        js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
+        js_TestNonFinal::to_js(RefPtr::new(self), global)
     }
 
     fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
@@ -1004,7 +1004,7 @@ pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
     Bun__NativePromiseContext__create(
         cx.global(),
-        TestRefCounted::constructor(42).cast(),
+        TestRefCounted::constructor(42).into_raw().cast(),
         0,
         JSValue::ZERO,
     )

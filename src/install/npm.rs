@@ -1518,7 +1518,7 @@ pub mod package_manifest {
             stream.write_byte(0)?;
             let len = stream.pos;
             // We wrote `len` bytes ending in a NUL into `buf`.
-            Ok(bun_core::ZStr::from_buf_mut(buf, len - 1))
+            Ok(bun_core::ZStr::from_buf(buf, len - 1))
         }
 
         pub(crate) fn save(

@@ -133,8 +133,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
 bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn shared parent; }
 
 impl ByteBlobLoader {
-    pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
-        // In-place init — `self` is a pre-allocated slot inside `Source`.
+    pub(crate) fn new(blob: &Blob, user_chunk_size: blob::SizeType) -> Self {
         let store = blob.store.get().as_ref().unwrap().clone();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
@@ -143,7 +142,7 @@ impl ByteBlobLoader {
         } else {
             blob::BlobContentType::default()
         };
-        *self = ByteBlobLoader {
+        ByteBlobLoader {
             offset: Cell::new(offset),
             store: JsCell::new(Some(store)),
             chunk_size: (if user_chunk_size > 0 {
@@ -155,7 +154,7 @@ impl ByteBlobLoader {
             remain: Cell::new(size),
             done: Cell::new(false),
             content_type: JsCell::new(content_type),
-        };
+        }
     }
 
     /// The bytes `drain_internal_buffer` and `on_pull` have yet to hand over.

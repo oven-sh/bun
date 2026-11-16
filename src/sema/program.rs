@@ -7373,7 +7373,32 @@ impl<'s> Files<'s> {
         text: Cow<'s, [u8]>,
         bind_time: BindTime,
     ) -> (hir::File<'s>, Bound<'s>) {
-        let _work = bun_core::current_work::working_on(bun_core::current_work::Step::Load, path);
+        bun_core::current_work::working_on(bun_core::current_work::Step::Load, path, || {
+            Self::parse_then_bind(
+                arena,
+                host,
+                options,
+                atoms,
+                path,
+                is_lib,
+                specifies_esm,
+                text,
+                bind_time,
+            )
+        })
+    }
+
+    fn parse_then_bind(
+        arena: &'s Arena,
+        host: &dyn Host,
+        options: ParseOptions,
+        atoms: &Interner<'s>,
+        path: &[u8],
+        is_lib: bool,
+        specifies_esm: bool,
+        text: Cow<'s, [u8]>,
+        bind_time: BindTime,
+    ) -> (hir::File<'s>, Bound<'s>) {
         let _step = file_steps::count(FileStep::ParseTypes);
         let mut whole = None;
         if bind_time == BindTime::WhenReached

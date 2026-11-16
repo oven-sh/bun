@@ -21,7 +21,7 @@ use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_spawn::RusageFields as _;
 
-use super::channel::Channel;
+use super::channel::OwnedChannel;
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
 
@@ -35,7 +35,7 @@ pub(crate) struct Worker {
     /// Commands and results both flow through this channel; backpressure is
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
-    pub(crate) ipc: Channel,
+    pub(crate) ipc: OwnedChannel,
     pub(crate) out: BufferedReader,
     pub(crate) err: BufferedReader,
 
@@ -117,7 +117,7 @@ impl Worker {
     }
 
     pub(crate) fn reset_pipes(&mut self) {
-        self.ipc = Channel::default();
+        self.ipc = OwnedChannel::default();
         self.out = BufferedReader::init();
         self.err = BufferedReader::init();
     }

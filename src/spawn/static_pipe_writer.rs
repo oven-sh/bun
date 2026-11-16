@@ -1,11 +1,16 @@
 use core::cell::Cell;
-#[cfg(windows)]
-use core::mem::ManuallyDrop;
 use core::mem::size_of;
 
 use bun_event_loop::EventLoopHandle;
-use bun_io::{BufferedWriteHandler, BufferedWriter, IoEvent, Owner, WriteHandler, WriteStatus};
+#[cfg(windows)]
+use bun_io::OwnedPipe;
+#[cfg(not(windows))]
+use bun_io::{BufferedWriteHandler, BufferedWriter, WriteHandler, WriteStatus};
+use bun_io::{IoEvent, Owner};
+#[cfg(not(windows))]
 use bun_ptr::AliasableBox;
+#[cfg(windows)]
+use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys;
 
 use crate::subprocess::StdioResult;
@@ -31,15 +36,19 @@ impl Source for Box<[u8]> {
 pub struct StaticPipeWriter<S: Source> {
     #[cfg(not(windows))]
     state: AliasableBox<State<S>>,
-    /// A write in flight keeps it past the drop.
     #[cfg(windows)]
-    state: ManuallyDrop<AliasableBox<State<S>>>,
+    pipe: Cell<Option<OwnedPipe>>,
+    /// Until `start` hands it to the write request.
+    #[cfg(windows)]
+    source: Cell<Option<S>>,
+    #[cfg(windows)]
+    source_memory_cost: usize,
 }
 
+#[cfg(not(windows))]
 struct State<S> {
     writer: BufferedWriter,
     /// Until `start` hands it to `writer`.
-    #[cfg(not(windows))]
     file: Cell<StdioResult>,
     source: S,
     written: Cell<usize>,
@@ -53,6 +62,7 @@ pub enum PipeState {
     Closed,
 }
 
+#[cfg(not(windows))]
 impl<S: Source> StaticPipeWriter<S> {
     /// `owner` is handed the events, to pass on to [`Self::on_io`].
     ///
@@ -62,21 +72,12 @@ impl<S: Source> StaticPipeWriter<S> {
     pub unsafe fn create(owner: Owner, result: StdioResult, source: S) -> Self {
         let state = AliasableBox::new(State {
             writer: BufferedWriter::owning_fd(),
-            #[cfg(not(windows))]
             file: Cell::new(result),
             source,
             written: Cell::new(0),
         });
-        // SAFETY: fn contract, and the box gives out shared borrows only.
+        // SAFETY: fn contract.
         unsafe { state.writer.set_owner(owner) };
-        #[cfg(windows)]
-        let state = {
-            let StdioResult::Buffer(pipe) = result else {
-                unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
-            };
-            state.writer.set_pipe(pipe);
-            ManuallyDrop::new(state)
-        };
         Self { state }
     }
 
@@ -91,22 +92,13 @@ impl<S: Source> StaticPipeWriter<S> {
     pub fn start(&self, event_loop: EventLoopHandle) -> bun_sys::Result<PipeState> {
         let state: &State<S> = &self.state;
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) start()", state);
-        #[cfg(windows)]
-        {
-            let _ = event_loop;
-            // SAFETY: `source` is never borrowed mutably, and `Drop` leaves it to a write in flight.
-            unsafe { state.writer.write_no_copy(state) };
-        }
-        #[cfg(not(windows))]
-        {
-            let file = state.file.take().unwrap();
-            state
-                .writer
-                .start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;
-            // The writer closes it from now on.
-            file.into_raw();
-            state.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
-        }
+        let file = state.file.take().unwrap();
+        state
+            .writer
+            .start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;
+        // The writer closes it from now on.
+        file.into_raw();
+        state.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
         Ok(self.pipe_state())
     }
 
@@ -117,7 +109,6 @@ impl<S: Source> StaticPipeWriter<S> {
     }
 
     pub fn watch(&self) -> PipeState {
-        #[cfg(not(windows))]
         if !self.state.remaining().is_empty() {
             self.state.writer.register_poll(&*self.state);
         }
@@ -134,24 +125,62 @@ impl<S: Source> StaticPipeWriter<S> {
 }
 
 #[cfg(windows)]
-impl<S: Source> Drop for StaticPipeWriter<S> {
-    fn drop(&mut self) {
-        /// # Safety
-        /// `state` is the box of a writer that was dropped.
-        unsafe fn free<S>(state: *mut ()) {
-            // SAFETY: fn contract.
-            unsafe { bun_core::heap::destroy(state.cast::<State<S>>()) };
+impl<S: Source> StaticPipeWriter<S> {
+    /// # Safety
+    /// As on POSIX.
+    pub unsafe fn create(owner: Owner, result: StdioResult, source: S) -> Self {
+        let StdioResult::Buffer(pipe) = result else {
+            unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
+        };
+        // SAFETY: fn contract.
+        unsafe { pipe.set_owner(owner) };
+        Self {
+            pipe: Cell::new(Some(pipe)),
+            source_memory_cost: source.memory_cost(),
+            source: Cell::new(Some(source)),
         }
-        let state = self.state.as_ptr().cast();
-        // SAFETY: nothing else frees the box, or uses it from here on.
-        unsafe {
-            if !self.state.writer.close_and_detach(state, free::<S>) {
-                free::<S>(state);
-            }
+    }
+
+    pub fn start(&self, _: EventLoopHandle) -> bun_sys::Result<PipeState> {
+        bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) start()", self);
+        if let Some(source) = self.source.take()
+            && !source.slice().is_empty()
+        {
+            self.pipe.with_taken(|pipe| {
+                pipe.take_if(|pipe| pipe.queue_write(source, S::slice).is_err());
+            });
         }
+        Ok(self.watch())
+    }
+
+    /// The one write has ended, or the VM has.
+    pub fn on_io(&self, _: IoEvent) -> PipeState {
+        self.pipe.set(None);
+        PipeState::Closed
+    }
+
+    pub fn watch(&self) -> PipeState {
+        if self.pipe.is_some() {
+            PipeState::Open
+        } else {
+            PipeState::Closed
+        }
+    }
+
+    pub fn update_ref(&self, add: bool) {
+        self.pipe.with_taken(|pipe| match pipe {
+            Some(pipe) if add => pipe.ref_(),
+            Some(pipe) => pipe.unref(),
+            None => {}
+        });
+    }
+
+    pub fn memory_cost(&self) -> usize {
+        size_of::<Self>() + self.source_memory_cost
     }
 }
 
+#[cfg(not(windows))]
 impl<S: Source> State<S> {
     fn remaining(&self) -> &[u8] {
         let source = self.source.slice();
@@ -159,12 +188,14 @@ impl<S: Source> State<S> {
     }
 }
 
+#[cfg(not(windows))]
 impl<S: Source> BufferedWriteHandler for State<S> {
     fn with_buffer<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
         f(self.remaining())
     }
 }
 
+#[cfg(not(windows))]
 impl<S: Source> WriteHandler for State<S> {
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
@@ -198,8 +229,4 @@ impl<S: Source> WriteHandler for State<S> {
     fn on_close(&self) {
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) onClose()", self);
     }
-
-    /// `Drop` leaves the state to the write's callback.
-    #[cfg(windows)]
-    fn set_has_inflight_write(&self, _: bool) {}
 }

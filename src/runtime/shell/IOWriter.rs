@@ -14,14 +14,10 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::marker::PhantomData;
-#[cfg(windows)]
-use core::mem::ManuallyDrop;
 
 use bun_io::{
     BufferedWriteHandler, BufferedWriter, IoEvent, Owner, PollTag, WriteHandler, WriteStatus,
 };
-#[cfg(windows)]
-use bun_ptr::AliasableBox;
 use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::builtin::IoKind;
@@ -126,11 +122,7 @@ const SHRINK_THRESHOLD: usize = 1024 * 128;
 pub(crate) type IOWriterId = bun_core::GenericIndex<u32, IOWriter<'static>>;
 
 pub(crate) struct IOWriter<'a> {
-    #[cfg(not(windows))]
     writer: BufferedWriter,
-    /// libuv holds its address, and a write in flight keeps it past the drop.
-    #[cfg(windows)]
-    writer: ManuallyDrop<AliasableBox<BufferedWriter>>,
     id: IOWriterId,
     fd: Fd,
     writers: Writers,
@@ -168,12 +160,9 @@ impl IOWriter<'_> {
         interp.io_writers.insert_with(|id| {
             // `Drop` closes the file descriptor.
             let writer = BufferedWriter::borrowing_fd();
-            #[cfg(windows)]
-            let writer = ManuallyDrop::new(AliasableBox::new(writer));
             let ptr = shell_interp.as_ptr().cast();
             let owner = Owner::with_key(PollTag::ShellIoWriter, id.get(), ptr);
-            // SAFETY: `shell_interp` owns `interp`, which owns the writer. On Windows the box keeps it in
-            // place and is never borrowed mutably.
+            // SAFETY: `shell_interp` owns `interp`, which owns the writer.
             unsafe { writer.set_owner(owner) };
             crate::shell_log!("IOWriter({}, fd={}) init", id, fd);
             IOWriter {
@@ -836,27 +825,11 @@ impl Drop for IOWriter<'_> {
     fn drop(&mut self) {
         crate::shell_log!("IOWriter(fd={}) deinit", self.fd);
         // The poll goes before its fd.
-        #[cfg(not(windows))]
         self.writer.close(&Handler::default());
+        // A libuv thread may still be writing to `fd`.
         #[cfg(windows)]
-        {
-            /// # Safety
-            /// `writer` is the box of an `IOWriter` that was dropped.
-            unsafe fn free(writer: *mut ()) {
-                // SAFETY: fn contract.
-                unsafe { bun_core::heap::destroy(writer.cast::<BufferedWriter>()) };
-            }
-            let writer = self.writer.as_ptr().cast();
-            // SAFETY: nothing else frees the box, or uses it from here on.
-            unsafe {
-                if !self.writer.close_and_detach(writer, free) {
-                    free(writer);
-                }
-            }
-            // A libuv thread may still be writing to `fd`.
-            if self.is_writing {
-                return;
-            }
+        if self.is_writing {
+            return;
         }
         if self.fd != Fd::INVALID {
             let _ = sys::close(self.fd);

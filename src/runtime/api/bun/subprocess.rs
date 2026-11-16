@@ -26,8 +26,6 @@ use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimerTag, RefCountedTimer};
 use crate::webcore::streams::SourceHandle;
 use crate::webcore::{self, FileSink};
-#[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
 pub(crate) mod resource_usage;
@@ -1126,32 +1124,6 @@ impl static_pipe_writer::Source for webcore::AnyBlob {
     }
     fn memory_cost(&self) -> usize {
         webcore::AnyBlob::memory_cost(self)
-    }
-}
-
-/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
-/// Subprocess owns without a reader/writer in front of them; record that so a
-/// thread teardown closes them through us (and `finalize_streams` then finds
-/// the slots empty) instead of anyone closing them twice.
-#[cfg(windows)]
-impl Subprocess<'_> {
-    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
-        // SAFETY: `this` is the live boxed Subprocess (stable address).
-        let me = unsafe { &*this };
-        me.stdio_pipes.with_taken(|pipes| {
-            for item in pipes {
-                if let StdioResult::Buffer(buffer) = item {
-                    buffer.set_owner(this.cast(), Self::stop_for_vm_teardown);
-                }
-            }
-        });
-    }
-
-    /// `uv::open_handles` entry point: close every stdio pipe still held here.
-    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
-        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
-        // Subprocess; each pipe leaves the list as its uv_close is issued.
-        unsafe { &*this.cast::<Self>() }.stdio_pipes.set(Vec::new());
     }
 }
 

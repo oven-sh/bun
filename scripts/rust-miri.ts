@@ -71,6 +71,10 @@ const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_io: ["max_buf"],
 };
 
+// Crates whose code is `#[cfg(windows)]`, which Miri interprets on any host.
+const MIRI_WINDOWS_CRATES = ["bun_libuv_sys"];
+const windowsTarget = ["--target", "x86_64-pc-windows-msvc"];
+
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
 }
@@ -128,6 +132,9 @@ for (const crate of Object.keys(MIRI_UNIT_TESTS)) {
   console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run -p ${crate} --lib`);
   if (run("cargo", ["miri", "test", "--no-run", "-p", crate, "--lib"], { env }).status !== 0) process.exit(1);
 }
+const windowsCrates = [...windowsTarget, ...MIRI_WINDOWS_CRATES.flatMap(c => ["-p", c])];
+console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${windowsCrates.join(" ")}`);
+if (run("cargo", ["miri", "test", "--no-run", ...windowsCrates], { env }).status !== 0) process.exit(1);
 
 type Result = { crate: string; ok: boolean; seconds: number; output: string };
 
@@ -137,19 +144,22 @@ function testCrate(crate: string): Promise<Result> {
     const chunks: Buffer[] = [];
     const paths = MIRI_UNIT_TESTS[crate];
     const only = paths ? ["--lib", "--", ...paths] : [];
-    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always", ...only], { cwd: repo, env });
+    const target = MIRI_WINDOWS_CRATES.includes(crate) ? windowsTarget : [];
+    const args = ["miri", "test", "-p", crate, "--color", "always", ...target, ...only];
+    const child = spawn("cargo", args, { cwd: repo, env });
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
     child.on("close", code => {
       const output = Buffer.concat(chunks).toString();
-      // A path that names no test any more passes with "0 passed".
-      const ranSome = !paths || /test result: ok\. [1-9]/.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
+      // A path that names no test any more, or a file that is cfg'd out, passes with "0 passed".
+      const ranSome =
+        (!paths && !target.length) || /test result: ok\. [1-9]/.test(output.replace(/\x1b\[[0-9;]*m/g, ""));
       done({ crate, ok: code === 0 && ranSome, seconds: (Date.now() - started) / 1000, output });
     });
   });
 }
 
-const queue = [...MIRI_CRATES, ...Object.keys(MIRI_UNIT_TESTS)];
+const queue = [...MIRI_CRATES, ...Object.keys(MIRI_UNIT_TESTS), ...MIRI_WINDOWS_CRATES];
 const width = Math.max(1, Math.min(availableParallelism(), queue.length));
 console.log(`\x1b[36m[miri]\x1b[0m ${queue.length} crates, ${width} at a time`);
 const results: Result[] = [];

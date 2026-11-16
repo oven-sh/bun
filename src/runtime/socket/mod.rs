@@ -28,10 +28,6 @@ pub(crate) mod upgraded_duplex;
 #[path = "WindowsNamedPipe.rs"]
 pub(crate) mod windows_named_pipe;
 
-#[cfg(windows)]
-#[path = "WindowsNamedPipeContext.rs"]
-pub(crate) mod windows_named_pipe_context;
-
 mod bundled_root_certs;
 mod cert_files;
 #[cfg(all(unix, not(target_vendor = "apple")))]
@@ -89,6 +85,6 @@ pub(crate) use socket_body::{
 };
 
 #[cfg(windows)]
-pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
+pub(crate) use windows_named_pipe::WindowsNamedPipe;
 
 pub(crate) use udp_socket::UDPSocket;

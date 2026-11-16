@@ -188,7 +188,7 @@ impl StoreExt for Store {
 impl FileExt for File {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match &self.pathlike {
-            PathOrFileDescriptor::Path(path_like) => Ok(node_fs::async_::Unlink::schedule(
+            PathOrFileDescriptor::Path(path_like) => Ok(node_fs::async_::Unlink::create(
                 cx,
                 node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                 cx.vm(),

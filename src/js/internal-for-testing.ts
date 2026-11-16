@@ -823,7 +823,7 @@ export const namedPipeInternals = {
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $bindgen("socket_body.bind.ts", "namedPipeContextLiveCount"),
+  liveCount: $bindgen("socket_body.bind.ts", "namedPipeLiveCount"),
 };
 
 export const duplexTLSInternals = {

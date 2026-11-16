@@ -766,47 +766,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub(crate) fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
-            // Reuse the memory
-            // Reshaped for borrowck — evaluate
-            // the stderr-capacity check first (immutable), then take the
-            // disjoint `stdout` mutable borrow, so `core::mem::take` only fires
-            // when all three clauses
-            // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`)
-            // hold — otherwise stdout's buffer is left
-            // in place for the `stdout.items.len +| stderr.items.len` check.
-            if self.stderr.buffer().capacity() == 0 {
-                let stdout = self.stdout.final_buffer();
-                if stdout.is_empty() && stdout.capacity() > 0 {
-                    let buf = core::mem::take(stdout);
-                    *self.stderr.buffer() = buf;
-                }
-            }
-
-            let stdout_len = self.stdout.final_buffer().len();
-            let stderr_len = self.stderr.final_buffer().len();
-
-            if stdout_len.saturating_add(stderr_len) == 0 {
+            let outputs = [&self.stdout, &self.stderr].map(|reader| reader.take_final_buffer());
+            if outputs.iter().all(Vec::is_empty) {
                 return;
             }
 
             let _unbuffered = Output::disable_buffering_scope();
             Output::flush();
 
-            if stdout_len > 0 {
-                let stdout = self.stdout.final_buffer();
+            for output in outputs.iter().filter(|output| !output.is_empty()) {
                 // Write the raw bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
-                let _ = Output::error_writer().write_all(stdout.as_slice());
+                let _ = Output::error_writer().write_all(output);
                 let _ = Output::error_writer().write_all(b"\n");
-                stdout.clear();
-                stdout.shrink_to_fit();
-            }
-
-            if stderr_len > 0 {
-                let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer().write_all(stderr.as_slice());
-                let _ = Output::error_writer().write_all(b"\n");
-                stderr.clear();
-                stderr.shrink_to_fit();
             }
         }
     }

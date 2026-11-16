@@ -5,10 +5,10 @@ use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
-#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_threading::Guarded;
+#[cfg(windows)]
+use core::cell::OnceCell;
 use core::cell::{Cell, UnsafeCell};
 use std::rc::Rc;
 
@@ -518,7 +518,7 @@ pub(crate) struct All {
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: Cell<i32>,
     #[cfg(windows)]
-    uv_timer: UnsafeCell<uv::Timer>,
+    uv_timer: OnceCell<uv::Owned<uv::Timer, &'static VirtualMachine>>,
     /// Whether we have emitted a warning for passing a negative timeout duration
     pub(crate) warned_negative_number: Cell<bool>,
     /// Whether we have emitted a warning for passing NaN for the timeout duration
@@ -531,7 +531,7 @@ pub(crate) struct All {
     pub(crate) epoch: Cell<u32>,
     pub(crate) immediate_ref_count: Cell<i32>,
     #[cfg(windows)]
-    uv_idle: UnsafeCell<uv::uv_idle_t>,
+    uv_idle: OnceCell<uv::Owned<uv::uv_idle_t>>,
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
     pub(crate) maps: UnsafeCell<Maps>,
@@ -548,14 +548,14 @@ impl All {
             timers: TimerHeap::default(),
             active_timer_count: Cell::new(0),
             #[cfg(windows)]
-            uv_timer: UnsafeCell::new(bun_core::ffi::zeroed()),
+            uv_timer: OnceCell::new(),
             warned_negative_number: Cell::new(false),
             warned_not_number: Cell::new(false),
             zero_delay_is_due_when_idle: Cell::new(false),
             epoch: Cell::new(0),
             immediate_ref_count: Cell::new(0),
             #[cfg(windows)]
-            uv_idle: UnsafeCell::new(bun_core::ffi::zeroed()),
+            uv_idle: OnceCell::new(),
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: UnsafeCell::default(),
@@ -626,23 +626,16 @@ impl All {
     }
 
     /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
-    /// more) and the timeout objects are drained: hand the embedded
-    /// `uv_timer_t`/`uv_idle_t` to `uv_close` so their nodes leave the loop's
-    /// handle queue when the teardown closes the loop — before this struct's
-    /// storage is freed.
+    /// more) and the timeout objects are drained.
     #[cfg(windows)]
     pub(crate) fn close_loop_handles_for_vm_teardown(&self) {
-        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
-        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
-        // SAFETY: JS thread only, and neither `stop` nor `close` runs a callback.
-        let (uv_timer, uv_idle) = unsafe { (&mut *self.uv_timer.get(), &mut *self.uv_idle.get()) };
-        if !uv_timer.data.is_null() {
+        if let Some(uv_timer) = self.uv_timer.get() {
             uv_timer.stop();
-            uv_timer.close(timer_closed);
+            uv_timer.close();
         }
-        if !uv_idle.data.is_null() {
+        if let Some(uv_idle) = self.uv_idle.get() {
             uv_idle.stop();
-            uv_idle.close(idle_closed);
+            uv_idle.close();
         }
     }
 
@@ -660,13 +653,11 @@ impl All {
             self.thread_id == std::thread::current().id(),
             "ensure_uv_timer: called off the owning JS thread; TLS loop/VM would diverge from vm.event_loop_handle",
         );
-        // SAFETY: JS thread only, and nothing below runs a callback.
-        let uv_timer = unsafe { &mut *self.uv_timer.get() };
-        if uv_timer.data.is_null() {
-            uv_timer.init(uv::Loop::get());
-            uv_timer.data = VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
+        let uv_timer = self.uv_timer.get_or_init(|| {
+            let uv_timer = uv::Timer::init(uv::Loop::get(), VirtualMachine::get());
             uv_timer.unref();
-        }
+            uv_timer
+        });
         debug_assert!(
             !uv_timer.is_closing(),
             "timer scheduled after teardown closed the heap's uv timer"
@@ -678,10 +669,7 @@ impl All {
             return;
         };
 
-        // SAFETY: `uv_timer.data` is non-null past the lazy-init block, so
-        // `uv_timer_init` has run and the handle's `loop` field points at
-        // the owning VM's live `uv_loop_t` (== `vm.uvLoop()` per spec).
-        unsafe { uv::uv_update_time(uv_timer.get_loop()) };
+        uv_timer.get_loop().update_time();
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         let wait = if next_ts.greater(&now) {
             next_ts.duration(&now)
@@ -697,12 +685,11 @@ impl All {
             core::cmp::max(1, wait.ms_unsigned())
         };
 
-        // SAFETY: `uv_timer_init` ran above; the handle is live.
-        let due_in = unsafe { uv::uv_timer_get_due_in(uv_timer) };
+        let due_in = uv_timer.get_due_in();
         // Restarting an overdue handle shifts the wakeup out by 1ms. Done
         // on every insert, the already-due callback never runs.
         if !(uv_timer.is_active() && due_in <= wait_ms) {
-            uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            uv_timer.start(wait_ms, 0, Self::on_uv_timer);
         }
 
         if self.active_timer_count.get() > 0 {
@@ -713,17 +700,11 @@ impl All {
     }
 
     /// libuv timer callback; drain due
-    /// timers then re-arm for the next deadline. Only ever invoked by libuv
-    /// (coerces to the `uv_timer_cb` fn-pointer type at the `Timer::start`
-    /// call site); body wraps its derefs explicitly.
+    /// timers then re-arm for the next deadline.
     #[cfg(windows)]
-    extern "C" fn on_uv_timer(uv_timer_t: *mut uv::Timer) {
-        // SAFETY: `uv_timer_t` is the address of `All.uv_timer` (libuv passes
-        // back exactly the handle pointer we registered in `ensure_uv_timer`);
-        // recover the containing `All` via container_of. It is live for the VM lifetime.
-        let all = unsafe { &*bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
-        // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null).
-        let vm = unsafe { &*(*uv_timer_t).data.cast::<VirtualMachine>() };
+    fn on_uv_timer(uv_timer: &uv::Handle<uv::Timer, &'static VirtualMachine>) {
+        let vm = uv_timer.data;
+        let all = crate::jsc_hooks::timer_all_of(vm);
         all.drain_timers(vm);
         all.ensure_uv_timer();
     }
@@ -957,44 +938,24 @@ impl All {
         let old = self.immediate_ref_count.get();
         let new = old + delta;
         self.immediate_ref_count.set(new);
-        // SAFETY: JS thread only, and nothing below runs a callback.
-        #[cfg(windows)]
-        let uv_idle = unsafe { &mut *self.uv_idle.get() };
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             uws_loop.ref_();
+            // `uv_run` does not block in poll while immediates are pending (matches Node.js).
             #[cfg(windows)]
-            {
-                // Lazy-init the idle handle and start
-                // it with a no-op callback so `uv_run` does not block in poll
-                // while immediates are pending (matches Node.js).
-                if uv_idle.data.is_null() {
-                    uv_idle.init(uv::Loop::get());
-                    // Note: `data` is only used as a
-                    // non-null "initialized" sentinel — never dereferenced.
-                    uv_idle.data = VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
-                }
-                uv_idle.start(Some(Self::on_uv_idle_noop));
-            }
+            self.uv_idle
+                .get_or_init(|| uv::uv_idle_t::init(uv::Loop::get()))
+                .start();
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             uws_loop.unref();
             #[cfg(windows)]
-            if !uv_idle.data.is_null() {
+            if let Some(uv_idle) = self.uv_idle.get() {
                 uv_idle.stop();
             }
         }
         #[cfg(windows)]
         let _ = uws_loop;
-    }
-
-    /// Empty `uv_idle` callback. Its presence alone
-    /// keeps `uv_run` from blocking in the poll phase; the body is a no-op.
-    /// No preconditions (the handle pointer is unused), so the fn is safe; the
-    /// safe fn item coerces into the `uv_idle_cb` fn-pointer slot.
-    #[cfg(windows)]
-    extern "C" fn on_uv_idle_noop(_: *mut uv::uv_idle_t) {
-        // prevent libuv from polling forever
     }
 
     /// `uws_loop` is the calling VM's uws loop.
@@ -1003,24 +964,20 @@ impl All {
         let new = old + delta;
         debug_assert!(new >= 0);
         self.active_timer_count.set(new);
-        // SAFETY: JS thread only, and nothing below runs a callback.
-        #[cfg(windows)]
-        let uv_timer = unsafe { &mut *self.uv_timer.get() };
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             uws_loop.ref_();
-            // `uv_timer.ref()` is intentionally unconditional (no `data !=
-            // null` guard). Invariant: every path that reaches a positive
-            // `active_timer_count` first inserts a timer, and `insert`
-            // → `ensure_uv_timer` lazily `uv_timer_init`s the handle. Guarding
-            // here would silently drop the ref and let the loop exit early.
             #[cfg(windows)]
-            uv_timer.ref_();
+            if let Some(uv_timer) = self.uv_timer.get() {
+                uv_timer.ref_();
+            }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             uws_loop.unref();
             #[cfg(windows)]
-            uv_timer.unref();
+            if let Some(uv_timer) = self.uv_timer.get() {
+                uv_timer.unref();
+            }
         }
         #[cfg(windows)]
         let _ = uws_loop;

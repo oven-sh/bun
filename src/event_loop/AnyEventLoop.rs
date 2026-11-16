@@ -332,7 +332,7 @@ impl EventLoopHandle {
 
     #[cfg(windows)]
     #[inline]
-    pub fn uv_loop(self) -> *mut bun_io::Loop {
+    pub fn uv_loop(self) -> &'static bun_io::Loop {
         self.r#loop().uv_loop()
     }
 

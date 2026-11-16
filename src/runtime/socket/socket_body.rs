@@ -4556,12 +4556,12 @@ pub(crate) mod testing_apis {
         cfg!(socket_fault_injection)
     }
 
-    /// Live `WindowsNamedPipeContext`s (one per connected or accepted socket
+    /// Live `WindowsNamedPipe`s (one per connected or accepted socket
     /// over a Windows named pipe); always 0 elsewhere.
-    pub(crate) fn named_pipe_context_live_count() -> usize {
+    pub(crate) fn named_pipe_live_count() -> usize {
         #[cfg(windows)]
         {
-            crate::socket::windows_named_pipe_context::LIVE_COUNT
+            crate::socket::windows_named_pipe::LIVE_COUNT
                 .load(core::sync::atomic::Ordering::Relaxed)
         }
         #[cfg(not(windows))]

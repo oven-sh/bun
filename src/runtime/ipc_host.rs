@@ -501,13 +501,7 @@ pub(crate) fn get_ipc_instance(
             Some(IPC::SendQueueOwner::Instance),
             IPC::SocketUnion::Uninitialized,
         );
-        let send_queue: *mut SendQueue = data.as_ptr();
-
-        // `windows_configure_client` STORES the `*mut SendQueue` in
-        // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-        // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `data`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
+        if let Err(_) = data.windows_configure_client(fd) {
             data.detach();
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;

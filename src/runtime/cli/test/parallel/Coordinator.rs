@@ -337,7 +337,7 @@ impl<'a> Coordinator<'a> {
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
             if let Some(p) = &w.process {
                 #[cfg(unix)]
-                terminate_process_group(p.pid);
+                terminate_process_group(p.pid());
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
@@ -559,7 +559,7 @@ impl<'a> Coordinator<'a> {
 
     /// In megabytes, since this was last asked. From now on the worker's children are looked at.
     fn take_highest_of_children(&mut self, slot: usize) -> u32 {
-        let pid = (self.workers[slot].process.as_ref()).map(|process| process.pid);
+        let pid = (self.workers[slot].process.as_ref()).map(|process| process.pid());
         match (&mut self.children_of_workers, pid) {
             (Some(children), Some(pid)) => children.take_highest(pid as i64),
             _ => 0,
@@ -819,7 +819,7 @@ impl<'a> Coordinator<'a> {
     fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
         let w = &mut self.workers[slot];
         if let (Some(children), Some(process)) = (&mut self.children_of_workers, &w.process) {
-            children.forget(process.pid as i64);
+            children.forget(process.pid() as i64);
         }
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
@@ -837,7 +837,7 @@ impl<'a> Coordinator<'a> {
             // test spawned; it led its own process group, so kill(-pid) does it.
             #[cfg(unix)]
             if let Some(p) = &w.process {
-                terminate_process_group(p.pid);
+                terminate_process_group(p.pid());
             }
             let (corrupt_frame, dispatched_at) = (w.ipc.corrupt_frame.get(), w.dispatched_at);
             self.break_dots();
@@ -1088,7 +1088,7 @@ impl<'a> Coordinator<'a> {
                 && let Some(p) = &w.process
             {
                 #[cfg(unix)]
-                terminate_process_group(p.pid);
+                terminate_process_group(p.pid());
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess (libuv-win ENOSYSes most

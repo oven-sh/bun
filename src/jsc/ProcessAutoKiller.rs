@@ -50,7 +50,7 @@ impl ProcessAutoKiller {
         while let Some(entry) = self.processes.with_mut(ArrayHashMap::pop) {
             let p = entry.key;
             if !p.has_exited() {
-                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
+                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid());
                 count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
             }
         }

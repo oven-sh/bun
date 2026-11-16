@@ -495,7 +495,7 @@ impl WriteFile {
 //
 // libuv-backed write path used by `Blob.writeFileInternal` on Windows. The
 // whole impl is `#[cfg(windows)]`-gated because `bun_sys::windows::libuv`
-// (and the libuv `fs_t`/`uv_buf_t` types) only exist when targeting Windows.
+// only exists when targeting Windows.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -505,7 +505,7 @@ pub(crate) use self::windows_impl::WriteFileWindows;
 mod windows_impl {
     use super::*;
     use crate::dispatch::fold;
-    use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
+    use bun_io::{self as aio, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
     use bun_jsc::event_loop::EventLoop;
@@ -514,7 +514,7 @@ mod windows_impl {
 
     /// One owner at a time: a `Box` here, or libuv and the pool while they work for it.
     pub(crate) struct WriteFileWindows {
-        pub(crate) io_request: uv::fs_t,
+        io_request: uv::fs::Request,
         pub(crate) file_blob: Blob,
         pub(crate) bytes_blob: Blob,
         pub(crate) promise: jsc::JSPromiseStrong,
@@ -533,7 +533,7 @@ mod windows_impl {
         pub(crate) owned_fd: bool,
     }
 
-    bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
+    bun_core::intrusive_field!(WriteFileWindows, io_request: uv::fs::Request);
 
     impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
         fn directory(&self) -> &[u8] {
@@ -582,7 +582,7 @@ mod windows_impl {
                 global_this: bun_ptr::BackRef::new(global_this),
                 context: script_context.id(),
                 mkdirp_if_not_exists: mkdirp,
-                io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
+                io_request: Default::default(),
                 event_loop,
                 fd: -1,
                 err: None,
@@ -590,7 +590,6 @@ mod windows_impl {
                 _keep_alive: JsKeepAlive::active(),
                 owned_fd: false,
             });
-            write_file.io_request.loop_ = event_loop.uv_loop();
 
             let store = write_file.file_blob.store.get().as_ref().unwrap();
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
@@ -616,62 +615,51 @@ mod windows_impl {
             };
             self.owned_fd = true;
             let loop_ = self.event_loop.uv_loop();
-            let this = bun_core::heap::into_raw(self);
-            // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated path
-            // before it returns, and it has `this` until `on_open`.
-            let rc = unsafe {
-                uv::uv_fs_open(
-                    loop_,
-                    &raw mut (*this).io_request,
-                    posix_path.as_ptr(),
-                    uv::O::CREAT
-                        | uv::O::WRONLY
-                        | uv::O::NOCTTY
-                        | uv::O::NONBLOCK
-                        | uv::O::SEQUENTIAL
-                        | uv::O::TRUNC,
-                    0o644,
-                    Some(Self::on_open),
-                )
-            };
+            let started = uv::fs::open(
+                self,
+                loop_,
+                bun_core::ZStr::from_cstr(&posix_path),
+                uv::O::CREAT
+                    | uv::O::WRONLY
+                    | uv::O::NOCTTY
+                    | uv::O::NONBLOCK
+                    | uv::O::SEQUENTIAL
+                    | uv::O::TRUNC,
+                0o644,
+                Self::on_open,
+            );
 
-            if let Some(err) = rc.to_error(sys::Tag::open) {
+            if let Err((this, rc)) = started {
+                let err = sys::Error::from_uv(rc, sys::Tag::open);
                 debug_assert!(err.get_errno() != sys::E::NOENT);
-                // SAFETY: libuv keeps nothing of a request that it refuses.
-                return unsafe { bun_core::heap::take(this) }.throw(err);
+                return this.throw(err);
             }
             Ok(())
         }
 
-        extern "C" fn on_open(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `open` left to libuv.
-            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
-            let rc = this.io_request.result;
+        fn on_open(mut self: Box<Self>, rc: uv::ReturnCodeI64) {
             #[cfg(debug_assertions)]
             bun_output::scoped_log!(
                 WriteFile,
                 "onOpen({}) = {}",
-                bstr::BStr::new(this.path()),
+                bstr::BStr::new(self.path()),
                 rc
             );
 
             if let Some(err) = rc.errno() {
-                if err == sys::E::NOENT && this.mkdirp_if_not_exists {
-                    // cleanup the request so we can reuse it later.
-                    this.io_request.deinit();
-
+                if err == sys::E::NOENT && self.mkdirp_if_not_exists {
                     // attempt to create the directory on another thread
-                    this.mkdirp();
+                    self.mkdirp();
                     return;
                 }
 
-                fold(this.throw(sys::Error::from_code(err, sys::Tag::open)));
+                fold(self.throw(sys::Error::from_code(err, sys::Tag::open)));
                 return;
             }
 
-            this.fd = i32::try_from(rc.int()).expect("int cast");
+            self.fd = i32::try_from(rc.int()).expect("int cast");
 
-            fold(this.do_write_loop());
+            fold(self.do_write_loop());
         }
 
         fn mkdirp(mut self: Box<Self>) {
@@ -687,17 +675,14 @@ mod windows_impl {
             });
         }
 
-        extern "C" fn on_write_complete(req: *mut uv::fs_t) {
-            // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv.
-            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
-            let rc = this.io_request.result;
+        fn on_write_complete(mut self: Box<Self>, rc: uv::ReturnCodeI64) {
             if let Some(err) = rc.to_error(sys::Tag::write) {
-                fold(this.throw(err));
+                fold(self.throw(err));
                 return;
             }
 
-            this.total_written += usize::try_from(rc.int()).expect("int cast");
-            fold(this.do_write_loop());
+            self.total_written += usize::try_from(rc.int()).expect("int cast");
+            fold(self.do_write_loop());
         }
 
         fn on_finish(mut self: Box<Self>) -> jsc::JsResult<()> {
@@ -746,56 +731,36 @@ mod windows_impl {
             None
         }
 
-        fn do_write_loop(mut self: Box<Self>) -> jsc::JsResult<()> {
-            let remain_full = self.bytes_blob.shared_view();
-            let off = self.total_written.min(remain_full.len());
-            let remain = &remain_full[off..];
+        fn remaining(&self) -> &[u8] {
+            let bytes = self.bytes_blob.shared_view();
+            &bytes[self.total_written.min(bytes.len())..]
+        }
 
-            if remain.is_empty() {
+        fn do_write_loop(self: Box<Self>) -> jsc::JsResult<()> {
+            if self.remaining().is_empty() {
                 return self.on_finish();
             }
 
-            let buf = uv::uv_buf_t {
-                base: remain.as_ptr().cast_mut(),
-                len: remain.len() as u32,
-            };
-            self.io_request.deinit();
-
             let (loop_, fd) = (self.event_loop.uv_loop(), self.fd);
-            let this = bun_core::heap::into_raw(self);
-            // SAFETY: the VM's loop outlives the request, libuv copies `buf` before it returns, and
-            // it has `this`, whose blob keeps the bytes, until `on_write_complete`.
-            let rc = unsafe {
-                uv::uv_fs_write(
-                    loop_,
-                    &raw mut (*this).io_request,
-                    fd,
-                    &raw const buf,
-                    1,
-                    -1,
-                    Some(Self::on_write_complete),
-                )
-            };
-            if rc.int() == 0 {
-                // EINPROGRESS
-                return Ok(());
+            let started = uv::fs::write(
+                self,
+                loop_,
+                fd,
+                Self::remaining,
+                -1,
+                Self::on_write_complete,
+            );
+            if let Err((this, rc)) = started {
+                return this.throw(sys::Error::from_uv(rc, sys::Tag::write));
             }
-
-            let Some(err) = rc.to_error(sys::Tag::write) else {
-                bun_core::Output::panic(format_args!(
-                    "unexpected return code from uv_fs_write: {}",
-                    rc.int()
-                ));
-            };
-            // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.throw(err)
+            Ok(())
         }
     }
 
     impl Drop for WriteFileWindows {
         fn drop(&mut self) {
             if self.fd > 0 && self.owned_fd {
-                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
+                aio::Closer::close(Fd::from_uv(self.fd), self.event_loop.uv_loop());
             }
         }
     }

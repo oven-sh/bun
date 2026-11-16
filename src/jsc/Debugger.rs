@@ -253,24 +253,12 @@ impl Debugger {
             use bun_sys::windows::libuv as uv;
             if wait == Wait::Shortly {
                 let uv_loop = this.uv_loop();
-                // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
-                unsafe { uv::uv_update_time(uv_loop) };
-                let mut timer = uv::Owned::<uv::Timer>::zeroed();
-                timer.init(uv_loop);
-
-                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
+                uv_loop.update_time();
+                uv::Timer::start_once(uv_loop, WAIT_FOR_CONNECTION_DELAY_MS as u64, (), |()| {
                     if let Some(d) = VirtualMachine::get().debugger.get() {
                         d.poll_ref.unref(js_vm_ctx());
                     }
-                    // SAFETY: the timer given up below, which fires once.
-                    drop(unsafe { uv::Owned::from_raw(handle) });
-                }
-                timer.start(
-                    WAIT_FOR_CONNECTION_DELAY_MS as u64,
-                    0,
-                    Some(on_debugger_timer),
-                );
-                let _ = timer.into_raw();
+                });
             }
         }
 

@@ -123,7 +123,7 @@ impl HostProcess {
         let Some(host) = super::remove(unreaped(), this) else {
             return;
         };
-        let pid = host.process.pid;
+        let pid = host.process.pid();
         drop(host);
         if (PID.compare_exchange(pid, 0, Ordering::Relaxed, Ordering::Relaxed)).is_err() {
             return; // retired
@@ -203,7 +203,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
             return Err(crate::Error::WatchFailed);
         }
     }
-    PID.store(process.pid, Ordering::Relaxed);
+    PID.store(process.pid(), Ordering::Relaxed);
     unreaped().with_taken(|unreaped| unreaped.push(host));
     // fd handed to C++ which adopts it into usockets. Not stored here —
     // usockets owns the socket; Rust only owns process lifetime.

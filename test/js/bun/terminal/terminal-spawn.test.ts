@@ -518,6 +518,40 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(exitCode).toBe(0);
   });
 
+  /** Types `input` once the child has printed CHILD-READY. The child prints `marker` before it exits with one of `exitCodes`. */
+  async function runInTerminal(cwd: string, input: string, marker: string, exitCodes: number[]) {
+    const ready = Promise.withResolvers<void>();
+    const reported = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("CHILD-READY")) ready.resolve();
+        if (output.includes(marker)) reported.resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "child-fixture.ts"],
+      env: bunEnv,
+      cwd,
+      terminal,
+    });
+    // Fail fast with the child's output if it dies before the handshake.
+    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
+
+    await ready.promise;
+    terminal.write(input);
+
+    const exitCode = await proc.exited;
+    // The exit IOCP and the final ConPTY pipe-data IOCP are independent, so
+    // the verdict line can arrive after proc.exited resolves. On any other
+    // exit (crash) the marker may never come, so don't wait for it.
+    if (exitCodes.includes(exitCode)) await reported.promise;
+    return { output, exitCode };
+  }
+
   // Regression test for a Windows-only use-after-free: cancelling a stdin
   // stream while a cooked-mode console read was parked used to free the
   // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
@@ -526,8 +560,8 @@ describe("Bun.Terminal subprocess integration", () => {
   // injecting a VK_RETURN, so the worker still wrote "\r\n" through the
   // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
   // block to next (a plausible mechanism for production reports of full-GC
-  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from the
-  // handle-owned uv::Tty::read_scratch. The child adopts the
+  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from a
+  // buffer that the handle owns. The child adopts the
   // previously-freed size class with ArrayBuffer probes and reports any
   // mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
@@ -543,7 +577,7 @@ describe("Bun.Terminal subprocess integration", () => {
         await warmup;
         // Arm the read under test; no more input arrives, so the libuv
         // worker parks in ReadConsoleW holding the read buffer (pre-fix:
-        // the reader's spare capacity; post-fix: the tty-owned scratch).
+        // the reader's spare capacity; post-fix: the tty's own buffer).
         reader.read().catch(() => {});
         // The park itself is unobservable from JS; there is no condition to
         // await. With the machinery proven warm above, a short delay makes
@@ -577,39 +611,39 @@ describe("Bun.Terminal subprocess integration", () => {
       `,
     });
 
-    const ready = Promise.withResolvers<void>();
-    const probeReported = Promise.withResolvers<void>();
-    const decoder = new TextDecoder();
-    let output = "";
-    await using terminal = new Bun.Terminal({
-      data(_, chunk: Uint8Array) {
-        output += decoder.decode(chunk, { stream: true });
-        if (output.includes("CHILD-READY")) ready.resolve();
-        if (output.includes("PROBE-")) probeReported.resolve();
-      },
-    });
-
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "child-fixture.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      terminal,
-    });
-    // Fail fast with the child's output if it dies before the handshake.
-    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
-
-    await ready.promise;
-    terminal.write("warmup\r");
-
-    const exitCode = await proc.exited;
-    // The exit IOCP and the final ConPTY pipe-data IOCP are independent, so
-    // the verdict line can arrive after proc.exited resolves. The child
-    // prints PROBE-* before exit(0)/exit(42) on both paths, so the marker is
-    // guaranteed to arrive for those codes; on any other exit (crash) the
-    // marker may never come, so don't wait for it.
-    if (exitCode === 0 || exitCode === 42) await probeReported.promise;
+    const { output, exitCode } = await runInTerminal(String(dir), "warmup\r", "PROBE-", [0, 42]);
     expect(output).toContain("PROBE-CLEAN");
     expect(output).not.toContain("PROBE-CORRUPTED");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isWindows).each([
+    [
+      "a writer on stdin is created during the read",
+      `const line = Bun.stdin.stream().getReader().read();
+       await new Promise(setImmediate);
+       globalThis.writer = Bun.stdin.writer();`,
+    ],
+    [
+      "a writer on stdin was collected",
+      `(() => void Bun.stdin.writer())();
+       await new Promise(setImmediate);
+       Bun.gc(true);
+       await new Promise(setImmediate);
+       const line = Bun.stdin.stream().getReader().read();`,
+    ],
+  ])("a line is read from the terminal when %s", async (_, setup) => {
+    using dir = tempDir("terminal-stdin-shared", {
+      "child-fixture.ts": `
+        ${setup}
+        console.log("CHILD-READY");
+        console.log("GOT-" + new TextDecoder().decode((await line).value).trim() + "-END");
+        process.exit(0);
+      `,
+    });
+
+    const { output, exitCode } = await runInTerminal(String(dir), "hello\r", "-END", [0]);
+    expect(output).toContain("GOT-hello-END");
     expect(exitCode).toBe(0);
   });
 });

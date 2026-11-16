@@ -719,7 +719,7 @@ impl EventLoop {
 
     #[cfg(windows)]
     #[inline]
-    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
+    pub fn uv_loop(&self) -> &'static crate::PlatformEventLoop {
         self.usockets_loop().uv_loop()
     }
 
@@ -1071,7 +1071,10 @@ impl EventLoop {
             // The VM's embedded loops run on the thread's loop, the one
             // `vm.event_loop_handle` names below.
             #[cfg(windows)]
-            debug_assert_eq!(uws::Loop::get().uv_loop(), Async::Loop::get());
+            debug_assert!(core::ptr::eq(
+                uws::Loop::get().uv_loop(),
+                Async::Loop::get()
+            ));
             self.uws_loop.set(Some(uws::Loop::get()));
         }
         let vm = self.vm_ref();
@@ -1247,10 +1250,7 @@ impl EventLoop {
             #[cfg(not(windows))]
             self.usockets_loop().tick();
             #[cfg(windows)]
-            // SAFETY: `uv_loop()` is live for this loop's lifetime; JS thread.
-            unsafe {
-                (*self.uv_loop()).tick()
-            };
+            self.uv_loop().tick();
         }
     }
 
@@ -1384,10 +1384,8 @@ pub(crate) fn get_active_tasks(
     let vm_ref = unsafe { heap.global() }.bun_vm();
     let event_loop = vm_ref.event_loop();
     #[cfg(windows)]
-    // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
     let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles.get() })
-            .expect("int cast");
+        i32::try_from(bun_sys::windows::libuv::Loop::get().active_handles.get()).expect("int cast");
     #[cfg(not(windows))]
     let num_polls: i32 = uws::Loop::get().num_polls.get();
     crate::generated_bindgen::event_loop::ActiveTasks {

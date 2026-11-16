@@ -5,31 +5,21 @@
 use core::ffi::c_int;
 
 use bun_jsc::JSGlobalObject;
-use bun_sys::windows::libuv::{self, UvHandle as _};
+use bun_sys::windows::libuv;
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__UVSignalHandle__init(
     global: &JSGlobalObject,
     signal_num: i32,
-    callback: unsafe extern "C" fn(sig: *mut libuv::uv_signal_t, num: c_int),
-) -> *mut libuv::uv_signal_t {
-    let mut signal = libuv::Owned::<libuv::uv_signal_t>::zeroed();
-
-    // SAFETY: `signal` is a heap handle and `uv_loop()` returns the VM's live libuv loop.
-    let failed = unsafe {
-        libuv::uv_signal_init(global.bun_vm().uv_loop(), signal.as_ptr()).is_err()
-            || libuv::uv_signal_start(signal.as_ptr(), Some(callback), signal_num).is_err()
-    };
-    if failed {
-        return core::ptr::null_mut();
-    }
-
+    callback: extern "C" fn(sig: *mut libuv::uv_signal_t, num: c_int),
+) -> Option<libuv::Owned<libuv::uv_signal_t>> {
+    let loop_ = global.bun_vm().uv_loop();
+    let signal = libuv::uv_signal_t::start(loop_, signal_num, callback).ok()?;
     signal.unref();
-    signal.into_raw()
+    Some(signal)
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__UVSignalHandle__close(signal: *mut libuv::uv_signal_t) {
-    // SAFETY: `signal` is a live handle previously returned by Bun__UVSignalHandle__init.
-    drop(unsafe { libuv::Owned::from_raw(signal) });
+extern "C" fn Bun__UVSignalHandle__close(signal: libuv::Owned<libuv::uv_signal_t>) {
+    drop(signal);
 }

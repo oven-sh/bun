@@ -232,12 +232,6 @@ pub use posix_event_loop::{FilePoll, Loop, OwnedFilePoll};
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 
-/// How a [`Loop`] is handed around: libuv's functions take a pointer.
-#[cfg(not(windows))]
-pub type LoopRef = &'static Loop;
-#[cfg(windows)]
-pub type LoopRef = *mut Loop;
-
 pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
 
 #[cfg(not(windows))]
@@ -363,7 +357,7 @@ pub use pipe_writer::{
     WriteStatus,
 };
 #[cfg(windows)]
-pub use source::Source;
+pub use source::{OwnedPipe, Source};
 
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
@@ -955,45 +949,6 @@ macro_rules! intrusive_io_request {
         // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
         unsafe impl $crate::IntrusiveIoRequest for $ty {
             const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
-/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
-/// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
-///
-/// Implement via [`intrusive_uv_fs!`].
-///
-/// # Safety
-/// `UV_FS_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request field>)`.
-#[cfg(windows)]
-pub unsafe trait IntrusiveUvFs: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const UV_FS_OFFSET: usize;
-
-    /// Take back the `Box<Self>` that was left to libuv, from the `*mut uv::fs_t` it passes back.
-    ///
-    /// # Safety
-    /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// leaked `Box<Self>` that nothing else takes back, and the pointer's provenance must cover the
-    /// whole allocation.
-    #[inline(always)]
-    unsafe fn take_from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> Box<Self> {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::heap::take(bun_core::container_of(req, Self::UV_FS_OFFSET)) }
-    }
-}
-
-/// Implements [`IntrusiveUvFs`] for a struct that embeds an intrusive
-/// `io_request: uv::fs_t` field.
-#[cfg(windows)]
-#[macro_export]
-macro_rules! intrusive_uv_fs {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `UV_FS_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveUvFs for $ty {
-            const UV_FS_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
         }
     };
 }
@@ -1703,33 +1658,32 @@ pub mod closer {
     use bun_sys::windows::libuv as uv;
 
     #[cfg(windows)]
-    pub struct Closer;
+    pub struct Closer {
+        req: uv::fs::Request,
+    }
+
+    #[cfg(windows)]
+    bun_core::intrusive_field!(Closer, req: uv::fs::Request);
 
     #[cfg(windows)]
     impl Closer {
-        pub fn close(fd: Fd, loop_: *mut uv::Loop) {
-            let req = bun_ptr::AliasableBox::from(bun_core::boxed_zeroed::<uv::fs_t>());
-            // SAFETY: `req` stays put until `on_close` takes it.
-            let rc = unsafe { uv::uv_fs_close(loop_, req.as_ptr(), fd.uv(), Some(Self::on_close)) };
-            if let Some(err) = rc.errno() {
-                bun_core::debug_warn!("libuv close() failed = {:?}", err);
-                return;
+        pub fn close(fd: Fd, loop_: &uv::Loop) {
+            bun_sys::syslog!("uv_fs_close({}) = scheduled", fd);
+            let this = Box::new(Closer {
+                req: Default::default(),
+            });
+            if let Err((this, rc)) = uv::fs::close(this, loop_, fd.uv(), Self::on_close) {
+                this.on_close(rc.into());
             }
-            let _ = req.into_raw();
         }
 
-        extern "C" fn on_close(req: *mut uv::fs_t) {
-            // SAFETY: the box `close` gave up.
-            let req = unsafe { bun_core::heap::take(req) };
-            bun_sys::syslog!(
-                "uv_fs_close({}) = {}",
-                // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                Fd::from_uv(unsafe { req.file_fd() }),
-                req.result
-            );
+        fn on_close(self: Box<Self>, result: uv::ReturnCodeI64) {
+            drop(self);
+            bun_sys::syslog!("uv_fs_close() = {}", result);
 
-            #[cfg(debug_assertions)]
-            if let Some(err) = req.result.errno() {
+            if cfg!(debug_assertions)
+                && let Some(err) = result.errno()
+            {
                 bun_core::debug_warn!("libuv close() failed = {:?}", err);
             }
         }

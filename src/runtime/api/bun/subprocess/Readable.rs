@@ -103,7 +103,7 @@ impl Readable {
                 let _ = result.map(bun_sys::File::into_raw);
                 #[cfg(windows)]
                 if let StdioResult::Buffer(pipe) = result {
-                    let _ = pipe.into_raw();
+                    let _ = core::mem::ManuallyDrop::new(pipe);
                 }
                 Readable::Ignore
             }

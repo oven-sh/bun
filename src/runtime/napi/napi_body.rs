@@ -2441,7 +2441,7 @@ extern "C" fn napi_get_uv_event_loop(
     {
         // A past alignment assertion here fired spuriously.
         // TODO(@190n) investigate
-        loop_out.write(VirtualMachine::get().uv_loop());
+        loop_out.write(VirtualMachine::get().uv_loop().as_ptr());
     }
     #[cfg(unix)]
     {

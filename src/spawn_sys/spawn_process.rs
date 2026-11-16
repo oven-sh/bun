@@ -72,12 +72,10 @@ unsafe extern "system" {
 }
 
 #[cfg(windows)]
-pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
-    use core::ffi::c_void;
+pub fn uv_getrusage(process: bun_sys::windows::HANDLE) -> WinRusage {
     let mut usage_info = Rusage::default();
-    let process_pid: *mut c_void = process.process_handle;
     // We at least get process times
-    if let Ok(times) = bun_sys::windows::GetProcessTimes(process_pid) {
+    if let Ok(times) = bun_sys::windows::GetProcessTimes(process) {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
         // 10 ticks. A `ticks % 1_000_000` computation here would be
         // unit-mismatched (a 100-ns tick count modulo a microsecond
@@ -92,11 +90,11 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     }
     let mut counters = IoCounters::default();
     // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
+    let _ = unsafe { GetProcessIoCounters(process, &mut counters) };
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 
-    let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
+    let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process) else {
         return usage_info;
     };
     usage_info.maxrss = memory.PeakWorkingSetSize as u64;

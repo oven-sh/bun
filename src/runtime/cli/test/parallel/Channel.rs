@@ -9,14 +9,15 @@
 //!
 //! Lifetime: a `Channel` is embedded as a field in an owner that outlives all
 //! uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
-//! `CoordinatorLink` which lives for the process). `Drop` assumes no write is in flight: true for both
-//! sites (start() errdefer and reap_worker after the peer has exited).
+//! `CoordinatorLink` which lives for the process).
 
 use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
 
 use bun_collections::VecExt;
+#[cfg(windows)]
+use bun_io::{IoEvent, OwnedPipe, Owner, PollTag};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::File;
@@ -26,7 +27,7 @@ use bun_uws as uws;
 use bun_uws_sys::thunk::ExtSlot;
 
 #[cfg(windows)]
-use bun_libuv_sys::UvStream as _;
+use bun_ptr::CellExt as _;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -126,29 +127,16 @@ impl Channel {
 // -- Windows (uv.Pipe) -------------------------------------------------------
 
 #[cfg(windows)]
-pub(crate) struct WindowsBackend {
-    pub(crate) pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
-    /// Read scratch — libuv asks us to allocate before each read.
-    pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
-    /// Payload owned by the in-flight uv_write; must stay stable until the
-    /// callback. New writes go to `out` until this completes, then the buffers
-    /// swap.
-    pub(crate) inflight: JsCell<Vec<u8>>,
-    pub(crate) write_req: JsCell<uv::uv_write_t>,
-    pub(crate) write_buf: JsCell<uv::uv_buf_t>,
-}
+const MAX_READ_LEN: usize = 16 * 1024;
 
 #[cfg(windows)]
-impl Default for WindowsBackend {
-    fn default() -> Self {
-        Self {
-            pipe: JsCell::new(None),
-            read_chunk: JsCell::new([0u8; 16 * 1024]),
-            inflight: JsCell::new(Vec::new()),
-            write_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_write_t>()),
-            write_buf: JsCell::new(uv::uv_buf_t::init(b"")),
-        }
-    }
+#[derive(Default)]
+pub(crate) struct WindowsBackend {
+    pub(crate) pipe: JsCell<Option<OwnedPipe>>,
+    /// New writes go to `out` until the one in flight completes.
+    is_writing: Cell<bool>,
+    /// The buffer of the last write, which is swapped with `out` for the next.
+    spare: Cell<Vec<u8>>,
 }
 
 // -- adopt -------------------------------------------------------------------
@@ -168,28 +156,21 @@ impl Channel {
             // the .ipc stdio container, which always inits with ipc=true) and
             // child end disagree on framing and the channel never delivers a
             // frame.
-            let mut pipe = uv::Owned::<uv::Pipe>::zeroed();
-            if let Some(e) = pipe
-                .init(uv::Loop::get(), true)
-                .to_error(bun_sys::Tag::pipe)
-            {
-                bun_core::debug_warn!(
-                    "Channel.adopt: uv_pipe_init failed: {}",
-                    e.name().escape_ascii(),
-                );
-                return false;
+            match OwnedPipe::open(uv::Loop::get(), true, fd) {
+                Ok(pipe) => {
+                    // `pipe` closes it.
+                    end.into_raw();
+                    self.adopt_pipe(pipe)
+                }
+                Err(e) => {
+                    bun_core::debug_warn!(
+                        "Channel.adopt: uv_pipe_open({}) failed: {}",
+                        fd.uv(),
+                        e.name().escape_ascii(),
+                    );
+                    false
+                }
             }
-            if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
-                bun_core::debug_warn!(
-                    "Channel.adopt: uv_pipe_open({}) failed: {}",
-                    fd.uv(),
-                    e.name().escape_ascii(),
-                );
-                return false;
-            }
-            // `pipe` closes it.
-            end.into_raw();
-            return self.adopt_pipe(pipe);
         }
         #[cfg(not(windows))]
         {
@@ -210,12 +191,12 @@ impl Channel {
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
     /// reading. The pipe stays ref'd so the loop blocks for the peer's first frame.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(&self, mut pipe: uv::Owned<uv::Pipe>) -> bool {
-        // The read callbacks are expressed via the `StreamReader` trait impl
-        // below and routed through `read_start_ctx`, which stashes `self` in
-        // `handle.data`.
-        let rc = pipe.read_start_ctx::<Self>(self);
-        if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
+    pub(crate) fn adopt_pipe(&self, pipe: OwnedPipe) -> bool {
+        let this = core::ptr::from_ref(self).cast_mut().cast();
+        // SAFETY: `self` drops the pipe, and stays in place as the top of this file says.
+        unsafe { pipe.set_owner(Owner::new(PollTag::TestParallelChannel, this)) };
+        pipe.set_max_read_len(MAX_READ_LEN);
+        if let Some(e) = pipe.read_start().to_error(bun_sys::Tag::listen) {
             bun_core::debug_warn!(
                 "Channel.adoptPipe: readStart failed: {}",
                 e.name().escape_ascii(),
@@ -261,7 +242,7 @@ impl Channel {
     #[cfg(windows)]
     fn send_windows(&self, frame_bytes: &[u8]) {
         // A uv_write is in flight — queue behind it.
-        if !self.backend.inflight.get().is_empty() {
+        if self.backend.is_writing.get() {
             self.out.with_mut(|out| out.extend_from_slice(frame_bytes));
             return;
         }
@@ -270,11 +251,10 @@ impl Channel {
         // so this currently always falls through to submit_windows_write —
         // kept because EBADF/EPIPE here mean the pipe is dead and must not
         // silently drop the frame.
-        let buf = uv::uv_buf_t::init(frame_bytes);
-        let try_write = |pipe: &mut uv::Owned<uv::Pipe>| pipe.try_write(&[buf]);
-        let Some(rc) = (self.backend.pipe).with_mut(|pipe| pipe.as_mut().map(try_write)) else {
+        let Some(pipe) = self.backend.pipe.get() else {
             return;
         };
+        let rc = pipe.try_write(frame_bytes);
         let w: usize = match rc.to_error(bun_sys::Tag::try_write) {
             None => rc.int() as usize,
             Some(e) => {
@@ -296,37 +276,15 @@ impl Channel {
 
     #[cfg(windows)]
     fn submit_windows_write(&self) {
-        if self.out.get().is_empty() || !self.backend.inflight.get().is_empty() || self.done.get() {
+        if self.out.get().is_empty() || self.backend.is_writing.get() || self.done.get() {
             return;
         }
         let Some(pipe) = self.backend.pipe.get() else {
             return;
         };
-        // Swap: out → inflight (stable for uv_write), out becomes empty.
-        let out = self.out.replace(Vec::new());
-        let prev_inflight = self.backend.inflight.replace(out);
-        self.out.set(prev_inflight);
-        self.backend
-            .write_buf
-            .set(uv::uv_buf_t::init(self.backend.inflight.get().as_slice()));
-        let this = core::ptr::from_ref(self).cast_mut();
-        // SAFETY: `p` is the `this` handed to `write` below — the live Channel
-        // stashed for the callback; every Channel method is `&self`.
-        let on_write: fn(*mut Self, uv::ReturnCode) = |p, s| unsafe { &*p }.on_write(s);
-        // SAFETY: `write_req`/`write_buf`/`inflight` live in `self`, which is
-        // address-stable and outlives the write, so libuv may hold them until
-        // `on_write` fires.
-        let rc = unsafe {
-            (*self.backend.write_req.as_ptr()).write(
-                pipe.as_ptr().cast(),
-                &*self.backend.write_buf.as_ptr(),
-                this,
-                on_write,
-            )
-        };
-        if rc.is_err() {
-            self.backend.inflight.with_mut(|inflight| inflight.clear());
-            self.mark_failed();
+        match pipe.write(self.out.replace(self.backend.spare.take()), 0) {
+            Ok(()) => self.backend.is_writing.set(true),
+            Err(_) => self.mark_failed(),
         }
     }
 
@@ -334,7 +292,7 @@ impl Channel {
     pub(crate) fn has_pending_writes(&self) -> bool {
         #[cfg(windows)]
         {
-            !self.out.get().is_empty() || !self.backend.inflight.get().is_empty()
+            !self.out.get().is_empty() || self.backend.is_writing.get()
         }
         #[cfg(not(windows))]
         {
@@ -380,6 +338,7 @@ impl Channel {
 
     // -- read ----------------------------------------------------------------
 
+    #[cfg(not(windows))]
     fn ingest(&self, data: &[u8]) {
         if self.done.get() {
             return;
@@ -388,10 +347,19 @@ impl Channel {
         self.has_incoming.set(true);
     }
 
+    /// A pipe has `in` while it is there, and its reads append to it.
+    fn replace_incoming(&self, bytes: Vec<u8>) -> Vec<u8> {
+        #[cfg(windows)]
+        if let Some(pipe) = self.backend.pipe.get() {
+            return pipe.input().replace(bytes);
+        }
+        self.r#in.replace(bytes)
+    }
+
     /// `None` if nothing has arrived since the last call. Goes back through `restore_incoming`.
     pub(crate) fn take_incoming(&self) -> Option<IncomingFrames> {
         self.has_incoming.take().then(|| IncomingFrames {
-            bytes: self.r#in.take(),
+            bytes: self.replace_incoming(Vec::new()),
             head: 0,
             is_corrupt: false,
         })
@@ -402,8 +370,8 @@ impl Channel {
             return self.mark_corrupt();
         }
         incoming.bytes.drain_front(incoming.head);
-        debug_assert!(self.r#in.get().is_empty());
-        self.r#in.set(incoming.bytes);
+        let arrived = self.replace_incoming(incoming.bytes);
+        debug_assert!(arrived.is_empty());
     }
 
     fn mark_failed(&self) {
@@ -460,18 +428,42 @@ impl uws::vtable::Handler for Channel {
 
 #[cfg(windows)]
 impl Channel {
+    pub(crate) fn on_io(&self, event: IoEvent) {
+        match event {
+            IoEvent::StreamRead(nread) => match nread.errno() {
+                Some(err) => self.on_error(err),
+                None => self.on_read(nread.int() as usize),
+            },
+            IoEvent::StreamWrite(bytes, status) => self.on_write(bytes, status),
+            IoEvent::VmTeardown => {}
+            _ => unreachable!("not an event of a channel"),
+        }
+    }
+    fn on_read(&self, len: usize) {
+        if !self.done.get() {
+            self.has_incoming.set(true);
+        } else if let Some(pipe) = self.backend.pipe.get() {
+            pipe.input()
+                .with_taken(|input| input.truncate(input.len() - len));
+        }
+    }
     fn on_error(&self, err: bun_sys::E) {
         // libuv frames this pipe itself (ipc=1), so bytes the peer writes
         // straight to fd 3 fail its frame-header check and surface here as a
-        // read error instead of reaching `ingest`; report it like a bad frame.
+        // read error instead of reaching `on_read`; report it like a bad frame.
         if err != bun_sys::E::EOF {
             self.mark_corrupt();
         }
-        self.backend.pipe.set(None);
+        if let Some(pipe) = self.backend.pipe.take() {
+            self.r#in.set(pipe.input().take());
+        }
+        self.backend.is_writing.set(false);
         self.done.set(true);
     }
-    fn on_write(&self, status: uv::ReturnCode) {
-        self.backend.inflight.with_mut(|inflight| inflight.clear());
+    fn on_write(&self, mut bytes: Vec<u8>, status: uv::ReturnCode) {
+        bytes.clear();
+        self.backend.spare.set(bytes);
+        self.backend.is_writing.set(false);
         if self.done.get() {
             return;
         }
@@ -480,22 +472,5 @@ impl Channel {
             return;
         }
         self.submit_windows_write();
-    }
-}
-
-// SAFETY: only these callbacks use `read_chunk`, and the pipe closes with the channel.
-#[cfg(windows)]
-unsafe impl uv::StreamReader for Channel {
-    #[inline]
-    fn on_read_alloc(this: &Self, _: usize) -> *mut [u8] {
-        this.backend.read_chunk.as_ptr()
-    }
-    #[inline]
-    fn on_read_error(this: &Self, err: core::ffi::c_int) {
-        this.on_error(bun_sys::windows::translate_uv_error_to_e(err));
-    }
-    #[inline]
-    unsafe fn on_read(this: &Self, nread: usize) {
-        this.ingest(&this.backend.read_chunk.get()[..nread]);
     }
 }

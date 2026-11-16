@@ -318,22 +318,13 @@ pub(crate) fn run_task(
             })
         }
         #[cfg(windows)]
-        task_tag::WindowsNamedPipeContext => {
-            // Same shape as `DuplexUpgradeContext`: may free the context.
+        task_tag::WindowsNamedPipeDeinit => {
             // SAFETY: tag identifies the pointee; the queue owns it until here.
-            unsafe {
-                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
-                    crate::socket::WindowsNamedPipeContext
-                ))
-            };
+            unsafe { bun_core::heap::destroy(cast_ptr!(WindowsNamedPipe)) };
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
             boxed!(task, crate::dns_jsc::LibuvRequest).run();
-        }
-        #[cfg(windows)]
-        task_tag::UvDnsPollFree => {
-            crate::dns_jsc::UvDnsPoll::destroy(cast_ptr!(crate::dns_jsc::UvDnsPoll));
         }
         task_tag::ValkeyDeferredClose => {
             boxed_arm!(
@@ -690,10 +681,8 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                    $(task_tag::$tag => feature_arm!([NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                        unsafe { fs_async::$ty::run_from_js_thread(request) }?;
-                        Ok(())
+                    $(task_tag::$tag => boxed_arm!(task, [NodeFs], |request: fs_async::$ty| -> JsResult<()> {
+                        request.run_from_js_thread()
                     })?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
@@ -839,7 +828,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 82,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -995,12 +984,30 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             FileSink,
             |this, _, event| this.on_writer_io(event)
         ),
+        // `on_io` takes the ref.
         #[cfg(windows)]
         PollTag::WindowsNamedPipe => io_arm!(
             [Sockets],
             <*mut _>::as_ref_unchecked,
             WindowsNamedPipe,
-            |this, _, event| this.on_writer_io(event)
+            |this, _, event| this.on_io(event)
+        ),
+
+        // Its owner keeps it until the task that reports the close has run.
+        #[cfg(windows)]
+        PollTag::SendQueue => io_arm!(
+            [Ipc, Spawn],
+            <*mut _>::as_ref_unchecked,
+            crate::ipc::SendQueue,
+            |this, _, event| this.on_io(event)
+        ),
+        // Not refcounted: `on_io` runs no code of the owner.
+        #[cfg(windows)]
+        PollTag::TestParallelChannel => io_arm!(
+            [TestCommand],
+            <*mut _>::as_ref_unchecked,
+            crate::cli::test::parallel::channel::Channel,
+            |this, _, event| this.on_io(event)
         ),
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
@@ -1831,15 +1838,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
-        task_tag::UvDnsPollFree => {
+        task_tag::WindowsNamedPipeDeinit => {
             #[cfg(windows)]
-            release!(crate::dns_jsc::UvDnsPoll);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::WindowsNamedPipeContext => {
-            #[cfg(windows)]
-            release!(crate::socket::WindowsNamedPipeContext);
+            release!(WindowsNamedPipe);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
@@ -1872,7 +1873,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             {
                 macro_rules! __fs_release {
                     ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                        $(task_tag::$tag => release_in!([NodeFs], fs_async::$ty),)*
+                        $(task_tag::$tag => release_boxed_in!([NodeFs], fs_async::$ty),)*
                         // SAFETY: the outer arm proves one of the table tags matched.
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     }};

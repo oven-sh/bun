@@ -1,6 +1,6 @@
 #!/bin/sh
 # What `compare_fonts` says about the fonts that macOS uses for its interface, and then what matters about the rest.
-cd "$(dirname "$0")" || exit 1
+# Run it where the executable is.
 fonts=/System/Library/Fonts
 set --
 for name in SFNS SFArabic SFHebrew NewYork Menlo Monaco Helvetica Times Courier "Apple Color Emoji" "Apple Symbols" CJKSymbolsFallback \

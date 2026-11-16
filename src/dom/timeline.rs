@@ -189,7 +189,7 @@ impl Document {
         let last = sources
             .filter_map(|it| Some((*it, declared(*it)?)))
             .max_by_key(|it| self.tree.path(it.0));
-        last.map(|it| it.1).ok_or(scope.is_some())
+        last.map(|it| it.1).ok_or_else(|| scope.is_some())
     }
 
     pub(crate) fn find_trigger(

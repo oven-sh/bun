@@ -484,6 +484,16 @@ impl Document {
         {
             self.container_changed(id, false);
         }
+        if rematches
+            && old.is_some()
+            && self.own_box(id).is_none()
+            && self.boxes[self.tree[id].layout_box]
+                .inline
+                .as_ref()
+                .is_some_and(|it| it.first_line.is_some())
+        {
+            self.mark_parent_rebuild(id);
+        }
         let mut below = change & (Change::REMATCH_ALL | Change::RECASCADE_ALL);
         let mut changed_customs = customs;
         let own_customs;
@@ -637,7 +647,7 @@ impl Document {
             if rematches {
                 self.tree[child].set(Flags::REMATCH);
             }
-            let below = if rematches && Some(child) == self.transition_root() {
+            let below = if rematches && self.is_transition_root(child) {
                 below | Change::REMATCH_ALL
             } else {
                 below
@@ -929,7 +939,13 @@ impl Document {
             true => _ = self.scrolling.states.entry(id).or_default(),
             false => _ = self.scrolling.states.remove(&id),
         }
-        if matches!(style.rare.content, Content::Items(..)) || !self.replacements.is_empty() {
+        if matches!(style.rare.content, Content::Items(..))
+            || !self.replacements.is_empty()
+            || self
+                .tree
+                .element(id)
+                .is_some_and(|it| it.tag == name!("img"))
+        {
             self.update_replacement(id, style);
         }
         self.register_snapping(id, style);
@@ -940,6 +956,7 @@ impl Document {
             self.tree[id].has(Flags::SKIPPED),
         );
         let skips = match visibility {
+            ContentVisibility::Auto if self.is_embedded => false,
             ContentVisibility::Auto if self.auto_visible.contains_key(&id) => was_skipped,
             ContentVisibility::Auto => self.auto_visible.insert(id, None).is_none(),
             _ => {
@@ -1045,6 +1062,7 @@ impl Document {
         }
         if old.effects.will_change != new.effects.will_change
             || old.contains_fixed() != new.contains_fixed()
+            || old.effects.filter.0.is_empty() != new.effects.filter.0.is_empty()
         {
             total |= Damage::LAYOUT;
         }
@@ -1301,8 +1319,7 @@ impl Document {
             (
                 BACKDROP,
                 Pseudo::Backdrop,
-                self.tree[id].has(Flags::TOP_LAYER)
-                    || Some(generated[BACKDROP]) == self.transition_root(),
+                self.tree[id].has(Flags::TOP_LAYER) || self.is_transition_root(generated[BACKDROP]),
             ),
         ];
         for (index, pseudo, is_wanted) in wanted {

@@ -154,7 +154,8 @@ function create(env: any, worldOf: (id: number) => any) {
   Object.defineProperty(available, "url", { get: () => require("node:url"), enumerable: true });
   const requireFrom = (file: string) => (id: string) => {
     if (/^electron(?:\/(?:renderer|common))?$/.test(id)) return electron;
-    if (env.unsandboxed) return env.unsandboxed.createRequire(file)(id);
+    const { unsandboxed } = env;
+    if (unsandboxed) return unsandboxed.createRequire(file)(id);
     const found = available[id.replace(/^node:/, "")];
     if (!found) throw new Error(`module not found: ${id}`);
     return found;
@@ -169,7 +170,7 @@ function create(env: any, worldOf: (id: number) => any) {
   return {
     run(script: Function, file: string) {
       const module = { exports: {} };
-      script.$call(
+      (script as any).$call(
         module.exports,
         requireFrom(file),
         process,

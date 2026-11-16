@@ -6,7 +6,7 @@ const { app, Event } = require("internal/desktop/app");
 const policy = require("internal/desktop/electron/policy");
 const loader = require("internal/desktop/electron/loader");
 const proxies = require("internal/desktop/electron/proxy");
-const { Cookies, kJar, isWithin, withoutDot } = require("internal/desktop/electron/cookies");
+const { Cookies, kJar, withoutDot } = require("internal/desktop/electron/cookies");
 const { Storage } = require("internal/desktop/electron/storage");
 const { inert, unsupported } = require("internal/desktop/electron/stubs");
 
@@ -15,8 +15,8 @@ const nothing = Object.freeze({});
 
 /** Where `--host-resolver-rules` sends what is for `url`. */
 function mapHost(url: URL) {
-  if (!app.commandLine.hasSwitch("host-resolver-rules")) return;
-  const rules = app.commandLine
+  if (!(app as any).commandLine.hasSwitch("host-resolver-rules")) return;
+  const rules = (app as any).commandLine
     .getSwitchValue("host-resolver-rules")
     .split(",")
     .map(rule => rule.trim().split(/\s+/));
@@ -200,8 +200,8 @@ function networkMayHaveChanged() {
   // Temporary IPv6 addresses come and go all the time.
   const isCut = now.length === 0 || before.some(it => !it.includes(":") && !now.includes(it));
   sessions.$forEach(session => session[kDisconnect](isCut ? "NETWORK_CHANGED" : undefined));
-  if ((before.length === 0) !== (now.length === 0))
-    require("internal/desktop/electron/page").onlineChanged(now.length > 0);
+  const { length } = now;
+  if ((before.length === 0) !== (length === 0)) require("internal/desktop/electron/page").onlineChanged(length > 0);
 }
 
 function resumed() {
@@ -231,7 +231,7 @@ function isBundled(certificate: any) {
   return bundled.$has(certificate.raw.toString("base64"));
 }
 
-function describeCertificate(certificate: any) {
+function describeCertificate(certificate: any): any {
   const principal = ({ CN = "", O, OU, L = "", ST = "", C = "" }: any = {}) => ({
     commonName: CN,
     organizations: [O ?? []].flat(),
@@ -267,9 +267,10 @@ class Locks {
 
   #grant() {
     const blocked = new Set<string>();
-    for (const lock of [...this.#pending]) {
-      if (blocked.$has(lock.name) || !this.#isFree(lock)) {
-        blocked.$add(lock.name);
+    for (const lock of Array.from(this.#pending)) {
+      const { name } = lock;
+      if (blocked.$has(name) || !this.#isFree(lock)) {
+        blocked.$add(name);
         continue;
       }
       this.#pending.splice(this.#pending.indexOf(lock), 1);
@@ -285,7 +286,7 @@ class Locks {
       this.#held = this.#held.filter(held => held.name !== name);
       this.#pending.unshift(lock);
     } else if (ifAvailable && (!this.#isFree(lock) || this.#pending.some(other => other.name === name))) {
-      setImmediate(notify, "unavailable");
+      setImmediate(notify as any, "unavailable");
     } else this.#pending.push(lock);
     this.#grant();
     return {
@@ -462,9 +463,9 @@ class ZoomLevels {
     this.#levels = Object.create(null);
     try {
       if (this.#file !== null)
-        Object.assign(this.#levels, JSON.parse(require("node:fs").readFileSync(this.#file, "utf8")));
+        Object.assign(this.#levels!, JSON.parse(require("node:fs").readFileSync(this.#file, "utf8")));
     } catch {}
-    return this.#levels;
+    return this.#levels!;
   }
 
   get(host: string): number | undefined {
@@ -498,7 +499,7 @@ class Session extends EventEmitter {
     removeExtension: undefined,
     loadExtension: unsupported.rejects("Extensions.loadExtension"),
   });
-  #proxy = proxies.fromSwitches(app.commandLine?.appended ?? new Map());
+  #proxy = proxies.fromSwitches((app as any).commandLine?.appended ?? new Map());
   #pool: Bun.FetchSession | undefined;
   #userAgent: string | undefined;
   #languages: string | undefined;
@@ -540,7 +541,7 @@ class Session extends EventEmitter {
       socketOptions: (url: URL) => {
         const toOptions = (route: (string | null)[]) => ({ proxy: usable(route)[0] ?? undefined, tls: this.#tls() });
         const route = proxies.resolve(url, this.#proxy);
-        return $isPromise(route) ? route.then(toOptions) : toOptions(route);
+        return $isPromise(route) ? route.then(toOptions as any) : toOptions(route);
       },
       locksOf(origin: string) {
         if (!locks.$has(origin)) locks.$set(origin, new Locks());
@@ -551,7 +552,7 @@ class Session extends EventEmitter {
   }
 
   #tls() {
-    if (app.commandLine.hasSwitch("ignore-certificate-errors")) return { rejectUnauthorized: false };
+    if ((app as any).commandLine.hasSwitch("ignore-certificate-errors")) return { rejectUnauthorized: false };
     return { ca: authorities, checkServerIdentity: this.#verify ? this.#checkServerIdentity : undefined };
   }
 
@@ -570,7 +571,7 @@ class Session extends EventEmitter {
       };
       this.#pool ??= new Bun.FetchSession({
         tls: this.#tls(),
-        http2: !app.commandLine.hasSwitch("disable-http2"),
+        http2: !(app as any).commandLine.hasSwitch("disable-http2"),
       } as any);
       try {
         const mapped = proxy ? undefined : mapHost(url);
@@ -640,7 +641,7 @@ class Session extends EventEmitter {
   }
 
   getUserAgent() {
-    return this.#userAgent ?? app.userAgentFallback;
+    return this.#userAgent ?? (app as any).userAgentFallback;
   }
 
   setUserAgent(userAgent: string, acceptLanguages?: string) {
@@ -712,7 +713,7 @@ class Session extends EventEmitter {
     if (includes(/^(?:cachestorage|serviceworkers)$/i)) storage.clearCaches(matches);
     if (includes(/^filesystems?$/i)) storage.clearFiles(listed, only === undefined);
     if (!includes(/^cookies$/)) return;
-    const sites = listed.map(origin => policy.siteOf(URL.parse(origin)?.hostname ?? ""));
+    const sites = listed.map(origin => policy.siteOf(URL.parse(origin as any)?.hostname ?? ""));
     for (const cookie of jar.all()) {
       if (sites.includes(policy.siteOf(withoutDot(cookie.domain))) === (only !== undefined))
         jar.remove(cookie, "explicit");
@@ -747,8 +748,8 @@ class Session extends EventEmitter {
 
   registerPreloadScript(script: { id?: string; type: string; filePath: string }) {
     const id = script.id ?? `preload-${nextPreload++}`;
-    if (!path.isAbsolute(script.filePath))
-      throw new Error(`Preload script must have absolute path: ${script.filePath}`);
+    const scriptFilePath = script.filePath;
+    if (!path.isAbsolute(scriptFilePath)) throw new Error(`Preload script must have absolute path: ${scriptFilePath}`);
     this[kState].preloads.push({ ...script, id });
     return id;
   }

@@ -193,7 +193,7 @@ function best(displays: any[], score: (display: any) => number) {
 const screen = systemEmitter({
   getAllDisplays() {
     const displays = native.ask("displays").sort((a, b) => b.primary - a.primary);
-    return displays.map(({ primary: _, ...display }) => ({
+    return displays.map(({ primary: _primary, ...display }) => ({
       ...display,
       size: { width: display.bounds.width, height: display.bounds.height },
       workAreaSize: { width: display.workArea.width, height: display.workArea.height },
@@ -359,7 +359,7 @@ const globalShortcut = {
   isRegistered: (text: string) => shortcuts.$has(hotkey(text)),
   unregister: (text: string) => unregister(hotkey(text)),
   unregisterAll() {
-    for (const key of [...shortcuts.$keys()]) unregister(key);
+    for (const key of Array.from(shortcuts.$keys())) unregister(key);
   },
 };
 

@@ -85,6 +85,10 @@ pub fn update(state: &WindowState) {
 }
 
 /// Whether someone is interested in the tree of the window.
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(dead_code, reason = "only AppKit is served")
+)]
 pub fn set_active(window: u32, is_active: bool) {
     thread_local! {
         static IS_ACTIVE: Cell<bool> = const { Cell::new(false) };
@@ -106,6 +110,10 @@ pub fn set_active(window: u32, is_active: bool) {
 }
 
 /// click, focus, blur, setValue, increment, decrement, expand, collapse, scrollIntoView or showContextMenu.
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(dead_code, reason = "only AppKit is served")
+)]
 pub fn perform(node: u64, action: &str, data: Value) {
     bridge::emit(
         json!({ "t": "a11yAction", "s": node >> 32, "node": node as u32, "action": action, "data": data }),

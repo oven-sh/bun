@@ -304,7 +304,7 @@ impl Document {
         let first = it.children.iter().find(|it| {
             !self.boxes[**it].style.is_out_of_flow() && !self.boxes[**it].style.is_floating()
         });
-        first.map_or(Strut::default(), |first| {
+        first.map_or_else(Strut::default, |first| {
             self.leading_margins(*first, width)
                 .with(margin(&self.boxes[*first].style, width).top)
         })
@@ -818,7 +818,7 @@ impl Document {
             };
             if !it.is_replaced() {
                 let placed = |baseline: f32| top + it.clamp_baseline(baseline, own.height);
-                output.baselines[0] = output.baselines[0].or(own.baselines[0].map(placed));
+                output.baselines[0] = output.baselines[0].or_else(|| own.baselines[0].map(placed));
                 output.last_baseline = own.last_baseline.map(placed).or(output.last_baseline);
                 let last = match it.kind {
                     Kind::Table => None,

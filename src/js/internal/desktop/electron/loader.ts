@@ -11,7 +11,6 @@ const {
 } = require("internal/desktop/electron/policy");
 const native = require("internal/desktop/native");
 const mime = require("internal/desktop/web/mime");
-const nativeFetch = fetch;
 
 type Pairs = [string, string][];
 type Load = {
@@ -44,6 +43,7 @@ type Load = {
   blocksAllMixed?: boolean;
   isImageSet?: boolean;
   isByUser?: boolean;
+  isFromPage?: boolean;
   embedderPolicy?: string;
   /** By calling `completed` of the result. */
   tellsCompletion?: boolean;
@@ -388,7 +388,8 @@ async function load(session: any, request: Load) {
     if (handler) {
       const given = new Request(url.href, { method, headers, body, signal, duplex: "half" } as any);
       if (origin !== undefined) Object.defineProperty(given, "initiatorOrigin", { value: origin, enumerable: true });
-      if (request.referrer) Object.defineProperty(given, "referrer", { value: request.referrer });
+      const { referrer } = request;
+      if (referrer) Object.defineProperty(given, "referrer", { value: referrer });
       return handler(given);
     }
     if (url.protocol === "file:") return readFile(url, headers);
@@ -443,7 +444,8 @@ async function load(session: any, request: Load) {
     const own = await server({ url: url.href, method, headers, destination, webContents: frame?.webContents }, network);
     if (own?.url === "" && destination === "style") {
       const body = await own.blob();
-      if (body.name) native.mapResource(body.name);
+      const { name } = body;
+      if (name) native.mapResource(name);
       return new Response(body, own);
     }
     if (own) return own;
@@ -452,7 +454,7 @@ async function load(session: any, request: Load) {
       throw Object.assign(netError("BLOCKED_BY_CLIENT"), { needsWebEngine: destination === "iframe" });
     const response = method === "GET" ? await network() : undefined;
     if (
-      ([301, 302, 303, 307, 308].includes(response?.status!) && response!.headers.has("location")) ||
+      ([301, 302, 303, 307, 308].includes(response?.status ?? 0) && response!.headers.has("location")) ||
       /^\s*attachment/i.test(response?.headers.get("content-disposition") ?? "")
     ) {
       return response!;
@@ -461,7 +463,7 @@ async function load(session: any, request: Load) {
     throw Object.assign(netError("BLOCKED_BY_CLIENT"), { needsWebEngine: true });
   }
 
-  function addCommonHeaders(sent: Headers, url: URL) {
+  function addCommonHeaders(sent: Headers, _url: URL) {
     const setDefault = (name: string, value?: string) => value && !sent.has(name) && sent.set(name, value);
     setDefault("user-agent", request.userAgent ?? session.userAgent());
     setDefault("accept", defaultAccept(destination));
@@ -548,8 +550,9 @@ async function load(session: any, request: Load) {
     if (request.allows?.(href, redirects > 0) === false) throw netError("BLOCKED_BY_CSP");
     if (navigates || url.protocol === "data:") return;
     if (tainting === "basic" && origin !== "null" && originOf(href) === origin) {
-      if (!isWeb(url) && url.protocol !== "blob:" && url.protocol !== "file:" && destination === "") {
-        if (!privilegesOf(url.protocol).supportFetchAPI) throw netError("ACCESS_DENIED");
+      const { protocol } = url;
+      if (!isWeb(url) && protocol !== "blob:" && protocol !== "file:" && destination === "") {
+        if (!privilegesOf(protocol).supportFetchAPI) throw netError("ACCESS_DENIED");
       }
       return;
     }
@@ -643,7 +646,8 @@ async function load(session: any, request: Load) {
         observers ? webRequest.exchange(href, method, sent, body, sendAs) : sendAs(method, sent, body);
       let response: any = await exchange();
       if (response === undefined) throw netError("CACHE_MISS");
-      if (url.username || url.password) login ??= [unescape(url.username), unescape(url.password)];
+      const { username } = url;
+      if (username || url.password) login ??= [unescape(username), unescape(url.password)];
       if (response.status === 401 && request.isStreamed) throw netError("FAILED");
       if (
         response.status === 401 &&
@@ -732,9 +736,10 @@ async function load(session: any, request: Load) {
       const isManual = !!mode && isRedirect;
       const isHidden = (isManual && request.redirect === "manual") || (tainting === "opaque" && destination === "");
       const hasBody = method !== "HEAD" && ![101, 103, 204, 205, 304].includes(status) && !isHidden;
-      if (request.integrity) {
+      const { integrity } = request;
+      if (integrity) {
         const bytes = hasBody && tainting !== "opaque" && (await response.bytes());
-        if (!bytes || !hasIntegrity(bytes, request.integrity)) throw refuse("FAILED");
+        if (!bytes || !hasIntegrity(bytes, integrity)) throw refuse("FAILED");
         response = new Response(bytes);
       }
       const about = {

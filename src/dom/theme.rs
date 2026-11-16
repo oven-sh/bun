@@ -225,7 +225,7 @@ impl Painter<'_> {
             ..Stroke::default()
         };
         self.emit(
-            Item::Path {
+            &Item::Path {
                 outline: Outline {
                     bounds: outline.bounds.grown(width * 2.0),
                     stroke,
@@ -240,7 +240,7 @@ impl Painter<'_> {
     /// Where it is, to a fraction of a pixel.
     fn fill_exactly(&mut self, shape: RoundedRect, color: u32, space: &Space) {
         let outline = self.outline_of(&Path::rounded_rect(&shape), FillRule::Nonzero);
-        self.emit(Item::Path { outline, color }, space);
+        self.emit(&Item::Path { outline, color }, space);
     }
 
     fn ring(&mut self, rect: Rect, radius: f32, width: f32, color: u32, space: &Space) {

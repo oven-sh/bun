@@ -44,6 +44,8 @@ type Host = {
 const hooks = {
   isFocused: (_canvas: Host, _element: unknown) => false,
   useFont(_canvas: Host, _font: Font) {},
+  /** 1 if there is none. */
+  ignoredOrientation: (_canvas: Host, _image: unknown) => 1,
   /** What `em`, `%`, `rem`, `inherit` and `currentcolor` refer to, and the `scope` of `font.register`. */
   inherited: (_canvas: Host) => ({
     fontSize: 10,
@@ -93,7 +95,7 @@ const TAU = PI * 2;
 
 function allFinite(a: number, b: number, c = 0, d = 0, e = 0, f = 0, g = 0) {
   // NaN if any of them is NaN or infinite.
-  return a * 0 + b * 0 + c * 0 + d * 0 + e * 0 + f * 0 + g * 0 === 0;
+  return a - a + (b - b) + (c - c) + (d - d) + (e - e) + (f - f) + (g - g) === 0;
 }
 
 function indexSizeError(message: string) {
@@ -408,8 +410,10 @@ function parseFont(text: string, em: number, rem: number): Font | undefined {
   if (font.families.length === 0) return;
   const parts: string[] = [];
   if (font.style) parts.push("italic");
-  if (font.weight !== 400) parts.push(font.weight === 700 ? "bold" : String(font.weight));
-  if (font.caps !== "normal") parts.push(font.caps);
+  const { weight } = font;
+  if (weight !== 400) parts.push(weight === 700 ? "bold" : String(weight));
+  const { caps } = font;
+  if (caps !== "normal") parts.push(caps);
   parts.push(+font.size.toPrecision(6) + "px");
   parts.push(
     font.families
@@ -636,8 +640,9 @@ class PathBuilder {
   roundRect(x: number, y: number, width: number, height: number, radii: any) {
     if (!allFinite(x, y, width, height)) return;
     const list = typeof radii === "object" && radii !== null && Symbol.iterator in radii ? [...radii] : [radii ?? 0];
-    if (list.length < 1 || list.length > 4) {
-      throw new RangeError(`${list.length} radii provided. Between one and four radii are necessary.`);
+    const { length } = list;
+    if (length < 1 || length > 4) {
+      throw new RangeError(`${length} radii provided. Between one and four radii are necessary.`);
     }
     const pairs = list.map(radius =>
       typeof radius === "object" && radius !== null ? [+(radius.x ?? 0), +(radius.y ?? 0)] : [+radius, +radius],
@@ -789,32 +794,38 @@ class Path2D {
   }
 
   moveTo(x: number, y: number) {
-    if (arguments.length < 2) need(arguments.length, 2);
+    const argc = arguments.length;
+    if (argc < 2) need(argc, 2);
     this.#path.moveTo(+x, +y);
   }
 
   lineTo(x: number, y: number) {
-    if (arguments.length < 2) need(arguments.length, 2);
+    const argc = arguments.length;
+    if (argc < 2) need(argc, 2);
     this.#path.lineTo(+x, +y);
   }
 
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#path.quadraticCurveTo(+cpx, +cpy, +x, +y);
   }
 
   bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number) {
-    if (arguments.length < 6) need(arguments.length, 6);
+    const argc = arguments.length;
+    if (argc < 6) need(argc, 6);
     this.#path.bezierCurveTo(+cp1x, +cp1y, +cp2x, +cp2y, +x, +y);
   }
 
   arcTo(x1: number, y1: number, x2: number, y2: number, radius: number) {
-    if (arguments.length < 5) need(arguments.length, 5);
+    const argc = arguments.length;
+    if (argc < 5) need(argc, 5);
     this.#path.arcTo(+x1, +y1, +x2, +y2, +radius);
   }
 
   arc(x: number, y: number, radius: number, startAngle: number, endAngle: number, counterclockwise = false) {
-    if (arguments.length < 5) need(arguments.length, 5);
+    const argc = arguments.length;
+    if (argc < 5) need(argc, 5);
     this.#path.ellipse(+x, +y, +radius, +radius, 0, +startAngle, +endAngle, !!counterclockwise);
   }
 
@@ -828,17 +839,20 @@ class Path2D {
     endAngle: number,
     counterclockwise = false,
   ) {
-    if (arguments.length < 7) need(arguments.length, 7);
+    const argc = arguments.length;
+    if (argc < 7) need(argc, 7);
     this.#path.ellipse(+x, +y, +radiusX, +radiusY, +rotation, +startAngle, +endAngle, !!counterclockwise);
   }
 
   rect(x: number, y: number, w: number, h: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#path.rect(+x, +y, +w, +h);
   }
 
   roundRect(x: number, y: number, w: number, h: number, radii: unknown = 0) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#path.roundRect(+x, +y, +w, +h, radii);
   }
 }
@@ -1279,7 +1293,9 @@ class CanvasRenderingContext2D {
   #inherited() {
     if (this.#inheritedAt !== flushes) {
       this.#inheritedAt = flushes;
-      this.#lastInherited = hooks.inherited(this.#canvas);
+      const language = this.#lastInherited?.language;
+      this.#lastInherited = hooks.inherited(this.#canvas.canvas ?? this.#canvas);
+      if (this.#lastInherited.language !== language) this.#state.fontId = -1;
       queueFlush();
     }
     return this.#lastInherited!;
@@ -1389,29 +1405,34 @@ class CanvasRenderingContext2D {
   }
 
   transform(a: number, b: number, c: number, d: number, e: number, f: number) {
-    if (arguments.length < 6) need(arguments.length, 6);
+    const argc = arguments.length;
+    if (argc < 6) need(argc, 6);
     this.#transform(+a, +b, +c, +d, +e, +f);
   }
 
   scale(x: number, y: number) {
-    if (arguments.length < 2) need(arguments.length, 2);
+    const argc = arguments.length;
+    if (argc < 2) need(argc, 2);
     this.#transform(+x, 0, 0, +y, 0, 0);
   }
 
   rotate(angle: number) {
-    if (arguments.length < 1) need(arguments.length, 1);
+    const argc = arguments.length;
+    if (argc < 1) need(argc, 1);
     angle = +angle;
     this.#transform(cos(angle), sin(angle), -sin(angle), cos(angle), 0, 0);
   }
 
   translate(x: number, y: number) {
-    if (arguments.length < 2) need(arguments.length, 2);
+    const argc = arguments.length;
+    if (argc < 2) need(argc, 2);
     this.#transform(1, 0, 0, 1, +x, +y);
   }
 
   setTransform(a: any = undefined, b?, c?, d?, e?, f?) {
-    if (arguments.length > 1 && arguments.length < 6) {
-      throw new TypeError(`Valid arities are: [0, 1, 6], but ${arguments.length} arguments provided.`);
+    const argc = arguments.length;
+    if (argc > 1 && argc < 6) {
+      throw new TypeError(`Valid arities are: [0, 1, 6], but ${argc} arguments provided.`);
     }
     this.#setMatrix(arguments.length > 1 ? new Matrix(+a, +b, +c, +d, +e, +f) : matrixFrom(a));
   }
@@ -1710,7 +1731,7 @@ class CanvasRenderingContext2D {
   }
 
   createPattern(image, repetition: string | null) {
-    this.#id;
+    void this.#id;
     need(arguments.length, 2);
     checkImageSource(image);
     repetition = (repetition === null ? "" : `${repetition}`) || "repeat";
@@ -1736,17 +1757,20 @@ class CanvasRenderingContext2D {
   }
 
   fillRect(x: number, y: number, w: number, h: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#rect(Op.FillRect, +x, +y, +w, +h);
   }
 
   strokeRect(x: number, y: number, w: number, h: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#rect(Op.StrokeRect, +x, +y, +w, +h);
   }
 
   clearRect(x: number, y: number, w: number, h: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#rect(Op.ClearRect, +x, +y, +w, +h);
   }
 
@@ -1759,32 +1783,38 @@ class CanvasRenderingContext2D {
   }
 
   moveTo(x: number, y: number) {
-    if (arguments.length < 2) need(arguments.length, 2);
+    const argc = arguments.length;
+    if (argc < 2) need(argc, 2);
     this.#path.moveTo(+x, +y);
   }
 
   lineTo(x: number, y: number) {
-    if (arguments.length < 2) need(arguments.length, 2);
+    const argc = arguments.length;
+    if (argc < 2) need(argc, 2);
     this.#path.lineTo(+x, +y);
   }
 
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#path.quadraticCurveTo(+cpx, +cpy, +x, +y);
   }
 
   bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number) {
-    if (arguments.length < 6) need(arguments.length, 6);
+    const argc = arguments.length;
+    if (argc < 6) need(argc, 6);
     this.#path.bezierCurveTo(+cp1x, +cp1y, +cp2x, +cp2y, +x, +y);
   }
 
   arcTo(x1: number, y1: number, x2: number, y2: number, radius: number) {
-    if (arguments.length < 5) need(arguments.length, 5);
+    const argc = arguments.length;
+    if (argc < 5) need(argc, 5);
     this.#path.arcTo(+x1, +y1, +x2, +y2, +radius);
   }
 
   arc(x: number, y: number, radius: number, startAngle: number, endAngle: number, counterclockwise = false) {
-    if (arguments.length < 5) need(arguments.length, 5);
+    const argc = arguments.length;
+    if (argc < 5) need(argc, 5);
     this.#path.ellipse(+x, +y, +radius, +radius, 0, +startAngle, +endAngle, !!counterclockwise);
   }
 
@@ -1798,17 +1828,20 @@ class CanvasRenderingContext2D {
     endAngle: number,
     counterclockwise = false,
   ) {
-    if (arguments.length < 7) need(arguments.length, 7);
+    const argc = arguments.length;
+    if (argc < 7) need(argc, 7);
     this.#path.ellipse(+x, +y, +radiusX, +radiusY, +rotation, +startAngle, +endAngle, !!counterclockwise);
   }
 
   rect(x: number, y: number, w: number, h: number) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#path.rect(+x, +y, +w, +h);
   }
 
   roundRect(x: number, y: number, w: number, h: number, radii: unknown = 0) {
-    if (arguments.length < 4) need(arguments.length, 4);
+    const argc = arguments.length;
+    if (argc < 4) need(argc, 4);
     this.#path.roundRect(+x, +y, +w, +h, radii);
   }
 
@@ -1956,8 +1989,8 @@ class CanvasRenderingContext2D {
   #fontId(): number {
     const state = this.#state;
     const { font } = state;
+    const scope = this.#inherited().fontScope;
     if (state.fontId < 0) {
-      const scope = this.#inherited().fontScope;
       const language = state.lang === "inherit" ? this.#inherited().language : state.lang;
       const key = [scope, language, state.fontKerning, state.fontStretch, state.fontVariantCaps, font.text].join();
       let id = fontIds.$get(key);
@@ -2004,17 +2037,20 @@ class CanvasRenderingContext2D {
   }
 
   fillText(text: string, x: number, y: number, maxWidth: unknown = undefined) {
-    if (arguments.length < 3) need(arguments.length, 3);
+    const argc = arguments.length;
+    if (argc < 3) need(argc, 3);
     this.#text(Op.FillText, text, +x, +y, maxWidth);
   }
 
   strokeText(text: string, x: number, y: number, maxWidth: unknown = undefined) {
-    if (arguments.length < 3) need(arguments.length, 3);
+    const argc = arguments.length;
+    if (argc < 3) need(argc, 3);
     this.#text(Op.StrokeText, text, +x, +y, maxWidth);
   }
 
   measureText(text: string) {
-    if (arguments.length < 1) need(arguments.length, 1);
+    const argc = arguments.length;
+    if (argc < 1) need(argc, 1);
     const state = this.#state;
     measured[0] = this.#fontId();
     measured[1] = state.font.size;
@@ -2043,9 +2079,35 @@ class CanvasRenderingContext2D {
     const height = +size[1];
     if (!width || !height) throw invalidStateError("The image argument has a width or height of 0.");
     if (image[kIsTainted]) this.#isTainted = true;
+    const orientation = hooks.ignoredOrientation(this.#canvas, image);
+    if (orientation > 1) {
+      const [w, h] = orientation > 4 ? [height, width] : [width, height];
+      const from = count < 9 ? [0, 0, w, h] : [+sx, +sy, +sw, +sh];
+      const to = count === 3 ? [+sx, +sy, w, h] : count === 5 ? [+sx, +sy, +sw, +sh] : [+dx, +dy, +dw, +dh];
+      return this.#drawUnturned(id, orientation, w, h, from, to);
+    }
     if (count === 3) this.#drawImage(id, width, height, 0, 0, width, height, +sx, +sy, width, height);
     else if (count === 5) this.#drawImage(id, width, height, 0, 0, width, height, +sx, +sy, +sw, +sh);
     else this.#drawImage(id, width, height, +sx, +sy, +sw, +sh, +dx, +dy, +dw, +dh);
+  }
+
+  /** The sizes and the rectangles are those before the image was turned. */
+  #drawUnturned(id: number, orientation: number, width: number, height: number, from: number[], to: number[]) {
+    const [x, y] = [
+      [2, 3, 7, 8],
+      [3, 4, 6, 7],
+    ].map(it => (it.includes(orientation) ? -1 : 1));
+    const [left, top] = [x < 0 ? width - from[0] - from[2] : from[0], y < 0 ? height - from[1] - from[3] : from[1]];
+    const [e, f] = [to[0] + (x < 0 ? to[2] : 0), to[1] + (y < 0 ? to[3] : 0)];
+    this.save();
+    if (orientation > 4) {
+      this.transform(0, y, x, 0, e, f);
+      this.#drawImage(id, height, width, top, left, from[3], from[2], 0, 0, to[3], to[2]);
+    } else {
+      this.transform(x, 0, 0, y, e, f);
+      this.#drawImage(id, width, height, left, top, from[2], from[3], 0, 0, to[2], to[3]);
+    }
+    this.restore();
   }
 
   #drawImage(
@@ -2125,9 +2187,11 @@ class OffscreenCanvasRenderingContext2D {
   }
 }
 {
-  const { constructor, drawFocusIfNeeded, ...members } = Object.getOwnPropertyDescriptors(
-    CanvasRenderingContext2D.prototype,
-  );
+  const {
+    constructor: _constructor,
+    drawFocusIfNeeded: _drawFocusIfNeeded,
+    ...members
+  } = Object.getOwnPropertyDescriptors(CanvasRenderingContext2D.prototype);
   Object.defineProperties(OffscreenCanvasRenderingContext2D.prototype, members);
 }
 
@@ -2273,7 +2337,7 @@ class ImageBitmapRenderingContext {
     need(arguments.length, 1);
     if (bitmap == null) return context[kResize](context.canvas.width, context.canvas.height);
     if (!(bitmap instanceof ImageBitmap)) throw new TypeError("parameter 1 is not of type 'ImageBitmap'.");
-    bitmap[kImageId];
+    void bitmap[kImageId];
     context[kAdopt](bitmap);
   }
 }
@@ -2349,7 +2413,7 @@ class OffscreenCanvas extends events.EventTarget {
       detach: () => {
         this.#isDetached = true;
         this.#width = this.#height = 0;
-        if (channel) channel.port1.onmessage = ({ data }) => present(data[0], data[1], data[2], true);
+        if (channel) (channel.port1 as any).onmessage = ({ data }) => present(data[0], data[1], data[2], true);
       },
     };
   }
@@ -2434,8 +2498,8 @@ events.defineHandlers(OffscreenCanvas.prototype, ["contextlost", "contextrestore
 
 /** See `internal/desktop/web/messaging`. */
 function transferable(prototype: object, begin: (value: any) => object, serialize?: Function) {
-  $putByIdDirectPrivate(prototype, "transferrer", begin);
-  $putByIdDirectPrivate(prototype, "cloner", (value: any) => {
+  $putByIdDirectPrivate(prototype as any, "transferrer", begin);
+  $putByIdDirectPrivate(prototype as any, "cloner", (value: any) => {
     const transfer = core.realm.page.host.transfers.get(value);
     if (transfer) return transfer.record;
     if (serialize) return serialize(value);
@@ -2467,7 +2531,7 @@ transferable(
     return { kind: "ImageBitmap", width, height, data: context.getImageData(0, 0, width, height).data };
   },
 );
-$putByIdDirectPrivate(ImageData.prototype, "cloner", ({ data, width, colorSpace, pixelFormat }: ImageData) => ({
+$putByIdDirectPrivate(ImageData.prototype as any, "cloner", ({ data, width, colorSpace, pixelFormat }: ImageData) => ({
   kind: "ImageData",
   data,
   width,

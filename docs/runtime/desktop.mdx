@@ -283,12 +283,13 @@ Compiled scripts are part of your program: `process`, `Bun`, `require` and `glob
 
 ## Troubleshooting
 
-| Variable               | Effect                                                                                                                           |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `BUN_DESKTOP_LOG`      | `1` prints what the UI library does, and `frames` every frame as well.                                                           |
-| `BUN_DESKTOP_RENDERER` | `software` paints everything with the CPU. On macOS, the GPU otherwise paints large changes.                                     |
-| `BUN_DESKTOP_SPELLING` | `0` does not ask macOS to check the spelling of text that is being edited.                                                       |
-| `BUN_DESKTOP_THREADS`  | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only. |
+| Variable                       | Effect                                                                                                                           |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `BUN_DESKTOP_LOG`              | `1` prints what the UI library does, and `frames` every frame as well.                                                           |
+| `BUN_DESKTOP_RENDERER`         | `software` paints everything with the CPU. On macOS, the GPU otherwise paints large changes.                                     |
+| `BUN_DESKTOP_CONFINE_BACKDROP` | `0` leaves the blur of a sidebar on macOS as AppKit has set it up. Scrolling next to it may miss frames.                         |
+| `BUN_DESKTOP_SPELLING`         | `0` does not ask macOS to check the spelling of text that is being edited.                                                       |
+| `BUN_DESKTOP_THREADS`          | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only. |
 
 With two threads on macOS, AppKit has the main thread. The functions of Node-API addons still run there, while JavaScript waits. Functions that are called through `bun:ffi` do not.
 

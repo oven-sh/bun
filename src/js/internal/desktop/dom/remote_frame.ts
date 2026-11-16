@@ -66,7 +66,12 @@ function popup(page: Page, handle: any) {
   const remote = handle.connect({
     message: (data: unknown, origin: string, path: number[], ports: MessagePort[]) =>
       deliver(page, data, origin, path.length === 0 ? window : null, ports),
-    ...{ loaded: ignore, painted: ignore, scroll: ignore, tab: ignore, tooltip: ignore, fullscreen: ignore },
+    loaded: ignore,
+    painted: ignore,
+    scroll: ignore,
+    tab: ignore,
+    tooltip: ignore,
+    fullscreen: ignore,
     origin: () => [0, 0],
     scale: () => 1,
   });

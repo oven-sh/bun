@@ -51,7 +51,7 @@ function loadInterface(name: string) {
 core.hooks.loadInterface = loadInterface;
 
 function defineMembers(window: object, hasInterfaces = true) {
-  const { constructor, ...all } = Object.getOwnPropertyDescriptors<any>(WindowMembers.prototype);
+  const { constructor: _constructor, ...all } = Object.getOwnPropertyDescriptors<any>(WindowMembers.prototype);
   for (const name in all) {
     const { get, set } = all[name];
     if (get !== undefined && set === undefined && name !== "window" && name !== "document" && name !== "top") {
@@ -252,7 +252,7 @@ function createPage(host: any, options?: { global?: object; baseUrl?: string; mi
       task(() => events.dispatch(page.target, new events.Event(is ? "online" : "offline"))),
     willSwap(type: string, to?: object) {
       let ticket = 0;
-      task(() => (ticket = page.history().willSwap(page, type, to)));
+      task(() => (ticket = page.history().willSwap(page, type, to as any)));
       return ticket;
     },
     /** False if the page wants to stay. */

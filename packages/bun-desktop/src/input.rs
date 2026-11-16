@@ -383,15 +383,18 @@ impl TextInput {
         self.with(|ime, _| ime.is_enabled) == Some(true)
     }
 
+    #[cfg(target_os = "macos")]
     pub fn selection(self) -> Option<Range<usize>> {
         self.with(|ime, _| ime.selection.clone())
     }
 
+    #[cfg(target_os = "macos")]
     pub fn composing(self) -> Option<Range<usize>> {
         self.with(|ime, _| ime.composing.clone())?
     }
 
     /// With the range that it is really from.
+    #[cfg(target_os = "macos")]
     pub fn text(self, range: Range<usize>) -> Option<(Vec<u16>, Range<usize>)> {
         self.with(|ime, _| {
             (
@@ -449,6 +452,7 @@ impl TextInput {
     }
 
     /// What is being composed stays as it is.
+    #[cfg(target_os = "macos")]
     pub fn end_composition(self) {
         if let (Ok(state), Some(true)) = (
             window::state(self.0),
@@ -751,10 +755,6 @@ fn scroll(
                 surface::milliseconds(Instant::now()),
             )
         });
-        #[cfg(target_os = "macos")]
-        if is_precise && crate::host::has_scrolled(state.id) {
-            return;
-        }
         return surface::catch_up(a as u32);
     }
     crate::diagnostics::note(crate::diagnostics::Incident::WheelLeftToScript);

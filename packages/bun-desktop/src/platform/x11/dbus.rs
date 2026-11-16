@@ -773,9 +773,9 @@ impl Bus {
                     .borrow_mut()
                     .extract_if(.., |it| it.0 == message.replies_to)
                     .next();
-                then.into_iter()
-                    .next()
-                    .map(|(_, then)| then(message.into_result()));
+                if let Some((_, then)) = then {
+                    then(message.into_result());
+                }
             } else if let Some(listener) = self.listener.borrow().clone() {
                 listener(self, &message);
             }

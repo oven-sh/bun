@@ -454,6 +454,28 @@ test("an initial value does not depend on the element that it is first written f
   expect(exitCode).toBe(0);
 });
 
+test("margins collapse through a block that is no longer a flex item", () => {
+  using page = open(`<div style="display: flex; flex-direction: column">
+    <div id="outer" style="display: flex; flex-direction: column"><div id="inner"><p style="margin: 18px 0 2px; height: 32px"></p></div></div>
+  </div>`);
+  const heights = ["flex", "block", "flex"].map(display => {
+    page.$("#outer").style.display = display;
+    return page.$("#inner").offsetHeight;
+  });
+  expect(heights).toEqual([52, 32, 52]);
+});
+
+test("a scroll container without a height gets its scrollbar when the overflow changes", () => {
+  using page = open(`<div style="overflow-y: auto; height: 0; width: 200px">
+    <div id="outer" style="height: 0"><div id="inner" style="height: 0"><p style="margin: 0; height: 100px"></p></div></div>
+  </div>`);
+  const width = page.$("#outer").offsetWidth;
+  page.$("#inner").style.contain = "paint";
+  expect(page.$("#outer").offsetWidth).toBe(200);
+  page.$("#inner").style.contain = "";
+  expect(page.$("#outer").offsetWidth).toBe(width);
+});
+
 test("selectAll stays in the shadow tree that has the caret", () => {
   using page = open("<p>outside</p><div></div>");
   const root = page.$("div").attachShadow({ mode: "open" });

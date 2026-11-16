@@ -252,8 +252,8 @@ fn add_between(
     if moves {
         path.move_to(contour.segments[first].around(from)[1]);
     }
-    for index in first..=last {
-        path.push(contour.segments[index].part(
+    for (index, segment) in (first..=last).zip(&contour.segments[first..]) {
+        path.push(segment.part(
             if index == first { from } else { 0. },
             if index == last { to } else { 1. },
         ));
@@ -276,7 +276,7 @@ fn dashed(path: &[Command], dashes: &[f32], offset: f32, resolution: f32) -> Pat
             return;
         };
         count += length * (dashes.len() / 2) as f32 / period;
-        if !(count <= MAX_PIECES as f32) {
+        if count.is_nan() || count > MAX_PIECES as f32 {
             return result.clear();
         }
         let (mut at, mut dash, mut index, mut was_added) =
@@ -508,7 +508,7 @@ impl Stroker {
         let (denominator, gap) = (leaving.cross(arriving), start - end);
         let (a, b) = (arriving.cross(gap), leaving.cross(gap));
         let t = a / denominator;
-        if denominator == 0. || !(t > t - 1.) {
+        if denominator == 0. || t.is_nan() || t <= t - 1. {
             let is_straight = leaving.dot(arriving) >= 0.
                 && from_line(middle, start, end - start) < self.tolerance;
             return is_straight.then_some(Command::LineTo(end));
@@ -712,8 +712,9 @@ impl Stroke<'_> {
             .filter(|it| it.is_finite() && *it > 0.)
             .unwrap_or(1.);
         let period: f32 = self.dashes.iter().sum();
-        let is_dashed =
-            self.dashes.len() % 2 == 0 && self.dashes.iter().all(|it| *it >= 0.) && period > 0.;
+        let is_dashed = self.dashes.len().is_multiple_of(2)
+            && self.dashes.iter().all(|it| *it >= 0.)
+            && period > 0.;
         let dashed = (is_dashed && (period + self.dash_offset).is_finite())
             .then(|| dashed(path, self.dashes, self.dash_offset, resolution));
         let mut stroker = Stroker {

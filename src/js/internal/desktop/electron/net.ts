@@ -46,7 +46,8 @@ class IncomingMessage extends Readable {
 }
 
 function urlOf(options: any) {
-  if (options.url) return String(options.url);
+  const { url } = options;
+  if (url) return String(url);
   const host = options.host ?? `${options.hostname ?? "localhost"}${options.port ? ":" + options.port : ""}`;
   if (/ /.test(options.path ?? "")) throw new TypeError("Request path contains unescaped characters");
   return new URL(options.path ?? "/", `${options.protocol ?? "http:"}//${host}`).href;
@@ -75,7 +76,7 @@ class ClientRequest extends Writable {
     if (this.#started) throw new Error("Can't set headers after they are sent");
     if (value == null) throw new Error('`value` required in setHeader("' + name + '", value)');
     require("node:http").validateHeaderName(name);
-    require("node:http").validateHeaderValue(name, value);
+    require("node:http").validateHeaderValue(name, value as any);
     this.#headers.$set(name.toLowerCase(), [name, $isArray(value) ? value.join(", ") : String(value)]);
   }
 
@@ -211,10 +212,10 @@ class SessionWebSocket extends EventTarget {
           },
         } as any));
         socket.binaryType = this.#binaryType as any;
-        socket.onopen = () => this.dispatchEvent(new Event("open"));
-        socket.onmessage = ({ data }) => this.dispatchEvent(new MessageEvent("message", { data }));
-        socket.onerror = () => this.dispatchEvent(new Event("error"));
-        socket.onclose = event => this.dispatchEvent(new CloseEvent("close", event));
+        (socket as any).onopen = () => this.dispatchEvent(new Event("open"));
+        (socket as any).onmessage = ({ data }) => this.dispatchEvent(new MessageEvent("message", { data }));
+        (socket as any).onerror = () => this.dispatchEvent(new Event("error"));
+        (socket as any).onclose = event => this.dispatchEvent(new CloseEvent("close", event));
       })
       .catch(() => {
         this.#state = 3;

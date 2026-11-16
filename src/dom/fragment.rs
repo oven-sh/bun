@@ -320,7 +320,7 @@ impl Breaks {
                 .tally
                 .starts
                 .get(index - 1)
-                .or(self.tally.starts.last())
+                .or_else(|| self.tally.starts.last())
                 .copied()
                 .unwrap_or(row.start),
         }
@@ -610,9 +610,8 @@ impl Flow<'_> {
                 line,
                 appeal: before,
             };
-            let here = Some(here).filter(|_| {
-                !is_stuck && before > within.map_or(Appeal::LastResort, |it| it.appeal)
-            });
+            let here = (!is_stuck && before > within.map_or(Appeal::LastResort, |it| it.appeal))
+                .then_some(here);
             for candidate in within.into_iter().chain(here) {
                 if self
                     .outcome
@@ -698,7 +697,7 @@ impl Flow<'_> {
         } else {
             text.orphans.0.max(text.widows.0)
         };
-        let appeal = early.unwrap_or(match count {
+        let appeal = early.unwrap_or_else(|| match count {
             0 if top > 0.0 || top <= self.start() + TOLERANCE => Appeal::Perfect,
             0 => Appeal::LastResort,
             _ if count < least as usize => Appeal::ViolatesOrphansAndWidows,
@@ -1988,7 +1987,8 @@ impl Document {
             {
                 (fragment.x, fragment.y, fragment.baseline) =
                     (fragment.x + x, fragment.y + y, fragment.baseline + y);
-                bounds = Some(bounds.map_or(fragment.rect(), |it| it.union(&fragment.rect())));
+                bounds =
+                    Some(bounds.map_or_else(|| fragment.rect(), |it| it.union(&fragment.rect())));
                 if let FragmentKind::Atomic(child) = fragment.kind {
                     let [from, to] = [own, at].map(|it| root.physical(it, [0.0; 2]));
                     let location = &mut self.boxes[child].layout.location;

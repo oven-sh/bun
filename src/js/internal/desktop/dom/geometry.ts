@@ -29,7 +29,7 @@ function defineAttribute(
     },
     name,
   )!;
-  accessor(ctor.prototype, name, get, write && set);
+  accessor(ctor.prototype, name, get as any, write && set);
 }
 
 function numbers(ctor: any, names: string[], writable: boolean) {
@@ -253,10 +253,22 @@ function rotation(x: number, y: number, z: number, degrees: number): Matrix {
   const c = [1, 0, -1, 0][quarters] ?? Math.cos(radians(degrees));
   const t = 1 - c;
   return [
-    ...[t * x * x + c, t * x * y + s * z, t * x * z - s * y, 0],
-    ...[t * x * y - s * z, t * y * y + c, t * y * z + s * x, 0],
-    ...[t * x * z + s * y, t * y * z - s * x, t * z * z + c, 0],
-    ...[0, 0, 0, 1],
+    t * x * x + c,
+    t * x * y + s * z,
+    t * x * z - s * y,
+    0,
+    t * x * y - s * z,
+    t * y * y + c,
+    t * y * z + s * x,
+    0,
+    t * x * z + s * y,
+    t * y * z - s * x,
+    t * z * z + c,
+    0,
+    0,
+    0,
+    0,
+    1,
   ];
 }
 
@@ -364,7 +376,7 @@ class DOMMatrixReadOnly {
   constructor(init: any = undefined) {
     if (init === undefined) this.$impl = { m: identity(), is2D: true };
     else if ($isObject(init) && init[Symbol.iterator])
-      this.$impl = fromSequence(Array.from(init, (value: any) => +value));
+      this.$impl = fromSequence(Array.from(init as any, (value: any) => +value));
     else this.$impl = parseMatrix(`${init}`);
   }
   static fromMatrix(other: unknown = undefined) {

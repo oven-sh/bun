@@ -27,7 +27,8 @@ function jsx(type: any, props: Props, key?: unknown): VNode {
 
 function createElement(type: any, props?: Props | null, ...children: unknown[]): VNode {
   props = { ...props };
-  if (children.length > 0) props.children = children.length === 1 ? children[0] : children;
+  const { length } = children;
+  if (length > 0) props.children = length === 1 ? children[0] : children;
   return jsx(type, props);
 }
 
@@ -212,7 +213,8 @@ function attachRef(fiber: Fiber, value: unknown) {
 function collect(fiber: Fiber, nodes: unknown[]) {
   for (const child of fiber.fallback ? [fiber.fallback] : fiber.children) {
     if (child.type === PORTAL) continue;
-    if (child.node) nodes.push(child.node);
+    const { node } = child;
+    if (node) nodes.push(node);
     else collect(child, nodes);
   }
   return nodes;
@@ -260,8 +262,9 @@ function place(fiber: Fiber) {
 
 function unmount(fiber: Fiber) {
   fiber.unmounted = true;
-  if (fiber.effects) {
-    for (const effect of fiber.effects) {
+  const { effects } = fiber;
+  if (effects) {
+    for (const effect of effects) {
       try {
         effect.cleanup?.();
       } catch (error) {
@@ -270,9 +273,11 @@ function unmount(fiber: Fiber) {
     }
   }
   fiber.releaseRef?.();
-  if (fiber.providers) for (const provider of fiber.providers) provider.consumers!.$delete(fiber);
+  const { providers } = fiber;
+  if (providers) for (const provider of providers) provider.consumers!.$delete(fiber);
   for (const child of fiber.children) unmount(child);
-  if (fiber.fallback) unmount(fiber.fallback);
+  const { fallback } = fiber;
+  if (fallback) unmount(fallback);
   if (fiber.type === PORTAL) closePortal(fiber);
 }
 
@@ -365,7 +370,8 @@ function update(fiber: Fiber, props: Props) {
   fiber.complete = false;
 
   if (type === TEXT) {
-    if (fiber.node) core.replaceData(fiber.node, 0, fiber.node.data.length, props as any);
+    const { node } = fiber;
+    if (node) core.replaceData(node, 0, node.data.length, props as any);
     else rendered.add((fiber.node = core.createText(hostOf(fiber).node.doc, props as any)));
   } else if (typeof type === "string") {
     const isNew = !fiber.node;
@@ -379,16 +385,18 @@ function update(fiber: Fiber, props: Props) {
   } else if (type === Fragment) {
     reconcile(fiber, props.children);
   } else if (type === PORTAL) {
-    if (fiber.node?.js !== props.container) {
+    const { container } = props;
+    if (fiber.node?.js !== container) {
       closePortal(fiber);
-      openPortal(fiber, props.container);
+      openPortal(fiber, container);
       place(fiber);
     }
     reconcile(fiber, props.children);
   } else if (type === Suspense) {
     updateSuspense(fiber);
   } else if (type?.[KIND] === CONTEXT) {
-    if (fiber.consumers && !Object.is(previous.value, props.value)) for (const each of fiber.consumers) schedule(each);
+    const { consumers } = fiber;
+    if (consumers && !Object.is(previous.value, props.value)) for (const each of consumers) schedule(each);
     reconcile(fiber, props.children);
   } else if (type?.prototype?.isReactComponent) {
     updateClass(fiber, previous);

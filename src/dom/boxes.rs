@@ -97,6 +97,8 @@ pub(crate) struct LayoutBox {
     pub(crate) passes_height: bool,
     pub(crate) fills_parent: bool,
     pub(crate) joins_formatting_context: bool,
+    /// Of the parent that it was last laid out in, which may be gone.
+    parent_kind: Kind,
     pub(crate) is_skipped: bool,
     /// Its children are in `Boxes::parked`.
     pub(crate) is_parking: bool,
@@ -192,6 +194,7 @@ impl LayoutBox {
             passes_height: false,
             fills_parent: false,
             joins_formatting_context: kind == Kind::Lines,
+            parent_kind: Kind::Block,
             is_skipped: false,
             is_parking: false,
             is_foreign_object: false,
@@ -595,8 +598,9 @@ impl Document {
     }
 
     fn adopt(&mut self, parent: BoxId, child: BoxId) {
-        let depth = self.boxes[parent].depth + 1;
+        let (depth, kind) = (self.boxes[parent].depth + 1, self.boxes[parent].kind);
         let it = &mut self.boxes[child];
+        it.parent_kind = kind;
         (it.parent, it.container, it.depth, it.claimed_by_inline) =
             (parent, parent, depth, Claims::empty());
     }
@@ -625,6 +629,7 @@ impl Document {
             if self.boxes[existing].kind == kind
                 && self.boxes[existing].depth == self.boxes[parent].depth + 1
             {
+                let is_in_other_kind = self.boxes[existing].parent_kind != self.boxes[parent].kind;
                 self.adopt(parent, existing);
                 let had_first_line =
                     core::mem::replace(&mut self.boxes[existing].has_first_line, has_first_line);
@@ -635,9 +640,10 @@ impl Document {
                     self.build_children(existing);
                     self.boxes.mark_contents(existing);
                 }
-                if self.boxes[existing].changes_mode
-                    != (self.boxes[existing].mode != self.boxes[parent].mode)
-                    || self.boxes[existing].tag == name!("legend")
+                let it = &self.boxes[existing];
+                if is_in_other_kind
+                    || it.changes_mode != (it.mode != self.boxes[parent].mode)
+                    || it.tag == name!("legend")
                 {
                     self.update_box_style(existing);
                     self.boxes[existing].cache.clear();
@@ -725,7 +731,9 @@ impl Document {
             && !style
                 .contain()
                 .intersects(Contain::SIZE | Contain::INLINE_SIZE);
-        it.ratio = natural_ratio.filter(|_| is_natural).or(ratio.value());
+        it.ratio = natural_ratio
+            .filter(|_| is_natural)
+            .or_else(|| ratio.value());
         (it.tag, it.uses_parent) = (
             tag,
             crate::layout::uses_parent(&style).map(|uses| uses || it.is_orthogonal()),
@@ -743,6 +751,7 @@ impl Document {
         for axis in 0..2 {
             let stable = stable && axis == it.block_axis();
             it.scrollbars[axis] = match overflow[axis] {
+                _ if it.is_replaced() => false,
                 Overflow::Scroll => true,
                 Overflow::Auto => it.scrollbars[axis] || stable,
                 Overflow::Hidden => stable,
@@ -998,11 +1007,11 @@ impl Document {
                         },
                     ));
                 }
-                let transition = self
-                    .transition_root()
-                    .and_then(|it| Some((it, self.tree.style(it)?)));
+                let transitions = self
+                    .transition_roots()
+                    .filter_map(|it| Some((it, self.tree.style(it)?)));
                 children.extend(
-                    transition
+                    transitions
                         .filter(|it| it.1.display() != Display::None)
                         .map(|it| Child::Element(it.0, Rc::clone(it.1))),
                 );
@@ -1173,18 +1182,20 @@ impl Document {
 
     fn first_line_style(&self, id: BoxId) -> Option<Rc<Style>> {
         let it = &self.boxes[id];
-        let outer = it
-            .has_first_line
-            .then(|| self.first_line_style(it.parent))
-            .flatten();
-        let inherited = outer.map(|outer| self.style_under(it.node, &outer));
-        let own = self.pseudo_style_under(
-            it.node,
-            Pseudo::FirstLine,
-            Default::default(),
-            inherited.as_ref().unwrap_or(&it.style),
-        );
-        let (from, is_own) = (own.as_ref().or(inherited.as_ref())?, own.is_some());
+        let blocks: Vec<_> = core::iter::successors(Some(it), |it| {
+            it.has_first_line.then(|| &self.boxes[it.parent])
+        })
+        .collect();
+        let nested = |outer: Option<Rc<Style>>, block: &&LayoutBox| {
+            self.pseudo_style_under(
+                block.node,
+                Pseudo::FirstLine,
+                Default::default(),
+                outer.as_ref().unwrap_or(&it.style),
+            )
+            .or(outer)
+        };
+        let from = blocks.iter().rev().fold(None, nested)?;
         let mut style = Style {
             customs: from.customs.clone(),
             font_id: from.font_id,
@@ -1200,11 +1211,8 @@ impl Document {
         ] {
             style.groups.set(&from.get(id));
         }
-        let decorated = if is_own { from } else { &self.styles.initial };
-        (style.groups.paint, style.groups.background) = (
-            Rc::clone(&decorated.paint),
-            Rc::clone(&decorated.background),
-        );
+        (style.groups.paint, style.groups.background) =
+            (Rc::clone(&from.paint), Rc::clone(&from.background));
         Some(Rc::new(style))
     }
 

@@ -232,7 +232,11 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, input: &TrimI
     if !input.request.is_template {
         features.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
         if !builds_executables && !can_enter_test_runner(input.used) {
-            features.subtract(&FeatureSet::from_features(&[Feature::Test]));
+            // No code is out of sight either, so a use of `bun:desktop` is kept already.
+            features.subtract(&FeatureSet::from_features(&[
+                Feature::Test,
+                Feature::Desktop,
+            ]));
         }
     }
     retained.insert_set(&features, RetainReason::NotRequested);
@@ -828,6 +832,25 @@ mod tests {
             decide_request(&used, &template).unused,
             Feature::all_outside_compiled_programs()
         );
+    }
+
+    #[test]
+    fn desktop_stays_where_program_can_reach_it() {
+        let keeps = |used: &UsedFeatures| {
+            !(decide_request(used, &TrimRequest::default()).unused).contains(Feature::Desktop)
+        };
+        assert!(!keeps(&using(&[Feature::Sql])));
+        for feature in [
+            Feature::Desktop,
+            Feature::ShadowRealm,
+            Feature::WorkerConstructor,
+            Feature::Bundler,
+        ] {
+            assert!(keeps(&using(&[feature])), "{feature:?}");
+        }
+        for cause in UnseenCodeCause::ALL {
+            assert!(keeps(&UsedFeatures::with_cause(cause)), "{cause:?}");
+        }
     }
 
     #[test]

@@ -66,7 +66,7 @@ function createEntry(url: string, from: Partial<Entry> = {}): Entry {
 }
 
 /** The host keeps it in its own list, which outlives the page. */
-function save(page: Page, { js, isOfDocument, url, ...kept }: Entry, how: string) {
+function save(page: Page, { js: _js, isOfDocument: _isOfDocument, url, ...kept }: Entry, how: string) {
   page.host.historyChanged?.(url, { replace: how !== "push", isQuiet: how === "update", state: kept });
 }
 
@@ -129,7 +129,11 @@ function canRewriteUrl(page: Page, href: string) {
   return url.pathname === current.pathname && (url.protocol === "file:" || url.search === current.search);
 }
 
-async function leave(page: Page, url: string, { element, formData, replaceIn, ...options }: Options) {
+async function leave(
+  page: Page,
+  url: string,
+  { element: _element, formData: _formData, replaceIn: _replaceIn, ...options }: Options,
+) {
   if (options.download === undefined && page.host.mayUnload?.() === false) return abortNavigation(page);
   if (!isActive(page)) return;
   Object.assign(options, { mayUnload: true });
@@ -250,9 +254,10 @@ function pushState(page: Page, state: unknown, given: unknown, replace: boolean)
 }
 
 function stateOf(page: Page) {
-  if (!page.same.$has("state")) {
+  const { same } = page;
+  if (!same.$has("state")) {
     const { state } = currentOf(page);
-    page.same.$set("state", state === undefined ? null : deserialize(page, state));
+    same.$set("state", state === undefined ? null : deserialize(page, state));
   }
   return page.same.$get("state");
 }
@@ -645,7 +650,8 @@ class NavigationHistoryEntry extends events.EventTarget {
 events.defineHandlers(NavigationHistoryEntry.prototype, ["dispose"]);
 
 function wrapEntry(page: Page, entry: Entry): NavigationHistoryEntry {
-  if (entry.js !== null) return entry.js;
+  const { js } = entry;
+  if (js !== null) return js;
   entry.js = new NavigationHistoryEntry(page, entry);
   page.mirror?.adopt(entry.js);
   return entry.js;
@@ -732,15 +738,18 @@ class NavigationState {
     const current = currentOf(page);
     if (ongoing !== null && navigationType !== null) {
       ongoing.entry = wrapEntry(page, current);
-      if (ongoing.state !== undefined) save(page, Object.assign(current, { navigationState: ongoing.state }), "update");
+      const { state } = ongoing;
+      if (state !== undefined) save(page, Object.assign(current, { navigationState: state }), "update");
       ongoing.committed.resolve(ongoing.entry);
     }
     this.#dispatch(
       new NavigationCurrentEntryChangeEvent("currententrychange", { navigationType, from: wrapEntry(page, from) }),
     );
     for (const it of dropped) {
-      if (it.key !== current.key) this.giveUpTraversal(it.key);
-      if (it.js !== null) events.dispatchFromScript(it.js.$impl, new events.Event("dispose"), true);
+      const { key } = it;
+      if (key !== current.key) this.giveUpTraversal(key);
+      const { js } = it;
+      if (js !== null) events.dispatchFromScript(js.$impl, new events.Event("dispose"), true);
     }
     if (navigationType === "traverse" && event !== null && event === this.event) this.#runHandlers(event);
   }
@@ -861,7 +870,8 @@ class NavigationState {
     if (history === "push" || history === "replace") it.navigationType = history;
     if (state !== undefined) {
       it.destination.$impl.state = serialize(page, state);
-      if (it.tracker) it.tracker.state = it.destination.$impl.state;
+      const { tracker } = it;
+      if (tracker) tracker.state = it.destination.$impl.state;
     }
     it.destination.$impl.url = url;
     if (info !== undefined) it.info = info;
@@ -903,9 +913,10 @@ class NavigationState {
         const { transition } = this;
         this.event = null;
         this.#finish(it, true);
-        if (it.tracker) {
-          this.#forget(it.tracker);
-          it.tracker.finished.resolve(it.tracker.entry);
+        const { tracker } = it;
+        if (tracker) {
+          this.#forget(tracker);
+          tracker.finished.resolve(tracker.entry);
         }
         this.#dispatch(new events.Event("navigatesuccess"));
         transition?.finished.resolve();
@@ -1048,13 +1059,15 @@ class Navigation extends events.EventTarget {
   get activation() {
     const it = this.#it;
     if (it.isDisabled()) return null;
-    if (it.activation !== null) return it.activation;
+    const itActivation = it.activation;
+    if (itActivation !== null) return itActivation;
     const page = this.#page();
     const { from, entry = currentOf(page), type = "push" } = page.host.activation?.() ?? {};
     const find = (wanted: Entry) =>
       wrapEntry(
         page,
-        page.entries.find(it => it.id === wanted.id) ?? createEntry(wanted.url, { isOfDocument: false, ...wanted }),
+        page.entries.find(it => it.id === wanted.id) ??
+          createEntry(wanted.url, { isOfDocument: false, ...(wanted as Partial<Entry>) }),
       );
     return (it.activation = createActivation({
       from: from ? find(from) : null,
@@ -1153,7 +1166,8 @@ function keepEntries(page: Page, keys: string[]) {
   page.entryIndex = page.entries.indexOf(current);
   for (const it of dropped) {
     navigationOf(page)?.giveUpTraversal(it.key);
-    if (it.js !== null) events.fire(it.js.$impl, "dispose");
+    const { js } = it;
+    if (js !== null) events.fire(js.$impl, "dispose");
   }
 }
 

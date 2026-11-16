@@ -59,7 +59,7 @@ pub struct CStrList<'a>(&'a [Option<CStrRef<'a>>]);
 impl<'a> CStrList<'a> {
     /// Panics unless `items` ends with `None`.
     #[inline]
-    pub fn new(items: &'a [Option<CStrRef<'a>>]) -> Self {
+    pub const fn new(items: &'a [Option<CStrRef<'a>>]) -> Self {
         assert!(matches!(items.last(), Some(None)));
         Self(items)
     }
@@ -74,6 +74,13 @@ impl<'a> CStrList<'a> {
     #[inline]
     pub fn first(self) -> Option<CStrRef<'a>> {
         self.0[0]
+    }
+
+    /// Without the `None`.
+    #[cfg(windows)]
+    #[inline]
+    pub fn unterminated(self) -> &'a [Option<CStrRef<'a>>] {
+        &self.0[..self.0.len() - 1]
     }
 
     #[inline]

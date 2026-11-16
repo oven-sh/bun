@@ -93,7 +93,8 @@ class Copied {
   }
   drop() {
     this.setBusy(false);
-    if (this.isCopied && known.$delete(this.id)) send("drop", this.id);
+    const { id } = this;
+    if (this.isCopied && known.$delete(id)) send("drop", id);
     this.era = 0;
   }
   toJSON(): object {
@@ -266,8 +267,9 @@ class Param {
     const time = this.node.context.time();
     for (let next: Automation; (next = this.events[0]); this.events.shift()) {
       const { method, value, more } = next;
-      if (method.endsWith("RampToValueAtTime") && time < next.time) {
-        const done = (time - this.#since) / (next.time - this.#since);
+      const nextTime = next.time;
+      if (method.endsWith("RampToValueAtTime") && time < nextTime) {
+        const done = (time - this.#since) / (nextTime - this.#since);
         return Math.fround(
           method[0] === "l" ? this.value + (value - this.value) * done : this.value * (value / this.value) ** done || 0,
         );
@@ -314,8 +316,13 @@ attribute(
 );
 ["defaultValue", "minValue", "maxValue"].forEach((name, i) => attribute(AudioParam, name, Param, it => it.range[i]));
 for (const [method, length] of Object.entries({
-  ...{ setValueAtTime: 2, linearRampToValueAtTime: 2, exponentialRampToValueAtTime: 2, setTargetAtTime: 3 },
-  ...{ setValueCurveAtTime: 3, cancelScheduledValues: 1, cancelAndHoldAtTime: 1 },
+  setValueAtTime: 2,
+  linearRampToValueAtTime: 2,
+  exponentialRampToValueAtTime: 2,
+  setTargetAtTime: 3,
+  setValueCurveAtTime: 3,
+  cancelScheduledValues: 1,
+  cancelAndHoldAtTime: 1,
 })) {
   const member = {
     [method](this: unknown, first: any, second: any, third: any) {
@@ -397,12 +404,13 @@ class Vertex extends Copied {
       : Object.fromEntries(Object.keys(options).map(key => [key, encode(options[key])]));
     send("node", this.id, this.context.copy().id, this.type, given);
     for (const name in this.values) {
-      if (!readOnly.includes(name) && this.values[name] !== defaultOf(this.type, name))
-        this.set(name, encode(this.values[name]));
+      const { values } = this;
+      if (!readOnly.includes(name) && values[name] !== defaultOf(this.type, name)) this.set(name, encode(values[name]));
     }
     for (const param of this.params) {
       param.current();
-      if (param.value !== param.range[0]) param.tell({ method: "setValueAtTime", value: param.value, time: 0 });
+      const { value } = param;
+      if (value !== param.range[0]) param.tell({ method: "setValueAtTime", value, time: 0 });
       for (const event of param.events) param.tell(event);
     }
     for (const edge of this.edges) this.tell(edge);
@@ -466,8 +474,9 @@ class AudioNode extends idl.EventTarget {
       throw error("InvalidAccessError", "The node is of another context.");
     if (edge.output >= it.outputs || (to instanceof Vertex && edge.input >= to.inputs))
       throw error("IndexSizeError", "There is no such input or output.");
-    if (!it.edges.some(other => other.to === to && other.output === edge.output && other.input === edge.input)) {
-      it.edges.push(edge);
+    const { edges } = it;
+    if (!edges.some(other => other.to === to && other.output === edge.output && other.input === edge.input)) {
+      edges.push(edge);
       if (it.isCopied) it.tell(edge);
     }
     return to instanceof Param ? undefined : destination;
@@ -765,7 +774,7 @@ class Context extends Copied {
     this.wanted = state;
     if (state !== "closed") this.invoke(state === "running" ? "resume" : "suspend");
     else {
-      for (const it of [...busy]) if (it instanceof Vertex && it.context === this) it.drop();
+      for (const it of Array.from(busy)) if (it instanceof Vertex && it.context === this) it.drop();
       this.processors.$clear();
       this.drop();
     }
@@ -843,7 +852,8 @@ attribute(BaseAudioContext, "currentTime", Context, it => it.time());
 attribute(BaseAudioContext, "sampleRate", Context, it => it.sampleRate);
 attribute(BaseAudioContext, "state", Context, it => it.state);
 attribute(BaseAudioContext, "destination", Context, it => {
-  if (it.destination) return it.destination;
+  const { destination } = it;
+  if (destination) return destination;
   const node = vertex((it.destination = new AudioDestinationNode(internal)), it, "AudioDestinationNode");
   node.outputs = 0;
   return it.destination;
@@ -1128,7 +1138,8 @@ class Player extends Copied {
     this.source?.copy();
     for (const name of ["volume", "muted", "defaultPlaybackRate", "playbackRate", "preservesPitch", "loop"])
       this.set(name, media[name]);
-    if (media.sinkId) this.invoke("setSinkId", media.sinkId);
+    const { sinkId } = media;
+    if (sinkId) this.invoke("setSinkId", sinkId);
   }
   #loading: Promise<boolean> | undefined;
   load() {
@@ -1162,7 +1173,8 @@ class Player extends Copied {
   }
   unload() {
     this.isTainted = false;
-    if (this.source) this.source.isTainted = false;
+    const { source } = this;
+    if (source) source.isTainted = false;
     this.#serial++;
     this.#loading = undefined;
     this.#base = 0;
@@ -1258,24 +1270,20 @@ function playerOf(element: any): Player {
 }
 
 const interfaces = {
-  ...{
-    AudioBuffer,
-    AudioContext,
-    AudioDestinationNode,
-    AudioNode,
-    AudioParam,
-    AudioScheduledSourceNode,
-    BaseAudioContext,
-  },
-  ...{
-    MediaDeviceInfo,
-    MediaDevices,
-    MediaStream,
-    MediaStreamTrack,
-    OverconstrainedError,
-    PeriodicWave,
-    ScriptProcessorNode,
-  },
+  AudioBuffer,
+  AudioContext,
+  AudioDestinationNode,
+  AudioNode,
+  AudioParam,
+  AudioScheduledSourceNode,
+  BaseAudioContext,
+  MediaDeviceInfo,
+  MediaDevices,
+  MediaStream,
+  MediaStreamTrack,
+  OverconstrainedError,
+  PeriodicWave,
+  ScriptProcessorNode,
   ...nodes,
 };
 for (const it of Object.values(interfaces)) expose(it);

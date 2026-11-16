@@ -268,7 +268,7 @@ function fromScript(url: URL, { pacScript = "", isOptional }: Config): Route | P
   try {
     const host = url.hostname.replace(/^\[|\]$/g, "");
     const route = then(script.get(), find => then<string, Route>(find(shown.replace(/^ws/, "http"), host), fromAnswer));
-    return $isPromise(route) ? route.catch(failed) : route;
+    return $isPromise(route) ? (route.catch(failed) as any) : route;
   } catch (error) {
     return failed(error);
   }

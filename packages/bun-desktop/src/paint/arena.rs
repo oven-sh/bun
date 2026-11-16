@@ -36,7 +36,7 @@ impl Chunk {
             id,
             start: map(len),
             len,
-            free: Mutex::new(vec![0..len]),
+            free: Mutex::new(std::iter::once(0..len).collect()),
         })
     }
 

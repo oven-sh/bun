@@ -73,7 +73,7 @@ impl CounterStyle {
         out.extend_from_slice(b"symbols(");
         out.extend(
             (self.system != System::Symbolic)
-                .then(|| self.system.name().bytes().chain([b' ']))
+                .then(|| self.system.name().bytes().chain(*b" "))
                 .into_iter()
                 .flatten(),
         );

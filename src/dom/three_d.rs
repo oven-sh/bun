@@ -470,7 +470,7 @@ impl Painter<'_> {
                     FillRule::Nonzero,
                 );
                 self.link(
-                    Item::PushClipOutline(Outline {
+                    &Item::PushClipOutline(Outline {
                         crisp: true,
                         ..outline
                     }),
@@ -484,10 +484,10 @@ impl Painter<'_> {
                         continue;
                     };
                     inside.visible = space.visible.transformed(&inverse);
-                    self.link(Item::PushTransform(matrix), &mut inside);
+                    self.link(&Item::PushTransform(matrix), &mut inside);
                 }
                 None => self.link(
-                    Item::PushProjection(
+                    &Item::PushProjection(
                         [0, 4, 12, 1, 5, 13, 3, 7, 15].map(|it| matrix[it] as f32),
                     ),
                     &mut inside,

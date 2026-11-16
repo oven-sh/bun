@@ -320,7 +320,8 @@ function requestSync(command: string, argument?: unknown): any {
     () => reply !== undefined,
     event => event.t === "reply",
   );
-  if (reply!.error !== undefined) throw new Error(reply!.error);
+  const { error } = reply!;
+  if (error !== undefined) throw new Error(error);
   return reply!.value;
 }
 

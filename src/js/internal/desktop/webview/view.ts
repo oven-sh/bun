@@ -34,6 +34,7 @@ type Owner = {
   painted(frame: any): void;
   shortcutFor(event: object): { isReserved: boolean; run(): void } | undefined;
   tooltip?(text: string): void;
+  mayDragWindow?(): boolean;
 };
 
 const clipboard = () => require("internal/desktop/system").api.clipboard;
@@ -52,13 +53,53 @@ const cursors = {
 const modifiersOf = (m: number) => ((m & 1) << 3) | (m & 2) | ((m & 4) >> 2) | ((m & 8) >> 1);
 const keyCodes = {
   __proto__: null,
-  ...{ Backspace: 8, Tab: 9, Enter: 13, NumpadEnter: 13, Pause: 19, CapsLock: 20, Escape: 27, Space: 32 },
-  ...{ ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17, AltLeft: 18, AltRight: 18 },
-  ...{ PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 },
-  ...{ PrintScreen: 44, Insert: 45, Delete: 46, MetaLeft: 91, MetaRight: isMac ? 93 : 92, ContextMenu: 93 },
-  ...{ NumpadMultiply: 106, NumpadAdd: 107, NumpadSubtract: 109, NumpadDecimal: 110, NumpadDivide: 111 },
-  ...{ NumLock: 144, ScrollLock: 145, Semicolon: 186, Equal: 187, Comma: 188, Minus: 189, Period: 190, Slash: 191 },
-  ...{ Backquote: 192, BracketLeft: 219, Backslash: 220, BracketRight: 221, Quote: 222, IntlBackslash: 226 },
+  Backspace: 8,
+  Tab: 9,
+  Enter: 13,
+  NumpadEnter: 13,
+  Pause: 19,
+  CapsLock: 20,
+  Escape: 27,
+  Space: 32,
+  ShiftLeft: 16,
+  ShiftRight: 16,
+  ControlLeft: 17,
+  ControlRight: 17,
+  AltLeft: 18,
+  AltRight: 18,
+  PageUp: 33,
+  PageDown: 34,
+  End: 35,
+  Home: 36,
+  ArrowLeft: 37,
+  ArrowUp: 38,
+  ArrowRight: 39,
+  ArrowDown: 40,
+  PrintScreen: 44,
+  Insert: 45,
+  Delete: 46,
+  MetaLeft: 91,
+  MetaRight: isMac ? 93 : 92,
+  ContextMenu: 93,
+  NumpadMultiply: 106,
+  NumpadAdd: 107,
+  NumpadSubtract: 109,
+  NumpadDecimal: 110,
+  NumpadDivide: 111,
+  NumLock: 144,
+  ScrollLock: 145,
+  Semicolon: 186,
+  Equal: 187,
+  Comma: 188,
+  Minus: 189,
+  Period: 190,
+  Slash: 191,
+  Backquote: 192,
+  BracketLeft: 219,
+  Backslash: 220,
+  BracketRight: 221,
+  Quote: 222,
+  IntlBackslash: 226,
 };
 
 function keyCodeOf(key: string, code: string): number {
@@ -219,7 +260,7 @@ class View {
     this.#size = size;
     this.scale = this.shownAt = scale;
     this.#release = engine.hold();
-    if (engine.paintsToFiles) fs.writeFileSync(this.#file(), "", { mode: 0o600 });
+    if (engine.paintsToFiles) fs.writeFileSync(this.#file() as any, "", { mode: 0o600 });
     this.image = native.ask("webview.open", { path: this.#file() });
     ({ promise: this.targetId, resolve: this.created } = Promise.withResolvers<string>());
     this.#root = this.targetId.then(async targetId => {

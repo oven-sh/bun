@@ -24,8 +24,10 @@ function tryEncode(key: any, seen: unknown[] = []): string | undefined {
   }
   if (types.isDate(key)) return tryEncode(Date.prototype.getTime.$call(key))?.replace("\x10", "\x20");
   if (types.isAnyArrayBuffer(key) || types.isArrayBufferView(key)) {
-    if ((key.buffer ?? key).detached) return;
-    const bytes = key.buffer ? new Uint8Array(key.buffer, key.byteOffset, key.byteLength) : new Uint8Array(key);
+    if (((key as any).buffer ?? key).detached) return;
+    const bytes = (key as any).buffer
+      ? new Uint8Array((key as any).buffer, (key as any).byteOffset, key.byteLength)
+      : new Uint8Array(key as any);
     let out = "\x40";
     for (const byte of bytes) out += unit(byte + 1);
     return out + "\0";
@@ -151,7 +153,7 @@ class IDBKeyRange {
   }
 
   static {
-    isRange = value => $isObject(value) && #lower in (value as object);
+    isRange = (value): value is IDBKeyRange => $isObject(value) && #lower in (value as object);
     boundsOf = range => [
       range.#lower === undefined ? "" : range.#lower + (range.#lowerOpen ? PAST : ""),
       range.#upper === undefined ? PAST : range.#upper + (range.#upperOpen ? "" : PAST),
@@ -367,7 +369,7 @@ class Transaction {
     this.#proceed();
   }
 
-  #step() {
+  #step(): any {
     this.#isStepQueued = false;
     if (this.finished) return;
     const next = this.#requests[0];
@@ -1234,7 +1236,7 @@ function inTurn(name: string, run: (backend: any, done: () => void) => void) {
 
 function whenAlone(backend: any, request: IDBRequest, newVersion: number | null, run: () => void) {
   const oldVersion = backend.meta.version;
-  for (const other of [...backend.connections]) other.versionChange(newVersion);
+  for (const other of Array.from<any>(backend.connections)) other.versionChange(newVersion);
   later(() => {
     if (backend.connections.size > 0)
       dispatchAlong(new IDBVersionChangeEvent("blocked", { oldVersion, newVersion }), request);

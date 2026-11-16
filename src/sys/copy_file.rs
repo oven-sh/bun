@@ -209,15 +209,8 @@ pub fn copy_file_with_state(
 
     #[cfg(windows)]
     {
-        // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
-        let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
-        if rc == 0 {
-            return Err(crate::Error::from_win32(
-                crate::windows::Win32Error::get(),
-                Tag::copyfile,
-            ));
-        }
-        return Ok(());
+        return crate::windows::CopyFileW(in_, out, false)
+            .map_err(|err| crate::Error::from_win32(err, Tag::copyfile));
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]

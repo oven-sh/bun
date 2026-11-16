@@ -128,7 +128,7 @@ impl View {
     /// `rows` has four bytes for each pixel of `rect`.
     fn update(&mut self, rect: IntRect, rows: &[u8]) {
         let (columns, stride) = (self.columns(), self.pixmap.width() as usize * 4);
-        for (y, row) in (rect.top..rect.bottom).zip(rows.chunks_exact(rect.width() as usize * 4)) {
+        for (y, row) in (rect.top..rect.bottom).zip(rows.chunks_exact(rect.width() * 4)) {
             let mut left = rect.left;
             while left < rect.right {
                 let right = ((left / TILE + 1) * TILE).min(rect.right);
@@ -289,9 +289,9 @@ pub fn command(name: &str, arguments: &Value) -> Result<Value> {
             view.version = view.version.wrapping_add(1);
             view.scale = arguments["scale"].as_f64().map_or(1., |scale| scale as f32);
             match arguments.get("blob") {
-                Some(blob) => Ok(
-                    view.show(images::decode_pixmap(&bridge::blob(blob)?).context("bad frame")?)
-                ),
+                Some(blob) => images::decode_pixmap(&bridge::blob(blob)?)
+                    .context("bad frame")
+                    .map(|it| view.show(it)),
                 None => view.read(arguments, received),
             }
         })?,

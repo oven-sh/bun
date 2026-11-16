@@ -46,9 +46,7 @@ fn from_sbix(font: &Font, glyph: u32, size: f32) -> Option<Bitmap> {
     };
     let strikes = (0..table.u32(4)?.min(256) as usize).filter_map(|it| table.at32(8 + it * 4));
     let strike = best(
-        strikes.filter_map(|it| {
-            Some((f32::from(it.u16(0)?), it)).filter(|_| find(it, glyph).is_some())
-        }),
+        strikes.filter_map(|it| find(it, glyph).and(Some((f32::from(it.u16(0)?), it)))),
         size,
     )?;
     let data = find(strike, glyph)?;

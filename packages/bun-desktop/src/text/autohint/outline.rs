@@ -68,7 +68,7 @@ impl Outline {
         };
         for &end in &shape.ends {
             let start = outline.points.len();
-            (start <= end && end <= shape.points.len().min(0xffff)).then_some(())?;
+            (start <= end && end <= shape.points.len().min(1 << 14)).then_some(())?;
             outline.contours.extend((start < end).then_some(start..end));
             outline.points.extend((start..end).map(|it| Point {
                 units: [shape.points[it].x, shape.points[it].y].map(|it| i32::from(it as i16)),

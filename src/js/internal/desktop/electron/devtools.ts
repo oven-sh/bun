@@ -111,7 +111,7 @@ function spy(sessions: Set<PageSession>, hooks: any, destination: string | undef
     listens: (name: string, url: URL) => name === "onCompleted" || hooks.listens(name, url),
     tell(name: string, url: URL, details: () => any) {
       if (name === "onBeforeRedirect") redirectResponse = describe(details());
-      else if (!isKnown);
+      else if (!isKnown) return;
       else if (name === "onResponseStarted")
         emit("Network.responseReceived", { response: describe(details()), hasExtraInfo: false });
       else if (name === "onCompleted") emit("Network.loadingFinished", { encodedDataLength: 0 });
@@ -139,7 +139,7 @@ function spy(sessions: Set<PageSession>, hooks: any, destination: string | undef
       isKnown = true;
       redirectResponse = undefined;
       let response;
-      for (const session of [...sessions]) {
+      for (const session of Array.from(sessions)) {
         const answer = await session.pause(requestId, request, type);
         if (answer?.errorReason) throw loader.netError(networkErrors[answer.errorReason] ?? "FAILED");
         const given = (answer?.responseHeaders ?? answer?.headers)?.map(({ name, value }) => [name, value]);
@@ -702,7 +702,8 @@ class PageSession {
       const context = target?.context ?? this.#context(params.executionContextId);
       const world = this.#world(context);
       const args = (params.arguments ?? []).map(argument => {
-        if (argument.objectId !== undefined) return this.#object(argument.objectId).value;
+        const { objectId } = argument;
+        if (objectId !== undefined) return this.#object(objectId).value;
         if (argument.unserializableValue === undefined) return world.clone(argument.value);
         const text = argument.unserializableValue;
         return text.endsWith("n") ? BigInt(text.slice(0, -1)) : Number(text);
@@ -822,7 +823,8 @@ class EngineSession {
         result = this.#rename(result, this.theirs, this.ours);
         if (method === "Page.getFrameTree" && this.isFrame) {
           if (this.inner !== undefined) result.frameTree = result.frameTree.childFrames?.[0];
-          if (result.frameTree) this.announce(result.frameTree, true);
+          const { frameTree } = result;
+          if (frameTree) this.announce(frameTree, true);
         }
         resolve(result);
         if (this.#hasSwappedBack && method === "Page.enable") setImmediate(this.swappedBack!);
@@ -889,7 +891,7 @@ class Children {
       if (this.#all.$get(child.frame) !== child) return;
       this.#announce(
         child,
-        targetIdOf(contents),
+        targetIdOf(contents) as any,
         sessionId,
         this.connection.local(contents, this.connection.emitter(sessionId)),
       );
@@ -901,7 +903,7 @@ class Children {
     const ours = targetIdOf(this.contents);
     const waitForFrame = (method: string, params: any) =>
       method === "Page.frameAttached" && params.parentFrameId === ours && resolve(params.frameId);
-    const session = await EngineSession.attach(this.connection, child.frame, ours, waitForFrame, true);
+    const session = await EngineSession.attach(this.connection, child.frame, ours as any, waitForFrame, true);
     const inspect = (method: string, params?: object) => child.frame.engine.inspect(method, params, session.id);
     await inspect("Page.enable");
     const { result } = await inspect("Runtime.evaluate", { expression: "document.querySelector('iframe')" });
@@ -962,7 +964,7 @@ class ContentsSession {
     const { connection, contents, emit } = this;
     const guest = (this.#guest = contents[kPrivate].guest);
     return guest
-      ? EngineSession.attach(connection, guest, targetIdOf(contents), emit, false)
+      ? EngineSession.attach(connection, guest, targetIdOf(contents) as any, emit, false)
       : connection.local(contents, emit);
   }
 
@@ -1055,7 +1057,7 @@ function targetInfo(contents: any) {
   };
 }
 
-const versionInfo = () => ({ product: `Chrome/${process.versions.chrome}`, userAgent: app.userAgentFallback });
+const versionInfo = () => ({ product: `Chrome/${process.versions.chrome}`, userAgent: (app as any).userAgentFallback });
 
 /** It is not known yet which engine will have its page. */
 const isUndecided = (contents: any) => !contents[kPrivate].guest && contents[kPrivate].staysInGuest();
@@ -1226,7 +1228,7 @@ function listen(port: number) {
         );
       }
       const target = webContents.fromDevToolsTargetId(route.replace("/devtools/page/", ""));
-      if ((target || route === browserPath) && server.upgrade(request, { data: { target } })) return;
+      if ((target || route === browserPath) && server.upgrade(request, { data: { target } } as any)) return;
       return new Response(null, { status: 404 });
     },
     websocket: {

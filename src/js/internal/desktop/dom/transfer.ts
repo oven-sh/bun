@@ -131,7 +131,7 @@ class DataTransferItemList {
     if ($argumentCount() < 1) core.tooFew(1);
     const store: Store = this[kList].store;
     if (store.mode !== Mode.ReadWrite) return null;
-    if ($inheritsBlob(data) && data.name !== undefined) store.addFile(data);
+    if ($inheritsBlob(data) && (data as any).name !== undefined) store.addFile(data as any);
     else if (store.items.some(item => item.file === null && item.type === asciiLower(String(type)))) {
       throw domError("NotSupportedError", `An item already exists for type '${type}'.`);
     } else store.set(asciiLower(String(type)), String(data));

@@ -177,7 +177,7 @@ pub(crate) fn spacing_class(character: char) -> Option<Punctuation> {
             return None;
         }
         '\u{3008}'..='\u{3011}' | '\u{3014}'..='\u{301b}' | '（' | '）'
-            if character as u32 % 2 == 0 =>
+            if (character as u32).is_multiple_of(2) =>
         {
             Punctuation::Opening
         }

@@ -3,9 +3,9 @@ const events = require("internal/desktop/dom/events");
 const nodes = require("internal/desktop/dom/node");
 const cssom = require("internal/desktop/dom/cssom");
 const { prepareCustomElement } = require("internal/desktop/dom/custom");
-const { DOMRect, rectAt, rectList } = require("internal/desktop/dom/geometry");
+const { DOMRect, rectList } = require("internal/desktop/dom/geometry");
 
-const { ELEMENT, DOCUMENT, HTML, Kind, kinds, hooks, flags, accessor, asciiLower, domError, expose } = core;
+const { ELEMENT, HTML, Kind, kinds, hooks, flags, accessor, asciiLower, domError, expose } = core;
 const { getAttr, hasAttr, isHtml, rare, react, removeAttr, same, setAttr, splitTokens, sync, unwrap } = core;
 const { wrap, wrapOrNull } = core;
 const { Element, collectionOf, defineTokenList } = nodes;
@@ -1034,11 +1034,13 @@ function defineTablePart({ prototype }: any, property: string, suffix: string, t
     },
   );
   prototype["create" + suffix] = function () {
-    if (!find(this.$impl)) put(this.$impl, core.createPlainElement(this.$impl.doc, tag, HTML));
+    const impl = this.$impl;
+    if (!find(impl)) put(impl, core.createPlainElement(impl.doc, tag, HTML));
     return wrap(find(this.$impl));
   };
   prototype["delete" + suffix] = function () {
-    if (find(this.$impl)) core.remove(find(this.$impl));
+    const impl = this.$impl;
+    if (find(impl)) core.remove(find(impl));
     react();
   };
 }

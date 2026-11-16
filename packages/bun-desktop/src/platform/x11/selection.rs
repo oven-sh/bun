@@ -248,10 +248,12 @@ impl X11 {
                 .into_iter()
                 .chain(contents.iter().map(|it| it.0))
                 .collect();
-            return Some(self.x.set_words(to.0, to.1, atom::ATOM, &targets));
+            self.x.set_words(to.0, to.1, atom::ATOM, &targets);
+            return Some(());
         }
         if target == self.atom(atom::TIMESTAMP) {
-            return Some(self.x.set_words(to.0, to.1, atom::INTEGER, &[*time]));
+            self.x.set_words(to.0, to.1, atom::INTEGER, &[*time]);
+            return Some(());
         }
         let bytes = contents.iter().find(|it| it.0 == target)?.1.clone();
         let kind = if target == self.atom(atom::TEXT) {
@@ -260,19 +262,21 @@ impl X11 {
             target
         };
         if bytes.len() <= CHUNK {
-            return Some(self.x.set_bytes(to.0, to.1, kind, &bytes));
+            self.x.set_bytes(to.0, to.1, kind, &bytes);
+            return Some(());
         }
         self.x.select_events(to.0, mask::PROPERTY);
         self.x
             .set_words(to.0, to.1, self.atom(atom::INCR), &[bytes.len() as u32]);
         let mut transfers = self.selections.transfers.borrow_mut();
         transfers.retain(|it| it.to != to);
-        Some(transfers.push(Transfer {
+        transfers.push(Transfer {
             to,
             kind,
             bytes,
             sent: 0,
-        }))
+        });
+        Some(())
     }
 
     pub fn selection_event(&self, event: &[u8]) {

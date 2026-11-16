@@ -199,7 +199,8 @@ class LocalFrame {
       measure: () => this.#measure(),
       fit: (followsContents: boolean) => this.#fit(followsContents),
       scroll(x: number, y: number) {
-        if (sync(node.doc).userScroll(node.id, x, y, 0, false) !== 0) invalidate(node.doc);
+        const { doc } = node;
+        if (sync(doc).userScroll(node.id, x, y, 0, false) !== 0) invalidate(doc);
         else page.container?.scroll(x, y);
       },
       reveal: () => html.scrollIntoView(node, 3, 3),
@@ -345,7 +346,8 @@ class LocalFrame {
     const { zoom } = this.#page;
     const [left, top] = this.box;
     const moved = (it: any) => ({ ...it, x: (it.x - left * zoom) / this.scale, y: (it.y - top * zoom) / this.scale });
-    if (event.points) return this.local.input({ ...event, points: event.points.map(moved) });
+    const { points } = event;
+    if (points) return this.local.input({ ...event, points: points.map(moved) });
     this.local.input("x" in event ? moved(event) : event);
   }
 

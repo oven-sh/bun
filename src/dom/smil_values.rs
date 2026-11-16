@@ -278,7 +278,11 @@ fn plan<T>(
     add: impl Fn(&T, f32, &T) -> Option<T>,
     underlying: impl FnOnce() -> Option<T>,
 ) -> Option<Plan<T>> {
-    let get = |name| element.attribute(name).filter(|it| !it.is_empty());
+    let get = |name| {
+        element
+            .attribute(name)
+            .filter(|it| !it.is_empty() || element.attribute(name!("attributeName")) == Some("d"))
+    };
     let (adds, accumulates) = (
         get(name!("additive")) == Some("sum"),
         get(name!("accumulate")) == Some("sum"),
@@ -529,8 +533,20 @@ impl Document {
                 .sum(1.0, values.last()?, progress.iteration as f32)
                 .unwrap_or(value);
         }
+        if matches!(&value, Value::Path(it) if it.is_empty())
+            && (adds
+                || element.has(name!("by"))
+                    && !element.has(name!("to"))
+                    && !element.has(name!("values")))
+        {
+            return None;
+        }
         if let Some(base) = base().filter(|_| adds) {
-            value = value.sum(1.0, &base, 1.0).unwrap_or(value);
+            let needs_base =
+                kind == Kind::Path && !element.has(name!("values")) && !element.has(name!("from"));
+            value = value
+                .sum(1.0, &base, 1.0)
+                .or_else(|| (!needs_base).then_some(value))?;
         }
         Some(value.write(kind))
     }
@@ -648,13 +664,22 @@ impl Document {
             ),
             None => points().map(|it| (Path::polygon(it.values.iter().copied(), false), it))?,
         };
-        let (pieces, length, pace) = (path.pieces(), path.length(), pace(element));
-        let stops = match (
-            element.has(name!("keyPoints")) && pace != Pace::Paced,
-            values.is_empty(),
-        ) {
+        let (pieces, length, has_points) = (
+            path.pieces(),
+            path.length(),
+            element.has(name!("keyPoints")),
+        );
+        let pace = Some(pace(element))
+            .filter(|it| !has_points || *it != Pace::Paced)
+            .unwrap_or(Pace::Linear);
+        let stops = match (has_points, values.is_empty()) {
             (true, _) => fractions(element, name!("keyPoints"))
                 .filter(|it| it.len() > 1 && element.has(name!("keyTimes")))?,
+            (false, true) if pace == Pace::Discrete => path
+                .distances()
+                .into_iter()
+                .map(|it| it / length.max(1e-9))
+                .collect(),
             (false, true) => vec![0.0, 1.0],
             (false, false) => core::iter::once(0.0)
                 .chain(pieces.iter().scan(0.0, |sum, it| {
@@ -711,13 +736,19 @@ impl Document {
             Map::<NodeId, Matrix>::default(),
         );
         for progress in contributing {
-            let Some((target, element)) = self.smil_target(progress.id).zip(
-                self.tree
-                    .element(progress.id)
-                    .filter(|it| crate::svg::passes_tests(it)),
-            ) else {
+            let Some((target, element)) = self
+                .smil_target(progress.id)
+                .zip(self.tree.element(progress.id))
+            else {
                 continue;
             };
+            if !core::iter::once(progress.id)
+                .chain(self.tree.flat_ancestors(progress.id))
+                .filter_map(|it| self.tree.element(it))
+                .all(crate::svg::passes_tests)
+            {
+                continue;
+            }
             if element.tag == name!("animateMotion") {
                 let underlying = motions.get(&target).copied().unwrap_or(IDENTITY);
                 motions.extend(
@@ -839,11 +870,18 @@ impl Document {
             .collect();
         let old = core::mem::replace(&mut self.smil.effects.styles, styles);
         let new = &self.smil.effects.styles;
-        let restyled = old
+        let restyled: Vec<_> = old
             .keys()
             .chain(new.keys())
-            .filter(|it| old.get(*it).map(Rc::as_ptr) != new.get(*it).map(Rc::as_ptr));
-        restyled.for_each(|it| self.tree.mark_style(*it, Flags::REMATCH));
+            .copied()
+            .filter(|it| old.get(it).map(Rc::as_ptr) != new.get(it).map(Rc::as_ptr))
+            .collect();
+        for id in restyled {
+            self.tree.mark_style(id, Flags::REMATCH);
+            if self.tree.style(id).is_none() {
+                self.svg_changed(id);
+            }
+        }
         let old = core::mem::replace(&mut self.smil.effects.motions, motions);
         let moved: Vec<_> = old
             .keys()
@@ -851,6 +889,8 @@ impl Document {
             .copied()
             .filter(|it| old.get(it) != self.smil.effects.motions.get(it))
             .collect();
-        moved.into_iter().for_each(|it| self.svg_changed(it));
+        for it in moved {
+            self.svg_changed(it);
+        }
     }
 }

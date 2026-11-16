@@ -460,6 +460,9 @@ impl Document {
                 match style.text.transform {
                     _ if is_space => to.text.push(' '),
                     TextTransform::Uppercase => to.text.extend(character.to_uppercase()),
+                    TextTransform::Capitalize if !to.text.ends_with(char::is_alphanumeric) => {
+                        to.text.extend(character.to_uppercase())
+                    }
                     TextTransform::Lowercase => to.text.extend(character.to_lowercase()),
                     _ => to.text.push(character),
                 }

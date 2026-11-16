@@ -184,7 +184,7 @@ fn exact(p: &P, start: usize, unit: usize, rounded: f32) -> f64 {
     let source = p.slice_from(start);
     text(&source[..source.len().saturating_sub(unit)])
         .parse()
-        .unwrap_or(rounded.into())
+        .unwrap_or_else(|_| rounded.into())
 }
 
 thread_local! {

@@ -1473,7 +1473,7 @@ impl Image {
         options
             .iter()
             .find(|it| it.1 >= scale)
-            .or(options.last())
+            .or_else(|| options.last())
             .map(|it| (&it.0, it.1))
     }
 
@@ -2467,7 +2467,8 @@ impl Css for Template {
             let lists = |p: &mut P| {
                 let next = || {
                     let start = p.position();
-                    Some(line_names(p)).filter(|_| p.position() != start)
+                    let names = line_names(p);
+                    (p.position() != start).then_some(names)
                 };
                 core::iter::from_fn(next).collect::<Vec<_>>()
             };
@@ -3046,6 +3047,8 @@ impl Css for Easing {
                     })?
                     .try_into()
                     .ok()?;
+                    let [x1, x2] =
+                        [x1, x2].map(|it| if it.is_nan() { 0.0 } else { it.clamp(0.0, 1.0) });
                     let [y1, y2] = [y1, y2].map(|it| {
                         if it.is_nan() {
                             0.0
@@ -3053,10 +3056,7 @@ impl Css for Easing {
                             it.clamp(f32::MIN.into(), f32::MAX.into())
                         }
                     });
-                    Some(Easing::Bezier(
-                        [x1.max(0.0).min(1.0), y1, x2.max(0.0).min(1.0), y2],
-                        "",
-                    ))
+                    Some(Easing::Bezier([x1, y1, x2, y2], ""))
                 }
             });
         }
@@ -3241,8 +3241,8 @@ impl Css for RangeEdge {
     fn write(&self, out: &mut Out) {
         out.extend(
             self.0
-                .map_or(
-                    if self.1.is_none() { "normal" } else { "" },
+                .map_or_else(
+                    || if self.1.is_none() { "normal" } else { "" },
                     RangeName::name,
                 )
                 .bytes(),

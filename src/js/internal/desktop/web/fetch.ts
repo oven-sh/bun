@@ -176,7 +176,7 @@ const { append } = Headers.prototype;
 function fill(headers: Headers, pairs: unknown[][]) {
   for (const pair of pairs) {
     if (pair.length !== 2) throw new TypeError("A header has to be a pair of a name and a value.");
-    append.$call(headers, pair[0], pair[1]);
+    append.$call(headers, pair[0] as string, pair[1] as string);
   }
 }
 
@@ -251,7 +251,8 @@ class Body {
 
   #reader(): Reader {
     const { source } = this;
-    if (this.incoming !== null) return this.incoming;
+    const { incoming } = this;
+    if (incoming !== null) return incoming;
     if (!(source instanceof Uint8Array)) return source!.stream().getReader() as any;
     let done = false;
     return { read: async () => ({ done, value: ((done = true), source.slice()) }), cancel() {} };
@@ -307,16 +308,16 @@ class Body {
 
   /** For who uses it from now on. */
   take(): Body {
-    if (this.#stream) return new Body(this.source, this.#stream.pipeThrough(new TransformStream()));
+    if (this.#stream) return new Body(this.source, (this.#stream as any).pipeThrough(new TransformStream()) as any);
     this.#isConsumed = true;
     return new Body(this.source);
   }
 
   clone(): Body {
     if (!this.#stream && this.incoming === null) return new Body(this.source);
-    const [own, other] = this.stream.tee();
-    this.#stream = own;
-    return new Body(this.source, other);
+    const [own, other] = (this.stream as any).tee();
+    this.#stream = own as any;
+    return new Body(this.source, other as any);
   }
 }
 
@@ -343,13 +344,13 @@ function extractBody(init: any, keepalive = false): [Body, string | null] {
     if (isStream(init)) {
       if (keepalive) throw new TypeError("A keepalive request cannot have a ReadableStream body.");
       if (isDisturbed(init) || init.locked) throw new TypeError("The stream is disturbed or locked.");
-      return [new Body(null, init), null];
+      return [new Body(null, init as any), null];
     }
-    if ($inheritsBlob(init)) return [new Body(init), init.type || null];
+    if ($inheritsBlob(init)) return [new Body(init as any), init.type || null];
     const bytes = idl.bytesOf(init);
     if (bytes) return [new Body(bytes.slice()), null];
     if (idl.isBranded(NativeFormData, "keys", init)) {
-      const [blob, type] = multipart(init);
+      const [blob, type] = multipart(init as any);
       return [new Body(blob), type];
     }
     if (idl.isBranded(URLSearchParams, "toString", init)) {
@@ -454,7 +455,7 @@ function mixInBody(prototype: object, bodyOf: (self: any) => Body | null, listFr
       const body = bodyOf(this);
       if (body === null) return new ReadableStream({ start: controller => controller.close() });
       if (body.isUnusable) throw new TypeError("The body is locked, or it has already been read.");
-      return body.stream.pipeThrough(new TextDecoderStream() as any);
+      return (body.stream as any).pipeThrough(new TextDecoderStream() as any);
     },
   };
   Object.defineProperties(prototype, Object.getOwnPropertyDescriptors(members));
@@ -580,7 +581,8 @@ class Request {
     else if (init.referrer !== undefined) {
       const referrer = idl.parseUrl(init.referrer);
       if (!referrer) throw new TypeError(`The referrer '${init.referrer}' is not a valid URL.`);
-      if (referrer.href !== "about:client" && referrer.origin === scope.env.origin) options.referrer = referrer.href;
+      const { href } = referrer;
+      if (href !== "about:client" && referrer.origin === scope.env.origin) options.referrer = href;
     }
     if (init.mode === "navigate") throw new TypeError("The mode of a request cannot be 'navigate'.");
     for (const key of ["referrerPolicy", "mode", "credentials", "cache", "redirect", "integrity", "priority"]) {
@@ -591,15 +593,17 @@ class Request {
     }
     if ("keepalive" in init) options.keepalive = !!init.keepalive;
     if ("method" in init) {
-      if (!mime.isToken(init.method) || mime.isForbiddenMethod(init.method)) {
-        throw new TypeError(`'${init.method}' is not a method that can be used.`);
+      const { method } = init;
+      if (!mime.isToken(method) || mime.isForbiddenMethod(method)) {
+        throw new TypeError(`'${method}' is not a method that can be used.`);
       }
       options.method = mime.normalizeMethod(init.method);
     }
     if ("signal" in init) this.#followed = init.signal;
     const isNoCors = options.mode === "no-cors";
-    if (isNoCors && !/^(?:GET|HEAD|POST)$/.test(options.method)) {
-      throw new TypeError(`'${options.method}' is not supported in no-cors mode.`);
+    const optionsMethod = options.method;
+    if (isNoCors && !/^(?:GET|HEAD|POST)$/.test(optionsMethod)) {
+      throw new TypeError(`'${optionsMethod}' is not supported in no-cors mode.`);
     }
     if (other && !hasInit) this.#list = new HeaderList(other.#list.pairs);
     this.#headers = makeHeaders(this.#list, isNoCors ? Guard.NoCors : Guard.Request);
@@ -610,8 +614,9 @@ class Request {
       throw new TypeError("A request with the method GET or HEAD cannot have a body.");
     }
     let body = inherited;
-    if (init.body != null) {
-      const [extracted, type] = extractBody(init.body, options.keepalive);
+    const initBody = init.body;
+    if (initBody != null) {
+      const [extracted, type] = extractBody(initBody, options.keepalive);
       body = extracted;
       if (type !== null && this.#list.get("content-type") === null) append.$call(this.#headers, "Content-Type", type);
     }
@@ -696,7 +701,7 @@ expose(Request);
 const hasNoBody = (status: number) => [101, 103, 204, 205, 304].includes(status);
 
 let makeResponse: (loaded: any, body: Body | null, guard?: Guard) => Response;
-let responseParts: (response: any) => { list: HeaderList; status: number };
+let responseParts: (response: any) => { list: HeaderList; status: number; type: string };
 
 class Response {
   #type = "default";
@@ -873,7 +878,7 @@ function send(request: Request, initiator: string): Promise<Response> {
   const load = start(
     options,
     list,
-    body && (body.source ?? body.stream.pipeThrough(checkedChunks())),
+    body && (body.source ?? (body.stream as any).pipeThrough(checkedChunks())),
     body?.length ?? 0,
   );
   let received: Body | undefined;
@@ -888,7 +893,8 @@ function send(request: Request, initiator: string): Promise<Response> {
   signal?.addEventListener("abort", abort, { once: true });
   load.promise.then(
     loaded => {
-      if (loaded.reader) (received = new Body(null)).incoming = ownReader(load, loaded.reader, failure, ended);
+      const { reader } = loaded;
+      if (reader) (received = new Body(null)).incoming = ownReader(load, reader, failure, ended);
       else ended();
       resolve(makeResponse(loaded, received ?? null));
     },

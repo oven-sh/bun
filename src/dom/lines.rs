@@ -257,7 +257,7 @@ fn best_widths(
             .unwrap_or_default();
         scores.push((best.0 + penalty(end) + for_line, best.1));
     }
-    let breaks = core::iter::successors(Some(last), |it| Some(scores[*it].1).filter(|_| *it > 0));
+    let breaks = core::iter::successors(Some(last), |it| (*it > 0).then_some(scores[*it].1));
     let mut widths: Vec<_> = breaks
         .take_while(|it| *it > 0)
         .map(|it| candidates[it].end - candidates[scores[it].1].start)
@@ -997,7 +997,7 @@ struct Placement<'a> {
     is_annotation: bool,
     size: (f32, Option<f32>),
     lines: Lines,
-    /// The item, the static position, and whether something is before it on the line.
+    /// The item, the static position, and the edges that are there.
     out_of_flow: Vec<(usize, [f32; 2], [Edge; 2])>,
 }
 
@@ -1321,7 +1321,7 @@ impl<'a> Placement<'a> {
             layer: 0,
         }];
         let (mut content, mut has_content) = (Vec::with_capacity(pieces.len()), inline.force_line);
-        let first_out_of_flow = self.out_of_flow.len();
+        let (first_out_of_flow, mut first_after_content) = (self.out_of_flow.len(), usize::MAX);
         for piece in &pieces {
             let item = &inline.items[piece.item];
             let key = match item.kind {
@@ -1374,11 +1374,9 @@ impl<'a> Placement<'a> {
                 ItemKind::OutOfFlow(_) => {
                     let (is_inline, offset) = (item.style.was_inline, boxes[owner].offset);
                     let x = offset[0] + x;
-                    let below = if has_content && !is_inline {
-                        f32::NAN
-                    } else {
-                        y + offset[1]
-                    };
+                    if has_content {
+                        first_after_content = first_after_content.min(self.out_of_flow.len());
+                    }
                     let is_rtl = if is_inline { piece.level % 2 == 1 } else { rtl };
                     let edges = [item.style.layout.justify_self, item.style.layout.align_self];
                     let edges = [0, 1].map(|axis| {
@@ -1397,7 +1395,11 @@ impl<'a> Placement<'a> {
                     } else {
                         offset[0] + edges[0].of([0.0, self.size.0])
                     };
-                    self.out_of_flow.push((piece.item, [x, below], edges));
+                    self.out_of_flow.push((
+                        piece.item,
+                        [x, y + if self.flips { -offset[1] } else { offset[1] }],
+                        edges,
+                    ));
                 }
                 ItemKind::Atomic(_) => {
                     let embedded = &self.embedded[piece.item];
@@ -1690,11 +1692,16 @@ impl<'a> Placement<'a> {
                 layer,
             });
         }
-        for (item, position, edges) in &mut self.out_of_flow[first_out_of_flow..] {
-            if position[1].is_nan() {
-                position[1] = y + height;
-            } else if inline.items[*item].style.was_inline {
+        for (index, (item, position, edges)) in self
+            .out_of_flow
+            .iter_mut()
+            .enumerate()
+            .skip(first_out_of_flow)
+        {
+            if inline.items[*item].style.was_inline {
                 position[1] += edges[1].of([0.0, height]);
+            } else if index >= first_after_content {
+                position[1] += height;
             }
         }
         self.lines.lines.push(Line {
@@ -1895,14 +1902,16 @@ impl Document {
                 1.0
             };
         let baseline = baseline
-            .or(it.style.look.is_checkable().then(|| {
-                own.height
-                    / if lines.style.has_central_baseline() {
-                        2.0
-                    } else {
-                        1.0
-                    }
-            }))
+            .or_else(|| {
+                it.style.look.is_checkable().then(|| {
+                    own.height
+                        / if lines.style.has_central_baseline() {
+                            2.0
+                        } else {
+                            1.0
+                        }
+                })
+            })
             .map_or(synthesized, |it| margin.top + it);
         Embedded {
             size: [width, own.height],
@@ -1921,12 +1930,12 @@ impl Document {
         let Some(mut inline) = self.boxes[id].inline.take() else {
             return Output::default();
         };
-        let owns_floats = floats.is_none();
+        let (owns_floats, mut own) = (floats.is_none(), Floats::default());
         let output = self.lay_out_inline(
             id,
             &mut inline,
             input,
-            floats.unwrap_or(&mut Floats::default()),
+            floats.unwrap_or(&mut own),
             owns_floats,
             breaks,
         );

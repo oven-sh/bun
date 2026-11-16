@@ -55,6 +55,8 @@ type Navigation = {
   /** What is left of the initiator. */
   creator?: any;
   hasTextActivation?: boolean;
+  isByUser?: boolean;
+  blob?: Blob;
   /** The document has been asked. */
   mayUnload?: boolean;
   navigationState?: unknown;
@@ -260,6 +262,7 @@ const isOfItsKind = (name: string, value: unknown) =>
 
 function canEvaluate() {
   try {
+    // eslint-disable-next-line no-eval
     return globalThis.eval("true");
   } catch {
     return false;
@@ -319,7 +322,7 @@ class WebContents extends EventEmitter {
       preferences,
       surface: this.#surface,
       /** The view that shows it, and the window of the view. */
-      view: undefined,
+      view: undefined as any,
       window: () => state.view?.window(),
       isVisible: () => !!state.window()?.isVisible() && state.view.isVisible(),
       entries: [] as Entry[],
@@ -382,7 +385,7 @@ class WebContents extends EventEmitter {
         const initiator = { handle: frame, origin: frame?.origin ?? "null" };
         const load = () => state.guest === guest && !this.#pending && this.#load(url, { history, initiator });
         Promise.resolve(guest?.fetchCookies())
-          .then(load)
+          .then(load as any)
           .catch(() => {});
         return true;
       },
@@ -483,7 +486,7 @@ class WebContents extends EventEmitter {
 
   #notify(name: string, ...args: unknown[]) {
     let answer;
-    for (const observer of [...this[kPrivate].observers]) answer ??= observer[name]?.(...args);
+    for (const observer of Array.from<any>(this[kPrivate].observers)) answer ??= observer[name]?.(...args);
     return answer;
   }
 
@@ -503,11 +506,12 @@ class WebContents extends EventEmitter {
         break;
       case "mouse":
       case "wheel": {
-        if (event.b === 3 || event.b === 4) {
+        const eventB = event.b;
+        if (eventB === 3 || eventB === 4) {
           if (event.e === "up")
             this[kPrivate]
               .window()
-              ?.emit("app-command", new Event(), event.b === 3 ? "browser-backward" : "browser-forward");
+              ?.emit("app-command", new Event(), eventB === 3 ? "browser-backward" : "browser-forward");
           break;
         }
         if (this.listenerCount("before-mouse-event") + this.listenerCount("input-event") === 0) break;
@@ -774,7 +778,8 @@ class WebContents extends EventEmitter {
       goOn();
     };
     if (target.document !== page.id && !this.#mayUnload()) return;
-    if (page.controller) page.controller.willTraverse(target.state?.key, isByUser, proceed);
+    const { controller } = page;
+    if (controller) controller.willTraverse(target.state?.key, isByUser, proceed);
     else proceed();
   }
 
@@ -801,8 +806,9 @@ class WebContents extends EventEmitter {
       return promise;
     }
     const { href } = parsed;
-    if (this.#isForGuest(href) || (navigation.options?.webEngine && webEngine().isAvailable())) {
-      this.#hasShownTrusted ||= navigation.options?.webEngine || isExcepted(href);
+    const { options } = navigation;
+    if (this.#isForGuest(href) || (options?.webEngine && webEngine().isAvailable())) {
+      this.#hasShownTrusted ||= options?.webEngine || isExcepted(href);
       this.#loadInGuest(href, navigation);
       return promise;
     }
@@ -847,10 +853,11 @@ class WebContents extends EventEmitter {
         this.#notServed = withoutHash(pending.url);
         return this.#loadInGuest(pending.url, navigation);
       }
-      if (this.#isForGuest(pending.url)) {
-        this.#hasShownTrusted ||= isExcepted(pending.url);
+      const { url } = pending;
+      if (this.#isForGuest(url)) {
+        this.#hasShownTrusted ||= isExcepted(url);
         this.#loading = false;
-        return this.#loadInGuest(pending.url, { ...navigation, body: undefined, headers: [] });
+        return this.#loadInGuest(url, { ...navigation, body: undefined, headers: [] });
       }
       const page = this.#page;
       this.#top().#aim = undefined;
@@ -929,10 +936,11 @@ class WebContents extends EventEmitter {
     const first = pending.url;
     let loaded: any = { url: pending.url, status: 200, statusText: "", headers: [["content-type", "text/html"]] };
     this.#mayShow(pending.url);
-    if (!pending.url.startsWith("about:") && navigation.markup === undefined) {
+    const pendingUrl = pending.url;
+    if (!pendingUrl.startsWith("about:") && navigation.markup === undefined) {
       loaded = await loader.load(this.session[sessions.kState], {
         ...navigation,
-        url: pending.url,
+        url: pendingUrl,
         destination: this.#frame?.element.kind ?? "document",
         allows: (target: string, redirected: boolean) => {
           const redirectedFrom = redirected ? first : undefined;
@@ -1032,7 +1040,7 @@ class WebContents extends EventEmitter {
     if (!initiator || (hasTextActivation && !this.#frame && isPrivate())) loaded.textDirectives = directives;
   }
 
-  #commit(loaded: any, navigation: Navigation, html: string, xmlType?: string) {
+  #commit(loaded: any, navigation: Navigation, html: string, xmlType?: string): any {
     this.#takeFragmentDirective(loaded, navigation);
     const options = {
       headers: loaded.headers,
@@ -1870,7 +1878,7 @@ inert(WebContents.prototype, {
   setWebRTCIPHandlingPolicy: undefined,
   setWebRTCUDPPortRange: undefined,
   startDrag: unsupported.throws("startDrag"),
-  takeHeapSnapshot: async (file: string) => void require("node:v8").writeHeapSnapshot(file),
+  takeHeapSnapshot: async (file: string) => void require("node:v8").writeHeapSnapshot(file, undefined),
   toggleDevTools: undefined,
 });
 require("internal/desktop/webview/routes").install(WebContents.prototype, kPrivate);

@@ -265,7 +265,7 @@ impl Timed {
             || self.conditions[END].is_empty();
         let duration = self
             .repeating_duration()
-            .min(end.or(may_come.then_some(INDEFINITE))? - begin);
+            .min(end.or_else(|| may_come.then_some(INDEFINITE))? - begin);
         Some(begin + duration.max(self.limits[0]).min(self.limits[1]))
     }
 
@@ -515,7 +515,7 @@ impl Document {
         for id in members {
             let it = &self.smil.elements[id];
             let (current, known) = (it.current(now), it.iteration);
-            let iteration = current.and(it.progress(now)).map_or(0, |it| it.2);
+            let iteration = current.and_then(|_| it.progress(now)).map_or(0, |it| it.2);
             self.smil
                 .elements
                 .get_mut(id)

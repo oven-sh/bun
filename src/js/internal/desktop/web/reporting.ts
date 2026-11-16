@@ -40,7 +40,7 @@ class ReportingObserver {
     if (this.#queue.push(report) > 1) return;
     idl.queueTask(() => {
       try {
-        if (this.#queue.length > 0) this.#callback.$call(this, this.#queue.splice(0), this);
+        if (this.#queue.length > 0) (this.#callback as any).$call(this, this.#queue.splice(0), this);
       } catch (thrown) {
         scope.report(thrown);
       }
@@ -69,7 +69,7 @@ function deliver(type: string, body: any, element?: any) {
     const target = element?.isConnected ? element : (scope.global.document ?? scope.global);
     const init = { ...body, bubbles: true, composed: true };
     idl.dispatchInTask(target, new SecurityPolicyViolationEvent("securitypolicyviolation", init));
-    const { blockedURI: blockedURL, documentURI: documentURL, violatedDirective, ...rest } = body;
+    const { blockedURI: blockedURL, documentURI: documentURL, violatedDirective: _violatedDirective, ...rest } = body;
     const isLocated = rest.sourceFile !== "";
     body = {
       documentURL,

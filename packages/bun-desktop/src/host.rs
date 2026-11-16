@@ -7,8 +7,6 @@ pub mod thread;
 mod unix;
 
 use std::cell::{Cell, OnceCell, RefCell};
-#[cfg(target_os = "macos")]
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -20,9 +18,6 @@ use crate::{app, bridge, input, surface, window};
 const FOR_RESIZE: Duration = Duration::from_millis(100);
 
 thread_local! {
-    /// The window, when that was, and when the next one is due.
-    #[cfg(target_os = "macos")]
-    static SCROLL_FRAME: Cell<Option<(u32, Instant, Instant)>> = const { Cell::new(None) };
     /// Never dropped: the process exits with the display's connection open.
     static PLATFORM: OnceCell<&'static dyn Platform> = const { OnceCell::new() };
     static TICK: Cell<Option<extern "C" fn()>> = const { Cell::new(None) };
@@ -85,38 +80,7 @@ pub fn wake() {
     }
 }
 
-/// macOS sends one scroll event per refresh, so the frame begins with it. Returns whether it has.
-#[cfg(target_os = "macos")]
-pub fn has_scrolled(window: u32) -> bool {
-    static IS_WANTED: LazyLock<bool> =
-        LazyLock::new(|| std::env::var("BUN_DESKTOP_SCROLL").map_or(true, |it| it == "event"));
-    if !*IS_WANTED || !thread::exists() {
-        return false;
-    }
-    let now = Instant::now();
-    let next = SCROLL_FRAME.get().map_or(now, |(_, _, next)| next);
-    if now + interval() * 3 / 10 < next {
-        return true;
-    }
-    SCROLL_FRAME.set(None);
-    frame_is_due(window);
-    SCROLL_FRAME.set(Some((
-        window,
-        now,
-        next.max(now - interval() / 2) + interval(),
-    )));
-    true
-}
-
 pub fn frame_is_due(window: u32) {
-    #[cfg(target_os = "macos")]
-    if SCROLL_FRAME
-        .get()
-        .is_some_and(|(id, last, _)| id == window && last.elapsed() < interval() * 3 / 2)
-    {
-        window::request_frame(window);
-        return;
-    }
     let Ok(state) = window::state(window) else {
         return;
     };

@@ -1,7 +1,7 @@
 //! Node-API (N-API) implementation.
 
-use core::cell::{Cell, UnsafeCell};
 use crate::desktop::main_thread as lent_main_thread;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr;

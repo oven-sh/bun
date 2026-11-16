@@ -65,9 +65,10 @@ const levels = {
 };
 
 function backgroundOf(options: any) {
-  if (options.backgroundMaterial === "mica" || options.backgroundMaterial === "tabbed")
-    return options.backgroundMaterial;
-  if (options.vibrancy && isMac) return `blurred:${options.vibrancy}:${options.visualEffectState ?? "followWindow"}`;
+  const { backgroundMaterial } = options;
+  if (backgroundMaterial === "mica" || backgroundMaterial === "tabbed") return backgroundMaterial;
+  const { vibrancy } = options;
+  if (vibrancy && isMac) return `blurred:${vibrancy}:${options.visualEffectState ?? "followWindow"}`;
   if (options.vibrancy || options.backgroundMaterial === "acrylic") return "blurred";
   return options.transparent ? "transparent" : "opaque";
 }
@@ -105,9 +106,10 @@ class Window extends EventEmitter {
   #coverOptions: { variables: string[]; trafficLightPosition: unknown } | undefined;
 
   constructor(options: Record<string | symbol, any> = {}) {
-    if (options.key !== undefined) {
+    const { key } = options;
+    if (key !== undefined) {
       for (const window of windows.values()) {
-        if (window.#key !== options.key) continue;
+        if (window.#key !== key) continue;
         nextId--;
         window.removeAllListeners();
         return window;
@@ -192,9 +194,10 @@ class Window extends EventEmitter {
     native.hold();
     this.#geometry = this.#ask("geometry");
     this.#normalBounds = this.getBounds();
-    if (options.launchCover) {
+    const { launchCover } = options;
+    if (launchCover) {
       this.#coverOptions = {
-        variables: ["LANG", "LC_ALL", ...(options.launchCover.environment ?? [])],
+        variables: ["LANG", "LC_ALL", ...(launchCover.environment ?? [])],
         trafficLightPosition: creation.trafficLightPosition,
       };
     }
@@ -210,7 +213,8 @@ class Window extends EventEmitter {
       roundedCorners: options.frame !== false || (options.roundedCorners !== false && !options.transparent),
     });
     if (options.alwaysOnTop) this.setAlwaysOnTop(true);
-    if (options.opacity !== undefined) this.setOpacity(options.opacity);
+    const { opacity } = options;
+    if (opacity !== undefined) this.setOpacity(opacity);
     if (waitsForOpacity) this.#tell("show", creation.focus);
     if (isMac && this.#visible && this.#parent) this.#tell(this.#modal ? "sheet" : "parent", this.#parent.id);
     if (options.skipTaskbar) this.setSkipTaskbar(true);
@@ -304,7 +308,7 @@ class Window extends EventEmitter {
     const tasks = require("internal/desktop/tasks");
     tasks.post(tasks.BLOCKING, () => {
       tasks.render();
-      cover.end(!options?.dropInput, options?.keep);
+      cover.end(!options?.dropInput, options?.keep as any);
     });
   }
 
@@ -431,10 +435,10 @@ class Window extends EventEmitter {
   deferShortcut(event: object) {
     return this.#internal && !isMac
       ? undefined
-      : require("internal/desktop/menu").deferByKey(this.#activeMenu(), this, event);
+      : require("internal/desktop/menu").deferByKey(this.#activeMenu(), this, event as any);
   }
 
-  [kHandle](name: string, value: any) {
+  [kHandle](name: string, value: any): any {
     switch (name) {
       case "close":
         return this.close();
@@ -972,7 +976,8 @@ class Window extends EventEmitter {
     let bits = 0;
     for (const modifier of event.modifiers ?? []) bits |= accelerator.parse(modifier + "+a")[1];
     const input: Record<string, unknown> = { ...event, m: bits };
-    if (event.button !== undefined) input.button = ["left", "middle", "right"].indexOf(event.button);
+    const { button } = event;
+    if (button !== undefined) input.button = ["left", "middle", "right"].indexOf(button);
     if (event.type === "keyDown" || event.type === "keyUp") {
       const [key, own] = accelerator.parse(event.keyCode);
       input.m = bits |= own;
@@ -995,7 +1000,7 @@ class Window extends EventEmitter {
 native.handlers.window = event => {
   const window = windows.$get(event.w);
   if (window) window[kHandle](event.e, event.v);
-  else cover.missed(event);
+  else cover.missed(event as any);
 };
 
 function useWindow(): Window {

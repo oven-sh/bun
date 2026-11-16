@@ -75,6 +75,15 @@ function requestOptions(modifiers: string | undefined, referrer: string | undefi
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
+function corsModifier(node: N) {
+  const mode = getAttr(node, "crossorigin");
+  return mode === null
+    ? ""
+    : `\0cross-origin(${asciiLower(mode) === "use-credentials" ? "use-credentials" : "anonymous"})`;
+}
+
+const inheritedAtTransfer = new WeakMap<object, object>();
+
 function fireLater(page: Page, node: N, type: string) {
   page.delayLoad();
   page.queueTask(() => {
@@ -102,6 +111,8 @@ class Picture {
   ratio = NaN;
   isSettled = false;
   isTainted = false;
+  /** The one in its metadata, if the page may know. */
+  orientation = 1;
   bytes = 0;
   loadedAt = 0;
   users = 0;
@@ -129,6 +140,7 @@ class Picture {
       const image = native.ask("image.open", { blob: native.putBlob(bytes), density, scale: page.scale });
       if (image === null) return;
       this.id = image.id;
+      this.orientation = image.orientation ?? 1;
       this.bytes = bytes.length;
       this.ratio = (this.width = image.width) / (this.height = image.height);
       this.isSettled = true;
@@ -152,15 +164,18 @@ class Picture {
       if (page.isDisposed) return native.send("image.release", { id: image.id });
       this.id = image.id;
       this.isTainted = resource.isReadable === false;
+      if (!this.isTainted) this.orientation = image.orientation ?? 1;
       this.width = image.width ?? NaN;
       this.height = image.height ?? NaN;
       this.ratio = image.ratio ?? this.width / this.height;
-      if (resource.bytes[0] === 0xff) this.correctDensity(resource.bytes, isOriented);
+      const { bytes } = resource;
+      if (bytes[0] === 0xff) this.correctDensity(bytes, isOriented);
     } catch {
     } finally {
       this.isSettled = true;
       this.loadedAt = performance.now();
-      if (page.timings !== null) page.timings.hasNewImages = true;
+      const { timings } = page;
+      if (timings !== null) timings.hasNewImages = true;
       if (this.id === 0) page.pictures.$delete(this.key);
     }
   }
@@ -237,7 +252,8 @@ class Picture {
 
   /** An id that the library knows. */
   libraryId(size: number[]): number {
-    if (this.id < VECTOR) return this.id;
+    const { id } = this;
+    if (id < VECTOR) return id;
     return (this.recorded ||= this.page.doc.engine.recordVector(this.id, size[0], size[1]));
   }
 
@@ -247,7 +263,8 @@ class Picture {
     if (id !== 0) native.send("image.release", { id });
     if (this.id < VECTOR) return;
     doc.engine.releaseVector(this.id);
-    if (this.fontScope !== 0) native.send("font.dropScope", { scope: this.fontScope });
+    const { fontScope } = this;
+    if (fontScope !== 0) native.send("font.dropScope", { scope: fontScope });
     for (const part of this.parts) part.release();
   }
 
@@ -260,7 +277,7 @@ class Picture {
     if (--this.users > 0 || page.isDisposed) return;
     const unused = page.unusedPictures;
     unused.$add(this);
-    if (page.transition !== null) return;
+    if (page.transition !== null || page.scopedTransitions.size > 0) return;
     let pixels = 0;
     for (const it of unused) pixels += it.pixels();
     for (const it of unused) {
@@ -309,6 +326,7 @@ class Img {
   isQueued = false;
   isBroken = false;
   hasAlt = false;
+  wasTurned = false;
   serial = 0;
   loadedAt = 0;
   autoWidth = -1;
@@ -385,7 +403,8 @@ function slotWidth(page: Page, image: N, from: N): number {
   if (allowsAutoSizes(image) && (sizes === null || startsWithAuto.test(sizes))) {
     page.autoSizedImages.$add(image);
     if (html.styleBits(image) & 1) return (image.x.autoWidth = page.doc.engine.boxSizes(image.id)[2]);
-    if (image.x.autoWidth >= 0) return image.x.autoWidth;
+    const { autoWidth } = image.x;
+    if (autoWidth >= 0) return autoWidth;
   }
   return sync(page.doc).sourceSize(sizes ?? "");
 }
@@ -394,7 +413,10 @@ function pickFromSet(page: Page, image: N, from: N, fallback: string | null): Ca
   const candidates = parseSourceSet(getAttr(from, from.name === "link" ? "imagesrcset" : "srcset") ?? "");
   const hasWidths = candidates.some(it => it.width !== undefined);
   const slot = hasWidths ? slotWidth(page, image, from) : 0;
-  for (const it of candidates) if (it.width !== undefined) it.density = it.width / slot;
+  for (const it of candidates) {
+    const { width } = it;
+    if (width !== undefined) it.density = width / slot;
+  }
   if (fallback && !hasWidths) candidates.push({ url: fallback, density: 1 });
   const distinct = candidates.filter((it, i) => candidates.findIndex(other => other.density === it.density) === i);
   distinct.sort((a, b) => (a.density === b.density ? 0 : a.density - b.density));
@@ -439,6 +461,10 @@ function showImage(node: N) {
     core.replaceAllWithText(alt ?? "", root);
     it.hasAlt = !!alt;
   }
+  const isTurned = picture !== null && picture.orientation > 1;
+  if (isTurned) engine.setAttribute(node.id, "turned source", picture.url + corsModifier(node));
+  else if (it.wasTurned) engine.removeAttribute(node.id, "turned source");
+  it.wasTurned = isTurned;
   if (alt) engine.clearReplaced(node.id);
   else if (picture === null) engine.setReplaced(node.id, 0, 0, 0, NaN);
   else engine.setReplaced(node.id, picture.id, picture.width / density, picture.height / density, picture.ratio);
@@ -780,7 +806,10 @@ function imageAttributeChanged(node: N, name: string, old: string | null, value:
       return referrerPolicy(old) === referrerPolicy(value) || queueImageUpdate(node);
     case "loading":
       if (node.x.deferred !== null && !isLazy(node)) resumeImage(node);
-      else if (node.doc.page !== null) reselectImage(node.doc.page, node);
+      else {
+        const { page } = node.doc;
+        if (page !== null) reselectImage(page, node);
+      }
       return;
     case "width":
       return allowsAutoSizes(node) && queueImageUpdate(node);
@@ -924,17 +953,20 @@ function canvas() {
   };
   loaded.hooks.useFont = (element: any, font: object) =>
     useFont(core.nodeOf(element)?.doc.page ?? core.realm.page, font);
-  loaded.hooks.inherited = (element: any) => {
+  loaded.hooks.inherited = (element: any): any => {
+    const known = inheritedAtTransfer.get(element);
+    if (known !== undefined) return known;
     const node = core.nodeOf(element);
     const { doc, fontScope } = node?.doc.page ?? core.realm.page;
     const engine = node && node.flags & CONNECTED ? sync(node.doc) : null;
     const style = (of: N | null, name: string) => (engine && of?.id ? engine.computedStyle(of.id, "", name) : "");
-    let withLanguage = node;
+    let withLanguage = node ?? core.documentElement(doc);
+    const dir = withLanguage && getAttr(withLanguage, "dir");
     while (withLanguage !== null && !hasAttr(withLanguage, "lang")) withLanguage = core.parentOrHost(withLanguage);
     return {
       fontSize: parseFloat(style(node, "font-size")) || 10,
       rootFontSize: parseFloat(style(core.documentElement(doc), "font-size")) || 16,
-      direction: style(node, "direction") || "ltr",
+      direction: style(node, "direction") || (dir !== null && asciiLower(dir) === "rtl" ? "rtl" : "ltr"),
       color: style(node, "color") || "#000",
       language: (withLanguage && getAttr(withLanguage, "lang")) ?? "",
       fontScope,
@@ -970,6 +1002,13 @@ function canvas() {
     if (isBroken && url !== "" && next === null)
       throw domError("InvalidStateError", "The image is in the 'broken' state.");
     return picture?.libraryId(pixels(node)) ?? 0;
+  };
+  loaded.hooks.ignoredOrientation = (element: any, image: any) => {
+    const orientation = image instanceof HTMLImageElement.load() ? (image.$impl.x.picture?.orientation ?? 1) : 1;
+    const node = orientation > 1 ? core.nodeOf(element) : null;
+    return node && node.flags & CONNECTED && sync(node.doc).computedStyle(node.id, "", "image-orientation") === "none"
+      ? orientation
+      : 1;
   };
   source(HTMLImageElement, idOfImage, pixels, node => node.x.picture?.isTainted);
   source(
@@ -1073,9 +1112,9 @@ const HTMLCanvasElement = define(
       const it: Canvas = this.$impl.x;
       if (it.type !== "") throw domError("InvalidStateError", "The canvas already has a rendering context.");
       it.type = "offscreen";
-      return canvas().createOffscreen(this.width, this.height, (id, width, height, isOwned) => {
+      const offscreen = canvas().createOffscreen(this.width, this.height, (id, width, height, isOwned) => {
         if (it.ownsPresented) core.realm.page.native.send("image.release", { id: it.presented });
-        if (id === it.presented && width === it.size?.[0] && height === it.size[1]) return;
+        if (id === it.presented && width === it.size?.[0] && height === it.size![1]) return;
         it.presented = id;
         it.ownsPresented = isOwned && id !== 0;
         it.size = [width, height];
@@ -1084,12 +1123,16 @@ const HTMLCanvasElement = define(
           setAttr(this.$impl, "height", String(height));
         });
       });
+      const { direction, language } = canvasModule.hooks.inherited(this);
+      inheritedAtTransfer.set(offscreen, { ...canvasModule.hooks.inherited(offscreen), direction, language });
+      return offscreen;
     },
   }),
   {
     created: (node: N) => (node.x = new Canvas()),
     mirrored: showCanvas,
     attribute(node: N, name: string) {
+      if ((name === "dir" || name === "lang") && node.x.backing) canvasModule.flush();
       if (name !== "width" && name !== "height") return;
       if (node.x.type !== "bitmaprenderer") node.x.backing?.[canvasModule.kResize](...canvasSize(node));
       showCanvas(node);
@@ -1257,9 +1300,10 @@ class Face {
     for (const source of this.sources) {
       const isShared = source.url !== undefined && page.container === null && page.mirror === null;
       let bytes = isShared ? fontsOfWindows.$get(source.url!) : source.bytes;
-      if (bytes === undefined && source.url !== undefined) {
-        bytes = (await load(page, source.url, "font"))?.bytes;
-        if (isShared && bytes !== undefined && fontsOfWindows.size < 4) fontsOfWindows.$set(source.url, bytes);
+      const { url } = source;
+      if (bytes === undefined && url !== undefined) {
+        bytes = (await load(page, url, "font"))?.bytes;
+        if (isShared && bytes !== undefined && fontsOfWindows.size < 4) fontsOfWindows.$set(url, bytes);
       }
       if (page.isDisposed || (bytes === undefined && source.local === undefined)) continue;
       const { native } = page;
@@ -1506,8 +1550,8 @@ class FontFaceSet extends events.EventTarget {
   constructor(fonts: Fonts | null = null) {
     if (!(fonts instanceof Fonts)) core.illegalConstructor();
     super();
-    this.#fonts = fonts;
-    this.$impl.x = fonts.page;
+    this.#fonts = fonts!;
+    this.$impl.x = fonts!.page;
   }
   get size() {
     return this.#fonts.all().size;
@@ -1547,7 +1591,7 @@ class FontFaceSet extends events.EventTarget {
     return Promise.all(faces.map(face => face.loaded.promise));
   }
   forEach(callback: Function, self: unknown = undefined) {
-    for (const face of this.#fonts.all()) callback.$call(self, face, face, this);
+    for (const face of this.#fonts.all()) (callback as any).$call(self, face, face, this);
   }
   entries() {
     return this.#fonts.all().entries();
@@ -1603,6 +1647,7 @@ function takeRequests(page: Page) {
       picture.done.then(() => {
         if (page.isDisposed) return;
         doc.engine.setImage(value, picture.id, picture.width, picture.height, picture.ratio);
+        if (page.timings !== null) page.timings.hasNewImages = true;
         invalidate(doc);
         page.allowLoad();
       });
@@ -1643,7 +1688,8 @@ function setSheet(node: N, sheet: Sheet | null) {
     if (node.scope === node.doc.node) sheet.title = getAttr(node, "title") ?? "";
     if (sheet.title !== "") sheet.disabled = !isPreferred(node);
   }
-  if (node.scope !== null) core.dirtyScope(node.scope);
+  const { scope } = node;
+  if (scope !== null) core.dirtyScope(scope);
 }
 
 const isAlternate = (node: N) =>
@@ -1656,8 +1702,10 @@ function isPreferred(node: N): boolean {
 function preferSheets(page: Page, title: string) {
   if (title === "") return;
   page.preferredSheets = title;
-  for (const node of core.scopeOf(page.doc.node).styleNodes)
-    if (node.x.sheet?.title) node.x.sheet.disabled = !isPreferred(node);
+  for (const node of core.scopeOf(page.doc.node).styleNodes) {
+    const { sheet } = node.x;
+    if (sheet?.title) sheet.disabled = !isPreferred(node);
+  }
   core.dirtyScope(page.doc.node);
 }
 
@@ -1840,14 +1888,15 @@ function removeStyleNode(node: N, scope: N, isMove: boolean) {
 }
 
 function retitle(node: N) {
-  if (node.x.sheet !== null && node.scope === node.doc.node) node.x.sheet.title = getAttr(node, "title") ?? "";
+  const { sheet } = node.x;
+  if (sheet !== null && node.scope === node.doc.node) sheet.title = getAttr(node, "title") ?? "";
 }
 
 const styleHooks = {
   created: (node: N) => (node.x = new StyleOwner()),
   inserted(node: N, isMove: boolean) {
     addStyleNode(node);
-    if (isMove) core.dirtyScope(node.scope);
+    if (isMove) core.dirtyScope(node.scope as any);
     else if (!(node.x.parserInserted = node.doc.parser?.isInserting === true) || node.ns !== core.HTML)
       updateStyle(node);
   },
@@ -1926,16 +1975,16 @@ function preload(page: Page, node: N, serial: number, loading: Promise<unknown>)
 
 const moduleTypes = {
   __proto__: null,
-  ...{
-    "": "",
-    "script": "",
-    "worker": "",
-    "sharedworker": "",
-    "serviceworker": "",
-    "audioworklet": "",
-    "paintworklet": "",
-  },
-  ...{ json: "json", style: "css", text: "text" },
+  "": "",
+  "script": "",
+  "worker": "",
+  "sharedworker": "",
+  "serviceworker": "",
+  "audioworklet": "",
+  "paintworklet": "",
+  json: "json",
+  style: "css",
+  text: "text",
 };
 
 function updateLink(node: N) {
@@ -1989,7 +2038,7 @@ const HTMLLinkElement = define(
     created: styleHooks.created,
     inserted(node: N, isMove: boolean) {
       addStyleNode(node);
-      if (isMove) return core.dirtyScope(node.scope);
+      if (isMove) return core.dirtyScope(node.scope as any);
       node.x.parserInserted = node.doc.parser?.isInserting === true;
       updateLink(node);
       if (node.doc.parser !== null) updateExpectation(node);
@@ -2154,7 +2203,8 @@ function speculate(page: Page, parser: $Dom.Parser) {
     for (let node = root.first; node !== null; node = core.following(node, root)) {
       if (node.flags & flags.HOST && !visit(node.rare!.shadow!)) return false;
       if (node.ns === core.SVG) {
-        if (node.name === "image" || node.name === "script") fetch(node, core.svgHref(node), node.name);
+        const { name } = node;
+        if (name === "image" || name === "script") fetch(node, core.svgHref(node), name);
       } else if (node.ns !== core.HTML) continue;
       else if (node.name === "img") {
         if (asciiLower(getAttr(node, "loading") ?? "") !== "lazy") fetch(node, pickSource(page, node)?.url, "image");
@@ -2284,7 +2334,7 @@ const scriptHooks = {
   children: (node: N, isMove: boolean) => isMove || prepareUnlessParsing(node),
   attribute(node: N, name: string, old: string | null) {
     if (name === "async") node.x.forceAsync = false;
-    else if (name === "src" && old === null) prepareUnlessParsing(node);
+    else if (name === (node.ns === core.HTML ? "src" : "href") && old === null) prepareUnlessParsing(node);
   },
 };
 const HTMLScriptElement = define(
@@ -2346,6 +2396,23 @@ function frameName(node: N): string {
 function renderFrames(page: Page) {
   page.hasDirtyFrames = false;
   for (const node of Array.from(page.frames)) node.x?.local?.render();
+  markForeignFrames(page);
+}
+
+function showsForeignContent(document: any): boolean {
+  try {
+    const window = document.defaultView;
+    for (let i = 0; i < window.length; i++) if (showsForeignContent(window[i].document)) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** SVG filters must not see what they show. */
+function markForeignFrames(page: Page) {
+  for (const node of page.frames)
+    page.doc.engine.setCustomState(node.id, ":foreign", showsForeignContent(contentDocument(node)));
 }
 
 function closeFrame(node: N) {
@@ -2362,7 +2429,8 @@ function openFrame(node: N) {
   if (page === null || !(node.flags & CONNECTED)) return;
   const url = hasAttr(node, "srcdoc") ? "about:srcdoc" : resolveUrl(node.doc, getAttr(node, "src") || "about:blank");
   const isLocal = !!page.host.isLocalFrame?.(url ?? "about:blank");
-  if (node.x?.isRemote && !!node.x.isLocal === isLocal) return node.x.navigate();
+  const nodeX = node.x;
+  if (nodeX?.isRemote && !!nodeX.isLocal === isLocal) return nodeX.navigate();
   closeFrame(node);
   if (isLocal) return openLocalFrame(node, page);
   const isBlank =
@@ -2391,7 +2459,8 @@ function openLocalFrame(node: N, page: Page) {
   page.frames.$add(node);
   page.hasRemoteFrames = true;
   page.layoutVersion = -1;
-  if (node.id !== 0) node.doc.engine.setReplaced(node.id, node.x.image, 300, 150, NaN);
+  const { id } = node;
+  if (id !== 0) node.doc.engine.setReplaced(id, node.x.image, 300, 150, NaN);
   invalidate(node.doc);
   framesChanged(page);
   node.x.navigate(true);
@@ -2450,6 +2519,7 @@ function placeFrames(page: Page) {
     const rect = { x: left + borderLeft + x, y: top + borderTop + y, width, height };
     (node.x as Frame).setRect?.(rect, (html.styleBits(node) & 3) === 3);
   }
+  markForeignFrames(page);
 }
 
 const emptyBox = (node: N) => node.doc.engine.setReplaced(node.id, 0, 300, 150, NaN);
@@ -2555,7 +2625,8 @@ function updatePlugin(node: N, page: Page) {
   if (url === null || url.startsWith("javascript:")) return failPlugin(node);
   if (type !== "" && isSupportedImage.test(type) && !isDocumentType.test(type)) return showPluginImage(node, url);
   if (!page.host.isLocalFrame?.(url)) return failPlugin(node);
-  if (node.x !== null && node.name === "embed") return node.x.navigate();
+  const nodeX = node.x;
+  if (nodeX !== null && node.name === "embed") return nodeX.navigate();
   emptyPlugin(node);
   openLocalFrame(node, page);
 }
@@ -2713,7 +2784,8 @@ class Media {
     if (!id) return;
     if (!isWanted()) return page!.native.send("image.release", { id });
     if (this.frames.length === 0) videos.register(this, this.frames);
-    if (this.frames.unshift(id) > 2) page!.native.send("image.release", { id: this.frames.pop() });
+    const { frames } = this;
+    if (frames.unshift(id) > 2) page!.native.send("image.release", { id: frames.pop() });
     showPoster(this.node);
     this.presented++;
     if (this.frameCallbacks.$size === 0) return;
@@ -2729,7 +2801,7 @@ class Media {
         mediaTime: this.#player.time(),
         presentedFrames,
       };
-      for (const callback of callbacks) events.callBack(page!, () => callback(now, about));
+      for (const callback of callbacks) events.callBack(page!, () => callback(now, about), undefined);
     });
   }
   /** False if that is up to a `<source>` to tell. */
@@ -2796,7 +2868,11 @@ function loadMedia(node: N) {
   });
   it.videoWidth = it.videoHeight = 0;
   it.showsPoster = true;
-  if (it.frames.length > 0) (releaseFrames(it.frames), showPoster(node));
+  const { frames } = it;
+  if (frames.length > 0) {
+    releaseFrames(frames);
+    showPoster(node);
+  }
   it.playbackRate = it.defaultPlaybackRate;
   it.networkState = 3;
   it.selected = new Promise<void>(resolve =>
@@ -2920,8 +2996,15 @@ const HTMLMediaElement = define(
 );
 core.extend(HTMLMediaElement, ctor => {
   expose(ctor, {
-    ...{ NETWORK_EMPTY: 0, NETWORK_IDLE: 1, NETWORK_LOADING: 2, NETWORK_NO_SOURCE: 3 },
-    ...{ HAVE_NOTHING: 0, HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 },
+    NETWORK_EMPTY: 0,
+    NETWORK_IDLE: 1,
+    NETWORK_LOADING: 2,
+    NETWORK_NO_SOURCE: 3,
+    HAVE_NOTHING: 0,
+    HAVE_METADATA: 1,
+    HAVE_CURRENT_DATA: 2,
+    HAVE_FUTURE_DATA: 3,
+    HAVE_ENOUGH_DATA: 4,
   });
   core.defineGetters(
     ctor,
@@ -2965,8 +3048,9 @@ function showPoster(node: N) {
 const mediaHooks = {
   created: (node: N) => (node.x = new Media(node)),
   children(node: N) {
-    if (node.x.networkState === 0) nextSource(node, null) === null || loadMedia(node);
-    else if (node.x.isWaiting) queueMicrotask(() => node.x.isWaiting && node.x.tryNextSource());
+    if (node.x.networkState === 0) {
+      if (nextSource(node, null) !== null) loadMedia(node);
+    } else if (node.x.isWaiting) queueMicrotask(() => node.x.isWaiting && node.x.tryNextSource());
   },
   removed: (node: N, _: N, isMove: boolean) =>
     isMove || node.x.paused || node.doc.page?.queueTask(() => node.flags & CONNECTED || wrap(node).pause()),

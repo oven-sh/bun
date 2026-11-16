@@ -65,12 +65,12 @@ pub(crate) fn attempt<R>(run: impl FnOnce() -> R) -> Option<R> {
 impl Document {
     /// Forgets all that follows from the tree and the style sheets. It may be in a state that cannot be dropped.
     pub(crate) fn start_over(&mut self) {
-        core::mem::forget(core::mem::replace(
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(
             &mut self.boxes,
             Boxes::new(&self.styles.initial),
         ));
-        core::mem::forget(core::mem::take(&mut self.pictures));
-        core::mem::forget(core::mem::take(&mut self.shaped));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.pictures));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.shaped));
         self.tree.forget_boxes();
         self.tree[DOCUMENT].layout_box = VIEWPORT;
         for boxes in [

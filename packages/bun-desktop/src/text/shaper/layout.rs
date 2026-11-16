@@ -10,6 +10,7 @@ use super::buffer::{self, Buffer, Glyph};
 use super::{Direction, position, substitute};
 use crate::small_vec::SmallVec;
 use crate::text::sfnt::variations::{self, Coords};
+use crate::text::sfnt::work::spend;
 use crate::text::sfnt::{Data, Font, Tag};
 
 pub fn coverage(table: Data, glyph: u32) -> Option<usize> {
@@ -575,12 +576,15 @@ impl Apply<'_> {
         is_context: bool,
         wanted: Option<(Matcher, u16)>,
     ) -> Option<usize> {
+        let mut tried = 0;
         let found = indexes.find_map(|it| {
+            tried += 8;
             Some((
                 it,
                 self.is_match(&self.buffer.glyphs[it], flags, is_context, wanted)?,
             ))
-        })?;
+        });
+        let found = spend(tried).and(found)?;
         found.1.then_some(found.0)
     }
 
@@ -588,6 +592,7 @@ impl Apply<'_> {
     pub fn next_that_must_match(&self) -> Option<u32> {
         let next = self.buffer.glyphs[self.at + 1..]
             .iter()
+            .take(8)
             .find(|it| self.considers(it, self.flags))?;
         (!next.is_ignorable()).then_some(next.id)
     }
@@ -722,15 +727,16 @@ impl Apply<'_> {
             self.matches_around(around, positions[positions.len() - 1] + 1)
                 .then_some((positions, rule))
         });
-        self.buffer.budget -= tried / 64;
-        let (positions, rule) = found?;
+        let (positions, rule) = spend(tried * 4).and(found)?;
         self.act(positions, rule.actions);
         Some(())
     }
 
     fn apply_here(&mut self, lookup: &Lookup) -> bool {
         let (glyph, [context, chain, _]) = (self.current().id, self.table.special_kinds());
-        self.buffer.budget -= lookup.subtables.len() as i64 / 64;
+        if spend(8 + lookup.subtables.len()).is_none() {
+            self.buffer.budget = 0;
+        }
         lookup
             .subtables
             .iter()
@@ -755,6 +761,9 @@ impl Apply<'_> {
         else {
             return;
         };
+        if spend(self.buffer.glyphs.len()).is_none() {
+            return;
+        }
         (self.options, self.flags, self.last_base) = (options, lookup.flags, (None, 0));
         let applies = |it: &Self, glyph: &Glyph| {
             lookup.digest.may_have(glyph.id)

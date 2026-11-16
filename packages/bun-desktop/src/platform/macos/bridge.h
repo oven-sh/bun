@@ -92,8 +92,6 @@ bool isFalse(id value);
 /// The origin of AppKit is the bottom left corner of the first screen.
 CGFloat primaryHeight(void);
 /// Outside of menus and drags, and of everything that could not run again while `body` runs a loop of its own.
-void commitWhatIsReady(void);
-bool commitsInTime(void);
 void soon(void (^body)(void));
 void whenIdle(void (^body)(void));
 void postEmptyEvent(void);

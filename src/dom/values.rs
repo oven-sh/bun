@@ -607,7 +607,11 @@ numeric!(Positive, "", 1.0, 0.0, |p, cx| quantity(
 numeric!(Degrees, "deg", 1.0, f32::MIN, |p, cx| degrees(p, cx));
 numeric!(
     /// In milliseconds.
-    Time, "s", 0.001, f32::MIN, |p, cx| quantity(p, cx, Kind::Time, f32::MIN).map(|it| (it * 1000.0).clamp(f32::MIN, f32::MAX))
+    Time,
+    "s",
+    0.001,
+    f32::MIN,
+    |p, cx| quantity(p, cx, Kind::Time, f32::MIN).map(|it| (it * 1000.0).clamp(f32::MIN, f32::MAX))
 );
 numeric!(BorderWidth, "px", 1.0, 0.0, |p, cx| match ident(p) {
     Some(name) if eq(name, "thin") => Some(cx.zoom),

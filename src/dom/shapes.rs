@@ -54,9 +54,10 @@ pub(crate) fn resolve(shape: &Shape, reference: &RoundedRect, zoom: f32) -> Reso
                 }
             }
             let rect = reference.rect.shrunk(sides);
-            Resolved::Rounded(corners.as_ref().map_or(square(rect), |it| {
-                with_corners(rect, [width, height], it.each_ref())
-            }))
+            Resolved::Rounded(corners.as_ref().map_or_else(
+                || square(rect),
+                |it| with_corners(rect, [width, height], it.each_ref()),
+            ))
         }
         Shape::Ellipse(radii, center, is_circle) => {
             let center = center.resolve(width, height);
@@ -195,20 +196,21 @@ fn command(p: &mut P, cx: &Ctx) -> Option<Command> {
         () if keyword(p, "arc") => {
             let to = end(p).filter(|_| keyword(p, "of"))?;
             let radii = core::iter::from_fn(|| Lp::parse(p, cx)).collect();
-            let (is_clockwise, is_large) = (
-                !keyword(p, "ccw") && keyword(p, "cw"),
-                !keyword(p, "small") && keyword(p, "large"),
-            );
+            let (mut sweep, mut size, mut angle) = (None, None, None);
+            for _ in 0..3 {
+                sweep = sweep.or_else(|| ["ccw", "cw"].into_iter().position(|it| keyword(p, it)));
+                size =
+                    size.or_else(|| ["small", "large"].into_iter().position(|it| keyword(p, it)));
+                if angle.is_none() && keyword(p, "rotate") {
+                    angle = Some(degrees(p, cx)?);
+                }
+            }
             Command::Arc {
                 to,
                 radii,
-                is_clockwise,
-                is_large,
-                degrees: if keyword(p, "rotate") {
-                    degrees(p, cx)?
-                } else {
-                    0.0
-                },
+                is_clockwise: sweep == Some(1),
+                is_large: size == Some(1),
+                degrees: angle.unwrap_or(0.0),
             }
         }
         () => {

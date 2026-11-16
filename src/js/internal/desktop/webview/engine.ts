@@ -110,7 +110,7 @@ class Engine {
     const args = [`--lang=${app.getLocale()}`];
     // It has no window on screen, and the cookies are not kept there.
     args.push("--disable-renderer-backgrounding", "--use-mock-keychain", "--password-store=basic", ...given);
-    for (const [name, value] of app.commandLine?.appended ?? []) {
+    for (const [name, value] of (app as any).commandLine?.appended ?? []) {
       if (forwarded.test(name)) args.push(value ? `--${name}=${value}` : `--${name}`);
     }
     if (type === "chromium") {
@@ -135,11 +135,11 @@ class Engine {
     child.once("error", () => this.close());
     child.once("exit", () => this.close());
     child.unref();
-    for (const pipe of child.stdio.slice(3, 8)) pipe?.on("error", () => this.close()).unref?.();
+    for (const pipe of child.stdio!.slice(3, 8)) pipe?.on("error", () => this.close()).unref?.();
 
     if (type === "chromium") {
       let partial: Buffer[] = [];
-      child.stdio[4]?.on("data", (chunk: Buffer) => {
+      child.stdio![4]?.on("data", (chunk: Buffer) => {
         for (let end; (end = chunk.indexOf(0)) !== -1; chunk = chunk.subarray(end + 1)) {
           const text = Buffer.concat([...partial, chunk.subarray(0, end)]).toString();
           partial = [];
@@ -162,7 +162,7 @@ class Engine {
       );
       return;
     }
-    child.stdio[6]?.on(
+    child.stdio![6]?.on(
       "data",
       wire.splitter((bytes: Buffer) => {
         this.hasAnswered = true;
@@ -174,7 +174,7 @@ class Engine {
       name: app.getName(),
       directory: profile,
       temporary: this.directory,
-      userAgent: app.userAgentFallback,
+      userAgent: (app as any).userAgentFallback,
       schemes: Array.from(schemes, ([scheme, privileges]) => ({ scheme: scheme.slice(0, -1), privileges })),
     });
   }
@@ -274,7 +274,8 @@ class Engine {
   }
 
   tell(kind: string, id: unknown, method: string, args: unknown[] = []) {
-    if (this.collected && kind === "object") this.collected.push([kind, id, method, args]);
+    const { collected } = this;
+    if (collected && kind === "object") collected.push([kind, id, method, args]);
     else this.send("call", 0, kind, id, method, args);
   }
 
@@ -325,7 +326,7 @@ class Engine {
     fs.rmSync(this.directory, { recursive: true, force: true, maxRetries: 3 });
     this.#pending.$forEach(it => it.reject(new Error("The web engine has exited")));
     for (const all of [this.views, this.sessions, this.objects])
-      for (const it of [...all.values()]) it.engineClosed?.();
+      for (const it of Array.from(all.values())) it.engineClosed?.();
   }
 }
 

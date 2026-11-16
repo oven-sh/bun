@@ -2,10 +2,8 @@
 
 use crate::bun::host;
 
-#[cfg(feature = "own-fonts")]
 #[path = "unicode/properties.rs"]
 mod properties;
-#[cfg(feature = "own-fonts")]
 pub use properties::*;
 
 /// An ISO 15924 tag.

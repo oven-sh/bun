@@ -1,20 +1,20 @@
 //! Compares `text/sfnt` with skrifa and `text/shaper` with harfrust.
 //!
-//! `cargo run --release --features own-fonts --example compare_fonts -- <fonts or directories>`
+//! `cargo run --release -- <fonts or directories>`
 
 #![allow(dead_code, unused_imports)]
 
-#[path = "../src/bun.rs"]
+#[path = "../../src/bun.rs"]
 mod bun;
-#[path = "../src/gfx.rs"]
+#[path = "../../src/gfx.rs"]
 mod gfx;
-#[path = "../src/small_vec.rs"]
+#[path = "../../src/small_vec.rs"]
 mod small_vec;
-#[path = "../src/system_icu.rs"]
+#[path = "../../src/system_icu.rs"]
 mod system_icu;
-#[path = "../src/unicode.rs"]
+#[path = "../../src/unicode.rs"]
 mod unicode;
-#[path = "../src/text"]
+#[path = "../../src/text"]
 mod text {
     #[cfg(not(target_os = "macos"))]
     pub mod autohint;
@@ -40,7 +40,12 @@ mod core_text {
 
     type Ref = *const c_void;
 
+    #[repr(C)]
+    struct Range(isize, isize);
+
     #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {}
+
     #[link(name = "CoreText", kind = "framework")]
     unsafe extern "C" {
         static kCTFontAttributeName: Ref;
@@ -87,8 +92,8 @@ mod core_text {
         fn CTLineGetTypographicBounds(line: Ref, _: *mut f64, _: *mut f64, _: *mut f64) -> f64;
         fn CTRunGetGlyphCount(run: Ref) -> isize;
         fn CTRunGetAttributes(run: Ref) -> Ref;
-        fn CTRunGetGlyphs(run: Ref, range: [isize; 2], to: *mut u16);
-        fn CTRunGetPositions(run: Ref, range: [isize; 2], to: *mut [f64; 2]);
+        fn CTRunGetGlyphs(run: Ref, range: Range, to: *mut u16);
+        fn CTRunGetPositions(run: Ref, range: Range, to: *mut [f64; 2]);
     }
 
     fn string(text: &str) -> Ref {
@@ -169,8 +174,8 @@ mod core_text {
                 for run in (0..CFArrayGetCount(runs)).map(|it| CFArrayGetValueAtIndex(runs, it)) {
                     let count = CTRunGetGlyphCount(run) as usize;
                     let (mut glyphs, mut positions) = (vec![0; count], vec![[0.; 2]; count]);
-                    CTRunGetGlyphs(run, [0; 2], glyphs.as_mut_ptr());
-                    CTRunGetPositions(run, [0; 2], positions.as_mut_ptr());
+                    CTRunGetGlyphs(run, Range(0, 0), glyphs.as_mut_ptr());
+                    CTRunGetPositions(run, Range(0, 0), positions.as_mut_ptr());
                     is_own &= CFEqual(
                         CFDictionaryGetValue(CTRunGetAttributes(run), kCTFontAttributeName),
                         self.0,
@@ -615,6 +620,33 @@ fn compare_hinting(
                     "hinted outlines",
                     glyph,
                     &numbers(metrics.outline(ours, coords, glyph, is_mark, size)),
+                    &their_numbers(elements),
+                    0.,
+                );
+            }
+        }
+        let options = HintingOptions {
+            engine: Engine::Interpreter,
+            target: SmoothMode::Light.into(),
+        };
+        let Ok(hinter) = HintingInstance::new(&outlines, Size::new(size), location, options) else {
+            continue;
+        };
+        for glyph in (0..ours.glyph_count).step_by(1 + (ours.glyph_count / GLYPHS) as usize) {
+            let (mut elements, Some(path)) = (
+                Vec::new(),
+                ours.outline_with_postscript_hints(glyph, coords, size),
+            ) else {
+                break;
+            };
+            if outlines.get(glyph.into()).is_some_and(|it| {
+                it.draw(DrawSettings::hinted(&hinter, false), &mut elements)
+                    .is_ok()
+            }) {
+                report.close(
+                    "outlines with PostScript hints",
+                    glyph,
+                    &numbers(Some(path)),
                     &their_numbers(elements),
                     0.,
                 );

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { hasLibrary } from "./library";
 
 /** What `script` returns, and the colors that the page then has at `points`. */
@@ -43,6 +44,108 @@ const svg = (source: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" ${source}</svg>`)}`;
 
 describe.skipIf(!hasLibrary).concurrent("paint", () => {
+  test("a view transition of an element shows its pseudo-elements in the element", async () => {
+    const html = `<style>
+      section { margin: 20px; border: 10px solid #000; width: 100px; height: 40px; view-transition-name: none }
+      section::view-transition { background: #00f }
+      div { width: 20px; height: 20px; background: #0f0; view-transition-name: box }
+      ::view-transition-group(box) { animation-timing-function: linear }
+    </style><section><div></div></section><div></div>`;
+    const script = `
+      const scope = document.querySelector("section");
+      const transition = scope.startViewTransition(() => void (scope.firstChild.style.marginLeft = "80px"));
+      await transition.ready;
+      for (const it of document.getAnimations()) it.pause(), it.currentTime = 125;
+      await new Promise(requestAnimationFrame);
+      return [scope.activeViewTransition === transition, document.activeViewTransition, transition.transitionRoot === scope]`;
+    expect(
+      await render(html, script, [
+        [80, 40],
+        [40, 40],
+        [25, 25],
+        [150, 40],
+      ]),
+    ).toEqual([[true, null, true], "00ff00", "0000ff", "000000", "ffffff"]);
+  });
+
+  test("a stable gutter stays empty if the overflow is hidden", async () => {
+    const html = `<style>::-webkit-scrollbar { width: 20px; background: #f00 }</style>
+      <div style="width: 50px; height: 50px; overflow: hidden; scrollbar-gutter: stable; background: #0f0"><p style="height: 99px">`;
+    expect(await render(html, "", [[40, 25]])).toEqual([null, "00ff00"]);
+  });
+
+  test("an underline is on the baseline of the element that has it", async () => {
+    const html = `<u style="font: 20px/20px serif; color: transparent; text-decoration: underline #0f0 4px; text-decoration-skip-ink: none; position: absolute; top: 30px"
+      >xxxx<span style="vertical-align: 12px">xxxx</span></u>`;
+    const [, ...colors] = await render(
+      html,
+      "",
+      [5, 65].flatMap(x => [48, 52, 56, 60, 64, 68].map(y => [x, y])),
+    );
+    expect(colors.slice(6)).toEqual(colors.slice(0, 6));
+    expect(colors).toContain("00ff00");
+  });
+
+  test("SVG: sizes come from attributes, filters work where nothing is displayed, empty transforms are inherited", async () => {
+    const html = `<svg style="display: none"><filter id=f><feFlood flood-color=#0f0 /></filter></svg>
+      <svg width=200 height=100 style="display: block">
+        <symbol id=s><rect width=90 height=90 fill=#00f /></symbol><use href=#s width=20 height=20 style="width: 90px; height: 90px" />
+        <rect x=100 width=20 height=20 filter=url(#f) />
+        <linearGradient id=a gradientTransform="scale(-1)"><stop stop-color=#0f0 /><stop offset=1 stop-color=#f00 /></linearGradient>
+        <linearGradient id=b href=#a gradientTransform="" /><rect x=150 width=20 height=20 fill=url(#b) />
+      </svg>`;
+    expect(
+      await render(html, "", [
+        [10, 10],
+        [50, 50],
+        [110, 10],
+        [165, 10],
+      ]),
+    ).toEqual([null, "0000ff", "ffffff", "00ff00", "00ff00"]);
+  });
+
+  test("an embedded color profile is applied", async () => {
+    const number = (...all: number[]) =>
+      Buffer.from(new Uint8Array(all.flatMap(it => [it >>> 24, it >>> 16, it >>> 8, it])));
+    const tags = { rXYZ: 224, gXYZ: 204, bXYZ: 244, rTRC: 264, gTRC: 264, bTRC: 264 };
+    const primaries = [
+      [0.4361, 0.2225, 0.0139],
+      [0.3851, 0.7169, 0.0971],
+      [0.1431, 0.0606, 0.7141],
+    ];
+    const swapped = Buffer.concat([
+      Buffer.alloc(16),
+      Buffer.from("RGB XYZ "),
+      Buffer.alloc(104),
+      number(6),
+      ...Object.entries(tags).flatMap(([name, at]) => [Buffer.from(name), number(at, 0)]),
+      ...primaries.flatMap(it => [Buffer.from("XYZ "), number(0, ...it.map(it => Math.round(it * 65536)))]),
+      Buffer.from("curv"),
+      number(0, 1, 0x0233 << 16),
+    ]);
+    const chunk = (kind: string, data: Buffer) => {
+      const body = Buffer.concat([Buffer.from(kind), data]);
+      return Buffer.concat([number(data.length), body, number(Bun.hash.crc32(body))]);
+    };
+    const red = (profile: Buffer) =>
+      Buffer.concat([
+        Buffer.from("89504e470d0a1a0a", "hex"),
+        chunk("IHDR", Buffer.from("00000001000000010802000000", "hex")),
+        chunk("iCCP", Buffer.concat([Buffer.from("p\0\0"), deflateSync(profile)])),
+        chunk("IDAT", deflateSync(Buffer.from([0, 255, 0, 0]))),
+        chunk("IEND", Buffer.alloc(0)),
+      ]).toString("base64");
+    const html = [swapped, swapped.subarray(0, 250)].map(
+      it => `<img width=20 style=float:left src="data:image/png;base64,${red(it)}">`,
+    );
+    expect(
+      await render(html.join(""), "", [
+        [10, 10],
+        [30, 10],
+      ]),
+    ).toEqual([null, "00ff00", "ff0000"]);
+  });
+
   test("a view transition moves the captured element and cleans up", async () => {
     const html = `<style>
       div { width: 20px; height: 20px; background: #0f0; view-transition-name: box; view-transition-class: moving }
@@ -220,6 +323,25 @@ describe.skipIf(!hasLibrary).concurrent("web fonts", () => {
           results.add(await draw("f" + kind + "x" + index, font.with(index, font[index] ^ 255)).then(() => "drawn", error => error.name));
       return [...results].sort();`;
     expect(await render("", script)).toEqual([["SyntaxError", "drawn"]]);
+  });
+
+  test("glyphs that are made of each other many times over are given up", async () => {
+    const script = `${prelude}
+      const parts = 60, size = 10 + parts * 6, font = new Uint8Array(fonts[0].length + 1024 * (size + 4)), view = new DataView(font.buffer);
+      font.set(fonts[0]);
+      const entry = tag => 12 + 16 * [...Array(view.getUint16(4)).keys()].find(i => String.fromCharCode(...font.subarray(12 + i * 16, 16 + i * 16)) === tag);
+      const count = view.getUint16(view.getUint32(entry("maxp") + 8) + 4), loca = fonts[0].length, glyf = loca + 4 * (count + 1);
+      view.setUint16(view.getUint32(entry("head") + 8) + 50, 1);
+      view.setUint32(entry("loca") + 8, loca), view.setUint32(entry("loca") + 12, glyf - loca);
+      view.setUint32(entry("glyf") + 8, glyf), view.setUint32(entry("glyf") + 12, count * size);
+      const empty = await draw("a", font.slice());
+      for (let glyph = 1; glyph < count; glyph++) {
+        const at = glyf + (glyph - 1) * size;
+        view.setUint32(loca + 4 * (glyph + 1), glyph * size), view.setInt16(at, -1);
+        for (let i = 0; i < parts; i++) view.setUint16(at + 10 + i * 6, i + 1 < parts ? 0x22 : 2), view.setUint16(at + 12 + i * 6, glyph % 8 && glyph - 1);
+      }
+      return (await draw("b", font)) === empty;`;
+    expect(await render("", script)).toEqual([true]);
   });
 });
 

@@ -4,18 +4,16 @@ use std::ffi::{CString, c_char, c_void};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
-use crate::hash::FastMap;
-use crate::sync::Mutex;
-use skrifa::attribute::Style;
-use skrifa::outline::OutlinePen;
-use skrifa::{FontRef, MetadataProvider as _, Tag};
-
 use super::decoded::map;
 use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, index_of};
+use super::sfnt::{self, variations};
 use super::woff::write_sfnt;
 use crate::abi::Rect;
+use crate::gfx::{Path, PathBuilder as _};
+use crate::hash::FastMap;
 use crate::paint::raster::{IntRect, Layer};
 use crate::platform::macos::{Object, take_string};
+use crate::sync::Mutex;
 
 type AddToPath = unsafe extern "C" fn(pen: *mut c_void, kind: i32, points: *const [f64; 2]);
 
@@ -85,15 +83,15 @@ static NATIVE_FONTS: LazyLock<Mutex<FastMap<(u64, u32), NativeFont>>> =
 unsafe extern "C" fn add_to_path(pen: *mut c_void, kind: i32, points: *const [f64; 2]) {
     // SAFETY: the argument of `outline`, and as many points as the kind takes.
     unsafe {
-        let pen = &mut **pen.cast::<&mut dyn OutlinePen>();
+        let pen = &mut *pen.cast::<Path>();
         let [x, y] = [0, 1].map(|axis| move |index| points.add(index).read()[axis] as f32);
         match kind {
-            0 => pen.move_to(x(0), y(0)),
-            1 => pen.line_to(x(0), y(0)),
-            2 => pen.quad_to(x(0), y(0), x(1), y(1)),
-            3 => pen.curve_to(x(0), y(0), x(1), y(1), x(2), y(2)),
+            0 => pen.move_to([x(0), y(0)]),
+            1 => pen.line_to([x(0), y(0)]),
+            2 => pen.quad_to([x(0), y(0)], [x(1), y(1)]),
+            3 => pen.curve_to([x(0), y(0)], [x(1), y(1)], [x(2), y(2)]),
             _ => pen.close(),
-        }
+        };
     }
 }
 
@@ -106,14 +104,14 @@ impl NativeFont {
     }
 
     /// `scale` is in pixels per unit.
-    pub fn outline(&self, glyph: u32, scale: f32, mut pen: &mut dyn OutlinePen) {
+    pub fn outline(&self, glyph: u32, scale: f32, pen: &mut Path) {
         // SAFETY: the pointer is only used during the call.
         unsafe {
             bd_font_outline(
                 &self.0,
                 glyph as u16,
                 scale.into(),
-                (&raw mut pen).cast(),
+                std::ptr::from_mut(pen).cast(),
                 add_to_path,
             )
         };
@@ -228,18 +226,17 @@ fn without_glyphs(font: &Object) -> Option<&'static [u8]> {
     Some(write_sfnt(0x0001_0000, TABLES.iter().filter_map(table).collect())?.leak())
 }
 
-fn capabilities(font: &FontRef) -> Capabilities {
-    let attributes = font.attributes();
-    let range = |tag| {
-        font.axes()
-            .get_by_tag(Tag::new(tag))
-            .map(|axis| (axis.min_value(), axis.max_value()))
+fn capabilities(font: &sfnt::Font) -> Capabilities {
+    let (axes, (weight, stretch, is_slanted)) = (variations::axes(font), font.style());
+    let range = |tag: &sfnt::Tag| {
+        axes.iter()
+            .find(|axis| axis.tag == *tag)
+            .map(|axis| (axis.min, axis.max))
     };
-    let (weight, stretch) = (attributes.weight.value(), attributes.stretch.percentage());
-    let slope = if attributes.style == Style::Normal {
-        0.
-    } else {
+    let slope = if is_slanted {
         DEFAULT_OBLIQUE_ANGLE
+    } else {
+        0.
     };
     Capabilities {
         weight: range(b"wght")
@@ -299,11 +296,8 @@ impl Catalog {
             return *opened;
         }
         let has = |font: &Font, tags: &[&[u8; 4]]| {
-            let font = FontRef::from_index(font.data, font.index);
-            font.is_ok_and(|font| {
-                tags.iter()
-                    .any(|tag| font.table_data(Tag::new(tag)).is_some())
-            })
+            let font = sfnt::Font::new(font.data, font.index);
+            font.is_some_and(|font| tags.iter().any(|tag| font.table(tag).is_some()))
         };
         let is_readable =
             |it: &Font| has(it, &[b"glyf", b"CFF ", b"CFF2", b"sbix"]) && !has(it, &[b"hvgl"]);
@@ -315,7 +309,7 @@ impl Catalog {
             })
         });
         let opened = font.and_then(|font| {
-            let mut capabilities = capabilities(&FontRef::from_index(font.data, font.index).ok()?);
+            let mut capabilities = capabilities(&sfnt::Font::new(font.data, font.index)?);
             if file.is_none() {
                 capabilities.weight =
                     css_weight(native).map_or(capabilities.weight, |weight| (weight, weight));

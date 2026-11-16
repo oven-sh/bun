@@ -1,101 +1,76 @@
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock, OnceLock};
 
+use super::catalog::{Catalog, FamilyId, Font};
+use super::decoded;
+use super::hint::Styles;
+use super::reach::{Reach, reach};
+use super::sfnt::variations::{self, Axis};
+use super::sfnt::{self, Metrics, Tag, bitmap, color};
+use super::shaper::{Feature, Plan, Tables};
+use crate::abi::{self, FontMetrics};
+use crate::bridge;
 use crate::error::{Context as _, Result, bail};
 use crate::hash::{FastHasher, FastMap};
 use crate::json::{Deserialize as _, Value, json, record};
 use crate::small_vec::SmallVec;
 use crate::sync::{Mutex, RwLock};
-use harfrust::{Feature, ShapePlan, Shaper, ShaperData, ShaperInstance};
-use skrifa::charmap::Charmap;
-use skrifa::instance::{LocationRef, NormalizedCoord, Size};
-use skrifa::metrics::Metrics;
-use skrifa::outline::GlyphStyles;
-use skrifa::outline::OutlineGlyphCollection;
-use skrifa::raw::TableProvider as _;
-use skrifa::string::StringId;
-use skrifa::{FontRef, MetadataProvider as _, Tag};
-
-use super::catalog::{Catalog, FamilyId, Font};
-use super::decoded;
-use super::reach::{Reach, reach};
-use crate::abi::{self, FontMetrics};
-use crate::bridge;
 use crate::unicode::{self, Script};
 
 pub const DEFAULT_OBLIQUE_ANGLE: f32 = 14.;
 const BOLD_THRESHOLD: f32 = 600.;
 
-struct Axis {
-    tag: Tag,
-    min: f32,
-    max: f32,
-}
-
 /// Never freed. Equal bytes are loaded once.
 pub struct File {
     pub data: &'static [u8],
-    pub font: FontRef<'static>,
-    pub outlines: OutlineGlyphCollection<'static>,
+    pub font: sfnt::Font,
+    pub tables: Tables,
     #[cfg(target_os = "macos")]
     pub native: Option<super::catalog::NativeFont>,
     pub has_color: bool,
     /// Advances are not proportional to the size.
     pub has_tracking: bool,
     reach: OnceLock<Option<Reach>>,
-    glyph_styles: OnceLock<GlyphStyles>,
-    charmap: Charmap<'static>,
+    styles: OnceLock<Option<Styles>>,
     ascii: u128,
     axes: Vec<Axis>,
-    shaper_data: ShaperData,
 }
 
 impl File {
     fn load(data: &'static [u8], index: u32) -> Option<&'static File> {
-        let font = FontRef::from_index(data, index).ok()?;
-        font.head().ok().filter(|head| head.units_per_em() > 0)?;
-        let charmap = font.charmap();
-        charmap.has_map().then_some(())?;
-        let has_table = |tag: &[u8; 4]| font.table_data(Tag::new(tag)).is_some();
-        let axes = font.axes().iter().map(|axis| Axis {
-            tag: axis.tag(),
-            min: axis.min_value(),
-            max: axis.max_value(),
-        });
+        let font =
+            sfnt::Font::new(data, index).filter(|it| it.units_per_em > 0 && it.has_charmap())?;
+        let has_table = |tag: &Tag| font.table(tag).is_some();
         Some(Box::leak(Box::new(File {
             data,
-            outlines: font.outline_glyphs(),
+            tables: Tables::new(&font),
             #[cfg(target_os = "macos")]
             native: super::catalog::NativeFont::of(data, index),
             has_color: has_table(b"COLR") || has_table(b"CBDT") || has_table(b"sbix"),
             has_tracking: has_table(b"trak"),
-            ascii: (0..128u32)
-                .filter(|code| charmap.map(*code).is_some_and(|glyph| glyph.to_u32() != 0))
+            ascii: (0..128)
+                .filter(|code| font.glyph(*code).is_some())
                 .fold(0, |bits, code| bits | 1 << code),
-            axes: axes.collect(),
-            shaper_data: ShaperData::new(&font),
+            axes: variations::axes(&font),
             reach: OnceLock::new(),
-            glyph_styles: OnceLock::new(),
-            charmap,
+            styles: OnceLock::new(),
             font,
         })))
     }
 
     pub fn glyph(&self, character: char) -> Option<u32> {
-        Some(self.charmap.map(character)?.to_u32()).filter(|glyph| *glyph != 0)
+        self.font.glyph(character.into())
     }
 
     /// For hinting.
-    pub fn glyph_styles(&self) -> GlyphStyles {
-        self.glyph_styles
-            .get_or_init(|| GlyphStyles::new(&self.outlines))
-            .clone()
+    pub fn styles(&self) -> Option<&Styles> {
+        self.styles.get_or_init(|| Styles::new(self)).as_ref()
     }
 
     pub fn reach(&self) -> Option<Reach> {
         *self
             .reach
-            .get_or_init(|| reach(&self.font, self.glyph(' ')?))
+            .get_or_init(|| reach(&self.font, &self.tables, self.glyph(' ')?))
     }
 
     fn covers(&self, character: char) -> bool {
@@ -110,12 +85,9 @@ impl File {
     }
 
     fn substitutes(&self, tag: &[u8; 4]) -> bool {
-        let features = self.font.gsub().and_then(|table| table.feature_list());
-        features.is_ok_and(|list| {
-            list.feature_records()
-                .iter()
-                .any(|record| record.feature_tag() == Tag::new(tag))
-        })
+        self.tables.layout[0]
+            .as_ref()
+            .is_some_and(|table| table.features().any(|it| it == *tag))
     }
 
     /// An `abi::ADJUST_*` metric, relative to the size.
@@ -123,60 +95,53 @@ impl File {
         if metric == abi::ADJUST_NONE {
             return None;
         }
-        let location = self.font.axes().location(variations.iter().copied());
-        let (metrics, glyphs) = (
-            self.font.metrics(Size::unscaled(), &location),
-            self.font.glyph_metrics(Size::unscaled(), &location),
+        let coords = variations::normalize(&self.font, &self.axes, variations.iter().copied());
+        let (metrics, em) = (
+            self.font.metrics(&coords),
+            f32::from(self.font.units_per_em),
         );
-        let (top, em) = (
-            |character| Some(glyphs.bounds(self.glyph(character)?.into())?.y_max),
-            f32::from(metrics.units_per_em),
-        );
+        let top = |character| {
+            self.font
+                .bounds(self.glyph(character)?, &coords)
+                .map(|it| it.y + it.height)
+        };
         let value = match metric {
             abi::ADJUST_EX_HEIGHT => metrics.x_height.filter(|it| *it > 0.).or_else(|| top('x')),
             abi::ADJUST_CAP_HEIGHT => metrics
                 .cap_height
                 .filter(|it| *it > 0.)
                 .or_else(|| top('H')),
-            abi::ADJUST_CH_WIDTH => glyphs.advance_width(self.glyph('0')?.into()),
+            abi::ADJUST_CH_WIDTH => self.font.advance(self.glyph('0')?, &coords),
             abi::ADJUST_IC_WIDTH => Some(
                 self.glyph('水')
-                    .and_then(|it| glyphs.advance_width(it.into()))
+                    .and_then(|it| self.font.advance(it, &coords))
                     .unwrap_or(em),
             ),
             _ => Some(
                 self.glyph('水')
-                    .and_then(|it| self.font.vmtx().ok()?.advance(it.into()))
-                    .map_or(em, f32::from),
+                    .and_then(|it| self.font.vertical_advance(it, &[]))
+                    .unwrap_or(em),
             ),
         };
         value.filter(|it| *it > 0.).map(|it| it / em)
     }
 
     fn axis(&self, tag: &[u8; 4]) -> Option<&Axis> {
-        self.axes.iter().find(|axis| axis.tag == Tag::new(tag))
+        self.axes.iter().find(|axis| axis.tag == *tag)
     }
 }
 
 /// Which font of a file has this PostScript name.
 #[cfg(target_os = "macos")]
-pub fn index_of(data: &[u8], name: &str) -> Option<u32> {
-    use skrifa::raw::FileRef;
-    use skrifa::string::StringId;
-    let FileRef::Collection(collection) = FileRef::new(data).ok()? else {
+pub fn index_of(data: &'static [u8], name: &str) -> Option<u32> {
+    let Some(count) = sfnt::Font::count(data) else {
         return Some(0);
     };
-    (0..collection.len()).find(|index| {
-        collection.get(*index).is_ok_and(|font| {
-            let instances = font
-                .named_instances()
-                .iter()
-                .filter_map(|instance| instance.postscript_name_id());
-            let mut ids = std::iter::once(StringId::POSTSCRIPT_NAME).chain(instances);
-            ids.any(|id| {
-                font.localized_strings(id)
-                    .any(|it| it.chars().eq(name.chars()))
-            })
+    (0..count).find(|index| {
+        sfnt::Font::new(data, *index).is_some_and(|font| {
+            let mut ids =
+                std::iter::once(sfnt::POSTSCRIPT_NAME).chain(variations::instance_names(&font));
+            ids.any(|id| font.names(id).iter().any(|it| it == name))
         })
     })
 }
@@ -190,63 +155,40 @@ pub struct Face {
     pub embolden: bool,
     pub skew: bool,
     palette: Palette,
-    pub shaper: Shaper<'static>,
-    instance: &'static ShaperInstance,
+    pub coords: &'static [i16],
     metrics: Metrics,
-    plans: Mutex<FastMap<PlanKey, Arc<ShapePlan>>>,
+    plans: Mutex<FastMap<PlanKey, Arc<Plan>>>,
 }
 
 impl Face {
-    pub fn location(&self) -> LocationRef<'static> {
-        LocationRef::new(self.instance.coords())
-    }
-
     pub fn table(&self, tag: u32) -> Option<&'static [u8]> {
-        Some(
-            self.file
-                .font
-                .table_data(skrifa::Tag::from_u32(tag))?
-                .as_bytes(),
-        )
+        Some(self.file.font.table(&tag.to_be_bytes())?.0)
     }
 
     pub fn palette_color(&self, index: u16) -> Option<[u8; 4]> {
-        use skrifa::raw::tables::cpal::PaletteType;
-        let palettes = self.file.font.color_palettes();
+        let (font, count) = (&self.file.font, color::palette_count(&self.file.font));
         let first = |wanted| {
-            (0..palettes.len()).find(|it| {
-                palettes
-                    .get(*it)
-                    .and_then(|it| it.palette_type())
-                    .is_some_and(|it| it.contains(wanted))
-            })
+            (0..count).find(|it| color::palette_kind(font, *it).is_some_and(|it| it & wanted != 0))
         };
         let base = match self.palette.base {
-            abi::PALETTE_LIGHT => first(PaletteType::USABLE_WITH_LIGHT_BACKGROUND),
-            abi::PALETTE_DARK => first(PaletteType::USABLE_WITH_DARK_BACKGROUND),
-            base => u16::try_from(base).ok().filter(|it| *it < palettes.len()),
+            abi::PALETTE_LIGHT => first(color::FOR_LIGHT_BACKGROUND),
+            abi::PALETTE_DARK => first(color::FOR_DARK_BACKGROUND),
+            base => u16::try_from(base).ok().filter(|it| *it < count),
         };
-        let color = *palettes
-            .get(base.unwrap_or(0))?
-            .colors()
-            .get(usize::from(index))?;
+        let color = color::palette_color(font, base.unwrap_or(0), index)?;
         let own = self
             .palette
             .overrides
             .iter()
             .rfind(|it| it[0] == u32::from(index));
-        Some(
-            own.map_or([color.red, color.green, color.blue, color.alpha], |it| {
-                it[1].to_be_bytes()
-            }),
-        )
+        Some(own.map_or(color, |it| it[1].to_be_bytes()))
     }
 
     pub fn units_per_em(&self) -> f32 {
-        self.metrics.units_per_em.into()
+        self.file.font.units_per_em.into()
     }
 
-    pub fn plan(&self, key: PlanKey, create: impl FnOnce() -> ShapePlan) -> Arc<ShapePlan> {
+    pub fn plan(&self, key: PlanKey, create: impl FnOnce() -> Plan) -> Arc<Plan> {
         self.plans
             .lock()
             .entry(key)
@@ -256,20 +198,11 @@ impl Face {
 
     /// Instead of the one in `hmtx`, which differs a little.
     pub fn bitmap_advance(&self, glyph: u32, size: f32) -> Option<f32> {
-        let bitmap = self
-            .file
-            .font
-            .bitmap_strikes()
-            .glyph_for_size(Size::new(size), glyph.into())?;
-        Some(bitmap.advance? * size / bitmap.ppem_x)
+        Some(bitmap::find(&self.file.font, glyph, size)?.advance? * size)
     }
 
     pub fn advance(&self, glyph: u32, size: f32) -> f32 {
-        let metrics = self
-            .file
-            .font
-            .glyph_metrics(Size::unscaled(), self.location());
-        metrics.advance_width(glyph.into()).unwrap_or(0.) * size / self.units_per_em()
+        self.file.font.advance(glyph, self.coords).unwrap_or(0.) * size / self.units_per_em()
     }
 }
 
@@ -290,7 +223,7 @@ pub struct Capabilities {
 }
 
 fn setting_tag(name: &str) -> Option<Tag> {
-    Some(Tag::new(name.as_bytes().try_into().ok()?))
+    name.as_bytes().try_into().ok()
 }
 
 record! {
@@ -486,7 +419,7 @@ pub struct Resolved {
     /// The candidate for each ASCII character, plus one, once it is known.
     ascii: [u16; 128],
     fallbacks: FastMap<(char, Presentation), u16>,
-    pub language: Option<harfrust::Language>,
+    pub language: Vec<u8>,
     pub device_scale: f32,
     emoji: u8,
 }
@@ -504,7 +437,7 @@ struct System {
 }
 
 #[derive(Default)]
-struct Instances(FastMap<(usize, Vec<NormalizedCoord>, bool, bool, Palette), &'static Face>);
+struct Instances(FastMap<(usize, Vec<i16>, bool, bool, Palette), &'static Face>);
 
 pub struct Fonts {
     system: System,
@@ -754,17 +687,17 @@ fn candidate(
     let clamp = |value: f32, (low, high): Range| value.max(low).min(high);
     let slope = clamp(wanted.slope(), offered.slope);
     let mut variations = vec![
-        (Tag::new(b"wght"), clamp(wanted.weight, offered.weight)),
-        (Tag::new(b"wdth"), clamp(wanted.stretch, offered.stretch)),
+        (*b"wght", clamp(wanted.weight, offered.weight)),
+        (*b"wdth", clamp(wanted.stretch, offered.stretch)),
     ];
     if wanted.style == abi::FONT_ITALIC && slope > 0. && file.axis(b"ital").is_some() {
-        variations.push((Tag::new(b"ital"), 1.));
+        variations.push((*b"ital", 1.));
     } else {
-        variations.push((Tag::new(b"slnt"), -slope));
+        variations.push((*b"slnt", -slope));
     }
     let mut features = Vec::new();
     if !wanted.kerning {
-        features.push((Tag::new(b"kern"), 0.));
+        features.push((*b"kern", 0.));
     }
     if let Some(web) = &web {
         let settings = |settings: &[(String, f32)]| {
@@ -780,40 +713,38 @@ fn candidate(
         wanted
             .variations
             .iter()
-            .map(|setting| (Tag::new(&setting.tag), setting.value)),
+            .map(|setting| (setting.tag, setting.value)),
     );
     features.extend(
         wanted
             .features
             .iter()
-            .map(|setting| (Tag::new(&setting.tag), setting.value)),
+            .map(|setting| (setting.tag, setting.value)),
     );
-    let has_optical_size = variations.iter().any(|(tag, _)| *tag == Tag::new(b"opsz"));
+    let has_optical_size = variations.iter().any(|(tag, _)| *tag == *b"opsz");
 
     let lacks = |tags: [&[u8; 4]; 2]| {
         wanted.synthesis & abi::SYNTHESIZE_SMALL_CAPS != 0
             && features
                 .iter()
-                .any(|(tag, value)| *value > 0. && tags.map(Tag::new).contains(tag))
+                .any(|(tag, value)| *value > 0. && tags.contains(&tag))
             && !tags.iter().any(|tag| file.substitutes(tag))
     };
     let [lower, upper] = [lacks([b"smcp", b"pcap"]), lacks([b"c2sc", b"c2pc"])];
-    let is_for_capitals = |tag: &Tag| [b"c2sc", b"c2pc"].map(Tag::new).contains(tag);
+    let is_for_capitals = |tag: &Tag| [b"c2sc", b"c2pc"].contains(&tag);
     let shrinks = [
         lower || upper,
         upper || lower && features.iter().any(|(tag, _)| is_for_capitals(tag)),
     ];
     if shrinks[0] {
-        features.retain(|(tag, _)| {
-            !is_for_capitals(tag) && ![b"smcp", b"pcap"].map(Tag::new).contains(tag)
-        });
+        features.retain(|(tag, _)| !is_for_capitals(tag) && ![b"smcp", b"pcap"].contains(&tag));
     }
     for (petite, small) in [(b"pcap", b"smcp"), (b"c2pc", b"c2sc")] {
         for (tag, _) in features
             .iter_mut()
-            .filter(|(tag, _)| *tag == Tag::new(petite) && !file.substitutes(petite))
+            .filter(|(tag, _)| *tag == *petite && !file.substitutes(petite))
         {
-            *tag = Tag::new(small);
+            *tag = *small;
         }
     }
     let mut hasher = FastHasher::default();
@@ -837,18 +768,21 @@ fn candidate(
             .unwrap_or(1.),
         features: features
             .iter()
-            .map(|(tag, value)| Feature::new(*tag, *value as u32, ..))
+            .map(|(tag, value)| Feature {
+                tag: *tag,
+                value: *value as u32,
+            })
             .collect(),
         features_hash: hasher.finish(),
         variations,
         optical_sizing: wanted.optical_sizing && !has_optical_size && file.axis(b"opsz").is_some(),
         is_taller: cfg!(target_os = "macos")
             && web.is_none()
-            && (file
+            && file
                 .font
-                .localized_strings(StringId::FAMILY_NAME)
-                .english_or_first())
-            .is_some_and(|name| matches!(&*name.to_string(), "Times" | "Helvetica" | "Courier")),
+                .names(sfnt::FAMILY_NAME)
+                .first()
+                .is_some_and(|name| matches!(&**name, "Times" | "Helvetica" | "Courier")),
         embolden: wanted.synthesis & abi::SYNTHESIZE_WEIGHT != 0
             && wanted.weight >= BOLD_THRESHOLD
             && offered.weight.1 < BOLD_THRESHOLD
@@ -864,11 +798,9 @@ fn candidate(
 impl Instances {
     fn get(&mut self, candidate: &Candidate, size: f32) -> &'static Face {
         let file = candidate.file;
-        let optical_size = candidate
-            .optical_sizing
-            .then_some((Tag::new(b"opsz"), size));
+        let optical_size = candidate.optical_sizing.then_some((*b"opsz", size));
         let settings = candidate.variations.iter().copied().chain(optical_size);
-        let coords = file.font.axes().location(settings).coords().to_vec();
+        let coords = variations::normalize(&file.font, &file.axes, settings);
         let key = (
             std::ptr::from_ref(file).addr(),
             coords,
@@ -877,8 +809,6 @@ impl Instances {
             candidate.palette.clone(),
         );
         self.0.entry(key).or_insert_with_key(|(_, coords, ..)| {
-            let instance = ShaperInstance::from_coords(&file.font, coords.iter().copied());
-            let instance: &'static ShaperInstance = Box::leak(Box::new(instance));
             let mut faces = FACES.write();
             let face = Box::leak(Box::new(Face {
                 id: faces.len() as u32,
@@ -886,15 +816,8 @@ impl Instances {
                 embolden: candidate.embolden,
                 skew: candidate.skew,
                 palette: candidate.palette.clone(),
-                shaper: file
-                    .shaper_data
-                    .shaper(&file.font)
-                    .instance(Some(instance))
-                    .build(),
-                instance,
-                metrics: file
-                    .font
-                    .metrics(Size::unscaled(), LocationRef::new(coords)),
+                coords: coords.clone().leak(),
+                metrics: file.font.metrics(coords),
                 plans: Mutex::default(),
             }));
             faces.push(face);
@@ -975,7 +898,7 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
         candidates,
         ascii: [0; 128],
         fallbacks: FastMap::default(),
-        language: harfrust::Language::new(&language),
+        language,
         emoji: wanted.emoji,
         device_scale: wanted.device_scale,
     }
@@ -1228,7 +1151,7 @@ pub fn prewarm() {
         if let Some(candidate) = candidate {
             candidate.file.reach();
             if !cfg!(target_os = "macos") {
-                candidate.file.glyph_styles();
+                candidate.file.styles();
             }
         }
     };
@@ -1374,11 +1297,10 @@ pub fn metrics(font: u32, size: f32) -> FontMetrics {
     };
     let height = |declared: Option<f32>, character, otherwise: f32| {
         let measured = || {
-            let glyphs = face
-                .file
+            face.file
                 .font
-                .glyph_metrics(Size::unscaled(), face.location());
-            Some(glyphs.bounds(face.file.glyph(character)?.into())?.y_max)
+                .bounds(face.file.glyph(character)?, face.coords)
+                .map(|it| it.y + it.height)
         };
         let declared = declared
             .filter(|height| *height > 0.)
@@ -1387,10 +1309,7 @@ pub fn metrics(font: u32, size: f32) -> FontMetrics {
             .or_else(|| Some((measured()? * scale).round()))
             .unwrap_or(otherwise)
     };
-    let underline = face
-        .metrics
-        .underline
-        .filter(|underline| underline.thickness > 0.);
+    let underline = face.metrics.underline.filter(|underline| underline.1 > 0.);
     let (zero_advance, is_apple) = (advance('0', size * 0.5), cfg!(target_os = "macos"));
     let declared = face
         .metrics
@@ -1398,10 +1317,11 @@ pub fn metrics(font: u32, size: f32) -> FontMetrics {
         .filter(|width| *width > 0. && !is_apple)
         .map(|width| width * scale);
     let average = declared.unwrap_or_else(|| advance('x', size * 0.5));
-    let bounds = face.metrics.bounds.filter(|_| !is_apple);
-    let widest = bounds.map_or(line.ascent, |bounds| {
-        ((bounds.x_max - bounds.x_min) * scale).round()
-    });
+    let widest = if is_apple {
+        line.ascent
+    } else {
+        (face.metrics.widest * scale).round()
+    };
     let is_usable = average <= zero_advance * 1.7;
     FontMetrics {
         average_advance: if is_usable {
@@ -1418,8 +1338,8 @@ pub fn metrics(font: u32, size: f32) -> FontMetrics {
         zero_advance,
         ideograph_advance: advance('水', size),
         space_advance: advance(' ', size * 0.25),
-        underline_offset: underline.map_or(size * 0.1, |underline| -underline.offset * scale),
-        underline_thickness: underline.map_or(size / 16., |underline| underline.thickness * scale),
+        underline_offset: underline.map_or(size * 0.1, |underline| -underline.0 * scale),
+        underline_thickness: underline.map_or(size / 16., |underline| underline.1 * scale),
     }
 }
 
@@ -1431,13 +1351,11 @@ pub fn em_box(font: u32, size: f32) -> (f32, f32) {
     };
     let (resolved, face) = fonts.instance(font, primary, size);
     let size = size * resolved.candidates[primary].size_adjust;
-    let typographic = face.file.font.os2().ok();
-    let typographic = typographic.map(|os2| {
-        (
-            f32::from(os2.s_typo_ascender()),
-            -f32::from(os2.s_typo_descender()),
-        )
-    });
+    let typographic = face
+        .file
+        .font
+        .table(b"OS/2")
+        .and_then(|it| Some((f32::from(it.i16(68)?), -f32::from(it.i16(70)?))));
     let is_usable =
         |(ascent, descent): &(f32, f32)| *ascent >= 0. && *descent >= 0. && ascent + descent > 0.;
     let (ascent, descent) = typographic

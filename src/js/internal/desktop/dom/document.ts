@@ -495,7 +495,7 @@ class Document extends Node {
     });
   }
 
-  createExpression(expression: string) {
+  createExpression(_expression: string) {
     if ($argumentCount() < 1) core.tooFew(1);
     return xpath().createExpression.$apply(this, arguments);
   }
@@ -503,7 +503,7 @@ class Document extends Node {
     if ($argumentCount() < 1) core.tooFew(1);
     return xpath().createNSResolver(nodeResolver);
   }
-  evaluate(expression: string, contextNode: object) {
+  evaluate(_expression: string, _contextNode: object) {
     if ($argumentCount() < 2) core.tooFew(2);
     return xpath().evaluate.$apply(this, arguments);
   }
@@ -718,7 +718,7 @@ class Document extends Node {
     if (page !== null) hooks.exitPointerLock(page);
   }
   startViewTransition(update: any = undefined) {
-    return transitions().start(this.$impl.doc.page, update);
+    return transitions().start(this.$impl.doc.page, update, null);
   }
   get activeViewTransition() {
     return this.$impl.doc.page?.transition?.js ?? null;
@@ -901,7 +901,7 @@ class DOMImplementation {
     this.#doc = doc!;
   }
   hasFeature() {
-    this.#doc;
+    void this.#doc;
     return true;
   }
   createDocumentType(name: string, publicId: string, systemId: string) {
@@ -910,7 +910,7 @@ class DOMImplementation {
     return wrap(core.createDoctype(this.#doc, String(name), String(publicId), String(systemId)));
   }
   createDocument(namespace: string | null, name: string | null, doctype: any = null) {
-    this.#doc;
+    void this.#doc;
     if ($argumentCount() < 2) core.tooFew(2);
     const types = ["application/xhtml+xml", "image/svg+xml"];
     const document = wrap(createXmlDoc(types[core.namespaces.indexOf(namespace!)] ?? "application/xml").node);
@@ -920,7 +920,7 @@ class DOMImplementation {
     return document;
   }
   createHTMLDocument(title: string | undefined = undefined) {
-    this.#doc;
+    void this.#doc;
     const doc = createHtmlDoc();
     parsing.parseDocument(doc, title === undefined ? "<!doctype html>" : "<!doctype html><title></title>");
     if (title !== undefined) core.insert(core.createText(doc, String(title)), titleElement(doc)!, null);
@@ -955,7 +955,8 @@ function inlineScriptsOf(source: string, xmlType: string | undefined) {
   for (const root of roots) {
     for (let node: N | null = root; node !== null; node = core.following(node, root)) {
       if (isHtml(node, "template")) roots.push(node.x);
-      if (node.rare?.shadow) roots.push(node.rare.shadow);
+      const { rare } = node;
+      if (rare?.shadow) roots.push(rare.shadow);
       if (node.name === "script" && require("internal/desktop/dom/loader").scriptType(node) !== null)
         found.$add(core.childText(node));
       const attrs = node.attrs ?? [];

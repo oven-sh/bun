@@ -78,7 +78,7 @@ fn collapsed<'a>(mut all: &'a [&'a [u8]]) -> Out {
 
 fn side<T: Clone>(all: &[T], index: usize) -> T {
     all.get(index)
-        .unwrap_or(&all[usize::from(index == 3 && all.len() > 1)])
+        .unwrap_or_else(|| &all[usize::from(index == 3 && all.len() > 1)])
         .clone()
 }
 
@@ -205,7 +205,7 @@ impl Shorthand {
                 Some(
                     rule.expand(item)?[index]
                         .clone()
-                        .unwrap_or(initial_source(self.longhands[index].prop).into()),
+                        .unwrap_or_else(|| initial_source(self.longhands[index].prop).into()),
                 )
             };
             for item in split_list(source) {
@@ -343,11 +343,10 @@ impl Shorthand {
         );
         let initials: Vec<Part> = (self.longhands())
             .map(|prop| {
-                initial
-                    .zip(prop.id(Flow::DEFAULT))
-                    .map_or(initial_source(prop).into(), |(initial, id)| {
-                        initial(id).into()
-                    })
+                initial.zip(prop.id(Flow::DEFAULT)).map_or_else(
+                    || initial_source(prop).into(),
+                    |(initial, id)| initial(id).into(),
+                )
             })
             .collect();
         let slashes = |values: &[&[u8]]| values.join(&b" / "[..]);

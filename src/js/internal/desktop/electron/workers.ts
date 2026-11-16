@@ -9,8 +9,10 @@ let entryOfScript: string | undefined;
 type Options = { url: string; isModule: boolean; name: string; credentials: string; blob?: Blob };
 type Failure = { message: string; filename?: string; lineno?: number; colno?: number };
 
+declare const Worker: new (entry: string, options: object) => any;
+
 class WorkerClient extends Client {
-  #thread: Worker | undefined;
+  #thread: any;
   #port: MessagePort | undefined;
   #logsTo: any;
   /** What was sent before the script had been loaded. */
@@ -141,7 +143,7 @@ class WorkerClient extends Client {
       load.read = () => reader.read().then(chunk => (chunk.done && handles.$delete(id), chunk));
       return { ...loaded, hasBody: !!reader };
     };
-    port.onmessage = async ({ data: [id, name, args, callbackAt, signal] }) => {
+    (port as any).onmessage = async ({ data: [id, name, args, callbackAt, signal] }) => {
       if (callbackAt >= 0) args[callbackAt] = (...given: unknown[]) => this.tell(id, given);
       let message;
       try {

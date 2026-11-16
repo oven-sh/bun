@@ -29,10 +29,10 @@ const messaging = {
   release: (port: MessagePort) => port,
   hide() {},
   transferList: (options: any) => [...(options?.transfer ?? options?.[Symbol.iterator]?.() ?? [])],
-  cloneInto: (_: unknown, message: unknown, transfer: Transferable[]) =>
+  cloneInto: (_: unknown, message: unknown, transfer: Bun.Transferable[]) =>
     structuredClone([transfer, message], { transfer }),
   messageEvent: (type: string, data: unknown, origin: string, source: unknown, ports: MessagePort[]) =>
-    Object.defineProperty(new MessageEvent(type, { data, origin, ports }), "source", { value: source }),
+    Object.defineProperty(new MessageEvent(type, { data, origin, ports } as any), "source", { value: source }),
   inbox: {
     deliver: (target: EventTarget, [list, data]: [object[], unknown], origin: string, source: unknown) =>
       target.dispatchEvent(

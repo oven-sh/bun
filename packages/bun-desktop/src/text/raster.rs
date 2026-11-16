@@ -1,21 +1,14 @@
 use std::cell::Cell;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, LazyLock, OnceLock};
-
-use crate::hash::FastMap;
-use crate::sync::Mutex;
-use skrifa::bitmap::{BitmapData, BitmapGlyph, Origin};
-use skrifa::color::{Brush, ColorPainter, CompositeMode, Extend};
-use skrifa::instance::Size;
-use skrifa::outline::{
-    DrawSettings, Engine, HintingInstance, HintingOptions, OutlinePen, SmoothMode, Target,
-};
-use skrifa::raw::types::BoundingBox;
-use skrifa::{GlyphId, MetadataProvider as _};
+use std::sync::OnceLock;
 
 use super::fonts::Face;
+use super::hint;
+pub use super::hint::release_memory;
+use super::sfnt::bitmap::{self, Bitmap, Pixels};
+use super::sfnt::color::{self, Drawing, Shape, Stop};
+use super::sfnt::work;
 use crate::abi::{GradientStop, Rect, RoundedRect};
-use crate::gfx::{self, Fill, PathBuilder as _, Pixmap, Stroke, Transform};
+use crate::gfx::{self, Fill, Pixmap, Stroke, Transform};
 use crate::images;
 use crate::paint::edges;
 use crate::paint::gradient::{Geometry, Gradient, Spread};
@@ -48,88 +41,18 @@ pub struct GlyphImage {
     pub pixels: GlyphPixels,
 }
 
-struct Pen(Path);
-
-impl OutlinePen for Pen {
-    fn move_to(&mut self, x: f32, y: f32) {
-        self.0.move_to([x, y]);
-    }
-
-    fn line_to(&mut self, x: f32, y: f32) {
-        self.0.line_to([x, y]);
-    }
-
-    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
-        self.0.quad_to([cx, cy], [x, y]);
-    }
-
-    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
-        self.0.curve_to([cx0, cy0], [cx1, cy1], [x, y]);
-    }
-
-    fn close(&mut self) {
-        self.0.close();
-    }
-}
-
-/// Skrifa panics on some malformed fonts. The rest of the page is painted all the same.
-fn despite_bad_font<R>(f: impl FnOnce() -> Option<R>) -> Option<R> {
-    catch_unwind(AssertUnwindSafe(f)).ok().flatten()
-}
-
-static HINTERS: LazyLock<Mutex<FastMap<(u32, u32), Option<Arc<HintingInstance>>>>> =
-    LazyLock::new(Mutex::default);
-
-pub fn release_memory() {
-    HINTERS.lock().clear();
-}
-
-/// Moves outlines vertically only, like FreeType's "slight" hinting.
-fn hinter(face: &Face, size: f32) -> Option<Arc<HintingInstance>> {
-    let mut hinters = HINTERS.lock();
-    if hinters.len() > 64 {
-        hinters.clear();
-    }
-    let hinter = hinters.entry((face.id, size.to_bits())).or_insert_with(|| {
-        despite_bad_font(|| {
-            let options = HintingOptions {
-                engine: Engine::Auto(Some(face.file.glyph_styles())),
-                target: Target::from(SmoothMode::Light),
-            };
-            let instance = HintingInstance::new(
-                &face.file.outlines,
-                Size::new(size),
-                face.location(),
-                options,
-            );
-            instance.ok().map(Arc::new)
-        })
-    });
-    hinter.clone()
-}
-
 /// With y up.
-fn outline(face: &Face, glyph: u32, size: Size, hinter: Option<&HintingInstance>) -> Path {
-    let mut pen = Pen(Path::new());
+fn outline(face: &Face, glyph: u32, scale: f32) -> Path {
     #[cfg(target_os = "macos")]
     if let Some(native) = face.file.native.as_ref().filter(|_| !face.file.has_color) {
-        native.outline(
-            glyph,
-            size.ppem().map_or(1., |size| size / face.units_per_em()),
-            &mut pen,
-        );
-        return pen.0;
+        let mut path = Path::new();
+        native.outline(glyph, scale, &mut path);
+        return path;
     }
-    if let Some(outline) = face.file.outlines.get(glyph.into()) {
-        let settings = match hinter {
-            Some(hinter) => DrawSettings::hinted(hinter, false),
-            None => DrawSettings::unhinted(size, face.location()),
-        };
-        if despite_bad_font(|| outline.draw(settings, &mut pen).ok()).is_none() {
-            pen.0.clear();
-        }
-    }
-    pen.0
+    face.file
+        .font
+        .outline(glyph, face.coords, scale)
+        .unwrap_or_default()
 }
 
 fn flip(face: &Face) -> Transform {
@@ -139,7 +62,11 @@ fn flip(face: &Face) -> Transform {
 /// With y down and the origin on the baseline.
 pub fn glyph_path(face: &Face, glyph: u32, size: f32) -> Path {
     let flip = flip(face);
-    let path = outline(face, glyph, Size::new(size), None);
+    let path = outline(
+        face,
+        glyph,
+        (size * 64.).trunc() / 64. / face.units_per_em(),
+    );
     path.iter()
         .map(|command| command.transform(&flip))
         .collect()
@@ -160,40 +87,22 @@ fn path_bounds(path: &Path, outset: f32) -> Rect {
     crate::paint::scene::outset(gfx::bounds(path), outset)
 }
 
-fn rasterize_bitmap(
-    face: &Face,
-    bitmap: &BitmapGlyph,
-    size: f32,
-    matrix: &Transform,
-) -> Option<GlyphImage> {
-    let pixmap = match bitmap.data {
-        BitmapData::Png(png) => images::decode_pixmap(png)?,
-        BitmapData::Bgra(bgra) => {
+fn rasterize_bitmap(bitmap: Bitmap, size: f32, matrix: &Transform) -> Option<GlyphImage> {
+    let pixmap = match bitmap.pixels {
+        Pixels::Png(png) => images::decode_pixmap(png)?,
+        Pixels::Bgra(bgra) => {
             let rgba = bgra
                 .as_chunks()
                 .0
                 .iter()
                 .flat_map(|[b, g, r, a]| [*r, *g, *b, *a]);
-            Pixmap::from_vec(rgba.collect(), bitmap.width, bitmap.height)?
+            Pixmap::from_vec(rgba.collect(), bitmap.size[0], bitmap.size[1])?
         }
-        BitmapData::Mask(_) => return None,
     };
-    let (unit, scale_x, scale_y) = (
-        size / face.units_per_em(),
-        size / bitmap.ppem_x,
-        size / bitmap.ppem_y,
-    );
-    let (width, height) = (
-        pixmap.width() as f32 * scale_x,
-        pixmap.height() as f32 * scale_y,
-    );
-    let bearing = bitmap.bearing_y * unit + bitmap.inner_bearing_y * scale_y;
+    let (width, height) = (bitmap.bounds.width * size, bitmap.bounds.height * size);
     let bounds = Rect {
-        x: bitmap.bearing_x * unit + bitmap.inner_bearing_x * scale_x,
-        y: match bitmap.placement_origin {
-            Origin::TopLeft => -bearing,
-            Origin::BottomLeft => -bearing - height,
-        },
+        x: bitmap.bounds.x * size,
+        y: bitmap.bounds.y * size,
         width,
         height,
     };
@@ -229,16 +138,24 @@ impl ColorGlyphPainter<'_> {
         self.matrices.last().copied().unwrap_or_default()
     }
 
+    fn spend(&self) {
+        work::spend(
+            self.layers
+                .last()
+                .map_or(0, |it| it.rect.width() * it.rect.height() / 64),
+        );
+    }
+
     fn push_clip(&mut self, coverage: impl FnOnce(&Transform, IntRect) -> Coverage) {
+        self.spend();
         let clip = self.clips.last().cloned().unwrap_or_default();
         self.clips
             .push(clip.within(coverage(&self.matrix(), clip.rect)));
     }
 }
 
-impl ColorPainter for ColorGlyphPainter<'_> {
-    fn push_transform(&mut self, by: skrifa::color::Transform) {
-        let by = Transform::from_row(by.xx, by.yx, by.xy, by.yy, by.dx, by.dy);
+impl color::Painter for ColorGlyphPainter<'_> {
+    fn push_transform(&mut self, by: Transform) {
         self.matrices.push(self.matrix().pre_concat(by));
     }
 
@@ -246,14 +163,14 @@ impl ColorPainter for ColorGlyphPainter<'_> {
         self.matrices.pop();
     }
 
-    fn push_clip_glyph(&mut self, glyph: GlyphId) {
-        let path = outline(self.face, glyph.to_u32(), Size::unscaled(), None);
+    fn push_clip_glyph(&mut self, glyph: u32) {
+        let path = outline(self.face, glyph, 1.);
         self.push_clip(|matrix, area| Coverage::of_path(&path, Fill::NonZero, matrix, area));
     }
 
-    fn push_clip_box(&mut self, bounds: BoundingBox<f32>) {
+    fn push_clip_box(&mut self, rect: Rect) {
         let shape = RoundedRect {
-            rect: box_rect(bounds),
+            rect,
             ..RoundedRect::default()
         };
         self.push_clip(|matrix, area| Coverage::of_shape(&shape, matrix, area));
@@ -263,76 +180,45 @@ impl ColorPainter for ColorGlyphPainter<'_> {
         self.clips.pop();
     }
 
-    fn fill(&mut self, brush: Brush<'_>) {
-        let (geometry, stops, extend) = match brush {
-            Brush::Solid {
-                palette_index,
-                alpha,
-            } => {
-                let paint = Paint::Solid(premultiply(self.color(palette_index, alpha)));
-                if let (Some(layer), Some(clip)) = (self.layers.last_mut(), self.clips.last()) {
-                    layer.fill(clip.rect, None, clip, &paint);
-                }
-                return;
-            }
-            Brush::LinearGradient {
-                p0,
-                p1,
-                color_stops,
-                extend,
-            } => {
-                let (from, to) = ([p0.x, p0.y], [p1.x, p1.y]);
-                (Geometry::Linear { from, to }, color_stops, extend)
-            }
-            Brush::RadialGradient {
-                c0,
-                r0,
-                c1,
-                r1,
-                color_stops,
-                extend,
-            } => {
-                let (from, to) = ([c0.x, c0.y, r0], [c1.x, c1.y, r1]);
-                (Geometry::Radial { from, to }, color_stops, extend)
-            }
-            Brush::SweepGradient {
-                c0,
-                start_angle,
-                end_angle,
-                color_stops,
-                extend,
-            } => {
-                // The angles are clockwise with y up, which is the other way around.
-                let (start, span) = (
-                    -end_angle.to_radians(),
-                    (end_angle - start_angle).to_radians(),
-                );
-                (
-                    Geometry::Sweep {
-                        center: [c0.x, c0.y],
-                        start,
-                        span,
-                    },
-                    color_stops,
-                    extend,
-                )
-            }
+    fn fill(&mut self, color: u16, alpha: f32) {
+        self.spend();
+        let paint = Paint::Solid(premultiply(self.color(color, alpha)));
+        if let (Some(layer), Some(clip)) = (self.layers.last_mut(), self.clips.last()) {
+            layer.fill(clip.rect, None, clip, &paint);
+        }
+    }
+
+    fn fill_gradient(&mut self, shape: Shape, stops: &[Stop], extend: u8) {
+        self.spend();
+        let geometry = match shape {
+            Shape::Linear([from, to]) => Geometry::Linear {
+                from: [from.x, from.y],
+                to: [to.x, to.y],
+            },
+            Shape::Radial([(a, from), (b, to)]) => Geometry::Radial {
+                from: [a.x, a.y, from],
+                to: [b.x, b.y, to],
+            },
+            Shape::Sweep(center, [start, end]) => Geometry::Sweep {
+                center: [center.x, center.y],
+                start: start.min(end),
+                span: (end - start).abs(),
+            },
         };
-        let mut stops: Vec<_> = (stops.iter())
-            .map(|stop| GradientStop {
-                offset: stop.offset,
-                color: self.color(stop.palette_index, stop.alpha),
-            })
-            .collect();
-        if matches!(geometry, Geometry::Sweep { .. }) {
+        let stop = |it: &Stop| GradientStop {
+            offset: it.offset,
+            color: self.color(it.color, it.alpha),
+        };
+        let mut stops: Vec<_> = stops.iter().map(stop).collect();
+        if matches!(shape, Shape::Sweep(_, [start, end]) if end < start) {
             stops.reverse();
             stops
                 .iter_mut()
                 .for_each(|stop| stop.offset = 1. - stop.offset);
         }
         let spread = match extend {
-            Extend::Repeat => Spread::Repeat,
-            Extend::Reflect => Spread::Reflect,
+            1 => Spread::Repeat,
+            2 => Spread::Reflect,
             _ => Spread::Pad,
         };
         let gradient = Gradient::new(geometry, &stops, spread, true);
@@ -349,57 +235,50 @@ impl ColorPainter for ColorGlyphPainter<'_> {
         }
     }
 
-    fn push_layer(&mut self, _: CompositeMode) {
+    fn push_layer(&mut self) {
+        self.spend();
         self.layers.extend(Layer::new(self.layers[0].rect));
     }
 
-    fn pop_layer_with_mode(&mut self, mode: CompositeMode) {
-        use crate::paint::blend::Mode as To;
-        let mode = match mode {
-            CompositeMode::Clear => To::Clear,
-            CompositeMode::Src => To::Source,
-            CompositeMode::Dest => To::Destination,
-            CompositeMode::DestOver => To::DestinationOver,
-            CompositeMode::SrcIn => To::SourceIn,
-            CompositeMode::DestIn => To::DestinationIn,
-            CompositeMode::SrcOut => To::SourceOut,
-            CompositeMode::DestOut => To::DestinationOut,
-            CompositeMode::SrcAtop => To::SourceAtop,
-            CompositeMode::DestAtop => To::DestinationAtop,
-            CompositeMode::Xor => To::Xor,
-            CompositeMode::Plus => To::Plus,
-            CompositeMode::Screen => To::Screen,
-            CompositeMode::Overlay => To::Overlay,
-            CompositeMode::Darken => To::Darken,
-            CompositeMode::Lighten => To::Lighten,
-            CompositeMode::ColorDodge => To::ColorDodge,
-            CompositeMode::ColorBurn => To::ColorBurn,
-            CompositeMode::HardLight => To::HardLight,
-            CompositeMode::SoftLight => To::SoftLight,
-            CompositeMode::Difference => To::Difference,
-            CompositeMode::Exclusion => To::Exclusion,
-            CompositeMode::Multiply => To::Multiply,
-            CompositeMode::HslHue => To::Hue,
-            CompositeMode::HslSaturation => To::Saturation,
-            CompositeMode::HslColor => To::Color,
-            CompositeMode::HslLuminosity => To::Luminosity,
-            _ => To::SourceOver,
-        };
+    fn pop_layer(&mut self, mode: u8) {
+        use crate::paint::blend::Mode::{self, *};
+        const MODES: [Mode; 28] = [
+            Clear,
+            Source,
+            Destination,
+            SourceOver,
+            DestinationOver,
+            SourceIn,
+            DestinationIn,
+            SourceOut,
+            DestinationOut,
+            SourceAtop,
+            DestinationAtop,
+            Xor,
+            Plus,
+            Screen,
+            Overlay,
+            Darken,
+            Lighten,
+            ColorDodge,
+            ColorBurn,
+            HardLight,
+            SoftLight,
+            Difference,
+            Exclusion,
+            Multiply,
+            Hue,
+            Saturation,
+            Color,
+            Luminosity,
+        ];
+        let mode = *MODES.get(usize::from(mode)).unwrap_or(&SourceOver);
         if self.layers.len() > 1
             && let Some(layer) = self.layers.pop()
             && let (Some(below), Some(clip)) = (self.layers.last_mut(), self.clips.last())
         {
             below.draw_with_mode(&layer, mode, clip);
         }
-    }
-}
-
-fn box_rect(bounds: BoundingBox<f32>) -> Rect {
-    Rect {
-        x: bounds.x_min,
-        y: bounds.y_min,
-        width: bounds.x_max - bounds.x_min,
-        height: bounds.y_max - bounds.y_min,
     }
 }
 
@@ -411,7 +290,7 @@ fn rasterize_color(
     foreground: u32,
 ) -> Option<GlyphImage> {
     let font = &face.file.font;
-    let Some(color_glyph) = font.color_glyphs().get(glyph.into()) else {
+    let Some(drawing) = Drawing::new(font, glyph, face.coords) else {
         #[cfg(target_os = "macos")]
         if let Some(native) = &face.file.native
             && (matrix.kx, matrix.ky, matrix.sx) == (0., 0., matrix.sy)
@@ -422,10 +301,8 @@ fn rasterize_color(
                 pixels: GlyphPixels::Color(layer),
             });
         }
-        let strike = Size::new(size * average_scale(matrix));
         return rasterize_bitmap(
-            face,
-            &font.bitmap_strikes().glyph_for_size(strike, glyph.into())?,
+            bitmap::find(font, glyph, size * average_scale(matrix))?,
             size,
             matrix,
         );
@@ -434,10 +311,7 @@ fn rasterize_color(
     let matrix = matrix
         .pre_concat(flip(face))
         .pre_scale(size / em, size / em);
-    let bounds = color_glyph
-        .bounding_box(face.location(), Size::unscaled())
-        .map(box_rect);
-    let bounds = bounds.unwrap_or(Rect {
+    let bounds = drawing.bounds().unwrap_or(Rect {
         x: -em * 0.25,
         y: -em * 0.5,
         width: face.advance(glyph, em) + em * 0.5,
@@ -451,7 +325,7 @@ fn rasterize_color(
         clips: vec![Clip::new(rect)],
         layers: vec![Layer::new(rect)?],
     };
-    color_glyph.paint(face.location(), &mut painter).ok()?;
+    drawing.paint(&mut painter)?;
     Some(GlyphImage {
         rect,
         pixels: GlyphPixels::Color(painter.layers.swap_remove(0)),
@@ -480,7 +354,7 @@ pub fn shade_for(color: u32) -> u32 {
                 >> 5;
             known.set((
                 rgb,
-                (luminance << 5 | luminance << 2 | luminance >> 1) * 0x0101_0100 | 0xFF,
+                ((luminance << 5 | luminance << 2 | luminance >> 1) * 0x0101_0100) | 0xFF,
             ));
         }
         known.get().1
@@ -510,7 +384,7 @@ fn correct(coverage: &mut [u8], color: u32) {
         .for_each(|value| *value = table[usize::from(*value)]);
 }
 
-/// `matrix` maps from the glyph's origin, with y down, to pixels. `hint` requires it to be a translation.
+/// `matrix` maps from the glyph's origin, with y down, to pixels. `hint` requires it not to scale.
 pub fn rasterize(
     face: &Face,
     glyph: u32,
@@ -520,13 +394,18 @@ pub fn rasterize(
     foreground: u32,
 ) -> Option<GlyphImage> {
     if face.file.has_color
-        && let Some(image) =
-            despite_bad_font(|| rasterize_color(face, glyph, size, matrix, foreground))
+        && let Some(image) = rasterize_color(face, glyph, size, matrix, foreground)
     {
         return Some(image);
     }
-    let hinter = if hint { hinter(face, size) } else { None };
-    let path = outline(face, glyph, Size::new(size), hinter.as_deref());
+    let hinted = hint.then(|| hint::outline(face, glyph, size)).flatten();
+    let path = hinted.unwrap_or_else(|| {
+        outline(
+            face,
+            glyph,
+            (size * 64.).trunc() / 64. / face.units_per_em(),
+        )
+    });
     if path.is_empty() {
         return None;
     }

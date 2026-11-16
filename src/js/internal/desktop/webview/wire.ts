@@ -36,13 +36,14 @@ function concat(chunks) {
 /** What `structuredClone` copies. `handleOf` names the objects that stay where they are. */
 function encode(root, handleOf) {
   const seen = new Map();
-  const chunks = [];
+  const chunks = new Array();
   let size = 0;
   function bytes(buffer, offset, length) {
     chunks.push(new Uint8Array(buffer, offset, length));
     return [(size += length) - length, length];
   }
-  function visit(value, depth) {
+  let visit;
+  visit = (value, depth) => {
     if (value === null) return value;
     switch (typeof value) {
       case "string":
@@ -79,7 +80,7 @@ function encode(root, handleOf) {
     if (tag === "Set") return ["s", ...each(value)];
     if (tag === "Error") return ["e", String(value.name), String(value.message), String(value.stack)];
     return ["o", ...Object.keys(value).flatMap(key => [key, visit(value[key], depth + 1)])];
-  }
+  };
   const json = new TextEncoder().encode(JSON.stringify(visit(root, 0)));
   const head = new DataView(new ArrayBuffer(8));
   head.setUint32(0, 4 + json.length + size, true);
@@ -90,10 +91,11 @@ function encode(root, handleOf) {
 /** `message` is without its length. */
 function decode(message, fromHandle) {
   const end = 4 + lengthAt(message, 0);
-  const seen = [];
+  const seen = new Array();
   const keep = value => (seen.push(value), value);
   const bytes = (offset, length) => new Uint8Array(message.subarray(end + offset, end + offset + length)).buffer;
-  function visit(value) {
+  let visit;
+  visit = value => {
     if (!Array.isArray(value)) return value;
     const [tag, first, second, third] = value;
     switch (tag) {
@@ -129,13 +131,13 @@ function decode(message, fromHandle) {
       }
     }
     return result;
-  }
+  };
   return visit(JSON.parse(new TextDecoder().decode(message.subarray(4, end))));
 }
 
 /** Takes what a stream reads, and gives whole messages. */
 function splitter(receive) {
-  let chunks = [];
+  let chunks = new Array();
   let have = 0;
   let wanted = 4;
   return chunk => {

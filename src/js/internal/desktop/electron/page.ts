@@ -35,7 +35,7 @@ class Page extends Client {
   title = "";
   /** What the previous document has captured, or 0. */
   inboundTransition = 0;
-  isInitial: boolean;
+  isInitial!: boolean;
   controller: any;
   /** The `<iframe>`s in the web engine. */
   frames = new Set<any>();
@@ -526,7 +526,8 @@ class Page extends Client {
     const page: Page = pageOf(guest);
     const { guest: remote } = guest[kPrivate];
     if (page.#opener) return page.controller.window;
-    if (!remote && this.agent && page.context.opener === this.context) return page.context.windowFor(this.agent);
+    const { agent } = this;
+    if (!remote && agent && page.context.opener === this.context) return page.context.windowFor(agent);
     return this.controller.remoteWindow({
       connect: (element: object) => {
         if (!remote?.isOpenedByPage) return;
@@ -572,7 +573,8 @@ class Page extends Client {
     if (!this.csp.allowsEval() || compiled.isExclusive) main?.disableEval();
     if (!this.csp.allowsWebAssembly()) main?.disableWebAssembly();
     if (this.csp.restrictsStyleAttributes()) this.controller?.checkStyleAttributes();
-    if (this.csp.watchesEval()) main?.watchEval(this.csp.requiresTrustedTypes());
+    const { csp } = this;
+    if (csp.watchesEval()) main?.watchEval(csp.requiresTrustedTypes());
     if (this.csp.restrictsScripts() && !compiled.isExclusive) this.controller?.forgetSource();
   }
 
@@ -834,7 +836,8 @@ class Page extends Client {
       }),
     );
     this.worlds.$set(0, main);
-    if (this.agent) this.context.joined(this.agent, main);
+    const { agent } = this;
+    if (agent) this.context.joined(agent, main);
     this.controller = main.controller;
     this.#applyPolicy();
     this.followLinks(this.#response && loader.find(this.#response.headers, "link"));

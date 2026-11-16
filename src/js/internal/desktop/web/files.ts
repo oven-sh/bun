@@ -7,13 +7,13 @@ const { error, need, scope } = idl;
 
 function blobOf(value: unknown): Blob {
   if (!$inheritsBlob(value)) throw new TypeError("parameter 1 is not of type 'Blob'.");
-  return value;
+  return value as Blob;
 }
 
 function partsOf(given: any): any[] {
   if (!$isObject(given)) throw new TypeError("The provided value cannot be converted to a sequence.");
   const parts: unknown[] = [];
-  for (const part of given)
+  for (const part of given as any)
     parts.push(typeof part === "string" || $inheritsBlob(part) || idl.bytesOf(part) ? part : `${part}`);
   return parts;
 }

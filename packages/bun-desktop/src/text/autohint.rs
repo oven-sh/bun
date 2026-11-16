@@ -14,8 +14,8 @@ use outline::{Outline, Point};
 use scripts::{Group, LONG, NEUTRAL, SUB_TOP, TOP, X_HEIGHT};
 pub use styles::{Style, Styles};
 
-use super::sfnt::Font;
 use super::sfnt::variations::Coords;
+use super::sfnt::{Font, work};
 use super::shaper::layout::Table;
 use crate::gfx::{self, Path};
 
@@ -227,6 +227,17 @@ fn medians(mut lists: [Vec<i32>; 2], is_top: bool) -> Option<[i32; 2]> {
 
 impl Metrics {
     pub fn new(
+        font: &Font,
+        substitutions: Option<&Table>,
+        coords: &Coords,
+        style: Style,
+    ) -> Metrics {
+        work::limited(1 << 24, || {
+            Metrics::measure(font, substitutions, coords, style)
+        })
+    }
+
+    fn measure(
         font: &Font,
         substitutions: Option<&Table>,
         coords: &Coords,

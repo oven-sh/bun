@@ -120,7 +120,8 @@ function hasHashes(sources: string[], integrity: string) {
 
 function forReport(href: string) {
   const url = new URL(href);
-  if (!/^(?:http|ws)s?:$/.test(url.protocol) && !privilegesOf(url.protocol).standard) return url.protocol.slice(0, -1);
+  const { protocol } = url;
+  if (!/^(?:http|ws)s?:$/.test(protocol) && !privilegesOf(protocol).standard) return protocol.slice(0, -1);
   url.username = url.password = url.hash = "";
   return url.href;
 }

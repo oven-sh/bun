@@ -150,6 +150,7 @@ impl Feature {
         let mut features = Feature::all_outside_compiled_programs();
         features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
         features.insert(Feature::Test);
+        features.insert(Feature::Desktop);
         features
     }
 

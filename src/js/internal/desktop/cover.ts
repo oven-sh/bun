@@ -90,7 +90,8 @@ function wait(times: number) {
 function hold(event: Input) {
   if (event.t === "text" || (event.t === "key" && event.e === "down")) received++;
   if (isPartial && (event.t === "outside" || event.t === "wheel")) return end(true);
-  if (event.t === "compose" || event.t === "composeEnd") isComposing = event.t === "compose";
+  const eventT = event.t;
+  if (eventT === "compose" || eventT === "composeEnd") isComposing = eventT === "compose";
   else if (event.t === "mouse") {
     if (event.e !== "down" && event.e !== "up") return;
     isPressed = event.buttons !== 0;
@@ -202,7 +203,8 @@ function finish(replays: boolean, keep: Rect[]) {
   for (const event of rest) if (event.t === "mouse") handle?.({ ...event, ...clicked });
   let tries = 20;
   (function typeRest() {
-    if (acceptsText(clicked.s)) type(typed(rest), clicked.s);
+    const clickedS = clicked.s;
+    if (acceptsText(clickedS)) type(typed(rest), clickedS);
     else if (--tries > 0 && typed(rest).length > 0) setTimeout(typeRest, 16);
   })();
 }
@@ -223,8 +225,9 @@ function holdKeys() {
       if (event.e === "down") dropKeys();
       return false;
     }
-    if (acceptsText(event.s)) {
-      type(dropKeys(), event.s);
+    const eventS = event.s;
+    if (acceptsText(eventS)) {
+      type(dropKeys(), eventS);
       return false;
     }
     if (event.t === "key" && (event.key === "Enter" || !edits.test(event.key) || (event.m & ~typing) !== 0))

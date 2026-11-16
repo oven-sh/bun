@@ -6,7 +6,6 @@ const { CONNECTED, CUSTOM, FAILED_CUSTOM, HOST, UNDEFINED } = flags;
 
 type N = $Dom.N;
 type Doc = $Dom.Doc;
-type Page = $Dom.Page;
 declare global {
   namespace $Dom {
     type Definition = DefinitionImpl;
@@ -88,7 +87,8 @@ function prepareCustomElement(newTarget: any, called: Function): any {
   let node = stack[stack.length - 1];
   if (stack.length === 0) {
     node = core.createPlainElement(doc, localName, HTML);
-    if (definition!.name !== localName) rare(node).is = definition!.name;
+    const { name } = definition!;
+    if (name !== localName) rare(node).is = name;
     if (definition!.registry.doc === null) rare(node).registry = definition!.registry.js;
     becomeCustom(node, definition!);
   } else if (node === null) throw new TypeError("This instance is already constructed");

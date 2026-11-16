@@ -153,7 +153,8 @@ const prototypeOfReadStream = {
 
     if (process.platform !== "win32") {
       // The descriptor may be non-blocking, as the master of a pty from node-pty is, so it has to be polled.
-      // One that blocks is taken for a file by the stream, which fails with ESPIPE before it has read anything.
+      // One that blocks is taken for a file by the stream, which fails before it has read anything:
+      // with ESPIPE, or ENXIO on macOS. kqueue refuses /dev/tty with EINVAL.
       Prototype._read = function (this: $Node.TTYReadStream, size: number) {
         if (!this.isTTY || this[kBlocks])
           return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
@@ -166,7 +167,8 @@ const prototypeOfReadStream = {
         reader.read().then(
           ({ value }) => this.push(value ?? null),
           error => {
-            if (error?.code !== "ESPIPE") return this.destroy(error);
+            const code = error?.code;
+            if (code !== "ESPIPE" && code !== "ENXIO" && code !== "EINVAL") return this.destroy(error);
             this[kBlocks] = true;
             this[kReader] = this.$bunNativePtr = undefined;
             this._read(size);

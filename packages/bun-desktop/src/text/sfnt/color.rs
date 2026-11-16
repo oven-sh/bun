@@ -3,7 +3,7 @@
 use std::f32::consts::PI;
 
 use super::variations::{Coords, Deltas};
-use super::{Data, Font};
+use super::{Data, Font, work};
 use crate::abi::Rect;
 use crate::gfx::{Point, Transform};
 
@@ -58,6 +58,8 @@ pub trait Painter {
     fn push_layer(&mut self);
     fn pop_layer(&mut self, mode: u8);
 }
+
+const WORK_PER_PAINT: usize = 1 << 10;
 
 pub struct Drawing<'a> {
     table: Data,
@@ -155,33 +157,30 @@ impl<'a> Drawing<'a> {
     }
 
     pub fn paint(&self, painter: &mut impl Painter) -> Option<()> {
-        if self.root(self.glyph).is_some() {
-            return self.paint_glyph(self.glyph, painter, 0, &mut 0);
-        }
-        for layer in self
-            .layers()?
-            .0
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|it| Data(it))
-        {
-            painter.push_clip_glyph(layer.u16(0)?.into());
-            painter.fill(layer.u16(2)?, 1.);
-            painter.pop_clip();
-        }
-        Some(())
+        work::limited(WORK_PER_PAINT << 14, || {
+            if self.root(self.glyph).is_some() {
+                return self.paint_glyph(self.glyph, painter, 0);
+            }
+            for layer in self
+                .layers()?
+                .0
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|it| Data(it))
+            {
+                work::spend(WORK_PER_PAINT)?;
+                painter.push_clip_glyph(layer.u16(0)?.into());
+                painter.fill(layer.u16(2)?, 1.);
+                painter.pop_clip();
+            }
+            Some(())
+        })
     }
 
-    fn paint_glyph(
-        &self,
-        glyph: u32,
-        painter: &mut impl Painter,
-        depth: u32,
-        count: &mut u32,
-    ) -> Option<()> {
+    fn paint_glyph(&self, glyph: u32, painter: &mut impl Painter, depth: u32) -> Option<()> {
         let clip = self.clip_of(glyph).map(|it| painter.push_clip_box(it));
-        self.visit(self.root(glyph)?, painter, depth, count)?;
+        self.visit(self.root(glyph)?, painter, depth)?;
         clip.into_iter().for_each(|()| painter.pop_clip());
         Some(())
     }
@@ -199,6 +198,7 @@ impl<'a> Drawing<'a> {
                 alpha,
             })
         };
+        work::spend(usize::from(line.u16(1)?) * 16)?;
         let stops =
             (0..usize::from(line.u16(1)?)).map(|it| stop(3 + it * if varies { 10 } else { 6 }));
         let (mut stops, extend) = (stops.collect::<Option<Vec<_>>>()?, line.u8(0)?);
@@ -305,20 +305,16 @@ impl<'a> Drawing<'a> {
         )
     }
 
-    fn visit(
-        &self,
-        paint: Data,
-        painter: &mut impl Painter,
-        depth: u32,
-        count: &mut u32,
-    ) -> Option<()> {
+    fn visit(&self, paint: Data, painter: &mut impl Painter, depth: u32) -> Option<()> {
         const SOURCE_OVER: u8 = 3;
-        *count += 1;
-        match paint.u8(0).filter(|_| depth < 64 && *count < 1 << 14)? {
+        match paint
+            .u8(0)
+            .filter(|_| depth < 64 && work::spend(WORK_PER_PAINT).is_some())?
+        {
             1 => {
                 let (list, first) = (self.table.at32(18)?, paint.u32(2)? as usize);
                 for index in first..first + usize::from(paint.u8(1)?) {
-                    self.visit(list.at32(4 + index * 4)?, painter, depth + 1, count)?;
+                    self.visit(list.at32(4 + index * 4)?, painter, depth + 1)?;
                 }
             }
             format @ (2 | 3) => painter.fill(
@@ -328,20 +324,20 @@ impl<'a> Drawing<'a> {
             format @ 4..=9 => self.gradient(paint, format, painter)?,
             10 => {
                 painter.push_clip_glyph(paint.u16(4)?.into());
-                self.visit(paint.at24(1)?, painter, depth + 1, count)?;
+                self.visit(paint.at24(1)?, painter, depth + 1)?;
                 painter.pop_clip();
             }
-            11 => self.paint_glyph(paint.u16(1)?.into(), painter, depth + 1, count)?,
+            11 => self.paint_glyph(paint.u16(1)?.into(), painter, depth + 1)?,
             format @ 12..=31 => {
                 painter.push_transform(self.transform(paint, format)?);
-                self.visit(paint.at24(1)?, painter, depth + 1, count)?;
+                self.visit(paint.at24(1)?, painter, depth + 1)?;
                 painter.pop_transform();
             }
             32 => {
                 painter.push_layer();
-                self.visit(paint.at24(5)?, painter, depth + 1, count)?;
+                self.visit(paint.at24(5)?, painter, depth + 1)?;
                 painter.push_layer();
-                self.visit(paint.at24(1)?, painter, depth + 1, count)?;
+                self.visit(paint.at24(1)?, painter, depth + 1)?;
                 painter.pop_layer(paint.u8(4)?);
                 painter.pop_layer(SOURCE_OVER);
             }

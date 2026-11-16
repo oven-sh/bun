@@ -31,7 +31,8 @@ class Mirror {
   remember(key: string, apply: (engine: any, id: number) => unknown) {
     this.commands.$delete(key);
     this.commands.$set(key, apply);
-    if (this.engine) return apply(this.engine, this.id);
+    const ownEngine = this.engine;
+    if (ownEngine) return apply(ownEngine, this.id);
   }
 
   link() {
@@ -184,7 +185,7 @@ function created(session: any, state: any) {
     startWorkerForScope: (scope: string) => mirror.perform("serviceWorkers.startWorkerForScope", [scope]),
   });
   session.setWebEngineHosts = (hosts: string[]) => {
-    const patterns = hosts.map(require("internal/desktop/electron/policy").glob);
+    const patterns: RegExp[] = hosts.map(require("internal/desktop/electron/policy").glob);
     state.viaWebEngine = (url: URL, options: object, signal?: AbortSignal) =>
       patterns.some(it => it.test(url.hostname) || it.test(url.host)) ? mirror.fetch(url, options, signal) : undefined;
   };
@@ -353,11 +354,13 @@ function listen() {
     session: (engine: any, id: number) => engine.sessions.get(id).session,
     image: (_: unknown, png: Buffer) => nativeImage.createFromBuffer(png),
     worker(engine: any, id: number, ...about: [string, string, number]) {
-      if (!engine.objects.has(id)) engine.objects.set(id, new ServiceWorkerMain(engine, id, ...about));
+      const { objects } = engine;
+      if (!objects.has(id)) objects.set(id, new ServiceWorkerMain(engine, id, ...about));
       return engine.objects.get(id);
     },
     download(engine: any, id: number, state: Record<string, unknown>) {
-      if (!engine.objects.has(id)) engine.objects.set(id, new DownloadItem(engine, id, state));
+      const { objects } = engine;
+      if (!objects.has(id)) objects.set(id, new DownloadItem(engine, id, state));
       return Object.assign(engine.objects.get(id), { state });
     },
   });
@@ -389,7 +392,7 @@ function listen() {
       const { jar } = mirror.state;
       const known = jar.all().find(it => isSameCookie(it, cookie));
       const isUnchanged = known && Object.keys(cookie).every(key => known[key] === cookie[key]);
-      if (removed ? /overwrite$/.test(cause) || known?.value !== cookie.value : isUnchanged) return;
+      if (removed ? `${cause}`.endsWith("overwrite") || known?.value !== cookie.value : isUnchanged) return;
       mirror.isReceiving = true;
       if (removed) jar.remove(known, cause);
       else jar.store(cookie);

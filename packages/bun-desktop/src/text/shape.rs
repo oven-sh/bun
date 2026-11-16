@@ -1,8 +1,7 @@
-use harfrust::{Feature, Tag};
-
 use super::breaks::{Breaks, breaks_in_ascii};
 use super::fonts::{FONTS, Fonts, Presentation, is_default_ignorable};
-use super::words::{Placed, STEPS_PER_UNIT, Shaping, WORDS};
+use super::shaper::{Feature, STEPS_PER_UNIT};
+use super::words::{Placed, Shaping, WORDS};
 use crate::abi::{self, Cluster, Glyph, Span, TextRun};
 use crate::bun::abi::BREAK_GRAPHEMES;
 use crate::unicode::{self, Script};
@@ -275,8 +274,14 @@ impl Shaped {
         let more_features;
         let has_alternates = run.word_break & abi::RUN_VERTICAL != 0;
         let features = if is_spaced || has_alternates {
-            let off = [b"liga", b"clig"].map(|tag| Feature::new(Tag::new(tag), 0, ..));
-            let on = [Feature::new(Tag::new(b"vert"), 1, ..)];
+            let off = [b"liga", b"clig"].map(|tag| Feature {
+                tag: *tag,
+                value: 0,
+            });
+            let on = [Feature {
+                tag: *b"vert",
+                value: 1,
+            }];
             more_features = [
                 &off[..usize::from(is_spaced) * 2],
                 &on[..usize::from(has_alternates)],
@@ -294,7 +299,7 @@ impl Shaped {
             is_rtl,
             is_vertical,
             capitalizes: item.is_small_capital,
-            language: resolved.language.as_ref(),
+            language: &resolved.language,
             features,
             features_hash: candidate.features_hash
                 ^ u64::from(is_spaced)

@@ -29,7 +29,7 @@ function mainProcess() {
   const packaged: string | null = require("internal/desktop/native").resourcesPath();
   if (process.env.ELECTRON_RUN_AS_NODE && packaged !== null) {
     const { ELECTRON_RUN_AS_NODE: _, ...env } = process.env;
-    process.execve(process.execPath, [process.execPath, ...process.argv.slice(2)], { ...env, BUN_BE_BUN: "1" });
+    process.execve!(process.execPath, [process.execPath, ...process.argv.slice(2)], { ...env, BUN_BE_BUN: "1" });
   }
   require("internal/desktop/cover").begin();
   if (packaged !== null) process.argv.splice(0, 2, process.execPath);

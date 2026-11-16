@@ -342,7 +342,7 @@ impl Engine {
         self.2 += 1;
         if self.is_broken() || crate::recovery::attempt(|| self.0.start_over()).is_none() {
             self.2 = MAX_PANICS;
-            core::mem::forget(core::mem::replace(
+            let _ = core::mem::ManuallyDrop::new(core::mem::replace(
                 &mut self.0,
                 Box::new(Document::new(0, b"")),
             ));
@@ -496,6 +496,9 @@ impl Engine {
     }
 
     pub(crate) fn set_custom_state(&mut self, node: u32, name: &[u8], on: bool) {
+        if name == b":foreign" {
+            return self.0.set_foreign(self.0.node(node), on);
+        }
         let (Some(element), name) = (self.0.tree.element_mut(node), Name::new(name)) else {
             return;
         };
@@ -546,9 +549,9 @@ impl Engine {
     pub(crate) fn set_language(&mut self, language: &[u8]) {
         self.0.tree.language = crate::values::text(language).into();
         let roots: Vec<_> = self.0.tree.element_children(DOCUMENT).collect();
-        roots
-            .into_iter()
-            .for_each(|it| self.0.tree.mark_style(it, Flags::REMATCH_SUBTREE));
+        for it in roots {
+            self.0.tree.mark_style(it, Flags::REMATCH_SUBTREE);
+        }
     }
 
     pub(crate) fn create_sheet(
@@ -571,12 +574,21 @@ impl Engine {
         let source = source.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(source);
         match self.0.has_prepared(source) || bun_core::strings::is_valid_utf8(source) {
             true => self.0.create_sheet(source, base_url, media, owner),
-            false => self.0.create_sheet(
-                String::from_utf8_lossy(source).as_bytes(),
-                base_url,
-                media,
-                owner,
-            ),
+            false => {
+                let mut valid = Vec::with_capacity(source.len());
+                for chunk in source.utf8_chunks() {
+                    valid.extend_from_slice(chunk.valid().as_bytes());
+                    valid.extend_from_slice(
+                        if chunk.invalid().is_empty() {
+                            ""
+                        } else {
+                            "\u{fffd}"
+                        }
+                        .as_bytes(),
+                    );
+                }
+                self.0.create_sheet(&valid, base_url, media, owner)
+            }
         }
     }
 
@@ -794,15 +806,22 @@ impl Engine {
     }
 
     pub(crate) fn view_transition(&mut self, step: u8, canvas: u32) -> u8 {
-        match step {
-            0 => self.0.capture_old_state(canvas).into(),
-            1 => self.0.capture_new_state().into(),
+        const SCOPED: u8 = 8;
+        let scope = if step & SCOPED == 0 {
+            0
+        } else {
+            self.0.node(canvas)
+        };
+        match step & !SCOPED {
+            _ if step & SCOPED != 0 && scope == 0 => 0,
+            0 => self.0.capture_old_state(scope, canvas).into(),
+            1 => self.0.capture_new_state(scope).into(),
             2 => self
                 .0
-                .update_view_transition()
+                .update_view_transition(scope)
                 .map_or(0, |is_animated| 1 + u8::from(is_animated)),
             3 => {
-                self.0.end_view_transition();
+                self.0.end_view_transition(scope);
                 1
             }
             4 => {
@@ -1029,7 +1048,7 @@ impl Engine {
     pub(crate) fn box_sizes(&mut self, node: u32) -> Numbers {
         let node = self.0.node(node);
         if node == DOCUMENT {
-            return numbers(self.0.size_of_contents().into_iter());
+            return numbers(self.0.size_of_contents());
         }
         numbers(
             self.0

@@ -16,6 +16,10 @@ use crate::types::*;
 
 pub(crate) const BLACK: u32 = 0xff;
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "only ever on the stack, and most are the large one"
+)]
 pub(crate) enum Areas<'a, 'b> {
     /// With the margin.
     Css(Frame, [f32; 4]),
@@ -59,6 +63,15 @@ impl<'a, 'b> Subject<'a, 'b> {
     /// In the units of the style.
     pub(crate) fn area(&self, area: BoxArea) -> RoundedRect {
         match (&self.areas, area) {
+            (Areas::Css(..), BoxArea::ViewBox)
+                if let Some((node, user)) = self.foreign_object() =>
+            {
+                square(
+                    self.document
+                        .svg_reference_box(&node, area)
+                        .transformed(&user.matrix),
+                )
+            }
             (Areas::Css(frame, margin), BoxArea::MarginBox) => frame.shape.outset(*margin),
             (Areas::Css(frame, _), _) => frame.area(area),
             (Areas::Svg(node), _) => square(
@@ -75,9 +88,11 @@ impl<'a, 'b> Subject<'a, 'b> {
     }
 
     fn is_masked(&self) -> bool {
-        let is_valid = |it: &Image| match it {
-            Image::Url(url) if self.mask_element(url).is_some() => true,
-            Image::Url(url) => {
+        let is_valid = |it: &Image| match it
+            .chosen(self.document.environment.scale * self.document.environment.zoom)
+        {
+            Some((Image::Url(url), _)) if self.mask_element(url).is_some() => true,
+            Some((Image::Url(url), _)) => {
                 self.document.fragment_of(url).is_none()
                     && self.document.image(url).is_none_or(|it| it.image != 0)
             }
@@ -85,6 +100,7 @@ impl<'a, 'b> Subject<'a, 'b> {
         };
         self.style.has_mask()
             && (matches!(self.areas, Areas::Css(..))
+                || self.style.mask.image.len() > 1
                 || self
                     .style
                     .mask
@@ -93,9 +109,41 @@ impl<'a, 'b> Subject<'a, 'b> {
                     .any(|it| it.0.as_ref().is_some_and(is_valid)))
     }
 
+    fn foreign_object(&self) -> Option<(Node<'a>, UserSpace)> {
+        let Areas::Css(frame, _) = &self.areas else {
+            return None;
+        };
+        let node = self
+            .document
+            .svg_node(self.node)
+            .filter(|it| it.tag == name!("foreignObject"))?;
+        let (bounds, rect, zoom) = (
+            self.document.svg_rect(&node),
+            frame.shape.rect,
+            self.style.zoom,
+        );
+        Some((
+            node,
+            UserSpace {
+                matrix: [
+                    zoom,
+                    0.0,
+                    0.0,
+                    zoom,
+                    rect.x - bounds.x * zoom,
+                    rect.y - bounds.y * zoom,
+                ],
+                bounds,
+            },
+        ))
+    }
+
     pub(crate) fn user_space(&self) -> UserSpace {
         match &self.areas {
-            Areas::Css(frame, _) => UserSpace::of_box(frame.shape.rect, self.style.zoom),
+            Areas::Css(frame, _) => self.foreign_object().map_or_else(
+                || UserSpace::of_box(frame.shape.rect, self.style.zoom),
+                |it| it.1,
+            ),
             Areas::Svg(node) => UserSpace {
                 matrix: IDENTITY,
                 bounds: self
@@ -130,6 +178,17 @@ impl Effects<'_> {
 }
 
 impl Document {
+    pub(crate) fn set_foreign(&mut self, frame: NodeId, is_foreign: bool) {
+        if if is_foreign {
+            self.foreign_frames.insert(frame)
+        } else {
+            self.foreign_frames.remove(&frame)
+        } {
+            self.pictures.discard();
+            self.needs_frame = true;
+        }
+    }
+
     /// What `ink` becomes. `reference` is the border box.
     pub(crate) fn filtered(&self, node: NodeId, style: &Style, ink: Rect, reference: Rect) -> Rect {
         style
@@ -140,18 +199,21 @@ impl Document {
             .fold(ink, |ink, filter| match filter {
                 Filter::Amount(FilterName::Blur, radius) => ink.grown(radius * 3.0),
                 Filter::DropShadow(it) => ink.union(&ink.moved(it.offset).grown(it.blur * 3.0)),
-                Filter::Url(url) => {
-                    self.svg_resource(node, url, name!("filter"))
-                        .map_or(ink, |filter| {
-                            let user = UserSpace::of_box(reference, style.zoom);
-                            ink.union(
-                                &filter
-                                    .document
-                                    .resource_region(&filter, name!("filterUnits"), user.bounds)
-                                    .transformed(&user.matrix),
-                            )
-                        })
-                }
+                Filter::Url(url) => self
+                    .filter_element(
+                        node,
+                        url,
+                        [reference.width / style.zoom, reference.height / style.zoom],
+                    )
+                    .map_or(ink, |filter| {
+                        let user = UserSpace::of_box(reference, style.zoom);
+                        ink.union(
+                            &filter
+                                .document
+                                .resource_region(&filter, name!("filterUnits"), user.bounds)
+                                .transformed(&user.matrix),
+                        )
+                    }),
                 Filter::Amount(..) => ink,
             })
     }
@@ -184,6 +246,8 @@ impl Document {
                     shapes.push(path.as_rect().map_or(Resolved::Path(path, rule), |it| {
                         Resolved::Rounded(square(it))
                     }));
+                } else if self.is_loading_external(url) {
+                    shapes.push(Resolved::Rounded(RoundedRect::default()));
                 }
             }
             Some((Shape::Box, area))
@@ -278,7 +342,7 @@ impl<'a> Painter<'a> {
             Resolved::Path(path, rule) => {
                 let outline = self.outline_of(&path, rule);
                 space.visible = space.visible.intersection(&outline.bounds.grown(1.0));
-                self.link(Item::PushClipOutline(outline), space);
+                self.link(&Item::PushClipOutline(outline), space);
             }
         }
     }
@@ -302,7 +366,7 @@ impl<'a> Painter<'a> {
     }
 
     /// What is black is kept.
-    fn clip_mask(&mut self, subject: &Subject<'a, '_>, space: &Space) {
+    pub(crate) fn clip_mask(&mut self, subject: &Subject<'a, '_>, space: &Space) {
         if let Some((Shape::Url(url), _)) = subject.style.effects.clip_path.0.as_deref()
             && subject.document.clip_shapes(subject).is_none()
         {
@@ -332,9 +396,26 @@ impl<'a> Painter<'a> {
         for filter in filters.0.iter() {
             self.out.filters.push(match filter {
                 Filter::Url(url) => {
-                    let found = subject
-                        .document
-                        .svg_resource(subject.node, url, name!("filter"));
+                    let viewport = match &subject.areas {
+                        Areas::Css(frame, _) => [frame.shape.rect.width, frame.shape.rect.height]
+                            .map(|it| it / subject.style.zoom),
+                        Areas::Svg(node) => node.viewport,
+                    };
+                    let (document, is_backdrop) = (
+                        subject.document,
+                        core::ptr::eq(filters, &raw const subject.style.effects.backdrop_filter),
+                    );
+                    let is_seen = |frame: &NodeId| {
+                        is_backdrop
+                            || *frame == subject.node
+                            || document
+                                .tree
+                                .flat_ancestors(*frame)
+                                .any(|it| it == subject.node)
+                    };
+                    let found = document
+                        .filter_element(subject.node, url, viewport)
+                        .filter(|_| !document.foreign_frames.iter().any(is_seen));
                     found
                         .into_iter()
                         .for_each(|it| self.svg_filter(&it, subject, &mut inputs, &mut is_tainted));
@@ -428,7 +509,7 @@ impl<'a> Painter<'a> {
                 .iter()
                 .for_each(|it| self.filter_input(it, space));
             if subject.is_masked() {
-                self.marker(Item::Mask { luminance: false });
+                self.marker(&Item::Mask { luminance: false });
                 self.painted_node = 0;
                 let mut inside = *space;
                 if subject.scale() != 1.0 {
@@ -444,7 +525,7 @@ impl<'a> Painter<'a> {
             self.end_group(base);
         }
         if let (Some(base), true) = (effects.groups[0], effects.clips_with_mask) {
-            self.marker(Item::Mask { luminance: false });
+            self.marker(&Item::Mask { luminance: false });
             self.clip_mask(subject, space);
             self.end_group(base);
         }

@@ -116,7 +116,7 @@ fn transfer(function: Option<&Element>) -> impl Iterator<Item = f32> {
         let (c, last) = (value as f32 / 255.0, table.len().saturating_sub(1));
         let result = match kind {
             1 if !table.is_empty() => {
-                let index = (c * last as f32) as usize;
+                let index = ((c * last as f32) as usize).min(last);
                 crate::values::mix(
                     table[index],
                     table[(index + 1).min(last)],
@@ -144,7 +144,7 @@ fn convolution(element: &Element) -> Option<Vec<f32>> {
     .then_some(())?;
     let non_zero = |it: f32| (it != 0.0).then_some(it);
     let divisor = non_zero(number(element, name!("divisor"), 0.0))
-        .or(non_zero(kernel.iter().sum()))
+        .or_else(|| non_zero(kernel.iter().sum()))
         .unwrap_or(1.0);
     let edge = choice(
         element,
@@ -209,7 +209,8 @@ impl<'a> Painter<'a> {
             .filter_map(|it| document.svg_node(it))
             .take(10_000)
         {
-            let element = node.element;
+            let (element, mut node) = (node.element, node);
+            node.viewport = filter.viewport;
             let children = || {
                 document
                     .tree
@@ -446,8 +447,9 @@ impl<'a> Painter<'a> {
                     pair(element, name!("baseFrequency"), 0.0),
                     number(element, name!("numOctaves"), 1.0).trunc(),
                 ) {
-                    ([x, y], octaves) if x < 0.0 || y < 0.0 || octaves < 0.0 => nothing(),
+                    (_, ..0.0) => nothing(),
                     ([x, y], octaves) => {
+                        let [x, y] = if x < 0.0 || y < 0.0 { [0.0; 2] } else { [x, y] };
                         let stitches =
                             f32::from(element.attribute(name!("stitchTiles")) == Some("stitch"));
                         let is_fractal =
@@ -501,7 +503,15 @@ impl<'a> Painter<'a> {
                 .to_array();
             let [first, second] = [0, 1].map(|it| used.get(it).copied().unwrap_or(INPUT_NOTHING));
             let arguments = self.floats([first, second].into_iter().chain(shown).chain(arguments));
-            let linear = node.style.svg.filter_interpolation == ColorInterpolation::LinearRgb;
+            let linear = match document.tree.style(filter.id) {
+                Some(_) => node.style.svg.filter_interpolation == ColorInterpolation::LinearRgb,
+                None => {
+                    [element, filter.element]
+                        .iter()
+                        .find_map(|it| it.attribute(name!("color-interpolation-filters")))
+                        == Some("linearRGB")
+                }
+            };
             self.out.filters.push(abi::Filter::Primitive {
                 kind,
                 linear,
@@ -525,7 +535,7 @@ impl<'a> Painter<'a> {
 
     pub(crate) fn filter_input(&mut self, input: &Input<'a>, space: &Space) {
         let (document, mut inside) = (input.primitive.document, *space);
-        self.marker(Item::Input);
+        self.marker(&Item::Input);
         inside.visible = input.subregion.transformed(&input.matrix);
         self.vector(input.matrix, &mut inside);
         let id = input.primitive.id;

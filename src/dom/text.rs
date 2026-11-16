@@ -21,6 +21,14 @@ use crate::values::Color;
 
 type Decorations<'a> = SmallVec<[&'a Style; 2]>;
 
+#[derive(Clone, Copy)]
+struct Decorating<'a> {
+    by: &'a Style,
+    /// Of the inline box that the lines belong to.
+    font: &'a Style,
+    baseline: f32,
+}
+
 struct Marked {
     clusters: Range<u32>,
     rect: Rect,
@@ -120,12 +128,19 @@ impl<'a> Painter<'a> {
                     );
                 }
             }
-            for fragment in inline
+            let mut fragments: SmallVec<[_; 8]> = inline
                 .lines
                 .fragments_of(line)
                 .iter()
                 .filter(|it| it.layer == layer)
+                .collect();
+            if fragments
+                .first()
+                .is_some_and(|it| matches!(it.kind, FragmentKind::Box(..)))
             {
+                fragments.sort_by_key(|it| it.item);
+            }
+            for fragment in fragments {
                 let item = &inline.items[fragment.item as usize];
                 let (style, rect) = (
                     document.current_style(item),
@@ -141,6 +156,9 @@ impl<'a> Painter<'a> {
                             );
                         }
                         self.embedded(child, physical);
+                        if document.boxes[child].is_replaced() {
+                            self.highlight_replaced(item.node, style, rect, space);
+                        }
                     }
                     continue;
                 }
@@ -166,7 +184,17 @@ impl<'a> Painter<'a> {
                     }
                     _ => {
                         self.hit(node_of(item), style, square(rect), space);
-                        self.text(inline, line, fragment, style, &decorations, space);
+                        self.text(
+                            inline,
+                            line,
+                            fragment,
+                            style,
+                            (
+                                &decorations,
+                                first_line.unwrap_or_else(|| document.inherited_style(id)),
+                            ),
+                            space,
+                        );
                     }
                 }
             }
@@ -189,6 +217,23 @@ impl<'a> Painter<'a> {
         }
         if layer == 0 && !is_under_text {
             self.caret_in(id, physical);
+        }
+    }
+
+    fn highlight_replaced(&mut self, node: NodeId, style: &Style, rect: Rect, space: &Space) {
+        let (document, mut below) = (self.document, style.color());
+        for (_, mark) in document.marks.of(node) {
+            if let Mark::Highlight(name) = mark
+                && let Some(highlight) = document.highlight(node, Pseudo::Highlight(*name))
+            {
+                let own = highlight.style(style, &document.styles.initial, below);
+                below = own.color();
+                self.fill(
+                    square(self.snap_rect(rect)),
+                    own.paint.background_color.resolve(own.color()),
+                    space,
+                );
+            }
         }
     }
 
@@ -360,6 +405,17 @@ impl<'a> Painter<'a> {
                     space.origin,
                     space,
                 );
+                if let FragmentKind::Text { clusters, .. } = &fragment.kind {
+                    self.emphasis_marks(
+                        inline,
+                        line,
+                        fragment,
+                        clusters,
+                        document.current_style(&inline.items[fragment.item as usize]),
+                        Some(0xff),
+                        space,
+                    );
+                }
             }
             if let Some(truncation) = line.clamp.as_ref().or(line.overflow.as_ref()) {
                 let origin = [
@@ -406,7 +462,7 @@ impl<'a> Painter<'a> {
             .grown(face.size);
             let origin = [x, self.snap(origin[1])];
             self.emit(
-                Item::Text {
+                &Item::Text {
                     origin,
                     bounds,
                     face: face.id,
@@ -447,7 +503,7 @@ impl<'a> Painter<'a> {
                 self.snap(origin[1] + fragment.baseline),
             ];
             self.emit(
-                Item::Text {
+                &Item::Text {
                     origin,
                     bounds,
                     face: face.id,
@@ -492,7 +548,7 @@ impl<'a> Painter<'a> {
                 ..Default::default()
             };
             self.emit(
-                Item::TextStroke {
+                &Item::TextStroke {
                     origin,
                     bounds,
                     face: face.id,
@@ -683,7 +739,7 @@ impl<'a> Painter<'a> {
         };
         let bounds = Rect::new([-total, 0.0, total * 2.0, fragment.width]).grown(face.size + blur);
         self.emit(
-            Item::Text {
+            &Item::Text {
                 origin: [0.0; 2],
                 bounds,
                 face: face.id,
@@ -827,7 +883,7 @@ impl<'a> Painter<'a> {
                     let own = highlight.style(
                         style,
                         &document.styles.initial,
-                        below.unwrap_or(style.color()),
+                        below.unwrap_or_else(|| style.color()),
                     );
                     let (background, color) = match highlight.has_colors {
                         true => (
@@ -911,19 +967,42 @@ impl<'a> Painter<'a> {
 
     fn decoration(
         &mut self,
-        by: &Style,
-        line: DecorationLine,
+        of: Decorating,
+        mut line: DecorationLine,
         [left, right]: [f32; 2],
         on: (&Inline, &Line, &Fragment),
         text: &Style,
         shadow: Option<&Shadow>,
         space: &Space,
     ) {
-        let fragment = on.2;
-        let (size, ascent) = (by.font.size.0, text.metrics.ascent);
+        let (fragment, Decorating { by, font, baseline }) = (on.2, of);
+        let (size, ascent) = (font.font.size.0, text.metrics.ascent);
         let scale = self.document.environment.scale;
+        let (offset, mut position) = (
+            by.ink
+                .underline_offset
+                .0
+                .as_ref()
+                .map(|it| it.resolve(size)),
+            by.ink.underline_position,
+        );
+        let mut flips = false;
+        if text.has_central_baseline() {
+            let is_right_by_default = ["ja", "ko"]
+                .into_iter()
+                .any(|it| crate::inline::speaks(font, it));
+            flips = position.contains(UnderlinePosition::RIGHT)
+                || is_right_by_default && !position.contains(UnderlinePosition::LEFT);
+            position = UnderlinePosition::UNDER;
+        }
+        if flips && line != DecorationLine::LINE_THROUGH {
+            line = (DecorationLine::UNDERLINE | DecorationLine::OVERLINE) - line;
+        }
+        let of_em = |style: &Style, part: f32| {
+            part * style.font.size.0 / (style.metrics.ascent + style.metrics.descent).max(1.0)
+        };
         let automatic = if by.paint.decoration_thickness.1 {
-            by.metrics.underline_thickness
+            font.metrics.underline_thickness
         } else {
             size / 10.0
         };
@@ -934,30 +1013,30 @@ impl<'a> Painter<'a> {
             .as_ref()
             .map_or(automatic, |it| self.snap(it.resolve(size)))
             .max(1.0 / scale);
-        let below = if line == DecorationLine::OVERLINE {
+        let below = if line == DecorationLine::OVERLINE && flips {
+            (((-of_em(text, ascent) - offset.unwrap_or(0.0)) * scale).floor()
+                - 1.0
+                - (thickness * scale).floor())
+                / scale
+        } else if line == DecorationLine::OVERLINE {
             -ascent - (thickness * scale).floor() / scale
         } else if line == DecorationLine::LINE_THROUGH {
             -ascent / 3.0 - thickness / 2.0
         } else {
-            let (offset, position) = (
-                by.ink
-                    .underline_offset
-                    .0
-                    .as_ref()
-                    .map(|it| it.resolve(size)),
-                by.ink.underline_position,
-            );
+            let offset = offset.filter(|_| !flips);
+            let shift = self.snap(space.origin[1] + baseline)
+                - self.snap(space.origin[1] + fragment.baseline);
             match offset {
                 _ if position.contains(UnderlinePosition::UNDER) => {
-                    let descent = text.metrics.descent * text.font.size.0
-                        / (ascent + text.metrics.descent).max(1.0);
-                    (((descent + offset.unwrap_or(0.0)) * scale).floor() + 1.0) / scale
+                    (((of_em(text, text.metrics.descent) + offset.unwrap_or(0.0)) * scale).floor()
+                        + 1.0)
+                        / scale
                 }
                 _ if position.contains(UnderlinePosition::FROM_FONT) => {
-                    text.metrics.underline_offset + offset.unwrap_or(0.0)
+                    shift + font.metrics.underline_offset + offset.unwrap_or(0.0)
                 }
-                Some(offset) => self.snap(offset),
-                None => (thickness * scale / 2.0).ceil().max(1.0) / scale,
+                Some(offset) => shift + self.snap(offset),
+                None => shift + (thickness * scale / 2.0).ceil().max(1.0) / scale,
             }
         };
         let style = match by.paint.decoration_style {
@@ -1008,7 +1087,7 @@ impl<'a> Painter<'a> {
                         space,
                         |painter, rect, space| {
                             painter.emit(
-                                Item::Line {
+                                &Item::Line {
                                     rect,
                                     color: it.color.resolve(text.color()),
                                     style,
@@ -1017,7 +1096,7 @@ impl<'a> Painter<'a> {
                             );
                         },
                     ),
-                    None => self.emit(Item::Line { rect, color, style }, space),
+                    None => self.emit(&Item::Line { rect, color, style }, space),
                 }
             }
             from = from.max(end);
@@ -1031,7 +1110,7 @@ impl<'a> Painter<'a> {
         fragment: &Fragment,
         clusters: Range<u32>,
         style: &Style,
-        decorations: &[&Style],
+        decorations: &[Decorating],
         space: &Space,
     ) {
         for shadow in style.ink.text_shadow.0.0.iter().rev() {
@@ -1048,10 +1127,10 @@ impl<'a> Painter<'a> {
                 ];
                 for kind in kinds
                     .into_iter()
-                    .filter(|it| by.paint.decoration_line.contains(*it))
+                    .filter(|it| by.by.paint.decoration_line.contains(*it))
                 {
                     self.decoration(
-                        by,
+                        *by,
                         kind,
                         extent,
                         (inline, line, fragment),
@@ -1096,7 +1175,7 @@ impl<'a> Painter<'a> {
         line: &Line,
         fragment: &Fragment,
         style: &Style,
-        outer: &Decorations<'a>,
+        outer: (&Decorations<'a>, &Style),
         space: &Space,
     ) {
         let FragmentKind::Text { clusters, .. } = &fragment.kind else {
@@ -1104,18 +1183,38 @@ impl<'a> Painter<'a> {
         };
         let marked = self.marked(inline, line, fragment, style, space);
         let (mut decorations, mut key) = (
-            Decorations::new(),
+            SmallVec::<[Decorating; 2]>::new(),
             inline.items[fragment.item as usize].parent,
         );
         while key != 0 {
-            let item = &inline.items[key as usize - 1];
-            decorations.extend(
-                Some(&**self.document.current_style(item))
-                    .filter(|it| !it.paint.decoration_line.is_empty()),
+            let (item, by) = (
+                &inline.items[key as usize - 1],
+                &**self.document.current_style(&inline.items[key as usize - 1]),
             );
+            if !by.paint.decoration_line.is_empty() {
+                let own = inline
+                    .lines
+                    .fragments_of(line)
+                    .iter()
+                    .find(|it| it.item == key - 1 && it.layer == fragment.layer);
+                decorations.push(Decorating {
+                    by,
+                    font: by,
+                    baseline: own.unwrap_or(fragment).baseline,
+                });
+            }
             key = item.parent;
         }
-        decorations.extend(outer.iter().copied());
+        let baseline = if fragment.layer == 0 {
+            line.baseline
+        } else {
+            fragment.baseline
+        };
+        decorations.extend(outer.0.iter().map(|by| Decorating {
+            by,
+            font: outer.1,
+            baseline,
+        }));
         self.text_shadows(
             inline,
             line,
@@ -1140,19 +1239,22 @@ impl<'a> Painter<'a> {
             });
             let decorate = |painter: &mut Self, kind: DecorationLine| {
                 let Some(extent) = extent else { return };
-                for by in decorations
+                for of in decorations
                     .iter()
                     .rev()
-                    .filter(|it| it.paint.decoration_line.contains(kind))
+                    .filter(|it| it.by.paint.decoration_line.contains(kind))
                 {
                     let recolored = recolors.map(|color| {
-                        let mut it = Style::clone(by);
+                        let mut it = Style::clone(of.by);
                         it.groups
                             .set(&Value::TextDecorationColor(Color::Rgba(color)));
                         it
                     });
                     painter.decoration(
-                        recolored.as_ref().unwrap_or(by),
+                        Decorating {
+                            by: recolored.as_ref().unwrap_or(of.by),
+                            ..*of
+                        },
                         kind,
                         extent,
                         (inline, line, fragment),
@@ -1168,7 +1270,11 @@ impl<'a> Painter<'a> {
                         .filter(|it| it.paint.decoration_line.contains(kind))
                     {
                         painter.decoration(
-                            by,
+                            Decorating {
+                                by,
+                                font: by,
+                                baseline: fragment.baseline,
+                            },
                             kind,
                             extent,
                             (inline, line, fragment),
@@ -1182,7 +1288,7 @@ impl<'a> Painter<'a> {
                         let rect =
                             Rect::new([space.origin[0] + extent[0], y, extent[1] - extent[0], 1.0]);
                         painter.emit(
-                            Item::Line {
+                            &Item::Line {
                                 rect,
                                 color: style.color(),
                                 style: LineStyle::Solid,
@@ -1258,8 +1364,8 @@ impl<'a> Painter<'a> {
                 .collect::<SmallVec<[&Marked; 2]>>()
         };
         let (plain, highlighted): (SmallVec<[_; 2]>, _) = edges
-            .windows(2)
-            .map(|it| (it[0]..it[1], over(it[0])))
+            .array_windows()
+            .map(|&[from, to]| (from..to, over(from)))
             .partition(|it| it.1.is_empty());
         plain.into_iter().for_each(|(run, _)| paint(self, run, &[]));
         for it in &marked {

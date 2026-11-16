@@ -22,7 +22,7 @@ const scope = {
   trusted: (kind: string, value: unknown, _sink: string): string => (kind === "scriptURL" ? usv(value) : `${value}`),
   isHandlerName: (name: string): boolean =>
     [events.globalHandlers, events.windowHandlers, events.clipboardHandlers].some(names => names.includes(name)),
-  evaluate: (_source: string, _url: string): unknown => {},
+  evaluate: (_source: string, _url: string): unknown => undefined,
 };
 
 /** For the modules that have something of the same name. */
@@ -52,7 +52,8 @@ function expose<T extends { prototype: object; name: string }>(constructor: T, c
   enumerate(prototype, ["constructor"]);
   enumerate(constructor, ["length", "name", "prototype"]);
   Object.defineProperty(prototype, Symbol.toStringTag, { value: constructor.name, configurable: true });
-  if ($getByIdDirectPrivate(prototype, "cloner") === undefined) $putByIdDirectPrivate(prototype, "cloner", false);
+  if ($getByIdDirectPrivate(prototype, "cloner") === undefined)
+    $putByIdDirectPrivate(prototype as any, "cloner", false);
   constants.forEach((name, value) => {
     for (const target of [constructor, prototype]) Object.defineProperty(target, name, { value, enumerable: true });
   });
@@ -85,7 +86,7 @@ function replaceable(target: object, name: string, read: () => unknown) {
 
 /** `serialize` returns a plain object, whose `kind` says which module `electron/realm` hands the clone of it to. */
 function serializable(prototype: object, serialize: (value: any, isForStorage: boolean) => object | undefined) {
-  $putByIdDirectPrivate(prototype, "cloner", serialize);
+  $putByIdDirectPrivate(prototype as any, "cloner", serialize);
 }
 
 const error = (name: string, message: string) =>
@@ -116,7 +117,7 @@ function sequence(value: any): any[] {
   if (!$isObject(value) || !$isCallable(value[Symbol.iterator])) {
     throw new TypeError("The provided value cannot be converted to a sequence.");
   }
-  return [...value];
+  return [...(value as any)];
 }
 
 /** `[EnforceRange]` */
@@ -154,7 +155,7 @@ function bytesOf(value: any): Uint8Array | undefined {
   const isView = ArrayBuffer.isView(value);
   if (!isView && !isAnyArrayBuffer(value)) return;
   if (isSharedArrayBuffer(isView ? value.buffer : value)) throw new TypeError("The buffer must not be shared.");
-  if ((isView ? value.buffer : value).detached) return new Uint8Array();
+  if (((isView ? value.buffer : value) as any).detached) return new Uint8Array();
   return isView ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength) : new Uint8Array(value);
 }
 
@@ -295,7 +296,7 @@ function iterable(constructor: { prototype: any; name: string }, pairsOf: (self:
       pairsOf(this);
       callable(callback);
       for (let i = 0, pairs; i < (pairs = pairsOf(this)).length; i++)
-        callback.$call(thisArgument, pairs[i][1], pairs[i][0], this);
+        (callback as any).$call(thisArgument, pairs[i][1], pairs[i][0], this);
     },
   });
   Object.defineProperty(constructor.prototype, Symbol.iterator, {

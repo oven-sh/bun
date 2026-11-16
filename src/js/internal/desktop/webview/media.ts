@@ -195,7 +195,7 @@ class Host {
   engineClosed() {
     if (running !== this) return;
     running = undefined;
-    for (const listener of [...this.listeners.values()]) listener.closed();
+    for (const listener of Array.from(this.listeners.values())) listener.closed();
     this.listeners.$clear();
   }
 }

@@ -297,8 +297,9 @@ function hidePopover(
     setInTopLayer(node, false, doc);
     if (node === doc.hintParent || stack(doc, "hint").length === 0) doc.hintParent = null;
     if (fires && !isNested) queueToggle(node, false, source, pendingPopoverToggles);
-    if (restoresFocus && hadFocus && popover.previousFocus !== null) {
-      focusing.focus(popover.previousFocus, focusing.SCRIPT, { preventScroll: true });
+    const { previousFocus } = popover;
+    if (restoresFocus && hadFocus && previousFocus !== null) {
+      focusing.focus(previousFocus, focusing.SCRIPT, { preventScroll: true });
     }
   } finally {
     if (!isNested) popover.isHiding = false;
@@ -512,8 +513,9 @@ function invoke(button: N, origin: N) {
     if (popover === null) return;
     if (popover !== button && core.containsComposed(popover, origin) && core.containsComposed(button, popover)) return;
     const action = asciiLower(getAttr(button, "popovertargetaction") ?? "");
-    if (isShowing(popover)) action !== "show" && hidePopover(popover, false, true, button);
-    else if (action !== "hide") showPopover(popover, false, button);
+    if (isShowing(popover)) {
+      if (action !== "show") hidePopover(popover, false, true, button);
+    } else if (action !== "hide") showPopover(popover, false, button);
     return;
   }
   const command = commandOf(button);
@@ -615,8 +617,8 @@ function reveal(node: N) {
   const hiding: [N, boolean][] = [];
   for (let at: N | null = node; at !== null; at = core.flatParent(at) ?? at.parent) {
     if (isUntilFound(at)) hiding.push([at, false]);
-    if (isHtml(at.parent, "details") && !isDetailsSummary(at) && !hasAttr(at.parent!, "open"))
-      hiding.push([at.parent!, true]);
+    const { parent } = at;
+    if (isHtml(parent, "details") && !isDetailsSummary(at) && !hasAttr(parent!, "open")) hiding.push([parent!, true]);
   }
   for (const [it, isDetails] of hiding) {
     if (!(it.flags & CONNECTED) || (isDetails ? hasAttr(it, "open") : !isUntilFound(it))) return;
@@ -683,7 +685,8 @@ function enterFullscreen(node: N) {
     hideAbove(doc, popoverAround(node), false);
     setFullscreen(node, true);
   }
-  if (doc.container !== null) doc.container.enterFullscreen();
+  const { container } = doc;
+  if (container !== null) container.enterFullscreen();
   else doc.page!.host.fullscreen?.(true);
 }
 
@@ -724,7 +727,8 @@ function leaveFullscreen(doc: Doc, forFrame: N | null) {
   if (forFrame !== null && (top !== forFrame || fullscreenFrames.has(forFrame))) return;
   if (top !== null) setFullscreen(top, false);
   if (fullscreenElement(doc) !== null) return;
-  if (doc.container !== null) doc.container.leaveFullscreen();
+  const { container } = doc;
+  if (container !== null) container.leaveFullscreen();
   else doc.page!.host.fullscreen?.(false);
 }
 
@@ -746,6 +750,9 @@ function exitFullscreenFully(page: Page): boolean {
   return true;
 }
 
+const transitions = () => require("internal/desktop/dom/view_transition");
+const transitionScope = (node: N) => (node === core.documentElement(node.doc) ? null : node);
+
 function requestPrefixed(this: any, options: any = {}) {
   prefixedRequests.add(this.$impl);
   requestFullscreen(this.$impl, options).catch(() => {});
@@ -756,6 +763,15 @@ core.mixin(
     async requestFullscreen(this: any, options: any = {}) {
       prefixedRequests.delete(this.$impl);
       await requestFullscreen(this.$impl, options);
+    },
+    startViewTransition(this: any, update: any = undefined) {
+      const node: N = this.$impl;
+      return transitions().start(node.doc.page, update, transitionScope(node));
+    },
+    get activeViewTransition() {
+      const node: N = (this as any).$impl;
+      const { page } = node.doc;
+      return (page && transitions().active(page, transitionScope(node))?.js) ?? null;
     },
     webkitRequestFullscreen: requestPrefixed,
     webkitRequestFullScreen: requestPrefixed,

@@ -97,8 +97,12 @@ class Page {
 
   sendState() {
     const ids = { processId: -this.options.id, osProcessId: 0 };
-    const frames = Array.from(this.frames.values(), ({ session: _, world: __, ...frame }) => ({
-      ...{ ...frame, ...ids, routingId: frame.id, frameTreeNodeId: frame.id, frameToken: frame.key },
+    const frames = Array.from(this.frames.values(), ({ session: _session, world: __, ...frame }) => ({
+      ...frame,
+      ...ids,
+      routingId: frame.id,
+      frameTreeNodeId: frame.id,
+      frameToken: frame.key,
     }));
     this.backend.receive("state", this.options.id, { ...this.state, isLoadingMainFrame: this.state.isLoading, frames });
   }
@@ -222,7 +226,7 @@ class Page {
     "Page.frameNavigated": async ({ frame }, session) => {
       this.addFrame(frame.id, session, frame.parentId);
       const known = this.frames.$get(frame.id)!;
-      for (const other of [...this.frames.values()]) if (other.parent === known.id) this.removeFrame(other.key);
+      for (const other of Array.from(this.frames.values())) if (other.parent === known.id) this.removeFrame(other.key);
       const url = fromEngine(frame.unreachableUrl ?? frame.url + (frame.urlFragment ?? ""));
       // Until the context of its scripts tells whether it is sandboxed.
       Object.assign(known, { url, name: frame.name ?? "", origin: "null", world: undefined });
@@ -420,7 +424,7 @@ const toHeaders = (headers: object) =>
 
 class Backend {
   nextId = 1;
-  userAgent = require("internal/desktop/app").app.userAgentFallback;
+  userAgent = (require("internal/desktop/app").app as any).userAgentFallback;
   media = {};
   sessions = new Map<number, Session>();
   views = new Map<number, Page>();
@@ -495,10 +499,10 @@ class Backend {
     const page = this.pages.$get(frameId);
     const isDocument = resourceType === "Document";
     const isMainFrame = isDocument && frameId === page?.target;
-    if (isMainFrame && page.isExpected && request.url === page.stub?.url) {
-      return page.stub.url.startsWith("file:")
+    if (isMainFrame && page!.isExpected && request.url === page!.stub?.url) {
+      return page!.stub!.url.startsWith("file:")
         ? reply("continueRequest")
-        : fulfill(200, { "content-type": "text/html" }, page.stub.html);
+        : fulfill(200, { "content-type": "text/html" }, page!.stub!.html);
     }
     // A worker has no frame. What cannot be put to the listeners of a session that has some does not go out.
     const only = this.sessions.size === 1 ? [...this.sessions.values()][0] : undefined;
@@ -506,9 +510,12 @@ class Backend {
     if (!session) return this.#refuse(params, "BlockedByClient");
     const url = fromEngine(request.url);
     if (isDocument) session.visited.add(originOf(url));
-    const ask = (name: string, more?: object) => {
+    const ask = (name: string, more?: object): any => {
       const details = {
-        ...{ id: +requestId.replace(/\D/g, "").slice(-15), url, method: request.method, timestamp: Date.now() },
+        id: +requestId.replace(/\D/g, "").slice(-15),
+        url,
+        method: request.method,
+        timestamp: Date.now(),
         resourceType: isMainFrame ? "mainFrame" : isDocument ? "subFrame" : (resourceTypes[resourceType] ?? "other"),
         referrer: fromEngine(request.headers.Referer ?? ""),
         webContents: page && this.handle("view", page.options.id),
@@ -550,9 +557,10 @@ class Backend {
     }
     const before = await ask("onBeforeRequest");
     if (before.cancel) return this.#refuse(params, "BlockedByClient");
-    if (before.redirectURL) return fulfill(307, { location: toEngine(before.redirectURL) });
+    const { redirectURL } = before;
+    if (redirectURL) return fulfill(307, { location: toEngine(redirectURL) });
     const { extraHeaders, postData } =
-      (isMainFrame && page.isExpected && !redirectedRequestId && page.options.request) || {};
+      (isMainFrame && page!.isExpected && !redirectedRequestId && page!.options.request) || {};
     let headers = { ...request.headers };
     for (const line of extraHeaders?.split("\n") ?? [])
       if (line) headers[line.split(":")[0]] = line.slice(line.indexOf(":") + 1).trim();
@@ -669,7 +677,14 @@ class Backend {
     } of cookies) {
       if (partitionKey) continue;
       now.$set(`${domain}\n${path}\n${name}`, {
-        ...{ name, value, domain, hostOnly: domain[0] !== ".", path, secure, httpOnly, session: isSession },
+        name,
+        value,
+        domain,
+        hostOnly: domain[0] !== ".",
+        path,
+        secure,
+        httpOnly,
+        session: isSession,
         sameSite: Object.keys(sameSites).find(it => sameSites[it] === sameSite) ?? "unspecified",
         ...(!isSession && { expirationDate: expires }),
       });
@@ -795,16 +810,14 @@ class Backend {
       const convert =
         (expires?: number) =>
         ({ name, value, domain, path, secure, httpOnly, sameSite, expirationDate }: any) => ({
-          ...{
-            name,
-            value,
-            domain,
-            path,
-            secure,
-            httpOnly,
-            sameSite: sameSites[sameSite],
-            expires: expires ?? expirationDate,
-          },
+          name,
+          value,
+          domain,
+          path,
+          secure,
+          httpOnly,
+          sameSite: sameSites[sameSite],
+          expires: expires ?? expirationDate,
         });
       const set = (cookie: object) =>
         this.engine.inspect("Storage.setCookies", { cookies: [cookie], browserContextId: session.context });
@@ -848,8 +861,8 @@ class Backend {
       const { targetId } = await this.engine.inspect("Target.createTarget", where);
       const { sessionId } = await this.engine.inspect("Target.attachToTarget", { targetId, flatten: true });
       await this.#adopt(options, targetId, sessionId);
-      if (options.preferences.preload)
-        this.views.$get(options.id)!.emit("preload-error", {}, options.preferences.preload, unsupported("preload"));
+      const { preload } = options.preferences;
+      if (preload) this.views.$get(options.id)!.emit("preload-error", {}, preload, unsupported("preload"));
     },
     destroy: (id: number) => this.engine.inspect("Target.closeTarget", { targetId: this.views.$get(id)?.target }),
     painted: (id: number) => {

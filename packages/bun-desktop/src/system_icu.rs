@@ -42,12 +42,19 @@ struct Functions {
 // SAFETY: these are their signatures.
 static ICU: LazyLock<Functions> = LazyLock::new(|| unsafe {
     Functions {
-        script_name: transmute(symbol("uscript_getShortName")),
+        script_name: transmute::<*mut c_void, extern "C" fn(i32) -> &'static [u8; 4]>(symbol(
+            "uscript_getShortName",
+        )),
         normalizer: transmute::<*mut c_void, extern "C" fn(&mut i32) -> usize>(symbol(
             "unorm2_getNFCInstance",
         ))(&mut 0),
-        decompose: transmute(symbol("unorm2_getRawDecomposition")),
-        compose: transmute(symbol("unorm2_composePair")),
+        decompose: transmute::<
+            *mut c_void,
+            extern "C" fn(usize, u32, &mut [u16; 4], i32, &mut i32) -> i32,
+        >(symbol("unorm2_getRawDecomposition")),
+        compose: transmute::<*mut c_void, extern "C" fn(usize, u32, u32) -> i32>(symbol(
+            "unorm2_composePair",
+        )),
     }
 });
 
@@ -79,10 +86,9 @@ static HOST: LazyLock<Host> = LazyLock::new(|| {
     unsafe {
         let nothing: Host =
             transmute([missing as extern "C" fn(); size_of::<Host>() / size_of::<usize>()]);
-        let (character_property, mirror) = (
-            transmute(symbol("u_getIntPropertyValue")),
-            transmute(symbol("u_charMirror")),
-        );
+        let character_property: extern "C" fn(u32, u32) -> i32 =
+            transmute(symbol("u_getIntPropertyValue"));
+        let mirror: extern "C" fn(u32) -> u32 = transmute(symbol("u_charMirror"));
         Host {
             character_property,
             mirror,

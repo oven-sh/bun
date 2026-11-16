@@ -47,7 +47,7 @@ class Mirror {
         const before = realm.page;
         realm.page = mirror.page;
         try {
-          const result = run.$apply(this, arguments);
+          const result = (run as any).$apply(this, arguments);
           return isOpaque ? result : mirror.adopt(result);
         } catch (error) {
           throw mirror.adopt(error);

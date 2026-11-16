@@ -52,7 +52,7 @@ pub(crate) struct Compositor {
 
 /// Leaves out those that interpolation gives.
 pub(crate) fn simplify<const N: usize>(
-    samples: Vec<(f32, [f32; N])>,
+    samples: &[(f32, [f32; N])],
     tolerance: [f32; N],
 ) -> Vec<(f32, [f32; N])> {
     let mut kept = Vec::new();
@@ -172,12 +172,7 @@ impl Document {
         let has_image = |style: &Style| style.background.image.iter().any(|it| it.0.is_some());
         let by_engine = !style.scroll.snap_type.is_empty()
             || has_image(style)
-                && (id == VIEWPORT
-                    || style
-                        .background
-                        .attachment
-                        .iter()
-                        .any(|it| *it == Attachment::Local))
+                && (id == VIEWPORT || style.background.attachment.contains(&Attachment::Local))
             || id == VIEWPORT
                 && self
                     .tree

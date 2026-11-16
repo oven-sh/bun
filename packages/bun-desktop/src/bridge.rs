@@ -71,7 +71,7 @@ static EDITS: AtomicU32 = AtomicU32::new(0);
 static EDITS_TAKEN: AtomicU32 = AtomicU32::new(0);
 
 pub fn will_edit_text() {
-    count_input();
+    INPUTS.fetch_add(1, Ordering::Relaxed);
     EDITS.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -216,22 +216,6 @@ pub fn emit_latest(json: Value) {
 
 static INPUTS: AtomicU32 = AtomicU32::new(0);
 
-#[cfg(target_os = "macos")]
-thread_local! {
-    static LAST_INPUT: std::cell::Cell<std::time::Instant> = std::cell::Cell::new(std::time::Instant::now());
-}
-
-fn count_input() {
-    INPUTS.fetch_add(1, Ordering::Relaxed);
-    #[cfg(target_os = "macos")]
-    LAST_INPUT.set(std::time::Instant::now());
-}
-
-#[cfg(target_os = "macos")]
-pub fn last_input() -> std::time::Instant {
-    LAST_INPUT.get()
-}
-
 /// How many events there were whose result the user is waiting for.
 pub fn inputs() -> u32 {
     INPUTS.load(Ordering::Relaxed)
@@ -245,7 +229,7 @@ pub fn emit_numbers(kind: Kind, fields: &[f64], is_replaceable: bool) {
     if matches!(kind, Kind::Key | Kind::Text | Kind::Resize)
         || kind == Kind::Mouse && !is_replaceable
     {
-        count_input();
+        INPUTS.fetch_add(1, Ordering::Relaxed);
     }
     let event = Queued {
         kind,

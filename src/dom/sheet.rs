@@ -4,6 +4,7 @@ use core::cell::{Cell, OnceCell, RefCell};
 use core::ops::Range;
 use std::rc::{Rc, Weak};
 
+use bun_core::strings;
 use bun_css::Token;
 
 use crate::condition::{self, Condition, ContainerCondition, Feature};
@@ -130,7 +131,10 @@ fn without_quirks(name: &str, source: &[u8]) -> Option<Out> {
                 }
                 (Token::Function(name), _) if eq(name, "rect") => {
                     out.extend_from_slice(b"rect(");
-                    nested(p, |p| Some(visit(p, source, is_color, out)));
+                    nested(p, |p| {
+                        visit(p, source, is_color, out);
+                        Some(())
+                    });
                     out.push(b')');
                 }
                 _ => {
@@ -144,8 +148,11 @@ fn without_quirks(name: &str, source: &[u8]) -> Option<Out> {
     }
     let name = ["-top", "-right", "-bottom", "-left"]
         .iter()
-        .fold(name.to_owned(), |name, side| name.replace(side, ""));
-    let is_color = matches!(&*name, "color" | "background-color" | "border-color");
+        .fold(name.as_bytes().to_vec(), |name, side| {
+            strings::replace_owned(&name, side.as_bytes(), b"")
+        });
+    let name = text(&name);
+    let is_color = matches!(name, "color" | "background-color" | "border-color");
     (is_color || LENGTHS.split_ascii_whitespace().any(|it| it == name)).then_some(())?;
     let mut out = Out::new();
     with_parser(source, |p| visit(p, source, is_color, &mut out));
@@ -1027,7 +1034,7 @@ impl Sheet {
                             .ok()
                     }
                 };
-                let mut numbers = text(value).split(' ').filter_map(number);
+                let mut numbers = strings::split(value, b" ").map(text).filter_map(number);
                 match (numbers.next(), numbers.next()) {
                     (Some(a), b) => offers[index] = [a.min(b.unwrap_or(a)), a.max(b.unwrap_or(a))],
                     _ if matches!(&**value, b"italic" | b"oblique") => {
@@ -1649,8 +1656,11 @@ impl Builder {
         cx: &Rc<Context>,
         depth: u8,
     ) {
+        if depth >= MAX_NESTING {
+            return;
+        }
         let mut declarations = at..at;
-        while depth < MAX_NESTING {
+        loop {
             match if owner.is_some() {
                 scan::next_item(source, at)
             } else {

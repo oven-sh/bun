@@ -90,7 +90,7 @@ class MessageEvent extends Event {
     source: unknown = null,
     ports: unknown = [],
   ) {
-    this.#data;
+    void this.#data;
     need(arguments.length, 1);
     if (this.eventPhase !== 0) return;
     Event.prototype.initEvent.$call(this, type, bubbles, cancelable);
@@ -118,7 +118,7 @@ const transfers: WeakMap<object, Transfer> = scope.env.transfers;
 
 /** `begin` throws if the object cannot be transferred. */
 function transferable(prototype: object, begin: (value: any) => Transfer, serialize?: Function) {
-  $putByIdDirectPrivate(prototype, "transferrer", begin);
+  $putByIdDirectPrivate(prototype as any, "transferrer", begin);
   idl.serializable(prototype, (value, isForStorage) => {
     const transfer = transfers.get(value);
     if (transfer) return transfer.record;
@@ -156,7 +156,7 @@ function serialize<T>(message: unknown, list: object[], send: (envelope: unknown
       const begin = isAnyArrayBuffer(value) || value instanceof NativePort ? undefined : transferrerOf(value);
       if (begin === undefined) moved.push(value);
       else {
-        const transfer: Transfer = begin(value);
+        const transfer: Transfer = (begin as any)(value);
         transfers.set(value, transfer);
         own.push(transfer);
         moved.push(...transfer.moved);
@@ -304,7 +304,7 @@ class MessagePort extends EventTarget {
   }
 
   postMessage(message: unknown, options: any = undefined) {
-    this.#peer;
+    void this.#peer;
     need(arguments.length, 1);
     const list = transferList(options);
     if (list.includes(this)) throw error("DataCloneError", "A port cannot be transferred through itself.");
@@ -476,7 +476,7 @@ function writableEnd(port: MessagePort) {
   });
 }
 
-const { pipeTo } = ReadableStream.prototype;
+const { pipeTo } = ReadableStream.prototype as any;
 
 function transferStream(kind: string, stream: any, pipe: (port: MessagePort) => Promise<void>): Transfer {
   if (stream.locked) throw error("DataCloneError", "A locked stream cannot be transferred.");

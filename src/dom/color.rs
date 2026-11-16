@@ -1020,7 +1020,7 @@ impl Specified {
                     let filled = Node::Value(rest, Unit::Percent);
                     if let Some(share) = share
                         .as_ref()
-                        .or(are_literal.then_some(&filled))
+                        .or_else(|| are_literal.then_some(&filled))
                         .filter(|_| !are_literal || !are_even)
                     {
                         out.push(b' ');
@@ -1145,12 +1145,11 @@ impl Palette {
     fn get(&self, rgba: u32, index: u16) -> Exact {
         match usize::from(index).checked_sub(FIRST_PASSING) {
             None => self.exact[usize::from(index)],
-            Some(at) => {
-                (self.passing.get(at).copied().filter(|it| it.rgba() == rgba)).unwrap_or(Exact {
+            Some(at) => (self.passing.get(at).copied().filter(|it| it.rgba() == rgba))
+                .unwrap_or_else(|| Exact {
                     is_legacy: false,
                     ..Exact::legacy(rgba)
-                })
-            }
+                }),
         }
     }
 

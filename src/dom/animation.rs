@@ -1369,7 +1369,9 @@ impl Document {
     pub(crate) fn stop_compositing(&mut self) -> bool {
         self.catch_up_with_compositor();
         let sampled: Vec<_> = self.compositor.sampled.keys().copied().collect();
-        sampled.into_iter().for_each(|it| self.forget_samples(it));
+        for it in sampled {
+            self.forget_samples(it);
+        }
         self.pictures.discard();
         core::mem::take(&mut self.compositor.is_on)
     }
@@ -1807,10 +1809,10 @@ impl Document {
                 && !it.overridden.contains(Overridden::TIMELINE)
         };
         let all = self.animations.all.iter().filter(|it| follows_name(it.1));
-        for (id, node, timeline) in all
+        let followers: Vec<_> = all
             .map(|(id, it)| (*id, it.owner, it.css_timeline.clone()))
-            .collect::<Vec<_>>()
-        {
+            .collect();
+        for (id, node, timeline) in followers {
             let clock = self.css_clock(node, &timeline);
             self.change_clock(id, clock);
         }
@@ -2201,12 +2203,12 @@ impl Document {
             }
         }
         let linear = 0.05 / size[0].max(size[1]).max(1.0);
-        let transforms = simplify(transforms, [linear, linear, linear, linear, 0.05, 0.05]);
+        let transforms = simplify(&transforms, [linear, linear, linear, linear, 0.05, 0.05]);
         Some(Sampled {
             timeline,
             size,
             transforms,
-            opacities: simplify(opacities, [0.002]),
+            opacities: simplify(&opacities, [0.002]),
         })
     }
 
@@ -2229,7 +2231,9 @@ impl Document {
             .symmetric_difference(&self.animations.watched)
             .copied()
             .collect();
-        changed.into_iter().for_each(|it| self.repaint_box(it));
+        for it in changed {
+            self.repaint_box(it);
+        }
         for node in nodes.into_iter().filter(|_| self.compositor.is_on) {
             let own = self.own_box(node);
             let size = own.map_or([0.0; 2], |it| {
@@ -2327,7 +2331,7 @@ impl Document {
     // ───────────────────────────── from styles ─────────────────────────────
 
     fn find_keyframes(&self, node: NodeId, name: &str) -> Option<Rc<[Keyframe]>> {
-        if let Some(found) = self.transition_keyframes(name) {
+        if let Some(found) = self.transition_keyframes(node, name) {
             return Some(found);
         }
         match self
@@ -2520,10 +2524,7 @@ impl Document {
                     .filter(|it| it.1.interpolates())
                     .map(|it| *it.0);
                 changed.extend(registered.filter(differs).map(Target::Custom));
-                if t.behavior
-                    .iter()
-                    .any(|it| *it == TransitionBehavior::AllowDiscrete)
-                {
+                if t.behavior.contains(&TransitionBehavior::AllowDiscrete) {
                     let others = before
                         .customs
                         .names()
@@ -2697,10 +2698,7 @@ impl Document {
         } else {
             generated.into_iter().find(is_it).unwrap_or(0)
         };
-        let target = self
-            .transition_part(pseudo)
-            .filter(|_| self.tree.is_root(node))
-            .unwrap_or(target);
+        let target = self.transition_part(node, pseudo).unwrap_or(target);
         let Some(animation) = self.animations.all.get_mut(&id) else {
             return;
         };

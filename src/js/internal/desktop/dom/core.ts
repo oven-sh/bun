@@ -784,9 +784,10 @@ function attachShadow(host: N, userAgent: boolean): N {
   if (host.flags & F.Connected) root.scope = root;
   rare(host).shadow = root;
   host.flags |= F.Host;
-  if (host.id !== 0) {
+  const { id } = host;
+  if (id !== 0) {
     const doc = host.doc;
-    doc.nodes[(root.id = doc.engine.attachShadow(host.id, userAgent) | 0)] = root;
+    doc.nodes[(root.id = doc.engine.attachShadow(id, userAgent) | 0)] = root;
     invalidate(doc);
   }
   return root;
@@ -823,7 +824,8 @@ function following(node: N, root: N | null): N | null {
 
 function followingSkip(node: N | null, root: N | null): N | null {
   for (; node !== null && node !== root; node = node.parent) {
-    if (node.next !== null) return node.next;
+    const { next } = node;
+    if (next !== null) return next;
   }
   return null;
 }
@@ -859,7 +861,8 @@ function flatChildren(node: N): N[] {
 }
 
 function rootOf(node: N): N {
-  if (node.scope !== null) return node.scope;
+  const { scope } = node;
+  if (scope !== null) return scope;
   while (node.parent !== null) node = node.parent;
   return node;
 }
@@ -909,7 +912,8 @@ function indexOf(node: N): number {
 
 function childArray(node: N): N[] {
   const extra = rare(node);
-  if (extra.nodeCache !== null) return extra.nodeCache;
+  const { nodeCache } = extra;
+  if (nodeCache !== null) return nodeCache;
   const list: N[] = [];
   for (let child = node.first; child !== null; child = child.next) list.push(child);
   node.flags |= F.ChildCache;
@@ -918,7 +922,8 @@ function childArray(node: N): N[] {
 
 function elementChildren(node: N): N[] {
   const extra = rare(node);
-  if (extra.elementCache !== null) return extra.elementCache;
+  const { elementCache } = extra;
+  if (elementCache !== null) return elementCache;
   const list: N[] = [];
   for (let child = node.first; child !== null; child = child.next) if (child.type === ELEMENT) list.push(child);
   node.flags |= F.ChildCache;
@@ -1098,13 +1103,15 @@ function invalidateIfDirty(doc: Doc) {
 
 /** The engine, after it was told what JavaScript had put off. */
 function sync(doc: Doc): Engine {
-  if (doc.container !== null) doc.container.measure();
+  const { container } = doc;
+  if (container !== null) container.measure();
   if (doc.needsSync) {
     doc.needsSync = false;
     const dirty = doc.dirtyStyles;
-    if (dirty.length > 0) {
+    const { length } = dirty;
+    if (length > 0) {
       doc.dirtyStyles = [];
-      for (let i = 0; i < dirty.length; i++) if (dirty[i].flags & F.StyleUnsent) hooks.sendStyle(dirty[i], dirty[i].id);
+      for (let i = 0; i < length; i++) if (dirty[i].flags & F.StyleUnsent) hooks.sendStyle(dirty[i], dirty[i].id);
     }
     if (doc.dirtyControls.size > 0) hooks.flushControls(doc);
     if (doc.dirtyScopes.size > 0) hooks.flushSheets(doc);
@@ -1138,15 +1145,18 @@ function mirrorOne(node: N, doc: Doc, engine: Engine): boolean {
       watchedChanged();
     }
     if (node.flags & F.BlocksWheel) engine.setBlocksWheel(id, true);
-    if (node.state !== 0) engine.setState(id, node.state, true);
+    const { state } = node;
+    if (state !== 0) engine.setState(id, state, true);
     doc.nodes[(node.id = id | 0)] = node;
     const extra = node.rare;
     if (extra !== null) {
       if (node.ns === OTHER) engine.setAttribute(id, "\0", extra.namespace ?? "");
-      if (extra.pseudo !== null) engine.setPseudo(id, extra.pseudo, extra.originator!.id);
+      const { pseudo } = extra;
+      if (pseudo !== null) engine.setPseudo(id, pseudo, extra.originator!.id);
       if (extra.isAnimated) afterMirror.push(node);
       if (extra.isStyleRefused) engine.removeAttribute(id, "style");
-      if (extra.customStates !== null) for (const name of extra.customStates) engine.setCustomState(id, name, true);
+      const { customStates } = extra;
+      if (customStates !== null) for (const name of customStates) engine.setCustomState(id, name, true);
     }
     if (node.kind.mirrored !== null) node.kind.mirrored(node);
     return true;
@@ -1182,7 +1192,10 @@ function mirroredFrom(node: N | null): number {
 function mirrorSlot(slot: N) {
   if (slot.id === 0) return;
   const ids: number[] = [];
-  for (const node of slotOf(slot).assigned) if (node.id !== 0) ids.push(node.id);
+  for (const node of slotOf(slot).assigned) {
+    const { id } = node;
+    if (id !== 0) ids.push(id);
+  }
   slot.doc.engine.assignSlot(slot.id, ids);
 }
 
@@ -1221,7 +1234,8 @@ function forgetIds(root: N, nodes: (N | null)[]) {
 function unmirror(node: N) {
   const { doc } = node;
   doc.engine.remove(node.id);
-  if (doc.page !== null) hooks.takeEngineEvents(doc.page);
+  const { page } = doc;
+  if (page !== null) hooks.takeEngineEvents(page);
   forgetIds(node, doc.nodes);
 }
 
@@ -1268,8 +1282,9 @@ function setState(node: N, bits: number, on: boolean) {
   const state = on ? node.state | bits : node.state & ~bits;
   if (state === node.state) return;
   node.state = state;
-  if (node.id !== 0) {
-    node.doc.engine.setState(node.id, bits, on);
+  const { id } = node;
+  if (id !== 0) {
+    node.doc.engine.setState(id, bits, on);
     invalidateIfDirty(node.doc);
   }
 }
@@ -1284,7 +1299,8 @@ function setQuirks(doc: Doc, mode: number) {
 function setPseudo(node: N, name: string, originator: N) {
   rare(node).pseudo = name;
   node.rare!.originator = originator;
-  if (node.id !== 0) node.doc.engine.setPseudo(node.id, name, originator.id);
+  const { id } = node;
+  if (id !== 0) node.doc.engine.setPseudo(id, name, originator.id);
 }
 
 function dirtyScope(scope: N) {
@@ -1505,7 +1521,8 @@ function slotsAfterInsert(node: N, parent: N) {
 
 function slotsAfterRemove(node: N, parent: N) {
   if (parent.flags & F.Host) {
-    if (node.rare !== null) node.rare.slot = null;
+    const { rare } = node;
+    if (rare !== null) rare.slot = null;
     assignSlots(parent.rare!.shadow!);
   }
   const root = rootOf(parent);
@@ -1623,10 +1640,12 @@ function insertOne(node: N, parent: N, before: N | null, isMove: boolean) {
   const parentFlags = parent.flags;
   if (parentFlags & F.Connected) connect(node, parent.scope!, isMove);
   else if (parentFlags & F.UserAgent) markControl(node);
-  if (parent.id !== 0) {
-    if (isMove && node.id !== 0) parent.doc.engine.moveNode(parent.id, node.id, mirroredFrom(before));
-    else if (node.id !== 0) parent.doc.engine.insert(parent.id, node.id, mirroredFrom(before));
-    else mirror(node, parent.id);
+  const { id } = parent;
+  if (id !== 0) {
+    const nodeId = node.id;
+    if (isMove && nodeId !== 0) parent.doc.engine.moveNode(id, nodeId, mirroredFrom(before));
+    else if (node.id !== 0) parent.doc.engine.insert(id, node.id, mirroredFrom(before));
+    else mirror(node, id);
     invalidate(parent.doc);
   }
   if (slotsExist) slotsAfterInsert(node, parent);
@@ -1684,7 +1703,8 @@ function remove(node: N, suppress = false, keepMirror = false, isMove = false) {
   if (doc.iterators.size > 0) hooks.iteratorsBeforeRemove(node);
   const { prev, next } = node;
   const wasConnected = node.flags & F.Connected;
-  if (wasConnected && doc.page !== null) doc.page.beforeRemove(node, isMove);
+  const { page } = doc;
+  if (wasConnected && page !== null) page.beforeRemove(node, isMove);
   if (node.parent !== parent) return;
   unlink(node, parent);
   let removed: N[] | undefined;
@@ -1737,7 +1757,8 @@ function adoptTree(root: N, doc: Doc, old: Doc) {
 function adopt(node: N, doc: Doc) {
   if (node.parent !== null) remove(node);
   else if (node.flags & F.TemporaryRoot) dropTemporary(node);
-  if (node.doc !== doc) adoptTree(node, doc, node.doc);
+  const nodeDoc = node.doc;
+  if (nodeDoc !== doc) adoptTree(node, doc, nodeDoc);
 }
 
 function hierarchyError(message: string) {
@@ -1839,13 +1860,15 @@ function replaceAllWithText(text: string, parent: N) {
 function replaceData(node: N, offset: number, count: number, data: string) {
   const old = node.data;
   if (offset > old.length) throw domError("IndexSizeError", "The offset is greater than the node's length.");
-  if (offset + count > old.length) count = old.length - offset;
+  const { length } = old;
+  if (offset + count > length) count = length - offset;
   const doc = node.doc;
   if (doc.observed & 4) queueRecord(4, node, null, null, old, null, null, null, null);
   node.data = count === old.length ? data : old.slice(0, offset) + data + old.slice(offset + count);
   if (node.flags & F.HasRanges) hooks.rangesAfterReplaceData(node, offset, count, data.length);
-  if (node.id !== 0) {
-    doc.engine.setText(node.id, node.data);
+  const { id } = node;
+  if (id !== 0) {
+    doc.engine.setText(id, node.data);
     invalidate(doc);
   }
   const parent = node.parent;
@@ -1879,7 +1902,8 @@ function clone(node: N, doc: Doc, deep: boolean, parent: N | null = null, fallba
         copy.flags |= node.flags & F.HasNamespacedAttr;
         for (let i = 0; i < attrs.length; i += 2) setAttr(copy, attrs[i], attrs[i + 1]);
       }
-      if (node.rare?.nonce) rare(copy).nonce = node.rare.nonce;
+      const nodeRare = node.rare;
+      if (nodeRare?.nonce) rare(copy).nonce = nodeRare.nonce;
       break;
     }
     case DOCUMENT: {
@@ -1923,7 +1947,8 @@ function clone(node: N, doc: Doc, deep: boolean, parent: N | null = null, fallba
     to.availableToInternals = from.availableToInternals;
     to.referenceTarget = from.referenceTarget;
     to.keepsRegistryNull = from.keepsRegistryNull;
-    if (shadow.rare?.registry !== undefined) rare(root).registry = shadow.rare.registry;
+    const shadowRare = shadow.rare;
+    if (shadowRare?.registry !== undefined) rare(root).registry = shadowRare.registry;
     for (let child = shadow.first; child !== null; child = child.next) clone(child, doc, true, root);
   }
   return copy;
@@ -2009,9 +2034,10 @@ function namespacedAttributeChanged(node: N, key: string, old: string | null, va
   doc.attributeVersion++;
   node.flags |= F.HasNamespacedAttr;
   if (doc.observed & 2) queueRecord(2, node, name, namespace, old, null, null, null, null);
-  if (node.id !== 0 && old !== value) {
-    if (value === null) doc.engine.removeAttribute(node.id, engineKey(key));
-    else doc.engine.setAttribute(node.id, engineKey(key), value);
+  const { id } = node;
+  if (id !== 0 && old !== value) {
+    if (value === null) doc.engine.removeAttribute(id, engineKey(key));
+    else doc.engine.setAttribute(id, engineKey(key), value);
     invalidateIfDirty(doc);
   }
   if (node.flags & F.Custom && node.rare!.definition!.observed.$has(name)) {
@@ -2024,9 +2050,10 @@ function attributeChanged(node: N, name: string, old: string | null, value: stri
   const doc = node.doc;
   doc.attributeVersion++;
   if (doc.observed & 2) queueRecord(2, node, name, null, old, null, null, null, null);
-  if (node.id !== 0 && old !== value) {
-    if (value === null) doc.engine.removeAttribute(node.id, name);
-    else doc.engine.setAttribute(node.id, name, value);
+  const { id } = node;
+  if (id !== 0 && old !== value) {
+    if (value === null) doc.engine.removeAttribute(id, name);
+    else doc.engine.setAttribute(id, name, value);
     invalidateIfDirty(doc);
   }
   if (node.flags & F.Custom && node.rare!.definition!.observed.$has(name)) {
@@ -2036,9 +2063,10 @@ function attributeChanged(node: N, name: string, old: string | null, value: stri
     case "class":
       return;
     case "id":
-      if (node.scope !== null) {
-        if (old) removeId(node.scope, old, node);
-        if (value) addId(node.scope, value, node);
+      const { scope } = node;
+      if (scope !== null) {
+        if (old) removeId(scope, old, node);
+        if (value) addId(scope, value, node);
       }
       node.flags = value ? node.flags | F.HasId : node.flags & ~F.HasId;
       if (node.flags & F.Named || node.name === "object") nameChanged(node);
@@ -2047,12 +2075,14 @@ function attributeChanged(node: N, name: string, old: string | null, value: stri
       nameChanged(node);
       break;
     case "style":
-      if (node.style !== null) node.style.list = null;
+      const { style } = node;
+      if (style !== null) style.list = null;
       if (old !== value) node.flags &= ~F.StyleUnsent;
       if (doc.checksStyleAttributes) hooks.checkStyleAttribute(node, value);
       return;
     case "slot":
-      if (node.parent !== null && node.parent.flags & F.Host) assignSlots(node.parent.rare!.shadow!);
+      const { parent } = node;
+      if (parent !== null && parent.flags & F.Host) assignSlots(parent.rare!.shadow!);
       break;
     case "blocking":
       invalidate(doc);
@@ -2065,7 +2095,10 @@ function attributeChanged(node: N, name: string, old: string | null, value: stri
       break;
     default:
       if (name.charCodeAt(0) === 111 && name.charCodeAt(1) === 110) hooks.handlerAttribute(node, name, value);
-      else if (node.rare !== null && node.rare.references !== null) node.rare.references.$delete(name);
+      else {
+        const { rare } = node;
+        if (rare !== null && rare.references !== null) rare.references.$delete(name);
+      }
   }
   if (node.kind.attribute !== null) node.kind.attribute(node, name, old, value);
 }
@@ -2144,11 +2177,12 @@ function expose<T extends { prototype: object; name: string }>(ctor: T, constant
     Object.defineProperty(ctor, key, descriptor);
     Object.defineProperty(ctor.prototype, key, descriptor);
   }
+  const ctorPrototype = ctor.prototype;
   if (
-    Object.getPrototypeOf(ctor.prototype) === Object.prototype &&
-    $getByIdDirectPrivate(ctor.prototype, "cloner") === undefined
+    Object.getPrototypeOf(ctorPrototype) === Object.prototype &&
+    $getByIdDirectPrivate(ctorPrototype, "cloner") === undefined
   ) {
-    $putByIdDirectPrivate(ctor.prototype, "cloner", false);
+    $putByIdDirectPrivate(ctorPrototype as any, "cloner", false);
   }
   makeEnumerable(ctor.prototype);
   makeEnumerable(ctor);

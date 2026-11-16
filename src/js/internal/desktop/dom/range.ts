@@ -2,14 +2,12 @@ const core = require("internal/desktop/dom/core");
 const { contextOf } = require("internal/desktop/dom/node");
 const { DOMRect, rectList } = require("internal/desktop/dom/geometry");
 
-const { ELEMENT, ATTRIBUTE, TEXT, COMMENT, DOCUMENT, DOCTYPE, FRAGMENT, INSTRUCTION } = core;
-const { domError, expose, hooks, indexOf, isData, isText, lengthOf, rare, react, rootOf, unwrap, wrap, wrapOrNull } =
-  core;
+const { ELEMENT, ATTRIBUTE, COMMENT, DOCUMENT, DOCTYPE, FRAGMENT, INSTRUCTION } = core;
+const { domError, expose, hooks, indexOf, isData, isText, lengthOf, rare, react, rootOf, unwrap, wrap } = core;
 const { HAS_RANGES } = core.flags;
 
 type N = $Dom.N;
 type Doc = $Dom.Doc;
-type Page = $Dom.Page;
 
 /** A live range. The nodes that it starts and ends in know it. */
 class R {
@@ -49,7 +47,8 @@ class R {
 
   detach() {
     unregister(this.startNode, this);
-    if (this.endNode !== this.startNode) unregister(this.endNode, this);
+    const { endNode } = this;
+    if (endNode !== this.startNode) unregister(endNode, this);
   }
 
   /** Both ends, through `move`, which returns nothing for an end that stays. */
@@ -389,7 +388,8 @@ class ValueRange {
   }
 
   disconnect() {
-    if (this.control !== null) core.invalidate(this.control.node.doc);
+    const { control } = this;
+    if (control !== null) core.invalidate(control.node.doc);
     this.control = null;
     this.startOffset = this.endOffset = 0;
   }
@@ -679,7 +679,7 @@ class Traversal {
         node = child;
         continue;
       }
-      for (let sibling; (sibling = first ? node.next : node.prev) === null;) {
+      while ((first ? node.next : node.prev) === null) {
         node = node.parent!;
         if (node === null || node === this.root || node === this.node) return null;
       }
@@ -888,7 +888,8 @@ class S {
     this.composed?.detach();
     this.composed = null;
     this.isInShadow = range !== null && isInAuthorShadow(range.$impl.startNode);
-    if (this.range !== null) this.range.$impl.selection = null;
+    const ownRange = this.range;
+    if (ownRange !== null) ownRange.$impl.selection = null;
     this.range = range;
     this.backward = backward;
     if (range !== null) range.$impl.selection = this;
@@ -952,7 +953,8 @@ class S {
     const r = this.span;
     if (r === null || r.collapsed) return "";
     const control = core.outOfControl(r.startNode);
-    if (control !== r.startNode && control.x?.isText) return control.x.selectedText();
+    const controlX = control.x;
+    if (control !== r.startNode && controlX?.isText) return controlX.selectedText();
     return core.sync(this.doc).renderedText(...toEngine(r), true);
   }
 }

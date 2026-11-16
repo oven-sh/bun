@@ -72,7 +72,9 @@ fn picture(file: &[u8], size: u32) -> Option<([u16; 4], &[u8])> {
         .strip_prefix(b"Xcur")
         .map(|_| file.part(file.u32(4) as usize, count * 12))?;
     let images = contents
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .filter(|entry| entry.u32(0) == IMAGE);
     let at = images
         .min_by_key(|entry| entry.u32(4).abs_diff(size))?
@@ -88,8 +90,12 @@ fn picture(file: &[u8], size: u32) -> Option<([u16; 4], &[u8])> {
 fn format_with_alpha(x: &Connection, render: Extension) -> Option<u32> {
     x.forget(x.ask(Request::new(render.opcode, 0).words(&[0, 11])));
     let reply = x.call(Request::new(render.opcode, 1)).ok()?;
-    let mut formats = reply.part(32, reply.u32(8) as usize * 28).chunks_exact(28);
-    let is_argb = |it: &&[u8]| {
+    let mut formats = reply
+        .part(32, reply.u32(8) as usize * 28)
+        .as_chunks::<28>()
+        .0
+        .iter();
+    let is_argb = |it: &&[u8; 28]| {
         it[4] == 1 && it[5] == 32 && (it.u16(8), it.u16(20), it.u16(22)) == (16, 24, 255)
     };
     Some(formats.find(is_argb)?.u32(0))

@@ -70,19 +70,23 @@ class Text {
               ? 0
               : RENDERED | IS_VISIBLE | (display.startsWith("inline") || display === "contents" ? 0 : BLOCK);
         }
-        if (node.type !== core.ELEMENT) {
-          if (node.type !== core.TEXT || (bits & (RENDERED | IS_VISIBLE)) !== (RENDERED | IS_VISIBLE)) continue;
+        const { type } = node;
+        if (type !== core.ELEMENT) {
+          if (type !== core.TEXT || (bits & (RENDERED | IS_VISIBLE)) !== (RENDERED | IS_VISIBLE)) continue;
           let offset = 0;
           for (const character of node.data) {
             if (character.trim() !== "") add(fold(character), node, offset);
             else if (units.at(-1) !== " " && units.at(-1) !== BOUNDARY) add(" ", node, offset);
             offset += character.length;
           }
-        } else if (bits & (RENDERED | CONTENTS) && !(node.ns === core.HTML && isOpaque.test(node.name))) {
-          if (bits & BLOCK) add(BOUNDARY, node, 0);
-          else if (node.name === "br" && units.at(-1) !== " ") add(" ", node, 0);
-          visit(node, isRevealed || canBeRevealed(node));
-          if (bits & BLOCK) add(BOUNDARY, node, 0);
+        } else {
+          const { name } = node;
+          if (bits & (RENDERED | CONTENTS) && !(node.ns === core.HTML && isOpaque.test(name))) {
+            if (bits & BLOCK) add(BOUNDARY, node, 0);
+            else if (name === "br" && units.at(-1) !== " ") add(" ", node, 0);
+            visit(node, isRevealed || canBeRevealed(node));
+            if (bits & BLOCK) add(BOUNDARY, node, 0);
+          }
         }
       }
     };

@@ -6,11 +6,10 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::ptr::null_mut;
 use std::sync::{Arc, LazyLock};
 
-use crate::hash::FastMap;
-use skrifa::{FontRef, MetadataProvider as _, Tag};
-
 use super::decoded::map;
 use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE};
+use super::sfnt::{self, variations};
+use crate::hash::FastMap;
 
 pub type FamilyId = u32;
 
@@ -290,14 +289,14 @@ impl Catalog {
             }),
         };
         let loaded = font.is(c"variable").then(|| self.load(&font)).flatten();
-        let Some(font) = loaded.and_then(|(data, index)| FontRef::from_index(data, index).ok())
-        else {
+        let Some(font) = loaded.and_then(|(data, index)| sfnt::Font::new(data, index)) else {
             return capabilities;
         };
-        let range = |tag| {
-            font.axes()
-                .get_by_tag(Tag::new(tag))
-                .map(|axis| (axis.min_value(), axis.max_value()))
+        let axes = variations::axes(&font);
+        let range = |tag: &sfnt::Tag| {
+            axes.iter()
+                .find(|axis| axis.tag == *tag)
+                .map(|axis| (axis.min, axis.max))
         };
         capabilities.weight = range(b"wght").unwrap_or(capabilities.weight);
         capabilities.stretch = range(b"wdth").unwrap_or(capabilities.stretch);

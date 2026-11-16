@@ -173,8 +173,9 @@ class MouseInit {
     this.modifierBits = modifiers & 48;
     this.relatedTarget = wrapOrNull(related && outOfControl(related));
     this.pressure = mouse.buttons !== 0 ? 0.5 : 0;
-    if (mouse.id !== POINTER || mouse.tappedBy !== null) {
-      const { id, type, isPrimary, details } = mouse.tappedBy ?? mouse;
+    const { tappedBy } = mouse;
+    if (mouse.id !== POINTER || tappedBy !== null) {
+      const { id, type, isPrimary, details } = tappedBy ?? mouse;
       Object.assign(this, { pointerId: id, pointerType: type, isPrimary }, details);
     }
   }
@@ -345,7 +346,8 @@ function settleCapture(page: Page) {
 function pointerTarget(page: Page): N | null {
   settleCapture(page);
   const { mouse } = page;
-  if (mouse.lock !== null) return mouse.lock;
+  const { lock } = mouse;
+  if (lock !== null) return lock;
   const target = mouse.capture ?? elementAt(page, mouse.x, mouse.y);
   hover(page, target);
   return target !== null && target.flags & CONNECTED ? target : elementAt(page, mouse.x, mouse.y);
@@ -698,7 +700,8 @@ function handleFileDrag(page: Page, event: any) {
     mouse.drag = { source: null, data, over: null, effect: "none", movesSelection: false };
   }
   if (event.e !== "leave") dragOver(page);
-  if (event.e === "leave" || event.e === "drop") endDrag(page, event.e === "drop");
+  const eventE = event.e;
+  if (eventE === "leave" || eventE === "drop") endDrag(page, eventE === "drop");
 }
 
 // ───────────────────────────── the mouse ─────────────────────────────
@@ -748,7 +751,7 @@ function startResizing(page: Page, node: N) {
   const { x, y } = mouse;
   const cursor = doc.engine.cursorAt(x, y);
   const cssom = require("internal/desktop/dom/cssom");
-  const { width, height } = cssom.computedStyle(node, "");
+  const { width, height } = cssom.computedStyle(node, "") as any;
   const style = cssom.styleOf(node);
   mouse.onScrollbar = true;
   mouse.onMove = (toX, toY) => {
@@ -1039,13 +1042,53 @@ function describePoint(page: Page, x: number, y: number) {
 
 const keyCodes: Record<string, number | undefined> = {
   __proto__: null as any,
-  ...{ Backspace: 8, Tab: 9, Enter: 13, NumpadEnter: 13, Pause: 19, CapsLock: 20, Escape: 27, Space: 32 },
-  ...{ ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17, AltLeft: 18, AltRight: 18 },
-  ...{ PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 },
-  ...{ PrintScreen: 44, Insert: 45, Delete: 46, MetaLeft: 91, MetaRight: isMac ? 93 : 92, ContextMenu: 93 },
-  ...{ NumpadMultiply: 106, NumpadAdd: 107, NumpadSubtract: 109, NumpadDecimal: 110, NumpadDivide: 111 },
-  ...{ NumLock: 144, ScrollLock: 145, Semicolon: 186, Equal: 187, Comma: 188, Minus: 189, Period: 190, Slash: 191 },
-  ...{ Backquote: 192, BracketLeft: 219, Backslash: 220, BracketRight: 221, Quote: 222, IntlBackslash: 226 },
+  Backspace: 8,
+  Tab: 9,
+  Enter: 13,
+  NumpadEnter: 13,
+  Pause: 19,
+  CapsLock: 20,
+  Escape: 27,
+  Space: 32,
+  ShiftLeft: 16,
+  ShiftRight: 16,
+  ControlLeft: 17,
+  ControlRight: 17,
+  AltLeft: 18,
+  AltRight: 18,
+  PageUp: 33,
+  PageDown: 34,
+  End: 35,
+  Home: 36,
+  ArrowLeft: 37,
+  ArrowUp: 38,
+  ArrowRight: 39,
+  ArrowDown: 40,
+  PrintScreen: 44,
+  Insert: 45,
+  Delete: 46,
+  MetaLeft: 91,
+  MetaRight: isMac ? 93 : 92,
+  ContextMenu: 93,
+  NumpadMultiply: 106,
+  NumpadAdd: 107,
+  NumpadSubtract: 109,
+  NumpadDecimal: 110,
+  NumpadDivide: 111,
+  NumLock: 144,
+  ScrollLock: 145,
+  Semicolon: 186,
+  Equal: 187,
+  Comma: 188,
+  Minus: 189,
+  Period: 190,
+  Slash: 191,
+  Backquote: 192,
+  BracketLeft: 219,
+  Backslash: 220,
+  BracketRight: 221,
+  Quote: 222,
+  IntlBackslash: 226,
 };
 
 function keyCodeOf(key: string, code: string): number {

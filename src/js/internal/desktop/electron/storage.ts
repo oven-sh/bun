@@ -62,7 +62,7 @@ class IndexedDatabase {
 
   erase() {
     const sql = this.#sql;
-    for (const connection of [...this.connections]) (connection as any).forceClose();
+    for (const connection of Array.from(this.connections)) (connection as any).forceClose();
     sql.transaction(() => {
       for (const store of Object.values<any>(this.meta.stores)) {
         for (const { table } of [store, ...Object.values<any>(store.indexes)]) {

@@ -98,7 +98,7 @@ function encodePng(bgra: Uint8Array, width: number, height: number) {
   return Buffer.concat([
     Buffer.from("89504e470d0a1a0a", "hex"),
     chunk("IHDR", header),
-    chunk("IDAT", deflateSync(rows, { level: 1 })),
+    chunk("IDAT", deflateSync(rows, { level: 1 }) as any),
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
@@ -202,7 +202,7 @@ function subscribe(center: string, name: string, callback: Function) {
 }
 const unsubscribe = (id: number) => void subscriptions.$delete(id);
 require("internal/desktop/app").systemEvents.notification = (name: string) => {
-  for (const [wanted, callback] of [...subscriptions.values()]) if (wanted === name) callback(name, {}, "");
+  for (const [wanted, callback] of Array.from(subscriptions.values())) if (wanted === name) callback(name, {}, "");
 };
 
 const sessionEvents = {
@@ -301,7 +301,7 @@ inert(api.Tray.prototype, {
 class Tray extends api.Tray {
   constructor(image: unknown) {
     try {
-      super(image);
+      super(image as any);
     } catch {
       let isDestroyed = false;
       const tray = inert(new EventEmitter(), {
@@ -468,7 +468,7 @@ const processMethods = {
   },
   getSystemVersion: () => (isMac ? (macVersion ??= readMacVersion()) : os.release()),
   setFdLimit() {},
-  takeHeapSnapshot: (file: string) => !!require("node:v8").writeHeapSnapshot(file),
+  takeHeapSnapshot: (file: string) => !!require("node:v8").writeHeapSnapshot(file, undefined),
 };
 
 export default {

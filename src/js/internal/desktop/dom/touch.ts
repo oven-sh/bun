@@ -158,21 +158,17 @@ function place(page: Page, finger: Finger, point: any, modifiers: number) {
   const { x: clientX, y: clientY, screenX, screenY } = pointer;
   const { width = 1, height = 1, pressure = 1 } = point.details;
   finger.touch = new Touch({
-    ...{
-      identifier: finger.identifier,
-      target: core.wrap(core.outOfControl(finger.target)),
-      clientX,
-      clientY,
-      screenX,
-      screenY,
-    },
-    ...{
-      pageX: clientX + page.scroll(0),
-      pageY: clientY + page.scroll(1),
-      radiusX: width / 2,
-      radiusY: height / 2,
-      force: pressure,
-    },
+    identifier: finger.identifier,
+    target: core.wrap(core.outOfControl(finger.target)),
+    clientX,
+    clientY,
+    screenX,
+    screenY,
+    pageX: clientX + page.scroll(0),
+    pageY: clientY + page.scroll(1),
+    radiusX: width / 2,
+    radiusY: height / 2,
+    force: pressure,
   });
 }
 
@@ -186,14 +182,17 @@ function fireTouch(page: Page, type: string, changed: Finger[], m: number): bool
     const isOn = (finger: Finger) => finger.target === target;
     const isBlocking = type === "touchend" || events.hasBlockingListenerAbove(target, type);
     const event = new TouchEvent(type, {
-      ...{ bubbles: true, composed: true, view: page.window },
+      bubbles: true,
+      composed: true,
+      view: page.window,
       cancelable: type !== "touchcancel" && isBlocking && !changed.some(it => it.isScrolling),
-      ...{
-        touches: touchesOf(all),
-        targetTouches: touchesOf(all.filter(isOn)),
-        changedTouches: touchesOf(changed.filter(isOn)),
-      },
-      ...{ shiftKey: m & 1, ctrlKey: m & 2, altKey: m & 4, metaKey: m & 8 },
+      touches: touchesOf(all),
+      targetTouches: touchesOf(all.filter(isOn)),
+      changedTouches: touchesOf(changed.filter(isOn)),
+      shiftKey: m & 1,
+      ctrlKey: m & 2,
+      altKey: m & 4,
+      metaKey: m & 8,
     });
     if (!events.dispatch(target, event)) proceeds = false;
   }

@@ -118,7 +118,8 @@ function spread(frames: Keyframe[]): Keyframe[] {
     if ((previous = offset) < 0 || offset > 1) throw new TypeError("Offsets must be null or in the range [0,1].");
   }
   if (plain.length > 1) offsets[0] ??= 0;
-  if (plain.length > 0) offsets[plain.length - 1] ??= 1;
+  const { length } = plain;
+  if (length > 0) offsets[length - 1] ??= 1;
   for (let known = 0, i = 1; i < plain.length; i++) {
     if (offsets[i] === null) continue;
     for (let j = known + 1; j < i; j++) {
@@ -201,8 +202,10 @@ function normalizeKeyframes(input: any): Keyframe[] {
       .map(at => byOffset.$get(at)!);
     frames.forEach((frame, index) => {
       setOffset(frame, offsets[index]);
-      if (easings.length > 0) frame.easing = easings[index % easings.length];
-      if (operations.length > 0) frame.composite = operations[index % operations.length];
+      const { length } = easings;
+      if (length > 0) frame.easing = easings[index % length];
+      const operationsLength = operations.length;
+      if (operationsLength > 0) frame.composite = operations[index % operationsLength];
     });
     unusedEasings = easings.slice(frames.length);
   }
@@ -792,7 +795,7 @@ class Animation extends events.EventTarget {
     const { doc } = given?.page ?? (timeline === null ? effect?.$impl?.target?.doc.page : null) ?? core.realm.page;
     const it = (this.#player = new Player(this, doc, adoptedId || doc.engine.reserveAnimation()));
     adoptedId = 0;
-    it.timeline = timeline === undefined ? doc.page.timeline.$impl : given;
+    it.timeline = timeline === undefined ? doc.page!.timeline.$impl : given;
     this.effect = effect;
   }
   get id() {
@@ -812,9 +815,10 @@ class Animation extends events.EventTarget {
     if (effect === it.effect) return;
     if (effect?.player) effect.player.js.effect = null;
     if (it.last[At.PlayState] !== State.Idle) it.revive();
-    if (it.effect !== null) {
-      it.effect.refresh(true);
-      it.effect.player = null;
+    const itEffect = it.effect;
+    if (itEffect !== null) {
+      itEffect.refresh(true);
+      itEffect.player = null;
     }
     it.effect = effect;
     if (effect !== null) effect.player = it;
@@ -883,7 +887,8 @@ class Animation extends events.EventTarget {
     if (this.#player.effect === null) return null;
     this.#player.revive();
     const state = this.#player.state();
-    if (state[At.EndTime] === 0) return state[At.CurrentTime] < 0 ? 0 : orNull(state[At.CurrentTime] * 0 + 1);
+    if (state[At.EndTime] === 0)
+      return state[At.CurrentTime] < 0 ? 0 : Number.isFinite(state[At.CurrentTime]) ? 1 : null;
     return orNull(Math.min(Math.max(state[At.CurrentTime] / state[At.EndTime], 0), 1));
   }
   get finished() {
@@ -935,7 +940,7 @@ class Animation extends events.EventTarget {
       throw domError("InvalidStateError", "Target element is not rendered.");
     }
     const values = it.doc.engine.committedStyles(it.revive());
-    styleOf(target).$impl.setAll(values);
+    (styleOf(target).$impl as any).setAll(values);
     it.releaseIfOver();
   }
 }
@@ -1025,7 +1030,7 @@ class ViewTimeline extends ScrollTimeline {
     super();
     const { axis = "block", inset = "auto", subject } = options ?? {};
     const isList = $isObject(inset) && inset[Symbol.iterator] != null;
-    const insets = canonicalValue("view-timeline-inset", isList ? Array.from(inset).join(" ") : `${inset}`);
+    const insets = canonicalValue("view-timeline-inset", isList ? Array.from(inset as any).join(" ") : `${inset}`);
     if (insets === null || !isAbsoluteRange.test(insets)) throw new TypeError("Invalid inset");
     watch(this.$impl, elementOrNull(subject), `view(${oneOf(axis, axes, "ScrollAxis")} ${insets})`);
   }

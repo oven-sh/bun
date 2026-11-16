@@ -789,7 +789,10 @@ impl Grid {
     }
 
     pub fn around(&self, is_included: impl Fn(usize) -> bool) -> IntRect {
-        let (mut rows, mut columns) = (i32::MAX..0, i32::MAX..0);
+        let [mut rows, mut columns] = [(); 2].map(|()| Range {
+            start: i32::MAX,
+            end: 0,
+        });
         for row in self.rows_of(self.window) {
             let is_included = |column: &i32| is_included(self.start_of(row) + *column as usize);
             let mut all = self.columns_of(self.window);
@@ -962,6 +965,24 @@ fn survey_again(
             }
         }
     }
+}
+
+/// The columns of pixels where what is behind may show.
+#[cfg(target_os = "macos")]
+pub fn see_through(primitives: &[Primitive], all: IntRect) -> Range<i32> {
+    let is_opaque = |it: &&Primitive| matches!(it.kind, Kind::Quad { color, .. } if bgra(color, it.opacity)[3] == 255);
+    let walls = primitives
+        .iter()
+        .filter(is_opaque)
+        .map(uniform_part)
+        .filter(|it| it.top <= all.top && it.bottom >= all.bottom);
+    walls.fold(all.left..all.right, |open, wall| {
+        match (wall.left <= open.start, wall.right >= open.end) {
+            (_, true) => open.start..open.end.min(wall.left).max(open.start),
+            (true, _) => open.start.max(wall.right)..open.end,
+            _ => open,
+        }
+    })
 }
 
 /// How many are the same at the start, and what is left without them and those that are the same at the end.

@@ -84,15 +84,9 @@ It is not part of Bun's binary. Bun downloads it for `bun:desktop`, and `--deskt
 
 | Library | License |
 |---------|---------|
-| [`harfrust`](https://github.com/harfbuzz/harfrust) | MIT |
-| [`skrifa`](https://github.com/googlefonts/fontations) | MIT or Apache 2.0 |
 | [`libc`](https://github.com/rust-lang/libc) | MIT or Apache 2.0 |
-| [`bitflags`](https://github.com/bitflags/bitflags) | MIT or Apache 2.0 |
-| [`bytemuck`](https://github.com/Lokathor/bytemuck) | Zlib, MIT or Apache 2.0 |
-| [`once_cell`](https://github.com/matklad/once_cell) | MIT or Apache 2.0 |
-| [`smallvec`](https://github.com/servo/rust-smallvec) | MIT or Apache 2.0 |
 
-`bun:desktop` embeds the [Public Suffix List](https://publicsuffix.org/list/) (MPL 2.0). Parts of its layout, painting and line breaking follow algorithms of [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) (BSD 3-Clause; parts of Blink are LGPL 2). The stroker in the UI library (`src/gfx/stroke.rs`) is derived from [Skia](https://skia.googlesource.com/skia) and [`tiny-skia`](https://github.com/linebender/tiny-skia) (BSD 3-Clause). Its text shaper (`src/text/shaper`) is derived from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) (["Old MIT"](https://github.com/harfbuzz/harfbuzz/blob/main/COPYING)) and [`harfrust`](https://github.com/harfbuzz/harfrust) (MIT). Its hinter (`src/text/autohint`) is derived from [FreeType](https://freetype.org) ([FreeType License](https://gitlab.freedesktop.org/freetype/freetype/-/blob/master/docs/FTL.TXT); portions are copyright © The FreeType Project, all rights reserved) and [`skrifa`](https://github.com/googlefonts/fontations) (MIT or Apache 2.0), and its font reader (`src/text/sfnt`) follows `skrifa` in how it rounds.
+`bun:desktop` embeds the [Public Suffix List](https://publicsuffix.org/list/) (MPL 2.0). Parts of its layout, painting and line breaking follow algorithms of [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) (BSD 3-Clause; parts of Blink are LGPL 2). The stroker in the UI library (`src/gfx/stroke.rs`) is derived from [Skia](https://skia.googlesource.com/skia) and [`tiny-skia`](https://github.com/linebender/tiny-skia) (BSD 3-Clause). Its text shaper (`src/text/shaper`) is derived from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) (["Old MIT"](https://github.com/harfbuzz/harfbuzz/blob/main/COPYING)) and [`harfrust`](https://github.com/harfbuzz/harfrust) (MIT). Its hinters (`src/text/autohint`, `src/text/sfnt/cff/hints.rs`) are derived from [FreeType](https://freetype.org) ([FreeType License](https://gitlab.freedesktop.org/freetype/freetype/-/blob/master/docs/FTL.TXT); portions are copyright © The FreeType Project and Adobe Systems Incorporated, all rights reserved) and [`skrifa`](https://github.com/googlefonts/fontations) (MIT or Apache 2.0), and its font reader (`src/text/sfnt`) follows `skrifa` in how it rounds.
 
 ## Polyfills
 

@@ -104,7 +104,8 @@ class Frame extends Remote {
     const meta = (name: string, value: string) => `<meta ${name} content="${Bun.escapeHTML(value)}">`;
     const policies = String(page.csp).split(",").filter(Boolean);
     const head = policies.map(it => meta("http-equiv=Content-Security-Policy", it));
-    if (page.referrerPolicy) head.push(meta("name=referrer", page.referrerPolicy));
+    const { referrerPolicy } = page;
+    if (referrerPolicy) head.push(meta("name=referrer", referrerPolicy));
     const html = encodeURIComponent(`<!doctype html>${head.join("")}<body>`);
     const base = page.url.startsWith("about:") ? page.origin + "/" : page.url;
     this.tell("loadURL", `data:text/html,${html}`, { baseURLForDataURL: page.origin === "null" ? undefined : base });
@@ -130,7 +131,7 @@ class Frame extends Remote {
   #send(...message: unknown[]) {
     this.#sent = this.#sent.then(async () => {
       const blobs = new Map<any, unknown>();
-      wire.encode(message, it => (it instanceof Blob ? void blobs.$set(it, 0) || 0 : undefined));
+      wire.encode(message, it => (it instanceof Blob ? (blobs.$set(it, 0), 0) : undefined));
       for (const blob of blobs.keys()) {
         blobs.$set(blob, [await blob.arrayBuffer(), blob.type, blob.name, blob.lastModified]);
       }
@@ -166,7 +167,7 @@ class Frame extends Remote {
       return (top?.state ?? this.state).navigateFrom(top?.page ?? this.#page, event.url, event.initiator);
     }
     if (name === "render-process-gone") return this.engineClosed();
-    if (name.endsWith("-html-full-screen")) return this.#element.fullscreen(name.startsWith("enter"));
+    if (name.endsWith("-html-full-screen")) return (this.#element as any).fullscreen(name.startsWith("enter"));
     const isOfPage =
       name === "frame-created" ? args[0].frame === this.embedder : (event?.isMainFrame ?? args.at(-3) === true);
     if (ofSubframes.test(name) ? isOfPage : !ofAnyFrame.test(name)) return;

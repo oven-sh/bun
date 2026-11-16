@@ -515,7 +515,7 @@ impl Document {
         let it = &self.boxes[id];
         let edges = it.border_and_padding(0.0).sums();
         let limit = container.size[1]
-            .unwrap_or(it.height_limits(&Room::default(), edges, None)[1] - edges[1]);
+            .unwrap_or_else(|| it.height_limits(&Room::default(), edges, None)[1] - edges[1]);
         let (lines, mut sizes) = (break_lines(&items, container, limit), [0.0f32; 2]);
         for line in &lines {
             let (mut widest, mut ascents, mut descents) = (0.0, [f32::MIN; 2], [f32::MIN; 2]);

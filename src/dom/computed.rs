@@ -5,9 +5,10 @@ use std::rc::Rc;
 use crate::boxes::Kind;
 use crate::document::Document;
 use crate::grammar::Mode;
-use crate::name::name;
+use crate::name::{is_name, name};
 use crate::properties::{Id, Prop, Style, Value};
 use crate::selector::Pseudo;
+use crate::svg_values::PathData;
 use crate::tree::{DOCUMENT, Data, Element, Flags, Namespace, NodeId};
 use crate::types::*;
 use crate::values::{
@@ -132,10 +133,7 @@ impl Document {
             .chain(self.carousels.parts_of(id))
             .chain(self.tree.descendants(element.shadow_root))
             .find(is_it);
-        let found = found.or_else(|| {
-            self.transition_part(pseudo)
-                .filter(|_| self.tree.is_root(id))
-        });
+        let found = found.or_else(|| self.transition_part(id, pseudo));
         if let Some(found) = found {
             return Some((found, self.style_on_demand(found)?));
         }
@@ -251,12 +249,36 @@ impl Document {
             return write_px(length, out);
         }
         let own = self.own_box(node);
-        let size = own.map_or(Default::default(), |it| self.boxes[it].layout.size);
+        let size = own.map_or_else(Default::default, |it| self.boxes[it].layout.size);
         match id {
             Id::LineHeight if style.font.line_height != LineHeight::Normal => {
                 write_px(style.line_height(), out)
             }
             Id::FontSize => write_px(style.font.size.0, out),
+            Id::D
+                if style.shape.d == PathData::Attribute
+                    && let Some(path) =
+                        self.tree.element(node).filter(|it| it.tag == name!("path")) =>
+            {
+                let data = path
+                    .attribute(name!("d"))
+                    .and_then(crate::path::normalize)
+                    .filter(|it| !it.is_empty());
+                data.map_or(PathData::None, |it| PathData::Path(it.into()))
+                    .write(out);
+            }
+            Id::Width | Id::Height
+                if style.display() != Display::None
+                    && let Some(shape) = self
+                        .svg_node(node)
+                        .filter(|it| is_name!(it.tag, "rect" | "image" | "foreignObject")) =>
+            {
+                write_px(
+                    shape.specified_size()[usize::from(id == Id::Height)].unwrap_or(0.0)
+                        * style.zoom,
+                    out,
+                );
+            }
             Id::Transform if own.is_none() && style.display() == Display::None => {
                 out.extend(b"none")
             }
@@ -398,7 +420,7 @@ impl Document {
             .for_each(|it| self.stop_lagging(it));
         match pseudo.is_empty() {
             true if self.is_in_skipped_contents(node) => {
-                self.update_skipped_values(node, &prop.longhands(crate::values::Flow::DEFAULT))
+                self.update_skipped_values(node, prop.longhands(crate::values::Flow::DEFAULT))
             }
             true => self.update_style_of(node),
             false => self.force(node, Document::update_style),

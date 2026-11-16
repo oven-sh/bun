@@ -6,6 +6,7 @@
 use super::buffer::{BASE, Glyph, LIGATED, LIGATURE, MARK, MULTIPLIED, SUBSTITUTED};
 use super::layout::{Apply, Lookup, Matcher, Positions, coverage, rules_for};
 use crate::text::sfnt::Data;
+use crate::text::sfnt::work::spend;
 use crate::unicode::category;
 
 pub const REVERSE: u16 = 8;
@@ -145,7 +146,7 @@ fn ligatures(set: Data) -> impl Iterator<Item = (u16, Data)> {
 pub fn apply(context: &mut Apply, kind: u16, table: Data) -> Option<()> {
     let glyph = context.current().id;
     let index = coverage(table.at16(2)?, glyph)?;
-    let listed = || Some(6 + index * 2).filter(|_| Some(index) < table.u16(4).map(usize::from));
+    let listed = || (Some(index) < table.u16(4).map(usize::from)).then_some(6 + index * 2);
     match kind {
         1 if table.u16(0)? == 1 => replace(context, (glyph as u16).wrapping_add(table.u16(4)?)),
         1 => replace(context, table.u16(listed()?)?),
@@ -173,9 +174,13 @@ pub fn apply(context: &mut Apply, kind: u16, table: Data) -> Option<()> {
                     .is_none_or(|(wanted, next)| u32::from(wanted) == next)
             };
             let matching = |(id, rest)| Some((id, context.match_input(rest, Matcher::Glyphs)?));
-            let (id, positions) = ligatures(table.at16(listed()?)?)
-                .filter(is_possible)
-                .find_map(matching)?;
+            let (id, positions) = ligatures(
+                table
+                    .at16(listed()?)
+                    .filter(|it| spend(it.u16(0).map_or(0, usize::from) * 4).is_some())?,
+            )
+            .filter(is_possible)
+            .find_map(matching)?;
             if positions.len() == 1 {
                 return replace(context, id);
             }

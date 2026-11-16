@@ -270,11 +270,11 @@ pub(crate) fn lerp_whole(from: &[u8], to: &[u8], t: Mixing) -> Option<Out> {
             .abs()
             .log2()
             .copysign(half - 0.5);
-        return Some(
-            format!("superellipse({})", parameter + 0.0)
-                .replace("inf", "infinity")
-                .into_bytes(),
-        );
+        return Some(strings::replace_owned(
+            format!("superellipse({})", parameter + 0.0).as_bytes(),
+            b"inf",
+            b"infinity",
+        ));
     }
     let color = |source| parse_all(source, |p| Color::parse(p, &Ctx::dummy()));
     Some(color(from)?.lerp(&color(to)?, t)?.written())
@@ -738,9 +738,10 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
     }),
     ("integers", |m, start, _| {
         let whole = |it: &[u8]| {
-            literal(it).map_or(it.to_vec(), |it| {
-                written(|out| write_double(it.trunc(), out))
-            })
+            literal(it).map_or_else(
+                || it.to_vec(),
+                |it| written(|out| write_double(it.trunc(), out)),
+            )
         };
         if m.out.len() > start {
             replace(m, start, |it| {
@@ -836,8 +837,8 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
                 return it;
             }
             let (a, b) = (
-                a.unwrap_or(100.0 - b.unwrap_or(50.0)),
-                b.unwrap_or(100.0 - a.unwrap_or(50.0)),
+                a.unwrap_or_else(|| 100.0 - b.unwrap_or(50.0)),
+                b.unwrap_or_else(|| 100.0 - a.unwrap_or(50.0)),
             );
             written(|out| {
                 out.extend([b"palette-mix(", items[0]].concat());

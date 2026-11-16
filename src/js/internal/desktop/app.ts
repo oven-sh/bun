@@ -295,7 +295,7 @@ class App extends EventEmitter {
     return ready;
   }
 
-  quit() {
+  quit(): any {
     if (quitting || !emitCancelable(this, "before-quit")) return;
     quitting = true;
     const windows = require("internal/desktop/window").Window.getAllWindows();
@@ -572,7 +572,7 @@ function closeCancelled() {
   quitting = false;
 }
 
-function allWindowsClosed() {
+function allWindowsClosed(): any {
   if (quitting) {
     if (!emitCancelable(app, "will-quit")) return closeCancelled();
     app.emit("quit", new Event(), process.exitCode ?? 0);

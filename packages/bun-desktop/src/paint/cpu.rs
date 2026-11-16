@@ -64,6 +64,8 @@ pub struct GlyphPlacer {
     matrix: Transform,
 }
 
+const LARGEST_HINTED: f32 = 48.;
+
 impl GlyphPlacer {
     pub fn new(
         frame: &Frame,
@@ -73,7 +75,6 @@ impl GlyphPlacer {
         size: f32,
         color: u32,
     ) -> Option<GlyphPlacer> {
-        const LARGEST_HINTED: f32 = 48.;
         let is_uniform = matrix.kx == 0.
             && matrix.ky == 0.
             && matrix.sx > 0.
@@ -1062,7 +1063,7 @@ impl Painter<'_> {
         smooth: bool,
     ) {
         const MAX_TILES: usize = 1 << 16;
-        let Tile { rect, step } = *tile;
+        let Tile { mut rect, mut step } = *tile;
         let draw = |target: &mut Layer, rect: Rect, matrix: &Transform| match content {
             Content::Pixels(pixmap) => draw_pixmap(target, pixmap, rect, matrix, smooth),
             Content::Svg(image) => image.draw(target, rect, matrix),
@@ -1100,6 +1101,38 @@ impl Painter<'_> {
             },
             &Transform::identity(),
         );
+        if step == [rect.width, rect.height]
+            && [rect.width * scale_x, rect.height * scale_y] == [width, height]
+            && width * height < 256.
+        {
+            let [columns, rows] = [width, height].map(|it| (64. / it).ceil());
+            let Some(mut many) = Layer::new(IntRect::new(
+                0,
+                0,
+                (width * columns) as i32,
+                (height * rows) as i32,
+            )) else {
+                return;
+            };
+            for (x, y) in (0..rows as u32).flat_map(|y| {
+                (0..columns as u32).map(move |x| (x as f32 * width, y as f32 * height))
+            }) {
+                draw_pixmap(
+                    &mut many,
+                    &cell.pixmap,
+                    Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    &Transform::identity(),
+                    false,
+                );
+            }
+            (cell, step) = (many, [step[0] * columns, step[1] * rows]);
+            [rect.width, rect.height] = step;
+        }
         let visible = matrix.invert().map_or(shape.rect, |inverse| {
             map_rect(&inverse, target.rect.to_rect())
         });
@@ -1168,9 +1201,21 @@ pub fn draw_glyphs(
             }
         }
     } else if let Some(face) = text::face(face) {
+        let is_turned =
+            matrix.sx.abs() + matrix.sy.abs() < 1e-4 && (matrix.kx + matrix.ky).abs() < 1e-4;
+        let hints = is_turned
+            && (matrix.kx.abs() - 1.).abs() < 1e-4
+            && size <= LARGEST_HINTED
+            && !cfg!(target_os = "macos");
         for glyph in glyphs {
-            let matrix = matrix.pre_translate(origin[0] + glyph.x, origin[1] + glyph.y);
-            if let Some(image) = text::rasterize(face, glyph.id, size, &matrix, false, color | 0xFF)
+            let mut matrix = matrix.pre_translate(origin[0] + glyph.x, origin[1] + glyph.y);
+            if is_turned {
+                (matrix.tx, matrix.ty) = (
+                    (matrix.tx + 0.5).floor(),
+                    (matrix.ty * 4. + 0.5).floor() / 4.,
+                );
+            }
+            if let Some(image) = text::rasterize(face, glyph.id, size, &matrix, hints, color | 0xFF)
             {
                 draw_glyph(layer, &image, 0, 0, clip, color);
             }

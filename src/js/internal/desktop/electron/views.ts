@@ -89,7 +89,7 @@ class View extends EventEmitter {
 
   #rearrange() {
     const window = this[kView].window();
-    if (window && !window.isDestroyed()) window.contentView[kView].arrange(window);
+    if (window && !window.isDestroyed()) (window as any).contentView[kView].arrange(window);
   }
 
   get children() {
@@ -218,14 +218,15 @@ class BaseWindow extends Window {
       options.backgroundColor ?? (options.transparent || options.vibrancy ? "#00000000" : "#FFFFFF");
     this.setBackgroundColor(this.#backgroundColor);
     this.setContentView(new View());
-    if (options.titleBarOverlay && (options.titleBarStyle ?? "default") !== "default") {
-      this.#overlay = options.titleBarOverlay === true ? {} : { ...options.titleBarOverlay };
+    const { titleBarOverlay } = options;
+    if (titleBarOverlay && (options.titleBarStyle ?? "default") !== "default") {
+      this.#overlay = titleBarOverlay === true ? {} : { ...titleBarOverlay };
       this.#drawOverlay();
     }
     if (options.x === undefined && options.center !== false) this.center();
 
     const internal = (names: (string | symbol)[], listener: () => void) =>
-      names.forEach(name => this[kView].listeners.set(name, listener));
+      names.forEach(name => this[kView].listeners.set(name as any, listener));
     internal(["content-resized"], () => this.#layOut());
     internal(["show"], () => this.#drawOverlay());
     internal(
@@ -521,11 +522,11 @@ class BrowserWindow extends BaseWindow {
 
   addBrowserView(view: any) {
     this.#browserViews.$add(view);
-    this.contentView.addChildView(view);
+    (this as any).contentView.addChildView(view);
   }
 
   removeBrowserView(view: any) {
-    if (this.#browserViews.$delete(view)) this.contentView.removeChildView(view);
+    if (this.#browserViews.$delete(view)) (this as any).contentView.removeChildView(view);
   }
 
   setBrowserView(view: any) {

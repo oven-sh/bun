@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 acb83dbf3e3bada5e517564be2d6788ef7b67f2f7a6a703ef9b598aad210a215.
+// Written against that file with the SHA-256 0bf6ae0d70e614a184f8f35fcaa70857262258ac80e13b4f4334ba9856d6e271.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -42,7 +42,7 @@ declare global {
       $start(): void;
       [kRawModeState]?: Uint8Array;
       [kBlocks]?: boolean;
-      [kReader]?: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array>;
+      [kReader]?: any;
       ref(): this;
       unref(): this;
       setRawMode(flag: boolean): this;
@@ -156,7 +156,8 @@ const prototypeOfReadStream = {
 
     if (process.platform !== "win32") {
       // The descriptor may be non-blocking, as the master of a pty from node-pty is, so it has to be polled.
-      // One that blocks is taken for a file by the stream, which fails with ESPIPE before it has read anything.
+      // One that blocks is taken for a file by the stream, which fails before it has read anything:
+      // with ESPIPE, or ENXIO on macOS. kqueue refuses /dev/tty with EINVAL.
       Prototype._read = function (this: $Node.TTYReadStream, size: number) {
         if (!this.isTTY || this[kBlocks])
           return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
@@ -169,7 +170,8 @@ const prototypeOfReadStream = {
         reader.read().then(
           ({ value }) => this.push(value ?? null),
           error => {
-            if (error?.code !== "ESPIPE") return this.destroy(error);
+            const code = error?.code;
+            if (code !== "ESPIPE" && code !== "ENXIO" && code !== "EINVAL") return this.destroy(error);
             this[kBlocks] = true;
             this[kReader] = this.$bunNativePtr = undefined;
             this._read(size);

@@ -1,7 +1,7 @@
 const core = require("internal/desktop/dom/core");
 const events = require("internal/desktop/dom/events");
 const { imageOfArea, parseInteger, scrollIntoView, styleBits } = require("internal/desktop/dom/html");
-const { selectionOf } = require("internal/desktop/dom/range");
+require("internal/desktop/dom/range");
 
 const { ELEMENT, HTML, SVG, flags, getAttr, hasAttr, hooks, isHtml, setState, states, wrapOrNull } = core;
 const { CONNECTED, HOST, SHADOW_ROOT, SLOT, USER_AGENT } = flags;
@@ -220,8 +220,9 @@ function setFocus(doc: Doc, node: N | null, cause: Cause, visible?: boolean): bo
 
 function noteKey(doc: Doc) {
   doc.page!.hadKey = true;
-  if (doc.focused !== null && !doc.page!.hidesFocus && !doc.page!.hasFocusedControl)
-    setState(doc.focused, states.FOCUS_VISIBLE, true);
+  const { focused } = doc;
+  if (focused !== null && !doc.page!.hidesFocus && !doc.page!.hasFocusedControl)
+    setState(focused, states.FOCUS_VISIBLE, true);
 }
 
 function focus(node: N, cause: Cause, options?: { preventScroll?: boolean; focusVisible?: boolean }) {

@@ -59,9 +59,9 @@ class WebSocket extends idl.EventTarget {
       const options = { protocols: list, headers: { ...headers }, proxy, tls };
       const native = (this.#native = new idl.native.WebSocket(allowed.url, options as any));
       native.binaryType = "arraybuffer";
-      native.onopen = () => idl.runTask(() => this.#opened());
-      native.onmessage = ({ data }) => idl.runTask(() => this.#received(data));
-      native.onclose = ({ wasClean, code, reason }) => idl.runTask(() => this.#closed(wasClean, code, reason));
+      (native as any).onopen = () => idl.runTask(() => this.#opened());
+      (native as any).onmessage = ({ data }) => idl.runTask(() => this.#received(data));
+      (native as any).onclose = ({ wasClean, code, reason }) => idl.runTask(() => this.#closed(wasClean, code, reason));
       scope.cleanups.add(this.#stop);
     }, failed);
   }
@@ -105,7 +105,7 @@ class WebSocket extends idl.EventTarget {
     return this.#binaryType;
   }
   set binaryType(value) {
-    this.#state;
+    void this.#state;
     value = `${value}`;
     if (value === "blob" || value === "arraybuffer") this.#binaryType = value;
   }
@@ -118,7 +118,7 @@ class WebSocket extends idl.EventTarget {
   }
 
   close(code: any = undefined, reason: any = undefined) {
-    this.#state;
+    void this.#state;
     if (code !== undefined) {
       const clamped = Math.min(Math.max(+code || 0, 0), 0xffff);
       code = Math.round(clamped) - (clamped % 2 === 0.5 ? 1 : 0);
@@ -137,7 +137,7 @@ class WebSocket extends idl.EventTarget {
   }
 
   send(data: any) {
-    this.#state;
+    void this.#state;
     idl.need(arguments.length, 1);
     const isBlob = $inheritsBlob(data);
     if (!isBlob) data = ($isObject(data) && idl.bytesOf(data)) || usv(data);

@@ -436,18 +436,32 @@ if (mac) {
   check("takes the focus", await until(() => sheet.isFocused(), 3000));
   sheet.close();
   check("and gives it back", await until(() => window.isFocused(), 3000));
-  const picture = async () => Bun.hash((await window.capturePage()).toPNG());
-  field.style.caretColor = "transparent";
-  field.value = "There are two mistakes in this sentence: helllo and wrold.";
-  field.focus();
-  await frame();
-  const unmarked = await picture();
-  let isMarked = false;
-  for (let i = 0; i < 20 && !isMarked; i++) {
-    await Bun.sleep(400);
-    isMarked = (await picture()) !== unmarked;
+  async function hasRed(element: any) {
+    const { OffscreenCanvas, Blob, createImageBitmap } = window.window as any;
+    const { x, y, width, height } = element.getBoundingClientRect();
+    const bitmap = await createImageBitmap(new Blob([(await window.capturePage({ x, y, width, height })).toPNG()]));
+    const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d");
+    context.drawImage(bitmap, 0, 0);
+    const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+    return data.some(
+      (red: number, at: number) => at % 4 === 0 && red > 200 && data[at + 1] < 110 && data[at + 2] < 110,
+    );
   }
-  check("spelling", isMarked, `focused ${window.isFocused()} ${document.activeElement === field}`);
+  list.removeAttribute("style");
+  const editor: any = field.parentNode.appendChild(document.createElement("div"));
+  editor.contentEditable = "true";
+  for (const it of [editor, field]) {
+    it.focus();
+    document.execCommand("selectAll");
+    document.execCommand("insertText", false, "There are two mistakes: helllo and wrold ");
+    let isMarked = false;
+    for (let i = 0; i < 20 && !isMarked; i++) {
+      await Bun.sleep(400);
+      isMarked = await hasRed(it);
+    }
+    check(`spelling in a ${it.localName}`, isMarked);
+  }
+  editor.remove();
   const tray = new Tray((await window.capturePage({ x: 100, y: 0, width: 9, height: 9 })).toPNG());
   await Bun.sleep(300);
   check("tray", tray.getBounds().height > 10 && tray.getBounds().height < 50, JSON.stringify(tray.getBounds()));

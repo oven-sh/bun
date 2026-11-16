@@ -47,11 +47,11 @@ pub(crate) fn unite(a: Rect, b: Rect) -> Rect {
 }
 
 pub(crate) fn view_box(element: &Element) -> Option<Rect> {
-    let rect = Rect::new(
-        Numbers::all(element.attribute(name!("viewBox"))?)?
-            .try_into()
-            .ok()?,
-    );
+    parse_view_box(element.attribute(name!("viewBox"))?)
+}
+
+pub(crate) fn parse_view_box(source: &str) -> Option<Rect> {
+    let rect = Rect::new(Numbers::all(source)?.try_into().ok()?);
     (rect.width >= 0.0 && rect.height >= 0.0).then_some(rect)
 }
 
@@ -97,11 +97,17 @@ pub(crate) fn parse_transform(source: &str) -> Option<Matrix> {
 }
 
 pub(crate) fn transform_attribute(element: &Element) -> Option<Matrix> {
-    parse_transform(element.attribute(match element.tag {
-        tag if is_name!(tag, "linearGradient" | "radialGradient") => name!("gradientTransform"),
-        tag if tag == name!("pattern") => name!("patternTransform"),
-        _ => name!("transform"),
-    })?)
+    parse_transform(
+        element
+            .attribute(match element.tag {
+                tag if is_name!(tag, "linearGradient" | "radialGradient") => {
+                    name!("gradientTransform")
+                }
+                tag if tag == name!("pattern") => name!("patternTransform"),
+                _ => name!("transform"),
+            })
+            .filter(|it| !it.trim_ascii().is_empty())?,
+    )
 }
 
 /// What `preserveAspectRatio` makes of `view` in an area of this size.
@@ -160,7 +166,7 @@ pub(crate) fn percent_decoded(mut rest: &[u8]) -> Vec<u8> {
 pub(crate) fn href(element: &Element) -> Option<&str> {
     element
         .attribute(name!("href"))
-        .or(element.attribute(name!("href http://www.w3.org/1999/xlink")))
+        .or_else(|| element.attribute(name!("href http://www.w3.org/1999/xlink")))
 }
 
 fn is_graphic(element: &Element) -> bool {
@@ -247,6 +253,10 @@ impl Node<'_> {
     }
 
     pub(crate) fn specified_size(&self) -> [Option<f32>; 2] {
+        if is_name!(self.tag, "svg" | "symbol" | "use") {
+            return [(name!("width"), 0), (name!("height"), 1)]
+                .map(|(name, axis)| Some(self.document.svg_length(self, name, axis)?.max(0.0)));
+        }
         let layout = &self.style.layout;
         [(&layout.width, 0), (&layout.height, 1)].map(|(size, axis)| match size {
             Size::Length(length) => Some(self.resolve(length, axis).max(0.0)),
@@ -471,6 +481,21 @@ impl Document {
 
     pub(crate) fn svg_resource(&self, from: NodeId, url: &str, tag: Name) -> Option<Node<'_>> {
         self.svg_resource_with(from, url, |it| it == tag)
+    }
+
+    /// `viewport` is that of what is filtered.
+    pub(crate) fn filter_element(
+        &self,
+        from: NodeId,
+        url: &str,
+        viewport: [f32; 2],
+    ) -> Option<Node<'_>> {
+        Some(Node {
+            viewport,
+            ..self
+                .svg_reference(from, url)
+                .filter(|it| it.tag == name!("filter"))?
+        })
     }
 
     /// One that is not in something with `display: none`.
@@ -719,6 +744,14 @@ impl Document {
         let (element, rect) = (node.element, self.viewport_rect(node));
         let view = match view_box(element) {
             Some(view) if view.is_empty() => return None,
+            Some(view)
+                if self.stretches_view && node.uses.is_none() && self.tree.is_root(node.id) =>
+            {
+                multiply(
+                    &scaling(rect.width / view.width, rect.height / view.height),
+                    &translation([-view.x, -view.y]),
+                )
+            }
             Some(view) => fit_view(element, view, [rect.width, rect.height]),
             None => self.synthesized_view(node, rect).map_or(IDENTITY, |it| {
                 scaling(rect.width / it.width, rect.height / it.height)
@@ -788,7 +821,7 @@ impl Document {
 
     pub(crate) fn svg_image(&self, node: &Node) -> Option<crate::tree::Replaced> {
         let url = href(node.element).filter(|it| !it.trim_ascii().is_empty())?;
-        self.image(&self.resolve_url(url))
+        self.oriented_image(&self.resolve_url(url), &node.style)
     }
 
     /// Of an `image` or a `foreignObject`.
@@ -982,7 +1015,7 @@ impl Document {
                     (it.offset[0].abs().max(it.offset[1].abs()) + it.blur * 3.0) / node.style.zoom,
                 ),
                 Filter::Url(url) => {
-                    self.svg_resource(node.id, url, name!("filter"))
+                    self.filter_element(node.id, url, node.viewport)
                         .map_or(ink, |filter| {
                             filter.document.resource_region(
                                 &filter,
@@ -1006,7 +1039,7 @@ impl Document {
         )
     }
 
-    fn has_geometry(&self, node: &Node) -> bool {
+    pub(crate) fn has_geometry(&self, node: &Node) -> bool {
         match is_name!(node.tag, "image" | "foreignObject") {
             true => !self.svg_rect(node).is_empty(),
             false => self
@@ -1030,7 +1063,9 @@ impl Document {
             return Vec::new();
         }
         let markers = urls.map(|url| {
-            let marker = self.svg_resource(node.id, &url.as_ref()?.0, name!("marker"))?;
+            let marker = self
+                .svg_reference(node.id, &url.as_ref()?.0)
+                .filter(|it| it.tag == name!("marker"))?;
             (!core::ptr::eq(self, marker.document)
                 || !self.tree.flat_ancestors(node.id).any(|it| it == marker.id))
             .then_some(())?;
@@ -1312,7 +1347,7 @@ impl Document {
             .unwrap_or_default();
         let [x, y] = at_distance(&path.pieces(), distance)
             .map(|it| it.0)
-            .or(path.start())
+            .or_else(|| path.start())
             .unwrap_or([f32::NAN; 2]);
         [path.length(), x, y]
     }

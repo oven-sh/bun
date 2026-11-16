@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 
+use crate::text::sfnt::work::spend;
 use crate::unicode::{self, category};
 
 pub const IGNORABLE: u16 = 1;
@@ -178,6 +179,7 @@ impl Buffer {
         glyphs[start..end]
             .iter_mut()
             .for_each(|it| it.cluster = cluster);
+        spend(end - start);
     }
 
     pub fn remove(&mut self, index: usize) -> Glyph {

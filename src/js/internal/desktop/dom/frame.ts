@@ -129,7 +129,7 @@ class Page {
   sizesVersion = -1;
   layoutVersion = -1;
   hasNewObservations = false;
-  timeline: object;
+  timeline: any;
   animations = new Map<number, $Dom.Player>();
   engineEvents: any[][] = [];
 
@@ -138,6 +138,7 @@ class Page {
   composition: $Dom.Composition | null = null;
   inputMethodState = new editing.InputMethodState();
   transition: any = null;
+  scopedTransitions = new Map<N, any>();
   suppressesRendering = false;
   openPicker: { node: N; close(): void } | null = null;
   bubble = 0;
@@ -192,7 +193,7 @@ class Page {
   hadInput = false;
   inputTime = 0;
   unpaintedSince = 0;
-  earlyPaintsLeft: int32 = 0;
+  earlyPaintsLeft = 0;
   hasPaintedContent = false;
   lazyImages = new Set<N>();
   autoSizedImages = new Set<N>();
@@ -247,10 +248,12 @@ class Page {
     this.doc.encoding = host.encoding ?? "utf-8";
     this.doc.contentType = host.contentType ?? "text/html";
     this.doc.lastModified = host.lastModified ?? null;
-    if (host.language) this.doc.engine.setLanguage(host.language);
+    const { language } = host;
+    if (language) this.doc.engine.setLanguage(language);
     this.doc.registry = createRegistry(this.doc);
     this.timeline = animation.createTimeline(this);
-    if (this.surface !== 0) this.attach(this.surface);
+    const { surface } = this;
+    if (surface !== 0) this.attach(surface);
     else this.readEnvironment();
   }
 
@@ -334,7 +337,7 @@ class Page {
       this.layoutVersion = this.sizesVersion = -1;
       this.isVisible = !this.isVisible;
       this.doc.scheduled = false;
-      if (!this.isVisible) this.transition?.fail();
+      if (!this.isVisible) for (const it of [this.transition, ...this.scopedTransitions.values()]) it?.fail();
       this.queueTask(() => events.fire(this.doc.node, "visibilitychange", true));
     }
     invalidate(this.doc);
@@ -391,9 +394,11 @@ class Page {
 
   schedule() {
     if (this.isDisposed || (!this.isVisible && this.hasPainted)) return;
-    if (this.container !== null) return this.container.schedule();
-    if (this.surface !== 0) {
-      this.native.requestFrame(this.surface);
+    const { container } = this;
+    if (container !== null) return container.schedule();
+    const { surface } = this;
+    if (surface !== 0) {
+      this.native.requestFrame(surface);
       this.tasks.wantsFrame(this);
     } else this.frameTimer ??= setTimeout(events.fromEventLoop, 16, updateRendering, this);
   }
@@ -417,6 +422,7 @@ class Page {
       this.surface === 0 ||
       this.container !== null ||
       this.transition !== null ||
+      this.scopedTransitions.size > 0 ||
       this.suppressesRendering
     )
       return;
@@ -466,7 +472,8 @@ class Page {
 
   topLayerChanged() {
     const ids = this.doc.topLayer.map(node => node.id).filter(Boolean);
-    if (this.bubble !== 0) ids.push(this.bubble);
+    const { bubble } = this;
+    if (bubble !== 0) ids.push(bubble);
     this.doc.engine.setTopLayer(ids);
     if (this.doc.focused !== null) core.hooks.markFocus(this.doc, true);
     invalidate(this.doc);
@@ -497,7 +504,8 @@ class Page {
   focusChanged() {
     if (this.composition !== null && this.composition.target !== editing.editTarget(this.doc)) this.composition = null;
     if (this.hasRemoteFrames) require("internal/desktop/dom/remote_frame").focusChanged(this);
-    if (this.container !== null && this.doc.focused !== null) this.container.focus();
+    const { container } = this;
+    if (container !== null && this.doc.focused !== null) container.focus();
     invalidate(this.doc);
   }
 
@@ -690,6 +698,7 @@ class Page {
       }
       this.doc.engine.controlSmil(0, 9, performance.now() - this.timeOrigin);
       this.doc.engine.controlSmil(0, 0, 0);
+      if (this.doc.engine.isAnimating()) invalidate(this.doc);
       for (const node of core.filterDescendants(this.doc.node, awaitsSvgLoad)) events.fire(node, "load");
       if (this.host.restoresScroll?.()) this.history().restoreScroll(this);
       else if (this.doc.url.includes("#") || this.host.textDirectives) this.scrollToFragment(!this.host.loadsAtTop);
@@ -706,8 +715,12 @@ class Page {
       this.isCompletelyLoaded = true;
       this.fonts?.settle();
       this.host.loaded?.("load");
-      if (this.same.$has("refresh")) this.same.$get("refresh")();
-      else if (this.host.refresh) this.history().refresh(this, this.host.refresh, false);
+      const { same } = this;
+      if (same.$has("refresh")) same.$get("refresh")();
+      else {
+        const { refresh } = this.host;
+        if (refresh) this.history().refresh(this, refresh, false);
+      }
     });
   }
 
@@ -886,11 +899,9 @@ class Page {
     );
     if (this.isVisible) {
       this.isVisible = false;
-      if (
-        events.hasListeners(this.doc.node, "visibilitychange") ||
-        events.hasListeners(this.target, "visibilitychange")
-      )
-        events.fire(this.doc.node, "visibilitychange", true);
+      const { node } = this.doc;
+      if (events.hasListeners(node, "visibilitychange") || events.hasListeners(this.target, "visibilitychange"))
+        events.fire(node, "visibilitychange", true);
     }
     if (events.hasListeners(this.target, "unload"))
       events.dispatchToWindowForDocument(this, new events.Event("unload"));
@@ -913,7 +924,10 @@ function fireSelectionEvents(page: Page) {
     const control = textControl(target);
     if (target.scope === page.doc.node || target.scope === null)
       events.fire(target, "selectionchange", control !== null);
-    else if (!targets.includes(page.doc.node)) events.fire(page.doc.node, "selectionchange");
+    else {
+      const { node } = page.doc;
+      if (!targets.includes(node)) events.fire(node, "selectionchange");
+    }
     if (control === null) continue;
     const isDue = control.hasSetSelection || control.start !== control.end;
     control.hasSetSelection = false;
@@ -996,8 +1010,8 @@ function updateBackground(page: Page) {
   if (root === null || (page.environment.transparent && page.container === null)) return;
   const isDark = page.doc.engine.styleBits(root.id, DARK) !== 0;
   let background = isDark ? DARK_CANVAS : 0;
-  if (page.container !== null)
-    background = isDark === !!(page.container.colorScheme() & DARK) ? 0 : background || 0xffffffff;
+  const { container } = page;
+  if (container !== null) background = isDark === !!(container.colorScheme() & DARK) ? 0 : background || 0xffffffff;
   if (background === page.background) return;
   page.native.send("surface.set", { id: page.surface, canvas: (page.background = background) });
 }
@@ -1103,8 +1117,13 @@ function updateRendering(page: Page) {
       if (page.isDisposed) return;
       showSelection(page);
       updateBackground(page);
-      if (page.transition !== null) {
-        page.transition.perform(page.canvasColor());
+      const { transition } = page;
+      if (transition !== null) {
+        transition.perform(page.canvasColor());
+        page.needsAnotherFrame = true;
+      }
+      if (page.scopedTransitions.size > 0) {
+        for (const it of Array.from(page.scopedTransitions.values())) it.perform(0);
         page.needsAnotherFrame = true;
       }
       engine.paint(page.surface);
@@ -1148,7 +1167,8 @@ function setFocused(page: Page, isFocused: boolean) {
 
 function handleEvent(page: Page, event: any) {
   routeEvent(page, event);
-  if (page.timings !== null && page.timings.dispatched.length > 0 && !page.doc.scheduled) page.timings.presented();
+  const { timings } = page;
+  if (timings !== null && timings.dispatched.length > 0 && !page.doc.scheduled) timings.presented();
 }
 
 function routeEvent(page: Page, event: any) {

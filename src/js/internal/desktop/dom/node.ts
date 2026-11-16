@@ -1,16 +1,15 @@
 const core = require("internal/desktop/dom/core");
 const events = require("internal/desktop/dom/events");
 
-const { ELEMENT, ATTRIBUTE, TEXT, CDATA, INSTRUCTION, COMMENT, DOCUMENT, DOCTYPE, FRAGMENT, HTML } = core;
+const { ELEMENT, ATTRIBUTE, TEXT, CDATA, COMMENT, DOCUMENT, DOCTYPE, FRAGMENT, HTML } = core;
 const { Kind, N, kinds, hooks, flags, realm, XML_NS, XMLNS_NS } = core;
 const { domError, expose, getAttr, illegalConstructor, rare, react, setAttr, unwrap, wrap, wrapOrNull } = core;
 const { hasPending, prefixOf, scopeOf, setPending } = core;
-const { asciiLower, engineFor, following, isData, isText, qualifiedName, same, splitTokens, sync } = core;
+const { asciiLower, engineFor, following, isData, isText, qualifiedName, same, splitTokens } = core;
 const { CONNECTED, HOST, SHADOW_ROOT, USER_AGENT } = flags;
 
 type N = $Dom.N;
 type Doc = $Dom.Doc;
-type Page = $Dom.Page;
 
 // ───────────────────────────── collections ─────────────────────────────
 
@@ -208,11 +207,12 @@ function cached(root: N, compute: () => N[], readsAttributes = true): () => N[] 
   };
   return () => {
     const now = root.doc.version + (readsAttributes ? root.doc.attributeVersion : 0);
-    if (now !== version || doc !== root.doc) {
-      if (version === -1 && root.doc.page !== null) root.doc.cachedLists.push(forget);
+    const rootDoc = root.doc;
+    if (now !== version || doc !== rootDoc) {
+      if (version === -1 && rootDoc.page !== null) rootDoc.cachedLists.push(forget);
       items = compute();
       version = now;
-      doc = root.doc;
+      doc = rootDoc;
     }
     return items;
   };
@@ -1453,7 +1453,8 @@ function attachShadow(host: N, init: any): N {
     return existing!;
   }
   const root = core.attachShadow(host, false);
-  if (init.registry !== host.doc.registry) rare(root).registry = init.registry;
+  const { registry } = init;
+  if (registry !== host.doc.registry) rare(root).registry = registry;
   scopeOf(root).availableToInternals = (host.flags & flags.CUSTOM) !== 0 || host.rare!.isPrecustomized;
   scopeOf(root).referenceTarget = init.referenceTarget == null ? null : `${init.referenceTarget}`;
   scopeOf(root).mode = init.mode;
@@ -1471,7 +1472,8 @@ function contentOf(node: N): N {
 function contextOf(parent: N, doc: Doc): N {
   if (parent.type === ELEMENT && !(doc.isHtml && core.isHtml(parent, "html"))) return parent;
   const body = core.createPlainElement(doc, "body", HTML);
-  if (parent.rare?.registry !== undefined) rare(body).registry = parent.rare.registry;
+  const parentRare = parent.rare;
+  if (parentRare?.registry !== undefined) rare(body).registry = parentRare.registry;
   return body;
 }
 
@@ -1752,7 +1754,7 @@ function referenceTargets(node: N, attribute: string): N[] | null {
 }
 
 function elementsOf(value: any, isList: boolean): N[] {
-  const nodes = (isList ? [...($isObject(value) ? value : [null])] : [value]).map(core.nodeOf);
+  const nodes = (isList ? [...($isObject(value) ? (value as any) : [null])] : [value]).map(core.nodeOf);
   if (nodes.some(it => it?.type !== ELEMENT)) throw new TypeError("The value is not of type 'Element'.");
   return nodes as N[];
 }

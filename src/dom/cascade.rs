@@ -131,9 +131,9 @@ impl Stylist {
         self.has_results.undo_leak();
         self.lists.undo_leak();
         self.substituted.undo_leak();
-        core::mem::forget(core::mem::take(&mut self.customs));
-        core::mem::forget(core::mem::take(&mut self.recent_groups));
-        core::mem::forget(core::mem::take(&mut self.recent_customs));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.customs));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.recent_groups));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.recent_customs));
     }
 }
 
@@ -703,7 +703,9 @@ impl Resolver<'_> {
                     };
                     alias = value;
                     let source = untainted(&alias);
-                    if source.len() < alias.len() && has_tainted_url(source, &[0..source.len()]) {
+                    if source.len() < alias.len()
+                        && has_tainted_url(source, core::slice::from_ref(&(0..source.len())))
+                    {
                         return Outcome::Wide(Wide::Unset);
                     }
                     (source, true)
@@ -1976,7 +1978,7 @@ impl Document {
                 if phase == Phase::LineHeight {
                     font.line_height = parent.line_height() * style.zoom / parent.zoom;
                 }
-                if core::ptr::eq(parent, &*self.styles.initial) {
+                if core::ptr::eq(parent, &raw const *self.styles.initial) {
                     root = if fonts_from.is_some() {
                         parent
                     } else {
@@ -2081,7 +2083,7 @@ impl Document {
             animates: Default::default(),
             ..*parent
         };
-        if core::ptr::eq(parent, &*self.styles.initial) {
+        if core::ptr::eq(parent, &raw const *self.styles.initial) {
             style.dark = self.environment.is_dark(ColorScheme::empty());
         }
         if rules

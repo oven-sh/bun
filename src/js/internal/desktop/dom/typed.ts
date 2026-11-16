@@ -131,7 +131,7 @@ iterable(CSSUnparsedValue, true);
 function sequence(value: any): Iterable<any> {
   if (!$isObject(value) || value[Symbol.iterator] == null)
     throw new TypeError("The value cannot be converted to a sequence.");
-  return value;
+  return value as any;
 }
 
 function variableName(value: unknown): string {
@@ -207,9 +207,25 @@ const canonicalUnits = { __proto__: null, length: "px", angle: "deg", time: "s",
 /** In the canonical unit. */
 const ratios = {
   __proto__: null,
-  ...{ px: 1, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, in: 96, pt: 96 / 72, pc: 16 },
-  ...{ deg: 1, grad: 0.9, rad: 180 / Math.PI, turn: 360, s: 1, ms: 0.001, hz: 1, khz: 1000 },
-  ...{ dppx: 1, x: 1, dpi: 1 / 96, dpcm: 2.54 / 96 },
+  px: 1,
+  cm: 96 / 2.54,
+  mm: 96 / 25.4,
+  q: 96 / 101.6,
+  in: 96,
+  pt: 96 / 72,
+  pc: 16,
+  deg: 1,
+  grad: 0.9,
+  rad: 180 / Math.PI,
+  turn: 360,
+  s: 1,
+  ms: 0.001,
+  hz: 1,
+  khz: 1000,
+  dppx: 1,
+  x: 1,
+  dpi: 1 / 96,
+  dpcm: 2.54 / 96,
 };
 const canonicalOf = (unit: string): string => (unit in ratios ? canonicalUnits[typeOfUnit.$get(unit)!] : unit);
 
@@ -225,7 +241,7 @@ class Type {
 
   static of(unit: string): Type {
     const type = new Type();
-    if (unit !== "number") type.powers[baseTypes.indexOf(typeOfUnit.$get(unit))] = 1;
+    if (unit !== "number") type.powers[baseTypes.indexOf(typeOfUnit.$get(unit) as any)] = 1;
     return type;
   }
   hinted(hint: number): Type {
@@ -302,7 +318,7 @@ function combine(self: CSSNumericValue, ctor: any, values: CSSNumericValue[], fo
   );
 }
 
-function multiply(self: CSSNumericValue, values: CSSNumericValue[]) {
+function multiply(self: CSSNumericValue, values: CSSNumericValue[]): any {
   const all = [...(self instanceof CSSMathProduct ? self.$impl.list : [self]), ...values];
   const others = all.filter(it => !isUnit(it, "number"));
   if (others.length > 1 || (others.length === 1 && !isUnit(others[0]))) return new CSSMathProduct(...all);
@@ -327,7 +343,7 @@ type Term = [number, Record<string, number>];
 const keyOf = (term: Term) => String(Object.entries(term[1]).sort());
 const typeOfTerm = ([, units]: Term) => {
   const type = new Type();
-  for (const unit in units) type.powers[baseTypes.indexOf(typeOfUnit.$get(unit))] += units[unit];
+  for (const unit in units) type.powers[baseTypes.indexOf(typeOfUnit.$get(unit) as any)] += units[unit];
   return type;
 };
 
@@ -398,10 +414,10 @@ class CSSNumericValue extends CSSStyleValue {
   sub(...values: unknown[]) {
     return combine(this, CSSMathSum, values.map(rectify).map(negate), (a, b) => a + b);
   }
-  mul(...values: unknown[]) {
+  mul(...values: unknown[]): any {
     return multiply(this, values.map(rectify));
   }
-  div(...values: unknown[]) {
+  div(...values: unknown[]): any {
     return multiply(this, values.map(rectify).map(invert));
   }
   min(...values: unknown[]) {
@@ -689,11 +705,11 @@ class CSSTransformComponent {
         : DOMMatrix.fromMatrix(matrix);
     }
     if (name === "perspective") {
-      if (length instanceof CSSNumericValue) result.m34 = -1 / Math.max(amount(length, "px"), 1);
+      if (length instanceof CSSNumericValue) (result as any).m34 = -1 / Math.max(amount(length, "px"), 1);
       return result;
     }
-    if (ay !== undefined) result.m12 = Math.tan(amount(ay, "rad"));
-    if (ax !== undefined) result.m21 = Math.tan(amount(ax, "rad"));
+    if (ay !== undefined) (result as any).m12 = Math.tan(amount(ay, "rad"));
+    if (ax !== undefined) (result as any).m21 = Math.tan(amount(ax, "rad"));
     return result;
   }
   toString(): string {
@@ -1057,7 +1073,7 @@ class StylePropertyMapReadOnly {
     for (const [, values] of this.entries()) yield values;
   }
   forEach(callback: Function, thisArg: unknown = undefined) {
-    for (const [name, values] of this.entries()) callback.$call(thisArg, values, name, this);
+    for (const [name, values] of this.entries()) (callback as any).$call(thisArg, values, name, this);
   }
 }
 Object.defineProperty(StylePropertyMapReadOnly.prototype, Symbol.iterator, {
@@ -1108,7 +1124,8 @@ class StylePropertyMap extends StylePropertyMapReadOnly {
       first instanceof CSSUnparsedValue ||
       (first instanceof CSSKeywordValue && onlySetTyped.test(it.name));
     if (values.length > 1 || !isKept) return void given.get(this.$impl)?.$delete(it.name);
-    if (!given.has(this.$impl)) given.set(this.$impl, new Map());
+    const impl = this.$impl;
+    if (!given.has(impl)) given.set(impl, new Map());
     const kept = isUnit(first) && text.startsWith("calc(") ? new CSSMathSum(clone(first)) : clone(first);
     given.get(this.$impl)!.$set(it.name, [this.$impl.typedValue(it)[1], kept]);
   }
@@ -1134,19 +1151,35 @@ function milliseconds(value: CSSNumericValue): number {
 }
 
 const classes = [
-  ...[CSSStyleValue, CSSImageValue, CSSKeywordValue, CSSUnparsedValue, CSSVariableReferenceValue, CSSPositionValue],
-  ...[CSSNumericValue, CSSUnitValue, CSSNumericArray, CSSMathValue, CSSMathSum, CSSMathProduct, CSSMathMin, CSSMathMax],
-  ...[
-    CSSMathClamp,
-    CSSMathNegate,
-    CSSMathInvert,
-    CSSTransformValue,
-    CSSTransformComponent,
-    CSSTranslate,
-    CSSRotate,
-    CSSScale,
-  ],
-  ...[CSSSkew, CSSSkewX, CSSSkewY, CSSPerspective, CSSMatrixComponent, StylePropertyMapReadOnly, StylePropertyMap],
+  CSSStyleValue,
+  CSSImageValue,
+  CSSKeywordValue,
+  CSSUnparsedValue,
+  CSSVariableReferenceValue,
+  CSSPositionValue,
+  CSSNumericValue,
+  CSSUnitValue,
+  CSSNumericArray,
+  CSSMathValue,
+  CSSMathSum,
+  CSSMathProduct,
+  CSSMathMin,
+  CSSMathMax,
+  CSSMathClamp,
+  CSSMathNegate,
+  CSSMathInvert,
+  CSSTransformValue,
+  CSSTransformComponent,
+  CSSTranslate,
+  CSSRotate,
+  CSSScale,
+  CSSSkew,
+  CSSSkewX,
+  CSSSkewY,
+  CSSPerspective,
+  CSSMatrixComponent,
+  StylePropertyMapReadOnly,
+  StylePropertyMap,
 ];
 for (const ctor of classes) expose(ctor);
 

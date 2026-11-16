@@ -175,7 +175,9 @@ pub(crate) fn gradient_stops(
     } else {
         32
     };
-    let position = |stop: &Stop| Some(stop.position.as_ref()?.resolve(length) / length.max(0.001));
+    let position = |stop: &Stop| {
+        Some((stop.position.as_ref()?.resolve(length) / length.max(0.001)).clamp(-1e9, 1e9))
+    };
     let colored = || gradient.stops.iter().filter(|it| it.color.is_some());
     let mut offsets = spread_positions(colored().map(position).collect()).into_iter();
     let (mut previous, mut hint): (Option<(GradientStop, Exact)>, Option<f32>) = (None, None);
@@ -188,7 +190,9 @@ pub(crate) fn gradient_stops(
             offset: offsets.next().unwrap_or(1.0),
             color: color.resolve(current.0),
         };
-        let exact = color.exact(Some(current)).unwrap_or(Exact::legacy(0));
+        let exact = color
+            .exact(Some(current))
+            .unwrap_or_else(|| Exact::legacy(0));
         let is_plain = gradient.interpolation == Interpolation::SRGB
             && exact.is_legacy
             && previous.is_none_or(|it| it.1.is_legacy);
@@ -211,7 +215,9 @@ pub(crate) fn gradient_stops(
                 }
             }));
         }
-        out.push(to);
+        if is_plain || previous.is_none_or(|it| it.0.offset >= to.offset) {
+            out.push(to);
+        }
         (previous, hint) = (Some((to, exact)), None);
     }
 }
@@ -286,13 +292,23 @@ impl<'a> Painter<'a> {
                     self.out.stops.len() as u32,
                 );
                 gradient_stops(gradient, length, style.ink.color, &mut self.out.stops);
+                if let (true, [first, .., last]) =
+                    (gradient.repeating, &mut self.out.stops[start as usize..])
+                    && first.offset == last.offset
+                {
+                    let color = last.color;
+                    self.out.stops.truncate(start as usize);
+                    self.out
+                        .stops
+                        .extend([0.0, 1.0].map(|offset| GradientStop { offset, color }));
+                }
                 let stops = Span {
                     start,
                     end: self.out.stops.len() as u32,
                 };
                 let GradientKind::Points(points, Some(radii)) = &gradient.kind else {
                     return self.emit(
-                        Item::Gradient {
+                        &Item::Gradient {
                             clip,
                             tile,
                             shape,
@@ -307,7 +323,7 @@ impl<'a> Painter<'a> {
                     .map(|([x, y], radius)| [x, y, radius]);
                 self.tiled(clip, tile, space, |painter, space| {
                     painter.emit(
-                        Item::Shade {
+                        &Item::Shade {
                             bounds: cell,
                             from,
                             to,
@@ -367,7 +383,7 @@ impl<'a> Painter<'a> {
     ) {
         if ready.id != 0 && !crate::embedded::is_vector(ready.id) {
             return self.emit(
-                Item::ImagePart {
+                &Item::ImagePart {
                     clip,
                     tile,
                     image: ready.id,
@@ -504,10 +520,21 @@ impl<'a> Painter<'a> {
             size: b.size.at(index),
             repeat: *b.repeat.at(index),
         };
-        let blend = blend_mode(*b.blend.at(index));
-        let group = (blend != BlendMode::Normal)
-            .then(|| self.begin_group(clip.rect, 1.0, blend, Span::default(), space));
         self.image(&ready, &placement, area, clip, style, space);
+    }
+
+    fn blended(
+        &mut self,
+        style: &Style,
+        index: usize,
+        bounds: Rect,
+        space: &Space,
+        paint: impl FnOnce(&mut Self),
+    ) {
+        let blend = blend_mode(*style.background.blend.at(index));
+        let group = (blend != BlendMode::Normal)
+            .then(|| self.begin_group(bounds, 1.0, blend, Span::default(), space));
+        paint(self);
         group.into_iter().for_each(|outer| self.end_group(outer));
     }
 
@@ -565,7 +592,9 @@ impl<'a> Painter<'a> {
             } else {
                 root.area(*style.background.origin.at(index)).rect
             };
-            self.background_layer(style, index, area, square(viewport), space);
+            self.blended(style, index, viewport, space, |painter| {
+                painter.background_layer(style, index, area, square(viewport), space)
+            });
         }
         group.into_iter().for_each(|it| self.end_group(it));
     }
@@ -582,27 +611,31 @@ impl<'a> Painter<'a> {
         paint: impl FnOnce(&mut Self, RoundedRect, &Space),
     ) {
         let is_masked = matches!(area, BoxArea::Text | BoxArea::BorderArea);
+        let bounds = contour.map_or(frame.shape.rect, |it| it.bounds(frame, 0.0));
         let (group, mut inside) = (
-            is_masked.then(|| {
-                self.begin_group(
-                    frame.shape.rect,
-                    1.0,
-                    BlendMode::Normal,
-                    Span::default(),
-                    space,
-                )
-            }),
+            is_masked
+                .then(|| self.begin_group(bounds, 1.0, BlendMode::Normal, Span::default(), space)),
             *space,
         );
         match contour {
             None => paint(self, frame.area(area), space),
+            Some(contour) if contour.is_collapsed() => {}
             Some(contour) => {
-                self.clip_inside(contour, frame, area.into(), &mut inside);
+                match area {
+                    BoxArea::BorderArea => inside.visible = inside.visible.intersection(&bounds),
+                    BoxArea::BorderBox => self.clip_inside(
+                        contour,
+                        frame,
+                        contour.end_of_background(style),
+                        &mut inside,
+                    ),
+                    _ => self.clip_inside(contour, frame, area.into(), &mut inside),
+                }
                 paint(self, square(inside.visible), &inside);
             }
         }
         if let Some(outer) = group {
-            self.marker(Item::Mask { luminance: false });
+            self.marker(&Item::Mask { luminance: false });
             match area {
                 BoxArea::Text => text(self),
                 _ => self.border_in(style, frame, [BLACK; 4], space),
@@ -675,16 +708,24 @@ impl<'a> Painter<'a> {
                 } else if *b.attachment.at(index) == Attachment::Fixed && !self.is_in_transform() {
                     area = self.fixed_area(space);
                 }
-                self.clipped(
+                self.blended(
                     style,
-                    frame,
-                    contour,
-                    clip(index),
+                    index,
+                    contour.map_or(frame.shape.rect, |it| it.bounds(frame, 0.0)),
                     space,
-                    text,
-                    |painter, shape, space| {
-                        let shape = within(painter, index, shape);
-                        painter.background_layer(style, index, area, shape, space);
+                    |painter| {
+                        painter.clipped(
+                            style,
+                            frame,
+                            contour,
+                            clip(index),
+                            space,
+                            text,
+                            |painter, shape, space| {
+                                let shape = within(painter, index, shape);
+                                painter.background_layer(style, index, area, shape, space);
+                            },
+                        );
                     },
                 );
             }
@@ -721,15 +762,19 @@ impl<'a> Painter<'a> {
         };
         let covered =
             has_background && alpha(color) == 0xff && *b.clip.at(last) == BoxArea::BorderBox;
+        let simple = contour
+            .as_ref()
+            .and_then(|_| crate::contour::rounded_border_shape(style, frame));
         for (it, color) in visible().filter(|it| !it.0.inset) {
-            let mut shadow = frame.shape.spread(it.spread);
+            let shape = simple.unwrap_or(frame.shape);
+            let mut shadow = shape.spread(it.spread);
             shadow.rect = shadow.rect.moved(it.offset);
-            if let Some(contour) = &contour {
+            if let Some(contour) = contour.as_ref().filter(|_| simple.is_none()) {
                 self.contoured_shadow(contour, frame, it, color, space);
-            } else if !shadow.rect.is_empty() && (it.blur > 0.0 || shadow != frame.shape) {
+            } else if !shadow.rect.is_empty() && (it.blur > 0.0 || shadow != shape) {
                 self.emit(
-                    Item::Shadow {
-                        shape: frame.shape,
+                    &Item::Shadow {
+                        shape,
                         shadow,
                         blur: it.blur,
                         color,
@@ -751,7 +796,7 @@ impl<'a> Painter<'a> {
                 self.contoured_shadow(contour, frame, it, color, space);
             } else if it.blur > 0.0 || shadow != shape {
                 self.emit(
-                    Item::Shadow {
+                    &Item::Shadow {
                         shape,
                         shadow,
                         blur: it.blur,
@@ -834,16 +879,15 @@ impl<'a> Painter<'a> {
                         self.begin_group(clip, 1.0, BlendMode::Normal, Span::default(), space),
                     )
                 });
-                self.image(
-                    &image,
-                    &placement,
-                    subject.area(*m.origin.at(index)).rect,
-                    square(clip),
-                    style,
-                    space,
-                );
+                let area = match &subject.areas {
+                    Areas::Css(frame, _) if frame.whole.is_some() => {
+                        frame.unsliced().area(*m.origin.at(index))
+                    }
+                    _ => subject.area(*m.origin.at(index)),
+                };
+                self.image(&image, &placement, area.rect, square(clip), style, space);
                 if let Some((text, outer)) = group {
-                    self.marker(Item::Mask { luminance: false });
+                    self.marker(&Item::Mask { luminance: false });
                     self.text_mask(text, space);
                     self.end_group(outer);
                 }
@@ -894,7 +938,7 @@ impl Replaced {
                 view.transformed(&crate::svg::scaling(1.0 / width, 1.0 / height)),
             ))
         };
-        view().unwrap_or((self, Rect::new([0.0, 0.0, 1.0, 1.0])))
+        view().unwrap_or_else(|| (self, Rect::new([0.0, 0.0, 1.0, 1.0])))
     }
 }
 

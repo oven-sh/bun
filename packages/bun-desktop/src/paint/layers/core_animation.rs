@@ -19,7 +19,7 @@ unsafe extern "C" {
         bytes_per_row: &mut usize,
     ) -> *mut c_void;
     safe fn bd_surface_unlock(surface: &c_void, wrote: bool);
-    fn bd_layer_create(parent: *const c_void, is_pinned: bool) -> Object;
+    fn bd_layer_create(parent: *const c_void) -> Object;
     safe fn bd_layer_pin(corner: &c_void) -> bool;
     safe fn bd_layer_place(
         layer: &c_void,
@@ -31,7 +31,7 @@ unsafe extern "C" {
         is_opaque: bool,
     );
     safe fn bd_layer_show(layer: &c_void, surface: &c_void);
-    safe fn bd_layer_blink(layer: &c_void, color: u32, seconds_ago: f64);
+    safe fn bd_layer_blink(layer: &c_void, color: u32, seconds_ago: f64, blinks: bool);
     safe fn bd_layer_clip(layer: &c_void, radius: f64, opacity: f32, order: f64);
     safe fn bd_layer_center(layer: &c_void, x: f64, y: f64, width: f64, height: f64, scale: f64);
     fn bd_layer_animate(
@@ -46,16 +46,11 @@ unsafe extern "C" {
     safe fn bd_layer_move(layer: &c_void, x: f64, y: f64);
     safe fn bd_layer_set_order(layer: &c_void, order: f64);
     safe fn bd_layer_remove(layer: &c_void);
-    safe fn bd_layers_apply(flushes: bool, may_wait: bool);
+    safe fn bd_layers_flush();
 }
 
-/// The window server takes what it has at a moment that is not known, so what moves has to arrive at a steady pace.
-pub fn flush(may_wait: bool) {
-    bd_layers_apply(true, may_wait);
-}
-
-pub fn leave_to_appkit() {
-    bd_layers_apply(false, false);
+pub fn flush() {
+    bd_layers_flush();
 }
 
 pub use metal::finish_and_check as gpu_has_spoiled_surfaces;
@@ -108,6 +103,7 @@ pub struct Caret {
     pub rect: IntRect,
     pub color: u32,
     pub since: Instant,
+    pub blinks: bool,
 }
 
 struct Overlay {
@@ -137,7 +133,7 @@ pub struct Tree {
 impl Tree {
     fn new(root: *mut c_void) -> Tree {
         // SAFETY: the layer of a view.
-        let corner = unsafe { bd_layer_create(root, true) };
+        let corner = unsafe { bd_layer_create(root) };
         let buffers = uses_gpu().then(Buffers::default);
         Tree {
             front: None,
@@ -157,7 +153,7 @@ impl Tree {
     pub fn of_window(root: *mut c_void) -> Tree {
         let mut tree = Tree::new(root);
         // SAFETY: the layer of a view.
-        let front = tree.front.insert(unsafe { bd_layer_create(root, true) });
+        let front = tree.front.insert(unsafe { bd_layer_create(root) });
         bd_layer_set_order(front, 3.);
         tree
     }
@@ -165,16 +161,13 @@ impl Tree {
     pub fn clipped(root: *mut c_void, order: f64) -> Tree {
         // SAFETY: layers.
         let (outer, clip) = unsafe {
-            let outer = bd_layer_create(root, true);
-            let clip = bd_layer_create(&*outer, false);
+            let outer = bd_layer_create(root);
+            let clip = bd_layer_create(&*outer);
             (outer, clip)
         };
         bd_layer_set_order(&outer, order);
         let mut tree = Tree::new((&raw const *clip).cast_mut());
         tree.clip = Some((outer, clip));
-        // Little is painted at a time.
-        tree.buffers
-            .take_if(|_| std::env::var("BUN_DESKTOP_SLIDE").as_deref() != Ok("gpu"));
         tree
     }
 
@@ -307,12 +300,11 @@ impl Tree {
             }
             let mut overlay = same.or_else(|| unused.pop()).unwrap_or_else(|| {
                 // SAFETY: layers.
-                let clip = unsafe {
-                    bd_layer_create(&**self.front.as_ref().unwrap_or(&self.corner), false)
-                };
+                let clip =
+                    unsafe { bd_layer_create(&**self.front.as_ref().unwrap_or(&self.corner)) };
                 // SAFETY: as above.
                 Overlay {
-                    picture: unsafe { bd_layer_create(&*clip, false) },
+                    picture: unsafe { bd_layer_create(&*clip) },
                     clip,
                     shown: None,
                 }
@@ -379,13 +371,20 @@ impl Tree {
         };
         // SAFETY: a layer.
         let layer = layer.unwrap_or_else(|| unsafe {
-            bd_layer_create(&**self.front.as_ref().unwrap_or(&self.corner), false)
+            bd_layer_create(&**self.front.as_ref().unwrap_or(&self.corner))
         });
         if shown.is_none_or(|it| it.rect != caret.rect) {
             self.place(&layer, caret.rect);
         }
-        if shown.is_none_or(|it| (it.color, it.since) != (caret.color, caret.since)) {
-            bd_layer_blink(&layer, caret.color, caret.since.elapsed().as_secs_f64());
+        if shown.is_none_or(|it| {
+            (it.color, it.since, it.blinks) != (caret.color, caret.since, caret.blinks)
+        }) {
+            bd_layer_blink(
+                &layer,
+                caret.color,
+                caret.since.elapsed().as_secs_f64(),
+                caret.blinks,
+            );
         }
         self.caret = Some((layer, caret));
     }
@@ -446,7 +445,7 @@ impl Target for Tree {
         let has_moved = known.as_ref().is_none_or(|(_, placed)| *placed != rect);
         // SAFETY: a layer.
         let layer = known.map_or_else(
-            || unsafe { bd_layer_create(&*self.corner, false) },
+            || unsafe { bd_layer_create(&*self.corner) },
             |(layer, _)| layer,
         );
         if has_moved {

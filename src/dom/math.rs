@@ -727,11 +727,11 @@ impl Document {
     fn math_font(&self, style: &Style) -> MathFont {
         let shaped = self.shape_plain(" ", style);
         let face = shaped.faces[shaped.clusters.first().map_or(0, |it| usize::from(it.face))];
-        let units = word(font_table(&face, b"head"), 18).unwrap_or(1000).max(1) as f32;
+        let units = word(font_table(&face, *b"head"), 18).unwrap_or(1000).max(1) as f32;
         let (x_height, rule) = (style.metrics.x_height, style.metrics.underline_thickness);
         MathFont {
             face,
-            table: font_table(&face, b"MATH"),
+            table: font_table(&face, *b"MATH"),
             scale: face.size / units,
             x_height,
             rule,
@@ -1158,7 +1158,7 @@ impl Document {
             self.in_flow(id),
             self.boxes.math.get(&id).and_then(|it| it.stretch),
         );
-        let embellished = inherited.and(self.embellished_child(id));
+        let embellished = inherited.and_then(|_| self.embellished_child(id));
         let stretches = |document: &Document, it: BoxId| {
             document
                 .operator(it)
@@ -1188,7 +1188,7 @@ impl Document {
                 .map(|it| {
                     self.lay_out_piece(
                         it,
-                        least.or(inherited.filter(|_| Some(it) == embellished)),
+                        least.or_else(|| inherited.filter(|_| Some(it) == embellished)),
                         basis,
                         output,
                     )
@@ -1576,7 +1576,7 @@ impl Document {
         }
         let own = self.boxes.math.entry(id).or_default();
         own.italic = italic;
-        own.bar = bar.map_or(Rect::default(), |[x, y, width, height]| {
+        own.bar = bar.map_or_else(Rect::default, |[x, y, width, height]| {
             Rect::new([left(x, width), baseline + y, width, height])
         });
         own.glyphs = surd.map(|(x, y, it)| {

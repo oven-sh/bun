@@ -147,7 +147,7 @@ class EventCounts {
   }
   forEach(callback: Function, thisArg: unknown = undefined) {
     idl.callable(callback);
-    for (const [type, count] of this.#counts) callback.$call(thisArg, count, type, this);
+    for (const [type, count] of this.#counts) (callback as any).$call(thisArg, count, type, this);
   }
 }
 expose(EventCounts);
@@ -305,13 +305,13 @@ function queueDelivery() {
   isDeliveryQueued = true;
   idl.queueTask(() => {
     isDeliveryQueued = false;
-    for (const it of [...observers]) {
+    for (const it of Array.from(observers)) {
       if (it.entries.length === 0) continue;
       const list = new PerformanceObserverEntryList(internal, it.entries.splice(0));
       const options = it.tellsDropped ? { droppedEntriesCount: it.types.$has("resource") ? dropped : 0 } : {};
       it.tellsDropped = false;
       try {
-        it.callback.$call(it.observer, list, it.observer, options);
+        (it.callback as any).$call(it.observer, list, it.observer, options);
       } catch (thrown) {
         scope.report(thrown);
       }
@@ -470,7 +470,7 @@ class Performance extends idl.EventTarget {
   }
 
   get timeOrigin() {
-    this.#timing;
+    void this.#timing;
     return timeOrigin();
   }
   get timing() {
@@ -484,12 +484,12 @@ class Performance extends idl.EventTarget {
     return (this.#eventCounts ??= new EventCounts(internal));
   }
   get interactionCount() {
-    this.#timing;
+    void this.#timing;
     return scope.page.timings?.interactions ?? 0;
   }
 
   now() {
-    this.#timing;
+    void this.#timing;
     return now();
   }
 
@@ -596,8 +596,10 @@ if (scope.isWindow) {
   const { page } = scope;
   buffers.$get("navigation")!.push(navigationEntry());
   reached(page.isVisible ? "visible" : "hidden", scope.timeOrigin);
-  for (const name of ["first-paint", "first-contentful-paint"])
-    if (page.milestones[name]) reached(name, page.milestones[name]);
+  for (const name of ["first-paint", "first-contentful-paint"]) {
+    const pageMilestones = page.milestones;
+    if (pageMilestones[name]) reached(name, pageMilestones[name]);
+  }
   page.onMilestone = reached;
   page.onTiming = addTiming;
   page.timings?.waiting.splice(0).forEach(addTiming);

@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
@@ -10,6 +11,7 @@ use crate::webcore::jsc::{
 };
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
+use bun_removable_features::removable_body_behind_value;
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
@@ -926,18 +928,16 @@ impl SourceHandle {
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
             SourceHandle::FetchResponseBody(p) => {
-                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_ready() })
+                removable_body_behind_value!(HttpClient, { p.on_ready() })
             }
             SourceHandle::ServerRequestBody(any) => {
-                bun_removable_features::removable_body!(Serve, Abort, {
-                    any.on_request_body_stream_drained()
-                })
+                removable_body_behind_value!(Serve, { any.on_request_body_stream_drained() })
             }
             SourceHandle::HTMLRewriter(p) => {
-                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_ready() })
+                removable_body_behind_value!(HtmlRewriter, { p.on_ready() })
             }
             SourceHandle::S3DownloadBody(p) => {
-                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_drained() })
+                removable_body_behind_value!(S3Client, { p.on_stream_drained() })
             }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
@@ -1962,8 +1962,11 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -1992,11 +1995,15 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
         unsafe { (*this).fail() };
         bun_sys::Result::Ok(())
     }
-    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
-        self.pipe = PipeCell::root(controller, global);
+    fn controller_created(
+        this: &mut Self::Entered<'_>,
+        controller: JSValue,
+        global: &JSGlobalObject,
+    ) {
+        this.pipe = PipeCell::root(controller, global);
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }
 
@@ -2453,8 +2460,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -2476,8 +2486,8 @@ impl crate::webcore::sink::ControlledSink for NetworkSink {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }
 

@@ -65,7 +65,7 @@ function toPrimitive(value: any): any {
   if (value instanceof Callable) return "function";
   if (!isPlain(value)) return String(value);
   for (const name of ["valueOf", "toString"]) {
-    const result = value[name] instanceof Callable ? invoke(value[name], value, []) : value;
+    const result = (value[name] as any) instanceof Callable ? invoke(value[name], value, []) : value;
     if (!isObject(result)) return result;
   }
   throw new TypeError("Cannot convert object to primitive value");
@@ -167,8 +167,8 @@ function set(target: any, key: string | number, value: unknown) {
     if (key === "length") target.length = Math.min(+toPrimitive(value), MAX_LENGTH);
     else target[key] = value;
   } else if (key === "__proto__") {
-    if (isPlain(target) && (value === null || isPlain(value))) Object.setPrototypeOf(target, value as object);
-  } else if (isPlain((target = own(target)))) target[key] = value;
+    if (isPlain(target) && (value === null || isPlain(value))) Object.setPrototypeOf(target, value as object | null);
+  } else if (isPlain((target = own(target)))) (target as any)[key] = value;
 }
 
 function lookUp(scope: Scope | null, name: string) {
@@ -328,11 +328,14 @@ function compile(source: string): Code {
 
   function body(parse: () => Code): Code {
     const outer = hoisted;
-    const { names, functions } = (hoisted = { names: [], functions: [] });
+    const { names, functions } = (hoisted = { names: [] as string[], functions: [] as [string, Code][] });
     const code = parse();
     hoisted = outer;
     return scope => {
-      for (const name of names) if (!scope.names.$has(name)) scope.names.$set(name, undefined);
+      for (const name of names) {
+        const scopeNames = scope.names;
+        if (!scopeNames.$has(name)) scopeNames.$set(name, undefined);
+      }
       for (const [name, create] of functions) scope.names.$set(name, create(scope));
       return code(scope);
     };

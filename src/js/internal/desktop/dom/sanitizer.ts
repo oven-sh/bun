@@ -158,7 +158,8 @@ function defaultConfig(): Config {
 
 function removeElement(it: Config, key: string): boolean {
   const wasReplaced = !!it.replaceWithChildrenElements?.$delete(key);
-  if (it.elements) return it.elements.$delete(key) || wasReplaced;
+  const { elements } = it;
+  if (elements) return elements.$delete(key) || wasReplaced;
   if (it.removeElements!.$has(key)) return wasReplaced;
   it.removeElements!.$add(key);
   return true;
@@ -333,17 +334,18 @@ function runsScript(node: N, element: string, key: string): boolean {
 
 function allows(it: Config, own: Own | undefined, key: string): boolean {
   if (own?.removeAttributes?.$has(key)) return false;
-  if (it.attributes)
-    return it.attributes.$has(key) || !!own?.attributes?.$has(key) || (!!it.dataAttributes && isData(key));
+  const { attributes } = it;
+  if (attributes) return attributes.$has(key) || !!own?.attributes?.$has(key) || (!!it.dataAttributes && isData(key));
   return own?.attributes?.$has(key) !== false && !it.removeAttributes!.$has(key);
 }
 
 function sanitize(parent: N, it: Config, isSafe: boolean) {
   for (let node = parent.first, next; node !== null; node = next) {
     next = node.next;
-    if (node.type !== ELEMENT) {
+    const { type } = node;
+    if (type !== ELEMENT) {
       const isAllowed = it.processingInstructions?.$has(node.name) ?? !it.removeProcessingInstructions!.$has(node.name);
-      if (node.type === COMMENT ? !it.comments : node.type === INSTRUCTION && !isAllowed) core.remove(node);
+      if (type === COMMENT ? !it.comments : type === INSTRUCTION && !isAllowed) core.remove(node);
       continue;
     }
     const element = keyOf(node.name, core.namespaceOf(node));

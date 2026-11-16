@@ -495,7 +495,7 @@ impl Document {
             let mut output =
                 self.in_own_mode(id, 0.0, |document| document.lay_out(id, input, None));
             let seen = |it: Option<f32>| {
-                Some(if is_flipped { output.height - it? } else { it? }).filter(|_| keeps_baselines)
+                keeps_baselines.then_some(if is_flipped { output.height - it? } else { it? })
             };
             (output.baselines, output.last_baseline) =
                 (output.baselines.map(seen), seen(output.last_baseline));

@@ -481,7 +481,8 @@ impl Document {
 
     /// Before the boxes are built.
     pub(crate) fn assign_markers(&mut self) {
-        for group in self.carousels.groups.keys().copied().collect::<Vec<_>>() {
+        let groups: Vec<_> = self.carousels.groups.keys().copied().collect();
+        for group in groups {
             let (scroller, mut markers) = (self.origin_of_part(group), Vec::new());
             match self.tree.style(scroller).filter(|_| self.is_shown(group)) {
                 Some(style) => {
@@ -537,7 +538,8 @@ impl Document {
             .iter()
             .filter(|it| it.1.rules >= COLUMN_RULES)
             .map(|it| (*it.0, it.1.columns.len(), it.1.rules));
-        for (id, old, rules) in wanting.collect::<Vec<_>>() {
+        let wanting: Vec<_> = wanting.collect();
+        for (id, old, rules) in wanting {
             let count = self
                 .flow_of_columns(id)
                 .and_then(|it| self.pieces(it))
@@ -762,7 +764,8 @@ impl Document {
 
     /// After layout, and after scrolling.
     pub(crate) fn update_scroll_controls(&mut self) {
-        for group in self.carousels.groups.keys().copied().collect::<Vec<_>>() {
+        let groups: Vec<_> = self.carousels.groups.keys().copied().collect();
+        for group in groups {
             let known = &self.carousels.groups[&group];
             let current = if known.pinned_in != 0 && known.current != 0 {
                 Some(known.current)
@@ -789,17 +792,18 @@ impl Document {
 
     /// The marker of what is being scrolled to, or of what it is in, becomes the current one.
     pub(crate) fn pin_marker_around(&mut self, node: NodeId) {
-        let around: Vec<_> = core::iter::once(node)
+        let mut around: Vec<_> = core::iter::once(node)
             .chain(self.tree.flat_ancestors(node))
             .filter_map(|it| Some(self.carousels.parts.get(&it)?.marker))
             .collect();
+        around.reverse();
         let links = self
             .carousels
             .group_of
             .keys()
             .copied()
             .filter(|it| self.target_of_link(*it) == Some(node));
-        let markers: Vec<_> = links.chain(around.into_iter().rev()).collect();
+        let markers: Vec<_> = links.chain(around).collect();
         markers.into_iter().for_each(|it| self.pin_marker(it));
     }
 

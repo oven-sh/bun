@@ -617,7 +617,8 @@ impl Document {
     }
 
     pub(crate) fn snap_after_layout(&mut self) {
-        for node in self.scrolling.snapping.keys().copied().collect::<Vec<_>>() {
+        let snapping: Vec<_> = self.scrolling.snapping.keys().copied().collect();
+        for node in snapping {
             let Some(id) = self.scroller(node) else {
                 continue;
             };

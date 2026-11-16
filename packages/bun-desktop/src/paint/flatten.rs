@@ -612,7 +612,6 @@ pub fn separate(primitives: &mut Vec<Primitive>, slide: &mut Slide) -> bool {
             primitives.extend(
                 visible
                     .without(slide.clip)
-                    .into_iter()
                     .map(|clip| Primitive { clip, ..it }),
             );
         } else {

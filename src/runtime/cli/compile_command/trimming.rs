@@ -127,6 +127,12 @@ fn find_settings_and_template(
         executable.embeds_source_maps,
     );
     add_build_option_requirements(request.options, &mut settings.exec_argv);
+    if executable.desktop.is_some() {
+        settings.exec_argv.push(OptionRequirement {
+            requirement: RuntimeRequirement::Feature(Feature::Desktop),
+            label: Box::from(&b"--desktop"[..]),
+        });
+    }
     // SAFETY: the loader outlives the request, and nothing below this call reaches the transpiler.
     let env = unsafe { &mut *executable.env };
     let template = target_executable(executable.target, env, executable.executable_path)

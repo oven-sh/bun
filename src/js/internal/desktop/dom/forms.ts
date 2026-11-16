@@ -32,7 +32,8 @@ function textIn(parent: N): N {
 }
 
 function setText(text: N, data: string) {
-  if (text.data !== data) core.replaceData(text, 0, text.data.length, data);
+  const textData = text.data;
+  if (textData !== data) core.replaceData(text, 0, textData.length, data);
 }
 
 function clearShadow(node: N): N {
@@ -290,7 +291,8 @@ hooks.showControls = root => {
 const controlInserted = dirty;
 
 function controlAttribute(node: N, name: string) {
-  if (name === "form" && node.rare !== null) node.rare.parserForm = null;
+  const { rare } = node;
+  if (name === "form" && rare !== null) rare.parserForm = null;
   if (node.flags & CONNECTED || node.id !== 0) dirty(node);
 }
 
@@ -369,8 +371,10 @@ class TextControl extends Control {
     if (this.editorText!.data === text) return;
     const { start, end, direction } = this;
     setText(this.editorText!, text);
-    if (text.endsWith("\n") !== (editor.last !== editor.first)) {
-      if (editor.last !== editor.first) core.remove(editor.last!, true);
+    const { last } = editor;
+    const { first } = editor;
+    if (text.endsWith("\n") !== (last !== first)) {
+      if (last !== first) core.remove(last!, true);
       else core.append(editor, core.createPlainElement(node.doc, "br", HTML));
     }
     this.start = start;
@@ -517,8 +521,9 @@ const selectable = new Set(splitTokens("text search url tel password textarea"))
 
 function withSelection(self: any): TextControl {
   const it: TextControl = self.$impl.x;
-  if (!selectable.$has(it.type)) {
-    throw domError("InvalidStateError", `The input element's type ('${it.type}') does not support selection.`);
+  const { type } = it;
+  if (!selectable.$has(type)) {
+    throw domError("InvalidStateError", `The input element's type ('${type}') does not support selection.`);
   }
   return it;
 }
@@ -554,7 +559,8 @@ const hasSelection = {
     it.select(0, Infinity);
     focusing.focus(it.node, focusing.SCRIPT, { preventScroll: true });
     it.showSelection();
-    if (it.node.doc.page !== null) it.node.doc.page.selectionSerial++;
+    const { page } = it.node.doc;
+    if (page !== null) page.selectionSerial++;
   },
   setSelectionRange(this: any, start: number, end: number, direction: string | undefined = undefined) {
     if ($argumentCount() < 2) core.tooFew(2);
@@ -845,11 +851,12 @@ class Input extends TextControl {
         !group.some(it => (it.x as Input).checked);
       return isMissing ? ["valueMissing"] : errors;
     }
+    const { isText } = this;
     if (
       hasAttr(node, "required") &&
-      (type === "checkbox" ? !this.checked : value === "" && (this.isText || type === "file"))
+      (type === "checkbox" ? !this.checked : value === "" && (isText || type === "file"))
     ) {
-      if (!this.isText || this.isMutable()) errors.push("valueMissing");
+      if (!isText || this.isMutable()) errors.push("valueMissing");
     }
     const kind = numeric[type];
     if (kind !== undefined) {
@@ -1100,7 +1107,8 @@ function handleInput(node: N, event: any, origin: N): boolean {
   const { type, key } = event;
   if (isDisabled(node)) return false;
   if (it.type === "range") return handleRange(it, event);
-  if (it.dates !== null && type !== "keypress") return it.dates.handle(event, origin);
+  const { dates } = it;
+  if (dates !== null && type !== "keypress") return dates.handle(event, origin);
   if (type === "mousedown" && it.isMutable()) {
     const pseudo = origin.rare?.pseudo;
     if (pseudo === "-webkit-search-cancel-button") {
@@ -1309,13 +1317,17 @@ const HTMLInputElement = define(
       if (it.type === "image")
         it.point =
           event.isTrusted && event.detail > 0 ? [Math.trunc(event.offsetX), Math.trunc(event.offsetY)] : [0, 0];
-      if (saved !== undefined && (it.type === "checkbox" || it.type === "radio")) {
-        if (node.flags & CONNECTED && (it.type === "checkbox" || !saved.checked)) userChanged(node);
+      const { type } = it;
+      if (saved !== undefined && (type === "checkbox" || type === "radio")) {
+        if (node.flags & CONNECTED && (type === "checkbox" || !saved.checked)) userChanged(node);
       } else if (it.type === "file" || it.type === "color") {
         if (!node.doc.page?.consumeActivation()) return;
         if (it.type === "file") it.pickFiles();
         else it.pickColor();
-      } else if (it.type in buttonLabels) activateButton(node, it.type, origin);
+      } else {
+        const itType = it.type;
+        if (itType in buttonLabels) activateButton(node, itType, origin);
+      }
     },
     handle: handleInput,
   },
@@ -1415,7 +1427,8 @@ class Button extends Control {
     return buttonType(this.node) !== "submit";
   }
   entries(add: (name: string, value: unknown) => void, submitter: N | null) {
-    if (this.node === submitter) add(getAttr(this.node, "name") ?? "", getAttr(this.node, "value") ?? "");
+    const { node } = this;
+    if (node === submitter) add(getAttr(node, "name") ?? "", getAttr(node, "value") ?? "");
   }
 }
 
@@ -1462,7 +1475,8 @@ class Barred extends Control {
     return true;
   }
   reset() {
-    if (this.defaultValue !== null) core.replaceAllWithText(this.defaultValue, this.node);
+    const { defaultValue } = this;
+    if (defaultValue !== null) core.replaceAllWithText(defaultValue, this.node);
     this.defaultValue = null;
   }
 }
@@ -1583,7 +1597,7 @@ define(
 
 const leadingFloat = /^[\t\n\f\r ]*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/;
 function numberAttr(node: N, name: string, fallback: number): number {
-  const value = parseFloat(leadingFloat.exec(getAttr(node, name) ?? "")?.[1]!);
+  const value = parseFloat(leadingFloat.exec(getAttr(node, name) ?? "")?.[1] ?? "");
   return Number.isFinite(value) ? value : fallback;
 }
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -1894,7 +1908,8 @@ class Select extends Control {
   }
 
   highlight(node: N | null) {
-    if (this.active !== null) setState(this.active, states.TARGET, false);
+    const { active } = this;
+    if (active !== null) setState(active, states.TARGET, false);
     this.active = node;
     if (node === null) return;
     setState(node, states.TARGET, true);
@@ -2084,9 +2099,10 @@ class Select extends Control {
   }
 
   pressInList(chosen: N, { shiftKey, ctrlKey, metaKey }: any) {
-    if (this.isMultiple() && shiftKey && this.anchor !== null) {
+    const { anchor } = this;
+    if (this.isMultiple() && shiftKey && anchor !== null) {
       const all = this.options();
-      const [from, to] = [all.indexOf(this.anchor), all.indexOf(chosen)].sort((a, b) => a - b);
+      const [from, to] = [all.indexOf(anchor), all.indexOf(chosen)].sort((a, b) => a - b);
       all.forEach((node, index) => setSelected(node, index >= from && index <= to && !isDisabled(node)));
       return userChanged(this.node);
     }
@@ -2177,8 +2193,9 @@ class Options extends nodes.Elements {
   }
   set(index: number, value: any) {
     const old = this.items()[index];
-    if (value == null) old && core.remove(old);
-    else if (old !== undefined) core.replaceChild(old, core.unwrap(value, "set"), old.parent!);
+    if (value == null) {
+      if (old) core.remove(old);
+    } else if (old !== undefined) core.replaceChild(old, core.unwrap(value, "set"), old.parent!);
     else {
       setOptionCount(this.node, index);
       addOption(this.node, value, null);
@@ -2258,7 +2275,8 @@ const HTMLSelectElement = define(
     shadow: node => node.x.build(),
     inserted: controlInserted,
     removed(node, scope, isMove) {
-      if (node.x.isOpen() && !node.x.popover.rare.popover) node.x.setOpen(false);
+      const nodeX = node.x;
+      if (nodeX.isOpen() && !nodeX.popover.rare.popover) nodeX.setOpen(false);
       else if (!isMove) setState(node, states.PICKER_OPEN, false);
       controlRemoved(node, scope);
     },
@@ -2368,7 +2386,7 @@ define("HTMLOptGroupElement", "optgroup", "disabled? label", undefined, {
   children(node) {
     selectOf(node)?.x.childrenChanged();
     const hasLegend = isHtml(core.elementChildren(node)[0] ?? null, "legend");
-    if (hasLegend) customStates(node).add(":legend");
+    if (hasLegend) customStates(node)!.add(":legend");
     else node.rare?.customStates?.delete(":legend");
   },
   moved: node => core.filterDescendants(node, it => isHtml(it, "option")).forEach(it => updateOwner(it)),
@@ -2444,11 +2462,11 @@ const { append: nativeAppend, set: nativeSet } = NativeFormData.prototype;
 
 function addTo(data: object, add: Function, given: IArguments) {
   const [name, value, filename] = given;
-  const isFile = $inheritsBlob(value) && value.name !== undefined;
-  if (!$inheritsBlob(value) || (isFile && filename === undefined)) return add.$apply(data, given);
+  const isFile = $inheritsBlob(value) && (value as any).name !== undefined;
+  if (!$inheritsBlob(value) || (isFile && filename === undefined)) return (add as any).$apply(data, given);
   const wanted = filename === undefined ? "blob" : `${filename}`.toWellFormed();
-  const options = { type: value.type, lastModified: isFile ? value.lastModified : Date.now() };
-  add.$call(data, name, new File([value], wanted, options), wanted);
+  const options = { type: value.type, lastModified: isFile ? (value as any).lastModified : Date.now() };
+  (add as any).$call(data, name, new File([value], wanted, options), wanted);
 }
 
 class FormData extends NativeFormData {
@@ -2462,10 +2480,10 @@ class FormData extends NativeFormData {
     }
     fillFormData(this, node, button);
   }
-  append(name: string, value: unknown) {
+  append(_name: string, _value: unknown) {
     addTo(this, nativeAppend, arguments);
   }
-  set(name: string, value: unknown) {
+  set(_name: string, _value: unknown) {
     addTo(this, nativeSet, arguments);
   }
   static [Symbol.hasInstance](value: unknown) {
@@ -2523,9 +2541,9 @@ function submit(form: N, submitter: N, fromMethod: boolean) {
     referrerPolicy: rel.includes("noreferrer") ? "no-referrer" : undefined,
     noopener: rel.includes("noreferrer") || rel.includes("noopener") || (rel.includes("opener") ? false : undefined),
   };
-  const encode = (type: string) => encodeForm(data, type, getAttr(form, "accept-charset"), form.doc.encoding);
+  const encode = (type: string) => encodeForm(data as any, type, getAttr(form, "accept-charset"), form.doc.encoding);
   if (isPost) Object.assign(options, { method: "POST", formData: data }, encode(asciiLower(setting("enctype") ?? "")));
-  else if (method !== "post" && url.protocol !== "javascript:") url.search = "?" + encode("").text;
+  else if (method !== "post" && url.protocol !== "javascript:") url.search = "?" + (encode("") as any).text;
   const [{ page }, target] = [form.doc, setting("target") ?? baseTarget(form.doc)];
   if (!fromMethod || !plannedNavigations.has(form)) plannedNavigations.set(form, new Map());
   const planned = plannedNavigations.get(form)!;
@@ -2639,9 +2657,10 @@ const HTMLFormElement = define(
     },
     requestSubmit(this: any, submitter: any = undefined) {
       const button = submitter == null ? this.$impl : core.unwrap(submitter, "requestSubmit");
-      if (button !== this.$impl) {
+      const impl = this.$impl;
+      if (button !== impl) {
         if (!isSubmitButton(button)) throw new TypeError("The specified element is not a submit button.");
-        if (formOf(button) !== this.$impl) throw domError("NotFoundError", "The element is not owned by this form.");
+        if (formOf(button) !== impl) throw domError("NotFoundError", "The element is not owned by this form.");
       }
       submit(this.$impl, button, false);
     },
@@ -2760,7 +2779,8 @@ class CustomControl extends Control {
     core.enqueueReaction(this.node, "formResetCallback");
   }
   entries(add: (name: string, value: unknown) => void) {
-    if (this.value instanceof NativeFormData) for (const [name, value] of this.value as any) add(name, value);
+    const ownValue = this.value;
+    if (ownValue instanceof NativeFormData) for (const [name, value] of ownValue as any) add(name, value);
     else if (this.value !== null) add(getAttr(this.node, "name") ?? "", this.value);
   }
 }
@@ -2928,9 +2948,11 @@ hooks.isSkippedRadio = node => {
   return node !== group.find(focusing.isFocusable);
 };
 hooks.beforeBlur = node => {
-  if (node.x instanceof Select && !node.x.popover?.rare!.popover) node.x.setOpen(false);
+  const nodeX = node.x;
+  if (nodeX instanceof Select && !nodeX.popover?.rare!.popover) nodeX.setOpen(false);
   else if (node.x instanceof Option && node.x.owner !== null) node.x.owner.x.lastFocused = node;
-  if (node.state & states.ACTIVE && !node.doc.page!.mouse.pressed.includes(node)) setState(node, states.ACTIVE, false);
+  const { ACTIVE } = states;
+  if (node.state & ACTIVE && !node.doc.page!.mouse.pressed.includes(node)) setState(node, ACTIVE, false);
   node.doc.page!.endComposition();
   if (!(node.x instanceof TextControl)) return;
   node.x.commit();

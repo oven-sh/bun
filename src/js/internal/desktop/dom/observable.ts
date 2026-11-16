@@ -82,7 +82,7 @@ class Subscriber {
 
   next(value: unknown) {
     if ($argumentCount() < 1) core.tooFew(1);
-    if (this.#isActive && isActive()) for (const observer of [...this.#observers]) observer.next(value);
+    if (this.#isActive && isActive()) for (const observer of Array.from(this.#observers)) observer.next(value);
   }
   error(error: unknown) {
     if ($argumentCount() < 1) core.tooFew(1);
@@ -117,7 +117,7 @@ function methodOf(value: any, key: PropertyKey): Function | undefined {
 }
 
 function iteratorOf(value: any, method: Function | undefined): [iterator: any, next: Function] {
-  const iterator = callable(method).$call(value);
+  const iterator = (callable(method) as any).$call(value);
   if (!$isObject(iterator)) throw new TypeError("The iterator is not an object.");
   return [iterator, iterator.next];
 }
@@ -137,13 +137,13 @@ function fromIterable(value: any): Subscribe {
       if (isDone) return;
       reporting(() => {
         const close = methodOf(iterator, "return");
-        if (close !== undefined && !$isObject(close.$call(iterator)))
+        if (close !== undefined && !$isObject((close as any).$call(iterator)))
           throw new TypeError("Expected return() to return an object.");
       });
     });
     while (subscriber.active) {
       isDone = true;
-      const result = resultOf(next.$call(iterator));
+      const result = resultOf((next as any).$call(iterator));
       if (result.done) return subscriber.complete();
       const item = result.value;
       isDone = false;
@@ -162,7 +162,7 @@ function fromAsyncIterable(value: any): Subscribe {
     $addAbortAlgorithmToSignal(subscriber.signal, () => {
       if (isDone) return;
       Promise.$resolve(
-        Promise.try(() => methodOf(iterator, "return")?.$call(iterator, subscriber.signal.reason) ?? {}),
+        Promise.try(() => (methodOf(iterator, "return") as any)?.$call(iterator, subscriber.signal.reason) ?? {}),
       ).then(result => {
         if (!$isObject(result)) throw new TypeError("Expected return() to return an object.");
       });
@@ -294,7 +294,7 @@ class Observable {
       realm.page?.mirror?.adopt(subscriber);
       join(subscriber, observer, signal);
       try {
-        source.#start.$call(undefined, subscriber);
+        (source.#start as any).$call(undefined, subscriber);
       } catch (error) {
         subscriber.error(error);
       }
@@ -551,7 +551,7 @@ function when(target: any, type: string, options: any, addEventListener: Functio
   const { capture, passive } = dictionary(options);
   return new Observable(subscriber => {
     if (!subscriber.active) return;
-    addEventListener.$call(target, type, event => subscriber.next(event), {
+    (addEventListener as any).$call(target, type, event => subscriber.next(event), {
       capture,
       passive,
       signal: subscriber.signal,

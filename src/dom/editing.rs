@@ -275,9 +275,9 @@ impl Document {
     pub(crate) fn forget_highlights(&mut self) {
         self.marks.styles.get_mut().clear();
         let marked: Vec<NodeId> = self.marks.by_node.keys().copied().collect();
-        marked
-            .into_iter()
-            .for_each(|it| self.repaint(self.tree.flat_parent(it)));
+        for it in marked {
+            self.repaint(self.tree.flat_parent(it));
+        }
     }
 
     pub(crate) fn update_marks(&mut self) {
@@ -314,11 +314,13 @@ impl Document {
                         previous = id;
                     }
                 }
-                Visit::Leave(true) if mark == Mark::Selection => {
+                Visit::Leave(true) if mark != Mark::Composition => {
                     let is_replaced = self
                         .own_box(id)
                         .is_some_and(|it| self.boxes[it].is_replaced());
-                    if is_replaced || self.tree.html_tag(id) == name!("br") {
+                    if is_replaced
+                        || mark == Mark::Selection && self.tree.html_tag(id) == name!("br")
+                    {
                         by_node.entry(id).or_default().push((0..1, mark));
                     }
                 }
@@ -336,9 +338,9 @@ impl Document {
             .filter(|it| old.get(*it) != new.get(*it))
             .copied()
             .collect();
-        changed
-            .into_iter()
-            .for_each(|it| self.repaint(self.tree.flat_parent(it)));
+        for it in changed {
+            self.repaint(self.tree.flat_parent(it));
+        }
     }
 
     fn inline(&self, id: BoxId) -> Option<&Inline> {
@@ -532,7 +534,7 @@ impl Document {
         };
         (before
             .filter(is_open_text)
-            .or(after.filter(is_open_text))
+            .or_else(|| after.filter(is_open_text))
             .map(in_text))
         .or_else(|| after.map(|it| beside(it, false)))
         .or_else(|| before.map(|it| beside(it, true)))
@@ -661,10 +663,14 @@ impl Document {
             )),
             None => {
                 let own = self.own_box(point.node)?;
-                let ([x, y, ..], metrics) = (self.content_box(own), &self.boxes[own].style.metrics);
+                let ([x, y, width, _], Style { metrics, .. }) =
+                    (self.content_box(own), &*self.boxes[own].style);
+                let indent = Some(&self.boxes[own].style.text.indent)
+                    .filter(|it| !it.hangs)
+                    .map_or(0.0, |it| it.length.resolve(width));
                 Some((
                     own,
-                    Rect::new([x, y, 1.0, metrics.ascent + metrics.descent]),
+                    Rect::new([x + indent, y, 1.0, metrics.ascent + metrics.descent]),
                 ))
             }
         }
@@ -811,7 +817,7 @@ impl Document {
                     false,
                 ));
             }
-            let line = found.or(lines.next_back())?;
+            let line = found.or_else(|| lines.next_back())?;
             for fragment in inline.lines.fragments_of(line) {
                 if let FragmentKind::Atomic(child) = fragment.kind
                     && fragment.rect().contains([x, y])
@@ -1101,7 +1107,7 @@ impl Document {
         let paragraph_edge = |from: u32| match forward {
             true => (from..inline.last_place())
                 .find(|it| inline.is_newline(*it))
-                .unwrap_or(inline.last_place()),
+                .unwrap_or_else(|| inline.last_place()),
             false => (0..from)
                 .rev()
                 .find(|it| inline.is_newline(*it))

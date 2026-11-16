@@ -93,6 +93,11 @@ pub trait Window {
     /// The `CALayer` of the view.
     #[cfg(target_os = "macos")]
     fn layer(&self) -> *mut std::ffi::c_void;
+    /// From where to where it shows, and from where to where a change makes the system blur again.
+    #[cfg(target_os = "macos")]
+    fn fit_backdrop(&self, _shows: [f64; 2]) -> [f64; 2] {
+        [0.; 2]
+    }
     fn set_cursor(&self, cursor: Cursor);
     /// Whether a field has the focus, or where its caret is, has changed. See `input::TextInput`.
     fn text_input_changed(&self);
@@ -224,7 +229,7 @@ pub enum Phase {
     Started,
     Moved,
     Ended,
-    #[cfg_attr(target_os = "macos", expect(dead_code, reason = "Objective-C does"))]
+    #[expect(dead_code, reason = "Objective-C does")]
     Cancelled,
 }
 
@@ -294,6 +299,7 @@ pub struct Pixels<'a> {
 /// What differs from the last time.
 #[cfg(any(test, not(target_os = "macos")))]
 #[derive(Default)]
+#[cfg_attr(target_os = "macos", expect(dead_code, reason = "X11 does it"))]
 pub struct Painted {
     /// In this order, each shows what was `moved_by` pixels above it. Done in the pixels unless `platform_moves`.
     pub moved: Vec<IntRect>,

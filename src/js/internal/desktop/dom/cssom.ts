@@ -3,8 +3,7 @@ const engine = require("internal/desktop/dom/engine");
 const { Element, iterable, kList, makeList, setIndexes } = require("internal/desktop/dom/node");
 const { comparePoints, pointId, pointOffset, rangeRects } = require("internal/desktop/dom/range");
 
-const { accessor, asciiLower, domError, expose, flags, hooks, illegalConstructor, rare, splitTokens, wrapOrNull } =
-  core;
+const { accessor, asciiLower, domError, expose, flags, hooks, illegalConstructor, splitTokens, wrapOrNull } = core;
 const { STYLE_DIRTY, STYLE_UNSENT, CUSTOM, CONNECTED } = flags;
 
 type N = $Dom.N;
@@ -235,7 +234,10 @@ class Declarations {
           for (let j = index + At.Next; j < list.length; j += At.Next)
             moves ||= conflicts(group, property(list[j]).group);
         }
-        if (moves) (this.drop(index), (index = -1));
+        if (moves) {
+          this.drop(index);
+          index = -1;
+        }
       }
       if (index < 0) {
         list.push(name, value, priority, values[i]);
@@ -396,7 +398,8 @@ class InlineStyle extends Declarations {
       doc.needsSync = true;
       core.invalidate(doc);
     }
-    if (node.rare !== null) node.rare.isStyleRefused = false;
+    const { rare } = node;
+    if (rare !== null) rare.isStyleRefused = false;
     node.flags |= STYLE_DIRTY | STYLE_UNSENT;
     doc.attributeVersion++;
     if (doc.observed & 2) core.queueRecord(2, node, "style", null, this.old, null, null, null, null);
@@ -432,7 +435,8 @@ hooks.checkStyleAttribute = (node: N, value: string | null) => {
   const isRefused =
     value !== null && !node.doc.page!.host.allowsInline("style", value, undefined, true, core.wrap(node));
   core.rare(node).isStyleRefused = isRefused;
-  if (isRefused && node.id !== 0) node.doc.engine.removeAttribute(node.id, "style");
+  const { id } = node;
+  if (isRefused && id !== 0) node.doc.engine.removeAttribute(id, "style");
 };
 
 let computedNames: string[] | undefined;
@@ -449,7 +453,7 @@ class ComputedStyle {
   }
   get({ name }: Property): string {
     const { node } = this;
-    return this.isEmpty() ? "" : core.sync(node.doc).computedStyle(node.id, this.pseudo, name);
+    return this.isEmpty() ? "" : core.sync(node.doc).computedStyle(node.id, this.pseudo as any, name);
   }
   isEmpty() {
     return !(this.node.flags & CONNECTED) || this.node.id === 0 || this.pseudo === null;
@@ -467,7 +471,7 @@ class ComputedStyle {
       .propertyNames()
       .filter((name: string) => property(name).name === name && !property(name).isShorthand && !notComputed.test(name))
       .sort((a: string, b: string) => +(a[0] === "-") - +(b[0] === "-") || (a < b ? -1 : 1));
-    return computedNames!.concat(core.sync(this.node.doc).customPropertyNames(this.node.id, this.pseudo));
+    return computedNames!.concat(core.sync(this.node.doc).customPropertyNames(this.node.id, this.pseudo as any));
   }
   text() {
     return "";
@@ -673,7 +677,7 @@ function makePseudoElement(known: Map<string, object>, element: N, parent: objec
   let made = known.$get(type);
   if (made === undefined) {
     known.$set(type, (made = Object.create(CSSPseudoElement.prototype) as object));
-    $putByIdDirectPrivate(made, "impl", { element, parent, type: type.replace(/\(.*/, ""), inner: new Map() });
+    $putByIdDirectPrivate(made as any, "impl", { element, parent, type: type.replace(/\(.*/, ""), inner: new Map() });
   }
   return made;
 }
@@ -704,8 +708,10 @@ class RuleStyle extends Declarations {
     super();
     this.rule = rule;
     if (rule.sheet?.owner?.doc.quirks) this.context = "quirks";
-    for (let at: Rule | null = rule; at !== null; at = at.parent)
-      if (ownDescriptors.includes(at.keyword)) this.context = at.keyword;
+    for (let at: Rule | null = rule; at !== null; at = at.parent) {
+      const { keyword } = at;
+      if (ownDescriptors.includes(keyword)) this.context = keyword;
+    }
   }
   source() {
     this.rule.rules();
@@ -766,14 +772,15 @@ class Rule {
   context(): string {
     for (let at: Rule | null = this; at !== null; at = at.parent) {
       if (at.keyword === "") return "style";
-      if (!groupKeywords.includes(at.keyword) || at.keyword === "scope" || at.keyword === "keyframes")
-        return at.keyword;
+      const { keyword } = at;
+      if (!groupKeywords.includes(keyword) || keyword === "scope" || keyword === "keyframes") return keyword;
     }
     return "";
   }
 
   rules(): Rule[] {
-    if (this.children !== null) return this.children;
+    const ownChildren = this.children;
+    if (ownChildren !== null) return ownChildren;
     const children: Rule[] = (this.children = []);
     const context = this.context();
     const parts = engine.splitRules(this.body ?? "", context !== "" && context !== "keyframes", true);
@@ -825,7 +832,8 @@ class Rule {
   text(forEngine: boolean): string {
     const { keyword } = this;
     let head = keyword === "" ? this.prelude : ("@" + keyword + " " + this.prelude).trimEnd();
-    if (keyword === "import" && this.parts[3] !== "") head += " " + this.parts[3];
+    const { parts } = this;
+    if (keyword === "import" && parts[3] !== "") head += " " + parts[3];
     if (this.body === null) return head + ";";
     if (forEngine && this.children === null && this.style === null && this.features === null)
       return `${head}{${this.body}}`;
@@ -989,7 +997,7 @@ class CSSRule {
     return this.$impl.text(false);
   }
   set cssText(_) {
-    this.$impl.parent;
+    void this.$impl.parent;
   }
   get parentRule() {
     return this.$impl.parent?.js ?? null;
@@ -1276,7 +1284,8 @@ class CSSFontFeatureValuesMap extends Map<string, number[]> {
   }
 }
 function featuresOf(rule: Rule): Map<string, CSSFontFeatureValuesMap> {
-  if (rule.features !== null) return rule.features;
+  const ruleFeatures = rule.features;
+  if (ruleFeatures !== null) return ruleFeatures;
   const features = (rule.features = new Map());
   for (const kind of featureKinds) {
     const map = new CSSFontFeatureValuesMap();
@@ -1284,7 +1293,7 @@ function featuresOf(rule: Rule): Map<string, CSSFontFeatureValuesMap> {
     features.$set(kind, map);
   }
   for (const { keyword, body } of rule.rules()) {
-    const parsed = engine.parseDeclarations(body);
+    const parsed = engine.parseDeclarations(body as any);
     for (let i = 0; i < parsed.length; i += 3) {
       const values = splitTokens(parsed[i + 1]);
       if (parsed[i + 2] !== "" || values.length === 0 || values.length > mostValues(keyword)) continue;
@@ -1470,7 +1479,8 @@ class Sheet {
   }
 
   load() {
-    if (this.bytes !== null) this.chunks[0] = new TextDecoder().decode(this.bytes);
+    const { bytes } = this;
+    if (bytes !== null) this.chunks[0] = new TextDecoder().decode(bytes);
     else if (this.isInEngine) for (const [engine, ids] of this.compiled) this.chunks[0] = engine.sheetSource(ids[0]);
     this.bytes = null;
     this.isInEngine = false;
@@ -1478,7 +1488,8 @@ class Sheet {
 
   rules(): Rule[] {
     this.load();
-    if (this.parsed !== null) return this.parsed;
+    const { parsed } = this;
+    if (parsed !== null) return parsed;
     const rules: Rule[] = (this.parsed = []);
     const parts = engine.splitRules(this.chunks[0], false, false);
     this.namespaces = "";
@@ -1498,9 +1509,11 @@ class Sheet {
     this.namespaces = this.parsed!.map(it => (it.keyword === "namespace" ? it.parts.join("\0") + "\0" : "")).join("");
   }
 
-  changed() {
-    if (this.parent !== null) return this.parent.changed();
-    if (this.owner?.scope) core.dirtyScope(this.owner.scope);
+  changed(): any {
+    const { parent } = this;
+    if (parent !== null) return parent.changed();
+    const { owner } = this;
+    if (owner?.scope) core.dirtyScope(owner.scope);
     for (const scope of this.scopes) if (scope.id !== 0) core.dirtyScope(scope);
   }
 
@@ -1557,7 +1570,8 @@ class Sheet {
   }
 
   scopeRoot(): N | null {
-    if (this.parent !== null) return this.parent.scopeRoot();
+    const ownParent = this.parent;
+    if (ownParent !== null) return ownParent.scopeRoot();
     const parent = this.owner?.parent ?? null;
     return parent !== null && parent.flags & flags.SHADOW_ROOT ? null : parent;
   }
@@ -1617,7 +1631,7 @@ class StyleSheet {
     if (new.target === StyleSheet) illegalConstructor();
   }
   get type() {
-    this.$impl.href;
+    void this.$impl.href;
     return "text/css";
   }
   get href() {
@@ -1754,18 +1768,56 @@ function checkAdoptable(scope: N, value: any) {
 }
 
 function adoptedSheets(scope: N) {
-  return (core.scopeOf(scope).adopted ??= new Proxy([], {
-    set(target, key, value) {
-      if (typeof key === "string" && String(+key >>> 0) === key) {
-        if (+key > target.length) return false;
-        checkAdoptable(scope, value);
-      }
-      target[key]?.$impl?.scopes.$delete(scope);
-      if (key === "length") for (const sheet of target.slice(value)) sheet?.$impl.scopes.$delete(scope);
-      core.dirtyScope(scope);
-      return Reflect.set(target, key, value);
+  return (core.scopeOf(scope).adopted ??= observedSheets(scope));
+}
+
+function observedSheets(scope: N) {
+  const isIndex = (key: string | symbol) => typeof key === "string" && String(+key >>> 0) === key;
+  const truncate = (target: any[], length: number) => {
+    for (const sheet of target.slice(length)) sheet.$impl.scopes.$delete(scope);
+    target.length = length;
+    core.dirtyScope(scope);
+    return true;
+  };
+  const store = (target: any[], key: string, value: any) => {
+    if (key === "length") {
+      const length = value >>> 0;
+      if (length !== +value) throw new RangeError("Invalid array length");
+      return length <= target.length && truncate(target, length);
+    }
+    if (+key > target.length) return false;
+    checkAdoptable(scope, value);
+    if (+key < target.length) target[key].$impl.scopes.$delete(scope);
+    core.dirtyScope(scope);
+    $putByValDirect(target, +key, value);
+    return true;
+  };
+  return new Proxy([], {
+    __proto__: null,
+    set: (target, key, value, receiver) =>
+      key === "length" || isIndex(key)
+        ? store(target, key as string, value)
+        : Reflect.set(target, key, value, receiver),
+    deleteProperty(target, key) {
+      if (!isIndex(key)) return Reflect.deleteProperty(target, key);
+      return +(key as string) === target.length - 1 && truncate(target, target.length - 1);
     },
-  }));
+    defineProperty(target, key, descriptor) {
+      const own = { __proto__: null, ...descriptor } as PropertyDescriptor;
+      if (key !== "length" && !isIndex(key)) return Reflect.defineProperty(target, key, own);
+      const isLength = key === "length";
+      if (
+        "get" in own ||
+        "set" in own ||
+        own.configurable === isLength ||
+        own.enumerable === isLength ||
+        own.writable === false
+      )
+        return false;
+      return !("value" in own) || store(target, key as string, own.value);
+    },
+    preventExtensions: () => false,
+  } as ProxyHandler<any[]>);
 }
 
 const hasSheets = {
@@ -1829,7 +1881,7 @@ function readsCollection(ctor: any, { entries, keys, values }: any, iterates: st
     },
     forEach(callback: Function, self: unknown = undefined) {
       if (!$isCallable(callback)) throw new TypeError("The callback is not a function.");
-      (this as any).$impl.$forEach((value, key) => callback.$call(self, value, key, this));
+      (this as any).$impl.$forEach((value, key) => (callback as any).$call(self, value, key, this));
     },
     clear() {
       (this as any).$impl.$clear();

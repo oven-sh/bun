@@ -1204,8 +1204,8 @@ declare module "bun:desktop/jsx-runtime" {
   import type { ElementType, Key, VNode } from "bun:desktop";
 
   export { Fragment, JSX } from "bun:desktop";
-  export function jsx<Props>(type: ElementType<Props>, props: Props, key?: Key): VNode<Props>;
   export { jsx as jsxs };
+  export function jsx<Props>(type: ElementType<Props>, props: Props, key?: Key): VNode<Props>;
 }
 
 declare module "bun:desktop/jsx-dev-runtime" {

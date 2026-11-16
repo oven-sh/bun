@@ -678,7 +678,7 @@ fn transform_into(
         (TextTransform::None | TextTransform::MathAuto, _) => out.push(character),
         (TextTransform::Capitalize, _) if in_word => out.push(character),
         (TextTransform::Capitalize, _) => {
-            out.extend(title_case(character).map_or(character.to_uppercase().next(), Some))
+            out.extend(title_case(character).map_or_else(|| character.to_uppercase().next(), Some))
         }
         (TextTransform::Uppercase, 'i') if speaks("tr") || speaks("az") => out.push('İ'),
         (TextTransform::Uppercase, '\u{307}')
@@ -901,7 +901,7 @@ impl Inline {
                 };
                 (
                     class,
-                    has_positioning_feature(&face, if stands { b"vhal" } else { b"halt" }),
+                    has_positioning_feature(&face, if stands { *b"vhal" } else { *b"halt" }),
                 )
             })
         });
@@ -1167,7 +1167,7 @@ pub(crate) fn is_layer(style: &Style) -> bool {
     style.is_positioned() || style.is_stacking_context(false)
 }
 
-fn speaks(style: &Style, language: &str) -> bool {
+pub(crate) fn speaks(style: &Style, language: &str) -> bool {
     let locale = style.font.locale.0.trim_start_matches('"').as_bytes();
     locale
         .get(..2)

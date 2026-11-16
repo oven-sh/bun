@@ -143,7 +143,7 @@ fn morphology(input: &Layer, [rx, ry]: [i32; 2], dilates: bool) -> Option<Layer>
         })
     };
     let rect = input.rect;
-    let (width, height) = (rect.width() as usize, rect.height() as usize);
+    let (width, height) = (rect.width(), rect.height());
     if rx < 0 || ry < 0 {
         return Layer::new(rect);
     }
@@ -477,7 +477,7 @@ impl Graph<'_> {
             ],
             kernel,
         ) = arguments.split_first_chunk()?;
-        let (columns, rows, bounds) = (columns as i32, rows as i32, input.area);
+        let (columns, rows, bounds) = (columns as i32, rows as i32, area);
         (kernel.len() == (columns * rows) as usize && !bounds.is_empty()).then_some(())?;
         let inside = |at: i32, low: i32, high: i32| match edge {
             0. => Some(at.clamp(low, high - 1)),
@@ -780,7 +780,7 @@ pub fn apply(
     }
     let (mut kept, most) = (
         Vec::new(),
-        ((1 << 28) / (rect.width() as usize * rect.height() as usize).max(1)).max(8),
+        ((1 << 28) / (rect.width() * rect.height()).max(1)).max(8),
     );
     for (index, primitive) in primitives.iter().enumerate() {
         let Filter::Primitive {

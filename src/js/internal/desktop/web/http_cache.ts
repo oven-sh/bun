@@ -75,7 +75,7 @@ class HttpCache {
 
   #onDisk() {
     return (this.#names ??= fs.promises
-      .readdir(this.#directory)
+      .readdir(this.#directory as any)
       .catch(() => [])
       .then(names => new Set(names.map(name => path.join(this.#directory, name)))));
   }
@@ -85,7 +85,7 @@ class HttpCache {
     if (this.#directory === null) return this.#memory.$get(key);
     if (!(await this.#onDisk()).$has(this.#file(key))) return;
     try {
-      const bytes = await fs.promises.readFile(this.#file(key));
+      const bytes = (await fs.promises.readFile(this.#file(key), undefined)) as Buffer;
       const end = bytes.indexOf(10);
       const entry = JSON.parse(bytes.utf8Slice(0, end));
       if (entry.key === key) return { ...entry, body: bytes.subarray(end + 1) };
@@ -93,7 +93,9 @@ class HttpCache {
   }
 
   #track(key: string, writing: Promise<unknown>) {
-    const done = writing.catch(() => {}).then(() => this.#writing.$get(key) === done && this.#writing.$delete(key));
+    const done: Promise<unknown> = writing
+      .catch(() => {})
+      .then(() => this.#writing.$get(key) === done && this.#writing.$delete(key));
     this.#writing.$set(key, done);
   }
 
@@ -125,7 +127,7 @@ class HttpCache {
   }
 
   async #files(): Promise<{ file: string; size: number; mtimeMs: number }[]> {
-    const names = await fs.promises.readdir(this.#directory).catch(() => []);
+    const names = await fs.promises.readdir(this.#directory as any).catch(() => []);
     const describe = async (file: string) => ({
       size: 0,
       mtimeMs: 0,
@@ -137,7 +139,7 @@ class HttpCache {
 
   async #trim() {
     this.#written = 0;
-    await fs.promises.mkdir(this.#directory, { recursive: true, mode: 0o700 });
+    await fs.promises.mkdir(this.#directory as any, { recursive: true, mode: 0o700 });
     let size = 0;
     for (const it of (await this.#files()).sort((a, b) => b.mtimeMs - a.mtimeMs)) {
       if ((size += it.size) > MAX_ON_DISK) await fs.promises.rm(it.file, { force: true });
@@ -195,7 +197,7 @@ class HttpCache {
       },
       flush: () => void (chunks && this.#track(key, this.#write({ ...entry, body: Buffer.concat(chunks) }))),
     });
-    return new Response(body.pipeThrough(copying), { status, statusText, headers });
+    return new Response((body as any).pipeThrough(copying), { status, statusText, headers });
   }
 
   /** `mode` is the `cache` of a `Request`. Undefined if only the cache may be asked, and it has nothing. */

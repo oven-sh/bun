@@ -504,11 +504,8 @@ impl Reader<'_> {
             kind == b"all" || kind == b"screen",
         ))];
         let has_condition = keyword(p, "and");
-        self.out.extend(
-            qualifier
-                .into_iter()
-                .flat_map(|it| it.bytes().chain([b' '])),
-        );
+        self.out
+            .extend(qualifier.into_iter().flat_map(|it| it.bytes().chain(*b" ")));
         if qualifier.is_some() || kind != b"all" || !has_condition {
             write_ident(&kind, &mut self.out);
             self.out

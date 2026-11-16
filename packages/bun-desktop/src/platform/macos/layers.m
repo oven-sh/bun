@@ -3,7 +3,6 @@
 #import <IOSurface/IOSurfaceObjC.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
-#import <os/lock.h>
 
 void bd_release(void* object) { CFRelease(object); }
 
@@ -42,69 +41,7 @@ void bd_surface_unlock(IOSurfaceRef surface, bool wrote)
         IOSurfaceUnlock(surface, wrote ? 0 : kIOSurfaceLockReadOnly, NULL);
 }
 
-/// What is being drawn, and what only waits for its moment.
-static NSMutableArray<void (^)(void)>*changes, *ready;
-static os_unfair_lock readyLock = OS_UNFAIR_LOCK_INIT;
-static bool hasChangedLayers;
-static NSMutableArray<id<MTLCommandBuffer>>* unfinished;
-
-static bool commitsAfterGpu(void)
-{
-    static int does = -1;
-    return does = does < 0 ? !strcmp(getenv("BUN_DESKTOP_COMMIT") ?: "", "gpu") : does;
-}
-
-static void change(void* pointer, void (^body)(CALayer* layer))
-{
-    CALayer* layer = (__bridge CALayer*)pointer;
-    changes = changes ?: [NSMutableArray new];
-    [changes addObject:^{
-        body(layer);
-    }];
-}
-
-/// On any thread.
-void commitWhatIsReady(void)
-{
-    @autoreleasepool {
-        os_unfair_lock_lock(&readyLock);
-        if (ready) {
-            [CATransaction begin];
-            for (void (^body)(void) in ready)
-                body();
-            [CATransaction commit];
-            ready = nil;
-            bd_trace("committed in time", 0);
-        }
-        os_unfair_lock_unlock(&readyLock);
-    }
-}
-
-void bd_layers_apply(bool flushes, bool mayWait)
-{
-    @autoreleasepool {
-        if (!flushes)
-            [unfinished.lastObject waitUntilScheduled];
-        os_unfair_lock_lock(&readyLock);
-        NSMutableArray* all = ready ?: changes;
-        if (ready && changes)
-            [all addObjectsFromArray:changes];
-        changes = nil;
-        bool waits = mayWait && commitsInTime();
-        if (commitsAfterGpu() && unfinished.count && flushes)
-            waits = unfinished.lastObject.status < MTLCommandBufferStatusCompleted;
-        ready = waits ? all : nil;
-        os_unfair_lock_unlock(&readyLock);
-        for (void (^body)(void) in waits ? nil : all)
-            body();
-        if (flushes && (!waits || hasChangedLayers))
-            [CATransaction flush];
-        hasChangedLayers = !flushes;
-    }
-}
-
-/// `isPinned` is for what `bd_layer_pin` gets.
-void* bd_layer_create(void* parent, bool isPinned)
+void* bd_layer_create(void* parent)
 {
     @autoreleasepool {
         CALayer* layer = [CALayer new];
@@ -115,13 +52,7 @@ void* bd_layer_create(void* parent, bool isPinned)
         layer.actions = actions;
         layer.anchorPoint = CGPointZero;
         layer.edgeAntialiasingMask = 0;
-        if (isPinned) {
-            [(__bridge CALayer*)parent addSublayer:layer];
-            hasChangedLayers = true;
-        } else
-            change(parent, ^(CALayer* it) {
-                [it addSublayer:layer];
-            });
+        [(__bridge CALayer*)parent addSublayer:layer];
         return (__bridge_retained void*)layer;
     }
 }
@@ -132,34 +63,32 @@ bool bd_layer_pin(void* corner)
     CALayer *layer = (__bridge CALayer*)corner, *root = layer.superlayer;
     bool isFlipped = root.contentsAreFlipped;
     CGPoint position = CGPointMake(0, isFlipped ? 0 : root.bounds.size.height);
-    if (!CGPointEqualToPoint(layer.position, position)) {
+    if (!CGPointEqualToPoint(layer.position, position))
         layer.position = position;
-        hasChangedLayers = true;
-    }
     return isFlipped;
 }
 
 void bd_layer_place(void* pointer, double x, double y, double width, double height, double scale, bool isOpaque)
 {
-    change(pointer, ^(CALayer* layer) {
-        layer.frame = CGRectMake(x, y, width, height);
-        layer.contentsScale = scale;
-        layer.opaque = isOpaque;
-    });
+    CALayer* layer = (__bridge CALayer*)pointer;
+    layer.frame = CGRectMake(x, y, width, height);
+    layer.contentsScale = scale;
+    layer.opaque = isOpaque;
 }
 
-void bd_layer_show(void* pointer, void* surface)
-{
-    id contents = (__bridge id)surface;
-    change(pointer, ^(CALayer* layer) {
-        layer.contents = contents;
-    });
-}
+void bd_layer_show(void* layer, void* surface) { ((__bridge CALayer*)layer).contents = (__bridge id)surface; }
 
-void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo)
+void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo, bool blinks)
 {
     @autoreleasepool {
-        id color = CFBridgingRelease(CGColorCreateSRGB((rgba >> 24) / 255., (rgba >> 16 & 255) / 255., (rgba >> 8 & 255) / 255., (rgba & 255) / 255.));
+        CALayer* layer = (__bridge CALayer*)pointer;
+        CGColorRef color = CGColorCreateSRGB((rgba >> 24) / 255., (rgba >> 16 & 255) / 255., (rgba >> 8 & 255) / 255., (rgba & 255) / 255.);
+        layer.backgroundColor = color;
+        CGColorRelease(color);
+        layer.opaque = NO;
+        layer.zPosition = 1e7;
+        if (!blinks)
+            return [layer removeAnimationForKey:@"blinking"];
         CAKeyframeAnimation* blinking = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
         blinking.calculationMode = kCAAnimationDiscrete;
         blinking.values = @[ @1, @0 ];
@@ -167,43 +96,30 @@ void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo)
         blinking.duration = 1;
         blinking.repeatCount = HUGE_VALF;
         blinking.beginTime = CACurrentMediaTime() - secondsAgo;
-        change(pointer, ^(CALayer* layer) {
-            layer.backgroundColor = (__bridge CGColorRef)color;
-            layer.opaque = NO;
-            layer.zPosition = 1e7;
-            [layer addAnimation:blinking forKey:@"blinking"];
-        });
+        [layer addAnimation:blinking forKey:@"blinking"];
     }
 }
 
-void bd_layer_move(void* pointer, double x, double y)
-{
-    change(pointer, ^(CALayer* layer) {
-        layer.position = CGPointMake(x, y);
-    });
-}
-
+void bd_layer_move(void* layer, double x, double y) { ((__bridge CALayer*)layer).position = CGPointMake(x, y); }
 void bd_layer_set_order(void* layer, double order) { ((__bridge CALayer*)layer).zPosition = order; }
 
 void bd_layer_clip(void* pointer, double radius, float opacity, double order)
 {
-    change(pointer, ^(CALayer* layer) {
-        layer.opaque = NO;
-        layer.masksToBounds = YES;
-        layer.cornerRadius = radius;
-        layer.opacity = opacity;
-        layer.zPosition = order;
-    });
+    CALayer* layer = (__bridge CALayer*)pointer;
+    layer.opaque = NO;
+    layer.masksToBounds = YES;
+    layer.cornerRadius = radius;
+    layer.opacity = opacity;
+    layer.zPosition = order;
 }
 
 void bd_layer_center(void* pointer, double x, double y, double width, double height, double scale)
 {
-    change(pointer, ^(CALayer* layer) {
-        layer.anchorPoint = CGPointMake(0.5, 0.5);
-        layer.bounds = CGRectMake(0, 0, width, height);
-        layer.position = CGPointMake(x, y);
-        layer.contentsScale = scale;
-    });
+    CALayer* layer = (__bridge CALayer*)pointer;
+    layer.anchorPoint = CGPointMake(0.5, 0.5);
+    layer.bounds = CGRectMake(0, 0, width, height);
+    layer.position = CGPointMake(x, y);
+    layer.contentsScale = scale;
 }
 
 /// A sample is a position and an opacity or a matrix.
@@ -212,9 +128,7 @@ void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t c
     @autoreleasepool {
         NSString* key = fades ? @"opacity" : @"transform";
         if (!count)
-            return change(pointer, ^(CALayer* layer) {
-                [layer removeAnimationForKey:key];
-            });
+            return [(__bridge CALayer*)pointer removeAnimationForKey:key];
         NSMutableArray *times = [NSMutableArray new], *values = [NSMutableArray new];
         for (const double* it = samples; count--; it += fades ? 2 : 7) {
             CGAffineTransform matrix = fades ? CGAffineTransformIdentity : CGAffineTransformMake(it[1], it[2], it[3], it[4], it[5], it[6]);
@@ -239,17 +153,17 @@ void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t c
         animation.fillMode = kCAFillModeBoth;
         animation.removedOnCompletion = NO;
         animation.preferredFrameRateRange = (CAFrameRateRange) { 30, 60, 60 };
-        change(pointer, ^(CALayer* layer) {
-            [layer addAnimation:animation forKey:key];
-        });
+        [(__bridge CALayer*)pointer addAnimation:animation forKey:key];
     }
 }
 
-void bd_layer_remove(void* pointer)
+void bd_layer_remove(void* layer) { [(__bridge CALayer*)layer removeFromSuperlayer]; }
+
+void bd_layers_flush(void)
 {
-    change(pointer, ^(CALayer* layer) {
-        [layer removeFromSuperlayer];
-    });
+    @autoreleasepool {
+        [CATransaction flush];
+    }
 }
 
 static id<MTLDevice> device;
@@ -309,6 +223,8 @@ void* bd_gpu_texture(IOSurfaceRef surface)
 typedef struct { size_t offset, count; void* slots[8]; } BDBatch;
 typedef struct { void* texture; float cell[4]; size_t batches; } BDPass;
 
+static NSMutableArray<id<MTLCommandBuffer>>* unfinished;
+
 char* bd_gpu_finish(void)
 {
     return answer(^id {
@@ -351,15 +267,8 @@ char* bd_gpu_draw(void* instances, const BDPass* passes, size_t count, const BDB
             }
             [encoder endEncoding];
         }
-        if (commitsAfterGpu())
-            [commands addCompletedHandler:^(id<MTLCommandBuffer> unused) {
-                commitWhatIsReady();
-            }];
         [commands commit];
-        if (!commitsAfterGpu())
-            [commands waitUntilScheduled];
-        if (getenv("BUN_DESKTOP_WAIT"))
-            [commands waitUntilCompleted];
+        [commands waitUntilScheduled];
         unfinished = unfinished ?: [NSMutableArray new];
         [unfinished addObject:commands];
         return nil;

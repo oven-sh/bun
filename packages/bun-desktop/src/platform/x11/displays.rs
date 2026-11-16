@@ -96,7 +96,9 @@ fn monitors(x: &Connection, randr: u8) -> Option<Vec<Monitor>> {
             .iter()
             .find(|it| it.u32(20) != 0 && (it.i16(12), it.i16(14)) == (left, top))?;
         let mode = modes
-            .chunks_exact(32)
+            .as_chunks::<32>()
+            .0
+            .iter()
             .find(|mode| mode.u32(0) == controller.u32(20))?;
         let (is_interlaced, scans_twice) = (mode.u32(28) & 16 != 0, mode.u32(28) & 32 != 0);
         let lines = f32::from(mode.u16(24))

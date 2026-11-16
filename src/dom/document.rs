@@ -164,11 +164,14 @@ pub(crate) struct Document {
     pub(crate) natural: Replaced,
     /// From `#svgView(transform())`.
     pub(crate) view_transform: crate::abi::Matrix,
+    pub(crate) stretches_view: bool,
     pub(crate) externals: Map<Str, Option<Box<Document>>>,
     pub(crate) wanted_externals: RefCell<Set<Str>>,
     /// How far the lines of the largest text decoration are from their text, if they do not follow from the font.
     pub(crate) decoration_reach: f32,
-    pub(crate) view_transition: Option<Box<crate::view_transition::ViewTransition>>,
+    /// Those that show something from another origin.
+    pub(crate) foreign_frames: Set<NodeId>,
+    pub(crate) view_transitions: Vec<crate::view_transition::ViewTransition>,
     pub(crate) animated_vectors: RefCell<Set<(u32, NodeId)>>,
     /// A transform may depend on a stroke that depends on the transform.
     pub(crate) is_measuring_stroke: Cell<bool>,
@@ -324,9 +327,11 @@ impl Document {
             natural: Replaced::default(),
             view_transform: crate::types::IDENTITY,
             externals: Default::default(),
+            stretches_view: false,
             wanted_externals: Default::default(),
             decoration_reach: 0.0,
-            view_transition: None,
+            foreign_frames: Default::default(),
+            view_transitions: Vec::new(),
             animated_vectors: Default::default(),
             is_measuring_stroke: Cell::new(false),
             is_measuring_text: Cell::new(false),
@@ -381,9 +386,9 @@ impl Document {
         let root = self.tree.create(Data::ShadowRoot { host, user_agent });
         self.tree[root].scope = root;
         let children: Vec<_> = self.tree.children(host).collect();
-        children
-            .into_iter()
-            .for_each(|child| self.stop_rendering(child));
+        for child in children {
+            self.stop_rendering(child);
+        }
         if let Some(element) = self.tree.element_mut(host) {
             element.shadow_root = root;
         }
@@ -480,9 +485,9 @@ impl Document {
             self.drop_scroll_parts(id);
         }
         let children: Vec<_> = self.tree.flat_children(id).collect();
-        children
-            .into_iter()
-            .for_each(|child| self.forget_style(child));
+        for child in children {
+            self.forget_style(child);
+        }
     }
 
     fn unlink(&mut self, id: NodeId) {
@@ -602,6 +607,9 @@ impl Document {
                 self.deep_lists.remove(&id);
             }
             self.captured_node_freed(id);
+            if !self.foreign_frames.is_empty() {
+                self.foreign_frames.remove(&id);
+            }
             if !self.replacements.is_empty() && self.replacements.remove(&id).is_some() {
                 self.generated_images.remove(&id);
                 self.drawn_images.remove(&id);
@@ -853,7 +861,9 @@ impl Document {
             && tag == name!("table")
         {
             let cells: Vec<_> = self.tree.descendants(id).collect();
-            cells.into_iter().for_each(|cell| self.update_hints(cell));
+            for cell in cells {
+                self.update_hints(cell);
+            }
         }
         if name == name!("id") {
             self.id_changed(id);
@@ -918,7 +928,9 @@ impl Document {
         self.tree.forget_unskipped();
         self.slot_changed(slot);
         let new: Vec<_> = self.tree.flat_children(slot).collect();
-        new.into_iter().for_each(|id| self.start_rendering(id));
+        for id in new {
+            self.start_rendering(id);
+        }
         self.mark_rebuild(slot);
     }
 
@@ -1444,9 +1456,9 @@ impl Document {
                 .iter()
                 .for_each(|it| tree.mark_style(*it, Flags::RECASCADE));
             let asked: Vec<NodeId> = self.styles.answers.get_mut().keys().copied().collect();
-            asked
-                .into_iter()
-                .for_each(|it| self.container_changed(it, false));
+            for it in asked {
+                self.container_changed(it, false);
+            }
         }
         let new = &self.environment;
         if (
@@ -1566,13 +1578,15 @@ impl Document {
     }
 
     /// The URL says whether to ignore the orientation.
-    pub(crate) fn oriented_image(&self, url: &Str, style: &Style) -> Option<Replaced> {
+    pub(crate) fn oriented_url(&self, url: &Str, style: &Style) -> Str {
         match style.other_if_set(crate::properties::Id::ImageOrientation) {
-            Some(_) if !self.is_cross_origin(url) => {
-                self.image(&format!("unoriented:{url}").into())
-            }
-            _ => self.image(url),
+            Some(_) if !self.is_cross_origin(url) => format!("unoriented:{url}").into(),
+            _ => Rc::clone(url),
         }
+    }
+
+    pub(crate) fn oriented_image(&self, url: &Str, style: &Style) -> Option<Replaced> {
+        self.image(&self.oriented_url(url, style))
     }
 
     pub(crate) fn set_image(&mut self, url: &str, image: Replaced) {
@@ -1583,9 +1597,9 @@ impl Document {
             .filter(|it| &*it.1.0 == url)
             .map(|it| (*it.0, it.1.1))
             .collect();
-        users.into_iter().for_each(|(id, resolution)| {
-            self.set_replaced(id, Some(image.at_resolution(resolution)))
-        });
+        for (id, resolution) in users {
+            self.set_replaced(id, Some(image.at_resolution(resolution)));
+        }
         self.externals
             .values_mut()
             .flatten()

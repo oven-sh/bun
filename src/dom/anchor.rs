@@ -234,11 +234,13 @@ fn area_keywords<'a>(area: &'a [Str], own: &Style, block: &Style) -> [(Keyword<'
         )),
     };
     let first = Keyword::new(&area[0]);
-    let second = Keyword::new(area.get(1).map_or(
-        if explicit(&first).is_some() {
-            "span-all"
-        } else {
-            &area[0]
+    let second = Keyword::new(area.get(1).map_or_else(
+        || {
+            if explicit(&first).is_some() {
+                "span-all"
+            } else {
+                &area[0]
+            }
         },
         |it| it,
     ));

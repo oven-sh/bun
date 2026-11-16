@@ -87,8 +87,10 @@ impl Element {
     }
 
     fn has_auto_direction(&self) -> bool {
-        self.direction()
-            .map_or(self.html_tag() == name!("bdi"), |it| it == Direction::Auto)
+        self.direction().map_or_else(
+            || self.html_tag() == name!("bdi"),
+            |it| it == Direction::Auto,
+        )
     }
 
     /// Its text does not count for the direction of an ancestor.
@@ -114,7 +116,7 @@ fn non_negative_integer(value: &str) -> Option<u32> {
     let digits = leading_number(
         value
             .strip_prefix('+')
-            .or(value.strip_prefix("-0").map(|_| "0"))
+            .or_else(|| value.strip_prefix("-0").map(|_| "0"))
             .unwrap_or(value),
     )
     .0;
@@ -571,7 +573,7 @@ fn html_hints(element: &Element, table: Option<&Element>, declare: &mut dyn FnMu
             .is_some_and(|it| !it.is_empty());
         let (border, rules) = (table_border(element), table_rules(element));
         border
-            .or(frame.map(|_| 1))
+            .or_else(|| frame.map(|_| 1))
             .into_iter()
             .for_each(|it| declare("border-width", &format!("{it}px")));
         match (frame, border) {
@@ -596,7 +598,7 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
     };
     if let Some(language) = element
         .attribute(name!("lang"))
-        .or(element.attribute(name!("lang http://www.w3.org/XML/1998/namespace")))
+        .or_else(|| element.attribute(name!("lang http://www.w3.org/XML/1998/namespace")))
     {
         let is_tag = language
             .bytes()
@@ -623,6 +625,8 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
                 }
             };
             match &*attribute.qualified {
+                "width" | "height"
+                    if !is_outer_svg && is_name!(element.tag, "svg" | "symbol" | "use") => {}
                 name @ ("font-size" | "letter-spacing" | "word-spacing" | "transform-origin"
                 | "x" | "y" | "width" | "height" | "cx" | "cy" | "r" | "rx" | "ry") => {
                     declare(
@@ -631,6 +635,26 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
                             .value
                             .split_ascii_whitespace()
                             .map(unit)
+                            .collect::<String>(),
+                    );
+                }
+                name @ "clip-path"
+                    if [
+                        "inset(", "circle(", "ellipse(", "polygon(", "rect(", "xywh(",
+                    ]
+                    .iter()
+                    .any(|it| attribute.value.trim_ascii_start().starts_with(it)) =>
+                {
+                    let separates = |it: &u8| matches!(it, b' ' | b',' | b'(' | b')');
+                    let parts = attribute
+                        .value
+                        .as_bytes()
+                        .chunk_by(|a, b| separates(a) == separates(b))
+                        .map(crate::values::text);
+                    declare(
+                        name,
+                        &parts
+                            .map(|it| unit(it).strip_suffix(' ').unwrap_or_default().to_owned())
                             .collect::<String>(),
                     );
                 }
@@ -707,7 +731,15 @@ pub(crate) fn can_be_hint(element: &Element, name: Name, qualified: &str) -> boo
 pub(crate) fn can_change_state(name: Name) -> bool {
     is_name!(
         name,
-        "href" | "disabled" | "required" | "readonly" | "contenteditable" | "open" | "dir" | "type"
+        "href"
+            | "href http://www.w3.org/1999/xlink"
+            | "disabled"
+            | "required"
+            | "readonly"
+            | "contenteditable"
+            | "open"
+            | "dir"
+            | "type"
     )
 }
 
@@ -865,7 +897,9 @@ impl Document {
         let inherited = parent.map_or(State::empty(), |it| it.state);
         state.set(
             State::LINK,
-            is_name!(element.tag, "a" | "area") && element.has(name!("href")),
+            is_name!(element.tag, "a" | "area")
+                && (element.has(name!("href"))
+                    || element.namespace == Namespace::Svg && crate::svg::href(element).is_some()),
         );
         state.set(
             State::OPEN,

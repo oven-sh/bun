@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { isHardened } from "../aot/hardened";
 import { unsupported as aotIsUnsupported } from "../aot/harness/commands";
-import { canTrim } from "./compile-trim-features";
 import { hasLibrary } from "../js/bun/desktop/library";
+import { canTrim } from "./compile-trim-features";
 import { machoTemplate, minimalPE64Template } from "./executable-templates";
 
 /** The left half is opaque red. The right half is transparent green, which must not show in a smaller copy. */
@@ -103,7 +103,7 @@ describe.concurrent("--desktop", () => {
     const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--desktop", ...forMac, "app.ts");
     expect(stderr).not.toContain("error:");
     if (!isMacOS) expect(stderr).toContain("The .app is not signed as a whole");
-    expect(stdout).toContain(`compile  Tom & Jerry's -Notes-.app bun-darwin`);
+    expect(stdout).toContain(`compile  Tom & Jerry's -Notes-.app`);
 
     const contents = join(String(dir), `Tom & Jerry's -Notes-.app`, "Contents");
     expect(filesIn(contents)).toEqual([

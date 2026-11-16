@@ -210,7 +210,7 @@ class Remote {
       cancelId: buttons.length - 1,
       signal,
     };
-    const { response } = await require("internal/desktop/dialog").showMessageBox(this.state.window(), options);
+    const { response } = (await require("internal/desktop/dialog").showMessageBox(this.state.window(), options)) as any;
     if (!signal.aborted) callback(response === 0, "");
   }
 
@@ -225,7 +225,7 @@ class Remote {
 
   destroy() {
     this.cancelDialogs();
-    for (const cleanup of [...this.cleanups]) cleanup();
+    for (const cleanup of Array.from(this.cleanups)) cleanup();
     this.view.destroy();
     this.frames.splice(0).forEach(WebFrameMain.detach);
   }
@@ -260,7 +260,7 @@ class Guest extends Remote {
     const owner = {
       surface: state.surface,
       window: state.window,
-      mayDragWindow: () => require("internal/desktop/electron/policy").isTrustedOrigin(this.mainFrame?.origin),
+      mayDragWindow: () => require("internal/desktop/electron/policy").isTrustedOrigin((this.mainFrame as any)?.origin),
       toSurface: (x: number, y: number) => [x * this.view.zoom, y * this.view.zoom],
       painted: () => {
         this.onFrame?.();
@@ -310,7 +310,7 @@ class Guest extends Remote {
     native.send("webview.show", { id: this.view.image, surface: state.surface });
     if (this.webContents.isFocused()) this.view.input({ t: "focus" });
     if (this.mirrored.entries) this.update(this.mirrored);
-    for (const observer of [...state.observers]) observer.guestCommitted?.();
+    for (const observer of Array.from<any>(state.observers)) observer.guestCommitted?.();
     return this;
   }
 
@@ -420,7 +420,7 @@ class Guest extends Remote {
     if (name === "did-frame-navigate" || (name === "did-fail-load" && args[0] !== -3)) this.commit();
     if (name === "dom-ready") this.mainFrame?.emit(name);
     if (name === "did-stop-loading") this.view.accessibilityChanged();
-    if (/-html-full-screen$/.test(name)) {
+    if (name.endsWith("-html-full-screen")) {
       this.state.window()?.setFullScreen(name.startsWith("enter"));
       this.state.window()?.emit(name);
     }
@@ -461,7 +461,7 @@ function ipcEvent(guest: Guest, frame: WebFrameMain, more?: object) {
   const details = {
     type: "frame",
     sender: guest.webContents,
-    frameId: frame.routingId,
+    frameId: (frame as any).routingId,
     processId: frame.processId,
     ...more,
   };

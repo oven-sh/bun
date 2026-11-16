@@ -60,7 +60,7 @@ function copyDeeply(value: any, link: Link, seen: Map<object, unknown>, depth: n
     const proxy = function (...args: unknown[]) {
       let result;
       try {
-        result = value.$apply(receiver, link.other.copy(args, back));
+        result = (value as any).$apply(receiver, link.other.copy(args, back));
       } catch (error) {
         throw copy(error, link);
       }

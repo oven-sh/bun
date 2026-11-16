@@ -357,7 +357,7 @@ class Navigator {
     checkProtocolHandler(this.#page, `${scheme}`, `${url}`);
   }
   javaEnabled() {
-    this.#page;
+    void this.#page;
     return false;
   }
   getGamepads() {
@@ -665,10 +665,10 @@ class WindowMembers {
   get crossOriginIsolated() {
     return false;
   }
-  webkitRequestAnimationFrame(callback: Function) {
+  webkitRequestAnimationFrame(_callback: Function) {
     return WindowMembers.prototype.requestAnimationFrame.$apply(this, arguments);
   }
-  webkitCancelAnimationFrame(id: number) {
+  webkitCancelAnimationFrame(_id: number) {
     return WindowMembers.prototype.cancelAnimationFrame.$apply(this, arguments);
   }
   get originAgentCluster() {
@@ -770,7 +770,7 @@ class WindowMembers {
   }
   scroll(first: any = undefined, second?: any) {
     return html.scrollFromScript(
-      this == null || this === (globalThis as any) ? pageOf(this) : this.$impl?.x,
+      this == null || this === (globalThis as any) ? pageOf(this) : (this as any).$impl?.x,
       $argumentCount(),
       first,
       second,
@@ -779,7 +779,7 @@ class WindowMembers {
   }
   scrollTo(first: any = undefined, second?: any) {
     return html.scrollFromScript(
-      this == null || this === (globalThis as any) ? pageOf(this) : this.$impl?.x,
+      this == null || this === (globalThis as any) ? pageOf(this) : (this as any).$impl?.x,
       $argumentCount(),
       first,
       second,
@@ -788,7 +788,7 @@ class WindowMembers {
   }
   scrollBy(first: any = undefined, second?: any) {
     return html.scrollFromScript(
-      this == null || this === (globalThis as any) ? pageOf(this) : this.$impl?.x,
+      this == null || this === (globalThis as any) ? pageOf(this) : (this as any).$impl?.x,
       $argumentCount(),
       first,
       second,
@@ -878,7 +878,8 @@ class WindowMembers {
   }
   focus() {
     const page = pageOf(this);
-    if (page.container !== null) page.container.focus();
+    const { container } = page;
+    if (container !== null) container.focus();
     else page.host.focusWindow?.();
   }
   blur() {}

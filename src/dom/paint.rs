@@ -441,17 +441,18 @@ impl Document {
 
     fn rounded_overflow_clip(&self, id: BoxId, outline: RoundedRect) -> RoundedRect {
         let it = &self.boxes[id];
-        let (ClipMargin(area, margin), inset) = (
+        let (ClipMargin(area, margin), padding, inside) = (
             it.style.effects.clip_margin,
-            it.layout.border + it.layout.padding,
+            it.layout.padding,
+            outline.shrunk(it.border()),
         );
         match area {
-            _ if it.scrolls() => outline.shrunk(it.border()),
-            BoxArea::BorderBox => outline.spread(margin),
-            BoxArea::ContentBox => outline
-                .shrunk([inset.top, inset.right, inset.bottom, inset.left])
-                .spread(margin),
-            _ => outline.shrunk(it.border()).spread(margin),
+            _ if it.scrolls() && !it.is_replaced() => inside,
+            BoxArea::BorderBox => inside.outset(it.border().map(|it| margin + it)),
+            BoxArea::ContentBox => inside.outset(
+                [padding.top, padding.right, padding.bottom, padding.left].map(|it| margin - it),
+            ),
+            _ => inside.spread(margin),
         }
     }
 
@@ -518,6 +519,7 @@ impl Document {
             Layers::IS_STACKING_CONTEXT,
             around.is_some()
                 || self.is_captured(it.node)
+                || self.is_transition_scope(it.node)
                 || it.parent == VIEWPORT
                 || it.style.is_stacking_context(z_index_applies)
                 || self.is_plane(id)
@@ -545,8 +547,8 @@ impl Document {
         );
         layers.set(
             Layers::IS_RAISED,
-            around.map_or(
-                z_index_applies && it.style.paint.z_index.0.is_some_and(|it| it != 0),
+            around.map_or_else(
+                || z_index_applies && it.style.paint.z_index.0.is_some_and(|it| it != 0),
                 |it| inline_z_index(it) != 0,
             ),
         );
@@ -1119,7 +1121,7 @@ impl<'a> Painter<'a> {
             visible: viewport,
         };
         let (transition, is_shown) = (
-            document.transition_root(),
+            document.transition_root(0),
             self.captures == root || !document.is_captured(root),
         );
         self.out.hits.push(Hit {
@@ -1168,7 +1170,7 @@ impl<'a> Painter<'a> {
                     self.scrollbars(VIEWPORT, &space);
                 }
                 continue;
-            } else if !is_shown {
+            } else if !is_shown || document.is_transition_root(node) {
                 continue;
             }
             if document
@@ -1217,7 +1219,7 @@ impl<'a> Painter<'a> {
                 visible: crate::three_d::EVERYWHERE,
             };
             self.link(
-                Item::PushTransform(multiply(&inverse, &document.to_viewport(container))),
+                &Item::PushTransform(multiply(&inverse, &document.to_viewport(container))),
                 &mut space,
             );
             self.contents.insert(container, space);
@@ -1298,22 +1300,22 @@ impl<'a> Painter<'a> {
         self.current = target;
     }
 
-    pub(crate) fn emit(&mut self, item: Item, space: &Space) {
+    pub(crate) fn emit(&mut self, item: &Item, space: &Space) {
         if !self.is_hidden {
             self.enter(space.link);
-            self.out.items.push(item);
+            self.out.items.push(*item);
         }
     }
 
     pub(crate) fn fill(&mut self, shape: RoundedRect, color: u32, space: &Space) {
         if alpha(color) > 0 && !shape.rect.is_empty() {
-            self.emit(Item::Fill { shape, color }, space);
+            self.emit(&Item::Fill { shape, color }, space);
         }
     }
 
-    pub(crate) fn link(&mut self, item: Item, space: &mut Space) {
+    pub(crate) fn link(&mut self, item: &Item, space: &mut Space) {
         let parent = &self.out.links[space.link as usize];
-        let matrix = match &item {
+        let matrix = match item {
             Item::PushTransform(matrix)
             | Item::PushVector(matrix)
             | Item::PushPattern { matrix, .. } => multiply(&parent.matrix, matrix),
@@ -1323,7 +1325,7 @@ impl<'a> Painter<'a> {
         self.out.links.push(Link {
             parent: space.link,
             depth,
-            item,
+            item: *item,
             owner: 0,
             matrix,
             driver: None,
@@ -1341,7 +1343,7 @@ impl<'a> Painter<'a> {
     /// With the origin at zero.
     pub(crate) fn transformed(&mut self, matrix: &Matrix, space: &Space) -> Space {
         let (matrix, mut inside) = (multiply(&translation(space.origin), matrix), *space);
-        self.link(Item::PushTransform(matrix), &mut inside);
+        self.link(&Item::PushTransform(matrix), &mut inside);
         Space {
             origin: [0.0; 2],
             visible: space
@@ -1377,7 +1379,7 @@ impl<'a> Painter<'a> {
         space: &mut Space,
     ) {
         let samples = self.samples(samples);
-        self.link(Item::PushTransform(matrix), space);
+        self.link(&Item::PushTransform(matrix), space);
         self.out.links[space.link as usize].driver = Some((source, samples));
     }
 
@@ -1462,7 +1464,7 @@ impl<'a> Painter<'a> {
             corners((from, points[0].1[0]), (to, value(to)), &value, &mut points);
             if points.iter().any(|it| it.1 != [0.0]) {
                 let along = |by: f32| translation(if axis == 0 { [by, 0.0] } else { [0.0, by] });
-                let points = simplify(points, [0.01])
+                let points = simplify(&points, [0.01])
                     .into_iter()
                     .map(|(at, [by])| (at, along(by)));
                 self.driven(
@@ -1499,7 +1501,7 @@ impl<'a> Painter<'a> {
 
     pub(crate) fn clip(&mut self, shape: RoundedRect, space: &mut Space) {
         space.visible = space.visible.intersection(&shape.rect);
-        self.link(Item::PushClip(shape), space);
+        self.link(&Item::PushClip(shape), space);
     }
 
     pub(crate) fn polygon(&mut self, points: &[[f32; 2]], color: u32, space: &Space) {
@@ -1507,7 +1509,7 @@ impl<'a> Painter<'a> {
             &Path::polygon(points.iter().copied(), true),
             FillRule::Nonzero,
         );
-        self.emit(Item::Path { outline, color }, space);
+        self.emit(&Item::Path { outline, color }, space);
     }
 
     pub(crate) fn hit(&mut self, node: NodeId, style: &Style, shape: RoundedRect, space: &Space) {
@@ -1531,7 +1533,7 @@ impl<'a> Painter<'a> {
         space: &Space,
     ) -> u32 {
         self.emit(
-            Item::PushLayer {
+            &Item::PushLayer {
                 bounds,
                 opacity,
                 blend,
@@ -1543,10 +1545,10 @@ impl<'a> Painter<'a> {
     }
 
     /// Ends a part of the group.
-    pub(crate) fn marker(&mut self, item: Item) {
+    pub(crate) fn marker(&mut self, item: &Item) {
         if !self.is_hidden {
             self.enter(self.base);
-            self.out.items.push(item);
+            self.out.items.push(*item);
         }
     }
 
@@ -1614,7 +1616,7 @@ impl<'a> Painter<'a> {
             return *known;
         }
         if let Some((clip, pieces)) = clip
-            .and(document.pieces(id))
+            .and_then(|_| document.pieces(id))
             .and_then(|it| document.whole_overflow_clip(id).zip(Some(it)))
         {
             let rects = pieces.iter().map(|it| {
@@ -1635,7 +1637,12 @@ impl<'a> Painter<'a> {
             } else {
                 clip
             };
-            let rect = self.snap_rect(clip.moved(space.origin));
+            let is_image = document.is_embedded && (id == VIEWPORT || it.parent == VIEWPORT);
+            let rect = if is_image {
+                clip.moved(space.origin)
+            } else {
+                self.snap_rect(clip.moved(space.origin))
+            };
             let outline = rounded(
                 self.snap_rect(document.border_box(id).moved(space.origin)),
                 &it.style,
@@ -1644,16 +1651,14 @@ impl<'a> Painter<'a> {
             let follows_corners = !it.overflow.contains(&Overflow::Visible)
                 || it.style.contain().contains(Contain::PAINT);
             if let Some(contour) = Contour::of(&it.style, &frame).filter(|_| follows_corners) {
-                self.clip_inside(
-                    &contour,
-                    &frame,
-                    if it.is_replaced() {
-                        Edge::Content
-                    } else {
-                        Edge::Inner(0.0)
-                    },
-                    &mut contents,
-                );
+                let edge = match it.style.effects.clip_margin {
+                    _ if document.covers_contents(id, &contour) => Edge::Within(0.5),
+                    _ if it.scrolls() && !it.is_replaced() => Edge::Inner(0.0),
+                    ClipMargin(BoxArea::ContentBox, _) => Edge::Content,
+                    ClipMargin(BoxArea::BorderBox, margin) => Edge::Outer(margin),
+                    ClipMargin(_, margin) => Edge::Inner(-margin),
+                };
+                self.clip_inside(&contour, &frame, edge, &mut contents);
             } else if outline.radii != Radii::default() && follows_corners {
                 self.clip(document.rounded_overflow_clip(id, outline), &mut contents);
             }
@@ -1833,7 +1838,10 @@ impl<'a> Painter<'a> {
 
     pub(crate) fn stacking_context(&mut self, id: BoxId, mut space: Space) {
         let document = self.document;
-        if document.is_captured(document.boxes[id].node) && document.boxes[id].node != self.captures
+        let node = document.boxes[id].node;
+        if document.is_captured(node)
+            && node != self.captures
+            && !document.is_transition_scope(node)
         {
             return;
         }
@@ -1920,7 +1928,15 @@ impl<'a> Painter<'a> {
                     return;
                 };
                 space.visible = space.visible.transformed(&inverse);
-                self.link(Item::PushTransform(matrix), &mut space);
+                self.link(&Item::PushTransform(matrix), &mut space);
+            }
+        }
+        let is_scope = document.is_transition_scope(it.node);
+        if is_scope && it.node != self.captures {
+            if document.is_captured(it.node) {
+                return self.scoped_transition(id, &space);
+            } else if self.frozen_scope(id, &space) {
+                return;
             }
         }
         let (e, has_escapees) = (&style.effects, it.cache.has_escapees());
@@ -1943,12 +1959,19 @@ impl<'a> Painter<'a> {
             && it.node != self.captures
             && !document.tree.is_root(it.node)
         {
-            let filters = self.filters(&e.backdrop_filter, &subject).0;
+            let mut filters = self.filters(&e.backdrop_filter, &subject).0;
+            if e.filter
+                .0
+                .iter()
+                .all(|it| matches!(it, Filter::Amount(name, _) if *name != FilterName::Blur))
+            {
+                filters.end = self.filters(&e.filter, &subject).0.end;
+            }
             let (frame, mut inside) = (
                 document.frame_of(id, subject.area(BoxArea::BorderBox).rect),
                 space,
             );
-            let masked = style.has_mask().then(|| {
+            let masked = (style.has_mask() || clips_with_mask).then(|| {
                 self.begin_group(
                     frame.shape.rect,
                     1.0,
@@ -1960,7 +1983,7 @@ impl<'a> Painter<'a> {
             let contour = Contour::of(style, &frame)
                 .inspect(|it| self.clip_inside(it, &frame, Edge::Outer(0.0), &mut inside));
             self.emit(
-                Item::Backdrop {
+                &Item::Backdrop {
                     shape: if contour.is_some() {
                         square(frame.shape.rect)
                     } else {
@@ -1980,9 +2003,30 @@ impl<'a> Painter<'a> {
                 });
             }
             if let Some(base) = masked {
-                self.marker(Item::Mask { luminance: false });
-                self.mask_layers(&subject, &space, &space);
-                self.end_group(base);
+                if style.has_mask() || clips_with_mask {
+                    self.marker(&Item::Mask { luminance: false });
+                }
+                let both = (style.has_mask() && clips_with_mask).then(|| {
+                    self.begin_group(
+                        frame.shape.rect,
+                        1.0,
+                        BlendMode::Normal,
+                        Span::default(),
+                        &space,
+                    )
+                });
+                if style.has_mask() {
+                    self.mask_layers(&subject, &space, &space);
+                }
+                if both.is_some() {
+                    self.marker(&Item::Mask { luminance: false });
+                }
+                if clips_with_mask {
+                    self.clip_mask(&subject, &space);
+                }
+                both.into_iter()
+                    .chain([base])
+                    .for_each(|it| self.end_group(it));
             }
         }
         let (clipped, mut outer, mut layers) = (space, space, LayerList::new());
@@ -2068,6 +2112,9 @@ impl<'a> Painter<'a> {
         below.iter().for_each(|it| self.layer(it.1, it.2));
         self.flow(id, &space);
         above.iter().for_each(|it| self.layer(it.1, it.2));
+        if is_scope {
+            self.scoped_transition(id, &space);
+        }
         effects
             .into_iter()
             .for_each(|it| self.end_effects(&subject, &it, &[], &clipped));
@@ -2160,6 +2207,10 @@ impl<'a> Painter<'a> {
         mut space: Space,
     ) -> Effects<'a> {
         let (document, node, e) = (self.document, subject.node, &subject.style.effects);
+        let is_root = subject.style.is_backdrop_root()
+            && document
+                .layers(document.nearest_box(node))
+                .contains(Layers::HAS_BACKDROP);
         let fades = document.tree[node]
             .has(Flags::ANIMATED)
             .then(|| document.compositor.sampled.get(&node))
@@ -2167,6 +2218,7 @@ impl<'a> Painter<'a> {
         let fades = fades.and_then(|it| Some((it, self.source(it.timeline)?)));
         self.is_hidden |= e.opacity.0 == 0.0 && fades.is_none();
         let groups = fades.is_some()
+            || is_root
             || clips_with_mask
             || e.opacity.0 < 1.0
             || e.blend != Blend::Normal
@@ -2184,7 +2236,7 @@ impl<'a> Painter<'a> {
             subject,
             clips_with_mask,
             e.opacity.0,
-            fades.is_some(),
+            fades.is_some() || is_root,
             bounds,
             &space,
         );
@@ -2285,16 +2337,45 @@ impl<'a> Painter<'a> {
                 .filter(is_own)
                 .map(|it| document.from_lines(id, it.rect()).moved(space.origin))
         };
-        let (first, pieces): (_, Vec<_>) = (
+        let (first, mut pieces): (_, Vec<_>) = (
             subject(rects().next().unwrap_or_default()),
             rects().map(subject).collect(),
         );
+        if style.rare.decoration_break == DecorationBreak::Slice
+            && !document.boxes[id].mode.is_vertical()
+        {
+            let (total, mut before) = (rects().map(|it| it.width).sum::<f32>(), 0.0);
+            for piece in &mut pieces {
+                let Areas::Css(frame, _) = &mut piece.areas else {
+                    continue;
+                };
+                let rect = frame.shape.rect;
+                let x = if style.is_rtl() {
+                    rect.right() + before - total
+                } else {
+                    rect.x - before
+                };
+                (frame.whole, before) = (
+                    Some((
+                        Rect {
+                            x,
+                            width: total,
+                            ..rect
+                        },
+                        frame.border,
+                        frame.padding,
+                    )),
+                    before + rect.width,
+                );
+            }
+        }
+        let whole = subject(rects().reduce(|a, b| a.union(&b)).unwrap_or_default());
         for rect in
             rects().filter(|_| !style.effects.backdrop_filter.0.is_empty() && style.is_visible())
         {
             let filters = self.filters(&style.effects.backdrop_filter, &first).0;
             self.emit(
-                Item::Backdrop {
+                &Item::Backdrop {
                     shape: rounded(self.snap_rect(rect), style),
                     filters,
                     opacity: style.effects.opacity.0,
@@ -2304,7 +2385,7 @@ impl<'a> Painter<'a> {
         }
         let clips_with_mask = self.clip_subject(&first, false, &mut space);
         let effects =
-            self.begin_inline_effects(&first, clips_with_mask, bounds, has_escapees, space);
+            self.begin_inline_effects(&whole, clips_with_mask, bounds, has_escapees, space);
         if is_stacking_context {
             self.collect_inline_layers(
                 id,
@@ -2385,6 +2466,9 @@ impl<'a> Painter<'a> {
         self.resizer(id, space);
         for (id, space) in phases.outlines.iter().chain([&(id, *space)]) {
             let style = &self.document.boxes[*id].style;
+            if style.other_if_set(Id::BorderShape).is_some() {
+                self.border_over_contents(*id, *space);
+            }
             match self.document.pieces(*id) {
                 Some(pieces) => pieces
                     .iter()
@@ -2395,6 +2479,20 @@ impl<'a> Painter<'a> {
                     space,
                 ),
             }
+        }
+    }
+
+    fn border_over_contents(&mut self, id: BoxId, mut space: Space) {
+        let (document, style) = (self.document, &self.document.boxes[id].style);
+        let frame = document.frame_of(
+            id,
+            self.snap_rect(document.border_box(id).moved(space.origin)),
+        );
+        if let Some(contour) =
+            Contour::of(style, &frame).filter(|it| document.covers_contents(id, it))
+        {
+            self.clip_inside(&contour, &frame, Edge::Within(0.5), &mut space);
+            self.border(style, &frame, &space);
         }
     }
 
@@ -2498,7 +2596,10 @@ impl<'a> Painter<'a> {
                     true => phases.foreground.push((Foreground::Replaced, child, space)),
                     false => self.backgrounds(child, &space, phases),
                 }
-                if own.style.outline_width() > 0.0 {
+                if own.style.outline_width() > 0.0
+                    || own.overflow[0] != Overflow::Visible
+                        && own.style.other_if_set(Id::BorderShape).is_some()
+                {
                     phases.outlines.push((child, space));
                 }
             }
@@ -2533,7 +2634,7 @@ impl<'a> Painter<'a> {
                         shape.rect.width
                     };
                     self.emit(
-                        Item::Border {
+                        &Item::Border {
                             shape,
                             widths,
                             colors: [edge.color; 4],
@@ -2570,7 +2671,7 @@ impl<'a> Painter<'a> {
                 self.document.border_box(id).grown(face.size),
             );
             self.emit(
-                Item::Text {
+                &Item::Text {
                     origin: space.origin,
                     bounds: bounds.moved(space.origin),
                     face: face.id,
@@ -2650,7 +2751,7 @@ impl<'a> Painter<'a> {
                 [0.0, -width / 2.0, 0.0, -width / 2.0]
             });
             self.emit(
-                Item::Border {
+                &Item::Border {
                     shape: square(self.snap_rect(rect.moved(space.origin))),
                     widths,
                     colors,
@@ -2699,6 +2800,20 @@ impl<'a> Painter<'a> {
             (cut[[0, 3][axis]], cut[[2, 1][axis]]) =
                 (from, it.size()[1 - axis] - from - legend.size()[1 - axis]);
             (gap, rect) = (Some(self.snap_rect(rect.shrunk(cut))), rect.shrunk(inset));
+        }
+        if it.node == 0 && it.style.is_floating() && it.style.is_visible() {
+            let padding = it.layout.padding;
+            let frame = Frame {
+                shape: rounded(self.snap_rect(rect), &it.style),
+                border,
+                padding: [padding.top, padding.right, padding.bottom, padding.left],
+                scrolled: None,
+                whole: None,
+            };
+            self.frame(&it.style, &frame, true, space, &mut |painter| {
+                painter.text_mask(id, space)
+            });
+            return self.border(&it.style, &frame, space);
         }
         if it.node == 0
             || !it.style.is_visible()
@@ -2852,7 +2967,7 @@ impl<'a> Painter<'a> {
                     edges.map(|it| collapsed_style(it.style)),
                 );
                 self.emit(
-                    Item::Border {
+                    &Item::Border {
                         shape,
                         widths: [top, right, bottom, left],
                         colors,
@@ -2933,7 +3048,7 @@ impl<'a> Painter<'a> {
                 .ink
                 .caret_color
                 .0
-                .map_or(style.color(), |it| it.resolve(style.color()));
+                .map_or_else(|| style.color(), |it| it.resolve(style.color()));
             let is_block = style.other_if_set(Id::CaretShape) == Some("block");
             let color = if is_block && style.ink.caret_color.0.is_none() {
                 color & !0xff | alpha(color).div_ceil(2)
@@ -2955,7 +3070,7 @@ impl<'a> Painter<'a> {
             };
             match style.other_if_set(Id::CaretAnimation) {
                 Some(_) => self.fill(square(rect), color, space),
-                None => self.emit(Item::Caret { rect, color }, space),
+                None => self.emit(&Item::Caret { rect, color }, space),
             }
         }
     }
@@ -3026,7 +3141,7 @@ impl<'a> Painter<'a> {
             self.contoured_border(&contour, frame, style, colors, styles(), space);
         } else if (0..4).any(|side| widths[side] > 0.0 && alpha(colors[side]) > 0) {
             self.emit(
-                Item::Border {
+                &Item::Border {
                     shape,
                     widths,
                     colors,
@@ -3055,7 +3170,14 @@ impl<'a> Painter<'a> {
             scrolled: None,
             whole: None,
         };
-        let contour = Contour::of(style, &frame);
+        let is_hard_to_stroke = |it: &RoundedRect| {
+            p.outline_style == OutlineStyle::Auto
+                || 2.0 * (offset + width) > it.rect.width.min(it.rect.height)
+        };
+        let simple = crate::contour::rounded_border_shape(style, &frame)
+            .filter(is_hard_to_stroke)
+            .inspect(|it| shape = *it);
+        let contour = Contour::of(style, &frame).filter(|_| simple.is_none());
         let ring = |painter: &mut Self,
                     shape: RoundedRect,
                     offset: f32,
@@ -3069,7 +3191,7 @@ impl<'a> Painter<'a> {
                 let [x, y] =
                     [shape.rect.width, shape.rect.height].map(|it| offset.max(-it / 2.0) + width);
                 painter.emit(
-                    Item::Border {
+                    &Item::Border {
                         shape: shape.outset([y, x, y, x]),
                         widths: [width; 4],
                         colors: [color; 4],
@@ -3078,8 +3200,25 @@ impl<'a> Painter<'a> {
                     space,
                 );
             }
+            None if line == LineStyle::Solid
+                && shape
+                    .radii
+                    .as_flattened()
+                    .iter()
+                    .any(|it| *it > 0.0 && *it < offset + width) =>
+            {
+                let [outer, inner] = [offset + width, offset].map(|it| {
+                    crate::shapes::Resolved::Rounded(shape.spread(it))
+                        .into_path()
+                        .0
+                        .verbs
+                });
+                let outline = painter
+                    .outline_of(&Path::from(&[outer, inner].concat()[..]), FillRule::Evenodd);
+                painter.emit(&Item::Path { outline, color }, space);
+            }
             None => painter.emit(
-                Item::Border {
+                &Item::Border {
                     shape: shape.spread(offset + width),
                     widths: [width; 4],
                     colors: [color; 4],
@@ -3185,9 +3324,23 @@ impl<'a> Painter<'a> {
             clip = document.rounded_overflow_clip(id, outline);
         }
         let (frame, mut space) = (document.frame_of(id, outline.rect), *space);
-        let contour = Contour::of(style, &frame)
-            .filter(|_| !it.overflow.contains(&Overflow::Visible))
-            .inspect(|it| self.clip_inside(it, &frame, Edge::Content, &mut space));
+        let contour =
+            Contour::of(style, &frame).filter(|_| !it.overflow.contains(&Overflow::Visible));
+        let goes_under = contour
+            .as_ref()
+            .is_some_and(|it| frame.padding == [0.0; 4] && it.is_hidden_by_border(style));
+        contour.iter().for_each(|it| {
+            self.clip_inside(
+                it,
+                &frame,
+                if goes_under {
+                    Edge::Within(0.5)
+                } else {
+                    Edge::Content
+                },
+                &mut space,
+            )
+        });
         let (clip, space) = (
             if contour.is_some() {
                 square(clip.rect)
@@ -3206,6 +3359,9 @@ impl<'a> Painter<'a> {
             style,
             space,
         );
+        if goes_under {
+            self.border(style, &frame, space);
+        }
     }
 
     fn bullet(&mut self, id: BoxId, content: Rect, space: &Space) {
@@ -3264,7 +3420,7 @@ impl<'a> Painter<'a> {
             "circle" => {
                 let (shape, widths) = (round.spread(0.5 / scale), [1.0 / scale; 4]);
                 self.emit(
-                    Item::Border {
+                    &Item::Border {
                         shape,
                         widths,
                         colors: [color; 4],

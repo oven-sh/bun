@@ -61,11 +61,11 @@ function replaceable(value: any) {
   globalThis.performance = value;
   globalThis.Buffer = value;
   globalThis.BuildError = value;
-  globalThis.BuildMessage = value;
-  globalThis.HTMLRewriter = value;
+  (globalThis as any).BuildMessage = value;
+  (globalThis as any).HTMLRewriter = value;
   globalThis.Request = value;
   globalThis.ResolveError = value;
-  globalThis.ResolveMessage = value;
+  (globalThis as any).ResolveMessage = value;
   globalThis.BroadcastChannel = value;
   globalThis.CustomEvent = value;
   globalThis.ErrorEvent = value;
@@ -108,16 +108,17 @@ function dispose(isShared?: boolean, isReachable?: boolean) {
 
 const isParseError = (error: any) =>
   error instanceof SyntaxError &&
-  URL.canParse(error.sourceURL) &&
-  `${error.stack}`.includes(`at <parse> (${error.sourceURL}:`);
+  URL.canParse((error as any).sourceURL) &&
+  `${error.stack}`.includes(`at <parse> (${(error as any).sourceURL}:`);
 
 function whereThrown(error: any): [string, number, number] {
   try {
     if (!bridge.isError(error)) return whereLastThrown(error) ?? ["", 0, 0];
     const match = /[( ]((?!internal:|native:|node:)[a-z][\w+.-]*:[^\s()]*):(\d+):(\d+)\)?$/m.exec(error.stack);
     if (match && !isParseError(error)) return [match[1], +match[2], +match[3]];
-    if (typeof error.sourceURL === "string" && !error.sourceURL.startsWith("internal:"))
-      return [error.sourceURL, error.line | 0, error.column | 0];
+    const { sourceURL } = error;
+    if (typeof sourceURL === "string" && !sourceURL.startsWith("internal:"))
+      return [sourceURL, error.line | 0, error.column | 0];
   } catch {}
   return ["", 0, 0];
 }
@@ -441,7 +442,7 @@ function installShared(env: any, page: any, members: object, Navigator: Function
     dispose() {
       if (scope.disposed) return;
       scope.disposed = true;
-      for (const cleanup of [...scope.cleanups]) cleanup();
+      for (const cleanup of Array.from<any>(scope.cleanups)) cleanup();
     },
   });
   const hooks = installReporting(env, require("internal/desktop/web/dom").events);
@@ -455,12 +456,12 @@ function installShared(env: any, page: any, members: object, Navigator: Function
 
   const operations = {
     ...installTimers(env),
-    fetch(input: unknown, init: unknown = undefined) {
-      return network().fetch(...arguments);
+    fetch(_input: unknown, _init: unknown = undefined) {
+      return (network() as any).fetch(...arguments);
     },
-    structuredClone(value: unknown, options: unknown = undefined) {
+    structuredClone(value: unknown, _options: unknown = undefined) {
       if (arguments.length === 1) return native.structuredClone(value);
-      return messaging().structuredClone(...arguments);
+      return (messaging() as any).structuredClone(...arguments);
     },
     reportError(error: unknown) {
       need(arguments.length, 1);
@@ -539,9 +540,9 @@ function installShared(env: any, page: any, members: object, Navigator: Function
       if (list.get("content-type")?.toLowerCase() !== "application/wasm")
         throw new TypeError("Incorrect response MIME type. Expected 'application/wasm'.");
       if (type.startsWith("opaque") || status < 200 || status > 299) throw new TypeError("The response is not ok.");
-      if (response.bodyUsed || response.body?.locked)
+      if ((response as any).bodyUsed || (response as any).body?.locked)
         throw new TypeError("The body is locked, or it has already been read.");
-      return new Response(response.body, { headers: { "content-type": "application/wasm" } });
+      return new Response((response as any).body, { headers: { "content-type": "application/wasm" } });
     },
     objectUrlCreated(url: string) {
       objectUrls.$add((url = `blob:${env.origin}/${url.slice(-36)}`));
@@ -635,7 +636,8 @@ function page(env: any) {
   const { isOfHost } = env;
   env = guard(env);
   env.dom = guard(env.dom);
-  if (env.never) replaceable(env.never);
+  const { never } = env;
+  if (never) replaceable(never);
   const { createPage } = env.shared ?? require("internal/desktop/dom/page");
   const mirror = env.shared && new (require("internal/desktop/dom/mirror").Mirror)(env.shared);
   if (mirror) require("internal/desktop/web/dom").share(mirror.module);
@@ -675,13 +677,14 @@ function page(env: any) {
         env.compiledPath(url) ? Promise.$resolve() : loader.preload(url, type, options),
       prepareInlineModule(...args: unknown[]) {
         try {
-          return loader.prepareInline(...args).then(reported);
+          return (loader as any).prepareInline(...args).then(reported);
         } catch (error) {
           return Promise.$resolve(() => report(error));
         }
       },
       addImportMap: loader.addImportMap,
-      createPlayer: (media: object, fire: Function, fetch: Function) => new (audio().Player)(media, fire, fetch),
+      createPlayer: (media: object, fire: Function, fetch: Function) =>
+        new (audio().Player)(media, fire as any, fetch as any),
       compileHandler: (body: string, line?: number) =>
         evaluate(`(function(){${body}})`, env.url, false, scope.baseUrl(), line),
       messaging,
@@ -718,8 +721,8 @@ function page(env: any) {
   const hooks = installShared(env, global.$impl.x, global, Navigator, [...inWindows, ...secure]);
   scope.encoding = () => scope.page.doc.encoding;
   define(Navigator.prototype, {
-    sendBeacon(url: string, data: unknown = null) {
-      return network().sendBeacon(...arguments);
+    sendBeacon(_url: string, _data: unknown = null) {
+      return (network() as any).sendBeacon(...arguments);
     },
   });
   if (env.secure)
@@ -819,7 +822,7 @@ function worker(env: any) {
   };
   canvas = once(() => {
     const loaded = require("internal/desktop/dom/canvas");
-    const inherited = { ...loaded.hooks.inherited(), fontScope: env.fontScope };
+    const inherited = { ...(loaded.hooks as any).inherited(), fontScope: env.fontScope };
     loaded.setNative(env.native());
     loaded.hooks.inherited = () => inherited;
     return loaded;
@@ -896,7 +899,7 @@ function worker(env: any) {
       try {
         Promise.$resolve(run()).then(undefined, page.reportError);
       } catch (error) {
-        if (env.isShared && isParseError(error) && error.sourceURL === env.url) throw error;
+        if (env.isShared && isParseError(error) && (error as any).sourceURL === env.url) throw error;
         scope.report(error, env.url);
       }
       workerScope.started();

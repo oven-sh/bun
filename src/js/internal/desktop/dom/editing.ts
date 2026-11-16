@@ -19,7 +19,7 @@ const transfer = require("internal/desktop/dom/transfer");
 const { styleBits } = require("internal/desktop/dom/html");
 const { textControl } = require("internal/desktop/dom/forms");
 
-const { ELEMENT, HTML, TEXT, hooks, indexOf, isHtml, isText, lengthOf, outOfControl, sync } = core;
+const { ELEMENT, HTML, TEXT, hooks, indexOf, isText, lengthOf, outOfControl, sync } = core;
 const { fromEngine, pointId, pointOffset, selectionOf, staticRange } = ranges;
 const { editingHost } = focusing;
 
@@ -171,13 +171,14 @@ function selectAll(doc: Doc, fromScript: boolean) {
       ? (editingHost(doc.focused) ?? doc.node)
       : selectionRoot(selection.r.startNode);
   // A caret that is not shown counts as no selection.
+  const { node } = doc;
   if (
-    root !== doc.node &&
+    root !== node &&
     !fromScript &&
     selection.r?.collapsed &&
     (doc.focused === null || !core.contains(root, doc.focused))
   )
-    root = doc.node;
+    root = node;
   else if (root === doc.node && selection.span !== null && !isInIdleControl(selection.span.startNode))
     root = core.rootOf(selection.span.startNode);
   if (root === doc.node) root = hooks.topModal(doc) ?? core.bodyOf(doc) ?? root;
@@ -270,7 +271,8 @@ function record(host: N, change: () => void): any[] {
 function revert(records: any[]) {
   for (const { type, target, name, oldValue, added, removed, next } of records.toReversed()) {
     if (type === 4) core.replaceData(target, 0, target.data.length, oldValue);
-    else if (type === 2) oldValue === null ? core.removeAttr(target, name) : core.setAttr(target, name, oldValue);
+    else if (type === 2 && oldValue === null) core.removeAttr(target, name);
+    else if (type === 2) core.setAttr(target, name, oldValue);
     else {
       for (const node of added ?? []) if (node.parent === target) core.remove(node);
       for (const node of removed ?? []) core.insert(node, target, next?.parent === target ? next : null);
@@ -343,8 +345,9 @@ function isSimple([node, start, endNode, end]: Span, text: string): boolean {
   if (node !== endNode || node.type !== TEXT || commands?.hasOverrides(node.doc)) return false;
   const { data } = node;
   const around = (data[start - 1] ?? " ") + text + (data[end] ?? " ");
-  if (start === 0 || end === data.length) {
-    if (end - start === data.length || core.closestHtml(node, "a") !== null) return false;
+  const { length } = data;
+  if (start === 0 || end === length) {
+    if (end - start === length || core.closestHtml(node, "a") !== null) return false;
   }
   if (!(styleBits(node) & KEEPS_SPACES)) return !spaces.test(around);
   return !newlines.test(around) && (end < data.length || node.next?.name !== "br");
@@ -461,7 +464,10 @@ function remember(host: N, step: Step) {
   if (last?.inputType === step.inputType && /^(?:insertText|insertCompo|deleteContent)/.test(step.inputType)) {
     last.records.push(...step.records);
     last.after = step.after;
-  } else if (history.undos.push(step) > 200) history.undos.shift();
+  } else {
+    const { undos } = history;
+    if (undos.push(step) > 200) undos.shift();
+  }
 }
 
 function insertText(doc: Doc, text: string, inputType = "insertText", silent = false): boolean {
@@ -814,16 +820,17 @@ function compose(page: Page, text: string, inside?: [number, number], range?: [n
       ? [it.node, it.start, it.node, it.start + it.length]
       : spanOf(selection);
   const before = span(selection);
-  if (before[0] === before[2] && isText(before[0]) && textControl(it.target) === null && text !== "") {
+  const itTarget = it.target;
+  if (before[0] === before[2] && isText(before[0]) && textControl(itTarget) === null && text !== "") {
     const details = { data: text, isComposing: true };
-    fireBeforeInput(it.target, "insertCompositionText", details, before);
+    fireBeforeInput(itTarget, "insertCompositionText", details, before);
     const [node, start, , end] = span(selection);
     if (isText(node)) {
-      const records = record(it.target, () => core.replaceData(node, start, end - start, text));
+      const records = record(itTarget, () => core.replaceData(node, start, end - start, text));
       selection.select(node, start + text.length);
-      remember(it.target, { records, before, after: spanOf(selection), inputType: "insertCompositionText" });
+      remember(itTarget, { records, before, after: spanOf(selection), inputType: "insertCompositionText" });
       noteComposition(it, selection, inside);
-      return fireInput(it.target, "insertCompositionText", details);
+      return fireInput(itTarget, "insertCompositionText", details);
     }
   }
   replace(doc, "insertCompositionText", { data: text, isComposing: true }, span, text, "inserttext");

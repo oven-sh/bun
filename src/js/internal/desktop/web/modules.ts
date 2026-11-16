@@ -128,10 +128,10 @@ function create(env: any, baseUrl: () => string, createSheet?: (text: string, ur
       const blob = blobs.$get(key);
       blobs.$delete(key);
       loading = env.loadScript(key, type, { ...options, integrity: options?.integrity ?? integrity.$get(key), blob });
-      inFlight.$set(id, loading);
+      inFlight.$set(id, loading as any);
     }
     return new Promise((resolve, reject) =>
-      loading
+      loading!
         .finally(() => inFlight.$delete(id))
         .then(
           ({ url, source, referrerPolicy }) => {

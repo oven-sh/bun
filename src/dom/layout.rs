@@ -280,7 +280,7 @@ impl Cache {
     pub(crate) fn collapsed_bottom_margin(&self) -> Strut {
         self.performed
             .as_ref()
-            .map_or(Strut::default(), |it| it.1.margins[1])
+            .map_or_else(Strut::default, |it| it.1.margins[1])
     }
 
     /// Whether an out-of-flow box in it has its containing block outside.
@@ -346,6 +346,20 @@ pub(crate) fn uses_parent(style: &Style) -> [bool; 2] {
     ]
 }
 
+fn positioned_claims(style: &Style) -> Claims {
+    let is_positioned = style.is_positioned()
+        || style
+            .effects
+            .will_change
+            .0
+            .contains(crate::properties::WillChange::POSITION);
+    if is_positioned {
+        Claims::ABSOLUTE
+    } else {
+        Claims::empty()
+    }
+}
+
 pub(crate) fn claims(style: &Style, is_inline: bool) -> Claims {
     let will_change = style.effects.will_change.0;
     let fixed = match is_inline {
@@ -356,13 +370,10 @@ pub(crate) fn claims(style: &Style, is_inline: bool) -> Claims {
         }
         false => style.contains_fixed(),
     };
-    match (
-        fixed,
-        style.is_positioned() || will_change.contains(crate::properties::WillChange::POSITION),
-    ) {
-        (true, _) => Claims::all(),
-        (false, true) => Claims::ABSOLUTE,
-        (false, false) => Claims::empty(),
+    if fixed {
+        Claims::all()
+    } else {
+        positioned_claims(style)
     }
 }
 
@@ -484,6 +495,12 @@ impl LayoutBox {
             _ if self.is_foreign_object => Claims::all(),
             crate::tree::DOCUMENT => Claims::all(),
             0 => Claims::empty(),
+            _ if self.parent == crate::boxes::VIEWPORT
+                && self.tag == crate::name::name!("html")
+                && !self.style.contains_fixed_as_root() =>
+            {
+                positioned_claims(&self.style)
+            }
             _ => claims(&self.style, false),
         }
     }
@@ -1656,7 +1673,7 @@ impl Document {
         let contained = |size, axis: usize| {
             intrinsic(size, axis)
                 .or(otherwise[axis])
-                .or((!has_tracks[axis]).then_some(0.0))
+                .or_else(|| (!has_tracks[axis]).then_some(0.0))
         };
         let width = contained(style.rare.intrinsic_width, 0);
         match contain.contains(Contain::SIZE) {
@@ -1676,17 +1693,10 @@ impl Document {
         }
     }
 
-    /// Whether `overflow: auto` has changed its mind.
-    fn update_scrollbars(&mut self, id: BoxId, may_remove: bool) -> bool {
-        if !self.boxes[id].overflow.contains(&Overflow::Auto) {
-            return false;
-        }
-        let turned = self.turn(id, WritingMode::HorizontalTb);
-        self.boxes[id].forget_extents();
-        let range = self.scroll_range(id);
-        let padding_box = self.border_box(id).shrunk(self.boxes[id].border());
-        let it = &mut self.boxes[id];
-        let before = it.scrollbars;
+    /// For `overflow: auto`.
+    pub(crate) fn needed_scrollbars(&self, id: BoxId, range: &[[f32; 2]; 2]) -> [bool; 2] {
+        let it = &self.boxes[id];
+        let padding_box = self.border_box(id).shrunk(it.border());
         let has_room = [
             padding_box.height > it.gutters().bottom
                 || !it.has_auto_size(1) && padding_box.height > 0.0,
@@ -1697,11 +1707,31 @@ impl Document {
             .layout
             .scrollbar_gutter
             .contains(ScrollbarGutter::STABLE);
+        [0, 1].map(|axis| {
+            range[axis][1] - range[axis][0] >= 0.5 && has_room[axis]
+                || axis == it.block_axis() && stable
+        })
+    }
+
+    /// Whether `overflow: auto` has changed its mind.
+    fn update_scrollbars(&mut self, id: BoxId, may_remove: bool) -> bool {
+        if !self.boxes[id].overflow.contains(&Overflow::Auto) {
+            return false;
+        }
+        let turned = self.turn(id, WritingMode::HorizontalTb);
+        self.boxes[id].forget_extents();
+        let range = self.scroll_range(id);
+        let needed = self.needed_scrollbars(id, &range);
+        let it = &mut self.boxes[id];
+        let before = it.scrollbars;
+        let stable = it
+            .style
+            .layout
+            .scrollbar_gutter
+            .contains(ScrollbarGutter::STABLE);
         for axis in 0..2 {
             if it.overflow[axis] == Overflow::Auto {
-                let is_needed = range[axis][1] - range[axis][0] >= 0.5 && has_room[axis]
-                    || axis == it.block_axis() && stable;
-                it.scrollbars[axis] = is_needed || before[axis] && !may_remove;
+                it.scrollbars[axis] = needed[axis] || before[axis] && !may_remove;
             }
         }
         let fits_without = |axis: usize| range[axis][1] - range[axis][0] <= it.scrollbar_size;
@@ -1784,7 +1814,7 @@ impl Document {
         if (width, height, natural) == (None, None, [None; 2]) && it.ratio.is_some() {
             let limit = |it: f32| transfer(0, it).filter(|_| it.is_finite()).unwrap_or(it);
             let available = room.available[0]
-                .unwrap_or(edges[0] + if is_relative(all[0]) { default[0] } else { 0.0 });
+                .unwrap_or_else(|| edges[0] + if is_relative(all[0]) { default[0] } else { 0.0 });
             width = Some(clamp(clamp(available, limits[1].map(limit)), limits[0]));
         }
         let natural = match natural {

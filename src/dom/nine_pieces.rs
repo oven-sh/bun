@@ -174,7 +174,10 @@ impl Painter<'_> {
                 (1, 1) => repeat(
                     rules[axis],
                     target[axis][1],
-                    source[axis][1] * factor([0, 3][axis]).or(factor([2, 1][axis])).unwrap_or(1.0),
+                    source[axis][1]
+                        * factor([0, 3][axis])
+                            .or_else(|| factor([2, 1][axis]))
+                            .unwrap_or(1.0),
                 ),
                 (1, _) => repeat(
                     rules[axis],

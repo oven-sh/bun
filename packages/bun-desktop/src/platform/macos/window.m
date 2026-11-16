@@ -1,6 +1,6 @@
 // A window, and the view that fills it.
 #import "bridge.h"
-#import <mach/mach_time.h>
+#import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 
@@ -120,7 +120,6 @@ static bool isFullscreen(NSWindow* window) { return window.styleMask & NSWindowS
 
 /// The refreshes of a display. What is committed while a `CADisplayLink` runs appears later. It is never released, as the thread of the link may use it after it was stopped.
 @interface BunDesktopClock : NSObject
-- (void)scrolls;
 @end
 
 @implementation BunDesktopClock {
@@ -128,133 +127,22 @@ static bool isFullscreen(NSWindow* window) { return window.styleMask & NSWindowS
     CFRunLoopSourceRef ticks;
     /// Refreshes are not worth waking up for until then.
     _Atomic CFTimeInterval restsUntil;
-    /// It knows when a frame has to begin to be in time.
-    CADisplayLink* model;
-    _Atomic CFTimeInterval lastRefresh, period, delay;
-    _Atomic CFTimeInterval comparedAt;
-    CFTimeInterval delays[5];
-    _Atomic int comparisons, refreshes;
-    CADisplayLink* pacer;
-    CFTimeInterval scrolledAt;
-    _Atomic bool isPaced;
     NSHashTable<BunDesktopView*>* listeners;
 }
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
-/// In seconds after a refresh. The first is negative for whenever there is something.
-static double commitAt = -1, fixedTickAt = -1;
-static bool commitsOnMainThread, followsModel;
-static int runningClocks;
-
-bool commitsInTime(void) { return commitAt >= 0 && runningClocks; }
-
-static void tickAll(void* clock);
-static void commit(void* unused) { commitWhatIsReady(); }
-
-static void commitAfter(const CVTimeStamp* refresh, double seconds)
-{
-    if (seconds > 0)
-        mach_wait_until(refresh->hostTime + seconds * CVGetHostClockFrequency());
-    if (commitsOnMainThread)
-        dispatch_async_f(dispatch_get_main_queue(), NULL, commit);
-    else
-        commitWhatIsReady();
-}
-
 static CVReturn displayIsReady(CVDisplayLinkRef link, const CVTimeStamp* now, const CVTimeStamp* shownAt, CVOptionFlags flags,
     CVOptionFlags* out, void* context)
 {
     __unsafe_unretained BunDesktopClock* clock = (__bridge BunDesktopClock*)context;
-    clock->lastRefresh = now->hostTime / CVGetHostClockFrequency();
-    clock->period = shownAt->videoTimeScale ? (double)shownAt->videoRefreshPeriod / shownAt->videoTimeScale : 0;
-    if ((followsModel && clock->model) || clock->isPaced)
+    if (CACurrentMediaTime() < clock->restsUntil)
         return kCVReturnSuccess;
-    double untilShown = ((double)shownAt->hostTime - now->hostTime) / CVGetHostClockFrequency();
-    if (++clock->refreshes == 10) {
-        bd_trace("the link is late by", CACurrentMediaTime() - clock->lastRefresh);
-        bd_trace("the link is ahead by", untilShown);
-        bd_trace("the system has started", CACurrentMediaTime());
-        // What answers a key is not to be held up by the model.
-        if (!clock->comparedAt || clock->lastRefresh > clock->comparedAt + 60) {
-            clock->comparisons = 0;
-            clock->model.paused = NO;
-        }
-    }
-    double tickAt = fixedTickAt >= 0 ? fixedTickAt : clock->model || !clock->period ? clock->delay : fmod(untilShown, clock->period);
-    if (fixedTickAt < 0 && tickAt > clock->period * 7 / 8)
-        tickAt = 0;
-    bool commitsFirst = commitAt >= 0 && commitAt <= tickAt;
-    if (commitsFirst)
-        commitAfter(now, commitAt);
-    if (tickAt > 0)
-        mach_wait_until(now->hostTime + tickAt * CVGetHostClockFrequency());
-    [clock tick];
-    if (commitAt > tickAt)
-        commitAfter(now, commitAt);
+    clock->restsUntil = CACurrentMediaTime() + 0.011;
+    CFRunLoopSourceSignal(clock->ticks);
+    CFRunLoopWakeUp(CFRunLoopGetMain());
     return kCVReturnSuccess;
-}
-
-- (void)tick
-{
-    if (CACurrentMediaTime() >= restsUntil) {
-        restsUntil = CACurrentMediaTime() + 0.011;
-        CFRunLoopSourceSignal(ticks);
-        CFRunLoopWakeUp(CFRunLoopGetMain());
-    }
-}
-
-- (void)scrolls
-{
-    scrolledAt = CACurrentMediaTime();
-    pacer.paused = NO;
-}
-
-- (void)pacerTicks:(CADisplayLink*)sender
-{
-    isPaced = CACurrentMediaTime() < scrolledAt + 0.1;
-    sender.paused = !isPaced;
-    tickAll((__bridge void*)self);
-}
-
-static int compare(const void* a, const void* b) { return *(const double*)a < *(const double*)b ? -1 : 1; }
-
-- (void)modelTicks:(CADisplayLink*)sender
-{
-    if (followsModel)
-        return [self tick];
-    // The first ones are not regular.
-    if (++comparisons <= 2 || !period)
-        return;
-    delays[(comparisons - 3) % 5] = fmod(CACurrentMediaTime() - lastRefresh + period, period);
-    if (comparisons < 7)
-        return;
-    sender.paused = YES;
-    qsort(delays, 5, sizeof *delays, compare);
-    if (delays[3] - delays[1] > period / 8)
-        return;
-    comparedAt = CACurrentMediaTime();
-    delay = delays[1];
-    bd_trace("frames begin", delay);
-}
-
-static NSRunLoop* otherRunLoop(void)
-{
-    static NSRunLoop* loop;
-    if (!loop) {
-        dispatch_semaphore_t isReady = dispatch_semaphore_create(0);
-        NSThread* thread = [[NSThread alloc] initWithBlock:^{
-            loop = NSRunLoop.currentRunLoop;
-            [loop addPort:NSMachPort.port forMode:NSDefaultRunLoopMode];
-            dispatch_semaphore_signal(isReady);
-            [loop run];
-        }];
-        thread.qualityOfService = NSQualityOfServiceUserInteractive;
-        [thread start];
-        dispatch_semaphore_wait(isReady, DISPATCH_TIME_FOREVER);
-    }
-    return loop;
 }
 
 static void tickAll(void* clock)
@@ -271,11 +159,6 @@ static void tickAll(void* clock)
     NSNumber* display = screen.deviceDescription[@"NSScreenNumber"];
     if (clocks[display])
         return clocks[display];
-    const char *when = getenv("BUN_DESKTOP_COMMIT") ?: "now", *shift = getenv("BUN_DESKTOP_TICK_SHIFT") ?: getenv("BUN_DESKTOP_CA_CLOCK") ? "-1" : "0";
-    commitAt = !strcmp(when, "next") ? 0 : !strncmp(when, "at:", 3) ? atof(when + 3) / 1000 : -1;
-    fixedTickAt = atof(shift) / 1000;
-    followsModel = getenv("BUN_DESKTOP_CA_CLOCK");
-    commitsOnMainThread = getenv("BUN_DESKTOP_COMMIT_ON_MAIN");
     BunDesktopClock* clock = [BunDesktopClock new];
     if (CVDisplayLinkCreateWithCGDisplay(display.unsignedIntValue, &clock->link))
         return nil;
@@ -284,20 +167,6 @@ static void tickAll(void* clock)
     clock->ticks = CFRunLoopSourceCreate(NULL, 1, &context);
     CFRunLoopAddSource(CFRunLoopGetMain(), clock->ticks, kCFRunLoopCommonModes);
     CVDisplayLinkSetOutputCallback(clock->link, displayIsReady, (__bridge void*)clock);
-    if (fixedTickAt == -0.001 && [screen respondsToSelector:@selector(displayLinkWithTarget:selector:)]) {
-        float rate = screen.maximumFramesPerSecond ?: 60;
-        clock->model = [screen displayLinkWithTarget:clock selector:@selector(modelTicks:)];
-        clock->model.preferredFrameRateRange = (CAFrameRateRange) { rate, rate, rate };
-        clock->model.paused = YES;
-        [clock->model addToRunLoop:otherRunLoop() forMode:NSDefaultRunLoopMode];
-    }
-    if (!strcmp(getenv("BUN_DESKTOP_SCROLL") ?: "", "ca") && [screen respondsToSelector:@selector(displayLinkWithTarget:selector:)]) {
-        float rate = screen.maximumFramesPerSecond ?: 60;
-        clock->pacer = [screen displayLinkWithTarget:clock selector:@selector(pacerTicks:)];
-        clock->pacer.preferredFrameRateRange = (CAFrameRateRange) { rate, rate, rate };
-        clock->pacer.paused = YES;
-        [clock->pacer addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    }
     clocks = clocks ?: [NSMutableDictionary new];
     return clocks[display] = clock;
 }
@@ -307,25 +176,14 @@ static void tickAll(void* clock)
 - (bool)add:(BunDesktopView*)view
 {
     [listeners addObject:view];
-    if (CVDisplayLinkIsRunning(link))
-        return true;
-    refreshes = 0;
-    bool isRunning = !CVDisplayLinkStart(link);
-    runningClocks += isRunning;
-    model.paused = !followsModel;
-    return isRunning;
+    return CVDisplayLinkIsRunning(link) || !CVDisplayLinkStart(link);
 }
 
 - (void)remove:(BunDesktopView*)view
 {
     [listeners removeObject:view];
-    if (!listeners.anyObject && CVDisplayLinkIsRunning(link)) {
+    if (!listeners.anyObject && CVDisplayLinkIsRunning(link))
         CVDisplayLinkStop(link);
-        model.paused = YES;
-        runningClocks--;
-        commitWhatIsReady();
-        [CATransaction flush];
-    }
 }
 
 #pragma clang diagnostic pop
@@ -547,12 +405,86 @@ static void describe(NSView* view, NSView* root, NSMutableArray* parts)
     [owned.contentView addSubview:imitation positioned:NSWindowBelow relativeTo:self];
 }
 
+/// These properties are private. Returns whether it has stopped looking to its right, or left.
+static bool confine(CALayer* layer, bool isLeft, bool isEverywhere)
+{
+    for (NSString* name in @[ @"marginWidth", @"setMarginWidth:", @"backdropRect", @"setBackdropRect:", @"updateRate", @"setUpdateRate:" ])
+        if (![layer respondsToSelector:NSSelectorFromString(name)])
+            return false;
+    void (^set)(NSString*, id) = ^(NSString* key, id value) {
+        bd_trace(key.UTF8String, 0);
+        [CATransaction begin];
+        CATransaction.disableActions = YES;
+        [layer setValue:value forKey:key];
+        [CATransaction commit];
+    };
+    double margin = [[layer valueForKey:@"marginWidth"] doubleValue];
+    if (margin && !isEverywhere) {
+        set(@"marginOfAppKit", @(margin));
+        set(@"marginWidth", @0);
+    }
+    margin = isEverywhere ? 0 : [[layer valueForKey:@"marginOfAppKit"] doubleValue];
+    double rate = margin ? 0 : 30;
+    if ([[layer valueForKey:@"updateRate"] doubleValue] != rate)
+        set(@"updateRate", @(rate));
+    if (!margin)
+        return true;
+    NSRect wanted = NSOffsetRect(NSInsetRect(layer.bounds, -margin / 2, -margin), isLeft ? -margin / 2 : margin / 2, 0);
+    NSRect current = [[layer valueForKey:@"backdropRect"] rectValue];
+    if (!NSContainsRect(NSInsetRect(wanted, -0.1, -0.1), current) || !NSContainsRect(NSInsetRect(current, -0.1, -0.1), wanted))
+        set(@"backdropRect", [NSValue valueWithRect:wanted]);
+    return true;
+}
+
+static void findReach(CALayer* layer, CALayer* root, double* edges)
+{
+    static const double margin = 101;
+    if (layer.isHidden)
+        return;
+    // A private class.
+    if (strcmp(object_getClassName(layer), "CABackdropLayer")) {
+        for (CALayer* it in layer.sublayers)
+            findReach(it, root, edges);
+        return;
+    }
+    static int mayConfine = -1;
+    mayConfine = mayConfine < 0 ? !!strcmp(getenv("BUN_DESKTOP_CONFINE_BACKDROP") ?: "", "0") : mayConfine;
+    NSRect frame = [layer convertRect:layer.bounds toLayer:root], all = root.bounds;
+    if (frame.size.height < all.size.height / 2 || frame.size.width < 1)
+        return;
+    bool isEverywhere = frame.size.width > all.size.width * 0.8;
+    double reach = mayConfine && confine(layer, NSMidX(frame) < NSMidX(all), isEverywhere) ? 0 : margin;
+    if (isEverywhere)
+        return;
+    edges[0] = edges[1] ? fmin(edges[0], NSMinX(frame) - reach) : NSMinX(frame) - reach;
+    edges[1] = fmax(edges[1], NSMaxX(frame) + reach);
+}
+
+/// The window server blurs again when a layer changes that overlaps what the blur looks at, and then misses frames.
+- (void)fitBackdrop:(double*)edges
+{
+    NSRect frame = NSMakeRect(edges[0], 0, edges[1] - edges[0], self.bounds.size.height);
+    if (effect && !NSEqualRects(effect.frame, frame)) {
+        bd_trace("the width of the backdrop", frame.size.width / 1000);
+        effect.frame = frame;
+    }
+    edges[0] = edges[1] = 0;
+    for (NSView* view in owned.contentView.subviews) {
+        if (view == self)
+            break;
+        findReach(view.layer, owned.contentView.layer, edges);
+    }
+}
+
 - (void)paintBackground
 {
     bool isOpaque = [background isEqual:@"opaque"];
     uint32_t color = backgroundColor.unsignedIntValue;
     owned.opaque = isOpaque;
-    if (!isOpaque)
+    // The blur hides it, and the shadow of a clear window is computed again for every frame.
+    if ([background hasPrefix:@"blurred:"])
+        owned.backgroundColor = NSColor.windowBackgroundColor;
+    else if (!isOpaque)
         owned.backgroundColor = NSColor.clearColor;
     else if (backgroundColor)
         owned.backgroundColor = [NSColor colorWithSRGBRed:(color >> 24) / 255. green:(color >> 16 & 255) / 255. blue:(color >> 8 & 255) / 255. alpha:(color & 255) / 255.];
@@ -1063,8 +995,6 @@ static void describe(NSView* view, NSView* root, NSMutableArray* parts)
 {
     bd_trace("scroll event", NSProcessInfo.processInfo.systemUptime - event.timestamp);
     [self send:BDScroll event:event];
-    if (event.hasPreciseScrollingDeltas)
-        [clock scrolls];
 }
 - (void)magnifyWithEvent:(NSEvent*)event { [self send:BDPinch event:event]; }
 
@@ -1379,4 +1309,15 @@ bool bd_window_is_active(void* pointer) { return view.window.isKeyWindow; }
 bool bd_window_is_visible(void* pointer) { return view.needsFrames; }
 void bd_window_request_frame(void* pointer, bool isLeisurely) { [view requestFrame:isLeisurely]; }
 void* bd_window_layer(void* pointer) { return (__bridge void*)view.layer; }
+void bd_window_fit_backdrop(void* pointer, double* edges)
+{
+    @autoreleasepool {
+        @try {
+            [view fitBackdrop:edges];
+        } @catch (NSException* exception) {
+            edges[0] = edges[1] = 0;
+        }
+    }
+}
+
 void* bd_window_content_view(void* pointer) { return (__bridge void*)view.superview; }

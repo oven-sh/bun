@@ -6,7 +6,7 @@ const policy = require("internal/desktop/electron/policy");
 const { kState } = require("internal/desktop/electron/session");
 const { ContentSecurityPolicy, forReport } = require("internal/desktop/web/csp");
 const mime = require("internal/desktop/web/mime");
-const tasks = require("internal/desktop/tasks");
+require("internal/desktop/tasks");
 
 const isWeb = /^https?:/;
 const MAX_UNREAD_TIMINGS = 250;
@@ -221,7 +221,7 @@ class Client {
     this.#sentReports.$add(legacy);
     for (const url of urls) this.#sendReport(url, "application/csp-report", legacy);
     if (group === undefined) return;
-    const { blockedURI: blockedURL, documentURI: documentURL, violatedDirective, ...rest } = body;
+    const { blockedURI: blockedURL, documentURI: documentURL, violatedDirective: _violatedDirective, ...rest } = body;
     this.report(group, "csp-violation", { ...rest, blockedURL, documentURL });
   }
 
@@ -355,7 +355,7 @@ class Client {
     const ownHeaders = Array.from(headers, (header: string[]) => [header[0], header[1]]);
     const preloaded = this.#preloaded.$size > 0 ? this.#takePreloaded(rest) : undefined;
     const promise = (preloaded ?? this.request({ ...rest, headers: ownHeaders, signal: controller.signal })).then(
-      ({ response, done, completed, failed, internal, timing, ...loaded }) => {
+      ({ response, done, completed: _completed, failed, internal: _internal, timing: _timing, ...loaded }) => {
         const end = () => void (this.cleanups.$delete(stop), (fail = undefined));
         const finish = (size: number) => fail && (end(), done(size));
         fail = error => (end(), failed?.(error));
@@ -465,8 +465,9 @@ class Client {
       : type === "json"
         ? mime.isJson(essence)
         : type === "text" || essence === "text/css";
-    if (loaded.status < 200 || loaded.status > 299 || !hasType) {
-      throw new Error(`Failed to load ${url}: status ${loaded.status}, type "${essence}"`);
+    const { status } = loaded;
+    if (status < 200 || status > 299 || !hasType) {
+      throw new Error(`Failed to load ${url}: status ${status}, type "${essence}"`);
     }
     return {
       url: loaded.url,
@@ -628,7 +629,7 @@ class Client {
   dispose() {
     this.disposed = true;
     this.aborter.abort();
-    for (const cleanup of [...this.cleanups]) cleanup();
+    for (const cleanup of Array.from(this.cleanups)) cleanup();
     this.cleanups.$clear();
     this.#timingWatcher = undefined;
   }

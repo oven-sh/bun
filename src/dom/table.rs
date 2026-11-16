@@ -784,7 +784,7 @@ impl Document {
     }
 
     pub(crate) fn height_of_captions(&mut self, id: BoxId, width: f32) -> f32 {
-        let captions = self.prepare_table(id).0.captions.clone();
+        let captions = self.prepare_table(id).0.captions;
         let height = |caption: BoxId| {
             let margins = margin(&self.boxes[caption].style, width).sums();
             let room = Room {
@@ -1000,8 +1000,8 @@ impl Document {
                 )
             );
             let (baseline, row) = (
-                Some(own.baselines[0].unwrap_or(own.intrinsic))
-                    .filter(|_| is_aligned && !it.children.is_empty()),
+                (is_aligned && !it.children.is_empty())
+                    .then_some(own.baselines[0].unwrap_or(own.intrinsic)),
                 &mut rows[cell.row],
             );
             row.baseline = row.baseline.into_iter().chain(baseline).reduce(f32::max);
@@ -1237,7 +1237,7 @@ impl Document {
                 }
                 let baseline = rows[index]
                     .baseline
-                    .unwrap_or(shown - rows[index].below_content.unwrap_or(0.0));
+                    .unwrap_or_else(|| shown - rows[index].below_content.unwrap_or(0.0));
                 output.baselines = [
                     output.baselines[0].or(Some(y + row_y + baseline)),
                     Some(y + row_y + baseline),

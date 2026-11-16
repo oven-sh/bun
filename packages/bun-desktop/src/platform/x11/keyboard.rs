@@ -238,10 +238,21 @@ impl Composer {
             Some(Composer {
                 state: Some(state(tables.find(|it| !it.is_null())?, 0))
                     .filter(|it| !it.is_null())?,
-                feed: std::mem::transmute(find(c"xkb_compose_state_feed")?),
-                status: std::mem::transmute(find(c"xkb_compose_state_get_status")?),
-                text: std::mem::transmute(find(c"xkb_compose_state_get_utf8")?),
-                reset: std::mem::transmute(find(c"xkb_compose_state_reset")?),
+                feed: std::mem::transmute::<
+                    *mut c_void,
+                    unsafe extern "C" fn(*mut c_void, u32) -> c_int,
+                >(find(c"xkb_compose_state_feed")?),
+                status: std::mem::transmute::<
+                    *mut c_void,
+                    unsafe extern "C" fn(*mut c_void) -> c_int,
+                >(find(c"xkb_compose_state_get_status")?),
+                text: std::mem::transmute::<
+                    *mut c_void,
+                    unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> c_int,
+                >(find(c"xkb_compose_state_get_utf8")?),
+                reset: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void)>(find(
+                    c"xkb_compose_state_reset",
+                )?),
             })
         }
     }

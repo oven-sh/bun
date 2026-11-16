@@ -385,12 +385,11 @@ impl Syntax {
             };
             let written = parse_all(value, |p| match it.1 {
                 b'#' => Some(commas(p, one)?.join(&b", "[..])),
-                b'+' => Some(
+                b'+' => (!value.is_empty()).then_some(
                     core::iter::from_fn(|| one(p))
                         .collect::<Vec<_>>()
                         .join(&b' '),
-                )
-                .filter(|_| !value.is_empty()),
+                ),
                 _ => one(p),
             });
             written.map(|written| (it, written))
@@ -413,7 +412,7 @@ impl Syntax {
             self.matching(value, Mode::Computed(cx))?.1,
             value.ends_with(TAINT),
         );
-        (!is_tainted || !has_tainted_url(&computed, &[0..computed.len()]))
+        (!is_tainted || !has_tainted_url(&computed, core::slice::from_ref(&(0..computed.len()))))
             .then(|| tainted_if(is_tainted, &computed))
     }
 }
@@ -500,7 +499,7 @@ impl Registered {
                         .filter(|it| parse_all(it, Syntax::parse).is_some())
                         .map(<[u8]>::to_vec)
                 });
-                syntax = valid.or(syntax.take());
+                syntax = valid.or_else(|| syntax.take());
             }
             () if eq(name, "inherits") && (eq(value, "true") || eq(value, "false")) => {
                 inherits = Some(eq(value, "true"))
@@ -773,9 +772,10 @@ impl Lookup for Frame<'_> {
             .iter()
             .find(|it| Name::new(&it.name) == name);
         let value = value.and_then(|it| {
-            typed.map_or(Some(Rc::clone(&it)), |typed| {
-                self.compute(&typed.syntax, &it)
-            })
+            typed.map_or_else(
+                || Some(Rc::clone(&it)),
+                |typed| self.compute(&typed.syntax, &it),
+            )
         });
         self.locals[index].2 = Some(value.clone());
         value
@@ -862,14 +862,16 @@ fn call(lookup: &mut dyn Lookup, name: &str, arguments: &[Template]) -> Option<T
                 Guard::Media(condition) => frame.caller.matches_media(condition),
                 Guard::Container(query) => frame.caller.matches_container(query),
             };
-            if guards.iter().fold(true, |all, it| holds(it) && all)
+            if guards.iter().filter(|it| !holds(it)).count() == 0
                 && !frame.locals.iter().any(|it| it.0 == *name)
             {
                 frame.locals.push((*name, value, None));
             }
         }
         let names: Vec<_> = frame.locals.iter().map(|it| it.0).collect();
-        names.into_iter().for_each(|name| drop(frame.var(name)));
+        for name in names {
+            drop(frame.var(name));
+        }
         let result = frame
             .locals
             .iter()
@@ -920,7 +922,7 @@ pub(crate) fn guarded<L: Lookup + ?Sized>(
         .keys
         .iter()
         .position(|it| *it == key)
-        .or((depth > 256).then_some(0))
+        .or_else(|| (depth > 256).then_some(0))
     {
         stack.cycle = Some(stack.cycle.map_or(at, |it| it.min(at)));
         return None;

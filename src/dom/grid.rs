@@ -186,14 +186,14 @@ impl Lines {
                 let missing = i32::from(*count) - after().count() as i32;
                 after()
                     .nth(usize::from(*count) - 1)
-                    .unwrap_or(from.max(self.explicit as i32) + missing)
+                    .unwrap_or_else(|| from.max(self.explicit as i32) + missing)
             }
             (GridLine::NamedSpan(name, count), false) => {
                 let before = || self.named(name).filter(|it| *it < from);
                 let missing = i32::from(*count) - before().count() as i32;
                 before()
                     .nth_back(usize::from(*count) - 1)
-                    .unwrap_or(from.min(0) - missing)
+                    .unwrap_or_else(|| from.min(0) - missing)
             }
             (GridLine::Span(count), _) => from + i32::from(*count) * if forward { 1 } else { -1 },
             _ => from + if forward { 1 } else { -1 },
@@ -1876,7 +1876,11 @@ impl Document {
             basis: [Some(input.basis.0), input.basis.1],
             height: None,
         };
-        let mut grid = self.own_grid(id, [Some(width), known.or(input.height.map(inner))], &room);
+        let mut grid = self.own_grid(
+            id,
+            [Some(width), known.or_else(|| input.height.map(inner))],
+            &room,
+        );
         let (mut output, mut turned) = (Output::default(), Vec::new());
         self.turn_subgrids(&grid, true, &mut turned);
         self.estimate_rows(&mut grid, known);
@@ -2191,13 +2195,13 @@ impl Document {
             let start = index(range[0]).map(|it| {
                 tracks
                     .get(it)
-                    .map_or(tracks.last().map_or(origin, |it| it[far]), |it| it[near])
+                    .map_or_else(|| tracks.last().map_or(origin, |it| it[far]), |it| it[near])
             });
             let end = index(range[1]).map(|it| {
-                it.checked_sub(1)
-                    .map_or(tracks.first().map_or(origin, |it| it[near]), |it| {
-                        tracks[it][far]
-                    })
+                it.checked_sub(1).map_or_else(
+                    || tracks.first().map_or(origin, |it| it[near]),
+                    |it| tracks[it][far],
+                )
             });
             let edges = padding_box.span(axis);
             let [start, end] = [start.unwrap_or(edges[near]), end.unwrap_or(edges[far])];

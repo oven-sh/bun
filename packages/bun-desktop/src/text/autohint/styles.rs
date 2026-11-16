@@ -4,6 +4,7 @@
 //! (c) 2019 Fontations Developers. FreeType License and MIT, see `licenses/freetype.txt` and `licenses/fontations.txt`.
 
 use super::scripts::{FEATURES, RANGES, SCRIPTS, Script};
+use crate::text::sfnt::work::{limited, spend};
 use crate::text::sfnt::{Data, Font, Tag};
 use crate::text::shaper::language::script_tags;
 use crate::text::shaper::layout::{Subtable, Table, context_layout, coverage, covered, rules_in};
@@ -42,13 +43,12 @@ struct Outputs<'a> {
     is_output: Vec<bool>,
     /// The glyphs that tell heights, until it is known that one of them is substituted.
     telling: Option<Vec<u32>>,
-    budget: usize,
 }
 
 impl Outputs<'_> {
     fn add(&mut self, glyphs: impl Iterator<Item = u16>) -> Option<()> {
         for glyph in glyphs {
-            self.budget = self.budget.checked_sub(1)?;
+            spend(1)?;
             self.is_output
                 .get_mut(usize::from(glyph))
                 .into_iter()
@@ -98,7 +98,7 @@ impl Outputs<'_> {
                     .into_iter()
                     .chain((0..count).flat_map(|it| rules_in(data, sets, it, kind == 6)))
                 {
-                    self.budget = self.budget.checked_sub(1 + rule.actions.0.len())?;
+                    spend(1 + rule.actions.0.len())?;
                     for lookup in rule.actions.u16s(0, usize::MAX).skip(1).step_by(2) {
                         self.visit(lookup, depth + 1);
                     }
@@ -119,6 +119,10 @@ impl Outputs<'_> {
 
 impl Styles {
     pub fn new(font: &Font, substitutions: Option<&Table>) -> Styles {
+        limited(1 << 25, || Styles::find(font, substitutions))
+    }
+
+    fn find(font: &Font, substitutions: Option<&Table>) -> Styles {
         let mut styles = Styles {
             of_glyphs: vec![(UNKNOWN, false); font.glyph_count as usize],
         };
@@ -177,9 +181,8 @@ impl Styles {
             is_visited,
             is_output,
             telling: style.feature.map(telling),
-            budget: 1 << 22,
         };
-        for lookup in lookups {
+        for lookup in lookups.take_while(|_| spend(1).is_some()) {
             outputs.visit(lookup, 1);
         }
         for (style, is_output) in self.of_glyphs.iter_mut().zip(outputs.is_output) {

@@ -7,11 +7,10 @@ use std::os::fd::AsRawFd as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::sfnt::Font;
+use super::woff;
 use crate::hash::{FastHasher, FastMap};
 use crate::sync::Mutex;
-use skrifa::FontRef;
-
-use super::woff;
 
 struct Decoded {
     /// `None` if it is `data`.
@@ -114,8 +113,7 @@ pub fn decode(original: Vec<u8>, may_be_slow: bool) -> Option<&'static [u8]> {
             Some(decoded) => decoded,
             None if path.is_some() && !may_be_slow => return None,
             None => {
-                let data =
-                    woff::decode(&original).filter(|data| FontRef::from_index(data, 0).is_ok())?;
+                let data = woff::decode(&original).filter(|data| Font::is_font(data))?;
                 let stored = path.filter(|path| write(path, &original, &data).is_ok());
                 let stored = stored.and_then(|path| read(&path, &original));
                 stored.unwrap_or_else(|| Decoded {
@@ -125,7 +123,7 @@ pub fn decode(original: Vec<u8>, may_be_slow: bool) -> Option<&'static [u8]> {
             }
         }
     } else {
-        FontRef::from_index(&original, 0).ok()?;
+        Font::is_font(&original).then_some(())?;
         Decoded {
             original: None,
             data: original.leak(),

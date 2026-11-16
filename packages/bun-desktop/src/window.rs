@@ -103,7 +103,7 @@ pub struct WindowState {
     planes: RefCell<Option<layers::Planes>>,
     /// For each surface.
     #[cfg(target_os = "macos")]
-    sliders: RefCell<Vec<(u32, Vec<(usize, f32)>)>>,
+    sliders: RefCell<Vec<layers::Sliders>>,
     #[cfg(target_os = "macos")]
     did_not_slide: Cell<Option<Instant>>,
     /// The identities of animations, and when that turned out.
@@ -227,10 +227,12 @@ pub fn any_is_stale() -> bool {
 pub mod layers {
     use super::*;
     use crate::paint::layers::core_animation::Caret;
-    use crate::paint::software::Plane;
+    use crate::paint::software::{self, Plane};
 
     /// After it has moved.
     const SLIDES_FOR: Duration = Duration::from_millis(1500);
+
+    pub type Sliders = (u32, Vec<(usize, f32)>);
 
     pub struct Planes {
         contents: (Layers<Tree>, Plane),
@@ -272,6 +274,9 @@ pub mod layers {
         ];
         for ((layers, plane), primitives, painted, down, radius) in parts {
             plane.primitives = primitives;
+            layers.avoids_cpu = true;
+            layers.keep_apart(0..slide.clip.left);
+            layers.set_scrolling(down == 0);
             layers.target.begin(scale, false);
             layers.target.show_through(slide.clip, down, radius);
             compositor.exchange(plane);
@@ -311,6 +316,8 @@ pub mod layers {
             .filter_map(moved_at)
             .max()
             .filter(|_| state.is_active.get());
+        // The window server misses frames when it does.
+        let blinks = !surfaces.iter().any(|it| it.borrow().is_scrolling());
         state
             .unlifted
             .borrow_mut()
@@ -339,7 +346,12 @@ pub mod layers {
             );
             let refused = flatten::lift(primitives, &mut cache.lifted);
             let caret = since.and_then(|since| {
-                flatten::lift_caret(primitives).map(|(rect, color)| Caret { rect, color, since })
+                flatten::lift_caret(primitives).map(|(rect, color)| Caret {
+                    rect,
+                    color,
+                    since,
+                    blinks,
+                })
             });
             if cache
                 .slide
@@ -392,7 +404,7 @@ pub mod layers {
         }
     }
 
-    fn sliders(surface: &mut Surface) -> (u32, Vec<(usize, f32)>) {
+    fn sliders(surface: &mut Surface) -> Sliders {
         (
             surface.id,
             surface.motion.sliders(
@@ -445,6 +457,18 @@ pub mod layers {
             (width * scale).ceil() as i32,
             (height * scale).ceil() as i32,
         );
+        let shows = software::see_through(&state.compositor.lock().primitives, all);
+        let points = [shows.start, shows.end].map(|it| f64::from(it) / f64::from(scale));
+        let [left, right] = window
+            .fit_backdrop(points)
+            .map(|it| (it * f64::from(scale)).round() as i32);
+        layers.keep_apart(left..right);
+        let slides = state.cache.borrow().slide.is_some();
+        let is_scrolling = surface::shown_in(state)
+            .iter()
+            .any(|it| it.borrow().is_scrolling());
+        layers.set_scrolling(is_scrolling && slides == state.planes.borrow().is_some());
+        layers.avoids_cpu = slides;
         layers.paint(&mut state.compositor.lock(), all, false);
         layers.target.show_caret(caret);
         let cache = &mut *state.cache.borrow_mut();
@@ -460,18 +484,15 @@ pub mod layers {
 
     /// Not from inside of AppKit, which commits what belongs together.
     pub fn flush() {
-        const ANSWERS_WITHIN: Duration = Duration::from_millis(40);
         if HAS_CHANGES.take() {
             crate::diagnostics::trace!("painted");
-            let may_wait = bridge::last_input().elapsed() > ANSWERS_WITHIN;
-            diagnostics::measure(Step::Commit, || core_animation::flush(may_wait));
+            diagnostics::measure(Step::Commit, core_animation::flush);
             crate::diagnostics::trace!("committed");
         }
     }
 
     pub(super) fn leave_to_appkit() {
         HAS_CHANGES.set(false);
-        core_animation::leave_to_appkit();
     }
 
     pub fn next_release() -> Option<Instant> {
@@ -693,8 +714,6 @@ pub fn draw_before_showing(id: u32) {
         state.forget_at.set(None);
         refresh(id);
         draw_now(id);
-        #[cfg(target_os = "macos")]
-        core_animation::leave_to_appkit();
     }
 }
 
@@ -760,7 +779,6 @@ fn forget_what_was_drawn(state: &WindowState) {
     if state.was_hidden.get() {
         state.planes.take();
         state.layers.take();
-        layers::leave_to_appkit();
     }
     state.is_stale.set(true);
     release_memory();

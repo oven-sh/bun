@@ -3,6 +3,7 @@ const core = require("internal/desktop/dom/core");
 
 const { domError, expose, invalidate, sync } = core;
 type Page = $Dom.Page;
+type N = $Dom.N;
 
 const enum Phase {
   PendingCapture,
@@ -17,16 +18,10 @@ const enum Step {
   End,
   HandOver,
   TakeOver,
+  Scoped = 8,
 }
 const TIMEOUT = 4000;
 const reserved = /^(?:none$|-ua-)/i;
-
-function setState(page: Page, name: string, on: boolean) {
-  const root = core.documentElement(page.doc);
-  if (root === null) return;
-  sync(page.doc).setCustomState(root.id, name, on);
-  invalidate(page.doc);
-}
 
 class Transition {
   page: Page;
@@ -41,30 +36,53 @@ class Transition {
   js: any = null;
   typeSet: any = null;
   isInbound = false;
+  scope: N | null;
 
-  constructor(page: Page, update: Function | null) {
+  constructor(page: Page, update: Function | null, scope: N | null) {
     this.page = page;
     this.update = update;
+    this.scope = scope;
   }
 
   isActive(): boolean {
-    return this.page.transition === this;
+    return active(this.page, this.scope) === this;
+  }
+
+  root(): N | null {
+    return this.scope ?? core.documentElement(this.page.doc);
+  }
+
+  setState(name: string, on: boolean) {
+    const { doc } = this.page;
+    const root = this.root();
+    if (root === null || root.doc !== doc) return;
+    sync(doc).setCustomState(root.id, name, on);
+    invalidate(doc);
+  }
+
+  step(step: Step, canvas: number): number {
+    const { page, scope } = this;
+    if (scope === null) return sync(page.doc).viewTransition(step, canvas);
+    return scope.doc === page.doc ? sync(page.doc).viewTransition(step | Step.Scoped, scope.id) : 0;
   }
 
   showType(type: string, on: boolean) {
-    if (this.isActive() && !reserved.test(type)) setState(this.page, ":type " + type, on);
+    if (this.isActive() && !reserved.test(type)) this.setState(":type " + type, on);
   }
 
   setActive(on: boolean) {
-    const { page } = this;
-    page.transition = this;
+    const { page, scope } = this;
+    if (scope === null) page.transition = this;
+    else page.scopedTransitions.$set(scope, this);
     for (const type of this.types) this.showType(type, on);
-    setState(page, ":active-view-transition", on);
+    this.setState(":active-view-transition", on);
     if (on) return;
-    page.transition = null;
-    page.suppressesRendering = false;
+    if (scope === null) {
+      page.transition = null;
+      page.suppressesRendering = false;
+    } else page.scopedTransitions.$delete(scope);
     clearTimeout(this.timer);
-    if (!page.isDisposed) page.doc.engine.viewTransition(Step.End, 0);
+    if (!page.isDisposed) this.step(Step.End, 0);
   }
 
   callUpdate() {
@@ -93,8 +111,8 @@ class Transition {
     const { page } = this;
     if (this.phase === Phase.Done) return;
     clearTimeout(this.timer);
-    page.suppressesRendering = false;
-    if (sync(page.doc).viewTransition(Step.CaptureNew, 0) === 0) return this.fail();
+    if (this.scope === null) page.suppressesRendering = false;
+    if (this.step(Step.CaptureNew, 0) === 0) return this.fail();
     this.phase = Phase.Animating;
     this.ready.resolve();
     invalidate(page.doc);
@@ -119,12 +137,12 @@ class Transition {
     if (this.phase === Phase.PendingCapture) {
       flush(page);
       if (!this.isActive()) return;
-      if (sync(page.doc).viewTransition(Step.CaptureOld, canvas) === 0) return this.fail();
-      page.suppressesRendering = true;
+      if (this.step(Step.CaptureOld, canvas) === 0) return this.fail();
+      if (this.scope === null) page.suppressesRendering = true;
       this.phase = Phase.UpdateCallbackCalled;
       schedule(this);
     } else if (this.phase === Phase.Animating) {
-      const state = sync(page.doc).viewTransition(Step.Follow, 0);
+      const state = this.step(Step.Follow, 0);
       if (state === 0 || (this.isInbound && typesForNavigation(page) === null)) return this.fail();
       if (state === 2 || this.waits > 0) return;
       page.queueTask(() => this.finish());
@@ -137,6 +155,10 @@ class Transition {
     this.phase = Phase.Done;
     this.finished.resolve();
   }
+}
+
+function active(page: Page, scope: N | null): Transition | null {
+  return scope === null ? page.transition : (page.scopedTransitions.$get(scope) ?? null);
 }
 
 const queues = new WeakMap<object, Transition[]>();
@@ -183,7 +205,7 @@ class ViewTransitionTypeSet {
     return this.$impl.types.values();
   }
   forEach(callback: Function, thisArg: unknown = undefined) {
-    for (const type of this.$impl.types) callback.$call(thisArg, type, type, this);
+    for (const type of this.$impl.types) (callback as any).$call(thisArg, type, type, this);
   }
 }
 for (const key of ["keys", Symbol.iterator]) {
@@ -215,7 +237,7 @@ class ViewTransition {
     return (this.$impl.typeSet ??= make(ViewTransitionTypeSet, this.$impl));
   }
   get transitionRoot() {
-    return core.wrapOrNull(core.documentElement(this.$impl.page.doc));
+    return core.wrapOrNull(this.$impl.root());
   }
   skipTransition() {
     this.$impl.skip(domError("AbortError", "Transition was skipped"));
@@ -239,16 +261,16 @@ function make(ctor: any, impl: Transition) {
   return made;
 }
 
-function start(page: Page | null, argument: any) {
+function start(page: Page | null, argument: any, scope: N | null) {
   const update = $isCallable(argument) ? argument : (argument?.update ?? null);
   if (update !== null && !$isCallable(update)) throw new TypeError("The update callback is not a function.");
-  const transition = new Transition(page ?? core.realm.page, update);
+  const transition = new Transition(page ?? core.realm.page, update, scope);
   if (update !== argument) for (const type of argument?.types ?? []) transition.types.add(`${type}`);
   transition.js = make(ViewTransition, transition);
   if (page === null) transition.skip(domError("AbortError", "The document has no window"));
   else if (!page.isVisible) transition.fail();
   else {
-    page.transition?.skip(domError("AbortError", "Transition was skipped because a new one started"));
+    active(page, scope)?.skip(domError("AbortError", "Transition was skipped because a new one started"));
     transition.setActive(true);
   }
   return transition.js;
@@ -260,7 +282,7 @@ function typesForNavigation(page: Page): string[] | null {
 }
 
 function forNavigation(page: Page, types: string[]): Transition {
-  const transition = new Transition(page, null);
+  const transition = new Transition(page, null, null);
   for (const type of types) transition.types.add(type);
   transition.js = make(ViewTransition, transition);
   $pokePromiseAsHandled(transition.ready.promise);
@@ -297,4 +319,4 @@ function reveal(page: Page, ticket: number, fire: (transition: object | null) =>
   require("internal/desktop/dom/events").microtaskCheckpoint();
 }
 
-export default { reveal, start, swap };
+export default { active, reveal, start, swap };

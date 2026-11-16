@@ -19,13 +19,22 @@ impl Styles {
     }
 }
 
-static METRICS: LazyLock<Mutex<FastMap<(u32, u8), Arc<Metrics>>>> = LazyLock::new(Mutex::default);
+type KnownMetrics = FastMap<(u32, u8), Arc<Metrics>>;
+
+static METRICS: LazyLock<Mutex<KnownMetrics>> = LazyLock::new(Mutex::default);
 
 pub fn release_memory() {
     METRICS.lock().clear();
 }
 
 pub fn outline(face: &Face, glyph: u32, size: f32) -> Option<Path> {
+    if let Some(path) = face
+        .file
+        .font
+        .outline_with_postscript_hints(glyph, face.coords, size)
+    {
+        return Some(path);
+    }
     let (file, (style, is_mark)) = (face.file, face.file.styles()?.0.of(glyph)?);
     let measure = || {
         Arc::new(Metrics::new(

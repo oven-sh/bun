@@ -122,14 +122,14 @@ impl Document {
         let count = fitting.unwrap_or(i32::MAX).min(
             rare.column_count
                 .0
-                .map_or(if fitting.is_some() { i32::MAX } else { 1 }, |it| it.0),
+                .map_or_else(|| if fitting.is_some() { i32::MAX } else { 1 }, |it| it.0),
         );
         let count = count.clamp(1, MAX_COLUMNS as i32) as usize;
         let column_width = unit(((width + column_gap) / count as f32 - column_gap).max(0.0));
         let row_height = rare.column_height.0.map(|it| unit(it.0));
         let wraps = rare.column_wrap == ColumnWrap::Wrap
             || rare.column_wrap == ColumnWrap::Auto && row_height.is_some();
-        let row_height = row_height.or(height.filter(|_| wraps));
+        let row_height = row_height.or_else(|| height.filter(|_| wraps));
         let row_gap = gap(&style, &style.layout.row_gap, height.unwrap_or(0.0));
         let mut breaks = Breaks::default();
         (breaks.column_width, breaks.budget) =
@@ -155,7 +155,10 @@ impl Document {
                 }
             })
         };
-        while flow != 0 {
+        loop {
+            if flow == 0 {
+                break;
+            }
             let mut top = y + strut.sum();
             let mut used_of_row = used_of_row(top - rows_start);
             if let Some(row) = row_height.filter(|it| used_of_row > 0.0 && used_of_row >= *it) {
@@ -307,7 +310,7 @@ impl Document {
                     Strut::default(),
                 );
                 if let Some(outer) = outer.as_ref().filter(|_| goes_on && in_flow.len() <= count) {
-                    end_of_flow.get_or_insert(outer.consumed(y));
+                    end_of_flow.get_or_insert_with(|| outer.consumed(y));
                 }
                 for outer in outer.iter_mut().filter(|_| end_of_flow.is_none()) {
                     outer.fill_to(y);
@@ -419,7 +422,7 @@ impl Document {
                 .push((spanner, breaks.rows.len(), [at.x, at.y]));
             output.escapes |= own.escapes;
             output.baselines = [
-                output.baselines[0].or(own.baselines[0].map(|it| top + it)),
+                output.baselines[0].or_else(|| own.baselines[0].map(|it| top + it)),
                 own.baselines[1].map(|it| top + it).or(output.baselines[1]),
             ];
             (y, strut) = (top + own.height, Strut::default().with(margin.bottom));

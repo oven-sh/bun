@@ -230,10 +230,10 @@ impl Document {
             &self.boxes[id],
             crate::lines::relative_offset(&self.boxes[id].style, width, Some(height)),
         );
-        let rect = it
-            .inline
-            .as_ref()
-            .map_or(self.border_box(id), |it| self.from_lines(id, it.lines.flow));
+        let rect = it.inline.as_ref().map_or_else(
+            || self.border_box(id),
+            |it| self.from_lines(id, it.lines.flow),
+        );
         let (at, mut margin, end) = (
             it.layout.location,
             it.layout.margin.to_array(),
@@ -708,7 +708,7 @@ impl Document {
                 .scrolling
                 .hovered
                 .map(|it| it.0)
-                .or(self.scrolling.dragged.map(|it| it.0));
+                .or_else(|| self.scrolling.dragged.map(|it| it.0));
             self.scrolling
                 .shown
                 .iter_mut()
@@ -722,7 +722,9 @@ impl Document {
                 .map(|it| it.0)
                 .collect();
             self.scrolling.shown.retain(|it| it.1 > now);
-            fading.into_iter().for_each(|it| self.repaint(it));
+            for it in fading {
+                self.repaint(it);
+            }
         }
     }
 
@@ -742,9 +744,10 @@ impl Document {
             if it.scrolls() {
                 let (node, client) = (it.node, self.client_box(at));
                 let ongoing = self.scrolling.smooth.iter().position(|it| it.node == node);
-                let from = ongoing.map_or(self.scroll_offset(node), |index| {
-                    self.scrolling.smooth[index].to
-                });
+                let from = ongoing.map_or_else(
+                    || self.scroll_offset(node),
+                    |index| self.scrolling.smooth[index].to,
+                );
                 let to = [0, 1].map(|axis| {
                     let step = [1.0, 40.0, [client.width, client.height][axis] * 0.875, 1e9]
                         [usize::from(unit.min(3))];
@@ -1006,18 +1009,12 @@ impl Document {
             })
             .collect();
         for id in scrollers {
-            let (it, range) = (&self.boxes[id], self.scroll_range(id));
+            let (it, needed) = (
+                &self.boxes[id],
+                self.needed_scrollbars(id, &self.scroll_range(id)),
+            );
             let is_stale = |axis: usize| {
-                let is_stable = axis == 1
-                    && it
-                        .style
-                        .layout
-                        .scrollbar_gutter
-                        .contains(ScrollbarGutter::STABLE);
-                let overflows =
-                    range[axis][1] - range[axis][0] >= 0.5 && !self.client_box(id).is_empty();
-                it.overflow[axis] == Overflow::Auto
-                    && it.scrollbars[axis] != (overflows || is_stable)
+                it.overflow[axis] == Overflow::Auto && it.scrollbars[axis] != needed[axis]
             };
             let node = it.node;
             if is_stale(0) || is_stale(1) {
@@ -1102,7 +1099,7 @@ impl Document {
             let visible = Some(rect.intersection(view)).filter(|it| !it.is_empty())?;
             let inside = (node == 0 || visible != rect)
                 .then(|| self.find_anchor_in(child, &matrix, scroller, view));
-            inside.flatten().or((node != 0).then_some(node))
+            inside.flatten().or_else(|| (node != 0).then_some(node))
         };
         let Some(inline) = &it.inline else {
             let hoisted = it
@@ -1342,7 +1339,10 @@ impl Document {
     pub(crate) fn resizer(&self, id: BoxId) -> Option<Rect> {
         let it = &self.boxes[id];
         (it.style.scroll.resize != Resize::None
-            && it.node != 0
+            && self
+                .tree
+                .element(it.node)
+                .is_some_and(|it| !it.is_generated())
             && (it.scrolls() || it.tag == name!("iframe")))
         .then_some(())?;
         let (inside, is_left) = (
@@ -1377,7 +1377,10 @@ impl Document {
                 self.scrolling.shown.iter().any(|shown| shown.0 == it.node)
                     && style.layout.scrollbar_width != ScrollbarWidth::None
             }
-            false => it.overflow[axis] == Overflow::Scroll || max > min,
+            false => {
+                it.overflow[axis] == Overflow::Scroll
+                    || it.overflow[axis] != Overflow::Hidden && max > min
+            }
         };
         (it.scrollbars[axis] && is_shown).then_some(())?;
         let is_standard = style.layout.scrollbar_width != ScrollbarWidth::Auto

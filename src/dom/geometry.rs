@@ -526,9 +526,10 @@ impl Document {
                     .filter(|it| !self.boxes[**it].spans_columns())
                 {
                     let (margin, whole) = (self.boxes[*id].layout.margin, [self.border_box(*id)]);
-                    let pieces = self
-                        .pieces(*id)
-                        .map_or(whole.to_vec(), |it| it.iter().map(|it| it.rect).collect());
+                    let pieces = self.pieces(*id).map_or_else(
+                        || whole.to_vec(),
+                        |it| it.iter().map(|it| it.rect).collect(),
+                    );
                     rects.extend(pieces.into_iter().map(|it| match mode.is_vertical() {
                         true => (
                             *id,
@@ -586,12 +587,14 @@ impl Document {
             .own_box(node)
             .is_some_and(|it| self.pieces(it).is_some());
         non_empty
-            .or(if is_split {
-                rects.last()
-            } else {
-                rects.first()
-            }
-            .copied())
+            .or_else(|| {
+                if is_split {
+                    rects.last()
+                } else {
+                    rects.first()
+                }
+                .copied()
+            })
             .unwrap_or_default()
     }
 
@@ -698,7 +701,7 @@ impl Document {
             return None;
         }
         let mut clip = self.client_box(id);
-        if x && y && !it.scrolls() {
+        if x && y && (!it.scrolls() || it.is_replaced()) {
             let ClipMargin(area, margin) = it.style.effects.clip_margin;
             clip = match area {
                 BoxArea::ContentBox => Rect::new(self.content_box(id)),

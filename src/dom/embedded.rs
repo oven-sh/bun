@@ -29,6 +29,8 @@ struct Key {
     size: [f32; 2],
     scale: f32,
     is_dark: bool,
+    /// Whatever its `preserveAspectRatio` says.
+    stretches: bool,
 }
 
 struct Vector {
@@ -115,7 +117,7 @@ impl<'a> Builder<'a> {
                 .filter_map(|(name, value)| Some((declared(name)?, value))),
         );
         let (prefix, local) =
-            strings::split_once_char(name.slice(), b':').unwrap_or((b"", name.slice()));
+            strings::split_once_char(name.slice(), b':').unwrap_or_else(|| (b"", name.slice()));
         let namespace = match self
             .prefixes
             .iter()
@@ -262,6 +264,9 @@ impl Vector {
             viewport_generation,
             ..environment.clone()
         });
+        if core::mem::replace(&mut document.stretches_view, key.stretches) != key.stretches {
+            document.svg_changed(document.tree.root_element());
+        }
         document.update_style();
         document.start_pending_animations();
         document.update_picture();
@@ -345,6 +350,7 @@ impl Document {
                 size: size.map(|it| it.round().max(1.0)),
                 scale: 1.0,
                 is_dark: false,
+                stretches: false,
             },
             &self.environment,
         );
@@ -425,6 +431,7 @@ impl Document {
                             self.view_transform =
                                 crate::svg::parse_transform(text(value)).unwrap_or(IDENTITY)
                         }
+                        b"viewBox" if crate::svg::parse_view_box(text(value)).is_none() => {}
                         b"viewBox" | b"preserveAspectRatio" => view.push((
                             if name == b"viewBox" {
                                 "viewBox"
@@ -447,7 +454,7 @@ impl Document {
                 };
                 view.extend(
                     view_box(element)
-                        .and(element.attribute(name!("viewBox")))
+                        .and_then(|_| element.attribute(name!("viewBox")))
                         .map(|it| ("viewBox", it.to_owned())),
                 );
                 view.extend(
@@ -484,6 +491,13 @@ impl Document {
             }
             None => root,
         })
+    }
+
+    pub(crate) fn is_loading_external(&self, url: &str) -> bool {
+        let url = self.resolve_url(url);
+        let file =
+            text(strings::split_once_char(url.as_bytes(), b'#').map_or(url.as_bytes(), |it| it.0));
+        self.wanted_externals.borrow().contains(file) && !self.externals.contains_key(file)
     }
 
     pub(crate) fn set_external(&mut self, url: &str, source: &[u8]) {
@@ -544,15 +558,16 @@ impl Document {
 
 impl Painter<'_> {
     /// With its corner in the origin of the space.
-    fn vector_image(
+    pub(crate) fn vector_image(
         &mut self,
         image: u32,
         size: [f32; 2],
+        stretches: bool,
         style: &crate::properties::Style,
         space: &Space,
     ) {
         let (document, mut inside) = (self.document, *space);
-        let rounded = size.map(|it| (it / style.zoom).round().max(1.0));
+        let rounded = size.map(|it| ((it / style.zoom * 64.0).round() / 64.0).max(1.0));
         if NESTING.get() >= MAX_NESTING
             || !self.vector(
                 scaling(size[0] / rounded[0], size[1] / rounded[1]),
@@ -566,6 +581,7 @@ impl Painter<'_> {
             size: rounded,
             scale: (document.screen_scale(&matrix) * 16.0).round().max(1.0) / 16.0,
             is_dark: style.dark,
+            stretches,
         };
         NESTING.set(NESTING.get() + 1);
         let painted = with_vector(image, |it| {
@@ -611,7 +627,7 @@ impl Painter<'_> {
         self.vector(translation([x, y]), &mut inside);
         if tile.step != [0.0; 2] {
             self.link(
-                Item::PushPattern {
+                &Item::PushPattern {
                     bounds: clip.rect.moved([-x, -y]),
                     tile: Tile { rect: cell, ..tile },
                     matrix: IDENTITY,
@@ -635,11 +651,17 @@ impl Painter<'_> {
     ) {
         if is_vector(image) {
             return self.tiled(clip, tile, space, |painter, space| {
-                painter.vector_image(image, [tile.rect.width, tile.rect.height], style, space)
+                painter.vector_image(
+                    image,
+                    [tile.rect.width, tile.rect.height],
+                    false,
+                    style,
+                    space,
+                )
             });
         }
         self.emit(
-            Item::Image {
+            &Item::Image {
                 clip,
                 tile,
                 image,

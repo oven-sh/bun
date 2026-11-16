@@ -695,7 +695,10 @@ fn check_plan(
         if !request.is_template {
             entered_by_programs.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
             if !can_enter_test_runner {
-                entered_by_programs.subtract(&FeatureSet::from_features(&[Feature::Test]));
+                entered_by_programs.subtract(&FeatureSet::from_features(&[
+                    Feature::Test,
+                    Feature::Desktop,
+                ]));
             }
         }
         seed.union_with(&entered_by_programs);

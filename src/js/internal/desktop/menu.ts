@@ -166,8 +166,9 @@ class MenuItem {
 
   constructor(options: Record<string, any>) {
     const defaults = options.role === undefined ? undefined : role(options.role);
-    if (options.role !== undefined && !defaults) {
-      throw $ERR_INVALID_ARG_VALUE("role", options.role, "is not a supported role");
+    const optionsRole = options.role;
+    if (optionsRole !== undefined && !defaults) {
+      throw $ERR_INVALID_ARG_VALUE("role", optionsRole, "is not a supported role");
     }
     const submenu = options.submenu ?? defaults?.submenu;
     this.id = options.id;
@@ -175,7 +176,8 @@ class MenuItem {
     this.submenu = $isArray(submenu) ? Menu.buildFromTemplate(submenu) : submenu;
     this.type = options.type ?? (this.submenu ? "submenu" : "normal");
     this.accelerator = options.accelerator ?? defaults?.accelerator;
-    if (this.accelerator) accelerator.parse(this.accelerator);
+    const ownAccelerator = this.accelerator;
+    if (ownAccelerator) accelerator.parse(ownAccelerator);
     this.icon = options.icon;
     this.sublabel = options.sublabel ?? "";
     this.toolTip = options.toolTip ?? "";
@@ -219,8 +221,9 @@ class MenuItem {
 
   set checked(checked) {
     this.#checked = !!checked;
-    if (checked && this.type === "radio" && this.menu) {
-      const { items } = this.menu;
+    const { menu } = this;
+    if (checked && this.type === "radio" && menu) {
+      const { items } = menu;
       const index = items.indexOf(this);
       for (const step of [-1, 1]) {
         for (let i = index + step; items[i] && items[i].type !== "separator"; i += step) {
@@ -235,7 +238,8 @@ class MenuItem {
     if (!this.#enabled) return;
     if (this.type === "checkbox") this.checked = !this.#checked;
     else if (this.type === "radio") this.checked = true;
-    if (this.role !== undefined) role(this.role)!.run?.(window);
+    const ownRole = this.role;
+    if (ownRole !== undefined) role(ownRole)!.run?.(window);
     const event = Object.assign(new Event(), {
       triggeredByAccelerator: modifiers !== undefined,
       shiftKey: !!(modifiers! & accelerator.SHIFT),
@@ -341,7 +345,7 @@ function serialize(menu: Menu): object[] {
     id: item.commandId,
     label: withoutMnemonic(item.label),
     type: item.type,
-    role: item.click ? undefined : nativeRoles[item.role?.toLowerCase()!],
+    role: item.click ? undefined : nativeRoles[item.role?.toLowerCase() ?? ""],
     enabled: item.enabled,
     checked: item.checked,
     submenu: item.submenu && serialize(item.submenu),
@@ -622,15 +626,19 @@ class Menus {
       row.ariaLabel = withoutMnemonic(item.label);
       row.ariaDisabled = String(!item.enabled);
       if (item.type in ariaRoles) row.ariaChecked = String(item.checked);
-      if (item.toolTip) row.title = item.toolTip;
+      const { toolTip } = item;
+      if (toolTip) row.title = toolTip;
       if (hasMarks) {
         const mark = this.#create("b", "", row);
         if (item.checked) mark.innerHTML = icons[item.type];
-        else if (item.icon)
-          this.#create("img", "", mark).src = require("internal/desktop/system").toImage(item.icon).toDataURL();
+        else {
+          const { icon } = item;
+          if (icon) this.#create("img", "", mark).src = require("internal/desktop/system").toImage(icon).toDataURL();
+        }
       }
       const label = this.#create("span", row.ariaLabel, row);
-      if (item.sublabel) this.#create("small", item.sublabel, label);
+      const { sublabel } = item;
+      if (sublabel) this.#create("small", sublabel, label);
       const end = this.#create("kbd", keys, row);
       if (item.submenu) end.innerHTML = icons.submenu;
       row.onmouseenter = () => {
@@ -659,7 +667,7 @@ class Menus {
     children[index].scrollIntoView({ block: "nearest" });
   }
 
-  #move(from: number, step: number, matches = (_: MenuItem) => true) {
+  #move(from: number, step: number, matches = (_item: MenuItem) => true) {
     const { items } = this.#panels.at(-1)!;
     for (let i = 1; i <= items.length; i++) {
       const index = (from + step * i + items.length * 2) % items.length;

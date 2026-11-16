@@ -62,7 +62,8 @@ function wheelListenersChanged(target: N) {
   const page: Page | null = target.type === 0 ? (target.x?.target === target ? target.x : null) : target.doc.page;
   if (target.type !== 0 && target.type !== DOCUMENT) {
     target.flags = blocks(target) ? target.flags | flags.BLOCKS_WHEEL : target.flags & ~flags.BLOCKS_WHEEL;
-    if (target.id !== 0) target.doc.engine.setBlocksWheel(target.id, blocks(target));
+    const { id } = target;
+    if (id !== 0) target.doc.engine.setBlocksWheel(id, blocks(target));
   } else page?.doc.engine.setBlocksWheel(1, blocks(page.target) || blocks(page.doc.node));
 }
 
@@ -407,8 +408,8 @@ function callBack(page: Page | null, callback: Function, self: unknown, a?: unkn
   if (page !== null && page.mirror !== null) page.mirror.adoptAll(a);
   if (realm.hasFrames) page = core.pageOfCallback(callback) ?? page;
   try {
-    if (b === undefined) callback.$call(self, a);
-    else callback.$call(self, a, b);
+    if (b === undefined) (callback as any).$call(self, a);
+    else (callback as any).$call(self, a, b);
   } catch (error) {
     reportError(page, error);
   }
@@ -449,13 +450,14 @@ function callHandler(listener: Listener, event: E, current: N) {
   const callback = handlerCallback(listener, event.name);
   if (!$isCallable(callback)) return;
   const { js, name } = event;
+  const currentJs = current.js;
   if (
     name === "error" &&
     current.type === 0 &&
-    current.js.self === current.js &&
+    currentJs.self === currentJs &&
     (event.flags & B.IsError || isErrorEvent(js))
   ) {
-    if (callback.$call(current.js, js.message, js.filename, js.lineno, js.colno, js.error) === true) cancel(event);
+    if (callback.$call(currentJs, js.message, js.filename, js.lineno, js.colno, js.error) === true) cancel(event);
     return;
   }
   const result = callback.$call(current.js, js);
@@ -552,7 +554,8 @@ function run(event: E, path: N[], targets: N[] | null, page: Page | null) {
   realm.page = realm.root;
   if (page !== null) {
     page.event = event.js;
-    if (page.mirror !== null && event.flags & B.Trusted) page.mirror.adopt(event.js);
+    const { mirror } = page;
+    if (mirror !== null && event.flags & B.Trusted) mirror.adopt(event.js);
   }
   event.path = path;
   const capturing = bitOf(type | 0, L.Capture) | (hasLegacy ? bitOf((type + 1) | 0, L.Capture) : 0);
@@ -660,7 +663,10 @@ function dispatchToNode(origin: N, event: E): boolean {
   }
   run(event, path, targets, page);
   if (clears) event.target = event.related = null;
-  else if (event.relateds !== null) event.related = event.relateds[path.length - 1];
+  else {
+    const { relateds } = event;
+    if (relateds !== null) event.related = relateds[path.length - 1];
+  }
   event.relateds = event.inShadow = null;
   const result = finish(event);
   if (activation !== null) {
@@ -730,7 +736,13 @@ function adoptNative(event: any): E {
   const bits = (event.bubbles ? B.Bubbles : 0) | (event.cancelable ? B.Cancelable : 0);
   event.$impl = new E(event, event.type, bits | (event.composed ? B.Composed : 0));
   if (adoptedMembers === null) {
-    const { constructor, type, initEvent, isTrusted, ...members } = Object.getOwnPropertyDescriptors(Event.prototype);
+    const {
+      constructor: _constructor,
+      type: _type,
+      initEvent: _initEvent,
+      isTrusted: _isTrusted,
+      ...members
+    } = Object.getOwnPropertyDescriptors(Event.prototype);
     adoptedMembers = members;
   }
   Object.defineProperties(event, adoptedMembers);
@@ -1328,14 +1340,15 @@ class PointerEvent extends MouseEvent {
   }
   getCoalescedEvents() {
     const event = this.$impl;
+    const { name } = event;
     if (
       this.#coalesced === null &&
       event.flags & B.Trusted &&
-      (event.name === "pointermove" || event.name === "pointerrawupdate")
+      (name === "pointermove" || name === "pointerrawupdate")
     ) {
       const init = {};
       for (const key in this) init[key as string] = this[key];
-      const only = new PointerEvent(event.name, { ...init, bubbles: false, cancelable: false, composed: false });
+      const only = new PointerEvent(name, { ...init, bubbles: false, cancelable: false, composed: false });
       only.$impl.flags |= B.Trusted;
       only.$impl.time = event.time;
       only.#coalesced = [];
@@ -1855,8 +1868,11 @@ const lazyStorageEvent = lazyEvent(
   { key: null, oldValue: null, newValue: null, url: "", storageArea: null },
   Event,
   {
-    ...{ key: nullableText, oldValue: nullableText, newValue: nullableText },
-    ...{ url: wellFormed, storageArea: instanceOf("Storage") },
+    key: nullableText,
+    oldValue: nullableText,
+    newValue: nullableText,
+    url: wellFormed,
+    storageArea: instanceOf("Storage"),
   },
 );
 const lazySubmitEvent = lazyEvent("SubmitEvent", { submitter: null }, Event, { submitter: instanceOf("HTMLElement") });

@@ -4,17 +4,11 @@ use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
-use crate::hash::{FastHasher, FastMap};
-use harfrust::{
-    BufferFlags, Direction, Feature, Language, ShapeOptions, ShapePlan, Tag, UnicodeBuffer,
-};
-
 use super::fonts::Face;
 use super::reach::Reach;
+use super::shaper::{Buffer, Direction, Feature, Glyph, Plan, Shaper};
+use crate::hash::{FastHasher, FastMap};
 use crate::unicode::Script;
-
-/// What variations add to kerning is not a whole number of font units.
-pub const STEPS_PER_UNIT: i32 = 64;
 
 /// In steps.
 #[derive(Clone, Copy)]
@@ -34,75 +28,61 @@ pub struct Shaping<'a> {
     pub is_rtl: bool,
     pub is_vertical: bool,
     pub capitalizes: bool,
-    pub language: Option<&'a Language>,
+    pub language: &'a [u8],
     pub features: &'a [Feature],
     pub features_hash: u64,
 }
 
 impl Shaping<'_> {
-    fn run(
-        &self,
-        text: &str,
-        range: Range<usize>,
-        buffer: &mut Option<UnicodeBuffer>,
-        to: &mut Vec<Placed>,
-    ) {
+    fn run(&self, text: &str, range: Range<usize>, buffer: &mut Buffer, to: &mut Vec<Placed>) {
         let direction = match (self.is_vertical, self.is_rtl) {
-            (true, _) => Direction::TopToBottom,
-            (_, true) => Direction::RightToLeft,
-            _ => Direction::LeftToRight,
+            (true, _) => Direction::Down,
+            (_, true) => Direction::Left,
+            _ => Direction::Right,
         };
-        let script = harfrust::Script::from_iso15924_tag(Tag::new(&self.script.0));
-        let mut input = buffer.take().unwrap_or_default();
+        let Face { file, coords, .. } = *self.face;
+        buffer.glyphs.clear();
         for (offset, character) in text[range.clone()].char_indices() {
+            let glyph = |it: char| Glyph {
+                character: it.into(),
+                cluster: (range.start + offset) as u32,
+                ..Glyph::default()
+            };
             match self.capitalizes {
-                true => character
-                    .to_uppercase()
-                    .for_each(|it| input.add(it, (range.start + offset) as u32)),
-                false => input.add(character, (range.start + offset) as u32),
+                true => buffer.glyphs.extend(character.to_uppercase().map(glyph)),
+                false => buffer.glyphs.push(glyph(character)),
             }
         }
-        input.set_pre_context(&text[..range.start]);
-        input.set_post_context(&text[range.end..]);
-        input.set_direction(direction);
-        input.set_flags(BufferFlags::REMOVE_DEFAULT_IGNORABLES);
-        if let Some(script) = script {
-            input.set_script(script);
-        }
-        if let Some(language) = self.language {
-            input.set_language(language.clone());
-        }
+        buffer.context.iter_mut().for_each(Vec::clear);
+        buffer.context[0].extend(text[..range.start].chars().rev().take(5).map(u32::from));
+        buffer.context[1].extend(text[range.end..].chars().take(5).map(u32::from));
         let plan = self
             .face
             .plan((self.script, self.is_rtl, self.features_hash), || {
-                ShapePlan::new(
-                    &self.face.shaper,
+                Plan::new(
+                    &file.tables,
+                    coords,
+                    self.script,
                     direction,
-                    script,
                     self.language,
                     self.features,
                 )
             });
-        let options = ShapeOptions::new()
-            .plan(Some(&plan))
-            .features(self.features)
-            .point_size(Some(self.size));
-        let options = options.scale(Some(self.face.shaper.units_per_em() * STEPS_PER_UNIT));
-        let shaped = self.face.shaper.shape(input, options);
-        to.extend(
-            shaped
-                .glyph_infos()
-                .iter()
-                .zip(shaped.glyph_positions())
-                .map(|(info, position)| Placed {
-                    cluster: info.cluster,
-                    advance: position.x_advance - position.y_advance,
-                    id: info.glyph_id as u16,
-                    dx: position.x_offset,
-                    dy: position.y_offset,
-                }),
-        );
-        *buffer = Some(shaped.clear());
+        Shaper {
+            font: &file.font,
+            tables: &file.tables,
+            coords,
+            plan: &plan,
+            size: self.size,
+        }
+        .shape(buffer);
+        to.extend(buffer.glyphs.iter().map(|it| Placed {
+            cluster: it.cluster,
+            advance: it.advance[0] - it.advance[1],
+            id: it.id as u16,
+            dx: it.offset[0],
+            dy: it.offset[1],
+        }));
     }
 
     fn identity(&self) -> u64 {
@@ -130,7 +110,7 @@ pub struct Words {
     known: FastMap<u64, Word>,
     text: Vec<u8>,
     glyphs: Vec<Placed>,
-    buffer: Option<UnicodeBuffer>,
+    buffer: Buffer,
     unknown: Vec<Unknown>,
     scratch: Vec<Placed>,
 }
@@ -290,7 +270,7 @@ mod tests {
             1 000 000 \u{301}a A - B a - b A : B ( A ) x * 2 2 x 2 \u{2192} f f i T o Another , . ! ? L ' T \
             averyveryveryveryveryveryveryveryveryveryveryverylongword T ";
         let families = command("families", &crate::json::Value::Null, None).unwrap();
-        let (mut words, mut buffer) = (Words::default(), None);
+        let (mut words, mut buffer) = (Words::default(), Buffer::default());
         for family in families.as_array().unwrap() {
             let font = describe(Description::new(family.as_str().unwrap().as_bytes(), 400.));
             let fonts = &mut *FONTS.lock();
@@ -305,7 +285,7 @@ mod tests {
                 is_rtl: false,
                 is_vertical: false,
                 capitalizes: false,
-                language: None,
+                language: &[],
                 features: &[],
                 features_hash: 0,
             };

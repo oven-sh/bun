@@ -15,6 +15,7 @@ use crate::svg_text::{Placed, TextLayout};
 use crate::svg_values::*;
 use crate::tree::{Element, Namespace, NodeId};
 use crate::types::*;
+use crate::values::mix;
 
 /// What an `svg` has painted, with the origin in the corner of its border box.
 pub(crate) struct Recording {
@@ -67,10 +68,43 @@ fn faded(color: u32, opacity: f32) -> u32 {
     color & !0xff | (alpha(color) as f32 * opacity).round() as u32
 }
 
-fn has_transform((node, element): &&(Node, &Element)) -> bool {
-    node.style.has_transform()
-        || element.has(name!("gradientTransform"))
-        || element.has(name!("patternTransform"))
+fn in_linear_light(stops: &[GradientStop]) -> Vec<GradientStop> {
+    let linear = |it: f32| {
+        if it <= 0.04045 {
+            it / 12.92
+        } else {
+            ((it + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let encoded = |it: f32| {
+        if it <= 0.003_130_8 {
+            it * 12.92
+        } else {
+            1.055 * it.powf(1.0 / 2.4) - 0.055
+        }
+    };
+    let between = stops.array_windows().flat_map(|[from, to]| {
+        let [a, b] = [from, to].map(|it| it.color.to_be_bytes().map(|it| f32::from(it) / 255.0));
+        (1..=64).map(move |step| {
+            let at = step as f32 / 64.0;
+            let part = |it: usize| {
+                if it == 3 {
+                    mix(a[3], b[3], at)
+                } else {
+                    encoded(mix(linear(a[it]), linear(b[it]), at))
+                }
+            };
+            GradientStop {
+                offset: mix(from.offset, to.offset, at),
+                color: u32::from_be_bytes([0, 1, 2, 3].map(|it| (part(it) * 255.0).round() as u8)),
+            }
+        })
+    });
+    stops.first().copied().into_iter().chain(between).collect()
+}
+
+fn has_transform((node, element): &(Node, &Element)) -> bool {
+    node.style.has_transform() || crate::svg::transform_attribute(element).is_some()
 }
 
 impl Document {
@@ -211,6 +245,9 @@ impl Document {
                 ),
             });
         }
+        if chain[0].0.style.svg.color_interpolation == ColorInterpolation::LinearRgb {
+            stops = in_linear_light(&stops);
+        }
         let Some(last) = stops.last().map(|it| it.color) else {
             return Some(Brush::Color(0));
         };
@@ -247,7 +284,7 @@ impl Document {
         }
         let own = chain
             .iter()
-            .find(has_transform)
+            .find(|it| has_transform(it))
             .map_or(IDENTITY, |it| self.resource_transform(&it.0, user.bounds));
         let matrix = multiply(
             &user.matrix,
@@ -296,8 +333,9 @@ impl Document {
             })
         };
         let origin = relative_to.map_or([0.0; 2], |it| [it.x, it.y]);
-        let tile =
-            Rect::new([0, 1, 2, 3].map(|it| part(it).or(origin.get(it).copied()).unwrap_or(0.0)));
+        let tile = Rect::new(
+            [0, 1, 2, 3].map(|it| part(it).or_else(|| origin.get(it).copied()).unwrap_or(0.0)),
+        );
         let content = &chain
             .iter()
             .find(|it| self.tree.element_children(it.0.id).next().is_some())?
@@ -321,14 +359,14 @@ impl Document {
         };
         let own = chain
             .iter()
-            .find(has_transform)
+            .find(|it| has_transform(it))
             .map_or(IDENTITY, |it| self.resource_transform(&it.0, user.bounds));
         let (matrix, inside) = (
             multiply(&user.matrix, &own),
             multiply(&translation([tile.x, tile.y]), &inside),
         );
         invert(&matrix)
-            .and(invert(&inside))
+            .and_then(|_| invert(&inside))
             .map(|_| Brush::Pattern {
                 content: content.clone(),
                 tile,
@@ -345,12 +383,15 @@ impl<'a> Painter<'a> {
             return false;
         };
         (space.visible, space.origin) = (space.visible.transformed(&inverse), [0.0; 2]);
-        self.link(Item::PushVector(matrix), space);
+        self.link(&Item::PushVector(matrix), space);
         true
     }
 
     /// Unless that would never end.
     pub(crate) fn with_resource(&mut self, node: &Node, paint: impl FnOnce(&mut Self)) {
+        if !self.svg.is_on {
+            self.document.reset_svg_budget();
+        }
         if self.svg.resources.len() < 16
             && !self.svg.resources.contains(&node.key())
             && self.document.spend_svg_budget()
@@ -451,6 +492,9 @@ impl<'a> Painter<'a> {
             *space,
         );
         document.reset_svg_budget();
+        if document.tree.is_root(root.id) {
+            self.clip(square(Rect::new(document.content_box(id))), &mut inside);
+        }
         if document
             .svg_to_parent(&root)
             .is_some_and(|it| self.vector(it, &mut inside))
@@ -490,6 +534,7 @@ impl<'a> Painter<'a> {
         let Some(mut matrix) = document.svg_to_parent(node) else {
             return;
         };
+        let outside = space;
         if node.establishes_viewport() && node.clips_overflow() {
             let own = document.svg_transform(node);
             if own != IDENTITY && !self.vector(own, &mut space) {
@@ -516,7 +561,7 @@ impl<'a> Painter<'a> {
             });
             self.svg_graphic(node, &space);
             if let (Some(base), Some((Shape::Url(url), _))) = (group, e.clip_path.0.as_deref()) {
-                self.marker(Item::Mask { luminance: false });
+                self.marker(&Item::Mask { luminance: false });
                 self.svg_clip(document, node.id, url, &subject.user_space(), &space);
                 self.end_group(base);
             }
@@ -528,6 +573,13 @@ impl<'a> Painter<'a> {
             space,
         );
         if !e.filter.0.is_empty() {
+            if is_name!(
+                node.tag,
+                "rect" | "circle" | "ellipse" | "path" | "polyline" | "polygon" | "image"
+            ) && !document.has_geometry(node)
+            {
+                return;
+            }
             source.visible = document.svg_bounds(node, Bounds::Ink).unwrap_or_default();
         }
         let effects = self.begin_effects(
@@ -543,8 +595,14 @@ impl<'a> Painter<'a> {
         if node.style.outline_width() > 0.0
             && let Some(bounds) = document.svg_bounds(node, Bounds::Stroke)
         {
-            let zoom = node.style.zoom;
-            self.vector(scaling(1.0 / zoom, 1.0 / zoom), &mut space);
+            let (zoom, mut space) = (node.style.zoom, outside);
+            self.vector(
+                multiply(
+                    &document.svg_to_parent(node).unwrap_or(IDENTITY),
+                    &scaling(1.0 / zoom, 1.0 / zoom),
+                ),
+                &mut space,
+            );
             self.outline(
                 &node.style,
                 bounds.transformed(&scaling(zoom, zoom)),
@@ -583,7 +641,7 @@ impl<'a> Painter<'a> {
             return;
         };
         space.visible = space.visible.transformed(&inverse);
-        self.link(Item::PushTransform(matrix), &mut space);
+        self.link(&Item::PushTransform(matrix), &mut space);
         let outer = core::mem::take(&mut self.svg);
         self.stacking_context(id, self.place(id, &space));
         self.svg = outer;
@@ -614,6 +672,33 @@ impl<'a> Painter<'a> {
             });
             let (mut inside, zoom) = (*space, node.style.zoom);
             self.clip(clip, &mut inside);
+            if crate::embedded::is_vector(image.image) {
+                let (rect, stretches) = (
+                    shown.transformed(&scaling(zoom, zoom)),
+                    element
+                        .attribute(name!("preserveAspectRatio"))
+                        .is_some_and(|it| it.trim_ascii() == "none"),
+                );
+                self.vector(scaling(1.0 / zoom, 1.0 / zoom), &mut inside);
+                let paint = |painter: &mut Self, space: &Space| {
+                    painter.vector_image(
+                        image.image,
+                        [rect.width, rect.height],
+                        stretches,
+                        &node.style,
+                        space,
+                    )
+                };
+                return self.tiled(
+                    square(rect),
+                    Tile {
+                        rect,
+                        step: [0.0; 2],
+                    },
+                    &inside,
+                    paint,
+                );
+            }
             self.vector(onto(shown), &mut inside);
             self.vector(
                 scaling(1.0 / width / zoom, 1.0 / height / zoom),
@@ -727,7 +812,7 @@ impl<'a> Painter<'a> {
                     end: self.out.stops.len() as u32,
                 };
                 self.emit(
-                    Item::Shade {
+                    &Item::Shade {
                         bounds,
                         from: *from,
                         to: *to,
@@ -753,7 +838,7 @@ impl<'a> Painter<'a> {
                     ..*space
                 };
                 self.link(
-                    Item::PushPattern {
+                    &Item::PushPattern {
                         bounds,
                         tile: Tile {
                             rect: *tile,
@@ -776,7 +861,7 @@ impl<'a> Painter<'a> {
         if let Brush::Color(color) = brush {
             if alpha(*color) > 0 {
                 self.emit(
-                    Item::Path {
+                    &Item::Path {
                         outline,
                         color: *color,
                     },
@@ -786,7 +871,7 @@ impl<'a> Painter<'a> {
             return;
         }
         let mut inside = *space;
-        self.link(Item::PushClipOutline(outline), &mut inside);
+        self.link(&Item::PushClipOutline(outline), &mut inside);
         self.cover(brush, outline.bounds, &inside);
     }
 
@@ -849,7 +934,7 @@ impl<'a> Painter<'a> {
         let rect = path.as_rect().filter(|_| !crisp);
         if self.svg.is_clip {
             return self.emit(
-                rect.map_or(
+                &rect.map_or(
                     Item::Path {
                         outline: fill,
                         color: BLACK,
@@ -1089,19 +1174,7 @@ impl<'a> Painter<'a> {
             blur,
         };
         if self.svg.is_clip {
-            return self.emit(text(origin, BLACK, 0.0), &upright);
-        }
-        for shadow in node.style.ink.text_shadow.0.0.iter().rev() {
-            let [x, y, blur] = [shadow.offset[0], shadow.offset[1], shadow.blur]
-                .map(|it| it / node.style.zoom * scale);
-            self.emit(
-                text(
-                    [origin[0] + x, origin[1] + y],
-                    shadow.color.resolve(node.style.color()),
-                    blur,
-                ),
-                &upright,
-            );
+            return self.emit(&text(origin, BLACK, 0.0), &upright);
         }
         for kind in node
             .style
@@ -1122,6 +1195,48 @@ impl<'a> Painter<'a> {
             };
             let stroke =
                 (kind == PaintKind::Stroke).then(|| self.stroke_of(node, stroke_scale, 1.0));
+            for shadow in node.style.ink.text_shadow.0.0.iter().rev() {
+                let [x, y, blur] = [shadow.offset[0], shadow.offset[1], shadow.blur]
+                    .map(|it| it / node.style.zoom * scale);
+                let (origin, color) = (
+                    [origin[0] + x, origin[1] + y],
+                    shadow.color.resolve(node.style.color()),
+                );
+                let Some(stroke) = stroke else {
+                    self.emit(&text(origin, color, blur), &upright);
+                    continue;
+                };
+                let (bounds, start) = (
+                    bounds.moved([x, y]).grown(stroke.width),
+                    self.out.filters.len() as u32,
+                );
+                self.out.filters.push(abi::Filter::Blur(blur / 2.0));
+                let group = (blur > 0.0).then(|| {
+                    self.begin_group(
+                        bounds.grown(blur * 1.5),
+                        1.0,
+                        BlendMode::Normal,
+                        Span {
+                            start,
+                            end: start + 1,
+                        },
+                        &upright,
+                    )
+                });
+                self.emit(
+                    &Item::TextStroke {
+                        origin,
+                        bounds,
+                        face: face.id,
+                        size,
+                        glyphs,
+                        color,
+                        stroke,
+                    },
+                    &upright,
+                );
+                group.into_iter().for_each(|it| self.end_group(it));
+            }
             let item = |color| match stroke {
                 None => text(origin, color, 0.0),
                 Some(stroke) => Item::TextStroke {
@@ -1136,15 +1251,15 @@ impl<'a> Painter<'a> {
             };
             match brush {
                 _ if stroke.is_some_and(|it| it.width <= 0.0) => {}
-                Brush::Color(color) => self.emit(item(color), &upright),
+                Brush::Color(color) => self.emit(&item(color), &upright),
                 brush => {
                     let bounds =
                         bounds.grown(stroke.map_or(0.0, |it| it.width * it.miter_limit.max(1.0)));
                     let base =
                         self.begin_group(bounds, 1.0, BlendMode::Normal, Span::default(), &upright);
                     self.cover(&brush, bounds, &upright);
-                    self.marker(Item::Mask { luminance: false });
-                    self.emit(item(BLACK), &upright);
+                    self.marker(&Item::Mask { luminance: false });
+                    self.emit(&item(BLACK), &upright);
                     self.end_group(base);
                 }
             }
@@ -1209,7 +1324,7 @@ impl<'a> Painter<'a> {
                 painter.svg_children(&clip, &outer);
             }
             if let Some((base, url)) = group {
-                painter.marker(Item::Mask { luminance: false });
+                painter.marker(&Item::Mask { luminance: false });
                 painter.svg_clip(clip.document, clip.id, url, user, space);
                 painter.end_group(base);
             }

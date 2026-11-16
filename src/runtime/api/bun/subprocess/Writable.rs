@@ -1,6 +1,8 @@
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
+#[cfg(not(windows))]
+use bun_jsc::SysErrorJsc as _;
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
@@ -8,8 +10,6 @@ use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::streams::SourceHandle;
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
@@ -140,19 +140,6 @@ impl<'a> Writable<'a> {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buffer) = result {
                         let pipe_ref = FileSink::create_with_pipe(evtloop, buffer);
-
-                        match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
-                            bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(err) => {
-                                if let Stdio::ReadableStream(rs) = &mut stdio {
-                                    rs.cancel(global)?;
-                                }
-                                return Err(global.throw_value(err.to_js(global)));
-                            }
-                        }
-                        pipe_ref
-                            .writer
-                            .with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
                         subprocess
                             .weak_file_sink_stdin_ptr
                             .set(Some(pipe_ref.as_non_null()));
@@ -211,7 +198,8 @@ impl<'a> Writable<'a> {
                 let file = result.unwrap();
                 let pipe_ref = FileSink::create(evtloop, file.fd());
 
-                match pipe_ref.writer.with_mut(|w| w.start(file.fd(), true)) {
+                let writer = &pipe_ref.writer;
+                match writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file.fd(), true) {
                     // The writer closes it from now on.
                     bun_sys::Result::Ok(()) => _ = file.into_raw(),
                     bun_sys::Result::Err(err) => {
@@ -223,11 +211,7 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                pipe_ref
-                    .writer
-                    .get()
-                    .handle
-                    .set_poll_flag(bun_io::FilePollFlag::Socket);
+                writer.set_poll_flag(bun_io::FilePollFlag::Socket);
 
                 subprocess
                     .weak_file_sink_stdin_ptr
@@ -295,11 +279,7 @@ impl<'a> Writable<'a> {
                     // writes were clobbered by the struct-literal reassignment
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
-                    //
-                    // The call re-enters via the writer backref, so no `&mut
-                    // FileSink` is materialized across it.
-                    // SAFETY: `pipe_ref` keeps the sink live.
-                    unsafe { FileSink::on_attached_process_exit(pipe_ref.as_ptr(), status) };
+                    pipe_ref.on_attached_process_exit(status);
                     // The wrapper takes `pipe_ref`'s ref.
                     FileSink::to_js(pipe_ref, global_this)
                 } else {
@@ -314,9 +294,9 @@ impl<'a> Writable<'a> {
                         subprocess.hold_for_stdin_sink();
                     }
                     let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
-                    if matches!(*pipe_ref.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
+                    if matches!(pipe_ref.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                     {
-                        pipe_ref.source.with_mut(|s| s.clear());
+                        pipe_ref.source.set(SourceHandle::None);
                     }
                     // The wrapper takes `pipe_ref`'s ref.
                     FileSink::to_js_for_subprocess(
@@ -342,9 +322,9 @@ impl<'a> Writable<'a> {
         let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe) => {
-                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
+                if matches!(pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                 {
-                    pipe.source.with_mut(|s| s.clear());
+                    pipe.source.set(SourceHandle::None);
                 }
             }
             Writable::Buffer(buffer) => {
@@ -362,20 +342,16 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub(crate) fn close(&mut self) {
-        match self {
+    pub(crate) fn close(this: &JsCell<Self>) {
+        match this.get() {
             Writable::Pipe(pipe) => {
-                let _ = pipe.end(None);
+                let _ = pipe.clone().end(None);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd { .. } => {
-                *self = Writable::Ignore;
-            }
-            Writable::Fd(_) => {
-                *self = Writable::Ignore;
-            }
+            Writable::Memfd { .. } => this.set(Writable::Ignore),
+            Writable::Fd(_) => this.set(Writable::Ignore),
             Writable::Buffer(buffer) => {
-                Self::buffer_writer_mut(buffer).close();
+                Self::buffer_writer_mut(&buffer.clone()).close();
             }
             Writable::Ignore => {}
             Writable::Inherit => {}

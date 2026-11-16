@@ -51,7 +51,10 @@ function describe(node: N, role: string) {
   else if (role === "textbox" || role === "multilineTextbox") value = core.wrap(node).innerText;
   let expanded = triState(node, "aria-expanded");
   if (core.hooks.isDetailsSummary(node)) expanded = hasAttr(node.parent!, "open");
-  else if (isHtml(node, "select") && node.x.isDropDown()) expanded = node.x.isOpen();
+  else {
+    const nodeX = node.x;
+    if (isHtml(node, "select") && nodeX.isDropDown()) expanded = nodeX.isOpen();
+  }
   return {
     label: aria.nameOf(node) || undefined,
     value,

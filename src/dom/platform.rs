@@ -268,10 +268,10 @@ pub(crate) fn image_alpha(image: u32, [width, height]: [usize; 2]) -> Vec<u8> {
     })
 }
 
-pub(crate) fn font_table(face: &abi::Face, tag: &[u8; 4]) -> &'static [u8] {
+pub(crate) fn font_table(face: &abi::Face, tag: [u8; 4]) -> &'static [u8] {
     // SAFETY: the renderer keeps font files.
     renderer().map_or(&[], |it| unsafe {
-        (it.font_table)(face.id, u32::from_be_bytes(*tag)).get()
+        (it.font_table)(face.id, u32::from_be_bytes(tag)).get()
     })
 }
 
@@ -279,8 +279,8 @@ pub(crate) fn word(table: &[u8], at: usize) -> Option<usize> {
     Some(u16::from_be_bytes(*table.get(at..)?.first_chunk()?).into())
 }
 
-pub(crate) fn has_positioning_feature(face: &abi::Face, tag: &[u8; 4]) -> bool {
-    let table = font_table(face, b"GPOS");
+pub(crate) fn has_positioning_feature(face: &abi::Face, tag: [u8; 4]) -> bool {
+    let table = font_table(face, *b"GPOS");
     let list = word(table, 6).and_then(|it| {
         Some(
             table
@@ -291,7 +291,7 @@ pub(crate) fn has_positioning_feature(face: &abi::Face, tag: &[u8; 4]) -> bool {
                 .take(word(table, it)?),
         )
     });
-    list.into_iter().flatten().any(|it| it.starts_with(tag))
+    list.into_iter().flatten().any(|it| it.starts_with(&tag))
 }
 
 pub(crate) fn glyph_extent(face: &abi::Face, glyph: u32) -> abi::GlyphExtent {

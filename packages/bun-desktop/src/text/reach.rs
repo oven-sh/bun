@@ -1,15 +1,10 @@
 //! How far across a space the rules of a font look.
 
-use std::ops::Range;
-
-use skrifa::raw::tables::gpos::{PairPos, PositionSubtables};
-use skrifa::raw::tables::gsub::{SingleSubst, SubstitutionSubtables};
-use skrifa::raw::tables::layout::{
-    ChainedSequenceContext, ClassDef, CoverageTable, SequenceContext,
+use super::sfnt::{Data, Font};
+use super::shaper::Tables;
+use super::shaper::layout::{
+    Matcher, Subtable, Table, context_layout, coverage, covered, rules_in,
 };
-use skrifa::raw::types::BigEndian;
-use skrifa::raw::{ReadError, TableProvider as _};
-use skrifa::{FontRef, GlyphId16, Tag};
 
 /// In characters.
 #[derive(Clone, Copy, Default)]
@@ -22,288 +17,165 @@ pub struct Reach {
 
 struct Analysis {
     /// With what it can be substituted by.
-    spaces: Vec<GlyphId16>,
+    spaces: Vec<u32>,
     reach: Reach,
+    budget: usize,
 }
 
-type Result<T = ()> = std::result::Result<T, ReadError>;
+fn subtables(table: &Table) -> impl Iterator<Item = &Subtable> {
+    (0..table.lookup_count())
+        .filter_map(|it| table.lookup(it))
+        .flat_map(|it| &it.subtables)
+}
+
+fn covered_glyphs(table: Data) -> impl Iterator<Item = u16> {
+    table
+        .at16(2)
+        .into_iter()
+        .flat_map(covered)
+        .flat_map(|(first, last)| first..=last)
+        .take(1 << 16)
+}
 
 impl Analysis {
-    /// `rule` says which of its positions match a space, and it changes those in `input`.
-    fn note(&mut self, rule: &[bool], input: Range<usize>) {
-        for position in (0..rule.len()).filter(|position| rule[*position]) {
-            if input.start <= position {
-                self.reach.after = self.reach.after.max(rule.len() - 1 - position);
-            }
-            if input.end > position + 1 {
-                self.reach.before = self.reach.before.max(position);
-            }
-        }
+    fn is_space(&self, matcher: Matcher, value: u16) -> bool {
+        self.spaces.iter().any(|it| matcher.matches(*it, value))
     }
 
-    fn chain(&mut self, backtrack: Vec<bool>, input: Vec<bool>, lookahead: Vec<bool>) {
-        let range = backtrack.len()..backtrack.len() + input.len();
-        let rule: Vec<_> = backtrack
-            .into_iter()
+    /// `parts` are what comes before, the input after `first`, and what comes after it.
+    fn note(&mut self, first: u16, parts: [Data; 3], matchers: [Matcher; 3]) -> Option<()> {
+        self.budget = self.budget.checked_sub(
+            1 + parts.iter().map(|it| it.0.len()).sum::<usize>() * self.spaces.len(),
+        )?;
+        let [before, rest, after] = [0, 1, 2].map(|part| {
+            parts[part]
+                .u16s(0, usize::MAX)
+                .map(move |it| (matchers[part], it))
+        });
+        let (input, len) = (
+            before.len()..before.len() + 1 + rest.len(),
+            before.len() + 1 + rest.len() + after.len(),
+        );
+        for (position, (matcher, value)) in before
             .rev()
-            .chain(input)
-            .chain(lookahead)
-            .collect();
-        self.note(&rule, range);
-    }
-
-    fn is_covered(&self, coverage: &CoverageTable) -> bool {
-        self.spaces
-            .iter()
-            .any(|space| coverage.get(*space).is_some())
-    }
-
-    fn glyphs(&self, glyphs: &[BigEndian<GlyphId16>]) -> Vec<bool> {
-        glyphs
-            .iter()
-            .map(|glyph| self.spaces.contains(&glyph.get()))
-            .collect()
-    }
-
-    fn classes(&self, definition: &ClassDef, classes: impl Iterator<Item = u16>) -> Vec<bool> {
-        classes
-            .map(|class| {
-                self.spaces
-                    .iter()
-                    .any(|space| definition.get(*space) == class)
-            })
-            .collect()
-    }
-
-    fn coverages<'a>(
-        &self,
-        coverages: impl Iterator<Item = Result<CoverageTable<'a>>>,
-    ) -> Result<Vec<bool>> {
-        coverages
-            .map(|coverage| Ok(self.is_covered(&coverage?)))
-            .collect()
-    }
-
-    fn context(&mut self, context: &SequenceContext) -> Result {
-        match context {
-            SequenceContext::Format1(table) => {
-                for (first, set) in table.coverage()?.iter().zip(table.seq_rule_sets().iter()) {
-                    for rule in set
-                        .transpose()?
-                        .iter()
-                        .flat_map(|set| set.seq_rules().iter())
-                    {
-                        let input = [
-                            vec![self.spaces.contains(&first)],
-                            self.glyphs(rule?.input_sequence()),
-                        ];
-                        self.chain(Vec::new(), input.concat(), Vec::new());
-                    }
-                }
+            .chain([(matchers[1], first)])
+            .chain(rest)
+            .chain(after)
+            .enumerate()
+        {
+            if self.is_space(matcher, value) {
+                self.reach.after = self.reach.after.max(if input.start <= position {
+                    len - 1 - position
+                } else {
+                    0
+                });
+                self.reach.before = self.reach.before.max(if input.end > position + 1 {
+                    position
+                } else {
+                    0
+                });
             }
-            SequenceContext::Format2(table) => {
-                let definition = table.class_def()?;
-                for (first, set) in (0..).zip(table.class_seq_rule_sets().iter()) {
-                    for rule in set
-                        .transpose()?
-                        .iter()
-                        .flat_map(|set| set.class_seq_rules().iter())
-                    {
-                        let rest = rule?.input_sequence().iter().map(BigEndian::get);
-                        self.chain(
-                            Vec::new(),
-                            self.classes(&definition, std::iter::once(first).chain(rest)),
-                            Vec::new(),
-                        );
-                    }
-                }
-            }
-            SequenceContext::Format3(table) => self.chain(
-                Vec::new(),
-                self.coverages(table.coverages().iter())?,
-                Vec::new(),
-            ),
         }
-        Ok(())
+        Some(())
     }
 
-    fn chained_context(&mut self, context: &ChainedSequenceContext) -> Result {
-        match context {
-            ChainedSequenceContext::Format1(table) => {
-                for (first, set) in table
-                    .coverage()?
-                    .iter()
-                    .zip(table.chained_seq_rule_sets().iter())
-                {
-                    for rule in set
-                        .transpose()?
-                        .iter()
-                        .flat_map(|set| set.chained_seq_rules().iter())
-                    {
-                        let rule = rule?;
-                        let input = [
-                            vec![self.spaces.contains(&first)],
-                            self.glyphs(rule.input_sequence()),
-                        ]
-                        .concat();
-                        self.chain(
-                            self.glyphs(rule.backtrack_sequence()),
-                            input,
-                            self.glyphs(rule.lookahead_sequence()),
-                        );
-                    }
-                }
-            }
-            ChainedSequenceContext::Format2(table) => {
-                let (before, input, after) = (
-                    table.backtrack_class_def()?,
-                    table.input_class_def()?,
-                    table.lookahead_class_def()?,
-                );
-                for (first, set) in (0..).zip(table.chained_class_seq_rule_sets().iter()) {
-                    for rule in set
-                        .transpose()?
-                        .iter()
-                        .flat_map(|set| set.chained_class_seq_rules().iter())
-                    {
-                        let rule = rule?;
-                        let rest = rule.input_sequence().iter().map(BigEndian::get);
-                        self.chain(
-                            self.classes(
-                                &before,
-                                rule.backtrack_sequence().iter().map(BigEndian::get),
-                            ),
-                            self.classes(&input, std::iter::once(first).chain(rest)),
-                            self.classes(
-                                &after,
-                                rule.lookahead_sequence().iter().map(BigEndian::get),
-                            ),
-                        );
-                    }
-                }
-            }
-            ChainedSequenceContext::Format3(table) => self.chain(
-                self.coverages(table.backtrack_coverages().iter())?,
-                self.coverages(table.input_coverages().iter())?,
-                self.coverages(table.lookahead_coverages().iter())?,
-            ),
+    fn context(&mut self, table: Data, is_chained: bool) -> Option<()> {
+        let (matchers, sets, only) = context_layout(table, is_chained)?;
+        if let Some(rule) = only {
+            return self.note(table.u16(6 + rule.parts[0].0.len())?, rule.parts, matchers);
         }
-        Ok(())
+        let firsts: Vec<u16> = if table.u16(0)? == 1 {
+            covered_glyphs(table).collect()
+        } else {
+            (0..table.u16(sets)?).collect()
+        };
+        self.budget = self.budget.checked_sub(firsts.len())?;
+        for (index, first) in firsts.into_iter().enumerate() {
+            rules_in(table, sets, index, is_chained)
+                .try_for_each(|rule| self.note(first, rule.parts, matchers))?;
+        }
+        Some(())
     }
 
-    fn substitute_spaces(&mut self, table: &SingleSubst) -> Result {
+    fn substitute_spaces(&mut self, table: Data) -> Option<()> {
         for index in 0..self.spaces.len() {
-            let space = self.spaces[index];
-            let substitute = match table {
-                SingleSubst::Format1(table) => (table.coverage()?.get(space)).map(|_| {
-                    GlyphId16::new(space.to_u16().wrapping_add_signed(table.delta_glyph_id()))
-                }),
-                SingleSubst::Format2(table) => (table.coverage()?.get(space)).and_then(|index| {
-                    Some(table.substitute_glyph_ids().get(usize::from(index))?.get())
-                }),
+            let Some(covered) = coverage(table.at16(2)?, self.spaces[index]) else {
+                continue;
+            };
+            let by = if table.u16(0)? == 1 {
+                (self.spaces[index] as u16).wrapping_add(table.u16(4)?)
+            } else {
+                table.u16(6 + covered * 2)?
             };
             self.spaces
-                .extend(substitute.filter(|substitute| !self.spaces.contains(substitute)));
+                .extend(Some(u32::from(by)).filter(|it| !self.spaces.contains(it)));
         }
-        Ok(())
+        (self.spaces.len() <= 64).then_some(())
     }
 
-    fn substitutions(&mut self, font: &FontRef) -> Result {
-        let Ok(table) = font.gsub() else {
-            return Ok(());
-        };
-        let lookups = table.lookup_list()?.lookups();
-        for lookup in lookups.iter() {
-            if let SubstitutionSubtables::Single(tables) = lookup?.subtables()? {
-                tables
-                    .iter()
-                    .try_for_each(|table| self.substitute_spaces(&table?))?;
-            }
-        }
-        for lookup in lookups.iter() {
-            match lookup?.subtables()? {
-                SubstitutionSubtables::Ligature(tables) => {
-                    for table in tables.iter() {
-                        let table = table?;
-                        for (first, set) in
-                            table.coverage()?.iter().zip(table.ligature_sets().iter())
-                        {
-                            for ligature in set?.ligatures().iter() {
-                                let rest = self.glyphs(ligature?.component_glyph_ids());
-                                self.chain(
-                                    Vec::new(),
-                                    [vec![self.spaces.contains(&first)], rest].concat(),
-                                    Vec::new(),
-                                );
-                            }
-                        }
+    fn look_at(&mut self, table: &Table, &Subtable { kind, data, .. }: &Subtable) -> Option<()> {
+        let [context, chain, _] = table.special_kinds();
+        match (table.positions, kind) {
+            _ if kind == context || kind == chain => self.context(data, kind == chain)?,
+            (false, 4) => {
+                for (set, first) in data.u16s(6, data.u16(4)?.into()).zip(covered_glyphs(data)) {
+                    let set = data.from(set.into())?;
+                    for ligature in set.u16s(2, set.u16(0)?.into()) {
+                        let rest = set.part(
+                            usize::from(ligature) + 4,
+                            usize::from(set.u16(usize::from(ligature) + 2)?.checked_sub(1)?) * 2,
+                        )?;
+                        self.note(
+                            first,
+                            [Data::default(), rest, Data::default()],
+                            [Matcher::Glyphs; 3],
+                        )?;
                     }
                 }
-                SubstitutionSubtables::Contextual(tables) => {
-                    tables.iter().try_for_each(|table| self.context(&table?))?
-                }
-                SubstitutionSubtables::ChainContextual(tables) => tables
-                    .iter()
-                    .try_for_each(|table| self.chained_context(&table?))?,
-                SubstitutionSubtables::Reverse(tables) => {
-                    for table in tables.iter() {
-                        let table = table?;
-                        self.chain(
-                            self.coverages(table.backtrack_coverages().iter())?,
-                            vec![self.is_covered(&table.coverage()?)],
-                            self.coverages(table.lookahead_coverages().iter())?,
-                        );
-                    }
-                }
-                _ => {}
             }
-        }
-        Ok(())
-    }
-
-    fn positions(&mut self, font: &FontRef) -> Result {
-        let Ok(table) = font.gpos() else {
-            return Ok(());
-        };
-        for lookup in table.lookup_list()?.lookups().iter() {
-            match lookup?.subtables()? {
-                PositionSubtables::Pair(tables) => {
-                    for table in tables.iter() {
-                        let coverage = match table? {
-                            PairPos::Format1(table) => table.coverage()?,
-                            PairPos::Format2(table) => table.coverage()?,
-                        };
-                        self.note(&[self.is_covered(&coverage), false], 0..2);
-                    }
-                }
-                PositionSubtables::Contextual(tables) => {
-                    tables.iter().try_for_each(|table| self.context(&table?))?
-                }
-                PositionSubtables::ChainContextual(tables) => tables
-                    .iter()
-                    .try_for_each(|table| self.chained_context(&table?))?,
-                _ => {}
+            (false, 8) => {
+                let before = data.part(6, usize::from(data.u16(4)?) * 2)?;
+                let after = data.part(
+                    8 + before.0.len(),
+                    usize::from(data.u16(6 + before.0.len())?) * 2,
+                )?;
+                self.note(
+                    data.u16(2)?,
+                    [before, Data::default(), after],
+                    [Matcher::Coverages(data); 3],
+                )?;
             }
+            (true, 2) if self.is_space(Matcher::Coverages(data), data.u16(2)?) => {
+                self.reach.after = self.reach.after.max(1)
+            }
+            _ => {}
         }
-        Ok(())
+        Some(())
     }
 }
 
 /// `None` if there is no telling.
-pub fn reach(font: &FontRef, space: u32) -> Option<Reach> {
-    let has_table = |tag: &[u8; 4]| font.table_data(Tag::new(tag)).is_some();
-    if has_table(b"morx") || has_table(b"kerx") {
+pub fn reach(font: &Font, tables: &Tables, space: u32) -> Option<Reach> {
+    if font.table(b"morx").is_some() || font.table(b"kerx").is_some() {
         return None;
     }
-    let reach = Reach {
-        before: 0,
-        after: has_table(b"kern").into(),
-    };
     let mut analysis = Analysis {
-        spaces: vec![GlyphId16::new(space.try_into().ok()?)],
-        reach,
+        spaces: vec![space],
+        reach: Reach {
+            before: 0,
+            after: font.table(b"kern").is_some().into(),
+        },
+        budget: 1 << 24,
     };
-    analysis.substitutions(font).ok()?;
-    analysis.positions(font).ok()?;
+    let singles = tables.layout[0]
+        .iter()
+        .flat_map(subtables)
+        .filter(|it| it.kind == 1);
+    { singles }.try_for_each(|it| analysis.substitute_spaces(it.data))?;
+    tables
+        .layout
+        .iter()
+        .flatten()
+        .try_for_each(|table| subtables(table).try_for_each(|it| analysis.look_at(table, it)))?;
     Some(analysis.reach)
 }

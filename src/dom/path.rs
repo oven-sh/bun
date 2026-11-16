@@ -583,6 +583,16 @@ impl Path {
             .iter()
             .map(|it| f64::from(it.length()))
             .sum::<f64>() as f32
+            + 0.0
+    }
+
+    /// How far it is to the end of each segment.
+    pub(crate) fn distances(&self) -> Vec<f32> {
+        let ends = (1..=self.verbs.len())
+            .filter(|it| *it == 1 || !matches!(self.verbs[it - 1], PathVerb::Move(_)));
+        ends.take(1024)
+            .map(|it| Path::from(&self.verbs[..it]).length())
+            .collect()
     }
 
     pub(crate) fn start(&self) -> Option<Point> {

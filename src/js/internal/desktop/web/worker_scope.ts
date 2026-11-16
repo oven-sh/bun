@@ -78,7 +78,7 @@ class WorkerGlobalScope extends idl.EventTarget {
     if (env.isModule) throw new TypeError("Module scripts don't support importScripts().");
     const parsed = given.map(url => idl.parseUrl(url));
     if (parsed.includes(null)) throw idl.error("SyntaxError", "The URL is invalid.");
-    for (const url of parsed) importScript(url.href);
+    for (const url of parsed) importScript(url!.href);
   }
 }
 class DedicatedWorkerGlobalScope extends WorkerGlobalScope {}

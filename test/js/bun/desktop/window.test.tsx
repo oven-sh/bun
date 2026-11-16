@@ -19,7 +19,7 @@ import {
   Window,
 } from "bun:desktop";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 app.on("window-all-closed", () => {});

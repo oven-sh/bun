@@ -1,6 +1,10 @@
 //! PostScript outlines: `CFF ` and `CFF2`.
 
+mod hints;
+
+use self::hints::{Hints, Parameters};
 use super::variations::{Coords, scalars};
+use super::work::spend;
 use super::{Data, Font};
 use crate::gfx::{Command, Path, PathBuilder as _, Point};
 
@@ -48,53 +52,71 @@ impl Index {
     }
 }
 
-/// The last two integers before an operator in a DICT.
-fn operands(dict: Data, wanted: u16) -> Option<[usize; 2]> {
-    let (mut at, mut last) = (0, [0; 2]);
-    loop {
-        let byte = dict.u8(at)?;
-        let (value, size) = match byte {
-            28 => (dict.i16(at + 1)?.into(), 3),
-            29 => (dict.u32(at + 1)? as i32, 5),
-            30 => (
-                0,
-                2 + dict
-                    .from(at + 1)?
-                    .0
-                    .iter()
-                    .position(|it| it & 15 == 15 || it >> 4 == 15)?,
-            ),
-            32..=246 => (i32::from(byte) - 139, 1),
+/// With how many bytes it takes.
+fn real(digits: Data) -> Option<(f64, usize)> {
+    let mut text = String::new();
+    for (at, digit) in digits
+        .0
+        .iter()
+        .flat_map(|it| [it >> 4, it & 15])
+        .enumerate()
+        .take(64)
+    {
+        match digit {
+            15 => return Some((text.parse().unwrap_or_default(), at / 2 + 1)),
+            _ => {
+                text += [
+                    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "e", "e-", "", "-",
+                ][usize::from(digit)]
+            }
+        }
+    }
+    None
+}
+
+/// The numbers and, as errors, the operators of a DICT.
+fn tokens(dict: Data) -> impl Iterator<Item = Result<f64, u16>> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let byte = spend(1).and(dict.u8(at))?;
+        let (token, size) = match byte {
+            12 => (Err(dict.u16(at)?), 2),
+            28 => (Ok(dict.i16(at + 1)?.into()), 3),
+            29 => (Ok((dict.u32(at + 1)? as i32).into()), 5),
+            30 => real(dict.from(at + 1)?).map(|(value, size)| (Ok(value), size + 1))?,
+            32..=246 => (Ok(f64::from(byte) - 139.), 1),
             247..=250 => (
-                (i32::from(byte) - 247) * 256 + i32::from(dict.u8(at + 1)?) + 108,
+                Ok(f64::from(byte - 247) * 256. + f64::from(dict.u8(at + 1)?) + 108.),
                 2,
             ),
             251..=254 => (
-                -(i32::from(byte) - 251) * 256 - i32::from(dict.u8(at + 1)?) - 108,
+                Ok(f64::from(byte - 251) * -256. - f64::from(dict.u8(at + 1)?) - 108.),
                 2,
             ),
-            _ => {
-                if wanted
-                    == if byte == 12 {
-                        dict.u16(at)?
-                    } else {
-                        byte.into()
-                    }
-                {
-                    return Some(last.map(|it: i32| it.max(0) as usize));
-                }
-                at += if byte == 12 { 2 } else { 1 };
-                continue;
-            }
+            _ => (Err(byte.into()), 1),
         };
-        (last, at) = ([last[1], value], at + size);
-    }
+        at += size;
+        Some(token)
+    })
+}
+
+/// The last two integers before an operator in a DICT.
+fn operands(dict: Data, wanted: u16) -> Option<[usize; 2]> {
+    let mut last = [0; 2];
+    tokens(dict)
+        .find(|token| {
+            last = token.map_or(last, |it| [last[1], it as usize]);
+            *token == Err(wanted)
+        })?
+        .err()?;
+    Some(last)
 }
 
 #[derive(Clone, Copy)]
 pub struct Cff {
     table: Data,
     is_second: bool,
+    units_per_em: u16,
     top: Data,
     glyphs: Index,
     global: Index,
@@ -123,6 +145,7 @@ impl Cff {
         Some(Cff {
             table,
             is_second,
+            units_per_em: font.units_per_em,
             top,
             glyphs: Index::read(follow(17)?, is_second)?.0,
             global: Index::read(rest, is_second)?.0,
@@ -194,6 +217,7 @@ impl Cff {
         };
         let (format, mut glyph, mut at) = (usize::from(charset.u8(0)?), 1, 1);
         while glyph < self.glyphs.count {
+            spend(1)?;
             let more = [
                 Some(0),
                 charset.u8(at + 2).map(usize::from),
@@ -209,7 +233,13 @@ impl Cff {
         None
     }
 
-    pub fn outline(&self, glyph: u32, coords: &Coords, scale: f32) -> Option<Path> {
+    pub fn outline(
+        &self,
+        glyph: u32,
+        coords: &Coords,
+        scale: f32,
+        hinted_size: Option<f32>,
+    ) -> Option<Path> {
         let private = self.private(glyph);
         let local = private.and_then(|(dict, offset)| {
             Index::read(
@@ -222,6 +252,7 @@ impl Cff {
             coords,
             scale,
             is_part: false,
+            hints: None,
             local: local.unwrap_or_default().0,
             variations: private
                 .and_then(|it| operands(it.0, 22))
@@ -231,8 +262,14 @@ impl Cff {
             has_width: self.is_second,
             at: Point::ZERO,
             path: Path::new(),
-            steps: 0,
         };
+        if let Some(size) = hinted_size {
+            machine.hints = Some(Hints::new(
+                &machine.parameters(private?.0)?,
+                size,
+                self.units_per_em,
+            ));
+        }
         machine.run(self.glyphs.get(glyph as usize)?, 0)?;
         machine.close();
         Some(machine.path)
@@ -250,12 +287,25 @@ struct Machine<'a> {
     has_width: bool,
     /// Of an accented glyph.
     is_part: bool,
+    hints: Option<Hints>,
     at: Point,
     path: Path,
-    steps: usize,
 }
 
 impl Machine<'_> {
+    fn parameters(&mut self, private: Data) -> Option<Parameters> {
+        let mut parameters = Parameters::new();
+        for token in tokens(private) {
+            match token {
+                Ok(value) => self.stack.push(value as f32),
+                Err(23) => self.blend()?,
+                Err(operator) => parameters.set(operator, &std::mem::take(&mut self.stack)),
+            }
+        }
+        self.stack.clear();
+        Some(parameters)
+    }
+
     fn close(&mut self) {
         let start = self
             .path
@@ -279,8 +329,11 @@ impl Machine<'_> {
         }
     }
 
-    /// Like FreeType, it drops fractions of font units.
-    fn scaled(&self, point: Point) -> Point {
+    /// Like FreeType, it drops fractions of font units unless it hints.
+    fn scaled(&mut self, point: Point) -> Point {
+        if let Some(hints) = &mut self.hints {
+            return hints.apply([point.x, point.y]).into();
+        }
         let snap = |it: f32| ((it + 1. / 2048.).floor() * self.scale * 64.).round() / 64.;
         Point::new(snap(point.x), snap(point.y))
     }
@@ -289,8 +342,17 @@ impl Machine<'_> {
         let units = |it: Point| [it.x, it.y].map(|it| (it + 1. / 2048.).floor());
         let from = units(self.at);
         self.at = self.at + Point::new(x, y);
-        if units(self.at) != from {
-            self.path.push(Command::LineTo(self.scaled(self.at)));
+        let to = self.scaled(self.at);
+        let is_empty = match (&self.hints, self.path.last()) {
+            (None, _) => units(self.at) == from,
+            (
+                _,
+                Some(Command::MoveTo(last) | Command::LineTo(last) | Command::CurveTo(.., last)),
+            ) => *last == to,
+            _ => false,
+        };
+        if !is_empty {
+            self.path.push(Command::LineTo(to));
         }
     }
 
@@ -298,11 +360,8 @@ impl Machine<'_> {
         let first = self.at + Point::new(a, b);
         let second = first + Point::new(c, d);
         self.at = second + Point::new(e, f);
-        self.path.push(Command::CurveTo(
-            self.scaled(first),
-            self.scaled(second),
-            self.scaled(self.at),
-        ));
+        let [first, second, end] = [first, second, self.at].map(|it| self.scaled(it));
+        self.path.push(Command::CurveTo(first, second, end));
     }
 
     fn draw(&mut self, operator: u16, stack: &[f32]) -> Option<()> {
@@ -318,7 +377,8 @@ impl Machine<'_> {
                             [*last, 0.],
                         ][usize::from(operator.saturating_sub(20))],
                     );
-                self.path.push(Command::MoveTo(self.scaled(self.at)));
+                let to = self.scaled(self.at);
+                self.path.push(Command::MoveTo(to));
             }
             5 => stack
                 .as_chunks()
@@ -420,8 +480,7 @@ impl Machine<'_> {
     fn run(&mut self, code: Data, depth: u32) -> Option<bool> {
         let mut at = 0;
         while let Some(byte) = code.u8(at) {
-            self.steps += 1;
-            (self.steps < 1 << 20 && self.stack.len() <= 513 && depth <= 10).then_some(())?;
+            (self.stack.len() <= 513 && depth <= 10).then_some(())?;
             let (value, size) = match byte {
                 28 => (code.i16(at + 1)?.into(), 3),
                 32..=246 => (f32::from(byte) - 139., 1),
@@ -441,6 +500,7 @@ impl Machine<'_> {
                 at += size;
                 continue;
             }
+            spend(8 + self.stack.len() * 8)?;
             let operator = if byte == 12 {
                 code.u16(at)?
             } else {
@@ -477,6 +537,7 @@ impl Machine<'_> {
                         self.stack.clear();
                         for (code, origin) in [(accent, Point::new(x, y)), (base, Point::ZERO)] {
                             (self.at, self.stems, self.has_width) = (origin, 0, false);
+                            self.hints.iter_mut().for_each(Hints::clear);
                             self.run(
                                 self.cff
                                     .glyphs
@@ -495,11 +556,22 @@ impl Machine<'_> {
                 1 | 3 | 18 | 19 | 20 | 23 => {
                     self.drop_width(self.stack.len() % 2 == 1);
                     self.stems += self.stack.len() / 2;
-                    at += if matches!(operator, 19 | 20) {
-                        self.stems.div_ceil(8)
-                    } else {
-                        0
-                    };
+                    let mask = code
+                        .part(
+                            at,
+                            if matches!(operator, 19 | 20) {
+                                self.stems.div_ceil(8)
+                            } else {
+                                0
+                            },
+                        )?
+                        .0;
+                    at += mask.len();
+                    match (&mut self.hints, operator) {
+                        (Some(hints), 1 | 18) => hints.add_stems(&self.stack),
+                        (Some(hints), 19 | 20) => hints.set_mask(mask, operator == 20),
+                        _ => {}
+                    }
                 }
                 _ => {
                     if matches!(operator, 4 | 21 | 22) {

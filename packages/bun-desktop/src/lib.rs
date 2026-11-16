@@ -4,7 +4,6 @@
 //! the events (`drain`) when that has returned.
 
 #[path = "../../../src/dom/abi.rs"]
-#[allow(dead_code)]
 mod abi;
 mod accessibility;
 mod allocator;

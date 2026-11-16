@@ -7,6 +7,7 @@ mod cff;
 pub mod color;
 mod glyf;
 pub mod variations;
+pub mod work;
 
 use crate::abi::Rect;
 use crate::gfx::{self, Path};
@@ -109,6 +110,8 @@ struct Charmap {
     is_mac_roman: bool,
     selectors: Option<Data>,
 }
+
+const WORK_PER_GLYPH: usize = 1 << 21;
 
 const MAC_ROMAN: &str = "ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»…\u{a0}ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔ\u{f8ff}ÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ";
 
@@ -323,7 +326,7 @@ impl Font {
         let file = Data(file);
         let directory = match Font::count(file.0) {
             Some(count) => file.at32(12 + Some(index).filter(|it| *it < count)? as usize * 4)?,
-            None => Some(file).filter(|_| index == 0)?,
+            None => (index == 0).then_some(file)?,
         };
         matches!(&directory.tag(0)?, [0, 1, 0, 0] | b"OTTO" | b"true").then_some(())?;
         directory.part(12, usize::from(directory.u16(4)?) * 16)?;
@@ -394,20 +397,41 @@ impl Font {
         self.charmap.as_ref()?.map_variant(character, selector)
     }
 
+    /// `None` for TrueType outlines.
+    #[cfg(not(target_os = "macos"))]
+    pub fn outline_with_postscript_hints(
+        &self,
+        glyph: u32,
+        coords: &Coords,
+        size: f32,
+    ) -> Option<Path> {
+        let Outlines::Cff(table) = &self.outlines else {
+            return None;
+        };
+        Some(
+            work::limited(WORK_PER_GLYPH, || {
+                table.outline(glyph, coords, 1., Some(size))
+            })
+            .unwrap_or_default(),
+        )
+    }
+
     /// With y up. Like in FreeType, points are on a grid of 1/64 after they are scaled.
     pub fn outline(&self, glyph: u32, coords: &Coords, scale: f32) -> Option<Path> {
-        match &self.outlines {
+        work::limited(WORK_PER_GLYPH, || match &self.outlines {
             Outlines::Glyf(table) => table.shape(self, glyph, coords, Some(scale))?.path(),
-            Outlines::Cff(table) => table.outline(glyph, coords, scale),
+            Outlines::Cff(table) => table.outline(glyph, coords, scale, None),
             Outlines::None => None,
-        }
+        })
     }
 
     /// In whole font units.
     #[cfg(not(target_os = "macos"))]
     pub fn shape(&self, glyph: u32, coords: &Coords) -> Option<Shape> {
         match &self.outlines {
-            Outlines::Glyf(table) => table.shape(self, glyph, coords, None),
+            Outlines::Glyf(table) => {
+                work::limited(WORK_PER_GLYPH, || table.shape(self, glyph, coords, None))
+            }
             _ => Some(Shape::from_cubic(&self.outline(glyph, coords, 1.)?)),
         }
     }
@@ -455,17 +479,24 @@ impl Font {
 
     /// With y up, so that it starts at the bottom.
     pub fn bounds(&self, glyph: u32, coords: &Coords) -> Option<Rect> {
-        match &self.outlines {
-            Outlines::Glyf(table) if coords.is_empty() => table.bounds(glyph).map(|it| Rect {
-                x: self
-                    .horizontal
-                    .bearing(glyph)
-                    .filter(|_| it != Rect::default())
-                    .map_or(it.x, f32::from),
-                ..it
-            }),
-            _ => Some(gfx::bounds(&self.outline(glyph, coords, 1.)?)),
-        }
+        let measure = || Some(gfx::bounds(&self.outline(glyph, coords, 1.)?));
+        let (Outlines::Glyf(table), []) = (&self.outlines, coords) else {
+            return measure();
+        };
+        let stated = table.bounds(glyph)?;
+        let is_moved = stated != Rect::default()
+            && self
+                .horizontal
+                .bearing(glyph)
+                .is_some_and(|it| f32::from(it) != stated.x);
+        Some(if is_moved {
+            Rect {
+                x: measure()?.x,
+                ..stated
+            }
+        } else {
+            stated
+        })
     }
 
     fn advance_of(
@@ -479,7 +510,9 @@ impl Font {
         let delta = match &self.outlines {
             _ if coords.is_empty() => None,
             Outlines::Glyf(table) if advances.deltas.is_none() => {
-                table.advance_delta(self, glyph, axis, coords)
+                work::limited(WORK_PER_GLYPH, || {
+                    table.advance_delta(self, glyph, axis, coords)
+                })
             }
             _ => advances.delta(8, glyph, coords),
         };
@@ -582,7 +615,8 @@ impl Font {
         let records = (0..usize::from(table.u16(2).unwrap_or(0)))
             .filter_map(|it| table.part(6 + it * 12, 12));
         let names = records
-            .filter(|it| it.u16(6) == Some(id))
+            .filter(|it| it.u16(6) == Some(id) && it.u16(8) < Some(1024))
+            .take(256)
             .filter_map(|record| {
                 let text = table
                     .at16(4)?

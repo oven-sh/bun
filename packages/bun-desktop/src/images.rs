@@ -643,10 +643,10 @@ fn decode_bitmap(bytes: &[u8], is_oriented: bool) -> Result<Frames> {
 
 /// The size of a large still image.
 fn size_to_defer(bytes: &[u8]) -> Option<Size> {
-    let is_still = matches!(
-        Format::of(bytes)?,
-        Format::Jpeg | Format::Png | Format::WebP
-    ) && !codec::is_animated(bytes);
+    let is_still = match Format::of(bytes)? {
+        Format::Png => codec::png_chunks(bytes).any(|it| it.0 == b"IDAT"),
+        format => matches!(format, Format::Jpeg | Format::WebP),
+    } && !codec::is_animated(bytes);
     is_still
         .then(|| codec::size(bytes))?
         .filter(|(width, height)| u64::from(*width) * u64::from(*height) >= DEFERRED_PIXELS)
@@ -693,6 +693,7 @@ fn decode_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
 }
 
 fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Value> {
+    let orientation = u32::from(codec::orientation(&bytes));
     let bitmap = match size_to_defer(&bytes).filter(|_| is_oriented) {
         Some(size) => Bitmap::deferred(size, bytes).context("out of memory")?,
         None => Bitmap::new(
@@ -703,7 +704,7 @@ fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Value> {
     let (id, (width, height)) = (next_id(), bitmap.size);
     IMAGES.lock().insert(id, Arc::new(Image::Bitmap(bitmap)));
     drop_pixels(DECODED_BYTES);
-    Ok(json!({ "id": id, "width": width, "height": height }))
+    Ok(json!({ "id": id, "width": width, "height": height, "orientation": orientation }))
 }
 
 pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
@@ -722,6 +723,7 @@ pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Valu
             let Some((width, height)) = size_to_defer(&bytes) else {
                 return Ok(Value::Null);
             };
+            let orientation = u32::from(codec::orientation(&bytes));
             let (id, number) = (next_id(), |name: &str| {
                 arguments[name].as_f64().unwrap_or(1.) as f32
             });
@@ -733,7 +735,9 @@ pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Valu
             );
             let likely = likely_size((width, height), number("density"), number("scale"));
             expect_all([(id, [likely.0 as f32, likely.1 as f32])].into_iter());
-            return Ok(json!({ "id": id, "width": width, "height": height }));
+            return Ok(
+                json!({ "id": id, "width": width, "height": height, "orientation": orientation }),
+            );
         }
         "release" => drop(
             IMAGES

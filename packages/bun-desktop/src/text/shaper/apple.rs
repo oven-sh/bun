@@ -5,6 +5,7 @@
 
 use super::buffer::{Attachment, Buffer, Glyph};
 use super::{Direction, Feature, STEPS_PER_UNIT, Shaper};
+use crate::text::sfnt::work::spend;
 use crate::text::sfnt::{Data, Tag};
 
 pub const DELETED: u32 = 0xffff;
@@ -151,7 +152,7 @@ impl Machine {
                 .glyphs
                 .get(at)
                 .map_or(0, |it| self.class_of(it.id).unwrap_or(1));
-            let (next, flags, rest) = self.entry(state, class)?;
+            let (next, flags, rest) = spend(32).and(self.entry(state, class))?;
             act(buffer, &mut at, flags, rest);
             (state, buffer.budget) = (next, buffer.budget - 1);
             if at >= buffer.glyphs.len() {
@@ -374,7 +375,7 @@ fn ligate(table: Data, buffer: &mut Buffer, set: impl Fn(&mut Glyph, u32)) -> Op
                     stack.clear();
                     break;
                 };
-                let (action, position) = (actions.u32(action * 4)?, stack[before]);
+                let (action, position) = (spend(8).and(actions.u32(action * 4))?, stack[before]);
                 let component = buffer
                     .glyphs
                     .get(position)?
@@ -465,7 +466,7 @@ pub fn substitute(shaper: &Shaper, flags: &[u32], buffer: &mut Buffer, direction
             else {
                 break;
             };
-            rest = table.from(len as usize);
+            rest = spend(buffer.glyphs.len() * 8).and(table.from(len as usize));
             let is_for_direction =
                 coverage & 1 << 29 != 0 || (coverage >> 31 != 0) == (direction == Direction::Down);
             let Some(table) = table
@@ -583,7 +584,7 @@ impl Kerning<'_> {
                         glyph.offset[1 - self.along],
                     ) = (Attachment::None, 0, 0);
                 } else if glyph.attachment != Attachment::None {
-                    glyph.offset[1 - self.along] += by;
+                    glyph.offset[1 - self.along] = glyph.offset[1 - self.along].saturating_add(by);
                 }
                 if value & 1 != 0 {
                     break;
@@ -661,6 +662,9 @@ fn in_visual_order(
     direction: Direction,
     apply: impl FnOnce(&mut Buffer) -> Option<()>,
 ) {
+    if spend(buffer.glyphs.len() * 16).is_none() {
+        return;
+    }
     if direction == Direction::Left {
         buffer.glyphs.reverse();
     }
@@ -833,7 +837,10 @@ pub fn kern_with_kerx(shaper: &Shaper, buffer: &mut Buffer, direction: Direction
             Direction::Left
         };
         in_visual_order(buffer, order, |buffer| match coverage & 0xff {
-            0 | 2 | 6 if goes_backwards => Some(kerning.chain(buffer)),
+            0 | 2 | 6 if goes_backwards => {
+                kerning.chain(buffer);
+                Some(())
+            }
             4 => kerning.anchored(buffer, body, if order == Direction::Left { 1 } else { -1 }),
             0 => kerning.sorted_pairs(buffer, body.from(16)?, body.u32(0)? as usize),
             1 => kerning.contextual(buffer, body, false),

@@ -26,6 +26,7 @@ pub use plan::Plan;
 
 use super::sfnt::variations::Coords;
 use super::sfnt::{Data, Font, Tag};
+use crate::text::sfnt::work;
 use crate::unicode::{self, Script, category};
 
 /// What variations add to kerning is not a whole number of font units.
@@ -468,6 +469,12 @@ impl Shaper<'_> {
 
     /// The glyphs have a character and a cluster, and end up in visual order.
     pub fn shape(&self, buffer: &mut Buffer) {
+        work::limited((buffer.glyphs.len() + 16) << 17, || {
+            self.shape_limited(buffer)
+        });
+    }
+
+    fn shape_limited(&self, buffer: &mut Buffer) {
         let plan = self.plan;
         buffer.start();
         buffer

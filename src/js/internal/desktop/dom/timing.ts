@@ -249,8 +249,9 @@ class Timing {
     if (this.hasNewImages) {
       for (const { id, x } of core.filterDescendants(doc.node, (it: N) => it.ns === core.SVG && it.name === "image")) {
         const rect = doc.engine.intersection(id, 1, []);
-        if (x.picture?.id && rect[0])
-          found.push(id, Content.Replaced, x.picture.id, ...rect.slice(5, 9), rect[3] * rect[4]);
+        const xPicture = x.picture;
+        if (xPicture?.id && rect[7] * rect[8] > 0)
+          found.push(id, Content.Replaced, xPicture.id, ...rect.slice(5, 9), rect[3] * rect[4]);
       }
     }
     this.hasNewImages = false;

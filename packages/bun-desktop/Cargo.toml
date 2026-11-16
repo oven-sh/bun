@@ -10,20 +10,6 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-default = ["font-crates"]
-font-crates = ["dep:harfrust", "dep:skrifa"]
-# `text/{sfnt,shaper,autohint}` in place of those. `text/own` has the modules that differ.
-own-fonts = []
-
-[[example]]
-name = "compare_fonts"
-required-features = ["font-crates", "own-fonts"]
-
-[dependencies]
-harfrust = { version = "0.12", optional = true }
-skrifa = { version = "0.44", optional = true }
-
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
@@ -38,13 +24,3 @@ opt-level = 2
 codegen-units = 1
 lto = "fat"
 strip = "symbols"
-
-# Less to load. What paints, shapes and decodes is listed below.
-[profile.release.package."*"]
-opt-level = "s"
-
-[profile.release.package]
-harfrust.opt-level = 3
-read-fonts.opt-level = 3
-skrifa.opt-level = 3
-font-types.opt-level = 3

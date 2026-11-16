@@ -1,3 +1,4 @@
+use super::work::spend;
 use super::{Data, Font, Tag};
 
 /// The position on each axis, from -1 to 1 with 14 bits after the point. It is empty for the default instance.
@@ -147,7 +148,9 @@ pub fn scalars(store: Data, outer: usize, coords: &Coords) -> Option<impl Iterat
         store.at32(8 + Some(outer).filter(|it| Some(*it) < store.u16(6).map(usize::from))? * 4)?,
     );
     let axes = usize::from(regions.u16(0).filter(|it| *it <= 256)?);
-    Some(data.u16s(6, data.u16(4)?.into()).map(move |region| {
+    let count = usize::from(data.u16(4)?);
+    (count * axes <= 1 << 16).then(|| spend(count * (axes + 1)))??;
+    Some(data.u16s(6, count).map(move |region| {
         let mut scalar = 1.;
         for axis in 0..axes {
             let at = 4 + (usize::from(region) * axes + axis) * 6;

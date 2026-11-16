@@ -156,7 +156,7 @@ function changePriority(signal: any, priority: number) {
     enqueue(task);
   }
   signal.dispatchEvent(new TaskPriorityChangeEvent("prioritychange", { previousPriority }));
-  for (const dependent of [...state.dependents]) {
+  for (const dependent of Array.from(state.dependents)) {
     const it = dependent.deref();
     if (it) changePriority(it, priority);
     else state.dependents.$delete(dependent);

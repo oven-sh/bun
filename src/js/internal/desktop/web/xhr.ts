@@ -52,7 +52,6 @@ class XMLHttpRequest extends XMLHttpRequestEventTarget {
   #timer: Timer | undefined;
   #sentAt = 0;
   #options = new Options();
-  #login: [string, string] | undefined;
   #headers = new HeaderList();
   #responseType = "";
   #overriddenType: any;
@@ -90,7 +89,7 @@ class XMLHttpRequest extends XMLHttpRequestEventTarget {
   }
 
   open(method: string, url: string, ...rest: unknown[]) {
-    this.#state;
+    void this.#state;
     need(arguments.length, 2);
     method = byteString(method);
     url = usv(url);
@@ -124,7 +123,7 @@ class XMLHttpRequest extends XMLHttpRequestEventTarget {
   }
 
   setRequestHeader(name: string, value: string) {
-    this.#state;
+    void this.#state;
     need(arguments.length, 2);
     name = byteString(name);
     value = mime.trim(byteString(value));
@@ -263,7 +262,8 @@ class XMLHttpRequest extends XMLHttpRequestEventTarget {
         this.#accept(loaded);
         this.#setState(State.HeadersReceived);
         if (this.#load !== load) return;
-        if (loaded.reader) read(loaded.reader, this.#expectedLength());
+        const { reader } = loaded;
+        if (reader) read(reader, this.#expectedLength());
         else this.#finish(0, 0);
       }),
       failed,
@@ -282,7 +282,8 @@ class XMLHttpRequest extends XMLHttpRequestEventTarget {
 
   #sendSynchronously(body: unknown) {
     const loaded = scope.env.loadSync({ ...this.#options, headers: this.#headers.pairs, body }, this.#timeout);
-    if (loaded.failure !== undefined) return this.#fail(loaded.failure);
+    const { failure } = loaded;
+    if (failure !== undefined) return this.#fail(failure);
     this.#accept(loaded);
     this.#chunks = [loaded.bytes];
     this.#finish(loaded.bytes.byteLength, this.#expectedLength());

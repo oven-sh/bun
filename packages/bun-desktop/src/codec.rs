@@ -272,7 +272,7 @@ fn exif(bytes: &[u8]) -> Option<&[u8]> {
 }
 
 /// From 1 to 8.
-fn orientation(bytes: &[u8]) -> u8 {
+pub fn orientation(bytes: &[u8]) -> u8 {
     let read = || {
         let tiff = exif(bytes)?;
         let short = |at| {

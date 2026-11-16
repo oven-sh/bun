@@ -2,6 +2,8 @@
 
 use std::rc::Rc;
 
+use bun_core::strings;
+
 use crate::boxes::Child;
 use crate::counter_style::CounterStyle;
 use crate::document::Document;
@@ -50,13 +52,17 @@ const QUOTES: [(&str, &str); 22] = [
 ];
 
 fn quotes_for(locale: &str) -> &'static str {
-    let locale = locale
-        .trim_matches('"')
-        .to_ascii_lowercase()
-        .replace('_', "-");
-    let mut tags = core::iter::successors(Some(&*locale), |it| Some(it.rsplit_once('-')?.0));
-    tags.find_map(|tag| QUOTES.iter().find(|it| it.1.split(' ').any(|it| it == tag)))
-        .map_or("“”‘’", |it| it.0)
+    let locale = locale.trim_matches('"').to_ascii_lowercase();
+    let locale = strings::replace_owned(locale.as_bytes(), b"_", b"-");
+    let mut tags = core::iter::successors(Some(&*locale), |it| {
+        Some(strings::rsplit_once_char(it, b'-')?.0)
+    });
+    tags.find_map(|tag| {
+        QUOTES
+            .iter()
+            .find(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == tag))
+    })
+    .map_or("“”‘’", |it| it.0)
 }
 
 #[derive(Default)]
@@ -229,7 +235,12 @@ impl Document {
             .element(parent)
             .is_some_and(|it| it.pseudo == crate::selector::Pseudo::Marker);
         let child = self.append_generated(parent, Data::Element(Box::new(element)));
-        let shown = self.show_image(child, image, if is_marker { None } else { Some(0.0) });
+        let shown = self.show_image(
+            child,
+            image,
+            style,
+            if is_marker { None } else { Some(0.0) },
+        );
         self.tree
             .element_mut(child)
             .into_iter()
@@ -237,16 +248,23 @@ impl Document {
     }
 
     /// `size` is that of an image that is drawn.
-    fn show_image(&mut self, id: NodeId, image: &Image, size: Option<f32>) -> Replaced {
+    fn show_image(
+        &mut self,
+        id: NodeId,
+        image: &Image,
+        style: &Style,
+        size: Option<f32>,
+    ) -> Replaced {
         self.generated_images.remove(&id);
         self.drawn_images.remove(&id);
         if let Some((Image::Url(url), resolution)) =
             image.chosen(self.environment.scale * self.environment.zoom)
         {
+            let url = self.oriented_url(url, style);
             self.generated_images
-                .insert(id, (Rc::clone(url), resolution));
-            return self.image(url).map_or(
-                Replaced {
+                .insert(id, (Rc::clone(&url), resolution));
+            return self.image(&url).map_or_else(
+                || Replaced {
                     size: [Some(0.0); 2],
                     ..Default::default()
                 },
@@ -260,7 +278,7 @@ impl Document {
         }
     }
 
-    /// An element whose `content` is one image is replaced by it.
+    /// An element whose `content` is one image is replaced by it, and an image that ignores its orientation by another decoding.
     pub(crate) fn update_replacement(&mut self, id: NodeId, style: &Style) {
         let Some(element) = self
             .tree
@@ -269,14 +287,26 @@ impl Document {
         else {
             return;
         };
-        match &style.rare.content {
-            Content::Items(items, _) if let [ContentItem::Image(image)] = &**items => {
-                self.replacements.entry(id).or_insert(element.replaced);
-                let shown = self.show_image(id, image, Some(0.0));
-                self.set_replaced(id, Some(shown));
-            }
-            _ => self.end_replacement(id),
-        }
+        let turned = element
+            .attribute(name!("turned source"))
+            .filter(|_| {
+                style
+                    .other_if_set(crate::properties::Id::ImageOrientation)
+                    .is_some()
+            })
+            .map(|it| Image::Url(format!("unoriented:{it}").into()));
+        let image = match &style.rare.content {
+            Content::Items(items, _) if let [ContentItem::Image(image)] = &**items => Some(image),
+            _ => turned.as_ref(),
+        };
+        let Some(image) = image else {
+            return self.end_replacement(id);
+        };
+        let own = *self.replacements.entry(id).or_insert(element.replaced);
+        let shown = self.show_image(id, image, style, Some(0.0));
+        let is_pending =
+            shown.image == 0 && turned.as_ref().is_some_and(|it| core::ptr::eq(it, image));
+        self.set_replaced(id, if is_pending { own } else { Some(shown) });
     }
 
     pub(crate) fn end_replacement(&mut self, id: NodeId) {
@@ -293,6 +323,17 @@ impl Document {
         match self.replacements.get_mut(&id) {
             Some(own) => *own = replaced,
             None => self.set_replaced(id, replaced),
+        }
+        if let Some(style) = self
+            .tree
+            .style(id)
+            .filter(|it| {
+                it.other_if_set(crate::properties::Id::ImageOrientation)
+                    .is_some()
+            })
+            .cloned()
+        {
+            self.update_replacement(id, &style);
         }
     }
 

@@ -8,7 +8,6 @@ const { XLINK_NS, XML_NS, XMLNS_NS, asciiLower, flags, getAttr, hooks, isHtml, s
 
 type N = $Dom.N;
 type Doc = $Dom.Doc;
-type Page = $Dom.Page;
 type Tag = { name: string; attrs: string[]; selfClosing: boolean };
 
 const set = (names: string) => new Set<string>(splitTokens(names));
@@ -161,7 +160,10 @@ function search(pattern: RegExp, text: string, from: number): number {
 }
 
 function attribute(tag: Tag, name: string): string | null {
-  for (let i = 0; i < tag.attrs.length; i += 2) if (tag.attrs[i] === name) return tag.attrs[i + 1];
+  for (let i = 0; i < tag.attrs.length; i += 2) {
+    const { attrs } = tag;
+    if (attrs[i] === name) return attrs[i + 1];
+  }
   return null;
 }
 
@@ -297,7 +299,8 @@ class Parser {
   // ─────────────── tokenizer ───────────────
 
   run() {
-    if (this.xml !== null) return this.runXml(this.xml);
+    const { xml } = this;
+    if (xml !== null) return this.runXml(xml);
     while (!this.paused && this.at < this.input.length && this.step()) if (this.option !== null) this.endOption();
     if (this.ended && !this.paused && !this.finished) {
       this.finished = true;
@@ -591,14 +594,15 @@ class Parser {
     else if (parent.flags & flags.SHADOW_ROOT) core.setRegistry(core.registryOf(parent), doc);
     const node = core.createElement(doc, tag.name, ns, is, runsScript);
     core.setRegistry(undefined);
-    if (tag.name === "script" && node.x !== null) {
-      node.x.parserInserted = this.onScript !== null;
-      node.x.forceAsync = !node.x.parserInserted;
-      node.x.parserDoc = doc;
+    const nodeX = node.x;
+    if (tag.name === "script" && nodeX !== null) {
+      nodeX.parserInserted = this.onScript !== null;
+      nodeX.forceAsync = !nodeX.parserInserted;
+      nodeX.parserDoc = doc;
       this.countLines();
-      node.x.line = this.line;
-      node.x.column = this.at - this.input.lastIndexOf("\n", this.at - 1) - 1;
-      node.x.started = this.onScript === null && !this.startsScripts;
+      nodeX.line = this.line;
+      nodeX.column = this.at - this.input.lastIndexOf("\n", this.at - 1) - 1;
+      nodeX.started = this.onScript === null && !this.startsScripts;
     }
     const { attrs } = tag;
     for (let i = 0; i < attrs.length; i += 2) {
@@ -620,18 +624,16 @@ class Parser {
       this.option = node;
       this.optionDepth = this.open.length;
     }
+    const { form } = this;
+    const { name } = tag;
     if (
-      this.form !== null &&
+      form !== null &&
       this.context === null &&
       ns === HTML &&
-      (associatesWithForm.test(tag.name) || node.rare?.definition?.formAssociated)
+      (associatesWithForm.test(name) || node.rare?.definition?.formAssociated)
     ) {
-      if (
-        !this.open.includes(this.form) &&
-        this.lastOpen("template") < 0 &&
-        core.rootOf(this.form) === core.rootOf(parent)
-      ) {
-        if (tag.name === "img" || !core.hasAttr(node, "form")) core.rare(node).parserForm = this.form;
+      if (!this.open.includes(form) && this.lastOpen("template") < 0 && core.rootOf(form) === core.rootOf(parent)) {
+        if (name === "img" || !core.hasAttr(node, "form")) core.rare(node).parserForm = form;
       }
     }
     this.isInserting = !(node.flags & flags.CUSTOM);
@@ -711,8 +713,9 @@ class Parser {
       attrs.every((it, i) => i % 2 === 1 || attribute(this.copy(other), it) === attrs[i + 1]);
     let count = 0;
     for (let i = this.active.length - 1; i >= 0 && this.active[i] !== null; i--) {
-      if (isSame(this.active[i]!) && ++count === 3) {
-        this.active.splice(i, 1);
+      const { active } = this;
+      if (isSame(active[i]!) && ++count === 3) {
+        active.splice(i, 1);
         break;
       }
     }
@@ -725,7 +728,8 @@ class Parser {
 
   findFormatting(name: string): N | null {
     for (let i = this.active.length - 1; i >= 0 && this.active[i] !== null; i--) {
-      if (this.active[i]!.name === name) return this.active[i];
+      const { active } = this;
+      if (active[i]!.name === name) return active[i];
     }
     return null;
   }
@@ -1109,12 +1113,8 @@ class Parser {
     this.active.push(null);
     this.framesetOk = false;
     this.templateModes.push((this.mode = M.InTemplate));
-    if (
-      this.allowShadow &&
-      (mode === "open" || mode === "closed") &&
-      host !== this.open[0] &&
-      !(host!.flags & flags.HOST)
-    ) {
+    const { open } = this;
+    if (this.allowShadow && (mode === "open" || mode === "closed") && host !== open[0] && !(host!.flags & flags.HOST)) {
       try {
         const has = (name: string) => attribute(tag, "shadowroot" + name) !== null;
         const init = {
@@ -1134,7 +1134,7 @@ class Parser {
           keepsRegistryNull: keepsNull,
         });
         template.x = root;
-        return void this.open.push(template);
+        return void open.push(template);
       } catch {}
     }
     if (!this.startPatch(tag)) this.insertElement(tag);
@@ -1152,7 +1152,8 @@ class Parser {
     if (start === null) return false;
     const patch = new Patch(this.create(tag, HTML, parent), start, endMarkerOf(start));
     const replaced: N[] = [];
-    if (patch.end !== start) for (let node = start.next; node !== patch.end; node = node!.next) replaced.push(node!);
+    const { end } = patch;
+    if (end !== start) for (let node = start.next; node !== end; node = node!.next) replaced.push(node!);
     this.doc.forbidsMarkupInsertion++;
     for (const node of replaced) if (node.parent !== null) core.remove(node);
     if (this.context === null) core.react();
@@ -1167,8 +1168,9 @@ class Parser {
     this.generateEnd(undefined, impliedEndThoroughly);
     const template = this.open[this.lastOpen("template")];
     this.popUntil("template");
-    if (this.patches.at(-1)?.template === template) {
-      const { start, end } = this.patches.pop()!;
+    const { patches } = this;
+    if (patches.at(-1)?.template === template) {
+      const { start, end } = patches.pop()!;
       if (start.parent !== null) core.remove(start);
       if (end?.parent) core.remove(end);
     }
@@ -1179,7 +1181,8 @@ class Parser {
 
   addMissing(node: N, tag: Tag) {
     for (let i = 0; i < tag.attrs.length; i += 2) {
-      if (!core.hasAttr(node, tag.attrs[i])) core.setAttr(node, tag.attrs[i], tag.attrs[i + 1]);
+      const { attrs } = tag;
+      if (!core.hasAttr(node, attrs[i])) core.setAttr(node, attrs[i], attrs[i + 1]);
     }
   }
 
@@ -1218,7 +1221,8 @@ class Parser {
         return this.addMissing(this.open[1], tag);
       case "frameset":
         if (!isHtml(this.open[1] ?? null, "body") || !this.framesetOk) return;
-        if (this.open[1].parent !== null) core.remove(this.open[1]);
+        const { open } = this;
+        if (open[1].parent !== null) core.remove(open[1]);
         this.open.length = 1;
         this.insertElement(tag);
         return (this.mode = M.InFrameset);
@@ -1609,7 +1613,8 @@ function parseHtmlFragment(
   const fragment = core.createFragment(owner);
   const parser = new Parser(context.doc);
   const root = core.createPlainElement(owner, "html", HTML);
-  if (!isHtml(context, "template") && registryFrom.rare !== null) core.rare(root).registry = registryFrom.rare.registry;
+  const { rare } = registryFrom;
+  if (!isHtml(context, "template") && rare !== null) core.rare(root).registry = rare.registry;
   const name = context.ns === HTML ? context.name : "";
   parser.startsScripts = withScripts;
   parser.context = context;
@@ -1720,10 +1725,11 @@ function* xmlSteps(source: string, root: N, context: N | null, loader: Parser | 
         loader !== null,
       );
       core.setRegistry(undefined);
-      if (node.name === "script" && node.x !== null) {
-        node.x.started = loader === null;
-        node.x.parserDoc = doc;
-        node.x.forceAsync = !(node.x.parserInserted = loader !== null);
+      const nodeX = node.x;
+      if (node.name === "script" && nodeX !== null) {
+        nodeX.started = loader === null;
+        nodeX.parserDoc = doc;
+        nodeX.forceAsync = !(nodeX.parserInserted = loader !== null);
       }
       for (const [name, value] of attrs) {
         const space = name.includes(":") ? name.slice(0, name.indexOf(":")) : null;
@@ -1827,7 +1833,8 @@ const tagNameOf = (node: N) => (node.ns === core.OTHER ? core.qualifiedName(node
 
 function startTag(node: N): string {
   let html = "<" + tagNameOf(node);
-  if (node.rare?.is && !core.hasAttr(node, "is")) html += ` is="${node.rare.is.replace(inAttribute, escapeOne)}"`;
+  const { rare } = node;
+  if (rare?.is && !core.hasAttr(node, "is")) html += ` is="${rare.is.replace(inAttribute, escapeOne)}"`;
   if (node.flags & flags.STYLE_DIRTY) hooks.flushStyle(node);
   const attrs = node.attrs;
   if (attrs !== null) {

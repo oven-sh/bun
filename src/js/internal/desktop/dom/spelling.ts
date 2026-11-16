@@ -43,8 +43,10 @@ function follow(checked: Checked, text: string) {
   const kept: number[] = [];
   for (let i = 0; i < words.length; i += 2) {
     if (words[i + 1] < head) kept.push(words[i], words[i + 1]);
-    else if (words[i] > old.length - tail)
-      kept.push(words[i] + text.length - old.length, words[i + 1] + text.length - old.length);
+    else {
+      const { length } = old;
+      if (words[i] > length - tail) kept.push(words[i] + text.length - length, words[i + 1] + text.length - length);
+    }
   }
   checked.text = text;
   checked.words = kept;
@@ -119,7 +121,7 @@ function selectMisspelling(page: Page): string {
   const selection = selectionOf(page.doc);
   const { r } = selection;
   const checked: Checked | undefined = r === null ? undefined : page.spelling.nodes.$get(r.startNode);
-  if (checked === undefined || checked.text !== r.startNode.data || r.endNode !== r.startNode) return "";
+  if (r === null || checked === undefined || checked.text !== r.startNode.data || r.endNode !== r.startNode) return "";
   const { words, text } = checked;
   for (let i = 0; i < words.length; i += 2) {
     if (r.startOffset < words[i] || r.endOffset > words[i + 1]) continue;

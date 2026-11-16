@@ -214,7 +214,8 @@ const TextContent = define(Graphics, "textContent", "textLength lengthAdjust:1",
       function locate(offset: number): [any, number] {
         const last = texts.at(-1);
         for (const text of texts) {
-          if (offset <= text.data.length || text === last) return [wrap(text), Math.min(offset, text.data.length)];
+          const { length } = text.data;
+          if (offset <= length || text === last) return [wrap(text), Math.min(offset, length)];
           offset -= text.data.length;
         }
         return [null, 0];
@@ -230,10 +231,11 @@ let isClockSet = false;
 
 function control(node: N, operation: number, value = 0): ArrayLike<number> {
   const engine = core.engineFor(node);
-  if (!isClockSet && node.doc.page !== null) {
+  const { page } = node.doc;
+  if (!isClockSet && page !== null) {
     isClockSet = true;
     queueMicrotask(() => (isClockSet = false));
-    engine.controlSmil(0, 9, performance.now() - node.doc.page.timeOrigin);
+    engine.controlSmil(0, 9, performance.now() - page.timeOrigin);
   }
   const result = engine.controlSmil(node.id, operation, value);
   if (node.doc.page !== null && operation !== 1 && operation !== 8) invalidate(node.doc);
@@ -563,7 +565,7 @@ function targetOf(node: N): N | null {
   const target = !href
     ? node.parent
     : isHere
-      ? core.elementById(node.scope, decodeURIComponent(url?.hash.slice(1) ?? href.slice(1)))
+      ? core.elementById(node.scope as any, decodeURIComponent(url?.hash.slice(1) ?? href.slice(1)))
       : null;
   return target?.ns === SVG ? target : null;
 }
@@ -581,7 +583,7 @@ function listen(node: N) {
       const [, id, type, sign, amount, unit = "s"] = eventCondition.exec(condition) ?? [];
       if (type === undefined || /^(?:\d|indefinite$|repeat\()/.test(type) || /^\d*$/.test(id ?? "x")) continue;
       if (id !== undefined && (type === "begin" || type === "end")) continue;
-      const base = id === undefined ? targetOf(node) : core.elementById(node.scope, id.replace(/\\/g, ""));
+      const base = id === undefined ? targetOf(node) : core.elementById(node.scope as any, id.replace(/\\/g, ""));
       if (base === null) continue;
       const offset = sign === undefined ? 0 : +(sign + amount) * secondsPerUnit[unit]!;
       const [target, name] = [wrap(base), type.replace(/\\/g, "")];

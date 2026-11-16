@@ -225,3 +225,58 @@ test("scrolling returns a promise", async () => {
   expect(page.$("div").scrollTo(1)).rejects.toThrow(page.window.TypeError);
   expect(smooth).toBeInstanceOf(page.window.Promise);
 });
+
+test.each([
+  ["simp-chinese-informal", 100010, "十万零十"],
+  ["korean-hangul-formal", 10001, "일만 일"],
+])("counter style %s", (style, value, text) => {
+  using page = open(`<style>span { font: 10px monospace } #a::before { content: counter(n, ${style}) }</style>
+    <span id=a style="counter-reset: n ${value}"></span><br><span id=b>${text}</span>`);
+  expect(page.$("#a").getBoundingClientRect().width).toBe(page.$("#b").getBoundingClientRect().width);
+});
+
+test("an element is replaced by the image in content", () => {
+  using page = open(`<p style="content: linear-gradient(red, blue); height: auto">text</p>`);
+  expect(page.$("p").offsetHeight).toBe(0);
+  page.$("p").style.content = "normal";
+  expect(page.$("p").offsetHeight).toBeGreaterThan(0);
+});
+
+test.each([
+  ["flex", "0 0 4", false],
+  ["flex", "0%", true],
+  ["grid", "none / auto-flow 1px", true],
+])("%s: %s", (property, value, isValid) => {
+  using page = open();
+  expect(page.window.CSS.supports(property, value)).toBe(isValid);
+});
+
+test("SVGLength.value keeps the unit", () => {
+  using page = open(`<svg style="font-size: 10px"><rect width="2em"/></svg>`);
+  const { baseVal } = page.$("rect").width;
+  baseVal.value = 50;
+  expect(baseVal.valueAsString).toBe("5em");
+});
+
+test("the computed size of a zoomed shape is not zoomed", () => {
+  using page = open(`<svg><rect style="zoom: 2; width: 19px; height: 18px"/></svg>`);
+  expect([page.computed("rect", "width"), page.computed("rect", "height")]).toEqual(["19px", "18px"]);
+});
+
+test("adoptedStyleSheets never has holes", () => {
+  using page = open("<p></p>");
+  const sheets = ["red", "blue"].map(color => {
+    const sheet = new page.window.CSSStyleSheet();
+    sheet.replaceSync(`p { color: ${color} }`);
+    return sheet;
+  });
+  page.document.adoptedStyleSheets = sheets;
+  const list = page.document.adoptedStyleSheets;
+  expect(Reflect.deleteProperty(list, "0")).toBe(false);
+  expect(Reflect.set(list, "length", 3)).toBe(false);
+  expect(() => Reflect.defineProperty(list, "1", { value: 1 })).toThrow();
+  expect(page.computed("p", "color")).toBe("rgb(0, 0, 255)");
+  expect(Reflect.deleteProperty(list, "1")).toBe(true);
+  expect(list.length).toBe(1);
+  expect(page.computed("p", "color")).toBe("rgb(255, 0, 0)");
+});

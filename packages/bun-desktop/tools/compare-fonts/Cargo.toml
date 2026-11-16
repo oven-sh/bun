@@ -1,0 +1,17 @@
+[package]
+name = "compare_fonts"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# For development only: the library does not depend on what it is compared with.
+[workspace]
+
+[[bin]]
+name = "compare_fonts"
+path = "main.rs"
+
+[dependencies]
+harfrust = "0.12"
+libc = "0.2"
+skrifa = "0.44"

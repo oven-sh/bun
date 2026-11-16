@@ -21,8 +21,8 @@ class UtilityProcess extends EventEmitter {
     // The entry point of an executable loads this module first, and then only goes on in the main process.
     const inExecutable = compiled.pathOf(Bun.pathToFileURL(modulePath).href);
     const { resourcesPath } = process as any;
-    const trustsAll = app.commandLine.hasSwitch("ignore-certificate-errors");
-    const about = { serviceName, resourcesPath, userAgent: app.userAgentFallback, inExecutable, trustsAll };
+    const trustsAll = (app as any).commandLine.hasSwitch("ignore-certificate-errors");
+    const about = { serviceName, resourcesPath, userAgent: (app as any).userAgentFallback, inExecutable, trustsAll };
     const child = (this.#child = require("node:child_process").spawn(
       process.execPath,
       inExecutable
@@ -41,7 +41,7 @@ class UtilityProcess extends EventEmitter {
       },
     ));
     this.#channel = carryPorts(
-      packet => child.connected && child.send(packet),
+      packet => child.connected && child.send!(packet),
       0,
       data => this.emit("message", data),
     );
@@ -145,7 +145,8 @@ function enter() {
         const canRepeat = !(input instanceof Request || init?.body instanceof ReadableStream);
         for (;;) {
           const request = new Request(input, init);
-          if (!request.headers.has("user-agent")) request.headers.set("user-agent", userAgent);
+          const { headers } = request;
+          if (!headers.has("user-agent")) headers.set("user-agent", userAgent);
           const trusted = tls;
           try {
             return await nativeFetch(request, { tls } as any);

@@ -3,11 +3,10 @@ const { callBack } = require("internal/desktop/dom/events");
 const { staticList } = require("internal/desktop/dom/node");
 const { DOMRectReadOnly, rectAt } = require("internal/desktop/dom/geometry");
 
-const { SVG, domError, expose, flags, hooks, rare, reportError, unwrap, wrap, wrapOrNull } = core;
+const { domError, expose, flags, hooks, rare, reportError, unwrap, wrap, wrapOrNull } = core;
 const { CONNECTED, OBSERVED, WATCHED } = flags;
 
 type N = $Dom.N;
-type Doc = $Dom.Doc;
 type Page = $Dom.Page;
 
 function requireCallback(callback: unknown, name: string) {
@@ -123,7 +122,7 @@ hooks.notifyObserver = (observer: Observer) => {
   dropTransient(observer);
   if (observer.records.length === 0) return;
   try {
-    observer.callback.$call(observer.js, takeRecords(observer), observer.js);
+    (observer.callback as any).$call(observer.js, takeRecords(observer), observer.js);
   } catch (error) {
     reportError(null, error);
   }
@@ -391,7 +390,8 @@ class ResizeObserver {
     const node = unwrap(target, "observe");
     const name = options?.box;
     const box = name === "border-box" ? 1 : name === "device-pixel-content-box" ? 2 : 0;
-    if (this.$impl.find(node)?.box !== box) this.$impl.observe(node, box);
+    const impl = this.$impl;
+    if (impl.find(node)?.box !== box) impl.observe(node, box);
   }
   unobserve(target: any) {
     this.$impl.unobserve(unwrap(target, "unobserve"));
@@ -512,7 +512,8 @@ class IntersectionObserver {
     const scrollMargin = parseMargin(String(init.scrollMargin ?? "0px"));
     const observer = (this.$impl = new BoxObserver(this, callback, intersectionObservations));
     observer.root = init.root == null ? null : unwrap(init.root, "IntersectionObserver");
-    if (observer.root !== null) observer.root.flags |= WATCHED;
+    const { root } = observer;
+    if (root !== null) root.flags |= WATCHED;
     observer.delay = init.delay | 0;
     observer.tracksVisibility = !!init.trackVisibility;
     if (observer.tracksVisibility && observer.delay < 100) {
@@ -546,7 +547,8 @@ class IntersectionObserver {
   }
   observe(target: any) {
     const node = unwrap(target, "observe");
-    if (this.$impl.find(node) === undefined) this.$impl.observe(node, 0);
+    const impl = this.$impl;
+    if (impl.find(node) === undefined) impl.observe(node, 0);
   }
   unobserve(target: any) {
     this.$impl.unobserve(unwrap(target, "unobserve"));

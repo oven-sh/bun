@@ -29,7 +29,7 @@ async function entryOf(request: any, response: any) {
   if (about.status === 206) throw new TypeError("Partial response (status code 206) is unsupported");
   if (mime.split(list.get("vary") ?? "").includes("*")) throw new TypeError("Vary header contains *");
   const hasBody = response.body !== null;
-  const bytes = await Response.prototype.bytes.$call(response);
+  const bytes = await (Response.prototype as any).bytes.$call(response);
   return { request: describe(request), response: { ...about, headers: list.pairs }, body: hasBody ? bytes : null };
 }
 

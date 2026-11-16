@@ -58,6 +58,7 @@ unsafe extern "C" {
     safe fn bd_window_is_visible(view: &c_void) -> bool;
     safe fn bd_window_request_frame(view: &c_void, is_leisurely: bool);
     safe fn bd_window_layer(view: &c_void) -> *mut c_void;
+    safe fn bd_window_fit_backdrop(view: &c_void, edges: &mut [f64; 2]);
     safe fn bd_window_content_view(view: &c_void) -> *mut c_void;
 }
 
@@ -153,7 +154,7 @@ pub fn finish_launching() {
 
 pub fn start(is_accessory: bool) -> Result<Box<dyn Platform>> {
     bd_launch(is_accessory);
-    if !crate::host::thread::exists() || std::env::var_os("BUN_DESKTOP_LATE").is_some() {
+    if !crate::host::thread::exists() {
         finish_launching();
     }
     Ok(Box::new(AppKit))
@@ -265,6 +266,11 @@ impl Window for View {
 
     fn layer(&self) -> *mut c_void {
         bd_window_layer(&self.view)
+    }
+
+    fn fit_backdrop(&self, mut edges: [f64; 2]) -> [f64; 2] {
+        bd_window_fit_backdrop(&self.view, &mut edges);
+        edges
     }
 
     fn set_cursor(&self, cursor: Cursor) {

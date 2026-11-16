@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const path = require("node:path");
 const native = require("internal/desktop/native");
-const { app, Event, hasDisplay } = require("internal/desktop/app");
+const { app, hasDisplay } = require("internal/desktop/app");
 const policy = require("internal/desktop/electron/policy");
 const { inert, properties, unsupported } = require("internal/desktop/electron/stubs");
 
@@ -232,7 +232,8 @@ inert(app, {
   trustOrigins: (patterns: string[], options?: object) => policy.trust(patterns, options),
   updateCurrentActivity: undefined,
 });
-if (app.dock) inert(app.dock, { downloadFinished: undefined, setIcon: undefined });
+const { dock } = app;
+if (dock) inert(dock, { downloadFinished: undefined, setIcon: undefined });
 properties(app, { accessibilitySupportEnabled: ["isAccessibilitySupportEnabled", "setAccessibilitySupportEnabled"] });
 Object.defineProperties(app, {
   runningUnderARM64Translation: { value: false, enumerable: true },

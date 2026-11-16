@@ -59,8 +59,8 @@ trim-feature ipc : Ipc ProcessIpc
   about "IPC with the parent process that started the executable with `ipc` or `fork()`: `process.send()`, `process.disconnect()`, `process.channel`, `process.connected`, and the `\"message\"` and `\"disconnect\"` events. Without it, the executable runs as if it was started without an IPC channel."
   saves 0.0 0.0
 
-trim-feature native-code : Ffi NativeAddons SqliteExtensions
-  about "Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, and `Database.loadExtension()` in `bun:sqlite`. Includes `\"ffi\"` and `\"native-addons\"`. Without it, `loadExtension()` throws an `SQLiteError`. On macOS, `\"sqlite\"` loads native code too: the system's SQLite library."
+trim-feature native-code : Ffi NativeAddons SqliteExtensions Desktop
+  about "Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, `bun:desktop`, and `Database.loadExtension()` in `bun:sqlite`. Includes `\"ffi\"`, `\"native-addons\"` and `\"desktop\"`. Without it, `loadExtension()` throws an `SQLiteError`. On macOS, `\"sqlite\"` loads native code too: the system's SQLite library."
   saves 0.7 0.5
 
 trim-feature jit : JIT
@@ -146,7 +146,7 @@ trim-feature webview : WebView
   saves 0.0 0.0
 
 trim-feature desktop : Desktop
-  about "`bun:desktop`."
+  about "`bun:desktop`. Included in `\"native-code\"`."
   saves 0.0 0.0
 
 trim-feature fetch : HttpClient Fetch

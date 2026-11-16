@@ -52,7 +52,9 @@ pub(crate) fn expand(rule: &[u8], name: &[u8], value: &[u8], important: bool) ->
                 .iter()
                 .zip(shorthand.expand(value)?)
                 .flat_map(|(id, part)| {
-                    let part = part.as_deref().unwrap_or(id.initial_source().as_bytes());
+                    let part = part
+                        .as_deref()
+                        .unwrap_or_else(|| id.initial_source().as_bytes());
                     [
                         part.to_vec(),
                         id.syntax().write(part, Mode::Specified).unwrap_or_default(),
@@ -61,9 +63,10 @@ pub(crate) fn expand(rule: &[u8], name: &[u8], value: &[u8], important: bool) ->
             return Some([Out::new()].into_iter().chain(parts).collect());
         }
         (_, prop) => {
-            return one(prop.id(Flow::DEFAULT).map_or(Some(value.to_vec()), |id| {
-                id.syntax().write(value, Mode::Specified)
-            })?);
+            return one(prop.id(Flow::DEFAULT).map_or_else(
+                || Some(value.to_vec()),
+                |id| id.syntax().write(value, Mode::Specified),
+            )?);
         }
     };
     Some(
@@ -207,7 +210,7 @@ pub(crate) fn prelude(
                         ", ",
                         out,
                         |(range, offset), out| {
-                            out.extend(range.iter().flat_map(|it| it.name().bytes().chain([b' '])));
+                            out.extend(range.iter().flat_map(|it| it.name().bytes().chain(*b" ")));
                             Lp::Fraction(*offset).write(out);
                         },
                     );
@@ -255,7 +258,7 @@ pub(crate) fn prelude(
                     .iter()
                     .flat_map(|it| [b" supports(", &it[..], b")"].concat()),
             );
-            let optional = |it: Option<Out>| it.unwrap_or(vec![0]);
+            let optional = |it: Option<Out>| it.unwrap_or_else(|| vec![0]);
             vec![
                 head,
                 rule.url,
@@ -316,8 +319,8 @@ pub(crate) fn prelude(
             ];
             vec![
                 head.into_iter().flatten().collect::<Vec<_>>().join(&b' '),
-                start.unwrap_or(vec![0]),
-                end.unwrap_or(vec![0]),
+                start.unwrap_or_else(|| vec![0]),
+                end.unwrap_or_else(|| vec![0]),
             ]
         }
         (b"page", _) => vec![page_selector(rest)?],
@@ -346,7 +349,7 @@ pub(crate) fn prelude(
                     parts.extend([
                         it.name.to_vec(),
                         written(|out| it.syntax.write(out)),
-                        it.default.map_or(vec![0], |it| it.0.to_vec()),
+                        it.default.map_or_else(|| vec![0], |it| it.0.to_vec()),
                     ]);
                 }
             }
@@ -414,7 +417,10 @@ pub(crate) fn split_variables(source: &[u8]) -> Vec<Out> {
                 Ok(
                     Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly,
                 ) if depth < 128 => {
-                    nested(p, |p| Some(scan(p, start, all, depth + 1)));
+                    nested(p, |p| {
+                        scan(p, start, all, depth + 1);
+                        Some(())
+                    });
                 }
                 Ok(_) => {}
                 Err(_) => return,
@@ -429,6 +435,6 @@ pub(crate) fn split_variables(source: &[u8]) -> Vec<Out> {
 
 /// Of any type.
 pub(crate) fn simplify_math(source: &[u8]) -> Option<Out> {
-    parse_all(source, |p| Node::parse_untyped(p))
+    parse_all(source, Node::parse_untyped)
         .map(|it| written(|out| it.as_specified(false).write_specified(out)))
 }

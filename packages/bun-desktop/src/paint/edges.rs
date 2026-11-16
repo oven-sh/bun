@@ -99,7 +99,14 @@ fn flatten(path: &[Command], matrix: &Transform) -> Path {
     const FAR: f32 = 1e7;
     let map = |point: Point| {
         let (x, y) = map_point(matrix, point.x, point.y);
-        Point::new(x.max(-FAR).min(FAR), y.max(-FAR).min(FAR))
+        let [x, y] = [x, y].map(|it| {
+            if it.is_nan() {
+                -FAR
+            } else {
+                it.clamp(-FAR, FAR)
+            }
+        });
+        Point::new(x, y)
     };
     let (mut lines, mut current) = (Path::with_capacity(path.len() * 3), Point::ZERO);
     for command in path {

@@ -16,7 +16,7 @@ function trustedClass(name: string, kind: Kind) {
     [name]: class {
       constructor(key: unknown = undefined, data = "") {
         idl.illegal(key);
-        $putByIdDirectPrivate(this, "impl", { trustedAs: kind, data });
+        $putByIdDirectPrivate(this as any, "impl", { trustedAs: kind, data });
       }
       toString() {
         return read(this);
@@ -164,7 +164,7 @@ class TrustedTypePolicyFactory {
     return this.#emptyScript;
   }
   get defaultPolicy() {
-    this.#emptyHTML;
+    void this.#emptyHTML;
     return defaultPolicy;
   }
 
@@ -312,7 +312,8 @@ function enforce() {
   for (const name of ["nodeValue", "textContent", "value"]) {
     guard(global.Attr.prototype, name, (attr, args) => {
       const text = args[0] === null && name !== "value" ? "" : `${args[0]}`;
-      if (attr.ownerElement) args[0] = attributeValue(attr.ownerElement, attr.localName, attr.namespaceURI, text);
+      const { ownerElement } = attr;
+      if (ownerElement) args[0] = attributeValue(ownerElement, attr.localName, attr.namespaceURI, text);
     });
   }
 }

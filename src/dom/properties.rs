@@ -1429,10 +1429,10 @@ impl Style {
     }
 
     pub(crate) fn outline_width(&self) -> f32 {
-        if self.paint.outline_style == OutlineStyle::None {
-            0.0
-        } else {
-            self.paint.outline_width.0
+        match self.paint.outline_style {
+            OutlineStyle::None => 0.0,
+            OutlineStyle::Auto => self.paint.outline_width.0.max(self.zoom),
+            _ => self.paint.outline_width.0,
         }
     }
 
@@ -1575,13 +1575,19 @@ impl Style {
 
     pub(crate) fn contains_fixed(&self) -> bool {
         let e = &self.effects;
+        self.contains_fixed_as_root()
+            || !e.filter.0.is_empty()
+            || !e.backdrop_filter.0.is_empty()
+            || (e.will_change.0 | self.animates).contains(WillChange::FILTER)
+    }
+
+    pub(crate) fn contains_fixed_as_root(&self) -> bool {
+        let e = &self.effects;
         self.has_transform()
             || e.perspective.0.is_some()
             || self.wants_3d()
-            || !e.filter.0.is_empty()
-            || !e.backdrop_filter.0.is_empty()
             || (e.will_change.0 | self.animates)
-                .intersects(WillChange::TRANSFORM | WillChange::FILTER | WillChange::CONTAINS)
+                .intersects(WillChange::TRANSFORM | WillChange::CONTAINS)
             || self.contain().intersects(Contain::LAYOUT | Contain::PAINT)
     }
 

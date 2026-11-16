@@ -562,7 +562,8 @@ test.skipIf(isWindows).each(["O_NONBLOCK", "O_RDWR"])(
         "-e",
         `
         const fs = require("fs");
-        const fd = fs.openSync("/dev/tty", fs.constants.O_RDWR | fs.constants.${flag});
+        const name = ${flag === "O_NONBLOCK"} ? require("child_process").execSync("tty", { stdio: ["inherit", "pipe", "inherit"] }).toString().trim() : "/dev/tty";
+        const fd = fs.openSync(name, fs.constants.O_RDWR | fs.constants.${flag});
         const stream = new (require("tty").ReadStream)(fd);
         stream.on("error", error => { console.log("error:" + error.code); process.exit(1); });
         stream.on("data", data => { console.log("got:" + String(data).trim()); stream.destroy(); });

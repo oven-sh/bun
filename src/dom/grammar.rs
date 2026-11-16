@@ -519,9 +519,9 @@ impl<'a> Matcher<'a> {
             Mode::Check => {}
             Mode::Computed(cx) => {
                 let node = node.simplified(Some(cx), !it.options.percentages);
-                self.write(|out| with_zoom(cx.zoom, || it.write(node, out)));
+                self.write(|out| with_zoom(cx.zoom, || it.write(&node, out)));
             }
-            _ if node.is_literal() && it.is_integer => self.write(|out| it.write(node, out)),
+            _ if node.is_literal() && it.is_integer => self.write(|out| it.write(&node, out)),
             _ => self.write(|out| {
                 node.as_specified(!it.options.percentages)
                     .write_specified(out)
@@ -800,8 +800,8 @@ pub(crate) fn is_reserved(name: &[u8]) -> bool {
 }
 
 impl Numeric {
-    fn write(&self, node: Node, out: &mut Out) {
-        let Node::Value(value, unit) = node else {
+    fn write(&self, node: &Node, out: &mut Out) {
+        let Node::Value(value, unit) = *node else {
             return node.write(out);
         };
         let limit = if unit == Unit::Px {
@@ -895,7 +895,7 @@ impl Definition {
                 sum @ Node::Sum(_) if numeric.options.kind == Kind::Length => {
                     Lp::new(sum).write(&mut out)
                 }
-                node => numeric.write(node, &mut out),
+                node => numeric.write(&node, &mut out),
             }
         }
         (from[at[0]..] == to[at[1]..]).then_some(())?;

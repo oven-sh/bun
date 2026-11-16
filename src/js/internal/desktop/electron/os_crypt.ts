@@ -31,10 +31,10 @@ function windowsKey() {
 async function readKey(): Promise<Buffer> {
   if (isWindows) return windowsKey();
   const fresh = randomBytes(16).toString("base64");
-  const owner = app.commandLine.getSwitchValue("safe-storage-name") || app.name;
+  const owner = (app as any).commandLine.getSwitchValue("safe-storage-name") || app.name;
   if (isLinux) return derive(await native.request("chromiumPassword", { application: owner, fresh }));
-  if (app.commandLine.hasSwitch("use-mock-keychain")) return derive("mock_password");
-  const other = app.commandLine.getSwitchValue("safe-storage-copy-from");
+  if ((app as any).commandLine.hasSwitch("use-mock-keychain")) return derive("mock_password");
+  const other = (app as any).commandLine.getSwitchValue("safe-storage-copy-from");
   const stored = await keychainPassword(other || owner);
   if (other && stored === null) throw new Error(`${other} has no key`);
   if (other || stored === null) {

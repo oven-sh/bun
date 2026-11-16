@@ -1,6 +1,7 @@
 //! TrueType outlines.
 
 use super::variations::{Coords, axis_scalar};
+use super::work::spend;
 use super::{Data, Font};
 use crate::abi::Rect;
 use crate::gfx::{Command, Path, PathBuilder as _, Point, Transform};
@@ -43,7 +44,7 @@ struct Component {
 fn components(glyph: Data) -> Option<Vec<Component>> {
     let (mut at, mut all) = (10, Vec::new());
     loop {
-        let flags = glyph.u16(at)?;
+        let flags = spend(8).and(glyph.u16(at))?;
         let argument = |index: usize| match flags & 3 {
             0 => glyph.u8(at + 4 + index).map(i32::from),
             1 => glyph.u16(at + 4 + index * 2).map(i32::from),
@@ -87,6 +88,7 @@ fn read_simple(glyph: Data, contours: usize, shape: &mut Shape) -> Option<()> {
     } else {
         shape.ends.last()? - first
     };
+    spend(contours + count * 4)?;
     let mut at = 12 + contours * 2 + usize::from(glyph.u16(10 + contours * 2).unwrap_or(0));
     let mut flags = Vec::with_capacity(count);
     while flags.len() < count {
@@ -265,7 +267,10 @@ impl Glyf {
         };
         let mut total = vec![Point::ZERO; points.len() + PHANTOMS];
         for _ in 0..count & 0xfff {
-            let (size, index) = (usize::from(data.u16(header)?), data.u16(header + 2)?);
+            let (size, index) = (
+                usize::from(data.u16(header)?),
+                spend(1 + axes).and(data.u16(header + 2))?,
+            );
             let [embedded, between] =
                 [0x8000, 0x4000].map(|flag| if index & flag != 0 { axes * 2 } else { 0 });
             let peaks = if embedded > 0 {
@@ -294,6 +299,7 @@ impl Glyf {
             };
             let numbers = own.as_ref().unwrap_or(&shared);
             let count = numbers.as_ref().map_or(total.len(), Vec::len);
+            spend(count + total.len() + ends.len())?;
             let (xs, ys) = (
                 read_deltas(data, &mut next, count)?,
                 read_deltas(data, &mut next, count)?,
@@ -400,6 +406,7 @@ impl Glyf {
             if flags & 0x200 != 0 {
                 phantoms = inner;
             }
+            spend(shape.points.len() - start)?;
             let grid = if shape.scale.is_some() { 64. } else { 1. };
             let product =
                 |a: f32, b: f32| (f64::from(a) * f64::from(b) * grid).round() as f32 / grid as f32;

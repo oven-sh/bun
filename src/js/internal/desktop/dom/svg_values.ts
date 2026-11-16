@@ -222,7 +222,9 @@ class SVGLength {
   }
   set value(value) {
     value = float(value);
-    Object.assign(this.$impl.edit(), { value, unit: "" });
+    const it = this.$impl.edit();
+    if (isCalculated(it)) it.unit = "";
+    it.value = Math.fround(value / (pixelsIn[it.unit] ?? resolve(this.$impl, "100" + it.unit) / 100)) || 0;
     this.$impl.commit();
   }
   get valueInSpecifiedUnits() {
@@ -560,15 +562,19 @@ class List extends Attribute<any[]> {
   splice(index: number, count: number, ...added: any[]) {
     if (added.length > 0) {
       if (this.item === null) added[0] = `${added[0]}`;
-      else if (!(added[0] instanceof this.item)) throw new TypeError(`The item is not of type '${this.item.name}'.`);
+      else {
+        const { item } = this;
+        if (!(added[0] instanceof item)) throw new TypeError(`The item is not of type '${item.name}'.`);
+      }
     }
     this.value.edit();
     if (count === 1) this.check(index);
-    if (added.length > 0 && this.item !== null) {
+    const ownItem = this.item;
+    if (added.length > 0 && ownItem !== null) {
       const it: Value<any> = added[0].$impl;
       if (it.owner === null) it.owner = this;
-      else added[0] = make(this.item, new Value(structuredClone(it.read()), this));
-      if (this.item === SVGLength) added[0].$impl.data.axis = this.name.endsWith("x") ? 0 : 1;
+      else added[0] = make(ownItem, new Value(structuredClone(it.read()), this));
+      if (ownItem === SVGLength) added[0].$impl.data.axis = this.name.endsWith("x") ? 0 : 1;
     }
     const removed = this.items.splice(index, count, ...added);
     if (this.item !== null) removed.forEach(release);

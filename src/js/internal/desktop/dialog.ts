@@ -135,7 +135,8 @@ function fillMessageWindow(window: any, options: Options, result: { response: nu
   find("p").hidden = !options.detail;
   find("input").checked = result.checkboxChecked;
   find("input").onchange = event => (result.checkboxChecked = event.target.checked);
-  if (options.checkboxLabel) find("label").append(options.checkboxLabel);
+  const { checkboxLabel } = options;
+  if (checkboxLabel) find("label").append(checkboxLabel);
   else find("label").remove();
   options.buttons.forEach((label: string, index: number) => {
     const button = find("footer").appendChild(document.createElement("button"));

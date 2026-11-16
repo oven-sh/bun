@@ -715,7 +715,7 @@ fn uncover() -> Option<u32> {
 }
 
 fn discard() {
-    uncover().map(|window| window::destroy(window));
+    uncover().map(window::destroy);
 }
 
 /// Whether the window that shows the picture is the one that `wanted` describes.

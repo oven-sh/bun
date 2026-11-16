@@ -8,7 +8,7 @@ type Callback = (a?: any, b?: any, c?: any, d?: any) => void;
 class Task {
   next: Task | null = null;
   /** A timer's index in the heap, or -1. */
-  index: int32 = -1;
+  index: number = -1;
   time = 0;
   /** 0 unless it repeats. */
   interval = 0;
@@ -93,7 +93,7 @@ let lastFrame = 0;
 let hurryUntil = 0;
 /** When the first task of the host since the last frame ran. */
 let busySince = 0;
-let hurriedFramesLeft: int32 = 0;
+let hurriedFramesLeft: number = 0;
 let alarm: ReturnType<typeof setTimeout> | undefined;
 let alarmTime = Infinity;
 
@@ -103,7 +103,7 @@ function queuePump() {
   setImmediate(pump);
 }
 
-function post(priority: int32, run: Callback, a?: unknown, b?: unknown, c?: unknown, d?: unknown): Task {
+function post(priority: number, run: Callback, a?: unknown, b?: unknown, c?: unknown, d?: unknown): Task {
   const task = new Task(run, a, b, c, d);
   queues[priority].push(task);
   queuePump();
@@ -174,7 +174,8 @@ function pump() {
         // A dialog runs the event loop inside of the task.
         if (!isPumpQueued && queues.some(hasTasks)) queuePump();
         run(task.a, task.b, task.c, task.d);
-        if (task.interval !== 0 && task.run !== null) addTimer(task, task.interval);
+        const { interval } = task;
+        if (interval !== 0 && task.run !== null) addTimer(task, interval);
       }
     } catch (error) {
       reportError(error);
@@ -232,15 +233,15 @@ function idleTime(): number {
 
 const isBefore = (a: Task, b: Task) => a.time < b.time || (a.time === b.time && a.order < b.order);
 
-function settle(task: Task, at: int32) {
+function settle(task: Task, at: number) {
   while (at > 0) {
-    const parent: int32 = (at - 1) >> 1;
+    const parent: number = (at - 1) >> 1;
     if (!isBefore(task, timers[parent])) break;
     (timers[at] = timers[parent]).index = at;
     at = parent;
   }
   for (;;) {
-    let child: int32 = (at << 1) + 1;
+    let child: number = (at << 1) + 1;
     if (child >= timers.length) break;
     if (child + 1 < timers.length && isBefore(timers[child + 1], timers[child])) child++;
     if (!isBefore(timers[child], task)) break;
@@ -255,7 +256,8 @@ function addTimer(task: Task, delay: number) {
   task.time = delay > PRECISE_DELAY ? Math.ceil(time / TIMER_ALIGNMENT) * TIMER_ALIGNMENT : time;
   timers.push(task);
   settle(task, timers.length - 1);
-  if (task.time < alarmTime) setAlarm(task.time);
+  const taskTime = task.time;
+  if (taskTime < alarmTime) setAlarm(taskTime);
 }
 
 function removeTimer(task: Task) {

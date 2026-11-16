@@ -226,13 +226,14 @@ function selected(test: Test): N[] {
 
 function isBlock(node: Maybe): boolean {
   if (node === null) return false;
-  if (node.type !== ELEMENT) return node.type === DOCUMENT || node.type === FRAGMENT;
+  const { type } = node;
+  if (type !== ELEMENT) return type === DOCUMENT || type === FRAGMENT;
   return !/^(?:inline|none|contents|ruby|math|-webkit-inline|$)/.test(css(node, "display"));
 }
 const isInline = (node: Maybe) => node !== null && !isBlock(node);
 const isBreak = (node: Maybe | undefined) => isHtml(node ?? null, "br");
 const isAtomic = (node: N) =>
-  isIn(node, replaced) || (node.type === ELEMENT && (node.ns === SVG || /^inline-/.test(css(node, "display"))));
+  isIn(node, replaced) || (node.type === ELEMENT && (node.ns === SVG || css(node, "display").startsWith("inline-")));
 
 function editability(node: N): string {
   const value = node.type === ELEMENT && node.ns === HTML ? getAttr(node, "contenteditable") : null;
@@ -389,8 +390,10 @@ function move(node: N, parent: N, index: number) {
   insert(node, parent, before);
   for (const { range, start, end } of kept) {
     range.set(start[0], Math.min(start[1], lengthOf(start[0])), end[0], Math.min(end[1], lengthOf(end[0])));
-    if (comparePoints(range.startNode, range.startOffset, range.endNode, range.endOffset) > 0) {
-      range.set(range.endNode, range.endOffset, range.endNode, range.endOffset);
+    const { endNode } = range;
+    const { endOffset } = range;
+    if (comparePoints(range.startNode, range.startOffset, endNode, endOffset) > 0) {
+      range.set(endNode, endOffset, endNode, endOffset);
     }
   }
 }
@@ -569,7 +572,8 @@ function isModifiable(node: Maybe): boolean {
 function isSimplyModifiable(node: N): boolean {
   if (!isModifiable(node) || attributeCount(node) > 1) return false;
   const properties = styledProperties(node);
-  if (properties.length !== 1) return properties.length === 0;
+  const { length } = properties;
+  if (length !== 1) return length === 0;
   const { name } = node;
   if (properties[0] === "text-decoration") {
     return (
@@ -779,11 +783,15 @@ function forceValue(node: N, command: string, value: Value, model: Maybe = null)
 function splitTextAtEnds() {
   const isInside = (node: N, offset: number) =>
     node.type === TEXT && offset > 0 && offset < node.data.length && isEditable(node);
-  if (isInside(active.startNode, active.startOffset)) {
-    const rest = core.splitText(active.startNode, active.startOffset);
+  const { startNode } = active;
+  const { startOffset } = active;
+  if (isInside(startNode, startOffset)) {
+    const rest = core.splitText(startNode, startOffset);
     select(rest, 0, active.endNode, active.endOffset);
   }
-  if (isInside(active.endNode, active.endOffset)) core.splitText(active.endNode, active.endOffset);
+  const { endNode } = active;
+  const { endOffset } = active;
+  if (isInside(endNode, endOffset)) core.splitText(endNode, endOffset);
 }
 
 /** If that takes no other kind of element. */
@@ -1084,8 +1092,9 @@ function alignmentOf(node: Maybe): string {
 function lastEquivalentPoint(node: N, offset: number): Point {
   while (lengthOf(node) > 0) {
     const next = child(node, offset);
-    if (offset === lengthOf(node) && node.parent !== null && isInline(node) && !isHost(node)) {
-      [node, offset] = [node.parent, indexOf(node) + 1];
+    const { parent } = node;
+    if (offset === lengthOf(node) && parent !== null && isInline(node) && !isHost(node)) {
+      [node, offset] = [parent, indexOf(node) + 1];
     } else if (next !== null && lengthOf(next) > 0 && isInline(next) && isEditable(next)) [node, offset] = [next, 0];
     else break;
   }
@@ -1095,8 +1104,8 @@ function lastEquivalentPoint(node: N, offset: number): Point {
 function firstEquivalentPoint(node: N, offset: number): Point {
   while (lengthOf(node) > 0) {
     const previous = child(node, offset - 1);
-    if (offset === 0 && node.parent !== null && isInline(node) && !isHost(node))
-      [node, offset] = [node.parent, indexOf(node)];
+    const { parent } = node;
+    if (offset === 0 && parent !== null && isInline(node) && !isHost(node)) [node, offset] = [parent, indexOf(node)];
     else if (previous !== null && lengthOf(previous) > 0 && isInline(previous) && isEditable(previous)) {
       [node, offset] = [previous, lengthOf(previous)];
     } else break;
@@ -1140,7 +1149,8 @@ function blockExtend({ startNode, startOffset, endNode, endOffset }: R): R {
 function followsBreak(node: N): boolean {
   for (let offset = 0; !isBlockBoundary(node, offset);) {
     const before = child(node, offset - 1);
-    if (isVisible(before)) return before!.type !== ELEMENT ? /\n$/.test(before!.data) && keepsBreaks(before!) : false;
+    if (isVisible(before))
+      return before!.type !== ELEMENT ? before!.data.endsWith("\n") && keepsBreaks(before!) : false;
     if (before === null) [node, offset] = [node.parent!, indexOf(node)];
     else offset--;
   }
@@ -1186,7 +1196,8 @@ function splitParent(nodes: N[]): boolean {
     remove(parent!);
     endLine();
   } else trimBreakBefore(parent!);
-  if (last.next === null && last.parent !== null) trimBreakAtEnd(last.parent);
+  const lastParent = last.parent;
+  if (last.next === null && lastParent !== null) trimBreakAtEnd(lastParent);
   return true;
 }
 
@@ -1367,7 +1378,8 @@ function mergeBlocks(start: N, end: N, endsWithBreak: boolean, isEndEmptied: boo
     if (end.first === null) {
       while (isEditable(end) && end.prev === null && end.next === null && end.parent !== start) end = end.parent!;
       if (!isEditable(end)) return;
-      if (isInline(end.prev) && isInline(end.next)) addBreak(end.parent!, end.next);
+      const endNext = end.next;
+      if (isInline(end.prev) && isInline(endNext)) addBreak(end.parent!, endNext);
       return remove(end);
     }
     if (beside(childOf(start, end), false) !== Beside.Content && !endsWithBreak) return select(end, 0);
@@ -1380,7 +1392,8 @@ function mergeBlocks(start: N, end: N, endsWithBreak: boolean, isEndEmptied: boo
     select(start, lengthOf(start));
     const isInside = contains(end, start);
     const next = isInside ? childOf(end, start).next : end.first;
-    if (isInline(next) && isBreak(start.last)) remove(start.last!);
+    const { last } = start;
+    if (isInline(next) && isBreak(last)) remove(last!);
     moved = firstLine(next);
     change = () => {
       for (const node of moved) move(node, start, -1);
@@ -1537,7 +1550,8 @@ function outdentNode(node: N) {
   while (path.length > 0) {
     const ancestor = path.pop()!;
     const target = node.parent === ancestor ? node : path.at(-1)!;
-    if (isInline(target) && !isBreak(target) && isBreak(target.next)) remove(target.next!);
+    const { next } = target;
+    if (isInline(target) && !isBreak(target) && isBreak(next)) remove(next!);
     const [siblings, index] = [children(ancestor), indexOf(target)];
     indentNodes(siblings.slice(0, index));
     indentNodes(siblings.slice(index + 1));
@@ -1731,7 +1745,8 @@ defineBlockCommand("delete", () => {
   let [node, offset] = [active.startNode, active.startOffset];
   while (true) {
     const before = child(node, offset - 1);
-    if (offset === 0 && node !== host && isRemovable(node.prev)) remove(node.prev!);
+    const { prev } = node;
+    if (offset === 0 && node !== host && isRemovable(prev)) remove(prev!);
     else if (isRemovable(before)) {
       remove(before!);
       offset--;
@@ -1805,9 +1820,9 @@ defineBlockCommand("delete", () => {
     else [start, startOffset] = [last, lengthOf(last)];
   }
   const isAround = contains(blockOf(start), node) && isBlock(node);
-  if (start.type === TEXT && start.data.endsWith("\n") && keepsBreaks(start)) {
-    const isEmptyLine =
-      startOffset > 1 ? start.data[startOffset - 2] === "\n" : beside(start, false) !== Beside.Content;
+  const { data } = start;
+  if (start.type === TEXT && data.endsWith("\n") && keepsBreaks(start)) {
+    const isEmptyLine = startOffset > 1 ? data[startOffset - 2] === "\n" : beside(start, false) !== Beside.Content;
     if (isAround && isEmptyLine) {
       if (startOffset > 1) core.replaceData(start, startOffset - 1, 1, "");
       else remove(start);
@@ -1832,7 +1847,8 @@ defineBlockCommand("forwarddelete", () => {
   let [node, offset] = [active.startNode, active.startOffset];
   while (true) {
     const [after, isAtEnd] = [child(node, offset), offset === lengthOf(node)];
-    if (isAtEnd && node !== host && isRemovable(node.next)) remove(node.next!);
+    const nodeNext = node.next;
+    if (isAtEnd && node !== host && isRemovable(nodeNext)) remove(nodeNext!);
     else if (isRemovable(after)) remove(after!);
     else if (node !== host && ((isAtEnd && isInline(node)) || isInvisible(node)))
       [node, offset] = [node.parent!, indexOf(node) + 1];
@@ -2005,7 +2021,7 @@ function removeScripts(root: N) {
     if (/^(?:script|iframe|object|embed|template|animate|set)$/.test(node.name)) core.remove(node);
     else {
       const isScript = (name: string) =>
-        /^on/.test(name) || isScriptUrl.test(core.getAttr(node, name)!.replace(/[\t\n\r]/g, ""));
+        name.startsWith("on") || isScriptUrl.test(core.getAttr(node, name)!.replace(/[\t\n\r]/g, ""));
       for (const name of node.attrs?.filter((it, i) => i % 2 === 0 && isScript(it)) ?? []) core.removeAttr(node, name);
     }
   }
@@ -2025,9 +2041,9 @@ function insertHtml(value: string, isPasted: boolean) {
   if (isPlain(around)) return insertText(core.textContent(fragment));
   const [last, inside] = [fragment.last, descendants(fragment)];
   if (last === null) return true;
-  if (isBlock(active.startNode)) {
-    for (const it of children(active.startNode).slice(active.startOffset))
-      if (isEditable(it) && isBlockProp(it)) remove(it);
+  const { startNode } = active;
+  if (isBlock(startNode)) {
+    for (const it of children(startNode).slice(active.startOffset)) if (isEditable(it) && isBlockProp(it)) remove(it);
   }
   if (inside.some(it => isModifiable(it))) leaveFormatting();
   const item = active.startNode;
@@ -2039,7 +2055,8 @@ function insertHtml(value: string, isPasted: boolean) {
     return true;
   }
   insertAtCaret(fragment);
-  if (isBlock(active.startNode)) keepOpen(active.startNode);
+  const activeStartNode = active.startNode;
+  if (isBlock(activeStartNode)) keepOpen(activeStartNode);
   collapseAfter(last);
   inside.forEach(fixDisallowedAncestors);
   return true;
@@ -2050,8 +2067,9 @@ defineBlockCommand("insertimage", value => {
   if (!canInsert()) return true;
   leaveTextAtItsEnds();
   const { startNode, startOffset } = active;
-  if (isBlock(startNode) && startOffset === 0 && startNode.first === startNode.last && isBreak(startNode.first)) {
-    remove(startNode.first!);
+  const { first } = startNode;
+  if (isBlock(startNode) && startOffset === 0 && first === startNode.last && isBreak(first)) {
+    remove(first!);
   }
   const image = create("img");
   if (value !== "") core.setAttr(image, "src", value);
@@ -2101,8 +2119,9 @@ function splitParagraph(): true {
     breakLine();
     return true;
   }
-  if (active.startNode.type === TEXT && active.startOffset > 0 && active.startOffset < active.startNode.data.length) {
-    core.splitText(active.startNode, active.startOffset);
+  const { startOffset } = active;
+  if (active.startNode.type === TEXT && startOffset > 0 && startOffset < active.startNode.data.length) {
+    core.splitText(active.startNode, startOffset);
   }
   const wrappers: N[] = [];
   const styled = firstEquivalentPoint(active.startNode, active.startOffset)[0];

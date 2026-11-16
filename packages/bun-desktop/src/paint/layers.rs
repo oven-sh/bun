@@ -25,10 +25,11 @@ const CELL_HEIGHT: i32 = 512;
 const COLUMNS: usize = (CELL_WIDTH / TILE_WIDTH) as usize;
 const TILES: usize = COLUMNS * (CELL_HEIGHT / TILE_HEIGHT) as usize;
 const UNKNOWN: u64 = 0;
+#[cfg(target_os = "macos")]
 pub const SPARES_LAST: Duration = Duration::from_secs(2);
 pub const SLOTS: usize = 8;
 
-/// The column and the row.
+/// The left edge and the row.
 pub type Position = (i32, i32);
 
 pub struct Locked {
@@ -76,6 +77,7 @@ pub struct Batch {
     pub slots: SmallVec<Arc<Chunk>, SLOTS>,
 }
 
+#[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "Metal does it"))]
 pub struct Pass<'a, S> {
     pub surface: &'a S,
     pub rect: IntRect,
@@ -299,8 +301,22 @@ struct Change<S> {
     is_drawn: bool,
 }
 
-fn origin((column, row): Position) -> (i32, i32) {
-    (column * CELL_WIDTH, row * CELL_HEIGHT)
+fn origin((left, row): Position) -> (i32, i32) {
+    (left, row * CELL_HEIGHT)
+}
+
+/// The left edges of the cells, and `right`.
+fn columns(breaks: &[i32], right: i32) -> SmallVec<i32, 8> {
+    let mut all = SmallVec::new();
+    let mut left = 0;
+    while left < right {
+        all.push(left);
+        left = breaks.iter().fold(left + CELL_WIDTH, |next, it| {
+            if *it > left { next.min(*it) } else { next }
+        });
+    }
+    all.push(right);
+    all
 }
 
 /// For each tile in `area`, its index in the window and in the cell.
@@ -369,15 +385,75 @@ pub struct Layers<T: Target> {
     shown: FastMap<Position, Buffer<T::Surface>>,
     spare: Vec<Buffer<T::Surface>>,
     instances: Vec<Instance>,
+    /// Where columns begin.
+    breaks: SmallVec<i32, 8>,
+    apart: Range<i32>,
+    /// What changes when something scrolls, and what has since that began.
+    moving: Range<i32>,
+    moved: Range<i32>,
+    frames_scrolled: u32,
+    /// The window server takes longer with what the CPU has written.
+    pub avoids_cpu: bool,
 }
 
 impl<T: Target> Layers<T> {
+    /// No cell is both inside of it and outside.
+    pub fn keep_apart(&mut self, part: Range<i32>) {
+        self.apart = part.start / TILE_WIDTH * TILE_WIDTH
+            ..(part.end + TILE_WIDTH - 1) / TILE_WIDTH * TILE_WIDTH;
+    }
+
+    pub fn set_scrolling(&mut self, is_scrolling: bool) {
+        self.frames_scrolled = if is_scrolling {
+            self.frames_scrolled + 1
+        } else {
+            0
+        };
+    }
+
+    /// The window server keeps up best with few cells that are the same in every frame. Returns whether they are others.
+    fn arrange_columns(&mut self, is_resized: bool) -> bool {
+        const TO_KNOW: u32 = 4;
+        const TOO_MUCH: usize = 384;
+        let (moving, moved) = (&mut self.moving, &mut self.moved);
+        let is_small = moved.start < moving.start || moved.end > moving.end;
+        match self.frames_scrolled {
+            _ if is_resized => (*moving, *moved) = (0..0, 0..0),
+            0 => *moved = 0..0,
+            frames if frames < TO_KNOW || Range::is_empty(moved) => {}
+            frames if is_small || frames == TO_KNOW && moving.len() > moved.len() + TOO_MUCH => {
+                *moving = moved.clone()
+            }
+            _ => {}
+        }
+        let tiles = moving.len() / TILE_WIDTH as usize;
+        let step = tiles.div_ceil(tiles.div_ceil(COLUMNS).max(1)).max(1) * TILE_WIDTH as usize;
+        let edges =
+            moving
+                .clone()
+                .step_by(step)
+                .chain([moving.end, self.apart.start, self.apart.end]);
+        let breaks: SmallVec<_, 8> = edges.collect();
+        let are_new = breaks[..] != self.breaks[..];
+        if are_new {
+            crate::diagnostics::log!("columns begin at {:?}", &breaks[..]);
+        }
+        self.breaks = breaks;
+        are_new
+    }
+
     pub fn new(target: T) -> Self {
         Layers {
             target,
             shown: FastMap::default(),
             spare: Vec::new(),
             instances: Vec::new(),
+            breaks: SmallVec::new(),
+            apart: 0..0,
+            moving: 0..0,
+            moved: 0..0,
+            frames_scrolled: 0,
+            avoids_cpu: false,
         }
     }
 
@@ -394,6 +470,7 @@ impl<T: Target> Layers<T> {
     }
 
     /// For another `Compositor`, whose hashes mean something else.
+    #[cfg(target_os = "macos")]
     pub fn forget_contents(&mut self) {
         self.release_spares(Duration::ZERO);
         self.shown
@@ -436,7 +513,6 @@ impl<T: Target> Layers<T> {
     /// What `is_in_front` has no cells where there is nothing, and only cells of one height.
     pub fn paint(&mut self, compositor: &mut Compositor, wanted: IntRect, is_in_front: bool) {
         const WORTH_DRAWING: usize = 480;
-        const WORTH_A_PASS: usize = 24;
         const WORTH_MOVING: usize = 32;
         const TILES_PER_THREAD: usize = 400;
         const MAX_THREADS: usize = 4;
@@ -457,11 +533,14 @@ impl<T: Target> Layers<T> {
         let tiles = compositor.survey(&summaries, grid);
         let before = std::mem::replace(&mut compositor.window, window);
 
-        let columns = 0..round_up(window.right, CELL_WIDTH) / CELL_WIDTH;
+        let has_new_columns = self.arrange_columns(before.right != window.right);
+        let edges = columns(&self.breaks, window.right);
+        let columns = &edges[..edges.len() - 1];
+        let column_at = |x: i32| columns.partition_point(|left| *left <= x) - 1;
         let rows = top / CELL_HEIGHT..round_up(window.bottom, CELL_HEIGHT) / CELL_HEIGHT;
         let area_of = |position| {
             let (left, top) = origin(position);
-            IntRect::new(left, top, left + CELL_WIDTH, top + CELL_HEIGHT).intersect(window)
+            IntRect::new(left, top, edges[column_at(left) + 1], top + CELL_HEIGHT).intersect(window)
         };
         let is_empty = |position| {
             is_in_front && tiles_in(grid, area_of(position)).all(|(tile, _)| tiles[tile].is_clear())
@@ -476,7 +555,7 @@ impl<T: Target> Layers<T> {
             (vec![Action::Keep; tiles.len()], Vec::new(), true);
         let positions = rows
             .clone()
-            .flat_map(|row| columns.clone().map(move |column| (column, row)));
+            .flat_map(|row| columns.iter().map(move |left| (*left, row)));
         for position in positions.filter(|it| !is_empty(*it)) {
             let ((left, top), area) = (origin(position), area_of(position));
             let height = if is_in_front {
@@ -484,7 +563,12 @@ impl<T: Target> Layers<T> {
             } else {
                 round_up(area.bottom - top, CELL_HEIGHT / 4)
             };
-            let size = (round_up(area.right - left, CELL_WIDTH / 4), height);
+            let step = if area.right == window.right {
+                CELL_WIDTH / 4
+            } else {
+                TILE_WIDTH
+            };
+            let size = (round_up(area.right - left, step), height);
             let is_right = |it: &Buffer<_>| {
                 tiles_in(grid, area).all(|(tile, own)| it.hashes[own] == tiles[tile].hash)
             };
@@ -504,6 +588,19 @@ impl<T: Target> Layers<T> {
             for (tile, own) in tiles_in(grid, area) {
                 let hash = tiles[tile].hash;
                 buffer.hashes[own] = hash;
+                let x = (tile % grid.columns) as i32 * TILE_WIDTH;
+                if self.frames_scrolled > 0
+                    && !has_new_columns
+                    && !self.apart.contains(&x)
+                    && shown.is_some_and(|it| it.hashes[own] != hash)
+                {
+                    let moved = if self.moved.is_empty() {
+                        x..x
+                    } else {
+                        self.moved.clone()
+                    };
+                    self.moved = moved.start.min(x)..moved.end.max(x + TILE_WIDTH);
+                }
                 if painted[own] != hash {
                     let is_shown =
                         !tiles[tile].is_flat && shown.is_some_and(|it| it.hashes[own] == hash);
@@ -528,11 +625,11 @@ impl<T: Target> Layers<T> {
             &compositor.primitives,
         );
         let work = changes.iter().map(|change| change.work).sum::<usize>();
-        if work >= WORTH_DRAWING && self.target.can_draw() {
+        if work >= if self.avoids_cpu { 1 } else { WORTH_DRAWING } && self.target.can_draw() {
             self.instances.clear();
             let passes = changes
                 .iter()
-                .filter(|change| change.work >= WORTH_A_PASS)
+                .filter(|change| change.work > 0)
                 .map(|change| {
                     let ((left, top), (width, height)) =
                         (origin(change.buffer.position), change.buffer.size);
@@ -554,7 +651,7 @@ impl<T: Target> Layers<T> {
             drop(passes);
             for change in changes
                 .iter_mut()
-                .filter(|change| is_drawn && change.work >= WORTH_A_PASS)
+                .filter(|change| is_drawn && change.work > 0)
             {
                 change.is_drawn = true;
                 tiles_in(grid, change.area).for_each(|(tile, _)| actions[tile] = Action::Keep);
@@ -563,7 +660,7 @@ impl<T: Target> Layers<T> {
 
         let count =
             |action: Action, actions: &[Action]| actions.iter().filter(|it| **it == action).count();
-        let can_move = count(Action::Paint, &actions) >= WORTH_MOVING;
+        let can_move = !has_new_columns && count(Action::Paint, &actions) >= WORTH_MOVING;
         let down = can_move
             .then(|| movement(&compositor.shown, &summaries))
             .flatten()
@@ -579,7 +676,7 @@ impl<T: Target> Layers<T> {
                 let source = grid.rect(row, column..column + 1).offset(0, -down);
                 let is_there = |y: i32| {
                     self.shown
-                        .contains_key(&(source.left / CELL_WIDTH, y / CELL_HEIGHT))
+                        .contains_key(&(columns[column_at(source.left)], y / CELL_HEIGHT))
                 };
                 if *action == Action::Paint
                     && !tiles[tile].is_flat
@@ -601,7 +698,7 @@ impl<T: Target> Layers<T> {
             .flat_map(|(areas, down)| areas.iter().map(move |area| area.offset(0, -down)))
         {
             for row in source.top / CELL_HEIGHT..=(source.bottom - 1) / CELL_HEIGHT {
-                for column in source.left / CELL_WIDTH..=(source.right - 1) / CELL_WIDTH {
+                for &column in &columns[column_at(source.left)..=column_at(source.right - 1)] {
                     let lock = || Shared(T::lock(&self.shown[&(column, row)].surface, false));
                     sources.entry((column, row)).or_insert_with(lock);
                 }
@@ -635,7 +732,7 @@ impl<T: Target> Layers<T> {
                 for y in (part.top..part.bottom).filter(|_| !part.is_empty()) {
                     let (x, Shared(source)) = (
                         (part.left - area.left) as usize,
-                        &sources[&(area.left / CELL_WIDTH, (y - down) / CELL_HEIGHT)],
+                        &sources[&(area.left, (y - down) / CELL_HEIGHT)],
                     );
                     let from = ((y - down) % CELL_HEIGHT) as usize * source.stride + x;
                     // SAFETY: the surface is locked, and these pixels were painted, so it has them.
@@ -681,8 +778,9 @@ impl<T: Target> Layers<T> {
                 changes.iter().filter(|change| change.is_drawn).count(),
                 self.spare.len(),
             );
+            let lefts: Vec<_> = changes.iter().map(|change| change.area.left).collect();
             crate::diagnostics::log!(
-                "{} cells ({drawn} by the GPU, {left} tiles by the CPU, {spare} spare) in {:?}",
+                "{} cells at {lefts:?} ({drawn} by the GPU, {left} tiles by the CPU, {spare} spare) in {:?}",
                 changes.len(),
                 start.elapsed()
             );
@@ -788,7 +886,7 @@ mod tests {
         }
 
         fn row(&self, y: i32, left: i32, right: i32) -> &[Pixel] {
-            let (rect, surface) = &self.shown[&(left / CELL_WIDTH, y / CELL_HEIGHT)];
+            let (rect, surface) = &self.shown[&(left, y / CELL_HEIGHT)];
             // SAFETY: `paint` has returned.
             let pixels = unsafe { &*surface.pixels.get() };
             &pixels[(y - rect.top) as usize * surface.width + (left - rect.left) as usize..]
@@ -930,6 +1028,8 @@ mod tests {
         {
             scrolled = (scrolled + step) % 6000;
             page(&mut compositor, &kept, size, scrolled, frame % 2 == 0);
+            layers.keep_apart([0..0, 0..576, 0..700, 1500..4000][frame / 5 % 4].clone());
+            layers.set_scrolling(frame % 13 > 1);
             layers.paint(&mut compositor, IntRect::new(0, 0, size.0, size.1), false);
             layers.target.next_frame(frame as u32 % 3);
             if frame % 20 == 19 {
@@ -951,13 +1051,11 @@ mod tests {
                 platform_moves: false,
             });
             for (y, expected) in (0..).zip(data.chunks(size.0 as usize)) {
-                for (left, expected) in (0..)
-                    .step_by(CELL_WIDTH as usize)
-                    .zip(expected.chunks(CELL_WIDTH as usize))
-                {
-                    let row = layers.target.row(y, left, left + expected.len() as i32);
+                for &[left, right] in columns(&layers.breaks, size.0).array_windows() {
+                    assert!(layers.target.shown[&(left, 0)].0.right == right || right == size.0);
                     assert!(
-                        row == expected,
+                        layers.target.row(y, left, right)
+                            == &expected[left as usize..right as usize],
                         "frame {frame}, row {y}, from column {left}"
                     );
                 }

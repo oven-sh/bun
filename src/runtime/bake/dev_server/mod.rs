@@ -12,6 +12,7 @@
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
+use std::sync::Arc;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
@@ -82,7 +83,6 @@ mod router_glue;
 mod server_hmr_ffi;
 mod trace;
 mod watch;
-mod watcher_atomics;
 
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
@@ -96,7 +96,7 @@ use ensure_route::{
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use hmr_socket::hmr_socket_behavior;
-pub(crate) use hot_reload_event::HotReloadEvent;
+pub(crate) use hot_reload_event::{HotReloadEvent, PendingReloadEvent};
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
     is_allowed_dev_origin, on_outdated_js_corked, origin_forbidden,
@@ -105,7 +105,6 @@ pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, relative_path, to_opaque_file_id};
-pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
@@ -432,9 +431,8 @@ pub(crate) struct CurrentBundle {
 pub(crate) struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub(crate) route_queue: ArrayHashMap<route_bundle::Index, ()>,
-    /// If a reload event exists and should be drained. The information
-    /// for this watch event is in one of the `watch_events`
-    pub(crate) reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
+    /// `DevServer.pending_reload_event` is to be drained.
+    pub(crate) has_reload_event: bool,
     /// The list of requests that are blocked on this bundle.
     pub(crate) requests: deferred_request::List,
 }
@@ -461,8 +459,6 @@ pub(crate) struct DevServer {
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
-    /// How the file-watcher thread submits hot-reload events to the VM.
-    pub(crate) vm_handle: bun_jsc::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -505,20 +501,11 @@ pub(crate) struct DevServer {
     pub(crate) server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    // Note: the watcher thread owns this allocation at shutdown (it frees it
-    // in `thread_main` once `running` flips false). Auto-dropping a
-    // `Box<Watcher>` here would free the heap block while the watcher thread
-    // is still blocked in `GetQueuedCompletionStatus`/`read()` holding a
-    // `*mut Watcher` into it (and on Windows the kernel still has a pending
-    // `ReadDirectoryChangesW` against the inline `DirWatcher.buf`/`overlapped`).
-    // `ManuallyDrop` so `Drop for DevServer` can hand the raw pointer to
-    // `Watcher::shutdown` instead.
-    pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
+    pub(crate) bun_watcher: Arc<Watcher>,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    /// Heap-owned via `heap::alloc_nn` so a still-queued
-    /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
-    /// `next_event` check in `Drop`.
-    pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
+    pub(crate) pending_reload_event: Arc<PendingReloadEvent>,
+    /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.
+    pub(crate) spare_reload_event: HotReloadEvent,
     pub(crate) testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but

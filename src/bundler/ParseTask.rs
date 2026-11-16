@@ -2568,7 +2568,9 @@ pub mod parse_worker {
             };
 
             // Without a watcher, a file that the task opened closes here.
-            file_to_watch = entry.file.filter(|_| ctx.bun_watcher.is_some());
+            file_to_watch = entry
+                .file
+                .filter(|_| ctx.transpiler().resolver.watcher.is_some());
 
             let (bump, contents) = (worker.arena(), entry.contents);
             match run_with_source_code(&mut this, &mut worker, &mut step, &mut log, bump, contents)

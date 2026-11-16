@@ -318,9 +318,9 @@ impl c_ares::HostentHandler for Query {
             Ok(host) => {
                 self.resolve(|global| super::cares_jsc::hostent_to_js_response(host, global, b""))
             }
-            // `ares_gethostbyaddr` turns a failed PTR into `ARES_ENOTFOUND`
-            // (`next_lookup` → `end_aquery`). Node passes that string through
-            // `ToErrorCodeString`; it does not remap `ENODATA` here.
+            // Only query-level failures (no PTR answer) become `ARES_ENOTFOUND`
+            // via `next_lookup`. An answer that parses to no PTR stays
+            // `ARES_ENODATA` and is passed through like Node.
             // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.h#L266-L270
             Err(err) => drop(self.reject(err, b"getHostByAddr", true)),
         }

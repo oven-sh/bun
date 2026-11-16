@@ -1,3 +1,4 @@
+import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
@@ -1151,14 +1152,9 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
 // as the c-ares code `ETIMEOUT`. CI cannot point getaddrinfo at a failing
 // resolver, so this drives the same mapping the system backend, fetch() and
 // Bun.connect() use with the raw EAI_* status.
-async function dnsGetaddrinfoError(code, hostname) {
-  const internal = await import("bun:internal-for-testing");
-  return internal.dnsGetaddrinfoError(code, hostname);
-}
-
 describe("getaddrinfo status mapping", () => {
-  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", async () => {
-    const err = await dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
+  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
+    const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
     expect(err).toBeInstanceOf(Error);
     expect(err).toMatchObject({
       message: "getaddrinfo EAI_AGAIN redis.example",
@@ -1169,8 +1165,8 @@ describe("getaddrinfo status mapping", () => {
     });
   });
 
-  test("EAI_NONAME is still reported as ENOTFOUND, like Node", async () => {
-    expect(await dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
+  test("EAI_NONAME is still reported as ENOTFOUND, like Node", () => {
+    expect(dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
       message: "getaddrinfo ENOTFOUND redis.example",
       code: "ENOTFOUND",
       syscall: "getaddrinfo",
@@ -1179,11 +1175,14 @@ describe("getaddrinfo status mapping", () => {
   });
 });
 
-// A name that exists without the queried record type is NODATA. NXDOMAIN is
-// ENOTFOUND. dns.lookup stays on getaddrinfo, which reports a missing name as
-// ENOTFOUND. https://github.com/oven-sh/bun/issues/48928
+// A name that exists without the queried record type is NODATA; NXDOMAIN is
+// ENOTFOUND. Bun.dns.lookup with the c-ares backend reports both as ENOTFOUND.
+// https://github.com/oven-sh/bun/issues/48928
 describe("resolve* ENODATA vs ENOTFOUND", () => {
   const A_ONLY = "a-only.test.";
+  const AAAA_ONLY = "aaaa-only.test.";
+  const NO_ANY = "no-any.test.";
+  const NON_PTR_ADDRESS = "192.0.2.8";
   const MISSING = "missing.test.";
   const DUAL = "dual.test.";
   let socket;
@@ -1239,14 +1238,22 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
       if (qtype === 1 || qtype === 255) return { rcode: 0, rdata: A, rrtype: 1 };
       return { rcode: 0 };
     }
+    if (base === "aaaa-only.test") {
+      if (qtype === 28) return { rcode: 0, rdata: AAAA, rrtype: 28 };
+      return { rcode: 0 };
+    }
+    if (base === "no-any.test") return { rcode: 0 };
     // Empty NOERROR for this PTR: the name's zone exists and has no PTR.
     // Node's dns.reverse reports that as ENOTFOUND (gethostbyaddr), not ENODATA.
     if (qtype === 12 && base === "9.2.0.192.in-addr.arpa") return { rcode: 0 };
+    // An answer that is not a PTR is a parse failure, so it stays ENODATA.
+    if (qtype === 12 && base === "8.2.0.192.in-addr.arpa") return { rcode: 0, rdata: A, rrtype: 1 };
     // Search-domain probes must not hang.
     return { rcode: 3 };
   }
 
   beforeAll(async () => {
+    previousServers = dns.getServers();
     socket = dgram.createSocket("udp4");
     socket.on("message", (query, rinfo) => {
       const { qname, qtype } = parseQuestion(query);
@@ -1255,13 +1262,15 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
-    previousServers = dns.getServers();
     dns.setServers(["127.0.0.1:" + socket.address().port]);
   });
 
   afterAll(() => {
-    if (previousServers) dns.setServers(previousServers);
-    socket?.close();
+    try {
+      if (previousServers) dns.setServers(previousServers);
+    } finally {
+      socket?.close();
+    }
   });
 
   function errorOf(err) {
@@ -1338,6 +1347,28 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     expect(await callbackResult(resolver.resolve6.bind(resolver), DUAL)).toEqual({ ok: ["2001:db8::1"] });
   });
 
+  test("resolve4 of an AAAA-only name is ENODATA", async () => {
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(dns.getServers());
+    promises.setServers(dns.getServers());
+
+    expect(await promiseResult(promises.resolve4(AAAA_ONLY))).toEqual(nodata("queryA", AAAA_ONLY));
+    expect(await callbackResult(resolver.resolve4.bind(resolver), AAAA_ONLY)).toEqual(nodata("queryA", AAAA_ONLY));
+    expect(await promiseResult(promises.resolve6(AAAA_ONLY))).toEqual({ ok: ["2001:db8::1"] });
+    expect(await callbackResult(resolver.resolve6.bind(resolver), AAAA_ONLY)).toEqual({ ok: ["2001:db8::1"] });
+  });
+
+  test("resolveAny with no recognized records is ENODATA", async () => {
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(dns.getServers());
+    promises.setServers(dns.getServers());
+
+    expect(await promiseResult(promises.resolveAny(NO_ANY))).toEqual(nodata("queryAny", NO_ANY));
+    expect(await callbackResult(resolver.resolveAny.bind(resolver), NO_ANY)).toEqual(nodata("queryAny", NO_ANY));
+  });
+
   test("lookup of a missing hostname is still ENOTFOUND", async () => {
     // c-ares lookup of the fixture's NXDOMAIN name. System getaddrinfo's
     // EAI_NONAME → ENOTFOUND mapping is the test above; it does not query DNS.
@@ -1366,6 +1397,28 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     expect(await callbackResult(resolver.reverse.bind(resolver), "192.0.2.9")).toEqual(
       notFound("getHostByAddr", "192.0.2.9"),
     );
+  });
+
+  test("reverse of a non-PTR answer is ENODATA", async () => {
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(dns.getServers());
+    promises.setServers(dns.getServers());
+    expect(await promiseResult(promises.reverse(NON_PTR_ADDRESS))).toEqual(nodata("getHostByAddr", NON_PTR_ADDRESS));
+    expect(await callbackResult(resolver.reverse.bind(resolver), NON_PTR_ADDRESS)).toEqual(
+      nodata("getHostByAddr", NON_PTR_ADDRESS),
+    );
+  });
+
+  test("lookupService of an address whose PTR answer is not a PTR is ENOTFOUND", async () => {
+    expect(await promiseResult(dns_promises.lookupService(NON_PTR_ADDRESS, 80))).toMatchObject({
+      code: "ENOTFOUND",
+      syscall: "getnameinfo",
+    });
+    expect(await callbackResult(dns.lookupService, NON_PTR_ADDRESS, 80)).toMatchObject({
+      code: "ENOTFOUND",
+      syscall: "getnameinfo",
+    });
   });
 });
 

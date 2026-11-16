@@ -1,19 +1,22 @@
 use bun_core::ZStr;
 
-use crate::{ErrorCase, Fd, FdExt, Mode, O, Tag};
+use crate::{CloseOnDrop, Error, Fd, Mode, O, Tag};
 
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    destination_dir: Fd,
-    // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
-    tmpfilename: &'a ZStr,
-    pub fd: Fd,
+    pub file: CloseOnDrop,
+    entry: UnlinkOnDrop<'a>,
 }
 
-impl Drop for Tmpfile<'_> {
+struct UnlinkOnDrop<'a> {
+    dir: Fd,
+    name: &'a ZStr,
+}
+
+impl Drop for UnlinkOnDrop<'_> {
     fn drop(&mut self) {
-        let _ = crate::close(self.fd);
+        let _ = crate::unlinkat(self.dir, self.name);
     }
 }
 
@@ -27,28 +30,38 @@ impl<'a> Tmpfile<'a> {
         tmpfilename: &'a ZStr,
         perm: Mode,
     ) -> crate::Result<Tmpfile<'a>> {
-        let fd = crate::openat(
+        let file = crate::openat(
             destination_dir,
             tmpfilename,
             O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
             perm,
-        )?
-        .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
+        )
+        .map(CloseOnDrop::new)?;
+        let entry = UnlinkOnDrop {
+            dir: destination_dir,
+            name: tmpfilename,
+        };
 
         Ok(Tmpfile {
-            destination_dir,
-            tmpfilename,
-            fd,
+            file: file.make_lib_uv_owned_for_syscall(Tag::open)?,
+            entry,
         })
     }
 
-    pub fn finish(&mut self, destname: &ZStr) -> crate::Result<()> {
-        crate::move_file_z_with_handle(
-            self.fd,
-            self.destination_dir,
-            self.tmpfilename,
-            self.destination_dir,
-            destname,
-        )
+    /// A failure hands the file back.
+    pub fn finish(self, destname: &ZStr) -> Result<(), (Error, Self)> {
+        let UnlinkOnDrop { dir, name } = self.entry;
+        match crate::move_file_z_with_handle(self.file.fd(), dir, name, dir, destname) {
+            Ok(()) => {
+                self.keep();
+                Ok(())
+            }
+            Err(err) => Err((err, self)),
+        }
+    }
+
+    /// Closes the file and leaves it on disk.
+    pub fn keep(self) {
+        let _ = core::mem::ManuallyDrop::new(self.entry);
     }
 }

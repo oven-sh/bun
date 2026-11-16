@@ -20,7 +20,7 @@ use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use core::mem::MaybeUninit;
 
 pub mod fd;
-pub use fd::{ErrorCase, FdExt, MakeLibUvOwnedError, RawFd};
+pub use fd::{FdExt, MakeLibUvOwnedError, RawFd};
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;
@@ -164,7 +164,7 @@ pub mod dir_iterator {
     use super::Error;
     #[cfg(unix)]
     use super::dirent;
-    use super::{EntryKind, Fd, Result, Tag};
+    use super::{Dir, EntryKind, Fd, Result, Tag};
     use bun_core::ZStr;
     use bun_paths::OSPathChar;
 
@@ -693,6 +693,27 @@ pub mod dir_iterator {
 
     pub fn iterate(dir: Fd) -> WrappedIterator {
         WrappedIterator {
+            dir,
+            state: State::new(),
+        }
+    }
+
+    /// A [`WrappedIterator`] that the directory belongs to.
+    pub struct OwnedIterator {
+        dir: Dir,
+        state: State,
+    }
+    impl OwnedIterator {
+        pub fn dir(&self) -> Fd {
+            self.dir.fd()
+        }
+        pub fn next(&mut self) -> Result<Option<IteratorResult<'_>>> {
+            self.state.next(self.dir.fd())
+        }
+    }
+
+    pub fn iterate_owned(dir: Dir) -> OwnedIterator {
+        OwnedIterator {
             dir,
             state: State::new(),
         }
@@ -1449,7 +1470,7 @@ mod safe_libc {
     // competing definition) with the canonical signature.
     #[allow(suspicious_runtime_symbol_definitions)]
     unsafe extern "C" {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         pub(crate) safe fn close(fd: c_int) -> c_int;
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
@@ -3185,29 +3206,18 @@ mod posix_impl {
         let _ = for_shell; // only meaningful on macOS
         let mut fds = [0i32; 2];
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            let ty = ty | libc::SOCK_CLOEXEC | if nonblock { libc::SOCK_NONBLOCK } else { 0 };
-            check!(
-                safe_libc::socketpair(domain, ty, proto, &mut fds),
-                Tag::socketpair
-            );
-        }
+        let ty = ty | libc::SOCK_CLOEXEC | if nonblock { libc::SOCK_NONBLOCK } else { 0 };
+        check!(
+            safe_libc::socketpair(domain, ty, proto, &mut fds),
+            Tag::socketpair
+        );
+        let pair = fds.map(Fd::from_native);
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            check!(
-                safe_libc::socketpair(domain, ty, proto, &mut fds),
-                Tag::socketpair
-            );
-            let close_both = |e: Error| {
-                safe_libc::close(fds[0]);
-                safe_libc::close(fds[1]);
-                Err::<[Fd; 2], _>(e)
-            };
+        let pair = {
+            let pair = pair.map(crate::CloseOnDrop::new);
             // CLOEXEC first.
-            for &fd in &fds {
-                if let Err(e) = set_close_on_exec(Fd::from_native(fd)) {
-                    return close_both(e);
-                }
+            for end in &pair {
+                set_close_on_exec(end.fd())?;
             }
             // Darwin: SO_NOSIGPIPE on both fds — unless `for_shell`, in which
             // case bump RCVBUF/SNDBUF instead.
@@ -3219,14 +3229,14 @@ mod posix_impl {
                     // SAFETY: setsockopt on freshly-created socketpair fds.
                     unsafe {
                         libc::setsockopt(
-                            fds[1],
+                            pair[1].fd().native(),
                             libc::SOL_SOCKET,
                             libc::SO_RCVBUF,
                             core::ptr::from_ref::<i32>(&so_recvbuf).cast(),
                             core::mem::size_of::<i32>() as u32,
                         );
                         libc::setsockopt(
-                            fds[0],
+                            pair[0].fd().native(),
                             libc::SOL_SOCKET,
                             libc::SO_SNDBUF,
                             core::ptr::from_ref::<i32>(&so_sendbuf).cast(),
@@ -3235,11 +3245,11 @@ mod posix_impl {
                     }
                 } else {
                     let on: libc::c_int = 1;
-                    for &fd in &fds {
+                    for end in &pair {
                         // SAFETY: setsockopt on freshly-created socketpair fds.
                         if unsafe {
                             libc::setsockopt(
-                                fd,
+                                end.fd().native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_NOSIGPIPE,
                                 core::ptr::from_ref::<i32>(&on).cast(),
@@ -3247,26 +3257,28 @@ mod posix_impl {
                             )
                         } < 0
                         {
-                            return close_both(Error::from_code_int(last_errno(), Tag::setsockopt));
+                            return Err(Error::from_code_int(last_errno(), Tag::setsockopt));
                         }
                     }
                 }
             }
             // O_NONBLOCK via GETFL→OR→SETFL (don't clobber existing flags).
             if nonblock {
-                for &fd in &fds {
+                for end in &pair {
+                    let fd = end.fd().native();
                     // SAFETY: `fd` is a live descriptor just returned by `socketpair`.
                     let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
                     if fl < 0
                         // SAFETY: same `fd`; F_SETFL takes an integer arg, no pointers.
                         || unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) } < 0
                     {
-                        return close_both(Error::from_code_int(last_errno(), Tag::fcntl));
+                        return Err(Error::from_code_int(last_errno(), Tag::fcntl));
                     }
                 }
             }
-        }
-        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])].map(move_above_stdio))
+            pair.map(crate::CloseOnDrop::into_raw)
+        };
+        Ok(pair.map(move_above_stdio))
     }
 
     /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
@@ -4055,14 +4067,13 @@ mod windows_impl {
         let facts = bun_paths::classify_rel_t(path.as_bytes(), bun_paths::PathFormat::Windows);
         // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
         let made = if facts.climbs_above_start {
-            super::open_dir_at_windows_a(dir, path.as_bytes(), options)?
+            super::open_dir_at_windows_a(dir, path.as_bytes(), options)
         } else {
             let mut wbuf = bun_paths::w_path_buffer_pool::get();
             let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
-            super::open_dir_at_windows_nt_path(dir, wpath, options)?
+            super::open_dir_at_windows_nt_path(dir, wpath, options)
         };
-        made.close();
-        Ok(())
+        made.map(super::File::from_fd).map(drop)
     }
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
@@ -8613,6 +8624,11 @@ impl CloseOnDrop {
     /// As [`File::into_raw`].
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).0
+    }
+    /// As [`File::make_lib_uv_owned_for_syscall`].
+    pub fn make_lib_uv_owned_for_syscall(mut self, syscall_tag: Tag) -> Maybe<Self> {
+        self.0 = self.0.make_lib_uv_owned_for_syscall(syscall_tag)?;
+        Ok(self)
     }
 }
 impl From<File> for CloseOnDrop {

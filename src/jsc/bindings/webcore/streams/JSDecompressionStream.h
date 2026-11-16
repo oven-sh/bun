@@ -6,6 +6,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 
+#include "JSCompressionStreamShared.h"
 #include "JSDOMGlobalObject.h"
 #include "JSTransformStream.h"
 #include "StreamConstructor.h"
@@ -16,8 +17,10 @@ class JSDecompressionStream final : public JSTransformStream {
 public:
     using Base = JSTransformStream;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSDecompressionStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSDecompressionStream*>(cell)->~JSDecompressionStream(); }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -35,7 +38,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    void* m_coder { nullptr };
+    std::unique_ptr<CompressionStreamCoder> m_coder;
 
 private:
     JSDecompressionStream(JSC::VM&, JSC::Structure*);

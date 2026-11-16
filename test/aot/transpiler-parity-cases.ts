@@ -42,6 +42,8 @@ const skipped: Record<string, string> = {
 const untypedJsxRuntime = "TS7016: react/jsx-runtime, which an element stands for, has no type declarations";
 const undeclaredIntrinsicElements = "TS7026: nothing declares JSX.IntrinsicElements";
 const fastRefresh = "bundler > a hook call in a method, with React Fast Refresh";
+const fastRefreshDefault = "bundler > a default export, with React Fast Refresh";
+const noFastRefresh = "--aot applies no React Fast Refresh, and the test prints what the transform signs and registers";
 const classFields = "tsconfig compilerOptions.useDefineForClassFields";
 const fieldOverridesAccessor = "TS2610: a field overrides an accessor of the base class";
 const decorators = "ES Decorators";
@@ -89,6 +91,14 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: "TS2339: the class C declares neither c nor v",
     [`${fastRefresh} > jsx/FastRefreshSiblingSignaturesAreDistinct`]:
       "TS2488: `make` does not return a list on every path",
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultFunctionWithHookEsm`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultFunctionWithHookCli`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultFunctionWithHookMinifyIdentifiers`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshNamedDefaultHooks-esm`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultFunctionWithHookWrapped`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultFunctionWithTopLevelUsing`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultExpressionsInOneChunk`]: noFastRefresh,
+    [`${fastRefreshDefault} > jsx/FastRefreshDefaultExpressionsInOneChunkWrapped`]: noFastRefresh,
   },
   "test/bundler/esbuild/ts.test.ts": {
     "bundler > ts/DeclareClassFields": "TS2304: nothing declares c, d, C and D",

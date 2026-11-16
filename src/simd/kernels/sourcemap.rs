@@ -346,7 +346,7 @@ pub(crate) mod simd {
     }
 
     /// Also returns where the scalar decoder has to resume. Leaves room for up to 15 rows unused.
-    #[export(up_to = avx2)]
+    #[export(up_to = avx2, up_to = neon)]
     pub fn parse_mappings<'a>(
         bytes: &[u8],
         out: ColumnsOut<'a>,

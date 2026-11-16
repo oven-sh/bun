@@ -5,6 +5,7 @@ mod common;
 
 use bun_simd::{Int, Matches, Out, SharedU8, SharedWriter, Sink, Source};
 use common::on_each_target;
+use std::cell::Cell;
 use std::fmt::Debug;
 use std::hint::black_box;
 use std::ops::Range;
@@ -52,7 +53,7 @@ fn shared(slice: &mut [u8]) -> &[AtomicU8] {
 
 #[bun_simd::foreach_target]
 mod simd {
-    use isa::{U8, U16, Vector};
+    use isa::{U8, U16, U32, U64, Vector, x128};
 
     /// The lanes around the slice match too, so a look outside of it changes the result.
     fn searches<T, S, const N: usize>(alignments: usize, view: fn(&mut [T]) -> &[S])
@@ -235,23 +236,64 @@ mod simd {
         &mut to[..len]
     }
 
-    /// In each of the three ways.
+    /// In both ways.
     fn append_plus_one(from: &[u8], to: &mut impl Sink) {
+        let from: Vec<u16> = from.iter().map(|&byte| byte.into()).collect();
         let from = &from[..from.len().min(to.remaining())];
+        let plus_one = |from: &[u16]| {
+            let [low, high] = U16::load_or_zero(from);
+            U8::narrow(low, high) + 1
+        };
         let (first, second) = from.split_at(from.len() / 2);
-        for part in [first, second] {
-            let done = U8::append_chunks(to, part, |at, chunk| {
-                assert_eq!(part[at..].as_ptr(), chunk.as_ptr());
-                (at < 2 * U8::LEN).then(|| U8::load(chunk) + 1)
+        for (part, chunks) in [(first, from.len() % 8), (second, usize::MAX)] {
+            let (start, left) = (to.len(), Cell::new(chunks));
+            U8::append_chunks(to, part, |chunk| {
+                left.set(left.get().checked_sub(1)?);
+                Some(plus_one(chunk))
             });
-            let rest = &part[done..];
-            let (short, rest) = rest.split_at(rest.len() % U8::LEN);
-            if let Some(partial) = U8::load_partial(short) {
-                (partial.lanes + 1).append_partial(to, short.len());
+            let want = match part.len() {
+                len if len < U8::LEN / 2 => 0,
+                len if len.div_ceil(U8::LEN) > chunks => chunks * U8::LEN,
+                len => len,
+            };
+            assert_eq!(to.len() - start, want);
+            let mut rest = &part[want..];
+            while rest.len() >= U8::LEN {
+                plus_one(rest).append_partial(to, U8::LEN - 1);
+                rest = &rest[U8::LEN - 1..];
             }
-            to.extend_with(rest, |byte| Some(byte + 1));
+            // At the very end, there is no room for more.
+            let is_last = rest.len() == to.remaining();
+            plus_one(rest).append_partial(to, if is_last { U8::LEN - 1 } else { rest.len() });
         }
         assert_eq!(to.len(), from.len());
+    }
+
+    /// `view` gives the input.
+    fn stops<S: Source<Lane = u8>>(alignments: usize, view: fn(&mut [u8]) -> &[S]) {
+        let (mut from, mut to) = (Room::new(0), Room::new(7));
+        let (from, to) = (from.all(), to.all());
+        for range in ranges::<u8>(U8::LEN, alignments).filter(|it| it.len() < 10 * U8::LEN) {
+            let (start, len) = (range.start, range.len());
+            from[range.clone()].fill(1);
+            for at in (0..=len).rev() {
+                from[start + at] = 0;
+                let (input, output) = (view(&mut from[range.clone()]), &mut to[range.clone()]);
+                let got =
+                    U8::map_to_shared_until(input, shared(output), |v| v + 1, |v| v.simd_eq(0));
+                assert_eq!(got, at);
+                assert!(output[..at].iter().all(|&byte| byte == 2));
+                output[..at].fill(7);
+                assert!(to[..start + len + U8::LEN].iter().all(|&byte| byte == 7));
+                let mut both = from[range.clone()].to_vec();
+                let view = shared(&mut both);
+                let got = U8::map_to_shared_until(view, view, |v| v + 1, |v| v.simd_eq(0));
+                assert_eq!((got, &both[at..]), (at, &from[start + at..start + len]));
+                assert!(both[..at].iter().all(|&byte| byte == 2));
+                from[start + at] = u8::from(at < len && at % 3 != 0);
+            }
+            from[range].fill(0);
+        }
     }
 
     fn shared_pairs(alignments: usize) {
@@ -282,15 +324,15 @@ mod simd {
         searches::<u8, _, 32>(alignments, plain);
         searches::<u16, _, 16>(alignments, plain);
         searches::<u16, _, { U16::LEN }>(alignments, plain);
-        searches::<u32, _, { isa::U32::LEN }>(alignments, plain);
-        searches::<u64, _, { isa::U64::LEN }>(alignments, plain);
+        searches::<u32, _, { U32::LEN }>(alignments, plain);
+        searches::<u64, _, { U64::LEN }>(alignments, plain);
         shared_pairs(alignments);
         two_matches::<u8, _, { U8::LEN }>(alignments, plain);
         two_matches::<u8, _, { U8::LEN }>(alignments, shared);
         two_matches::<u16, _, { U16::LEN }>(alignments, plain);
         matches::<u8, { U8::LEN }>(alignments);
         matches::<u16, { U16::LEN }>(alignments);
-        matches::<u64, { isa::U64::LEN }>(alignments);
+        matches::<u64, { U64::LEN }>(alignments);
         counts::<u8, _, { U8::LEN }>(alignments, plain);
         counts::<u8, _, { U8::LEN }>(alignments, shared);
         counts::<u16, _, { U16::LEN }>(alignments, plain);
@@ -326,19 +368,40 @@ mod simd {
         maps(bytes(), |from, to| {
             append_plus_one(from, &mut SharedWriter::new(shared(to)))
         });
-        maps(bytes().filter(|it| it.len() >= 2 * U8::LEN), |from, to| {
-            let both = shared(copy(from, to));
-            U8::append_chunks(&mut SharedWriter::new(both), both, |_, it| {
-                Some(U8::load(it) + 1)
-            });
+        stops(alignments, plain);
+        stops(alignments, shared);
+        maps(ranges::<u8>(16, alignments), |from, to| {
+            x128::U8::map_to_shared(from, shared(to), |v| v + 1)
         });
-        let words = || ranges::<u16>(U16::LEN, alignments);
-        maps::<u16>(words(), |from, to| {
-            U16::map(from, to.into(), |v| v + 1);
+        plain_maps::<u8, 16>(alignments);
+        plain_maps::<u8, 32>(alignments);
+        plain_maps::<u16, { U16::LEN }>(alignments);
+        plain_maps::<u32, { U32::LEN }>(alignments);
+        plain_maps::<u64, { U64::LEN }>(alignments);
+    }
+
+    fn plain_maps<T: Int<N> + From<u8> + PartialEq + Debug, const N: usize>(alignments: usize) {
+        let (ranges, one) = (|| ranges::<T>(N, alignments), T::from(1));
+        maps::<T>(ranges(), |from, to| {
+            Vector::map(from, to.into(), |v: Vector<T, N>| v + one);
         });
-        maps(words(), |from, to| {
-            U16::map_in_place(copy(from, to), |v| v + 1)
+        maps(ranges(), |from, to| {
+            Vector::map_in_place(copy(from, to), |v: Vector<T, N>| v + one)
         });
+        maps(ranges(), |from, to| {
+            Vector::zip_in_place(copy(from, to), from, |a: Vector<T, N>, b| a + a - b + one)
+        });
+    }
+
+    fn pairs_stay_together<T: Int<N> + From<u8> + PartialEq + Debug, const N: usize>() {
+        for len in (0..80).step_by(2) {
+            let from: Vec<T> = (0..len).map(T::from).collect();
+            let want: Vec<T> = (0..len).map(|i| T::from(i ^ 1)).collect();
+            let (mut a, mut b) = (from.clone(), from.clone());
+            Vector::map(&from, a[..].as_mut().into(), Vector::<T, N>::swap_pairs);
+            Vector::map_in_place(&mut b, Vector::<T, N>::swap_pairs);
+            assert_eq!([&a, &b], [&want; 2]);
+        }
     }
 
     fn padded<T, S, const N: usize>(view: fn(&mut [T]) -> &[S])
@@ -354,6 +417,12 @@ mod simd {
         for range in ranges::<T>(N, N).filter(|it| it.len() < N) {
             let (mut want, len) = ([T::from(0); N], range.len());
             want[..len].copy_from_slice(&room[range.clone()]);
+            let (mut to, lanes) = (Room::new(T::from(0)), Vector::<T, N>::iota() + T::from(1));
+            let to = to.all();
+            let stored = lanes.store_partial(to[range.clone()].as_mut().into());
+            assert_eq!(stored, &lanes.to_array()[..len]);
+            stored.fill(T::from(0));
+            assert!(to.iter().all(|&lane| lane == T::from(0)));
             let Some(padded) = Vector::<T, N>::load_padded(black_box(view(&mut room[range])))
             else {
                 assert_eq!(len, 0);
@@ -380,6 +449,9 @@ mod simd {
 
     #[export]
     pub fn groups_stay_together() {
+        pairs_stay_together::<u16, { U16::LEN }>();
+        pairs_stay_together::<u32, { U32::LEN }>();
+        pairs_stay_together::<u64, { U64::LEN }>();
         for (size, count) in [2, 4, 8]
             .into_iter()
             .flat_map(|it| (0..40).map(move |n| (it, n)))
@@ -399,15 +471,16 @@ mod simd {
 
     #[export]
     pub fn short_slices() {
-        assert!(U8::load_partial::<u8>(&[]).is_none());
         padded::<u8, _, { U8::LEN }>(plain);
         padded::<u8, _, { U8::LEN }>(shared);
         padded::<u8, _, 16>(plain);
+        padded::<u8, _, 32>(plain);
+        padded::<u16, _, 16>(plain);
         padded::<u16, _, { U16::LEN }>(plain);
-        padded::<u32, _, { isa::U32::LEN }>(plain);
-        padded::<u64, _, { isa::U64::LEN }>(plain);
-        let (mut from, mut to) = (Room::new(0), Room::new(0));
-        let (from, to) = (from.all(), to.all());
+        padded::<u32, _, { U32::LEN }>(plain);
+        padded::<u64, _, { U64::LEN }>(plain);
+        let mut from = Room::new(0);
+        let from = from.all();
         for (i, from) in from.iter_mut().enumerate() {
             *from = 1 + (i % 251) as u8;
         }
@@ -416,41 +489,13 @@ mod simd {
             want[..range.len()].copy_from_slice(&from[range.clone()]);
             assert_eq!(U8::pad_block(black_box(&from[range])), want);
         }
-        for range in ranges::<u8>(U8::LEN, U8::LEN).filter(|it| it.len() < U8::LEN) {
-            let (slice, len) = (black_box(&from[range.clone()]), range.len());
-            let Some(partial) = U8::load_partial(slice) else {
-                assert_eq!(len, 0);
-                continue;
-            };
-            let at = |index: u8| slice.get(usize::from(index)).copied().unwrap_or(0);
-            assert_eq!(
-                partial.indices().to_array().map(at),
-                partial.lanes.to_array()
-            );
-            to[range.clone()].copy_from_slice(slice);
-            let of_shared = U8::load_partial(shared(&mut to[range.clone()])).unwrap();
-            assert_eq!(of_shared.lanes.to_array(), partial.lanes.to_array());
-            if len < U16::LEN {
-                let wide: Vec<u16> = slice.iter().map(|&byte| 0x700 | u16::from(byte)).collect();
-                let lanes = U16::load_partial(black_box(&wide)).unwrap().lanes;
-                let to = to[range].as_mut().into();
-                assert_eq!(U8::narrow(lanes, lanes).store_partial(to), slice);
-            }
-            if len < 16 {
-                let wide: Vec<u16> = slice.iter().map(|&byte| byte.into()).collect();
-                let lanes = Vector::<u16, 16>::load_partial(black_box(&wide))
-                    .unwrap()
-                    .lanes;
-                let mut both_ways = (vec![0; len], vec![0; len]);
-                lanes
-                    .cast::<u8>()
-                    .store_partial(both_ways.0[..].as_mut().into());
-                let lanes = Vector::<u8, 16>::load_partial(slice).unwrap().lanes;
-                lanes
-                    .cast::<u16>()
-                    .store_partial(both_ways.1[..].as_mut().into());
-                assert_eq!(both_ways, (slice.to_vec(), wide));
-            }
+        for range in ranges::<u8>(U8::LEN, 2).filter(|it| it.len() <= 5 * U8::LEN) {
+            let (mut want, len) = ([[0; U8::LEN]; 4], range.len().min(4 * U8::LEN));
+            want.as_flattened_mut()[..len].copy_from_slice(&from[range.start..][..len]);
+            let got: [_; 4] = U8::load_or_zero(black_box(&from[range.clone()]));
+            assert_eq!(got.map(U8::to_array), want);
+            let [a, b] = U8::load_or_zero(shared(&mut from[range]));
+            assert_eq!([a.to_array(), b.to_array()], want[..2]);
         }
     }
 
@@ -493,6 +538,21 @@ mod simd {
     }
 
     #[export]
+    pub fn swap_pairs(bytes: &[AtomicU8]) {
+        U8::map_to_shared(bytes, bytes, U8::swap_pairs);
+    }
+
+    #[export]
+    pub fn load_a_whole_vector() {
+        U8::load_padded(&[0; U8::LEN]);
+    }
+
+    #[export]
+    pub fn store_a_whole_vector() {
+        U8::zero().store_partial([0; U8::LEN][..].as_mut().into());
+    }
+
+    #[export]
     pub fn append_a_whole_vector(to: &[AtomicU8]) {
         U8::zero().append_partial(&mut SharedWriter::new(to), U8::LEN);
     }
@@ -522,6 +582,37 @@ fn short_slices() {
 #[should_panic]
 fn append_a_whole_vector() {
     simd::append_a_whole_vector(shared(&mut [0; 100]));
+}
+
+#[test]
+#[should_panic]
+fn load_a_whole_vector() {
+    simd::load_a_whole_vector();
+}
+
+#[test]
+#[should_panic]
+fn store_a_whole_vector() {
+    simd::store_a_whole_vector();
+}
+
+#[test]
+fn readers_see_only_old_and_new_values() {
+    on_each_target(|| {
+        for len in [2, 6, 18, 70] {
+            let bytes: Vec<_> = (0..len).map(|i| AtomicU8::new(1 + i % 2)).collect();
+            let is_done = AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    while !is_done.load(Relaxed) {
+                        assert!(bytes.iter().all(|byte| byte.load(Relaxed) != 0));
+                    }
+                });
+                (0..100_000).for_each(|_| simd::swap_pairs(&bytes));
+                is_done.store(true, Relaxed);
+            });
+        }
+    });
 }
 
 #[test]

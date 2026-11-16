@@ -336,11 +336,13 @@ fn pieces(js: &[u8]) {
         compare!("lower_ascii of 20000 {name}", |k| {
             each(all, |t| _ = k::lower_ascii(t, out.as_mut_slice().into()))
         });
-        compare!("copy_ascii_prefix of 20000 {name}", |k| {
+        compare!(
+            "copy_ascii_prefix of 20000 {name}",
+            each(all, |t| _ = highway::copy_ascii_prefix(t, out)),
             each(all, |t| {
-                _ = k::copy_ascii_prefix(t, out.as_mut_slice().into())
+                _ = rust::copy_ascii_prefix_to_shared(t, AtomicU8::from_mut_slice(out))
             })
-        });
+        );
         compare!("fill_with_mask of 20000 {name}", |k| {
             each(all, |t| {
                 _ = k::fill_with_mask([1, 2, 3, 4], out.as_mut_slice().into(), t)
@@ -348,7 +350,7 @@ fn pieces(js: &[u8]) {
         });
         compare!("encode_hex_lower of 20000 {name}", |k| {
             each(all, |t| {
-                _ = k::encode_hex_lower(t, out.as_chunks_mut().0.into())
+                _ = k::encode_hex_lower(t, out.as_mut_slice().into())
             })
         });
     }
@@ -585,7 +587,7 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
 
 #[optimize(size)]
 fn conversions(js: &[u8]) {
-    for n in [12, 32, 64, 100, 16384] {
+    for n in [3, 12, 16, 20, 32, 64, 100, 16384] {
         let (t, out, wide_out) = (&js[..n], &mut vec![0; 2 * n], &mut vec![0; n]);
         let wide: &Vec<u16> = &t.iter().map(|&byte| byte.into()).collect();
         compare!("copy_u16_to_u8 {n}", |k| {
@@ -598,7 +600,7 @@ fn conversions(js: &[u8]) {
             k::fill_with_mask([1, 2, 3, 4], opaque(&mut out[..]).into(), opaque(t))
         });
         compare!("encode_hex_lower {n}", |k| {
-            k::encode_hex_lower(opaque(t), opaque(out.as_chunks_mut().0).into())
+            k::encode_hex_lower(opaque(t), opaque(&mut out[..]).into())
         });
         let hex = &out.clone();
         compare!("decode_hex {n}", |k| {
@@ -610,9 +612,6 @@ fn conversions(js: &[u8]) {
         });
         compare!("lower_ascii {n}", |k| {
             k::lower_ascii(opaque(t), opaque(&mut out[..]).into())
-        });
-        compare!("copy_ascii_prefix {n}", |k| {
-            k::copy_ascii_prefix(opaque(t), opaque(&mut out[..]).into())
         });
         compare!("mask_in_place {n}", |k| {
             k::mask_in_place([1, 2, 3, 4], opaque(&mut out[..n]))
@@ -777,8 +776,8 @@ fn from_shared(js: &[u8]) {
         );
         compare!(
             "shared: encode_hex_lower {n}",
-            highway::encode_hex_lower(opaque(t), out.as_chunks_mut().0),
-            rust::encode_hex_lower_shared(shared(opaque(t)), out.as_chunks_mut().0.into())
+            highway::encode_hex_lower(opaque(t), out),
+            rust::encode_hex_lower_shared(shared(opaque(t)), out.as_mut_slice().into())
         );
         compare!(
             "shared: fill_with_mask {n}",
@@ -902,7 +901,7 @@ pub(crate) fn at_the_end_of_a_page() {
             _ = rust::copy_u16_to_u8(wide, t.into())
         });
         both("encode_hex_lower", texts, |t| {
-            rust::encode_hex_lower(text, t.as_chunks_mut().0.into());
+            rust::encode_hex_lower(text, t.into());
         });
         both("png_unfilter", texts, |t| rust::png_unfilter(2, 1, t, text));
     }

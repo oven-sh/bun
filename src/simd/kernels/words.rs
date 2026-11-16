@@ -84,7 +84,7 @@ pub(crate) mod simd {
     }
 
     /// `data` needs 16 bytes for each group.
-    #[export(up_to = avx2)]
+    #[export(up_to = avx2, up_to = neon)]
     pub fn pack_words<'a, 'b>(
         words: &[[u32; 4]],
         controls: Out<'a, u8>,
@@ -127,7 +127,7 @@ pub(crate) mod simd {
     }
 
     /// Stops 16 bytes before the end of `data`, and returns how much of it was used.
-    #[export]
+    #[export(up_to = neon)]
     pub fn unpack_words<'a>(
         controls: &[u8],
         data: &[u8],

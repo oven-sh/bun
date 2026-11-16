@@ -172,6 +172,7 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 | `#[export]`                             | All but `avx512_skx`         |
 | `#[export(long_running)]`               | All                          |
 | `#[export(up_to = avx2)]`               | None for x86-64 above `avx2` |
+| `#[export(up_to = neon)]`               | No `sve2`                    |
 | `#[export(up_to = avx2, up_to = neon)]` | `avx2`, `sse4` and `neon`    |
 | `#[export(baseline)]`                   | The lowest of each family    |
 
@@ -185,10 +186,11 @@ The other ops are `core::simd`, which is safe with any features. No op outside o
 
 What you have to trust:
 
-- **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
+- **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. SVE does not count on Linux before 6.2 but for 5.14.0, as [for glibc](https://sourceware.org/pipermail/glibc-cvs/2024q2/084813.html): it traps after each system call. Arm requires and LLVM assumes that the length of its vectors is a power of two. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque`**, which is `asm!` without an instruction.
 - **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests.
+- **Masked loads and stores.** `load_masked_to_last` and `fill_masked` touch only the lanes that are in the slice. The address of the first lane may be before it.
 - **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[AtomicU8]` for output. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. The loops do not depend on two reads giving the same value.
 
 ## What the ops avoid

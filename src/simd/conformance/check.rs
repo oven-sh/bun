@@ -302,14 +302,14 @@ impl Round<'_> {
         name: &'static str,
         from: &[T],
         highway: impl Fn(&[T], &mut [u8]) -> usize,
-        rust: for<'a> fn(&[T], Out<'a, u8>) -> &'a mut [u8],
+        rust: Option<for<'a> fn(&[T], Out<'a, u8>) -> &'a mut [u8]>,
         to_shared: fn(&[T], &[AtomicU8]) -> usize,
     ) {
         let ([a, b, ..], mut want) = (&mut *self.rooms, vec![0; from.len()]);
         let (len, ones) = (highway(from, &mut want), vec![0xFF; from.len()]);
         want[len..].fill(0xFF);
         let (from, got) = (a.copy_of(from, self.offset), b.copy_of(&ones, self.offset));
-        let is_same = len == rust(from, got.into()).len() && want == got;
+        let is_same = rust.is_none_or(|rust| len == rust(from, got.into()).len() && want == got);
         got.fill(0xFF);
         let got_len = to_shared(from, AtomicU8::from_mut_slice(got));
         self.failures
@@ -342,7 +342,7 @@ impl Round<'_> {
             "copy_u16_to_u8",
             &any,
             all(highway::copy_u16_to_u8),
-            rust::copy_u16_to_u8,
+            Some(rust::copy_u16_to_u8),
             rust::copy_u16_to_shared,
         );
         self.from_to(
@@ -362,17 +362,20 @@ impl Round<'_> {
             "copy_ascii_prefix",
             text,
             copy,
-            rust::copy_ascii_prefix,
+            None,
             rust::copy_ascii_prefix_to_shared,
         );
 
         let hex = all(highway::encode_hex_lower);
-        self.from_to("encode_hex_lower", (text, len), &hex, |from, to| {
+        self.from_to("encode_hex_lower", (text, 2 * len), &hex, |from, to| {
             rust::encode_hex_lower(from, to)
         });
-        self.from_to("encode_hex_lower_shared", (text, len), &hex, |from, to| {
-            rust::encode_hex_lower_shared(shared(from), to)
-        });
+        self.from_to(
+            "encode_hex_lower_shared",
+            (text, 2 * len),
+            &hex,
+            |from, to| rust::encode_hex_lower_shared(shared(from), to),
+        );
         let fill = all(|from, to| highway::fill_with_mask(mask, to, from));
         self.from_to("fill_with_mask", (text, len), &fill, |from, to| {
             rust::fill_with_mask(mask, to, from)
@@ -399,7 +402,7 @@ impl Round<'_> {
             "decode_hex",
             digits.as_chunks().0,
             decode,
-            rust::decode_hex,
+            Some(rust::decode_hex),
             rust::decode_hex_to_shared,
         );
 
@@ -413,7 +416,7 @@ impl Round<'_> {
             "decode_hex16",
             digits.as_chunks().0,
             decode,
-            rust::decode_hex16,
+            Some(rust::decode_hex16),
             rust::decode_hex16_to_shared,
         );
 

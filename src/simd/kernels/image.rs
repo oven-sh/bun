@@ -55,7 +55,7 @@ pub(crate) mod simd {
     }
 
     /// Resamples each row of `src`.
-    #[export(up_to = avx2)]
+    #[export(up_to = avx2, up_to = neon)]
     pub fn horizontal(src: &[Pixel], src_w: usize, src_h: usize, axis: &Axis, dst: &mut [Pixel]) {
         let (taps, dst_w) = (axis.taps(), axis.spans.len());
         let from = |y: usize| &src[y * src_w..][..src_w];
@@ -103,7 +103,7 @@ pub(crate) mod simd {
     }
 
     /// Resamples each column of `src`.
-    #[export]
+    #[export(up_to = neon)]
     pub fn vertical<'a>(
         src: &[Pixel],
         width: usize,
@@ -156,7 +156,7 @@ pub(crate) mod simd {
         }
     }
 
-    #[export]
+    #[export(up_to = neon)]
     pub fn flip_horizontally<'a>(
         src: &[Pixel],
         width: usize,
@@ -258,7 +258,7 @@ pub(crate) mod simd {
     }
 
     /// The index of the first color at the least distance.
-    #[export]
+    #[export(up_to = neon)]
     pub fn nearest_in_palette(palette: &[Pixel], color: Pixel) -> u8 {
         let palette = &palette[..palette.len().min(256)];
         let padded = || {
@@ -298,7 +298,7 @@ pub(crate) mod simd {
         }
     }
 
-    #[export]
+    #[export(up_to = neon)]
     pub fn cmyk_to_rgba(mut pixels: &mut [Pixel]) {
         if isa::Isa::HAS_INTERLEAVED_MEMORY {
             let blocks;
@@ -328,7 +328,7 @@ pub(crate) mod simd {
         });
     }
 
-    #[export(long_running)]
+    #[export(long_running, up_to = neon)]
     pub fn modulate(pixels: &mut [Pixel], brightness: f32, saturation: f32) {
         U8::map_in_place(pixels.as_flattened_mut(), |v| {
             let v: U32 = v.bitcast();

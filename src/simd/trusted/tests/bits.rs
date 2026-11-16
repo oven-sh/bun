@@ -377,3 +377,31 @@ fn avx512_needs_darwin_21_3() {
     }
     assert_eq!(x86_64::saved_by_darwin(0x03, true, b"22.0.0\0"), 0xE3);
 }
+
+#[test]
+fn sve_needs_linux_6_2() {
+    let before = [
+        "4.15.0",
+        "5.10.1",
+        "5.14.21-150500",
+        "5.15.0-1",
+        "6.1.112-122.amzn2023",
+        "6",
+        "x.y",
+        "",
+    ];
+    let since = [
+        "5.14.0-427.el9",
+        "6.2",
+        "6.2-rc1",
+        "6.12.3",
+        "7.0.0",
+        "10.1.0",
+    ];
+    for (releases, kept) in [(&before[..], !(1 << 22)), (&since, !0)] {
+        for release in releases.iter().map(|release| format!("{release}\0\0")) {
+            let got = aarch64::kept_by_linux(!0, release.as_bytes());
+            assert_eq!(got, kept, "{release}");
+        }
+    }
+}

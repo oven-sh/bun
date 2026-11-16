@@ -116,3 +116,11 @@ impl<A: Arch> Features<A> {
         Self::from_bits(usable)
     }
 }
+
+/// Of the release of a kernel.
+pub(crate) fn major_and_minor(release: &[u8]) -> Option<(u32, u32)> {
+    let mut numbers = release
+        .split(|byte| !byte.is_ascii_digit())
+        .map(|digits| str::from_utf8(digits).ok()?.parse().ok());
+    numbers.next()?.zip(numbers.next()?)
+}

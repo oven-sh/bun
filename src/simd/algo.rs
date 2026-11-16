@@ -510,8 +510,8 @@ mod simd {
             if to.len() >= N {
                 return to.fill_chunks(from, |_, chunk| Some(f(Self::load(chunk)).to_array()));
             }
-            match Self::load_partial_inline(&from[..to.len()]) {
-                Some(partial) => f(partial.lanes).store_partial_inline(to),
+            match Self::load_pieces(&from[..to.len()]) {
+                Some(pieces) => f(pieces).store_pieces(to),
                 None => &mut [],
             }
         }
@@ -519,8 +519,8 @@ mod simd {
         /// `slice[i] = f(slice[i])`
         pub fn map_in_place(slice: &mut [T], f: impl Fn(Self) -> Self) {
             let Some((_, last)) = slice.split_last_chunk() else {
-                if let Some(partial) = Self::load_partial_inline(slice) {
-                    f(partial.lanes).store_partial_inline(slice.into());
+                if let Some(pieces) = Self::load_pieces(slice) {
+                    f(pieces).store_pieces(slice.into());
                 }
                 return;
             };
@@ -541,12 +541,9 @@ mod simd {
             let (len, other) = (slice.len(), &other[..slice.len()]);
             let (Some((_, a)), Some((_, b))) = (slice.split_last_chunk(), other.split_last_chunk())
             else {
-                let (a, b) = (
-                    Self::load_partial_inline(slice),
-                    Self::load_partial_inline(other),
-                );
+                let (a, b) = (Self::load_pieces(slice), Self::load_pieces(other));
                 if let (Some(a), Some(b)) = (a, b) {
-                    f(a.lanes, b.lanes).store_partial_inline(slice.into());
+                    f(a, b).store_pieces(slice.into());
                 }
                 return;
             };
@@ -572,27 +569,58 @@ mod simd {
             to: &[AtomicU8],
             f: impl Fn(Self) -> Self,
         ) {
+            Self::map_to_shared_until(from, to, f, |v| v.simd_ne(v));
+        }
+
+        /// The same up to the first element that `stops`. Returns the count.
+        pub fn map_to_shared_until<S: Source<Lane = u8>>(
+            from: &[S],
+            to: &[AtomicU8],
+            f: impl Fn(Self) -> Self,
+            stops: impl Fn(Self) -> Mask<u8, N>,
+        ) -> usize {
             let len = from.len().min(to.len());
             let (from, to) = (&from[..len], &to[..len]);
-            let (Some((_, last)), Some((_, to_last))) =
-                (from.split_last_chunk(), to.split_last_chunk())
-            else {
-                if let Some(partial) = Self::load_partial_inline(from) {
-                    f(partial.lanes).store_partial_shared(to);
+            let (v, rest): (Self, &[AtomicU8]) = 'stopped: {
+                let (Some((_, last)), Some((_, to_last))) =
+                    (from.split_last_chunk(), to.split_last_chunk())
+                else {
+                    let Some(pieces) = Self::load_pieces(from) else {
+                        return 0;
+                    };
+                    match pieces.join(len) {
+                        Some(v) if stops(pieces).any() => break 'stopped (v, to),
+                        _ => return f(pieces).store_pieces_shared(to),
+                    }
+                };
+                let last = Self::load(last);
+                let mut from = from[..len - 1].as_chunks().0;
+                let mut to = to[..len - 1].as_chunks().0;
+                while let (Some((four, rest)), Some((to_four, to_rest))) =
+                    (from.split_first_chunk(), to.split_first_chunk())
+                {
+                    let [a, b, c, d] = Self::load4(four);
+                    if (stops(a) | stops(b) | stops(c) | stops(d)).any() {
+                        break;
+                    }
+                    Self::store4_shared([f(a), f(b), f(c), f(d)], to_four);
+                    (from, to) = (rest, to_rest);
                 }
-                return;
+                for (from, to) in from.iter().zip(to) {
+                    let v = Self::load(from);
+                    if stops(v).any() {
+                        break 'stopped (v, to);
+                    }
+                    f(v).store_shared(to);
+                }
+                if stops(last).any() {
+                    break 'stopped (last, to_last);
+                }
+                f(last).store_shared(to_last);
+                return len;
             };
-            let last = f(Self::load(last));
-            let (fours, from) = from[..len - 1].as_chunks().0.as_chunks();
-            let (to_fours, to) = to[..len - 1].as_chunks().0.as_chunks();
-            for (from, to) in fours.iter().zip(to_fours) {
-                let [a, b, c, d] = Self::load4(from);
-                Self::store4_shared([f(a), f(b), f(c), f(d)], to);
-            }
-            for (from, to) in from.iter().zip(to) {
-                f(Self::load(from)).store_shared(to);
-            }
-            last.store_shared(to_last);
+            let count = stops(v).first_set().unwrap_or(0).min(rest.len());
+            rest.as_ptr().addr() - to.as_ptr().addr() + f(v).store_partial_shared(&rest[..count])
         }
 
         /// One bit per byte of `block`, for each of `K` tests.

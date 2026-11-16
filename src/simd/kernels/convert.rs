@@ -1,10 +1,10 @@
 //! Ports of highway_strings.cpp: from one buffer to another, or in place.
-use bun_simd::{Out, Partial, SharedU8, SharedWriter, Sink, Source};
+use bun_simd::{Out, SharedU8, SharedWriter, Sink, Source};
 use core::sync::atomic::AtomicU8;
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I8, U8, U16, U32, Vector, x128};
+    use isa::{I8, U8, U16, U32};
 
     #[export]
     pub fn lower_ascii<'a>(from: &[u8], to: Out<'a, u8>) -> &'a mut [u8] {
@@ -42,49 +42,22 @@ pub(crate) mod simd {
         reverse_each::<8>(bytes);
     }
 
-    #[inline(always)]
-    fn append_ascii_prefix(from: &[u8], to: &mut impl Sink) {
-        let is_not_ascii = |v: U8| v.bitcast::<I8>().simd_lt(0).cast::<u8>();
-        let from = &from[..from.len().min(to.remaining())];
-        let done = U8::append_chunks(to, from, |_, chunk| {
-            let v = U8::load(chunk);
-            is_not_ascii(v).none().then_some(v)
-        });
-        if done < from.len() {
-            let rest = &from[done..][..(from.len() - done).min(U8::LEN - 1)];
-            let len = U8::position(rest, is_not_ascii).unwrap_or(rest.len());
-            if let Some(partial) = U8::load_partial(&rest[..len]) {
-                partial.lanes.append_partial(to, len);
-            }
-        }
-    }
-
-    #[export]
-    pub fn copy_ascii_prefix<'a>(from: &[u8], to: Out<'a, u8>) -> &'a mut [u8] {
-        let mut to = to.into_writer();
-        append_ascii_prefix(from, &mut to);
-        to.finish()
-    }
-
     #[export]
     pub fn copy_ascii_prefix_to_shared(from: &[u8], to: &[AtomicU8]) -> usize {
-        let mut to = SharedWriter::new(to);
-        append_ascii_prefix(from, &mut to);
-        to.len()
+        U8::map_to_shared_until(from, to, |v| v, |v| v.bitcast::<I8>().simd_lt(0).cast())
     }
 
     #[inline(always)]
     fn append_low_bytes(from: &[u16], to: &mut impl Sink) {
         let from = &from[..from.len().min(to.remaining())];
-        if from.len() >= U8::LEN {
-            width::full::append_low_bytes(from, to);
-        } else if from.len() >= 16 {
-            width::x128::append_low_bytes(from, to);
-        } else if from.len() >= 8 {
-            Vector::append_chunks(to, from, |_, chunk| Some(x128::U16::load(chunk).cast()));
-        } else if let Some(Partial { lanes, .. }) = x128::U16::load_partial(from) {
-            x128::U8::narrow(lanes, lanes).append_partial(to, from.len());
+        if from.len() >= U16::LEN {
+            return U8::append_chunks(to, from, |chunk| {
+                let [low, high] = U16::load_or_zero(chunk);
+                Some(U8::narrow(low, high))
+            });
         }
+        let [v] = U16::load_or_zero(from);
+        U8::narrow(v, v).append_partial(to, from.len());
     }
 
     #[export]
@@ -99,19 +72,6 @@ pub(crate) mod simd {
         let mut to = SharedWriter::new(to);
         append_low_bytes(from, &mut to);
         to.len()
-    }
-
-    #[bun_simd::foreach_width]
-    mod width {
-        use isa::{U8, U16};
-
-        #[inline(always)]
-        pub fn append_low_bytes(from: &[u16], to: &mut impl Sink) {
-            U8::append_chunks(to, from, |_, chunk| {
-                let (low, high) = chunk.split_at(U16::LEN);
-                Some(U8::narrow(U16::from_slice(low), U16::from_slice(high)))
-            });
-        }
     }
 
     #[inline(always)]
@@ -129,8 +89,8 @@ pub(crate) mod simd {
                 Some((U8::load(from) ^ mask_at(at)).to_array())
             });
         }
-        match U8::load_partial(&input[..len]) {
-            Some(it) => (it.lanes ^ mask_at(0).lookup(it.indices() & 3)).store_partial(output),
+        match U8::load_padded(&input[..len]) {
+            Some(it) => (it.lanes ^ mask_at(0)).store_partial(output),
             None => &mut [],
         }
     }

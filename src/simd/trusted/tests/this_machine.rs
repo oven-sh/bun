@@ -104,7 +104,13 @@ fn agrees_with_proc_cpuinfo() {
             },
             !0,
         ),
-        _ => bun_simd_trusted::aarch64::from_hwcap(!0, !0),
+        _ => bun_simd_trusted::aarch64::from_hwcap(
+            bun_simd_trusted::aarch64::kept_by_linux(
+                !0,
+                &std::fs::read("/proc/sys/kernel/osrelease").unwrap(),
+            ),
+            !0,
+        ),
     };
     let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap();
     let is_list = |line: &&str| line.starts_with("flags") || line.starts_with("Features");

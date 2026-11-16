@@ -557,30 +557,40 @@ fn check_bswap<const N: usize>(t: &[u8], kernel: fn(&[AtomicU8])) {
     check(swapped, || to_shared(t, kernel).1);
 }
 
+fn rooms(len: usize) -> [usize; 4] {
+    [len, len / 2, len + 3, len + 70]
+}
+
 /// What follows the result stays as it is.
+fn check_written<T>(want: &[u8], from: &[T], kernel: impl Fn(&[T], &mut [u8]) -> usize) {
+    for room in sample(rooms(from.len()), 4) {
+        let (want, ones) = (&want[..room.min(want.len())], vec![0xFF; room]);
+        check((want.len(), [want, &ones[want.len()..]].concat()), || {
+            let mut out = ones.clone();
+            (kernel(from, &mut out), out)
+        });
+    }
+}
+
+fn check_shared_prefix<T>(want: &[u8], from: &[T], kernel: fn(&[T], &[AtomicU8]) -> usize) {
+    check_written(want, from, |from, out| {
+        kernel(from, AtomicU8::from_mut_slice(out))
+    });
+}
+
 fn check_prefix<T>(
     want: &[u8],
     from: &[T],
     kernel: for<'a> fn(&[T], Out<'a, u8>) -> &'a mut [u8],
     kernel_to_shared: fn(&[T], &[AtomicU8]) -> usize,
 ) {
-    let rooms = [from.len(), from.len() / 2, from.len() + 3, from.len() + 70];
-    for room in rooms {
+    for room in rooms(from.len()) {
         check(want[..room.min(want.len())].to_vec(), || {
             filled(room, |out| kernel(from, out))
         });
     }
-    for room in sample(rooms, 4) {
-        let (want, ones) = (&want[..room.min(want.len())], vec![0xFF; room]);
-        let all = [want, &ones[want.len()..]].concat();
-        check((want.len(), all.clone()), || {
-            let mut out = ones.clone();
-            (kernel(from, out[..].as_mut().into()).len(), out)
-        });
-        check((want.len(), all), || {
-            to_shared(&ones, |out| kernel_to_shared(from, out))
-        });
-    }
+    check_written(want, from, |from, out| kernel(from, out.into()).len());
+    check_shared_prefix(want, from, kernel_to_shared);
 }
 
 #[test]
@@ -617,11 +627,11 @@ fn conversions() {
             .iter()
             .flat_map(|b| format!("{b:02x}").into_bytes())
             .collect();
-        check(hex.as_chunks().0.to_vec(), || {
-            filled(len, |out| kernels::encode_hex_lower(&t, out))
+        check(hex.clone(), || {
+            filled(2 * len, |out| kernels::encode_hex_lower(&t, out))
         });
-        check(hex.as_chunks().0.to_vec(), || {
-            filled(len, |out| {
+        check(hex.clone(), || {
+            filled(2 * len, |out| {
                 from_shared(&t, |t| kernels::encode_hex_lower_shared(t, out))
             })
         });
@@ -649,10 +659,9 @@ fn conversions() {
         let ascii: Vec<u8> = t.iter().map(|b| b & 0x7F).collect();
         for prefix in [len, len / 2, len / 9] {
             let from = [&ascii[..prefix], b"\x80", &ascii[prefix..]].concat();
-            check_prefix(
+            check_shared_prefix(
                 &ascii[..prefix],
                 &from,
-                kernels::copy_ascii_prefix,
                 kernels::copy_ascii_prefix_to_shared,
             );
         }
@@ -682,15 +691,15 @@ fn nothing_after_a_prefix() {
         let wide: Vec<u16> = text.iter().map(|&byte| byte.into()).collect();
         check_prefix(&text, &wide, copy_u16_to_u8, copy_u16_to_shared);
         check_prefix(&text, &hex, decode_hex, decode_hex_to_shared);
-        for room in [at, len, len + 70] {
-            check(hex[..len.min(room)].to_vec(), || {
-                prefix(vec![[1; 2]; room], |out| encode_hex_lower(&text, out))
+        for room in [at, 2 * at + 1, 2 * len, 2 * len + 141] {
+            check(hex[..len.min(room / 2)].concat(), || {
+                prefix(vec![1; room], |out| encode_hex_lower(&text, out))
             });
         }
         (text[at], hex[at][at % 2]) = (0x80, b'g');
         let wide: Vec<[u16; 2]> = hex.iter().map(|pair| pair.map(u16::from)).collect();
         let want = &text[..at];
-        check_prefix(want, &text, copy_ascii_prefix, copy_ascii_prefix_to_shared);
+        check_shared_prefix(want, &text, copy_ascii_prefix_to_shared);
         check_prefix(want, &hex, decode_hex, decode_hex_to_shared);
         check_prefix(want, &wide, decode_hex16, decode_hex16_to_shared);
     }
@@ -708,10 +717,10 @@ fn each_byte_converted() {
     check(lower.collect(), || {
         filled(256, |out| kernels::lower_ascii16(&wide, out))
     });
-    let hex = |byte| *format!("{byte:02x}").as_bytes().as_array().unwrap();
+    let hex = |byte| format!("{byte:02x}").into_bytes();
     for part in [&all[..], &all[..15], &all[0xA0..0xAF], &all[0xF1..]] {
-        check(part.iter().map(hex).collect(), || {
-            filled(part.len(), |out| kernels::encode_hex_lower(part, out))
+        check(part.iter().flat_map(hex).collect(), || {
+            filled(2 * part.len(), |out| kernels::encode_hex_lower(part, out))
         });
     }
 }

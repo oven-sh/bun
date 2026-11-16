@@ -112,6 +112,8 @@ interface RunTestOptions {
   executable?: string;
   /** Overrides the baseline CPU. */
   cpu?: string;
+  /** What QEMU reports as the release of Linux. */
+  release?: string;
   /** Has to be in the output. */
   expected?: string;
 }
@@ -131,8 +133,12 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
   const start = performance.now();
   const live = options?.live ?? false;
-  const { cpu, expected = "" } = options ?? {};
-  const runnerCmd = !cpu ? config.runnerCmd : isWindows ? [emulatorPath, `-${cpu}`, "--"] : [emulatorPath, "-cpu", cpu];
+  const { cpu, release = "6.12.0", expected = "" } = options ?? {};
+  const runnerCmd = !cpu
+    ? config.runnerCmd
+    : isWindows
+      ? [emulatorPath, `-${cpu}`, "--"]
+      : [emulatorPath, "-cpu", cpu, "-r", release];
   const proc = Bun.spawn([...runnerCmd, options?.executable ?? binary, ...binaryArgs], {
     // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
     cwd: config.cwd ?? options?.cwd,
@@ -276,6 +282,10 @@ if (values["simd-cpus"] && !values["skip-emulation"]) {
   for (const [cpu, target] of Object.entries(bestTargets)) {
     const expected = ` ${target}\nrounds: 200`;
     await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "avx512_icl", "1", "200"], { cpu, expected });
+  }
+  if (isAarch64) {
+    const options = { cpu: "neoverse-n2", release: "6.1.0", expected: " neon\nrounds: 1" };
+    await runTest("bun_simd on Linux 6.1", [...runner, "check", "avx512_icl", "1", "1"], options);
   }
 }
 

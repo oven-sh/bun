@@ -1,9 +1,9 @@
-//! Output to memory that may be uninitialized. A `&mut [T]` comes back for the part that was written.
+//! Output to memory that may be uninitialized, and masked access to the last lanes of a vector.
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::simd::{Mask, MaskElement, Simd, SimdElement, cmp::SimdPartialOrd};
 
-/// A slice that can only be written to, and only with initialized values.
+/// A slice that can only be written to. A `&mut [T]` comes back for the part that was written.
 pub struct Out<'a, T>(&'a mut [MaybeUninit<T>]);
 
 impl<'a, T: Copy> From<&'a mut [T]> for Out<'a, T> {
@@ -22,25 +22,60 @@ impl<'a, T: Copy> From<&'a mut [MaybeUninit<T>]> for Out<'a, T> {
 }
 
 #[inline(always)]
-fn write<T: Copy, const N: usize>(to: &mut [MaybeUninit<T>; N], values: [T; N]) {
-    to.write_copy_of_slice(&values);
+fn write<T: Copy, const N: usize>(to: &mut [MaybeUninit<T>; N], values: [T; N]) -> &mut [T] {
+    to.write_copy_of_slice(&values)
 }
 
-/// `len` is at most `N`.
+/// Selects the first or the last `len` lanes, which are at most `N`, and says how many are before them.
 #[inline(always)]
-fn last_lanes<M: MaskElement, const N: usize>(len: usize) -> Mask<M, N> {
+fn lanes_for<M: MaskElement, const N: usize, const ARE_LAST: bool>(
+    len: usize,
+) -> (Mask<M, N>, usize) {
     const { assert!(N < 256) };
     let index = Simd::from_array(core::array::from_fn(|i| i as u8));
-    index.simd_ge(Simd::splat((N - len) as u8)).cast()
+    match ARE_LAST {
+        true => (index.simd_ge(Simd::splat((N - len) as u8)).cast(), N - len),
+        false => (index.simd_lt(Simd::splat(len as u8)).cast(), 0),
+    }
 }
 
 /// To the last lanes if `from` is too short, after zeros. What the load skips is before `from`.
 #[inline(always)]
 pub fn load_masked_to_last<T: SimdElement + Default, const N: usize>(from: &[T]) -> Simd<T, N> {
-    let len = from.len().min(N);
-    let lane_0 = from.as_ptr().wrapping_sub(N - len);
-    // SAFETY: lane `i` comes from `lane_0.wrapping_add(i)`, which is in `from` for the last `len` lanes.
-    unsafe { Simd::load_select_ptr(lane_0, last_lanes(len), Simd::default()) }
+    let (enable, skipped) = lanes_for::<_, N, true>(from.len().min(N));
+    let lane_0 = from.as_ptr().wrapping_sub(skipped);
+    // SAFETY: lane `i` comes from `lane_0.wrapping_add(i)`, which is in `from` if it is enabled.
+    unsafe { Simd::load_select_ptr(lane_0, enable, Simd::default()) }
+}
+
+/// Where four pieces start that cover `piece..=4 * piece` elements.
+#[inline(always)]
+pub const fn quarters(len: usize, piece: usize) -> [usize; 4] {
+    let room = len - piece;
+    let inset = if room < piece { room } else { piece };
+    [0, inset, room - inset, room]
+}
+
+/// Chunks per turn of a loop. For x86-64, LLVM finds a good number.
+pub const UNROLL: usize = if cfg!(any(target_arch = "aarch64", miri)) {
+    4
+} else {
+    1
+};
+
+/// Adds what it writes to `filled`.
+#[inline(always)]
+fn fill_each<A, T: Copy, const N: usize>(
+    from: &[[A; N]],
+    to: &mut [[MaybeUninit<T>; N]],
+    filled: &mut usize,
+    f: &mut impl FnMut(usize, &[A; N]) -> Option<[T; N]>,
+) -> Option<()> {
+    for (from, to) in from.iter().zip(to) {
+        write(to, f(*filled, from)?);
+        *filled += N;
+    }
+    Some(())
 }
 
 impl<'a, T: Copy> Out<'a, T> {
@@ -92,74 +127,50 @@ impl<'a, T: Copy> Out<'a, T> {
         let len = from.len().min(self.len());
         let (from, all) = (&from[..len], &mut self.0[..len]);
         let mut filled = 0;
-        'fill: {
-            let Some((_, last)) = from.split_last_chunk() else {
-                break 'fill;
-            };
-            let chunks = from[..len - 1].as_chunks().0;
-            #[cfg_attr(target_arch = "aarch64", rustc_unroll(4))]
-            for (from, to) in chunks.iter().zip(all[..len - 1].as_chunks_mut().0) {
-                let Some(values) = f(filled, from) else {
-                    break 'fill;
-                };
-                write(to, values);
-                filled += N;
+        let _: Option<()> = try {
+            let last = from.split_last_chunk()?.1;
+            let (chunks, rest) = from[..len - 1].as_chunks().0.as_chunks::<UNROLL>();
+            let (to, to_rest) = all[..len - 1].as_chunks_mut().0.as_chunks_mut::<UNROLL>();
+            for (from, to) in chunks.iter().zip(to) {
+                fill_each(from, to, &mut filled, &mut f)?;
             }
+            fill_each(rest, to_rest, &mut filled, &mut f)?;
             // Up to `N` are left.
-            if let (Some(values), Some((_, to))) = (f(len - N, last), all.split_last_chunk_mut()) {
-                write(to, values);
-                filled = len;
-            }
-        }
+            write(all.split_last_chunk_mut()?.1, f(len - N, last)?);
+            filled = len;
+        };
         Writer { all, len: filled }.finish()
     }
 
-    /// Gives `self` back unless the two fit and cover all of it.
+    /// Puts the pieces at `quarters`. Does nothing unless they fit and cover all of `self`.
     #[inline(always)]
-    pub fn fill_ends<const N: usize>(
+    pub fn fill_quarters<const N: usize>(self, [a, b, c, d]: [[T; N]; 4]) -> &'a mut [T] {
+        let (len, all) = (self.len(), self.0);
+        if len < N || len > 4 * N {
+            return &mut [];
+        }
+        let inset = quarters(len, N)[1];
+        write(all.first_chunk_mut().unwrap(), a);
+        write(all[inset..].first_chunk_mut().unwrap(), b);
+        write(all[..len - inset].split_last_chunk_mut().unwrap().1, c);
+        write(all.split_last_chunk_mut().unwrap().1, d);
+        Writer { all, len }.finish()
+    }
+
+    /// As many of the first or the last lanes as fit, with a masked store.
+    #[inline(always)]
+    pub fn fill_masked<const FROM_LAST: bool, const N: usize>(
         self,
-        first: [T; N],
-        last: [T; N],
-    ) -> Result<&'a mut [T], Self> {
-        let len = self.len();
-        if len > 2 * N {
-            return Err(self);
-        }
-        let Some(start) = self.0.first_chunk_mut() else {
-            return Err(self);
-        };
-        write(start, first);
-        if let Some((_, end)) = self.0.split_last_chunk_mut() {
-            write(end, last);
-        }
-        Ok(Writer { all: self.0, len }.finish())
-    }
-
-    /// As many lanes as fit, with a masked store.
-    #[inline(always)]
-    pub fn fill_masked<const N: usize>(self, lanes: Simd<T, N>) -> &'a mut [T]
-    where
-        T: SimdElement,
-    {
-        const { assert!(N < 256) };
-        let len = self.len().min(N);
-        let index = Simd::from_array(core::array::from_fn(|i| i as u8));
-        let enable = index.simd_lt(Simd::splat(len as u8)).cast();
-        // SAFETY: the first `len` lanes are enabled, and `self` has that many.
-        unsafe { lanes.store_select_ptr(self.0.as_mut_ptr().cast(), enable) };
-        Writer { all: self.0, len }.finish()
-    }
-
-    /// The same for the last lanes. What the store skips is before `self`.
-    #[inline(always)]
-    pub fn fill_masked_from_last<const N: usize>(self, lanes: Simd<T, N>) -> &'a mut [T]
+        lanes: Simd<T, N>,
+    ) -> &'a mut [T]
     where
         T: SimdElement,
     {
         let len = self.len().min(N);
-        let lane_0 = self.0.as_mut_ptr().cast::<T>().wrapping_sub(N - len);
-        // SAFETY: lane `i` goes to `lane_0.wrapping_add(i)`, which is in `self` for the last `len` lanes.
-        unsafe { lanes.store_select_ptr(lane_0, last_lanes(len)) };
+        let (enable, skipped) = lanes_for::<_, N, FROM_LAST>(len);
+        let lane_0 = self.0.as_mut_ptr().cast::<T>().wrapping_sub(skipped);
+        // SAFETY: lane `i` goes to `lane_0.wrapping_add(i)`, which is in `self` if it is enabled.
+        unsafe { lanes.store_select_ptr(lane_0, enable) };
         Writer { all: self.0, len }.finish()
     }
 }
@@ -193,6 +204,12 @@ impl<'a, T: Copy> Writer<'a, T> {
         unsafe { self.all.get_unchecked_mut(self.len..) }
     }
 
+    /// Forgets what follows the first `len` elements, so that the next ones overwrite it.
+    #[inline(always)]
+    pub fn truncate(&mut self, len: usize) {
+        self.len = self.len.min(len);
+    }
+
     /// Panics if they do not fit.
     #[inline(always)]
     pub fn push<const N: usize>(&mut self, values: [T; N]) {
@@ -202,15 +219,13 @@ impl<'a, T: Copy> Writer<'a, T> {
     /// Keeps up to `count`. Panics unless all of `values` fit.
     #[inline(always)]
     pub fn push_first<const N: usize>(&mut self, values: [T; N], count: usize) {
-        write(self.rest().first_chunk_mut().unwrap(), values);
-        self.len += count.min(N);
+        self.append(|to| &mut write(to.0.first_chunk_mut().unwrap(), values)[..count.min(N)]);
     }
 
     /// Panics if they do not fit.
     #[inline(always)]
     pub fn extend_from_slice(&mut self, values: &[T]) {
-        self.rest()[..values.len()].write_copy_of_slice(values);
-        self.len += values.len();
+        self.append(|to| to.0[..values.len()].write_copy_of_slice(values));
     }
 
     /// Pushes `f(item)` for each item, until it is `None` or there is no room.
@@ -229,14 +244,14 @@ impl<'a, T: Copy> Writer<'a, T> {
         self.len += added;
     }
 
-    /// Panics if `fill` returns anything but a prefix of what it is given.
+    /// Panics if `fill` returns a slice that starts elsewhere.
     #[inline(always)]
     pub fn append(&mut self, fill: impl for<'b> FnOnce(Out<'b, T>) -> &'b mut [T]) {
         let rest = self.rest();
         let (start, room) = (rest.as_ptr().cast(), rest.len());
         let filled = fill(Out(rest));
-        assert!(filled.is_empty() || filled.as_ptr() == start && filled.len() <= room);
-        self.len += filled.len();
+        assert!(filled.is_empty() || filled.as_ptr() == start);
+        self.len += filled.len().min(room);
     }
 
     #[inline(always)]
@@ -246,7 +261,7 @@ impl<'a, T: Copy> Writer<'a, T> {
     }
 }
 
-/// Like `Writer::append`, with room for `additional` elements.
+/// Panics if `fill` returns anything but a prefix of the room for `additional` elements.
 #[inline(always)]
 pub fn extend_vec<T: Copy>(
     vec: &mut Vec<T>,

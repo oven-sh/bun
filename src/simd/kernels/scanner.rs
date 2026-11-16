@@ -50,7 +50,7 @@ pub(crate) mod simd {
     use isa::{I8, U8};
 
     /// The offset after each newline. Panics unless there is room for 64 more than there are.
-    #[export]
+    #[export(up_to = neon)]
     pub fn line_starts<'a>(text: &[u8], out: Out<'a, u32>) -> &'a mut [u32] {
         let (mut out, mut had_newlines) = (out.into_writer(), 0u8);
         for (i, block) in blocks(text, &mut [0; 64]).enumerate() {
@@ -82,7 +82,7 @@ pub(crate) mod simd {
     }
 
     /// Panics unless each plane has a bit for each byte.
-    #[export]
+    #[export(up_to = neon)]
     pub fn scanner_run_stops(text: &[u8], planes: [&mut [[u8; 8]]; 3]) {
         let (whole, rest) = text.as_chunks();
         let [names, blanks, strings] =
@@ -100,19 +100,18 @@ pub(crate) mod simd {
 
     /// Not printable ASCII or white space, or a backslash.
     fn has_odd_byte(block: &[u8; 64]) -> bool {
-        let mut is_plain = U8::splat(0xFF);
+        let exceptions = U8::repeat_16(*b"\x01\0\0\0\0\0\0\0\0\t\n\0\\\r\0\x7F");
+        let mut is_odd = U8::zero();
         for chunk in block.as_chunks().0 {
             let v = U8::load(chunk);
-            let is_blank = U8::repeat_16(*b"\x80\0\0\0\0\0\0\0\0\t\n\0\0\r\0\0")
-                .lookup(v & 0x8F)
-                .simd_eq(v);
-            is_plain &= (v.in_range(0x20..=0x7E) & v.simd_ne(b'\\') | is_blank).to_vector();
+            let is_below_space = v.bitcast::<I8>().simd_lt(0x20).cast::<u8>();
+            is_odd |= (is_below_space ^ exceptions.lookup(v & 0x8F).simd_eq(v)).to_vector();
         }
-        is_plain.simd_eq(0).any()
+        is_odd.simd_ne(0).any()
     }
 
     /// A bit for each block of 64 bytes.
-    #[export]
+    #[export(up_to = neon)]
     pub fn odd_blocks<'a>(text: &[u8], out: Out<'a, u64>) -> &'a mut [u64] {
         let mut out = out.into_writer();
         out.extend_with(text.chunks(64 * 64), |chunk| {

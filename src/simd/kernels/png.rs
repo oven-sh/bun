@@ -24,7 +24,7 @@ pub(crate) mod simd {
     }
 
     /// Returns how far the bytes are from zero for each filter type. Panics unless `row` is shortest.
-    #[export(up_to = avx2)]
+    #[export(up_to = avx2, up_to = neon)]
     pub fn filter_rgba(row: &[Rgba], above: &[Rgba], filtered: [&mut [Rgba]; 4]) -> [u64; 5] {
         let (len, [sub, up, average, paeth]) = (row.len(), filtered);
         let above = &above[..len];
@@ -151,7 +151,7 @@ pub(crate) mod simd {
         }
     }
 
-    #[export(up_to = avx2)]
+    #[export(up_to = avx2, up_to = neon)]
     pub fn unfilter_up(row: &mut [u8], above: &[u8]) {
         isa::U8::zip_in_place(row, above, |x, b| x + b);
     }

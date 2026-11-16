@@ -1,15 +1,13 @@
 //! What bytes are appended to.
 use crate::{Int, Out, Writer};
-use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
+use bun_simd_trusted::UNROLL;
+use core::sync::atomic::AtomicU8;
 
 /// A `Writer` of bytes, to plain or to shared memory. What follows the bytes is left as it is.
 pub trait Sink {
     fn len(&self) -> usize;
 
     fn remaining(&self) -> usize;
-
-    /// Pushes `f(item)` for each item, until it is `None` or there is no room.
-    fn extend_with<A>(&mut self, items: &[A], f: impl FnMut(&A) -> Option<u8>);
 
     #[doc(hidden)]
     fn append_either(
@@ -28,11 +26,6 @@ impl Sink for Writer<'_, u8> {
     #[inline(always)]
     fn remaining(&self) -> usize {
         self.remaining()
-    }
-
-    #[inline(always)]
-    fn extend_with<A>(&mut self, items: &[A], mut f: impl FnMut(&A) -> Option<u8>) {
-        self.extend_with(items, |item| Some([f(item)?]));
     }
 
     #[inline(always)]
@@ -56,11 +49,6 @@ impl<'a> SharedWriter<'a> {
     pub fn new(rest: &'a [AtomicU8]) -> Self {
         Self { rest, len: 0 }
     }
-
-    #[inline(always)]
-    fn advance(&mut self, by: usize) {
-        (self.rest, self.len) = (&self.rest[by..], self.len + by);
-    }
 }
 
 impl Sink for SharedWriter<'_> {
@@ -75,23 +63,13 @@ impl Sink for SharedWriter<'_> {
     }
 
     #[inline(always)]
-    fn extend_with<A>(&mut self, items: &[A], mut f: impl FnMut(&A) -> Option<u8>) {
-        let mut added = 0;
-        for (to, item) in self.rest.iter().zip(items) {
-            let Some(byte) = f(item) else { break };
-            to.store(byte, Relaxed);
-            added += 1;
-        }
-        self.advance(added);
-    }
-
-    #[inline(always)]
     fn append_either(
         &mut self,
         _: impl for<'a> FnOnce(Out<'a, u8>) -> &'a mut [u8],
         shared: impl FnOnce(&[AtomicU8]) -> usize,
     ) {
-        self.advance(shared(self.rest));
+        let added = shared(self.rest).min(self.rest.len());
+        (self.rest, self.len) = (&self.rest[added..], self.len + added);
     }
 }
 
@@ -103,59 +81,78 @@ mod simd {
     where
         u8: Int<N>,
     {
-        /// Like `Out::fill_chunks`, but returns the count. `from` may be where the bytes go.
-        pub fn append_chunks<A>(
+        /// Like `Out::fill_chunks`, from half a vector on. `f` may mix only the lanes of a half.
+        pub fn append_chunks<A: Copy>(
             to: &mut impl Sink,
             from: &[A],
-            f: impl Fn(usize, &[A; N]) -> Option<Self>,
-        ) -> usize {
-            let start = to.len();
-            to.append_either(
-                |to| to.fill_chunks(from, |at, chunk| Some(f(at, chunk)?.to_array())),
-                |to| Self::fill_chunks_shared(to, from, &f),
-            );
-            to.len() - start
+            f: impl Fn(&[A; N]) -> Option<Self>,
+        ) {
+            const {
+                assert!(
+                    N >= 16 && size_of::<A>().is_multiple_of(2),
+                    "needs whole vectors as halves"
+                )
+            };
+            let len = from.len().min(to.remaining());
+            if len >= N {
+                to.append_either(
+                    |to| to.fill_chunks(from, |_, chunk| Some(f(chunk)?.to_array())),
+                    |to| Self::fill_chunks_shared(&to[..len], &from[..len], &f),
+                );
+            } else if len >= N / 2 {
+                let mut halves = [from[0]; N];
+                halves[..N / 2].copy_from_slice(&from[..N / 2]);
+                halves[N / 2..].copy_from_slice(&from[len - N / 2..len]);
+                if let Some(halves) = f(&halves) {
+                    to.append_either(
+                        |to| halves.store_halves(to.take(len)),
+                        |to| halves.store_halves_shared(&to[..len]),
+                    );
+                }
+            }
         }
 
         #[inline(always)]
         fn fill_chunks_shared<A>(
             to: &[AtomicU8],
             from: &[A],
-            f: &impl Fn(usize, &[A; N]) -> Option<Self>,
+            f: &impl Fn(&[A; N]) -> Option<Self>,
         ) -> usize {
-            let len = from.len().min(to.len());
-            let (from, to) = (&from[..len], &to[..len]);
-            let (Some((_, last)), Some((_, to_last))) =
-                (from.split_last_chunk(), to.split_last_chunk())
-            else {
-                return 0;
+            let (len, mut filled) = (from.len(), 0);
+            let _: Option<()> = try {
+                let (last, to_last) = (from.split_last_chunk()?.1, to.split_last_chunk()?.1);
+                let (chunks, rest) = from[..len - 1].as_chunks().0.as_chunks::<UNROLL>();
+                let (to, to_rest) = to[..len - 1].as_chunks().0.as_chunks::<UNROLL>();
+                for (from, to) in chunks.iter().zip(to) {
+                    Self::fill_each_shared(to, from, &mut filled, f)?;
+                }
+                Self::fill_each_shared(to_rest, rest, &mut filled, f)?;
+                f(last)?.store_shared(to_last);
+                filled = len;
             };
-            let last = f(len - N, last);
-            let (chunks, mut filled) = (from[..len - 1].as_chunks().0, 0);
-            #[cfg_attr(target_arch = "aarch64", rustc_unroll(4))]
-            for (from, to) in chunks.iter().zip(to[..len - 1].as_chunks().0) {
-                let Some(v) = f(filled, from) else {
-                    return filled;
-                };
-                v.store_shared(to);
-                filled += N;
-            }
-            let Some(last) = last else {
-                return filled;
-            };
-            last.store_shared(to_last);
-            len
+            filled
         }
 
-        /// Like `store_partial` for `len` bytes. Panics if they do not fit, or fill the vector.
+        #[inline(always)]
+        fn fill_each_shared<A>(
+            to: &[[AtomicU8; N]],
+            from: &[[A; N]],
+            filled: &mut usize,
+            f: &impl Fn(&[A; N]) -> Option<Self>,
+        ) -> Option<()> {
+            for (from, to) in from.iter().zip(to) {
+                f(from)?.store_shared(to);
+                *filled += N;
+            }
+            Some(())
+        }
+
+        /// As many of the first `len` lanes as fit. Panics if they fill the vector.
         pub fn append_partial(self, to: &mut impl Sink, len: usize) {
-            assert!(len < N && len <= to.remaining());
+            assert!(len < N);
             to.append_either(
-                |to| self.store_partial_inline(to.take(len)),
-                |to| {
-                    self.store_partial_shared(&to[..len]);
-                    len
-                },
+                |to| self.store_partial(to.take(len)),
+                |to| self.store_partial_shared(&to[..len.min(to.len())]),
             );
         }
     }

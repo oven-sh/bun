@@ -34,7 +34,7 @@ pub(crate) mod simd {
     }
 
     /// Panics unless there is room for 64 more than `input` has.
-    #[export]
+    #[export(up_to = neon)]
     pub fn index_chunk<'a>(
         input: &[u8],
         base_offset: usize,
@@ -67,7 +67,7 @@ pub(crate) mod simd {
     }
 
     /// The same for UTF-16. The next call decides on a lead surrogate that ends the last whole block.
-    #[export]
+    #[export(up_to = neon)]
     pub fn index_chunk16<'a>(
         input: &[u16],
         base_offset: usize,

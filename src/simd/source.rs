@@ -1,7 +1,6 @@
 //! What vectors are loaded from.
-use crate::{Isa, Lane, SharedU8};
+use crate::{Lane, SharedU8};
 use core::array;
-use core::simd::{ToBytes, num::SimdUint, u8x64, u16x32};
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 /// A lane in memory: a plain value, or bytes that other threads may write concurrently.
@@ -82,17 +81,6 @@ impl Source for [SharedU8; 2] {
     }
 }
 
-impl<T: Lane, const N: usize, I: Isa> crate::Vector<T, N, I> {
-    #[inline(always)]
-    pub(crate) fn from_shared(bytes: u8x64) -> Self {
-        match const { size_of::<T>() } {
-            1 => Self::new(bytes.resize(0).cast()),
-            2 => Self::new(u16x32::from_le_bytes(bytes).resize(0).cast()),
-            _ => unreachable!(),
-        }
-    }
-}
-
 #[bun_simd_macros::foreach_target]
 mod simd {
     // Miri cannot run `asm!`.
@@ -107,7 +95,8 @@ mod simd {
             Self::load_nth::<S, 1, 0>(array::from_ref(from))
         }
 
-        pub(crate) fn load4<S: Source<Lane = T>>(from: &[[S; N]; 4]) -> [Self; 4] {
+        /// Needs only one address, even for shared memory.
+        pub fn load4<S: Source<Lane = T>>(from: &[[S; N]; 4]) -> [Self; 4] {
             [
                 Self::load_nth::<S, 4, 0>(from),
                 Self::load_nth::<S, 4, 1>(from),
@@ -134,10 +123,14 @@ mod simd {
         >(
             from: &[[S; N]; K],
         ) -> Self {
-            match S::memory(from.as_flattened()) {
-                Memory::Plain(lanes) => Self::from_array(lanes.as_chunks().0[AT]),
+            match S::memory(if S::IS_SHARED {
+                from.as_flattened()
+            } else {
+                &from[AT]
+            }) {
+                Memory::Plain(lanes) => Self::from_slice(lanes),
                 Memory::Shared(bytes) => {
-                    Self::from_shared(shared::load_shared::<[S; N], K, AT>(bytes))
+                    Self::from_first_bytes(shared::load_shared::<[S; N], K, AT>(bytes))
                 }
             }
         }

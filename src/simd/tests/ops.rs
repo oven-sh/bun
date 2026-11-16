@@ -292,6 +292,7 @@ mod simd {
             let products = from_fn(|i| (a[i] & 0xFFFF_FFFF) * (b[i] & 0xFFFF_FFFF));
             assert_eq!(x.mul_low32(y).to_array(), products);
             assert_eq!(x.reduce_sum(), a.into_iter().fold(0, u64::wrapping_add));
+            assert_eq!(x.cast::<i8>().to_array(), a.map(|a| a as i8));
 
             let bits = random.next();
             let parities = (0..64).fold(0, |parities, shift| parities ^ bits << shift);

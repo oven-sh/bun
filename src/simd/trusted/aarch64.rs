@@ -1,5 +1,5 @@
 //! Decodes the answers of the operating system.
-use crate::features::{Arch, Feature, row};
+use crate::features::{Arch, Feature, major_and_minor, row};
 use core::ffi::CStr;
 
 /// Every entry of a list is required. An empty list means that the system cannot report it.
@@ -99,6 +99,17 @@ pub fn from_hwcap(hwcap: u64, hwcap2: u64) -> Features {
         has(&(64 + 9)),
         has(&(64 + 12)),
     )
+}
+
+pub const HWCAP_SVE: u64 = 1 << 22;
+
+/// Before 6.2, SVE traps after each system call. RHEL 9 has a fix in 5.14.0.
+pub fn kept_by_linux(hwcap: u64, release: &[u8]) -> u64 {
+    match major_and_minor(release) {
+        Some((6, 2..) | (7.., _)) => hwcap,
+        _ if release.starts_with(b"5.14.0") => hwcap,
+        _ => hwcap & !HWCAP_SVE,
+    }
 }
 
 /// Before Android 9, the kernel for the Exynos 9810 reports what only its small cores have.

@@ -116,11 +116,6 @@ pub(crate) fn last_index_of_char16(text: &[u16], unit: u16) -> Option<usize> {
 }
 
 #[inline(always)]
-pub(crate) fn encode_hex_lower(src: &[u8], dst: &mut [[u8; 2]]) {
-    bun_highway::encode_hex_lower(src, dst.as_flattened_mut());
-}
-
-#[inline(always)]
 pub(crate) fn decode_hex<'a>(src: &[[u8; 2]], dst: &'a mut [u8]) -> &'a mut [u8] {
     let len = bun_highway::decode_hex(src.as_flattened(), dst);
     &mut dst[..len]

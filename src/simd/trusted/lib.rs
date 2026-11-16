@@ -1,7 +1,6 @@
 //! All the `unsafe` of `bun_simd`, and what it relies on.
 #![no_std]
-#![feature(portable_simd, fn_static)]
-#![cfg_attr(target_arch = "aarch64", feature(loop_hints))]
+#![feature(portable_simd, fn_static, try_blocks)]
 #![deny(unsafe_code)]
 // The decoders for other systems are public, so that every machine can test them.
 #![cfg_attr(mordant, allow(unused_pub))]
@@ -33,7 +32,8 @@ pub mod x86_64;
 pub use aarch64::Features;
 pub use atomic_fn::AtomicFn;
 pub use opaque::{opaque, opaque16};
-pub use output::{Append, Out, Writer, extend_vec, load_masked_to_last, spare_capacity};
+pub use output::{Append, Out, Writer, extend_vec, spare_capacity};
+pub use output::{UNROLL, load_masked_to_last, quarters};
 pub use shared_u8::SharedU8;
 pub use target::Target;
 #[cfg(target_arch = "x86_64")]

@@ -35,24 +35,33 @@ cfg_select! {
         }
     }
     any(target_os = "linux", target_os = "android") => {
-        use core::ffi::c_ulong;
+        use core::ffi::{c_int, c_ulong};
 
         const AT_HWCAP: c_ulong = 16;
         const AT_HWCAP2: c_ulong = 26;
 
-        // SAFETY: accepts any number.
+        // SAFETY: `getauxval` accepts any number. A `struct utsname` has six names of 65 bytes.
         unsafe extern "C" {
             safe fn getauxval(key: c_ulong) -> c_ulong;
+            safe fn uname(names: &mut [[u8; 65]; 6]) -> c_int;
+        }
+
+        fn hwcap() -> u64 {
+            let (hwcap, mut names) = (getauxval(AT_HWCAP), [[0; 65]; 6]);
+            if hwcap & crate::aarch64::HWCAP_SVE != 0 {
+                uname(&mut names);
+            }
+            crate::aarch64::kept_by_linux(hwcap, &names[2])
         }
 
         #[cfg(target_os = "linux")]
         pub(crate) fn query() -> crate::Features {
-            crate::aarch64::from_hwcap(getauxval(AT_HWCAP), getauxval(AT_HWCAP2))
+            crate::aarch64::from_hwcap(hwcap(), getauxval(AT_HWCAP2))
         }
 
         #[cfg(target_os = "android")]
         pub(crate) fn query() -> crate::Features {
-            use core::ffi::{c_char, c_int};
+            use core::ffi::c_char;
             const PROP_VALUE_MAX: usize = 92;
             unsafe extern "C" {
                 fn __system_property_get(
@@ -63,7 +72,7 @@ cfg_select! {
             let mut value = [0; PROP_VALUE_MAX];
             // SAFETY: the name is NUL-terminated, and a value has up to `PROP_VALUE_MAX` bytes.
             unsafe { __system_property_get(c"ro.arch".as_ptr(), &mut value) };
-            crate::aarch64::on_android(getauxval(AT_HWCAP), getauxval(AT_HWCAP2), &value)
+            crate::aarch64::on_android(hwcap(), getauxval(AT_HWCAP2), &value)
         }
     }
     any(target_os = "freebsd", target_os = "openbsd") => {

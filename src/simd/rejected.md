@@ -270,7 +270,7 @@ Two ways to what was appended:
 ```rust,compile_fail,E0499
 let mut vec = Vec::with_capacity(1);
 let (out, rest) = bun_simd::spare_capacity(&mut vec);
-let filled = out.fill_ends([1], [1]).unwrap_or_default();
+let filled = out.fill_chunks(&[1], |_, &[it]| Some([it]));
 rest.append(filled);
 let first = &mut vec[0];
 filled[0] = *first;

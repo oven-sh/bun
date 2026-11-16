@@ -1,7 +1,7 @@
 //! Each allocation has its exact size and is not initialized, for Miri.
 #![feature(portable_simd)]
 #![forbid(unsafe_code)]
-use bun_simd_trusted::{Out, extend_vec, load_masked_to_last, spare_capacity};
+use bun_simd_trusted::{Out, extend_vec, load_masked_to_last, quarters, spare_capacity};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -18,18 +18,18 @@ fn counting(len: usize) -> Vec<u16> {
 
 #[test]
 fn fill_chunks() {
-    for (len, room) in (0..10).flat_map(|len| [(len, len), (len, 9), (9, len)]) {
+    for (len, room) in (0..32).flat_map(|len| [(len, len), (len, 31), (31, len)]) {
         let (from, both) = (counting(len), len.min(room));
-        for stop in 0..10 {
+        for stop in [0, 5, 11, 14, 22, 26, 29, 30, 31] {
             let got = filled(room, |out| {
-                out.fill_chunks(&from, |at, &chunk: &[_; 4]| {
+                out.fill_chunks(&from, |at, &chunk: &[_; 3]| {
                     assert_eq!(usize::from(chunk[0]), at);
                     (!chunk.contains(&stop)).then_some(chunk)
                 })
             });
             let want = match usize::from(stop) {
-                _ if both < 4 => 0,
-                stop if stop < both => stop / 4 * 4,
+                _ if both < 3 => 0,
+                stop if stop < both => stop / 3 * 3,
                 _ => both,
             };
             assert_eq!(got, from[..want]);
@@ -38,21 +38,33 @@ fn fill_chunks() {
 }
 
 #[test]
-fn fill_ends() {
-    for len in 0..9 {
-        let got = filled(len, |out| match out.fill_ends([1; 3], [2; 3]) {
-            Ok(filled) => filled,
-            Err(out) => {
-                assert_eq!(out.len(), len);
-                &mut []
-            }
+fn fill_quarters() {
+    for len in 0..15 {
+        let at = quarters(len.max(3), 3).map(|at| at as u16);
+        let got = filled(len, |out| {
+            out.fill_quarters(at.map(|at| [at, at + 1, at + 2]))
         });
-        let want = if (3..=6).contains(&len) {
-            &[1, 1, 1, 2, 2, 2][6 - len..]
-        } else {
-            &[]
-        };
-        assert_eq!(got, want);
+        assert_eq!(got, counting(if (3..=12).contains(&len) { len } else { 0 }));
+    }
+}
+
+fn pushed<T: Copy, const N: usize>(out: Out<'_, T>, values: [T; N]) -> &mut [T] {
+    let mut out = out.into_writer();
+    out.push(values);
+    out.finish()
+}
+
+#[test]
+fn truncate() {
+    for len in 0..5 {
+        let got = filled(6, |out| {
+            let mut out = out.into_writer();
+            out.push([1; 3]);
+            out.truncate(len);
+            out.push([2; 3]);
+            out.finish()
+        });
+        assert_eq!(got, [1, 1, 1, 2, 2, 2][3 - len.min(3)..]);
     }
 }
 
@@ -60,9 +72,13 @@ fn fill_ends() {
 fn fill_masked() {
     let lanes: [u8; 64] = core::array::from_fn(|i| i as u8);
     for len in [0, 1, 2, 3, 63, 64, 65, 256, 257] {
-        let got = filled(len, |out| out.fill_masked(Simd::from_array(lanes)));
+        let got = filled(len, |out| {
+            out.fill_masked::<false, _>(Simd::from_array(lanes))
+        });
         assert_eq!(got, lanes[..len.min(64)]);
-        let got = filled(len, |out| out.fill_masked(Simd::from_array([5u64, 6])));
+        let got = filled(len, |out| {
+            out.fill_masked::<false, _>(Simd::from_array([5u64, 6]))
+        });
         assert_eq!(got, [5, 6][..len.min(2)]);
     }
 }
@@ -72,14 +88,15 @@ fn last_lanes() {
     let lanes: [u8; 64] = core::array::from_fn(|i| i as u8);
     for len in [0, 1, 2, 3, 63, 64, 65, 256, 257] {
         let got = filled(len, |out| {
-            out.fill_masked_from_last(Simd::from_array(lanes))
+            out.fill_masked::<true, _>(Simd::from_array(lanes))
         });
         assert_eq!(got, lanes[64 - len.min(64)..]);
         let got = filled(len, |out| {
-            out.fill_masked_from_last(Simd::from_array([5u64, 6]))
+            out.fill_masked::<true, _>(Simd::from_array([5u64, 6]))
         });
         assert_eq!(got, [5, 6][2 - len.min(2)..]);
-        let got: Simd<u16, 4> = load_masked_to_last(&counting(len + 1)[1..].to_vec());
+        let from: Vec<u16> = (1..=len as u16).collect();
+        let got: Simd<u16, 4> = load_masked_to_last(&from);
         assert_eq!(got.as_array(), &[0, 0, 0, 0, 1, 2, 3, 4][len.min(4)..][..4]);
     }
 }
@@ -93,7 +110,7 @@ fn writer() {
         out.push_first([2, 9, 9], 1);
         out.push_first([3, 4], usize::MAX);
         out.extend_from_slice(&[5]);
-        out.append(|rest| rest.take(2).fill_ends([6], [7]).unwrap_or_default());
+        out.append(|rest| pushed(rest.take(2), [6, 7]));
         out.append(|_| &mut []);
         out.extend_with([8, 0, 9], |it| (it != 0).then_some([it]));
         assert_eq!((out.len(), out.remaining()), (9, 4));
@@ -152,17 +169,15 @@ fn initialized_memory_keeps_the_rest() {
 #[test]
 fn extend_vec_keeps_the_start() {
     let mut vec = vec![1];
-    extend_vec(&mut vec, 40, |out| {
-        out.take(2).fill_ends([2], [3]).unwrap_or_default()
-    });
+    extend_vec(&mut vec, 40, |out| pushed(out.take(2), [2, 3]));
     assert_eq!(vec, [1, 2, 3]);
 }
 
 #[test]
 fn into_chunks() {
     let got = filled(5, |out| {
-        let pairs = out.into_chunks().fill_ends([[1, 2]], [[3, 4]]);
-        pairs.unwrap_or_default().as_flattened_mut()
+        let pairs = pushed(out.into_chunks(), [[1, 2], [3, 4]]);
+        pairs.as_flattened_mut()
     });
     assert_eq!(got, [1, 2, 3, 4]);
 }
@@ -172,8 +187,8 @@ fn spare_capacity_of_two() {
     let (mut a, mut b) = (Vec::with_capacity(3), Vec::with_capacity(2));
     a.push(1);
     let ((out_a, rest_a), (out_b, rest_b)) = (spare_capacity(&mut a), spare_capacity(&mut b));
-    let filled_a = out_a.fill_ends([2], [3]).unwrap_or_default();
-    rest_b.append(out_b.take(1).fill_ends([4], [4]).unwrap_or_default());
+    let filled_a = pushed(out_a, [2, 3]);
+    rest_b.append(pushed(out_b.take(1), [4]));
     rest_a.append(filled_a);
     spare_capacity(&mut b).1.append(&mut []);
     assert_eq!((a, b), (vec![1, 2, 3], vec![4]));
@@ -183,8 +198,8 @@ fn spare_capacity_of_two() {
 #[should_panic]
 fn spare_capacity_of_another() {
     let (mut a, mut b) = (Vec::with_capacity(1), Vec::with_capacity(1));
-    let filled = spare_capacity(&mut a).0.fill_ends([1], [1]);
-    spare_capacity(&mut b).1.append(filled.unwrap_or_default());
+    let filled = pushed(spare_capacity(&mut a).0, [1]);
+    spare_capacity(&mut b).1.append(filled);
 }
 
 #[test]
@@ -192,7 +207,7 @@ fn spare_capacity_of_another() {
 fn spare_capacity_not_from_the_start() {
     let mut vec = Vec::with_capacity(2);
     let (out, rest) = spare_capacity(&mut vec);
-    rest.append(&mut out.fill_ends([1], [2]).unwrap_or_default()[1..]);
+    rest.append(&mut pushed(out, [1, 2])[1..]);
 }
 
 #[test]
@@ -239,19 +254,28 @@ fn another_slice() {
 }
 
 #[test]
-#[should_panic]
-fn not_from_the_start() {
-    filled(2, |out| {
-        &mut out.fill_ends([1], [2]).unwrap_or_default()[1..]
-    });
+fn the_slice_that_follows() {
+    static KEPT: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    let both = vec![0; 2].leak();
+    KEPT.store(both.as_mut_ptr(), Relaxed);
+    let (first, second) = both.split_at_mut(1);
+    let mut out = Out::from(first).into_writer();
+    out.push([1]);
+    out.append(|_| second);
+    assert_eq!(out.finish(), [1]);
 }
 
 #[test]
 #[should_panic]
+fn not_from_the_start() {
+    filled(2, |out| &mut pushed(out, [1, 2])[1..]);
+}
+
+#[test]
 fn more_than_there_was_room_for() {
-    Out::from(&mut [(); 2][..])
-        .into_writer()
-        .append(|_| vec![(); 3].leak());
+    let mut out = Out::from(vec![(); 2].leak()).into_writer();
+    out.append(|_| vec![(); 3].leak());
+    assert_eq!(out.len(), 2);
 }
 
 #[test]
@@ -266,5 +290,5 @@ fn more_than_the_spare_capacity() {
 fn not_from_the_start_of_a_writer() {
     Out::from(&mut [0; 2][..])
         .into_writer()
-        .append(|rest| &mut rest.fill_ends([1], [2]).unwrap_or_default()[1..]);
+        .append(|rest| &mut pushed(rest, [1, 2])[1..]);
 }

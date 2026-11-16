@@ -1,5 +1,5 @@
 //! Port of xxhash3.cpp. The constants are those of xxHash.
-use bun_simd::{SharedU8, Source, opaque};
+use bun_simd::{Isa, SharedU8, Source, opaque};
 use core::slice;
 
 trait Byte = Source<Lane = u8>;
@@ -48,7 +48,7 @@ const UP_BY_32: [u8; 16] = [
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{U8, U64, Vector};
+    use isa::{U8, U64, Vector, x128};
 
     #[inline(always)]
     fn u32_at(bytes: &[impl Byte], at: usize) -> u32 {
@@ -97,7 +97,7 @@ pub(crate) mod simd {
     }
 
     /// For more than 240 bytes.
-    #[export]
+    #[export(up_to = neon)]
     pub fn hash_long(input: &[SharedU8], secret: &[u8; 192]) -> u64 {
         let (mut acc, last) = (INIT, input.split_last_chunk().unwrap().1);
         let (blocks, rest) = input[..input.len() - 1].as_chunks::<1024>();
@@ -125,8 +125,9 @@ pub(crate) mod simd {
 
     #[inline(always)]
     fn mix(data: &[SharedU8; 16], key_at: usize, seed: u64) -> u64 {
-        let low = u64_at(data, 0) ^ u64_at(&SECRET, key_at).wrapping_add(seed);
-        let high = u64_at(data, 8) ^ u64_at(&SECRET, key_at + 8).wrapping_sub(seed);
+        let key: x128::U64 = x128::U8::from_slice(&SECRET[key_at..]).bitcast();
+        let key = key + x128::U64::from_array([seed, seed.wrapping_neg()]);
+        let [low, high] = (x128::U8::load(data).bitcast::<x128::U64>() ^ key).to_array();
         folded_mul(low, high)
     }
 
@@ -190,30 +191,37 @@ pub(crate) mod simd {
         }
     }
 
+    /// In the low halves. On x86-64, the moves from a vector would compete with the rotations.
+    #[inline(always)]
+    fn products32(stripe: &[impl Byte; 16]) -> [u64; 4] {
+        if isa::Isa::HAS_SINGLE_CYCLE_OPS {
+            let words = Vector::load4(stripe.as_chunks().0.as_array().unwrap());
+            let product = |word| u32::from_le_bytes(word).wrapping_mul(PRIME32_2);
+            return words.map(|word| product(word.to_array()).into());
+        }
+        let products = x128::U8::load(stripe).bitcast::<x128::U32>() * PRIME32_2;
+        let [low, high] = products.bitcast::<x128::U64>().to_array().map(opaque);
+        [low, low >> 32, high, high >> 32]
+    }
+
     #[inline(always)]
     fn hash32(seed: u32, input: &[impl Byte]) -> u32 {
         let (stripes, rest) = input.as_chunks::<16>();
         let mut hash = seed.wrapping_add(PRIME32_5);
         if !stripes.is_empty() {
-            let from_seed = [
-                PRIME32_1.wrapping_add(PRIME32_2),
-                PRIME32_2,
-                0,
-                PRIME32_1.wrapping_neg(),
-            ];
-            let mut acc = from_seed.map(|it| it.wrapping_add(seed));
+            let round = |acc: u32, product: u64| {
+                let sum = acc.wrapping_add(product as u32);
+                sum.rotate_left(13).wrapping_mul(PRIME32_1)
+            };
+            let (mut b, mut c) = (seed.wrapping_add(PRIME32_2), seed);
+            let (mut a, mut d) = (b.wrapping_add(PRIME32_1), seed.wrapping_sub(PRIME32_1));
             for stripe in stripes {
-                for (i, acc) in acc.iter_mut().enumerate() {
-                    let sum = acc.wrapping_add(u32_at(stripe, 4 * i).wrapping_mul(PRIME32_2));
-                    // In a vector, each step takes longer.
-                    *acc = opaque(sum.rotate_left(13).wrapping_mul(PRIME32_1).into()) as u32;
-                }
+                // What depends on the stripe before takes longer in a vector.
+                let [w, x, y, z] = products32(stripe).map(opaque);
+                (a, b, c, d) = (round(a, w), round(b, x), round(c, y), round(d, z));
             }
-            let rotated = acc
-                .iter()
-                .zip([1, 7, 12, 18])
-                .map(|(acc, by)| acc.rotate_left(by));
-            hash = rotated.fold(0, u32::wrapping_add);
+            hash = (a.rotate_left(1).wrapping_add(b.rotate_left(7)))
+                .wrapping_add(c.rotate_left(12).wrapping_add(d.rotate_left(18)));
         }
         hash = hash.wrapping_add(input.len() as u32);
         let (words, bytes) = rest.as_chunks::<4>();
@@ -245,8 +253,9 @@ pub(crate) mod simd {
     #[inline(always)]
     fn accumulate64(mut acc: [u64; 4], stripes: &[[impl Byte; 32]]) -> [u64; 4] {
         for stripe in stripes {
-            for (i, acc) in acc.iter_mut().enumerate() {
-                *acc = round64(*acc, u64_at(stripe, 8 * i));
+            let words = Vector::load4(stripe.as_chunks().0.as_array().unwrap());
+            for (acc, word) in acc.iter_mut().zip(words) {
+                *acc = round64(*acc, u64::from_le_bytes(word.to_array()));
             }
         }
         acc
@@ -358,7 +367,8 @@ fn hash_long_with_seed(seed: u64, input: &[SharedU8]) -> u64 {
 
 #[inline(always)]
 fn round64(acc: u64, input: u64) -> u64 {
-    let sum = acc.wrapping_add(input.wrapping_mul(PRIME64_2));
+    // With `madd`, the product would wait for `acc`.
+    let sum = acc.wrapping_add(opaque(input.wrapping_mul(PRIME64_2)));
     sum.rotate_left(31).wrapping_mul(PRIME64_1)
 }
 

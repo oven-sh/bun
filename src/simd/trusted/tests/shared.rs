@@ -241,7 +241,7 @@ fn last_lanes_of_plain<T: SimdElement + Default + From<u8> + PartialEq + Debug, 
         let (end, fit) = (room.len(), len.min(N));
         for start in [0, 77, end - len] {
             let to = black_box(&mut room[start..start + len]);
-            let filled = Out::from(to).fill_masked_from_last(Simd::from_array(lanes));
+            let filled = Out::from(to).fill_masked::<true, _>(Simd::from_array(lanes));
             assert_eq!(filled, &lanes[N - fit..]);
             let mut want = lanes;
             want[..N - fit].fill(T::default());

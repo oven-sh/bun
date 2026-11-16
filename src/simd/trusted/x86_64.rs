@@ -1,5 +1,5 @@
 //! Decodes the answers of `cpuid` and `xgetbv`.
-use crate::features::{Arch, Feature, row};
+use crate::features::{Arch, Feature, major_and_minor, row};
 
 /// Leaf, subleaf if not 0, register. `E` is for the extended leaves.
 #[derive(Clone, Copy)]
@@ -163,12 +163,8 @@ pub fn decode(cpuid: impl Fn(u32, u32) -> [u32; 4], saved: u64) -> Features {
 
 /// macOS sets the AVX-512 bits for a thread only after its first AVX-512 instruction.
 pub fn saved_by_darwin(xcr0: u64, has_avx512f: bool, release: &[u8]) -> u64 {
-    let mut numbers = release
-        .split(|&b| b == b'.')
-        .map(|n| str::from_utf8(n).ok()?.parse::<u32>().ok());
-    let release = numbers.next().flatten().zip(numbers.next().flatten());
     // Earlier releases lose the mask registers in signal handlers: https://github.com/golang/go/issues/49233
-    if has_avx512f && release >= Some((21, 3)) {
+    if has_avx512f && major_and_minor(release) >= Some((21, 3)) {
         xcr0 | MASKS_ZMM
     } else {
         xcr0 & !MASKS_ZMM

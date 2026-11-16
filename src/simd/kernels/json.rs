@@ -18,7 +18,7 @@ const GIVES_UP: u32 = 1 << 3;
 pub(crate) mod simd {
     use isa::U8;
 
-    #[export]
+    #[export(up_to = neon)]
     pub fn index_chunk<'a>(
         input: &[u8],
         base_offset: usize,

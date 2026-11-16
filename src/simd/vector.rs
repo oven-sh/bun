@@ -13,15 +13,22 @@ use core::simd::{self, SimdCast, SimdElement, Swizzle, ToBytes, prelude::*};
 /// The type of a lane.
 pub trait Lane: SimdElement + SimdCast + Default {}
 
-impl Lane for u8 {}
-impl Lane for i8 {}
-impl Lane for u16 {}
-impl Lane for i16 {}
-impl Lane for u32 {}
-impl Lane for i32 {}
-impl Lane for u64 {}
-impl Lane for i64 {}
-impl Lane for f32 {}
+/// `core::simd` has `cast` in a trait for each kind of number.
+macro_rules! impl_lane {
+    ($($T:ty)*) => {$(
+        impl Lane for $T {}
+
+        impl<const N: usize, I: Isa> Vector<$T, N, I> {
+            /// Converts each lane with `as`.
+            #[inline(always)]
+            pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
+                Vector::new(self.0.cast())
+            }
+        }
+    )*};
+}
+
+impl_lane!(u8 i8 u16 i16 u32 i32 u64 i64 f32);
 
 /// An integer lane of a vector with `N` lanes: the bound for code that is generic over lanes.
 pub trait Int<const N: usize> = Lane
@@ -113,6 +120,17 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
         V::from_bytes(self.0.to_le_bytes())
     }
 
+    /// The inverse of `first_bytes`, for integers.
+    #[inline(always)]
+    pub(crate) fn from_first_bytes<const BYTES: usize>(bytes: Simd<u8, BYTES>) -> Self {
+        Self::new(match const { size_of::<T>() } {
+            1 => bytes.resize(0).cast(),
+            2 => u16x32::from_le_bytes(bytes.resize(0)).resize(0).cast(),
+            4 => u32x16::from_le_bytes(bytes.resize(0)).resize(0).cast(),
+            _ => u64x8::from_le_bytes(bytes.resize(0)).resize(0).cast(),
+        })
+    }
+
     /// Keeps LLVM from merging the ops before it with those after it.
     #[inline(always)]
     pub fn opaque(self) -> Self
@@ -156,15 +174,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     /// Panics if the vector has fewer than `BYTES` bytes.
     #[inline(always)]
     pub(crate) fn first_bytes<const BYTES: usize>(self) -> Simd<u8, BYTES> {
-        Simd::from_slice(self.0.to_ne_bytes().as_ref())
-    }
-
-    /// Panics if the vector has more than `BYTES` bytes.
-    #[inline(always)]
-    pub(crate) fn from_first_bytes<const BYTES: usize>(bytes: Simd<u8, BYTES>) -> Self {
-        let mut first = Self::zero().0.to_ne_bytes();
-        first.as_mut().copy_from_slice(&bytes[..size_of::<Self>()]);
-        Self::new(Simd::from_ne_bytes(first))
+        Simd::from_slice(self.0.to_le_bytes().as_ref())
     }
 
     /// `a0 b0 a1 b1 ..`, split into two halves.
@@ -243,12 +253,6 @@ impl<const N: usize, I: Isa> Vector<u8, N, I> {
         Self::new(Repeat::<16>::swizzle(Simd::from_array(block)))
     }
 
-    /// Converts each lane with `as`.
-    #[inline(always)]
-    pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
-        Vector::new(self.0.cast())
-    }
-
     #[inline(always)]
     pub fn saturating_add(self, other: impl Into<Self>) -> Self {
         Self::new(self.0.saturating_add(other.into().0))
@@ -277,17 +281,15 @@ impl<const N: usize, I: Isa> Vector<u8, N, I> {
     where
         Simd<u16, M>: ToBytes<Bytes = Simd<u8, N>>,
     {
-        Self::new(first.0.to_le_bytes().deinterleave(second.0.to_le_bytes()).0)
+        // Each takes fewer shuffles than the other would.
+        Self::new(match N {
+            32 => Repeat::<N>::concat_swizzle(first.0, second.0).cast(),
+            _ => first.0.to_le_bytes().deinterleave(second.0.to_le_bytes()).0,
+        })
     }
 }
 
 impl<const N: usize, I: Isa> Vector<u16, N, I> {
-    /// Converts each lane with `as`.
-    #[inline(always)]
-    pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
-        Vector::new(self.0.cast())
-    }
-
     /// Zero-extends the first half of the lanes.
     #[inline(always)]
     pub fn widen_lower<const M: usize>(bytes: Vector<u8, M, I>) -> Self
@@ -311,21 +313,7 @@ impl<const N: usize, I: Isa> Vector<u16, N, I> {
     }
 }
 
-impl<const N: usize, I: Isa> Vector<i16, N, I> {
-    /// Converts each lane with `as`.
-    #[inline(always)]
-    pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
-        Vector::new(self.0.cast())
-    }
-}
-
 impl<const N: usize, I: Isa> Vector<i32, N, I> {
-    /// Converts each lane with `as`.
-    #[inline(always)]
-    pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
-        Vector::new(self.0.cast())
-    }
-
     #[inline(always)]
     pub fn reduce_min(self) -> i32 {
         self.0.reduce_min()
@@ -338,16 +326,16 @@ impl<const N: usize, I: Isa> Vector<i32, N, I> {
 }
 
 impl<const N: usize, I: Isa> Vector<u64, N, I> {
+    #[inline(always)]
+    pub fn reduce_sum(self) -> u64 {
+        self.0.reduce_sum()
+    }
+
     /// The full product of the low 32 bits of each lane.
     #[inline(always)]
     pub fn mul_low32(self, other: Self) -> Self {
         let [a, b] = [self, other].map(|v| v.0.cast::<u32>().cast::<u64>());
         Self::new(a * b)
-    }
-
-    #[inline(always)]
-    pub fn reduce_sum(self) -> u64 {
-        self.0.reduce_sum()
     }
 }
 

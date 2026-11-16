@@ -9,6 +9,9 @@
 // here than SSSE3 or the NEON without AES.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))
+#ifndef __OPTIMIZE__
+#error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
+#endif
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_webp_encoder.cpp"

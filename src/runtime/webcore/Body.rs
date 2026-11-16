@@ -860,12 +860,7 @@ impl Value {
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
                 let (encoded, mime) = image.encode_for_body(global_this, value)?;
-                // Blob.Store owns a `Vec`, so dupe out of the
-                // codec's allocator here. The hot path (`.bytes()`) hands the
-                // codec buffer to JS without this copy.
-                let owned = encoded.to_vec();
-                drop(encoded);
-                let blob = Blob::init(owned, global_this);
+                let blob = Blob::init(encoded, global_this);
                 blob.content_type
                     .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);

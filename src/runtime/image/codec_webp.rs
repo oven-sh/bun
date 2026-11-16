@@ -41,13 +41,11 @@ pub(crate) fn encode(
     quality: u8,
     lossless: bool,
     icc_profile: Option<&[u8]>,
-) -> Result<codecs::Encoded, codecs::Error> {
+) -> Result<Vec<u8>, codecs::Error> {
     let compression = if lossless {
         bun_webp::Compression::Lossless
     } else {
         bun_webp::Compression::Lossy { quality }
     };
-    bun_webp::encode(rgba, w, h, compression, icc_profile)
-        .map(codecs::Encoded::from_owned)
-        .map_err(encode_error)
+    bun_webp::encode(rgba, w, h, compression, icc_profile).map_err(encode_error)
 }

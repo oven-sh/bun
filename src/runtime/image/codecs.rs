@@ -2,14 +2,8 @@
 //! highway resize/rotate kernels. Everything works on RGBA8 — decoders are
 //! told to emit RGBA, encoders are fed RGBA, so Image.rs never branches on
 //! channel layout.
-//!
-//! Memory ownership: decode returns global-allocator-owned RGBA. Encode
-//! returns `Encoded{bytes, free}` carrying the codec's own deallocator so the
-//! JS layer can hand the buffer to `ArrayBuffer.toJSWithContext` without a
-//! dupe — see `Encoded` below.
 
-use core::ffi::{c_int, c_void};
-use core::ptr::NonNull;
+use core::ffi::c_int;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
@@ -448,71 +442,6 @@ impl Default for EncodeOptions {
     }
 }
 
-/// Encoded output paired with the free function for its allocator:
-/// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
-/// the matching free — one allocation, zero copies, for the final output.
-///
-/// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
-/// be passed straight through; the `ctx` arg is unused.
-pub(crate) struct Encoded {
-    bytes: NonNull<[u8]>,
-    free: Free,
-}
-
-type Free = unsafe extern "C" fn(*mut c_void, *mut c_void);
-
-impl core::ops::Deref for Encoded {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        // SAFETY: live until `free` runs.
-        unsafe { self.bytes.as_ref() }
-    }
-}
-
-impl Drop for Encoded {
-    fn drop(&mut self) {
-        // SAFETY: `bytes` was allocated by the codec whose deallocator is `free`.
-        unsafe {
-            (self.free)(
-                self.bytes.as_ptr().cast::<u8>().cast::<c_void>(),
-                core::ptr::null_mut(),
-            )
-        }
-    }
-}
-
-/// Adapt a 1-arg free to the 2-arg JSC deallocator signature.
-// Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
-// so this is a macro that mints a static trampoline per call site.
-#[macro_export]
-macro_rules! encoded_wrap_free {
-    ($f:path) => {{
-        unsafe extern "C" fn call(p: *mut ::core::ffi::c_void, _: *mut ::core::ffi::c_void) {
-            // SAFETY: p was allocated by the matching allocator for `$f`.
-            unsafe { $f(p) }
-        }
-        call as unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void)
-    }};
-}
-
-impl Encoded {
-    /// The caller releases the bytes with the function returned.
-    pub(crate) fn into_raw(self) -> (NonNull<[u8]>, Free) {
-        let this = core::mem::ManuallyDrop::new(self);
-        (this.bytes, this.free)
-    }
-
-    pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
-        let (ptr, len, _capacity) = bytes.into_parts();
-        Encoded {
-            bytes: NonNull::slice_from_raw_parts(ptr, len),
-            // `bytes` came from a `Vec<u8>` (the global allocator); free with
-            // `default_alloc::free` so it agrees with the `#[global_allocator]`.
-            free: encoded_wrap_free!(bun_alloc::default_alloc::free),
-        }
-    }
-}
-
 /// `icc` is the ICC profile to embed in the output container (JPEG APP2, PNG
 /// iCCP, WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
 /// pipeline forwards this from the decode step so a non-sRGB source
@@ -524,7 +453,7 @@ pub(crate) fn encode(
     height: u32,
     opts: EncodeOptions,
     icc: Option<&[u8]>,
-) -> Result<Encoded, Error> {
+) -> Result<Vec<u8>, Error> {
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise
@@ -558,7 +487,7 @@ pub(crate) fn encode(
                 return match system_backend::BackendError::split(system_backend::encode(
                     rgba, width, height, &opts,
                 )) {
-                    Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
+                    Ok(Some(buf)) => Ok(buf),
                     // BackendUnavailable collapses into UnsupportedOnPlatform.
                     Ok(None) => Err(Error::UnsupportedOnPlatform),
                     Err(e) => Err(e),

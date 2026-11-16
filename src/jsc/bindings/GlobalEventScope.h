@@ -20,9 +20,8 @@ class GlobalEventScope : public RefCounted<GlobalEventScope>, public EventTarget
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 
 public:
-    GlobalEventScope(ScriptExecutionContext* context)
+    GlobalEventScope()
         : EventTargetWithInlineData()
-        , m_context(context)
     {
         this->onDidChangeListener = &onDidChangeListenerImpl;
     }
@@ -30,9 +29,9 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    static Ref<GlobalEventScope> create(ScriptExecutionContext* context)
+    static Ref<GlobalEventScope> create()
     {
-        return adoptRef(*new GlobalEventScope(context));
+        return adoptRef(*new GlobalEventScope);
     }
 
     ~GlobalEventScope() = default;
@@ -43,6 +42,6 @@ public:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {}
 
-    ScriptExecutionContext* m_context;
+    ScriptExecutionContext* m_context { nullptr };
 };
 }

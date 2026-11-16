@@ -1250,11 +1250,8 @@ impl JSGlobalObject {
         }
     }
 
-    pub(crate) fn create_for_test_isolation(
-        old_global: &JSGlobalObject,
-        console: *mut c_void,
-    ) -> *mut JSGlobalObject {
-        Zig__GlobalObject__createForTestIsolation(old_global, console)
+    pub(crate) fn create_for_test_isolation(old_global: &JSGlobalObject) -> *mut JSGlobalObject {
+        Zig__GlobalObject__createForTestIsolation(old_global)
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
@@ -1538,11 +1535,9 @@ unsafe extern "C" {
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
-    // stores into the new global (never dereferenced as Rust data here).
+    // ABI-identical to non-null `*const`).
     safe fn Zig__GlobalObject__createForTestIsolation(
         old_global: &JSGlobalObject,
-        console: *mut c_void,
     ) -> *mut JSGlobalObject;
 }
 

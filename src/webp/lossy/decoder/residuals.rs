@@ -219,7 +219,7 @@ impl Residuals {
 #[inline(always)]
 fn spread_first(row: &mut BlockRow) -> bool {
     let first: [i16; 16] = core::array::from_fn(|x| *row.at(x & !3));
-    let residuals = first.map(|it| it.wrapping_add(4) >> 3);
+    let residuals = first.map(|it| it.saturating_add(4) >> 3);
     row.as_chunks_mut().0.fill(residuals);
     first != [0; 16]
 }

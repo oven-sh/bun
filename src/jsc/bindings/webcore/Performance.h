@@ -61,7 +61,6 @@ class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;
 class PerformanceMeasure;
-class PerformanceNavigation;
 class PerformanceNavigationTiming;
 class PerformanceObserver;
 class PerformanceTiming;
@@ -130,8 +129,6 @@ private:
 
     // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;
-
-    Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
 
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 

@@ -175,8 +175,13 @@ if (process.argv[2] === "stay") setInterval(() => {}, 1000);
     });
     const written = `${order}.${stays.pid}`;
     while (!existsSync(written) || !readFileSync(written, "utf8").includes(" first\n")) await Bun.sleep(10);
-    stays.kill("SIGKILL");
-    expect(await stays.stdout.text()).toBe("8\n");
+    // The line is there while `first` runs, before the program has printed.
+    let stdout = "";
+    for await (const chunk of stays.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (stdout.includes("\n")) stays.kill("SIGKILL");
+    }
+    expect(stdout).toBe("8\n");
     await stays.exited;
     expect(readFileSync(written, "utf8")).toContain(" first\n");
     const missing = await run([executable], { BUN_AOT_ORDER_OUT: join(String(dir), "missing", "file") });

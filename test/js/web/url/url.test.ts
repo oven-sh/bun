@@ -456,16 +456,15 @@ describe("url", () => {
       // The number ends at the first character that is not a digit. No digit, or a number above 65535, is a failure.
       ["http://example.net/path", "8080stuff2", "http://example.net:8080/path"],
       ["http://example.net:8080/path", "randomstring", "http://example.net:8080/path"],
+      ["http://example.net/path", "65535", "http://example.net:65535/path"],
       ["http://example.net:8080/path", "65536", "http://example.net:8080/path"],
     ] as const;
 
-    for (const [href, value, expected] of cases) {
-      it(`new URL(${JSON.stringify(href)}).port = ${JSON.stringify(value)}`, () => {
-        const url = new URL(href);
-        url.port = value;
-        expect(url.href).toBe(expected);
-      });
-    }
+    it.each(cases)("new URL(%j).port = %j", (href, value, expected) => {
+      const url = new URL(href);
+      url.port = value;
+      expect(url.href).toBe(expected);
+    });
   });
 
   // Web IDL record conversion interleaves Get with value conversion: mutations made by a

@@ -205,6 +205,19 @@ describe("BunTestController", () => {
       expect(result.location).toBe(location);
     });
 
+    test("should read both values of a toBe error that has a hint line", () => {
+      const message =
+        'expect(received).toBe(expected)\n\nIf this test should pass, replace "toBe" with "toEqual"\n\nExpected: {}\nReceived: {\n  a: undefined,\n}\n';
+      const location = new MockLocation(new MockUri("file:///test/file.ts"), new MockPosition(10, 5));
+
+      const result = internal.processErrorData(message, location);
+      expect({ expected: result.expectedOutput, actual: result.actualOutput }).toEqual({
+        expected: "{}",
+        actual: "{\n  a: undefined,\n}",
+      });
+      expect(result.location).toBe(location);
+    });
+
     test("should handle toEqual errors", () => {
       const message = `expect(received).toEqual(expected)\nExpected: { name: "John", age: 30 }\nReceived: { name: "Jane", age: 25 }`;
       const location = new MockLocation(new MockUri("file:///test/file.ts"), new MockPosition(10, 5));

@@ -20,6 +20,12 @@ test("toHaveProperty", () => {
 test("not.toBe", () => {
   expect("<red>x</red>").not.toBe("<red>x</red>");
 });
+test("toBe of deep-equal values that print the same", () => {
+  expect({ tag: "<red>x</red>" }).toBe({ tag: "<red>x</red>" });
+});
+test("toBe of deep-equal values that print differently", () => {
+  expect({ tag: "<b>x</b>", more: undefined }).toBe({ tag: "<b>x</b>" });
+});
 test("toThrow", () => {
   expect(() => {
     throw new Error("<u>underlined</u>");
@@ -79,6 +85,12 @@ describe("expect() failure messages preserve <...> in user data", () => {
     // not.toBe: a string that happens to match a colour tag name.
     expect(stderr).toContain('Expected: not "<red>x</red>"');
 
+    // toBe of deep-equal values: the printed values are user data.
+    expect(stderr).toContain('Expected: {\n  tag: "<red>x</red>",\n}\nReceived: serializes to the same string\n');
+    expect(stderr).toContain(
+      'Expected: {\n  tag: "<b>x</b>",\n}\nReceived: {\n  tag: "<b>x</b>",\n  more: undefined,\n}\n',
+    );
+
     // toThrow: error message from a thrown Error is user data.
     expect(stderr).toContain('Error message: "<u>underlined</u>"');
 
@@ -120,6 +132,16 @@ describe("expect() failure messages preserve <...> in user data", () => {
     // `<red>` in user data must not become a red escape inside the quoted
     // value; it must appear literally after the *template's* green escape.
     expect(stderr).toContain('\x1b[32m"<red>x</red>"\x1b[0m');
+
+    // toBe of deep-equal values: the template dims the hint and colours both
+    // values. `<red>` and `<b>` inside the values stay literal.
+    expect(stderr).toContain('\x1b[2mIf this test should pass, replace "toBe" with "toEqual"\x1b[0m');
+    expect(stderr).toContain(
+      'Expected: \x1b[32m{\n  tag: "<red>x</red>",\n}\x1b[0m\nReceived: serializes to the same string\n',
+    );
+    expect(stderr).toContain(
+      'Expected: \x1b[32m{\n  tag: "<b>x</b>",\n}\x1b[0m\nReceived: \x1b[31m{\n  tag: "<b>x</b>",\n  more: undefined,\n}\x1b[0m\n',
+    );
 
     // The custom label is user data — must not emit a blue escape. The label
     // heads the bold error line.

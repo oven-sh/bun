@@ -2,7 +2,6 @@ use core::ops::Range;
 
 use super::hash::{Candidate, Match, score, score_of_recent};
 use super::matching::{HASH_MULTIPLIER_64, load32, load64, match_length};
-use crate::format::MAX_ALLOWED_DISTANCE;
 use crate::memory::{self, Result};
 
 const BUCKET_LIMIT: u8 = 32;
@@ -100,9 +99,6 @@ impl PreparedDictionary {
 
     /// The bytes that `distance` refers to, if the last byte of the dictionary is at `end_distance + 1`.
     pub(super) fn at_distance(&self, distance: usize, end_distance: usize) -> Option<&[u8]> {
-        if distance > MAX_ALLOWED_DISTANCE as usize {
-            return None;
-        }
         let length = distance.checked_sub(end_distance)?;
         Some(&self.bytes[self.bytes.len().checked_sub(length)?..])
     }

@@ -1,6 +1,6 @@
-use super::{Stop, transform};
+use super::Stop;
 use crate::format::WINDOW_GAP;
-use crate::memory;
+use crate::{memory, transform};
 use bun_core::vec::BorrowedCursor;
 
 /// Past [`RingBuffer::limit`], for a word of the dictionary that starts before it and for copies that round up.

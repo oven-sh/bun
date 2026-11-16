@@ -297,6 +297,7 @@ impl MetaBlock {
     }
 }
 
+#[inline(never)]
 fn choose_distance_params(commands: &[Command], params: &Params) -> DistanceParams {
     let original = params.distance;
     let mut best = original;

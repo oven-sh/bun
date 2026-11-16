@@ -42,6 +42,10 @@ pub(crate) const MAX_ALLOWED_DISTANCE: u32 = 0x7FFF_FFFC;
 pub(crate) const INITIAL_DISTANCES: [u32; 4] = [4, 11, 15, 16];
 
 pub(crate) const MAX_DICTIONARY_SIZE: usize = 1 << 30;
+const _: () = assert!(
+    max_backward_distance(LARGE_MAX_WINDOW_BITS) + MAX_DICTIONARY_SIZE
+        <= MAX_ALLOWED_DISTANCE as usize
+);
 
 pub(crate) const fn max_backward_distance(window_bits: u32) -> usize {
     (1 << window_bits) - WINDOW_GAP

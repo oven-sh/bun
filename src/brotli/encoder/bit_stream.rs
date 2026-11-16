@@ -235,6 +235,7 @@ fn move_to_front(values: &[u32]) -> impl Iterator<Item = u32> {
     })
 }
 
+#[inline(never)]
 fn write_context_map(
     map: &[u32],
     tree_count: usize,
@@ -248,7 +249,7 @@ fn write_context_map(
     let mut values = memory::empty(map.len())?;
     values.extend(move_to_front(map));
     let runs = || values.chunk_by(|&a, &b| a == 0 && b == 0);
-    let longest = runs().filter(|run| run[0] == 0).map(<[u32]>::len).max();
+    let longest = runs().map(<[u32]>::len).max();
     let max_code = longest.map_or(0, log2_floor).min(MAX_RUN_LENGTH_CODE);
 
     let mut symbols = memory::empty(map.len())?;
@@ -288,6 +289,7 @@ fn write_context_map(
 }
 
 /// All contexts of a block type use the tree with its number.
+#[inline(never)]
 fn write_trivial_context_map(
     type_count: usize,
     context_bits: u32,

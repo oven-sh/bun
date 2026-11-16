@@ -1,7 +1,8 @@
 use super::slots::Slots;
-use super::{Hasher, MIN_SCORE, Match, RecentDistances, Search, score, score_of_recent};
+use super::{Hasher, MIN_SCORE, Match, RecentDistances, Search, jump, score, score_of_recent};
+use crate::encoder::input_block::InputBlock;
 use crate::encoder::matching::{HASH_MULTIPLIER_64, load32, load64};
-use crate::encoder::ring_buffer::Window;
+use crate::encoder::ring_buffer::{SLACK, Window};
 use crate::encoder::words::QuickWordSearch;
 
 /// Keeps `SWEEP` positions for a hash of `HASHED` bytes (qualities 2 to 4).
@@ -31,27 +32,8 @@ impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool>
     fn slot_for(key: usize, position: usize) -> usize {
         key + (position & ((SWEEP - 1) << 3))
     }
-}
 
-impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Hasher
-    for Quick<S, SWEEP, HASHED, USE_WORDS>
-{
-    const LOOKAHEAD: usize = 8;
-
-    fn recent_count(&self) -> usize {
-        1
-    }
-
-    fn clear(&mut self) {
-        self.slots.clear();
-    }
-
-    #[inline(always)]
-    fn store(&mut self, eight: u64, position: usize) {
-        self.slots
-            .set(Self::slot_for(Self::key(eight), position), position);
-    }
-
+    /// Whether it is quick to tell that [`Hasher::find`] finds nothing.
     #[inline(always)]
     fn rules_out(
         &self,
@@ -73,6 +55,43 @@ impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Has
         let key = Self::key(eight);
         differs(position.wrapping_sub(last_distance as usize), u32::MAX)
             && (0..SWEEP).all(|i| differs(self.slots.get(key + 8 * i) as usize, compared))
+    }
+}
+
+impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Hasher
+    for Quick<S, SWEEP, HASHED, USE_WORDS>
+{
+    const LOOKAHEAD: usize = 8;
+
+    fn recent_count(&self) -> usize {
+        1
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+    }
+
+    #[inline(always)]
+    fn store(&mut self, eight: u64, position: usize) {
+        self.slots
+            .set(Self::slot_for(Self::key(eight), position), position);
+    }
+
+    #[inline(never)]
+    fn skip<'a>(
+        &mut self,
+        block: &InputBlock<'_>,
+        mut position: usize,
+        mut padded: &'a [u8],
+        last_distance: i32,
+    ) -> (usize, &'a [u8]) {
+        while padded.len() > Self::LOOKAHEAD + SLACK
+            && self.rules_out(block.window, load64(padded, 0), position, last_distance)
+        {
+            self.store(load64(padded, 0), position);
+            (position, padded) = jump(self, block, position + 1, &padded[1..], 4);
+        }
+        (position, padded)
     }
 
     #[inline(always)]

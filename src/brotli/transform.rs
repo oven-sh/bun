@@ -5,10 +5,10 @@ use Kind::{Identity, OmitFirst, OmitLast, UppercaseAll, UppercaseFirst};
 
 const MAX_AFFIX_LENGTH: usize = 8;
 /// Holds the longest result, and what the copies of a fixed size write past it.
-pub(super) const ROOM: usize = 48;
+pub(crate) const ROOM: usize = 48;
 
 #[derive(Clone, Copy)]
-enum Kind {
+pub(crate) enum Kind {
     Identity,
     OmitFirst(u8),
     OmitLast(u8),
@@ -17,7 +17,7 @@ enum Kind {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Transform {
+pub(crate) struct Transform {
     prefix: [u8; MAX_AFFIX_LENGTH],
     suffix: [u8; MAX_AFFIX_LENGTH],
     prefix_length: u8,
@@ -53,13 +53,33 @@ impl Transform {
         }
     }
 
-    pub(super) fn get(index: usize) -> Option<&'static Self> {
+    /// The inverse of [`get`](Self::get), for tables.
+    #[allow(clippy::indexing_slicing)] // Runs at compile time.
+    pub(crate) const fn index_of(prefix: &[u8], kind: Kind, suffix: &[u8]) -> Option<u8> {
+        let wanted = Self::new(prefix, kind, suffix);
+        let mut index = 0;
+        while index < TRANSFORMS.len() {
+            let other = &TRANSFORMS[index];
+            if u64::from_le_bytes(other.prefix) == u64::from_le_bytes(wanted.prefix)
+                && u64::from_le_bytes(other.suffix) == u64::from_le_bytes(wanted.suffix)
+                && other.skipped == wanted.skipped
+                && other.omitted == wanted.omitted
+                && other.uppercased == wanted.uppercased
+            {
+                return Some(index as u8);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    pub(crate) fn get(index: usize) -> Option<&'static Self> {
         TRANSFORMS.get(index)
     }
 
     /// Returns the length of what it left at the start of `out`. Spoils up to 16 bytes after that.
     #[inline(always)]
-    pub(super) fn apply(
+    pub(crate) fn apply(
         &self,
         word: &[u8; PADDED_WORD_LENGTH],
         length: usize,

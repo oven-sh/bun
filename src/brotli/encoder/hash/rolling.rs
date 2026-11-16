@@ -97,6 +97,7 @@ fn add_byte(hash: u32, byte: u8) -> u32 {
     hash.wrapping_mul(FACTOR).wrapping_add(u32::from(byte) + 1)
 }
 
+/// Skips nothing, whatever `H` can tell.
 impl<H: Hasher, const STEP: usize> Hasher for WithRolling<H, STEP> {
     const LOOKAHEAD: usize = H::LOOKAHEAD;
 

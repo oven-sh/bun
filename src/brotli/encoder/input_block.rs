@@ -9,6 +9,7 @@ pub(super) struct InputBlock<'a> {
     pub(super) window: Window<'a>,
     pub(super) position: usize,
     pub(super) length: usize,
+    pub(super) is_last: bool,
     pub(super) params: &'a Params,
     pub(super) dictionary: Option<&'a PreparedDictionary>,
     max_backward_distance: usize,
@@ -20,6 +21,7 @@ impl<'a> InputBlock<'a> {
         window: Window<'a>,
         position: usize,
         length: usize,
+        is_last: bool,
         params: &'a Params,
         dictionary: Option<&'a PreparedDictionary>,
     ) -> Self {
@@ -27,6 +29,7 @@ impl<'a> InputBlock<'a> {
             window,
             position,
             length,
+            is_last,
             params,
             dictionary,
             max_backward_distance: params.max_backward_distance(),
@@ -44,7 +47,7 @@ impl<'a> InputBlock<'a> {
 
     /// Whether it is too early to allocate for a long input.
     pub(super) fn may_be_all(&self) -> bool {
-        self.position == 0 && self.length < self.params.block_size()
+        self.position == 0 && (self.is_last || self.length < self.params.block_size())
     }
 
     #[inline(always)]

@@ -132,10 +132,11 @@ impl Windowed {
         is_last: bool,
     ) -> Result<()> {
         let (position, length) = (wrap(self.processed), self.unprocessed());
-        let block = InputBlock::new(self.ring.window(), position, length, params, dictionary);
+        let window = self.ring.window();
+        let block = InputBlock::new(window, position, length, is_last, params, dictionary);
         let finder = match &mut self.finder {
             Some(finder) => finder,
-            none => none.insert(MatchFinder::new(&block, is_last)?),
+            none => none.insert(MatchFinder::new(&block)?),
         };
         let covered = self.commands.extend_last(&block, self.processed);
         finder.add_commands(&block, covered, self.positions_wrapped, &mut self.commands)?;

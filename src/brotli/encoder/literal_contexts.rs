@@ -61,6 +61,7 @@ pub(super) fn choose(
     choose_by_bigrams(&bigrams, params.quality)
 }
 
+#[inline(never)]
 fn entropy(counts: &[u32]) -> f64 {
     let mut total = 0;
     let mut sum = 0.0;

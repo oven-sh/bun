@@ -4,7 +4,6 @@ use super::bit_reader::{BitReader, FastReader, REFILLED};
 use super::huffman::{
     Forest, Ranges, RangesRoot, Root, Symbol, SymbolLists, SymbolTree, peek_symbol,
 };
-use super::transform::Transform;
 use super::{Blocks, Decoder, Resume, State, Stop, ring_buffer};
 use crate::DecodeError;
 use crate::context::{
@@ -16,6 +15,7 @@ use crate::format::{
     FIRST_COMMAND_WITH_DISTANCE, INITIAL_DISTANCES, INSERT_LENGTH_CODES, MAX_ALLOWED_DISTANCE,
     MAX_BLOCK_TYPES, MAX_CODE_LENGTH, SHORT_CODE_BASES, SHORT_CODE_DELTAS,
 };
+use crate::transform::Transform;
 
 /// In place of a distance context.
 const LAST_DISTANCE: u32 = DISTANCE_CONTEXTS as u32;
@@ -486,6 +486,7 @@ fn run_fast(
                 break Some(Err(Stop::UNREACHABLE));
             }
         } else {
+            core::hint::cold_path();
             cursor.position = position as usize;
             let stopped = cursor.copy(tables, whole_ring, distance, is_repeat, copy as usize);
             position = cursor.position as u32;

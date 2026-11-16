@@ -657,7 +657,7 @@ impl<'a> Paths<'a> {
         }
     }
 
-    fn add_cheapest_to(&self, commands: &mut Commands) {
+    fn add_cheapest_to(&self, commands: &mut Commands) -> Result<()> {
         let mut end = self.block.length;
         while self.costs[end] == UNREACHED {
             end -= 1;
@@ -668,6 +668,8 @@ impl<'a> Paths<'a> {
             offset -= self.nodes[offset].command_length();
             count += 1;
         }
+        // And one for the literals after them.
+        commands.try_reserve(count + 1)?;
         let first = commands.list.len();
         commands.list.resize(first + count, Command::insert_only(0));
         offset = end;
@@ -696,6 +698,7 @@ impl<'a> Paths<'a> {
             }
         }
         commands.pending_literals += self.block.length - end;
+        Ok(())
     }
 }
 
@@ -726,16 +729,13 @@ impl Finder<'_, '_> {
             16
         };
         let first = found.len();
-        match self.block.dictionary {
-            None => self.tree.find_all(&search, short_match_range, found),
-            Some(dictionary) => {
-                self.in_window.clear();
-                self.in_dictionary.clear();
-                self.tree
-                    .find_all(&search, short_match_range, &mut self.in_window);
-                dictionary.find_all(&self.block.query_at(position), &mut self.in_dictionary);
-                merge(&self.in_dictionary, &self.in_window, found);
-            }
+        self.tree.find_all(&search, short_match_range, found);
+        if let Some(dictionary) = self.block.dictionary {
+            self.in_window.clear();
+            self.in_window.extend(found.drain(first..));
+            self.in_dictionary.clear();
+            dictionary.find_all(&self.block.query_at(position), &mut self.in_dictionary);
+            merge(&self.in_dictionary, &self.in_window, found);
         }
         if let Some(&last) = found[first..].last()
             && last.length() > long
@@ -767,7 +767,7 @@ fn merge(mut a: &[Candidate], mut b: &[Candidate], merged: &mut Vec<Candidate>) 
     merged.extend_from_slice(b);
 }
 
-/// `commands` has room.
+#[inline(never)]
 pub(super) fn add_commands(
     tree: &mut BinaryTree,
     block: &InputBlock<'_>,
@@ -797,8 +797,7 @@ pub(super) fn add_commands(
             }
             offset = next;
         }
-        paths.add_cheapest_to(commands);
-        return Ok(());
+        return paths.add_cheapest_to(commands);
     }
 
     let mut found = memory::empty(4 * block.length)?;
@@ -821,7 +820,7 @@ pub(super) fn add_commands(
     let (first, literal_count) = (commands.list.len(), commands.literal_count);
     let pending_literals = commands.pending_literals;
     paths.extend_all(&found, &counts);
-    paths.add_cheapest_to(commands);
+    paths.add_cheapest_to(commands)?;
 
     let added = &commands.list[first..];
     refined = memory::copied(core::slice::from_ref(&FIRST_GUESS))?;
@@ -833,6 +832,5 @@ pub(super) fn add_commands(
     commands.pending_literals = pending_literals;
     commands.last_distances = paths.first_distances;
     paths.extend_all(&found, &counts);
-    paths.add_cheapest_to(commands);
-    Ok(())
+    paths.add_cheapest_to(commands)
 }

@@ -48,6 +48,7 @@ impl<const N: usize> Histogram<N> {
         self.total += symbols.len();
     }
 
+    #[inline(never)]
     pub(super) fn merge(&mut self, other: &Self) {
         for (count, other) in self.counts.iter_mut().zip(&other.counts) {
             *count += other;
@@ -66,13 +67,13 @@ impl<const N: usize> Histogram<N> {
 
     /// For a caller that knows what is [`used`](Self::used).
     pub(super) fn cost_of(&self, used: &SymbolSet) -> f64 {
-        cost(used, self.total, |symbol| self.counts[symbol])
+        static NOTHING: [u32; COMMAND_SYMBOLS] = [0; _];
+        cost(used, self.total, &self.counts, &NOTHING)
     }
 
     /// `used` has the symbols of both.
     pub(super) fn cost_with(&self, other: &Self, used: &SymbolSet) -> f64 {
-        let count_of = |symbol: usize| self.counts[symbol] + other.counts[symbol];
-        cost(used, self.total + other.total, count_of)
+        cost(used, self.total + other.total, &self.counts, &other.counts)
     }
 }
 
@@ -105,21 +106,41 @@ fn whole_part(value: f64) -> usize {
 }
 
 // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L13
-#[inline(always)]
-fn cost(used: &SymbolSet, total: usize, count_of: impl Fn(usize) -> u32) -> f64 {
+#[inline(never)]
+fn cost(used: &SymbolSet, total: usize, counts: &[u32], more: &[u32]) -> f64 {
+    let more = &more[..counts.len()];
+    let count_of = |symbol: usize| counts[symbol] + more[symbol];
+    let used_count = used.len();
+    if used_count <= 4 {
+        let mut first = [0; 4];
+        for (count, symbol) in first.iter_mut().zip(used) {
+            *count = count_of(symbol);
+        }
+        first.sort_unstable();
+        let [d, c, b, a] = first;
+        return match used_count {
+            0 | 1 => 12.0,
+            2 => 20.0 + total as f64,
+            3 => 28.0 + f64::from(2 * (a + b + c)) - f64::from(a),
+            _ => 37.0 + f64::from(3 * (c + d)) + f64::from(2 * (a + b)) - f64::from(a.max(c + d)),
+        };
+    }
     let mut bits = 0.0;
     let mut lengths = [0; CODE_LENGTH_CODES];
     let log2_total = fast_log2(total);
-    let mut first = [0; 4];
-    let (mut used_count, mut next_symbol) = (0, 0);
+    let cost_of = |count: u32| {
+        let log2_p = log2_total - fast_log2(count as usize);
+        let length = whole_part(log2_p + 0.5).min(MAX_CODE_LENGTH);
+        (f64::from(count) * log2_p, length)
+    };
+    let rare: [_; 8] = core::array::from_fn(|count| cost_of(count as u32));
+    let (mut lone_zeros, mut next_symbol) = (0, 0);
     for symbol in used {
         let count = count_of(symbol);
-        first[used_count % 4] = count;
-        used_count += 1;
         let zeros = symbol - next_symbol;
         next_symbol = symbol + 1;
         if zeros < 3 {
-            lengths[0] += zeros as u32;
+            lone_zeros += zeros as u32;
         } else {
             let mut left = zeros - 2;
             while left > 0 {
@@ -128,30 +149,29 @@ fn cost(used: &SymbolSet, total: usize, count_of: impl Fn(usize) -> u32) -> f64 
                 left >>= 3;
             }
         }
-        let log2_p = log2_total - fast_log2(count as usize);
-        bits += f64::from(count) * log2_p;
-        lengths[whole_part(log2_p + 0.5).min(MAX_CODE_LENGTH)] += 1;
+        let (cost, length) = match rare.get(count as usize) {
+            Some(&known) => known,
+            None => cost_of(count),
+        };
+        bits += cost;
+        lengths[length % 16] += 1;
     }
-    if used_count > 4 {
-        let longer = lengths[2..=MAX_CODE_LENGTH]
-            .iter()
-            .rposition(|&count| count != 0);
-        let max_length = longer.map_or(1, |index| index + 2);
-        return bits + (18 + 2 * max_length) as f64 + bits_entropy(&lengths);
-    }
-    first.sort_unstable();
-    let [d, c, b, a] = first;
-    match used_count {
-        0 | 1 => 12.0,
-        2 => 20.0 + total as f64,
-        3 => 28.0 + f64::from(2 * (a + b + c)) - f64::from(a),
-        _ => 37.0 + f64::from(3 * (c + d)) + f64::from(2 * (a + b)) - f64::from(a.max(c + d)),
-    }
+    lengths[0] += lone_zeros;
+    let longer = lengths[2..=MAX_CODE_LENGTH]
+        .iter()
+        .rposition(|&count| count != 0);
+    let max_length = longer.map_or(1, |index| index + 2);
+    bits + (18 + 2 * max_length) as f64 + inlined_bits_entropy(&lengths)
 }
 
 /// The entropy, but at least one bit for each symbol.
-#[inline(always)]
+#[inline(never)]
 pub(super) fn bits_entropy(counts: &[u32]) -> f64 {
+    inlined_bits_entropy(counts)
+}
+
+#[inline(always)]
+fn inlined_bits_entropy(counts: &[u32]) -> f64 {
     let sum = counts.iter().sum::<u32>() as usize;
     let mut bits = 0.0;
     for symbol in &SymbolSet::matching(counts, |count| count > 1) {

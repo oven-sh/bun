@@ -38,7 +38,7 @@ impl PackedWord {
         &word(self.length(), self.index())[..self.length()]
     }
 
-    /// `transform` is an index into the list in RFC 7932 appendix B.
+    /// With the transform that has this index.
     #[inline(always)]
     pub(super) fn address(self, transform: u8) -> usize {
         self.index() + (usize::from(transform) << size_bits(self.length()))

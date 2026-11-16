@@ -19,6 +19,7 @@ mod error;
 mod format;
 mod memory;
 mod streaming;
+mod transform;
 
 pub use decoder::{DecodeStatus, Decoder};
 pub use encoder::{

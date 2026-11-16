@@ -1,11 +1,50 @@
-//! Finds words of the static dictionary in the input. The numbers of transforms are from RFC 7932 appendix B.
+//! Finds words of the static dictionary in the input.
 
 use super::hash::{Match, score};
 use super::matching::{bytes_at, match_length};
 use super::word_tables::{Case, PackedWord, all_words, likely_words};
+use crate::transform::Kind::{Identity, OmitLast, UppercaseAll, UppercaseFirst};
+use crate::transform::Transform;
+
+/// The index of a transform that exists.
+macro_rules! transform {
+    ($prefix:expr, $kind:expr, $suffix:expr) => {
+        const { Transform::index_of($prefix, $kind, $suffix).unwrap() }
+    };
+}
 
 /// The transform that omits the last `n` bytes.
-const OMIT_LAST: [u8; 10] = [0, 12, 27, 23, 42, 63, 56, 48, 59, 64];
+const OMIT_LAST: [u8; 10] = {
+    let (mut transforms, mut n) = ([0; _], 0);
+    while n < transforms.len() {
+        transforms[n] = Transform::index_of(b"", OmitLast(n as u8), b"").unwrap();
+        n += 1;
+    }
+    transforms
+};
+
+#[derive(Clone, Copy)]
+enum ShortPrefix {
+    None,
+    Space,
+    Dot,
+}
+
+/// The transforms with `suffix`, for each [`ShortPrefix`] and [`Case`].
+const fn transforms_with(suffix: &[u8]) -> [[Option<u8>; 3]; 3] {
+    const fn by_case(prefix: &[u8], suffix: &[u8]) -> [Option<u8>; 3] {
+        let mut row = [None; _];
+        row[Case::Unchanged as usize] = Transform::index_of(prefix, Identity, suffix);
+        row[Case::UppercaseFirst as usize] = Transform::index_of(prefix, UppercaseFirst, suffix);
+        row[Case::UppercaseAll as usize] = Transform::index_of(prefix, UppercaseAll, suffix);
+        row
+    }
+    let mut rows = [[None; _]; _];
+    rows[ShortPrefix::None as usize] = by_case(b"", suffix);
+    rows[ShortPrefix::Space as usize] = by_case(b" ", suffix);
+    rows[ShortPrefix::Dot as usize] = by_case(b".", suffix);
+    rows
+}
 
 /// Gives up on inputs in which it finds next to nothing.
 #[derive(Clone, Copy, Default)]
@@ -32,29 +71,33 @@ impl QuickWordSearch {
     ) {
         self.lookups += candidates;
         for word in likely_words(bytes_at(data, 0)).into_iter().take(candidates) {
-            if word.length() == 0 || word.length() > data.len() {
-                continue;
-            }
-            let length = match_length(word.spelling(), data);
-            let Some(&transform) = OMIT_LAST.get(word.length() - length) else {
-                continue;
-            };
-            let distance = first_distance + word.address(transform);
-            if distance > max_distance {
-                continue;
-            }
-            let score = score(length, distance);
-            if score >= best.score {
-                *best = Match {
-                    length,
-                    omitted: word.length() - length,
-                    distance,
-                    score,
-                };
+            if word.length() != 0
+                && let Some(found) = match_of(word, data, first_distance)
+                && found.distance <= max_distance
+                && found.score >= best.score
+            {
+                *best = Match { ..found };
                 self.matches += 1;
             }
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn match_of(word: PackedWord, data: &[u8], first_distance: usize) -> Option<Match> {
+    if word.length() > data.len() {
+        return None;
+    }
+    let length = match_length(word.spelling(), data);
+    let omitted = word.length() - length;
+    let distance = first_distance + word.address(*OMIT_LAST.get(omitted)?);
+    Some(Match {
+        length,
+        omitted,
+        distance,
+        score: score(length, distance),
+    })
 }
 
 pub(super) const MAX_MATCH_LENGTH: usize = 37;
@@ -108,51 +151,40 @@ impl WordMatches {
             if case == Case::Unchanged {
                 self.add_unchanged(word, data, min_length);
             } else if let Some(after) = strip_word(word, case, data) {
-                self.add_uppercase(word, case, after);
+                self.add_punctuated(ShortPrefix::None, word, case, after);
             }
         }
         if let [first @ (b' ' | b'.'), a, b, c, d, ..] = *data {
+            let prefix = match first {
+                b' ' => ShortPrefix::Space,
+                _ => ShortPrefix::Dot,
+            };
             for (word, case) in all_words([a, b, c, d]) {
                 if (first == b' ' || case == Case::Unchanged)
                     && let Some(after) = strip_word(word, case, &data[1..])
                 {
-                    self.add_after_one_byte(first, word, case, after);
+                    self.add_punctuated(prefix, word, case, after);
                 }
             }
         }
+        macro_rules! add_between {
+            ($prefix:literal, $($suffix:literal),+) => {
+                for (word, after) in unchanged_words(&data[$prefix.len()..]) {
+                    $(if after.starts_with($suffix) {
+                        let length = $prefix.len() + word.length() + $suffix.len();
+                        self.add(word, transform!($prefix, Identity, $suffix), length);
+                    })+
+                }
+            };
+        }
         match *data {
-            [0xC2, 0xA0, _, _, _, _, ..] => {
-                for (word, _) in unchanged_words(&data[2..]) {
-                    self.add(word, 102, word.length() + 2);
-                }
-            }
-            [first @ (b'e' | b's' | b','), b' ', _, _, _, _, ..] => {
-                let transform = match first {
-                    b'e' => 18,
-                    b's' => 7,
-                    _ => 13,
-                };
-                for (word, after) in unchanged_words(&data[2..]) {
-                    if let [b' ', ..] = after {
-                        self.add(word, transform, word.length() + 3);
-                    }
-                }
-            }
-            [b'.', b'c', b'o', b'm', b'/', _, _, _, _, ..] => {
-                for (word, _) in unchanged_words(&data[5..]) {
-                    self.add(word, 72, word.length() + 5);
-                }
-            }
+            [0xC2, 0xA0, _, _, _, _, ..] => add_between!(b"\xC2\xA0", b""),
+            [b'e', b' ', _, _, _, _, ..] => add_between!(b"e ", b" "),
+            [b's', b' ', _, _, _, _, ..] => add_between!(b"s ", b" "),
+            [b',', b' ', _, _, _, _, ..] => add_between!(b", ", b" "),
+            [b'.', b'c', b'o', b'm', b'/', _, _, _, _, ..] => add_between!(b".com/", b""),
             [b' ', b't', b'h', b'e', b' ', _, _, _, _, ..] => {
-                for (word, after) in unchanged_words(&data[5..]) {
-                    self.add(word, 41, word.length() + 5);
-                    if after.starts_with(b" of ") {
-                        self.add(word, 62, word.length() + 9);
-                    }
-                    if after.starts_with(b" of the ") {
-                        self.add(word, 73, word.length() + 13);
-                    }
-                }
+                add_between!(b" the ", b"", b" of ", b" of the ");
             }
             _ => {}
         }
@@ -163,7 +195,7 @@ impl WordMatches {
         let length = word.length();
         let matched = match_length(word.spelling(), data);
         if matched + 1 >= length && data[length - 1..].starts_with(b"ing ") {
-            self.add(word, 49, length + 3);
+            self.add(word, transform!(b"", OmitLast(1), b"ing "), length + 3);
         }
         for kept in min_length.max(length.saturating_sub(9))..=matched {
             self.add(word, OMIT_LAST[length - kept], kept);
@@ -174,153 +206,67 @@ impl WordMatches {
         let Some(after) = data[length..].first_chunk::<7>() else {
             return;
         };
-        let mut add = |transform, suffix: &[u8]| {
-            if after.starts_with(suffix) {
-                self.add(word, transform, length + suffix.len());
-            }
-        };
+        macro_rules! add {
+            ($($suffix:literal),+) => {{
+                $(if after.starts_with($suffix) {
+                    self.add(word, transform!(b"", Identity, $suffix), length + $suffix.len());
+                })+
+            }};
+        }
         match after[0] {
             b' ' => {
-                add(1, b" ");
+                add!(b" ");
                 match after[1] {
-                    b'a' => {
-                        add(28, b" a ");
-                        add(46, b" as ");
-                        add(60, b" at ");
-                        add(10, b" and ");
-                    }
-                    b'b' => add(38, b" by "),
-                    b'i' => {
-                        add(16, b" in ");
-                        add(47, b" is ");
-                    }
-                    b'f' => {
-                        add(25, b" for ");
-                        add(37, b" from ");
-                    }
-                    b'o' => {
-                        add(8, b" of ");
-                        add(45, b" on ");
-                    }
-                    b'n' => add(80, b" not "),
-                    b't' => {
-                        add(5, b" the ");
-                        add(29, b" that ");
-                        add(17, b" to ");
-                    }
-                    b'w' => add(35, b" with "),
+                    b'a' => add!(b" a ", b" as ", b" at ", b" and "),
+                    b'b' => add!(b" by "),
+                    b'i' => add!(b" in ", b" is "),
+                    b'f' => add!(b" for ", b" from "),
+                    b'o' => add!(b" of ", b" on "),
+                    b'n' => add!(b" not "),
+                    b't' => add!(b" the ", b" that ", b" to "),
+                    b'w' => add!(b" with "),
                     _ => {}
                 }
             }
-            b'"' => {
-                add(19, b"\"");
-                add(21, b"\">");
-            }
-            b'.' => {
-                add(20, b".");
-                add(31, b". ");
-                add(43, b". The ");
-                add(75, b". This ");
-            }
-            b',' => {
-                add(76, b",");
-                add(14, b", ");
-            }
-            b'\n' => {
-                add(22, b"\n");
-                add(50, b"\n\t");
-            }
-            b']' => add(24, b"]"),
-            b'\'' => add(36, b"'"),
-            b':' => add(51, b":"),
-            b'(' => add(57, b"("),
-            b'=' => {
-                add(70, b"=\"");
-                add(86, b"='");
-            }
-            b'a' => add(84, b"al "),
-            b'e' => {
-                add(53, b"ed ");
-                add(82, b"er ");
-                add(95, b"est ");
-            }
-            b'f' => add(90, b"ful "),
-            b'i' => {
-                add(92, b"ive ");
-                add(100, b"ize ");
-            }
-            b'l' => {
-                add(93, b"less ");
-                add(61, b"ly ");
-            }
-            b'o' => add(106, b"ous "),
+            b'"' => add!(b"\"", b"\">"),
+            b'.' => add!(b".", b". ", b". The ", b". This "),
+            b',' => add!(b",", b", "),
+            b'\n' => add!(b"\n", b"\n\t"),
+            b']' => add!(b"]"),
+            b'\'' => add!(b"'"),
+            b':' => add!(b":"),
+            b'(' => add!(b"("),
+            b'=' => add!(b"=\"", b"='"),
+            b'a' => add!(b"al "),
+            b'e' => add!(b"ed ", b"er ", b"est "),
+            b'f' => add!(b"ful "),
+            b'i' => add!(b"ive ", b"ize "),
+            b'l' => add!(b"less ", b"ly "),
+            b'o' => add!(b"ous "),
             _ => {}
         }
     }
 
-    fn add_uppercase(&mut self, word: PackedWord, case: Case, after: &[u8]) {
-        let mut add = |first, all, suffix_length| {
-            let transform = if case == Case::UppercaseAll {
-                all
-            } else {
-                first
+    /// For a word that has a prefix or another case.
+    fn add_punctuated(&mut self, prefix: ShortPrefix, word: PackedWord, case: Case, after: &[u8]) {
+        let length = usize::from(!matches!(prefix, ShortPrefix::None)) + word.length();
+        let mut add = |transforms: &[[Option<u8>; 3]; 3], suffix: &[u8]| {
+            if let Some(transform) = transforms[prefix as usize][case as usize] {
+                self.add(word, transform, length + suffix.len());
+            }
+        };
+        macro_rules! add_if_among {
+            ($bytes:expr, $($suffix:literal),+) => {
+                match $bytes {
+                    $($suffix => add(const { &transforms_with($suffix) }, $suffix),)+
+                    _ => {}
+                }
             };
-            self.add(word, transform, word.length() + suffix_length);
-        };
-        add(9, 44, 0);
-        let [next, second, ..] = *after else {
-            return;
-        };
-        match next {
-            b' ' => add(4, 68, 1),
-            b'"' => add(66, 87, 1),
-            b'.' => add(79, 101, 1),
-            b',' => add(99, 112, 1),
-            b'\'' => add(74, 94, 1),
-            b'(' => add(78, 113, 1),
-            _ => {}
         }
-        match &[next, second] {
-            b"\">" => add(69, 97, 2),
-            b". " => add(88, 114, 2),
-            b", " => add(58, 107, 2),
-            b"=\"" => add(104, 105, 2),
-            b"='" => add(108, 116, 2),
-            _ => {}
-        }
-    }
-
-    /// `prefix` is a space, or a dot before an unchanged word.
-    fn add_after_one_byte(&mut self, prefix: u8, word: PackedWord, case: Case, after: &[u8]) {
-        const NO: u8 = u8::MAX;
-        let column = match case {
-            _ if prefix == b'.' => 0,
-            Case::Unchanged => 1,
-            Case::UppercaseFirst => 2,
-            Case::UppercaseAll => 3,
-        };
-        let mut add = |transforms: [u8; 4], suffix_length| {
-            if transforms[column] != NO {
-                self.add(word, transforms[column], 1 + word.length() + suffix_length);
-            }
-        };
-        add([32, 6, 30, 85], 0);
-        let [next, second, ..] = *after else {
-            return;
-        };
-        match next {
-            b' ' => add([77, 2, 15, 83], 1),
-            b'(' => add([67, 89, NO, NO], 1),
-            b',' => add([NO, 103, 109, NO], 1),
-            b'.' => add([NO, 71, 96, 115], 1),
-            _ => {}
-        }
-        match &[next, second] {
-            b", " => add([NO, 33, 65, 111], 2),
-            b". " => add([NO, 52, 91, 117], 2),
-            b"=\"" => add([NO, 81, 118, 110], 2),
-            b"='" => add([NO, 98, 120, 119], 2),
-            _ => {}
+        add(const { &transforms_with(b"") }, b"");
+        if let [next, second, ..] = *after {
+            add_if_among!(&[next], b" ", b"\"", b".", b",", b"'", b"(");
+            add_if_among!(&[next, second], b"\">", b". ", b", ", b"=\"", b"='");
         }
     }
 }

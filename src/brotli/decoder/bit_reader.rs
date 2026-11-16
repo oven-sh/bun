@@ -138,6 +138,7 @@ impl<'a> BitReader<'a> {
     #[inline(always)]
     pub(super) fn refill_for(&mut self, bits: u32) {
         if self.bits.count < bits {
+            core::hint::cold_path();
             self.refill();
         }
     }

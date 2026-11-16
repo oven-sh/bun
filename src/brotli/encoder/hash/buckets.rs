@@ -3,7 +3,6 @@ use core::hint::{Locality, prefetch_read};
 use super::{Filter, Hasher, Match, RecentDistances, Search, Small, prefetch_for_store};
 use crate::encoder::input_block::InputBlock;
 use crate::encoder::matching::{HASH_MULTIPLIER_64, hash_of_four};
-use crate::encoder::ring_buffer::Window;
 use crate::encoder::words::QuickWordSearch;
 use crate::memory::{self, Result};
 
@@ -66,6 +65,36 @@ pub(in crate::encoder) struct Buckets<const LONG: bool> {
     words: QuickWordSearch,
 }
 
+impl Buckets<false> {
+    /// Reading a bucket is faster than following many links, which has to pay off before the input ends.
+    #[inline(always)]
+    pub(in crate::encoder) fn should_replace(
+        small: &Small<{ 1 << BUCKET_BITS }>,
+        position: usize,
+        input_size: usize,
+    ) -> bool {
+        /// For each byte of input.
+        const USUAL_HOPS: usize = 4;
+        /// Take about as long as setting up buckets.
+        const SPARE_HOPS: usize = 1 << 13;
+        let counted = small.hops.min(USUAL_HOPS * (input_size - input_size / 4));
+        counted > USUAL_HOPS * position + SPARE_HOPS
+    }
+
+    /// Goes on at `position`, where `small` left off.
+    pub(in crate::encoder) fn after(
+        small: &Small<{ 1 << BUCKET_BITS }>,
+        block: &InputBlock<'_>,
+        position: usize,
+    ) -> Result<Self> {
+        let mut buckets = Self::new(small.max_hops.ilog2(), small.recent_count())?;
+        buckets.words = small.words;
+        buckets.try_reserve(block)?;
+        small.store_all_in(&mut buckets, block.window, position);
+        Ok(buckets)
+    }
+}
+
 impl<const LONG: bool> Buckets<LONG> {
     pub(in crate::encoder) fn new(bucket_size_bits: u32, recent_count: usize) -> Result<Self> {
         Ok(Self {
@@ -75,6 +104,11 @@ impl<const LONG: bool> Buckets<LONG> {
             recent_count,
             words: QuickWordSearch::default(),
         })
+    }
+
+    /// Between [`FIRST_CAPACITY`] and the full size.
+    fn second_capacity(&self) -> usize {
+        (self.bucket_size / 8).max(16)
     }
 
     #[inline(always)]
@@ -98,7 +132,11 @@ impl<const LONG: bool> Buckets<LONG> {
             let start = head.next() - self.bucket_size;
             return Head::new(count % (1 << 16), self.bucket_size, start);
         }
-        let room = (4 * count).min(self.bucket_size) - count;
+        let capacity = match count {
+            FIRST_CAPACITY => self.second_capacity(),
+            _ => self.bucket_size,
+        };
+        let room = capacity - count;
         self.slots
             .extend_from_within(head.next() - count..head.next());
         let next = self.slots.len();
@@ -120,10 +158,15 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
     }
 
     fn try_reserve(&mut self, block: &InputBlock<'_>) -> Result<()> {
-        // A bucket takes up less than six times its count, with what it left behind.
-        let most = (2 * self.bucket_size) << BUCKET_BITS;
+        // With what a bucket leaves behind.
+        let (first, second) = (FIRST_CAPACITY, self.second_capacity());
+        let grown = first + second;
+        let full = grown + self.bucket_size;
+        let most = full << BUCKET_BITS;
         let needed = if block.may_be_all() {
-            most.min(6 * block.length)
+            let for_each_position =
+                (first.max(grown.div_ceil(first + 1))).max(full.div_ceil(second + 1));
+            most.min(for_each_position * block.length)
         } else {
             most
         };
@@ -197,6 +240,19 @@ pub(in crate::encoder) struct TaggedBuckets<
     words: QuickWordSearch,
 }
 
+impl<const SIZE: usize> TaggedBuckets<false, { 1 << 14 }, SIZE> {
+    /// Goes on with `block`, before which `small` left off.
+    pub(in crate::encoder) fn after(
+        small: &Small<{ 1 << 14 }>,
+        block: &InputBlock<'_>,
+    ) -> Result<Self> {
+        let mut buckets = Self::new()?;
+        buckets.words = small.words;
+        small.store_all_in(&mut buckets, block.window, block.position);
+        Ok(buckets)
+    }
+}
+
 impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> TaggedBuckets<LONG, BUCKETS, SIZE> {
     pub(in crate::encoder) fn new() -> Result<Self> {
         Ok(Self {
@@ -205,16 +261,6 @@ impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> TaggedBuckets<LO
             tags: memory::zeroed_array()?,
             words: QuickWordSearch::default(),
         })
-    }
-
-    /// Goes on where `small` left off.
-    pub(in crate::encoder) fn after(small: &Small, window: Window<'_>) -> Result<Self> {
-        let mut buckets = Self::new()?;
-        buckets.words = small.words;
-        for position in small.stored_positions() {
-            buckets.store(u64::from_le_bytes(window.bytes_at(position)), position);
-        }
-        Ok(buckets)
     }
 
     #[inline(always)]

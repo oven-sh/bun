@@ -128,6 +128,31 @@ impl MetaBlock {
     }
 }
 
+enum SizedTable<'a> {
+    Bits9(&'a mut [u32; 1 << 9]),
+    Bits11(&'a mut [u32; 1 << 11]),
+    Bits13(&'a mut [u32; 1 << 13]),
+    Bits15(&'a mut [u32; 1 << 15]),
+}
+
+impl SizedTable<'_> {
+    fn emit_matches(
+        &mut self,
+        block: &mut MetaBlock,
+        input: &[u8],
+        range: Range<usize>,
+        next_literal: usize,
+        writer: &mut BitWriter,
+    ) -> ControlFlow<usize, usize> {
+        match self {
+            Self::Bits9(table) => block.emit_matches(table, input, range, next_literal, writer),
+            Self::Bits11(table) => block.emit_matches(table, input, range, next_literal, writer),
+            Self::Bits13(table) => block.emit_matches(table, input, range, next_literal, writer),
+            Self::Bits15(table) => block.emit_matches(table, input, range, next_literal, writer),
+        }
+    }
+}
+
 impl Emitter<'_> {
     #[inline(always)]
     fn counted(&mut self, token: Token) -> Bits {
@@ -181,28 +206,19 @@ impl Sink for Emitter<'_> {
 }
 
 impl OnePass {
+    #[inline(never)]
     pub(super) fn compress(
         &mut self,
         input: &[u8],
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        match table_bits(input.len(), 15) | 1 {
-            9 => self.write_meta_blocks::<{ 1 << 9 }>(input, trees, writer),
-            11 => self.write_meta_blocks::<{ 1 << 11 }>(input, trees, writer),
-            13 => self.write_meta_blocks::<{ 1 << 13 }>(input, trees, writer),
-            _ => self.write_meta_blocks::<{ 1 << 15 }>(input, trees, writer),
-        }
-    }
-
-    #[inline(never)]
-    fn write_meta_blocks<const TABLE_SIZE: usize>(
-        &mut self,
-        input: &[u8],
-        trees: &mut TreeBuilder,
-        writer: &mut BitWriter,
-    ) -> Result<()> {
-        let table = self.table.cleared::<TABLE_SIZE>()?;
+        let mut table = match table_bits(input.len(), 15) | 1 {
+            9 => SizedTable::Bits9(self.table.cleared()?),
+            11 => SizedTable::Bits11(self.table.cleared()?),
+            13 => SizedTable::Bits13(self.table.cleared()?),
+            _ => SizedTable::Bits15(self.table.cleared()?),
+        };
         let mut block = MetaBlock {
             start: 0,
             codes: const { codes_for(&FIRST_LENGTHS) },
@@ -230,7 +246,7 @@ impl OnePass {
             let (mut from, mut next_literal) = (start, start);
             let refused_end = loop {
                 block.histogram = INITIAL_HISTOGRAM;
-                match block.emit_matches(table, input, from..end, next_literal, writer) {
+                match table.emit_matches(&mut block, input, from..end, next_literal, writer) {
                     ControlFlow::Continue(at) => next_literal = at,
                     ControlFlow::Break(at) => break Some(at),
                 }

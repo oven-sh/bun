@@ -28,7 +28,11 @@ static SMALL: [f64; 256] = {
 pub(super) fn fast_log2(value: usize) -> f64 {
     match SMALL.get(value) {
         Some(&log) => log,
-        None => (value as f64).log2(),
+        None => {
+            // Keeps the sums of the callers in registers.
+            core::hint::cold_path();
+            (value as f64).log2()
+        }
     }
 }
 

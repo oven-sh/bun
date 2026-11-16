@@ -14,7 +14,7 @@ pub(super) use chains::{Chains, ForgetfulChains};
 pub(super) use quick::Quick;
 pub(super) use rolling::WithRolling;
 pub(super) use slots::{Dense, Linked, Paged};
-pub(super) use small::Small;
+pub(super) use small::{MAX_SMALL_INPUT_SIZE, Small};
 
 use core::hint::{Locality, prefetch_read};
 
@@ -330,16 +330,16 @@ pub(super) trait Hasher {
     #[inline(always)]
     fn prefetch(&self, _eight: u64) {}
 
-    /// Whether it is quick to tell that [`Hasher::find`] finds nothing.
+    /// Jumps up to the first search that may find something, if that is quick to tell.
     #[inline(always)]
-    fn rules_out(
-        &self,
-        _window: Window<'_>,
-        _eight: u64,
-        _position: usize,
+    fn skip<'a>(
+        &mut self,
+        _block: &InputBlock<'_>,
+        position: usize,
+        padded: &'a [u8],
         _last_distance: i32,
-    ) -> bool {
-        false
+    ) -> (usize, &'a [u8]) {
+        (position, padded)
     }
 
     /// For the positions of `block` and the last ones before it.
@@ -358,4 +358,27 @@ pub(super) trait Hasher {
 
     /// The best match, or one with [`MIN_SCORE`]. Stores the position. `longer_than` is for [`Quick`], which skips what cannot be.
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, longer_than: usize) -> Match;
+}
+
+/// Where nothing matched for a while, there are four steps between searches.
+#[inline(always)]
+pub(super) fn jump<'a, H: Hasher>(
+    hasher: &mut H,
+    block: &InputBlock<'_>,
+    mut position: usize,
+    mut padded: &'a [u8],
+    step: usize,
+) -> (usize, &'a [u8]) {
+    /// Where the sixth search will be.
+    const AHEAD: usize = 16 + 17 * 5;
+    if let Some(eight) = padded.get(AHEAD..).and_then(<[u8]>::first_chunk) {
+        hasher.prefetch(u64::from_le_bytes(*eight));
+    }
+    let end = (position + 4 * step).min(block.end() - (H::LOOKAHEAD - 1).max(step));
+    while position < end {
+        hasher.store(load64(padded, 0), position);
+        position += step;
+        padded = &padded[step..];
+    }
+    (position, padded)
 }

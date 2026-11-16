@@ -1,57 +1,60 @@
 use super::{Filter, Hasher, Match, RecentDistances, Search};
 use crate::encoder::input_block::InputBlock;
-use crate::encoder::matching::HASH_MULTIPLIER_32;
+use crate::encoder::matching::hash_of_four;
+use crate::encoder::ring_buffer::Window;
 use crate::encoder::words::QuickWordSearch;
 use crate::memory::{self, Result};
 
 const NOT_STORED: u16 = u16::MAX;
 
-/// Finds what either kind of buckets finds in a small input, with much less memory to clear first.
-pub(in crate::encoder) struct Small {
+/// Finds what as many `BUCKETS` find in a small input, with much less memory to clear first.
+pub(in crate::encoder) struct Small<const BUCKETS: usize> {
     /// The last position with each hash, plus one.
-    heads: Vec<u16>,
+    heads: Box<[u16; BUCKETS]>,
     /// The same, as it was before each position, or [`NOT_STORED`].
     links: Vec<u16>,
-    key_shift: u32,
-    max_hops: usize,
+    pub(super) max_hops: usize,
+    /// In all searches so far.
+    pub(super) hops: usize,
     recent_count: usize,
     pub(super) words: QuickWordSearch,
 }
 
-impl Small {
-    pub(in crate::encoder) const MAX_INPUT_SIZE: usize = 1 << 16;
+pub(in crate::encoder) const MAX_SMALL_INPUT_SIZE: usize = 1 << 16;
 
-    pub(in crate::encoder) fn new(
-        key_bits: u32,
-        max_hops: usize,
-        recent_count: usize,
-    ) -> Result<Self> {
-        const { assert!(Self::MAX_INPUT_SIZE - Self::LOOKAHEAD + 1 < NOT_STORED as usize) };
+impl<const BUCKETS: usize> Small<BUCKETS> {
+    pub(in crate::encoder) fn new(max_hops: usize, recent_count: usize) -> Result<Self> {
+        const { assert!(MAX_SMALL_INPUT_SIZE - Self::LOOKAHEAD + 1 < NOT_STORED as usize) };
         Ok(Self {
-            heads: memory::zeroed(1 << key_bits)?,
+            heads: memory::zeroed_array()?,
             links: Vec::new(),
-            key_shift: 32 - key_bits,
             max_hops,
+            hops: 0,
             recent_count,
             words: QuickWordSearch::default(),
         })
     }
 
-    pub(super) fn stored_positions(&self) -> impl Iterator<Item = usize> {
-        (0..self.links.len()).filter(|&position| self.links[position] != NOT_STORED)
+    /// None is at `end` or after it.
+    pub(super) fn store_all_in(&self, larger: &mut impl Hasher, window: Window<'_>, end: usize) {
+        for (position, &link) in self.links[..end].iter().enumerate() {
+            if link != NOT_STORED {
+                larger.store(u64::from_le_bytes(window.bytes_at(position)), position);
+            }
+        }
     }
 
     /// Returns the previous head.
     #[inline(always)]
     fn insert(&mut self, eight: u64, position: usize) -> u16 {
-        let key = (eight as u32).wrapping_mul(HASH_MULTIPLIER_32) >> self.key_shift;
-        let link = core::mem::replace(&mut self.heads[key as usize], position as u16 + 1);
+        let key = hash_of_four(eight as u32, BUCKETS.ilog2());
+        let link = core::mem::replace(&mut self.heads[key % BUCKETS], position as u16 + 1);
         self.links[position] = link;
         link
     }
 }
 
-impl Hasher for Small {
+impl<const BUCKETS: usize> Hasher for Small<BUCKETS> {
     const LOOKAHEAD: usize = 4;
 
     fn recent_count(&self) -> usize {
@@ -75,14 +78,17 @@ impl Hasher for Small {
         let mut best = Match::NONE;
         let length = search.try_recent(recent, self.recent_count, &mut best);
         let mut filter = Filter::new(search, length);
-        for _ in 0..self.max_hops {
+        let mut left = self.max_hops;
+        while left != 0 {
             let candidate = usize::from(link).wrapping_sub(1);
             let Some(&next) = self.links.get(candidate) else {
                 break;
             };
             link = next;
+            left -= 1;
             filter.try_position(search, candidate, search.position - candidate, &mut best);
         }
+        self.hops += self.max_hops - left;
         search.try_words(&mut self.words, 2, &mut best);
         best
     }

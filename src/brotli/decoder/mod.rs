@@ -6,7 +6,6 @@ mod context_map;
 mod huffman;
 mod prefix_code;
 mod ring_buffer;
-mod transform;
 
 use crate::context::{ContextMode, DISTANCE_CONTEXTS, LITERAL_CONTEXTS};
 use crate::format::{

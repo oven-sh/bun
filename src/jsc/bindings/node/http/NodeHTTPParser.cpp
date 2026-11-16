@@ -12,18 +12,18 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-#define DEFINE_LLHTTP_CALLBACK(name)                                                                            \
-    static int name(llhttp_t* data)                                                                             \
-    {                                                                                                           \
-        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - offsetof(HTTPParser, m_parserData)); \
-        return parser->name();                                                                                  \
+#define DEFINE_LLHTTP_CALLBACK(name)                                                                                   \
+    static int name(llhttp_t* data)                                                                                    \
+    {                                                                                                                  \
+        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - OBJECT_OFFSETOF(HTTPParser, m_parserData)); \
+        return parser->name();                                                                                         \
     }
 
-#define DEFINE_LLHTTP_DATA_CALLBACK(name)                                                                       \
-    static int name(llhttp_t* data, const char* at, size_t length)                                              \
-    {                                                                                                           \
-        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - offsetof(HTTPParser, m_parserData)); \
-        return parser->name(at, length);                                                                        \
+#define DEFINE_LLHTTP_DATA_CALLBACK(name)                                                                              \
+    static int name(llhttp_t* data, const char* at, size_t length)                                                     \
+    {                                                                                                                  \
+        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - OBJECT_OFFSETOF(HTTPParser, m_parserData)); \
+        return parser->name(at, length);                                                                               \
     }
 
 DEFINE_LLHTTP_CALLBACK(onMessageBegin);

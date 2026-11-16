@@ -269,8 +269,7 @@ pub struct Timeout {
     pub event_loop_timer: OwnedTimer,
 
     /// Raw back-pointer to the owning `AbortSignal`; no refcount held. The
-    /// `Timeout` is owned by the signal (`m_timeout`, freed via
-    /// `~AbortSignal` → `cancelTimer` → [`AbortSignal__Timeout__deinit`]),
+    /// `Timeout` is owned by the signal (`m_timeout`),
     /// so while this box is live the signal is too.
     pub signal: *mut AbortSignal,
 

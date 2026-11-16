@@ -47,6 +47,7 @@ public:
     using Init = std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>>;
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
+    static Ref<FetchHeaders> create(HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { WTF::move(headers) }); }
     static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
 
     ExceptionOr<void> append(const String& name, const String& value);
@@ -125,10 +126,10 @@ public:
     uint8_t bodyFacts() const { return m_bodyFacts; }
     void setBodyFacts(uint8_t facts) { m_bodyFacts = facts; }
 
-    explicit FetchHeaders(HTTPHeaderMap&& = {});
+private:
+    explicit FetchHeaders(HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
-private:
     // An iterator points into the map while the counter stands still, so the one way to a map that can be changed moves it.
     class CountedHeaderMap {
     public:

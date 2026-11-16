@@ -557,9 +557,11 @@ fn widths() {
             kernels::visible_latin1_width_exclude_ansi(&t)
         });
     }
-    // Each kind starts at each place before the end of a block, and goes on for more than one.
-    for start in [
-        &b"\x1B["[..],
+    // Each kind starts at each place around the end of a block, and goes on for more than one,
+    // also in one of another kind or the same, which ends before it would. Blocks start at a
+    // control byte in front.
+    let starts: [&[u8]; 14] = [
+        b"\x1B[",
         b"\x1B]",
         b"\x1BP",
         b"\x1B(",
@@ -567,18 +569,22 @@ fn widths() {
         b"\x9B",
         b"\x9D",
         b"\x90",
-    ] {
+        b"\x9D\x9D",
+        b"\x9D\x9B",
+        b"\x9B\x9D",
+        b"\x90\x9B",
+        b"\x1B\x9D",
+        b"\x1B(\x9B",
+    ];
+    let ends: [&[u8]; 3] = [b"m\x07z\x1B\\yy", b"mz\x07y\x1B\\yy", b"\x070mz\x1B\\yy"];
+    for (start, end) in starts.iter().flat_map(|start| ends.map(|end| (start, end))) {
         for (before, len) in sample((60..66).flat_map(|it| [(it, 0), (it, 150)]), 7) {
-            let t = [
-                &vec![b'a'; before],
-                start,
-                &vec![b'0'; len],
-                b"m\x07z\x1B\\yy",
-            ]
-            .concat();
-            check(width_without_escapes(&t), || {
-                kernels::visible_latin1_width_exclude_ansi(&t)
-            });
+            for first in [&b""[..], b"\x01"] {
+                let t = [first, &vec![b'a'; before], start, &vec![b'0'; len], end].concat();
+                check(width_without_escapes(&t), || {
+                    kernels::visible_latin1_width_exclude_ansi(&t)
+                });
+            }
         }
     }
 
@@ -626,10 +632,20 @@ fn each_byte_in_each_escape() {
     let alone = (*b"\x1B\x90\x98\x9B\x9D\x9E\x9F[a").map(|byte| vec![byte]);
     for start in after_esc.into_iter().chain(alone) {
         for (before, byte) in (0..=255).flat_map(|byte| [0, 61, 62, 63, 64].map(|it| (it, byte))) {
-            let t = [&vec![b'a'; before], &start, &[byte][..], b"0z\x070\x1B\\yy"].concat();
-            check(width_without_escapes(&t), || {
-                kernels::visible_latin1_width_exclude_ansi(&t)
-            });
+            // Blocks start at a control byte in front, or at the escape.
+            for first in [&b""[..], b"\x01"] {
+                let t = [
+                    first,
+                    &vec![b'a'; before],
+                    &start,
+                    &[byte][..],
+                    b"0z\x070\x1B\\yy",
+                ];
+                let t = t.concat();
+                check(width_without_escapes(&t), || {
+                    kernels::visible_latin1_width_exclude_ansi(&t)
+                });
+            }
         }
     }
 }

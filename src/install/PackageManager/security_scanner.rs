@@ -722,7 +722,7 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop_handle = EventLoopHandle::from_any(&manager.event_loop);
+    let event_loop_handle = manager.event_loop;
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
         event_loop_handle,

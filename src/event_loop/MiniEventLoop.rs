@@ -286,11 +286,10 @@ bun_io::link_impl_EventLoopCtx! {
 }
 
 impl MiniEventLoop {
-    /// The returned ctx must not outlive `self`.
     #[inline]
-    pub fn as_event_loop_ctx(&self) -> bun_io::EventLoopCtx {
+    pub fn as_event_loop_ctx(&'static self) -> bun_io::EventLoopCtx {
         let this = core::ptr::from_ref(self).cast_mut();
-        // SAFETY: a mini loop outlives what polls or counts on it. Dispatch takes shared borrows only.
+        // SAFETY: `self` is `'static`. Dispatch takes shared borrows only.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }

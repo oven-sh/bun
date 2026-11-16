@@ -1,13 +1,15 @@
 // reset() of a gzip compressor whose open member has already given output.
 // Node.js refuses it since v26.11.0 (nodejs/node#66179), because the bytes that are already out
-// cannot be taken back. This file passes unchanged under Node.js v26.12.1.
+// cannot be taken back. All tests in this file run in both Bun and Node.js: `bun test` runs them
+// here, and the last test runs this same file under Node.js.
 import assert from "node:assert";
 import { once } from "node:events";
 import { finished } from "node:stream/promises";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 
-const { Z_DEFAULT_STRATEGY, Z_FINISH, Z_NO_FLUSH, Z_STREAM_ERROR, Z_SYNC_FLUSH } = zlib.constants;
+const { Z_BUF_ERROR, Z_DEFAULT_STRATEGY, Z_FINISH, Z_NO_FLUSH, Z_STREAM_ERROR, Z_SYNC_FLUSH } = zlib.constants;
 
 // The tests reach `_handle`, `_writeState` and `_processChunk`, and the types have no `reset()` for most kinds.
 type Stream = any;
@@ -205,13 +207,16 @@ describe("Gzip: reset() in an open member", () => {
     const handle = new stream._handle.constructor(zlib.constants.GZIP);
     stream.destroy();
     const { promise: wrote, resolve, reject } = Promise.withResolvers<void>();
-    handle.init(15, 6, 8, Z_DEFAULT_STRATEGY, new Uint32Array(2), resolve, undefined);
+    // Node.js writes the result of a write through a pointer to this array, so the array has to stay referenced.
+    const writeState = new Uint32Array(2);
+    handle.init(15, 6, 8, Z_DEFAULT_STRATEGY, writeState, resolve, undefined);
     const reports = reportsOf(handle, reject);
     const input = Buffer.from("hello");
     const output = Buffer.alloc(4096);
     try {
       handle.write(Z_SYNC_FLUSH, input, 0, input.length, output, 0, output.length);
       await wrote;
+      assert.ok(writeState[0] < output.length);
       handle.reset();
       assert.deepStrictEqual(reports, [refusal]);
     } finally {
@@ -298,6 +303,95 @@ describe("Gzip: reset() is allowed while no part of a member is out", () => {
   });
 });
 
+describe("Gzip: a deflate() result that is not the end of the member leaves it open", () => {
+  const input = Buffer.from("hello");
+  const member = zlib.gzipSync(input, { level: 0 });
+  // A finish write into this much room stops 7 bytes before the end of the trailer.
+  const room = member.length - 7;
+
+  test("a second flush with nothing to do (Z_BUF_ERROR, no output)", async () => {
+    const stream = quiet(zlib.createGzip());
+    const chunks = collect(stream);
+    stream.write("hello");
+    await flushed(stream);
+    const given = Buffer.concat(chunks).length;
+    assert.ok(given > 0);
+    await flushed(stream);
+    assert.strictEqual(Buffer.concat(chunks).length, given);
+    assert.strictEqual(stream.destroyed, false);
+
+    stream.reset();
+    assert.strictEqual(stream.destroyed, true);
+    await assert.rejects(finished(stream), { code: "ERR_ZLIB_INCOMPLETE_FRAME" });
+  });
+
+  test("a finish write with new input gives the pending end and then fails (Z_BUF_ERROR with output)", () => {
+    const stream = quiet(zlib.createGzip({ level: 0 }));
+    const handle = stream._handle;
+    const reports = reportsOf(handle);
+    const output = Buffer.alloc(64);
+    try {
+      handle.writeSync(Z_FINISH, input, 0, input.length, output, 0, room);
+      assert.deepStrictEqual(reports, []);
+
+      handle.writeSync(Z_FINISH, input, 0, input.length, output, room, output.length - room);
+      assert.deepStrictEqual(reports, [{ message: "buffer error", errno: Z_BUF_ERROR, code: "Z_BUF_ERROR" }]);
+      // The write that failed gave the 7 bytes. Each byte of the member is out now.
+      assert.deepStrictEqual(output.subarray(0, member.length), member);
+
+      // deflate() has not returned Z_STREAM_END, so the member is still open.
+      handle.reset();
+      assert.deepStrictEqual(reports.slice(1), [refusal]);
+
+      // A finish write with no input returns Z_STREAM_END and gives no output.
+      handle.writeSync(Z_FINISH, input, 0, 0, output, member.length, output.length - member.length);
+      assert.deepStrictEqual([...stream._writeState], [output.length - member.length, 0]);
+      handle.reset();
+      assert.strictEqual(reports.length, 2);
+    } finally {
+      stream.destroy();
+    }
+  });
+
+  test("a finish write whose room is exactly the pending end (Z_OK, not Z_STREAM_END)", () => {
+    const stream = quiet(zlib.createGzip({ level: 0 }));
+    const handle = stream._handle;
+    const reports = reportsOf(handle);
+    const output = Buffer.alloc(64);
+    try {
+      handle.writeSync(Z_FINISH, input, 0, input.length, output, 0, room);
+      handle.writeSync(Z_FINISH, input, 0, 0, output, room, 7);
+      assert.deepStrictEqual([...stream._writeState], [0, 0]);
+      assert.deepStrictEqual(reports, []);
+      assert.deepStrictEqual(output.subarray(0, member.length), member);
+
+      handle.reset();
+      assert.deepStrictEqual(reports, [refusal]);
+    } finally {
+      stream.destroy();
+    }
+  });
+
+  test("a write that is not a finish write, after a finish write that did not fit (Z_STREAM_ERROR, no output)", () => {
+    const stream = quiet(zlib.createGzip({ level: 0 }));
+    const handle = stream._handle;
+    const reports = reportsOf(handle);
+    const output = Buffer.alloc(64, 0xee);
+    try {
+      handle.writeSync(Z_FINISH, input, 0, input.length, output, 0, room);
+      handle.writeSync(Z_NO_FLUSH, input, 0, input.length, output, room, output.length - room);
+      assert.deepStrictEqual(reports, [{ message: "stream error", errno: Z_STREAM_ERROR, code: "Z_STREAM_ERROR" }]);
+      // Z_STREAM_ERROR is decided before deflate() writes: the 7 bytes are still pending.
+      assert.deepStrictEqual(output.subarray(room), Buffer.alloc(output.length - room, 0xee));
+
+      handle.reset();
+      assert.deepStrictEqual(reports.slice(1), [refusal]);
+    } finally {
+      stream.destroy();
+    }
+  });
+});
+
 // Node.js refuses none of these.
 const neverRefused: [name: string, create: () => Stream][] = [
   ["Deflate", () => zlib.createDeflate()],
@@ -363,6 +457,28 @@ for (const [name, create] of everyKind) {
         "zlib binding closed\n" +
         "This is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
         "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n",
+    });
+  });
+}
+
+// Only in Bun: when Node.js runs this file it must not spawn itself again.
+if (typeof Bun !== "undefined") {
+  const { bunEnv, nodeExeAtLeast } = await import("harness");
+  // Node.js refuses the reset since v26.11.0.
+  const node = nodeExeAtLeast("26.11.0");
+
+  describe("Node.js compatibility", () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+      // A direct run, not `node --test`: the runner mode forks a second node
+      // process per file. node:test still exits non-zero on any failure.
+      await using proc = Bun.spawn({
+        cmd: [node!, "--v8-pool-size=1", fileURLToPath(import.meta.url)],
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      assert.deepStrictEqual({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }, { exitCode: 0, output: "" });
     });
   });
 }

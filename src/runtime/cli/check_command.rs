@@ -688,11 +688,12 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
-    let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
+    let (watcher, cwd) = (vm.bun_watcher.get().clone()?, working_directory());
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.
-            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            let _ =
+                watcher.add_file_by_path_slow(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
         }
     }))
 }

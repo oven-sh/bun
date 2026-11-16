@@ -11,7 +11,7 @@
 use core::ops::ControlFlow;
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_core::strings;
 
 use super::{
@@ -298,7 +298,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
-    pub(crate) stale_files: DynamicBitSetUnmanaged,
+    pub(crate) stale_files: DynamicBitSet,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,
     /// Edge storage; indices into this are `EdgeIndex`.
@@ -444,7 +444,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         are_new_files_stale: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        let want = self.bundled_files.count().max(self.stale_files.bit_length);
+        let want = self
+            .bundled_files
+            .count()
+            .max(self.stale_files.bit_length());
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
         let aligned = want.div_ceil(STEP) * STEP;
@@ -567,7 +570,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
-        if self.stale_files.bit_length > file_index.get() as usize {
+        if self.stale_files.bit_length() > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
 

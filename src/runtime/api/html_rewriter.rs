@@ -17,7 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RawSlice, RefPtr};
+use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
@@ -562,19 +562,16 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 
-/// [`RewriterPipe::schedule_background_pull`]'s task: same pointer as the pipe, its own tag.
-#[repr(transparent)]
-pub(crate) struct RewriterPipeBackgroundPull(RewriterPipe);
-impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
+/// [`RewriterPipe::schedule_background_pull`]'s task.
+pub(crate) struct RewriterPipeBackgroundPull;
+impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HTMLRewriterBackgroundPull;
-    /// Give back what `schedule_background_pull` took: the cell's protect and the pipe's ref.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: the ref that was queued with the task.
-        let pipe = unsafe { RefPtr::from_raw(this.cast::<RewriterPipe>()) };
+    type Ref = RefPtr<RewriterPipe>;
+    fn release_unrun(pipe: Self::Ref) {
         pipe.background_pull_root.set(None);
     }
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -858,9 +855,7 @@ impl RewriterPipe {
         let Some(out) = self.output.get() else {
             return self.buffered_consumer.get();
         };
-        if out.sink.get().is_some()
-            || out.buffer_action.get().is_some()
-            || out.pending.get().state == streams::PendingState::Pending
+        if out.sink.get().is_some() || out.buffer_action.get().is_some() || out.pending.is_pending()
         {
             return true;
         }
@@ -1201,11 +1196,9 @@ impl RewriterPipe {
         }
         self.background_pull_root
             .set(Some(self.cell.get_or_undefined().protected()));
-        vm.enqueue_task(bun_event_loop::Task::init(
-            self.ref_guard()
-                .into_raw()
-                .cast::<RewriterPipeBackgroundPull>(),
-        ));
+        vm.enqueue_task(
+            bun_event_loop::Task::from_ref::<RewriterPipeBackgroundPull>(self.ref_guard()),
+        );
     }
 
     pub(crate) fn run_background_pull(&self) {
@@ -1275,7 +1268,7 @@ impl RewriterPipe {
     }
 
     /// `SinkHandle::write` entry — input bytes arrived.
-    pub fn write(&self, data: &StreamResult) -> Writable {
+    pub fn write(&self, data: &StreamResult<'_>) -> Writable {
         let _pin = self.pin();
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
@@ -1838,22 +1831,22 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult) -> Writable {
+    fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         RewriterPipe::write(this, data)
     }
     fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
         let _ = buf.write_utf16(text);
-        RewriterPipe::write(this, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
-    fn write_latin1(this: &mut Self::Entered<'_>, data: &StreamResult) -> Writable {
+    fn write_latin1(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return RewriterPipe::write(this, data);
         }
         let mut buf = Vec::new();
         let _ = buf.write_latin1(bytes);
-        RewriterPipe::write(this, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
     fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> bun_sys::Result<()> {
         this.end_from_stream(err.map(StreamError::Error));

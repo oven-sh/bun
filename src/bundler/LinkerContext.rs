@@ -603,8 +603,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
         let mut chunks = compute_chunks(self, log)?;
 
-        self.report_sloppy_only_syntax(&chunks, log);
-
         if log.has_errors() {
             return Err(LinkError::BuildFailed);
         }
@@ -662,7 +660,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     }
 
     /// A chunk that is strict code as a whole does not parse with the `Ast::sloppy_only_syntax` of a file in it. Only the linker knows the chunk.
-    fn report_sloppy_only_syntax(&self, chunks: &[Chunk<'a>], log: &mut Log) {
+    pub(crate) fn report_sloppy_only_syntax(&self, chunks: &[Chunk<'a>], log: &mut Log) {
         if self.bundle.sloppy_only_syntax.is_empty() {
             return;
         }

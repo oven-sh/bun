@@ -44,6 +44,15 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 ) -> crate::Result<Vec<options::OutputFile>> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
+    // Here, not in `link`: a link that prints no chunk (`bun add --analyze`) has no output to refuse. The dev server's parser reports for itself.
+    if !IS_DEV_SERVER {
+        let errors = log.errors;
+        c.report_sloppy_only_syntax(chunks, log);
+        if log.errors > errors {
+            return Err(crate::Error::BuildFailed);
+        }
+    }
+
     c.mangle_local_css();
 
     let mut has_js_chunk = false;

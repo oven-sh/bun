@@ -39,7 +39,7 @@ use crate::linker_context_mod::debug;
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
 pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext<'_, 'a>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     chunks: &mut [Chunk<'a>],
 ) -> crate::Result<Vec<options::OutputFile>> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
@@ -1637,7 +1637,7 @@ fn wanted_internal_modules(
 /// builtins section of the executable the bundle is going into.
 fn append_internal_module_bytecode(
     c: &LinkerContext,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
     // With an order file the internal modules are more modules of the link's one payload, and their output files say

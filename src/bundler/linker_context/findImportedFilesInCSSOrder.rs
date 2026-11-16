@@ -614,7 +614,7 @@ pub(crate) struct CssImportChainTooDeep {
 }
 
 impl CssImportChainTooDeep {
-    pub(crate) fn add_to_log(&self, sources: &[bun_ast::Source], log: &mut bun_ast::Log) {
+    pub(crate) fn add_to_log(&self, sources: &[bun_ast::Source], log: &bun_ast::Log) {
         log.add_range_error_fmt(
             Some(&sources[self.importer.get() as usize]),
             self.range,

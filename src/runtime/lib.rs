@@ -87,7 +87,7 @@ pub(crate) mod valkey_jsc;
 // so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
 pub(crate) use cli::{
-    Cli, Command, build_command, command, filter_arg, package_manager_command, run_command,
+    Command, build_command, command, filter_arg, package_manager_command, run_command,
     shell_completions, test_command,
 };
 

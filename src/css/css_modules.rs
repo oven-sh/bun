@@ -253,7 +253,7 @@ impl<'a, 'bump> ComposesVisitor<'a, 'bump> {
         sheet: &BundlerStyleSheet<'bump>,
         local: CssRef,
         source_index: u32,
-        log: &mut Log,
+        log: &Log,
     ) -> &[ExportedName<'bump>] {
         self.visited.clear_retaining_capacity();
         self.names.clear();
@@ -266,7 +266,7 @@ impl<'a, 'bump> ComposesVisitor<'a, 'bump> {
         sheet: &BundlerStyleSheet<'bump>,
         local: CssRef,
         source_index: u32,
-        log: &mut Log,
+        log: &Log,
     ) {
         let ref_ = local.to_real_ref(source_index);
         if self.visited.insert(ref_, ()).is_some() {
@@ -287,7 +287,7 @@ impl<'a, 'bump> ComposesVisitor<'a, 'bump> {
         sheet: &BundlerStyleSheet<'bump>,
         compose: &Composes<'bump>,
         source_index: u32,
-        log: &mut Log,
+        log: &Log,
     ) {
         if !self.stack_check.is_safe_to_recurse() {
             self.out_of_stack = true;
@@ -360,7 +360,7 @@ impl<'a, 'bump> ComposesVisitor<'a, 'bump> {
         local: &LocalEntry,
         source_index: u32,
         compose: &Composes,
-        log: &mut Log,
+        log: &Log,
     ) {
         if !local.ref_.can_be_composed() {
             log.add_range_error_fmt_with_note(

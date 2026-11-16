@@ -242,7 +242,7 @@ fn resolve_target(
         || (cfg!(windows) && strings::has_prefix(argument, b"node_modules\\"));
     let (pkg, folder, other_folders) = if is_path {
         let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
-        let (name, version) = read_name_and_version(manager, &folder);
+        let (name, version) = read_name_and_version(manager.log(), &folder);
         let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
             Ok(pkg) => pkg,
             Err(err) => folder_lookup_error(err, command, &folder, &name, &version),
@@ -329,7 +329,7 @@ fn path_argument_from_root(
     argument.to_vec()
 }
 
-fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
+fn read_name_and_version(log: &bun_ast::Log, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
     // `folder` is user input of any length, so the join can spill to the heap. A path that is too
     // long then simply fails to open.
     let mut spill = Vec::new();
@@ -349,7 +349,6 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
         };
 
     initialize_store();
-    let log = manager.log_mut();
     let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
         Ok(p) => p,
         Err(err) => {
@@ -464,7 +463,7 @@ pub fn do_patch_commit(
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
     let mut lockfile: Box<Lockfile> = Box::default();
-    let log = manager.log_mut();
+    let log = manager.log();
     let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
     let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
     match load_result {
@@ -710,8 +709,8 @@ fn patch_applies(
     folder: &[u8],
     patch: &bun_ast::Source,
 ) -> bool {
-    let mut log = bun_ast::Log::init();
-    let patchfile = crate::patch_install::parse_patch_source(patch, &mut log);
+    let log = bun_ast::Log::init();
+    let patchfile = crate::patch_install::parse_patch_source(patch, &log);
     let _ = log.print(Output::error_writer());
     // An install only warns about the sections it skips, because older versions of Bun wrote patch
     // files that have them. A new patch must not have any.
@@ -1097,7 +1096,7 @@ fn has_trusted_scripts(
     // bun.lock does not record a dependency's scripts, so they are read from its package.json.
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
-        &mut bun_ast::Log::init(),
+        &bun_ast::Log::init(),
         &mut folder_path,
         name,
         &pkg.resolution,
@@ -1126,7 +1125,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
         return;
     }
     if download_pinned_packages(manager, Some(pkg.meta.id), false).is_err() || !is_cached(manager) {
-        let _ = manager.log_mut().print(Output::error_writer());
+        let _ = manager.log().print(Output::error_writer());
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b>{}<r> not in cache, re-download failed",
             bstr::BStr::new(&name),

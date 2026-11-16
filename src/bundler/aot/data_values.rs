@@ -280,7 +280,7 @@ fn to_canonical_wtf8(text: &[u8]) -> Cow<'_, [u8]> {
 }
 
 #[allow(clippy::needless_pass_by_value)] // the end of the error
-pub(crate) fn report_not_data(log: &mut Log, path: &[u8], subject: &str, error: NotData) {
+pub(crate) fn report_not_data(log: &Log, path: &[u8], subject: &str, error: NotData) {
     let path = bstr::BStr::new(path);
     match error {
         NotData::Expression => log.add_error_fmt(

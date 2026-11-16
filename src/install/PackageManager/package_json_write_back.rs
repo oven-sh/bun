@@ -601,7 +601,7 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     let printed: &[u8] = &fetch_entry(manager, target).source.contents;
     let mut file = WorkspacePackageJSONCache::default();
     let GetResult::Entry(on_disk) = file.get_with_path(
-        &mut bun_ast::Log::init(),
+        &bun_ast::Log::init(),
         &target.package_json_path,
         GetJSONOptions {
             init_reset_store: false,

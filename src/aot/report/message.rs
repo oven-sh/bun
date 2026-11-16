@@ -37,7 +37,7 @@ pub fn write_lines<'m>(
     }
 }
 
-pub fn add_messages_to_log(messages: impl IntoIterator<Item = ReportMessage>, log: &mut Log) {
+pub fn add_messages_to_log(messages: impl IntoIterator<Item = ReportMessage>, log: &Log) {
     for ReportMessage { kind, message } in messages {
         if is_message_report(kind) {
             log.add_msg(message);

@@ -42,7 +42,7 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
 
 pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
@@ -510,7 +510,7 @@ pub(crate) fn scan_imports_and_exports(
                         &mut member_resolutions,
                     );
 
-                    if log.errors > 0 {
+                    if log.has_errors() {
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
                     }
                 }
@@ -1633,7 +1633,7 @@ mod __css_validation {
 
     pub(super) fn validate_css_import_composes<'bump>(
         symbols: &symbol::Map,
-        log: &mut Log,
+        log: &Log,
         id: usize,
         css_asts: &CssAsts<'bump>,
         import_records_list: &[ImportRecordList<'bump>],
@@ -1721,7 +1721,7 @@ mod __css_validation {
     /// We should find a way to do this without incurring performance penalties to the common cases.
     fn validate_composes_from_properties<'bump>(
         all_symbols: &symbol::Map,
-        log: &mut Log,
+        log: &Log,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         all_import_records: &[ImportRecordList<'bump>],
@@ -1749,7 +1749,7 @@ mod __css_validation {
             all_css_asts: &'a CssAsts<'bump>,
             all_symbols: &'a symbol::Map,
             all_sources: &'a [Source<'a>],
-            log: &'a mut Log,
+            log: &'a Log,
         }
 
         impl<'a, 'bump: 'a> Visitor<'a, 'bump> {

@@ -80,8 +80,8 @@ fn describe_notices(
     let view = loaded.project(ProjectId::Application).view();
     let mut diagnostics = Diagnostics::new();
     warn_where_every_file_may_load_again(&mut diagnostics, view, loads, left_out);
-    let mut log = Log::init();
-    diagnostics.write_to(&mut log);
+    let log = Log::init();
+    diagnostics.write_to(&log);
     describe_messages(&log)
 }
 

@@ -64,6 +64,7 @@ fn start_manifest_task(
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
+    let log = manager.log();
     let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
 
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
@@ -78,13 +79,14 @@ fn start_manifest_task(
     // SAFETY: `write_init` populated every field.
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by
-    // `for_manifest` (it only writes the pool slot and `manager.log`).
+    // `for_manifest` (it only writes the pool slot and `log`).
     task.for_manifest(
         pkg_name,
         scope.get(),
         None,
         !is_required,
         needs_extended_manifest,
+        log,
     )?;
 
     enqueue::enqueue_network_task(manager, net_ptr);
@@ -327,10 +329,10 @@ pub fn populate_manifest_cache(
 }
 
 /// Prints the fetch failures a [`Packages::Ids`] pass logged; true when one of them is a required dependency's.
-pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
-    let log = manager.log_mut();
+pub fn print_fetch_failures(manager: &mut PackageManager) -> crate::Result<bool> {
+    let log = manager.log();
     let failed_required = log.has_errors();
-    if !log.msgs.is_empty() {
+    if log.has_msgs() {
         Output::flush();
         log.print(Output::error_writer())?;
         log.reset();

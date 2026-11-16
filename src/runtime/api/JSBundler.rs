@@ -1750,7 +1750,7 @@ pub(crate) mod js_bundler {
                                 this.entry_points.keys(),
                                 bun_resolver::fs::FileSystem::get().top_level_dir(),
                                 Some(&this.files),
-                                &mut bun_ast::Log::init(),
+                                &bun_ast::Log::init(),
                             )
                         });
                         let entry_point: &[u8] = match expanded_entry_points.as_deref() {

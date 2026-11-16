@@ -15,6 +15,7 @@ use bun_collections::HashMap;
 use bun_core::io::WriterStorage;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
+use bun_options_types::context::CONSOLE_DEPTH;
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -77,10 +78,6 @@ macro_rules! pfmt {
 // ───────────────────────────────────────────────────────────────────────────
 // ConsoleObject
 // ───────────────────────────────────────────────────────────────────────────
-
-/// Default depth for `console.log` object inspection.
-/// Only `--console-depth` CLI flag and `console.depth` bunfig option should modify this.
-const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 type Counter = HashMap<u64, u32>;
 
@@ -435,10 +432,7 @@ fn message_with_type_and_level_(
     }
 
     let mut print_length = vals.len();
-    // Get console depth from CLI options or bunfig, fallback to default.
-    let console_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
+    let console_depth = CONSOLE_DEPTH.load();
 
     let mut print_options = FormatOptions {
         enable_colors,
@@ -5751,9 +5745,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
-    fmt.max_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
+    fmt.max_depth = CONSOLE_DEPTH.load();
     fmt.can_throw_stack_overflow = true;
     let mut writer = vm_console(global).error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.

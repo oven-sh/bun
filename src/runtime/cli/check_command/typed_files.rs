@@ -56,7 +56,7 @@ pub(crate) struct TypedFiles {
     pub(crate) compiler_options: CompilerOptions,
 }
 
-pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Log) {
+pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &bun_ast::Log) {
     log.add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
@@ -188,7 +188,7 @@ fn options_of_sources(cwd: &[u8], tsconfig: Option<&[u8]>) -> CompilerOptions {
 pub(crate) fn warn_unless_package_states(
     outdir: &[u8],
     compiler_options: &CompilerOptions,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) {
     let outdir = from_native(outdir);
     let disk = Disk::with_already_read(1, Default::default(), &outdir);
@@ -216,7 +216,7 @@ pub(crate) fn warn_unless_package_states(
 
 pub(crate) fn typed_files_for_build(
     asked: &TypedFilesRequest<'_>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> TypedFiles {
     let &TypedFilesRequest {
         cwd,
@@ -348,7 +348,7 @@ pub(crate) fn typed_files_for_build(
         true => without_emitted_declarations,
         false => build_typed_files(outdir, &outputs, modules, &emitted_modules),
     };
-    let mut warn = |why: core::fmt::Arguments<'_>| {
+    let warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,

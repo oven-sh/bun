@@ -115,22 +115,19 @@ pub(super) fn mark_all_route_children(
 }
 
 impl DevServer {
-    pub(crate) fn prepare_and_log_resolution_failures(&mut self) -> crate::Result<()> {
+    pub(crate) fn prepare_and_log_resolution_failures(
+        &mut self,
+        resolution_failures: &bundler::bundle_v2::ResolutionFailures,
+    ) -> crate::Result<()> {
         // Since resolution failures can be asynchronous, their logs are not inserted
         // until the very end.
-        let resolution_failures = &self
-            .current_bundle
-            .as_ref()
-            .expect("infallible: bundle active")
-            .resolution_failure_entries;
         if !resolution_failures.is_empty() {
-            for (owner, log) in resolution_failures
+            for (&owner, log) in resolution_failures
                 .keys()
                 .iter()
                 .zip(resolution_failures.values())
             {
                 if log.has_errors() {
-                    // `resolution_failure_entries` keys are `OwnerPacked` (1-bit side + file).
                     let index = owner.file();
                     match owner.side() {
                         bake::Side::Client => self.graphs.insert_failure::<{ Side::Client }>(
@@ -147,7 +144,7 @@ impl DevServer {
         }
 
         // Theoretically, it shouldn't be possible for errors to leak into dev.log
-        if self.log.has_errors() && !self.log.msgs.is_empty() {
+        if self.log.has_errors() && self.log.has_msgs() {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
@@ -338,7 +335,7 @@ impl DevServer {
             err.name(),
             <&'static str>::from(graph),
             bun_core::fmt::quote(abs_path),
-            log.msgs.len(),
+            log.msgs_len(),
         );
 
         let mut watch_for_route_file = false;
@@ -391,17 +388,17 @@ impl DevServer {
         Ok(())
     }
 
-    /// Return a log to write resolution failures into.
-    pub(crate) fn get_log_for_resolution_failures(
+    /// Inserts `abs_path` into its graph as stale.
+    pub(crate) fn insert_stale_owner(
         &mut self,
         abs_path: &[u8],
         graph: bake::Graph,
-    ) -> crate::Result<&mut Log> {
+    ) -> Result<serialized_failure::OwnerPacked, AllocError> {
         debug_assert!(self.current_bundle.is_some());
 
         let _g = self.graph_safety_lock.guard();
 
-        let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
+        Ok(if graph == bake::Graph::Client {
             let idx = self
                 .graphs
                 .insert_stale::<{ Side::Client }>(abs_path, graph)?;
@@ -411,18 +408,7 @@ impl DevServer {
                 .graphs
                 .insert_stale::<{ Side::Server }>(abs_path, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
-        };
-        let current_bundle = self
-            .current_bundle
-            .as_mut()
-            .expect("infallible: bundle active");
-        let gop = current_bundle
-            .resolution_failure_entries
-            .get_or_put(owner)?;
-        if !gop.found_existing {
-            *gop.value_ptr = Log::init();
-        }
-        Ok(gop.value_ptr)
+        })
     }
 
     fn mark_all_route_children_failed(&mut self, route_index: router::RouteIndex) {

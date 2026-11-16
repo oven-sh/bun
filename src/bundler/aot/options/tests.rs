@@ -37,7 +37,7 @@ impl Default for Case<'_> {
     }
 }
 
-fn default_options<'a>(log: &mut Log) -> BundleOptions<'a> {
+fn default_options<'a>(log: &Log) -> BundleOptions<'a> {
     Fs::FileSystem::init(None).ok().expect("file system");
     let transform = api::TransformOptions {
         target: Some(api::Target::bun),
@@ -53,8 +53,8 @@ fn convert<R>(
     configure: impl FnOnce(&mut BundleOptions<'_>),
     check: impl FnOnce(Option<Options<'_>>, &Log) -> R,
 ) -> R {
-    let mut log = Log::init();
-    let mut options = default_options(&mut log);
+    let log = Log::init();
+    let mut options = default_options(&log);
     configure(&mut options);
     let aot = AotOptions {
         omits_builtin_modules: case.omits_builtin_modules,
@@ -74,15 +74,16 @@ fn convert<R>(
         working_directory: case.working_directory,
         node_path: case.node_path,
     };
-    let result = options_from_bundler(&input, &mut log);
+    let result = options_from_bundler(&input, &log);
     check(result, &log)
 }
 
 fn errors(log: &Log) -> Vec<String> {
-    let messages = log.msgs.iter();
-    messages
-        .map(|message| bstr::BStr::new(&message.data.text).to_string())
-        .collect()
+    log.with_msgs(|messages| {
+        (messages.iter())
+            .map(|message| bstr::BStr::new(&message.data.text).to_string())
+            .collect()
+    })
 }
 
 fn convert_code(configure: impl FnOnce(&mut BundleOptions<'_>)) -> CodeOptions {
@@ -141,7 +142,7 @@ fn convert_paths(
 
 fn report_errors(configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<String> {
     convert(Case::default(), configure, |result, log| {
-        assert_eq!(result.is_none(), !log.msgs.is_empty());
+        assert_eq!(result.is_none(), log.has_msgs());
         errors(log)
     })
 }
@@ -169,7 +170,7 @@ fn default_options_convert() {
         |_| {},
         |result, log| {
             let options = result.expect("options");
-            assert!(log.msgs.is_empty());
+            assert_eq!(log.msgs_len(), 0);
             assert_eq!(
                 options.code.conditions,
                 byte_lists(&["bun", "node", "node-addons", "aot"])
@@ -760,17 +761,12 @@ fn embedded_names(
     entry_points: &[&str],
     configure: impl FnOnce(&mut BundleOptions<'_>),
 ) -> (Option<Vec<Vec<u8>>>, Vec<String>) {
-    let mut log = Log::init();
-    let mut options = default_options(&mut log);
+    let log = Log::init();
+    let mut options = default_options(&log);
     configure(&mut options);
     let entry_points = byte_lists(entry_points);
-    let names = embedded_entry_point_names(
-        &options,
-        b"/project",
-        &entry_points,
-        b"/project/src",
-        &mut log,
-    );
+    let names =
+        embedded_entry_point_names(&options, b"/project", &entry_points, b"/project/src", &log);
     (names, errors(&log))
 }
 
@@ -970,13 +966,13 @@ fn owned_entry_points_expand() {
     let project = TemporaryProject::new("owned", &PROJECT_FILES);
     let entry_points: [Box<[u8]>; 2] = [Box::from(&b"main.cjs"[..]), Box::from(&b"plugins/*"[..])];
     let working_directory = project.directory.as_os_str().as_bytes();
-    let mut log = Log::init();
-    let entries = expand_entry_points(&entry_points, working_directory, None, &mut log);
+    let log = Log::init();
+    let entries = expand_entry_points(&entry_points, working_directory, None, &log);
     assert_eq!(
         entries,
         Some(byte_lists(&["main.cjs", "plugins/a.cjs", "plugins/b.cjs"]))
     );
-    assert!(log.msgs.is_empty());
+    assert_eq!(log.msgs_len(), 0);
 }
 
 #[test]

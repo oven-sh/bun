@@ -350,7 +350,9 @@ pub(crate) mod cli {
     pub(crate) use bun_options_types::compile_target::CompileTarget;
 
     // Process-global, init in start().
-    pub(crate) static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
+    static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
+        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+    static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<Command::ContextData>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
@@ -368,8 +370,9 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        // SAFETY: single-threaded process startup; nothing else refers to `LOG_` yet.
-        let log = unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        // SAFETY: `main` calls this once, and nothing else names the two statics.
+        let (log, ctx) = unsafe { (&mut *LOG_.get(), &mut *CONTEXT_DATA.get()) };
+        let log: &'static bun_ast::Log = log.write(bun_ast::Log::init());
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
         // use) — see `super::CLI_ARENA`. The write happens before any worker
         // thread is spawned and before `Command::start` (the first
@@ -378,7 +381,7 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        if let Err(err) = Command::start(log) {
+        if let Err(err) = Command::start(Command::ContextSlot { log, ctx }) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
@@ -611,19 +614,10 @@ pub(crate) mod command {
     pub(crate) use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
     pub(crate) use bun_options_types::context::{Context, ContextData, HotReload};
 
-    // Process-lifetime
-    // storage, written exactly once in `create_context_data` during
-    // single-threaded startup. The pointer to it is published via
-    // `bun_options_types::context::set_global` (single source of truth).
-    static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
-        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
-
-    /// Process-global CLI context handle.
-    #[inline]
-    pub(crate) fn get() -> Context<'static> {
-        // SAFETY: only called after `create_context_data` published the ctx
-        // during single-threaded startup; callers treat the result as read-mostly.
-        unsafe { &mut *bun_options_types::context::global_ptr() }
+    /// Process-lifetime storage, which `create_context_data` fills.
+    pub(crate) struct ContextSlot {
+        pub(super) log: &'static bun_ast::Log,
+        pub(super) ctx: &'static mut core::mem::MaybeUninit<ContextData>,
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -931,36 +925,24 @@ pub(crate) mod command {
         Tag::AutoCommand
     }
 
-    /// Initialize the process-global `CONTEXT_DATA` and publish it via
-    /// `Context::set_global`. Shared by `create_context_data` and the
+    /// Shared by `create_context_data` and the
     /// standalone-graph fast path in `start()`.
-    fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
-        // SAFETY: single-threaded CLI startup; first and only write to
-        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
-        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
-        // address is sound for the process lifetime.
-        //
+    fn write_context_no_parse(slot: ContextSlot) -> &'static mut ContextData {
         // One `ContextData::default()` is constructed and written in place,
         // then the two non-default fields are patched on the live storage —
         // avoids the second `Default` temporary (and its drop) that the
         // `..Default::default()` struct-update form would build on the stack.
-        unsafe {
-            let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
-            ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
-            ctx.start_time = bun_core::start_time();
-            bun_options_types::context::set_global(ctx);
-            ctx
-        }
+        let ContextSlot { log, ctx } = slot;
+        let ctx = ctx.write(ContextData::default());
+        ctx.log = Some(log);
+        ctx.start_time = bun_core::start_time();
+        ctx
     }
 
-    /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
+    /// `ContextData.create` — populates the ctx and runs `Arguments::parse`.
     ///
     /// `Tag` lacks `ConstParamTy` (lower-tier crate), so `cmd` is a runtime
     /// arg; the runtime `USES_GLOBAL_OPTIONS` set covers per-command gating.
-    /// Returns `&'static mut` to the process-global `CONTEXT_DATA`. Sound
-    /// because CLI dispatch is single-threaded and this is the sole live
-    /// borrow at the time of return; callers thread it down via the `ctx`
-    /// parameter rather than re-deriving.
     ///
     /// `#[inline(never)]`: this is the `init` step of the `bun run <script>`
     /// dispatch chain (`exec_auto_or_run → init → RunCommand::exec_with_cfg`)
@@ -971,11 +953,11 @@ pub(crate) mod command {
     #[inline(never)]
     pub(crate) fn create_context_data(
         cmd: Tag,
-        log: &mut bun_ast::Log,
+        slot: ContextSlot,
     ) -> crate::Result<&'static mut ContextData> {
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
-        let ctx = write_context_no_parse(log);
+        let ctx = write_context_no_parse(slot);
 
         if USES_GLOBAL_OPTIONS[cmd] {
             ctx.args = arguments::parse(cmd, ctx)?;
@@ -1003,7 +985,7 @@ pub(crate) mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn start(slot: ContextSlot) -> crate::Result<()> {
         use bun_removable_features::call_removable;
 
         crate::cli::startup_options::refuse_code_without_interpreter();
@@ -1037,7 +1019,7 @@ pub(crate) mod command {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
                 // Never taken for a plain `bun` binary; ~2 KB of argv-splice
                 // and ctx-setup code lives behind this cold call.
-                return boot_standalone(graph, log);
+                return boot_standalone(graph, slot);
             }
             // Only `bun build --compile` removes the command line, so this file had a program.
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
@@ -1052,7 +1034,7 @@ pub(crate) mod command {
                 .starts_with(run_compiled::PROGRAM_FILE_FLAG)
             && let Some(graph) = run_compiled::load_program_file()?
         {
-            return boot_standalone(graph, log);
+            return boot_standalone(graph, slot);
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
@@ -1126,7 +1108,7 @@ pub(crate) mod command {
                     .map(bun_core::ZStr::as_bytes)
                     .is_some_and(looks_like_run_entrypoint)
                 {
-                    return call_removable!(Tools, Abort, exec_auto_or_run, Tag::AutoCommand, log);
+                    return call_removable!(Tools, Abort, exec_auto_or_run, Tag::AutoCommand, slot);
                 }
             }
         }
@@ -1142,7 +1124,7 @@ pub(crate) mod command {
 
         match tag {
             Tag::AutoCommand | Tag::RunCommand => {
-                call_removable!(Tools, Abort, exec_auto_or_run, tag, log)
+                call_removable!(Tools, Abort, exec_auto_or_run, tag, slot)
             }
             Tag::HelpCommand => HelpCommand::exec(),
             Tag::ReservedCommand => ReservedCommand::exec(),
@@ -1153,39 +1135,39 @@ pub(crate) mod command {
             Tag::InstallCompletionsCommand => {
                 call_removable!(Tools, Abort, exec_install_completions)
             }
-            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log),
-            Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, log),
-            Tag::InfoCommand => call_removable!(Install, Abort, bun_info, log),
-            Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, log),
-            Tag::CompileCommand => call_removable!(AotCompiler, Abort, exec_compile, log),
-            Tag::InstallCommand => call_removable!(Install, Abort, exec_install, log),
-            Tag::AddCommand => call_removable!(Install, Abort, exec_add, log),
-            Tag::UpdateCommand => call_removable!(Install, Abort, exec_update, log),
-            Tag::PatchCommand => call_removable!(Install, Abort, exec_patch, log),
-            Tag::PatchCommitCommand => call_removable!(Install, Abort, exec_patch_commit, log),
-            Tag::OutdatedCommand => call_removable!(Install, Abort, exec_outdated, log),
+            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, slot),
+            Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, slot),
+            Tag::InfoCommand => call_removable!(Install, Abort, bun_info, slot),
+            Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, slot),
+            Tag::CompileCommand => call_removable!(AotCompiler, Abort, exec_compile, slot),
+            Tag::InstallCommand => call_removable!(Install, Abort, exec_install, slot),
+            Tag::AddCommand => call_removable!(Install, Abort, exec_add, slot),
+            Tag::UpdateCommand => call_removable!(Install, Abort, exec_update, slot),
+            Tag::PatchCommand => call_removable!(Install, Abort, exec_patch, slot),
+            Tag::PatchCommitCommand => call_removable!(Install, Abort, exec_patch_commit, slot),
+            Tag::OutdatedCommand => call_removable!(Install, Abort, exec_outdated, slot),
             Tag::UpdateInteractiveCommand => {
-                call_removable!(Install, Abort, exec_update_interactive, log)
+                call_removable!(Install, Abort, exec_update_interactive, slot)
             }
-            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, log),
-            Tag::AuditCommand => call_removable!(Install, Abort, exec_audit, log),
-            Tag::CheckCommand => call_removable!(Check, Abort, exec_check, log),
-            Tag::LintCommand => call_removable!(Lint, Abort, exec_lint, log),
-            Tag::FormatCommand => call_removable!(Fmt, Abort, exec_format, log),
-            Tag::DedupeCommand => call_removable!(Install, Abort, exec_dedupe, log),
-            Tag::PruneCommand => call_removable!(Install, Abort, exec_prune, log),
-            Tag::WhyCommand => call_removable!(Install, Abort, exec_why, log),
-            Tag::BunxCommand => call_removable!(Install, Abort, exec_bunx, log),
-            Tag::ReplCommand => call_removable!(Repl, Abort, exec_repl, log),
-            Tag::RemoveCommand => call_removable!(Install, Abort, exec_remove, log),
-            Tag::LinkCommand => call_removable!(Install, Abort, exec_link, log),
-            Tag::UnlinkCommand => call_removable!(Install, Abort, exec_unlink, log),
-            Tag::TestCommand => call_removable!(TestCommand, Abort, exec_test, log),
-            Tag::GetCompletionsCommand => call_removable!(Tools, Abort, bun_getcompletes, log),
-            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, log),
-            Tag::UpgradeCommand => call_removable!(Upgrade, Abort, exec_upgrade, log),
-            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, log),
-            Tag::FuzzilliCommand => call_removable!(Tools, Abort, exec_fuzzilli, log),
+            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, slot),
+            Tag::AuditCommand => call_removable!(Install, Abort, exec_audit, slot),
+            Tag::CheckCommand => call_removable!(Check, Abort, exec_check, slot),
+            Tag::LintCommand => call_removable!(Lint, Abort, exec_lint, slot),
+            Tag::FormatCommand => call_removable!(Fmt, Abort, exec_format, slot),
+            Tag::DedupeCommand => call_removable!(Install, Abort, exec_dedupe, slot),
+            Tag::PruneCommand => call_removable!(Install, Abort, exec_prune, slot),
+            Tag::WhyCommand => call_removable!(Install, Abort, exec_why, slot),
+            Tag::BunxCommand => call_removable!(Install, Abort, exec_bunx, slot),
+            Tag::ReplCommand => call_removable!(Repl, Abort, exec_repl, slot),
+            Tag::RemoveCommand => call_removable!(Install, Abort, exec_remove, slot),
+            Tag::LinkCommand => call_removable!(Install, Abort, exec_link, slot),
+            Tag::UnlinkCommand => call_removable!(Install, Abort, exec_unlink, slot),
+            Tag::TestCommand => call_removable!(TestCommand, Abort, exec_test, slot),
+            Tag::GetCompletionsCommand => call_removable!(Tools, Abort, bun_getcompletes, slot),
+            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, slot),
+            Tag::UpgradeCommand => call_removable!(Upgrade, Abort, exec_upgrade, slot),
+            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, slot),
+            Tag::FuzzilliCommand => call_removable!(Tools, Abort, exec_fuzzilli, slot),
         }
     }
 
@@ -1202,10 +1184,7 @@ pub(crate) mod command {
     /// code is not decoded on the `bun --version` path.
     #[cold]
     #[inline(never)]
-    fn boot_standalone(
-        graph: *mut bun_standalone_graph::Graph,
-        log: &mut bun_ast::Log,
-    ) -> CmdResult {
+    fn boot_standalone(graph: *mut bun_standalone_graph::Graph, slot: ContextSlot) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
@@ -1255,7 +1234,7 @@ pub(crate) mod command {
                 }
 
                 // Handle actual options to parse.
-                let result = init(Tag::AutoCommand, log)?;
+                let result = init(Tag::AutoCommand, slot)?;
 
                 // Restore full argv so passthrough calculation works correctly
                 // SAFETY: single-threaded startup.
@@ -1267,7 +1246,7 @@ pub(crate) mod command {
             // If no compile_exec_argv, skip executable name if present
             offset_for_passthrough = 1.min(bun::argv().len());
 
-            break 'brk write_context_no_parse(log);
+            break 'brk write_context_no_parse(slot);
         };
 
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
@@ -1290,9 +1269,9 @@ pub(crate) mod command {
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
-    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_auto_or_run(tag: Tag, slot: ContextSlot) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
-        let ctx = init(tag, log)?;
+        let ctx = init(tag, slot)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
@@ -1303,7 +1282,7 @@ pub(crate) mod command {
         }
         if runs_several
             && ctx.runtime_options.check
-            && !super::check_command::check_project_before(None)
+            && !super::check_command::check_project_before(&ctx.args, None)
         {
             Global::exit(1);
         }
@@ -1354,7 +1333,7 @@ pub(crate) mod command {
 
         // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
         if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
-            super::check_command::CheckCommand::exec_without_arguments();
+            super::check_command::CheckCommand::exec_without_arguments(ctx);
         }
 
         if !ctx.positionals.is_empty() {
@@ -1406,15 +1385,15 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::RunAsNodeCommand, log)?;
+    fn exec_run_as_node(slot: ContextSlot) -> CmdResult {
+        let ctx = init(Tag::RunAsNodeCommand, slot)?;
         run_command::RunCommand::exec_as_if_node(ctx)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::BunxCommand, log)?;
+    fn exec_bunx(slot: ContextSlot) -> CmdResult {
+        let ctx = init(Tag::BunxCommand, slot)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
         } else {
@@ -1426,35 +1405,35 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_repl(slot: ContextSlot) -> CmdResult {
         // Inits with RunCommand (repl reuses run params).
-        let ctx = init(Tag::RunCommand, log)?;
+        let ctx = init(Tag::RunCommand, slot)?;
         super::repl_command::ReplCommand::exec(ctx)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::BuildCommand, log)?;
+    fn exec_build(slot: ContextSlot) -> CmdResult {
+        let ctx = init(Tag::BuildCommand, slot)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_compile(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::CompileCommand, log)?;
+    fn exec_compile(slot: ContextSlot) -> CmdResult {
+        let ctx = init(Tag::CompileCommand, slot)?;
         super::compile_command::CompileCommand::exec_command(ctx)?;
         Ok(())
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_check(slot: ContextSlot) -> CmdResult {
         // CheckCommand parses its own argv.
-        init(Tag::CheckCommand, log)?;
+        let ctx = init(Tag::CheckCommand, slot)?;
         let argv = argv_zslice();
-        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+        super::check_command::CheckCommand::exec(ctx, after_command(&argv, b"check"))
     }
 
     /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
@@ -1500,9 +1479,9 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_lint(slot: ContextSlot) -> CmdResult {
         // LintCommand parses its own argv.
-        let ctx = init(Tag::LintCommand, log)?;
+        let ctx = init(Tag::LintCommand, slot)?;
         let argv = argv_zslice();
         print_help_if_asked_before(b"lint", Tag::LintCommand);
         let knows = super::lint_command::LintCommand::has_flag;
@@ -1511,9 +1490,9 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_format(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_format(slot: ContextSlot) -> CmdResult {
         // FormatCommand parses its own argv.
-        let ctx = init(Tag::FormatCommand, log)?;
+        let ctx = init(Tag::FormatCommand, slot)?;
         let argv = argv_zslice();
         print_help_if_asked_before(b"fmt", Tag::FormatCommand);
         let knows = super::format_command::FormatCommand::has_flag;
@@ -1525,15 +1504,15 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::AuditCommand, log)?;
+    fn exec_audit(slot: ContextSlot) -> CmdResult {
+        let ctx = init(Tag::AuditCommand, slot)?;
         match super::audit_command::AuditCommand::exec(ctx)? {}
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_exec(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::ExecCommand, log)?;
+    fn exec_exec(slot: ContextSlot) -> CmdResult {
+        let ctx = init(Tag::ExecCommand, slot)?;
         if ctx.positionals.len() > 1 {
             super::exec_command::ExecCommand::exec(ctx)?;
         } else {
@@ -1544,23 +1523,23 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_fuzzilli(slot: ContextSlot) -> CmdResult {
         if bun_core::Environment::ENABLE_FUZZILLI {
-            let ctx = init(Tag::FuzzilliCommand, log)?;
+            let ctx = init(Tag::FuzzilliCommand, slot)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
         }
         Err(crate::Error::UnrecognizedCommand)
     }
 
-    /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
+    /// Stamps out `#[cold] #[inline(never)] fn $name(slot) { init($tag)?; $exec(ctx) }`
     /// for the trivial `init + exec` arms.
     macro_rules! cold_exec {
         ($( $name:ident => ($tag:ident, $($path:tt)+) ),* $(,)?) => {
             $(
                 #[cold]
                 #[inline(never)]
-                fn $name(log: &mut bun_ast::Log) -> CmdResult {
-                    let ctx = init(Tag::$tag, log)?;
+                fn $name(slot: ContextSlot) -> CmdResult {
+                    let ctx = init(Tag::$tag, slot)?;
                     $($path)+(ctx)
                 }
             )*
@@ -1621,12 +1600,12 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_getcompletes(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_getcompletes(slot: ContextSlot) -> crate::Result<()> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
 
-        let ctx = init(Tag::GetCompletionsCommand, log)?;
+        let ctx = init(Tag::GetCompletionsCommand, slot)?;
         // `ctx.positionals` is `Vec<Box<[u8]>>`; clone into a local
         // owned vec so `filter` doesn't borrow `ctx` (passed `&mut` below).
         let positionals: Vec<Box<[u8]>> = ctx.positionals.clone();
@@ -1734,7 +1713,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_create(slot: ContextSlot) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1748,7 +1727,7 @@ pub(crate) mod command {
         }
 
         // Create command wraps bunx
-        let ctx = init(Tag::CreateCommand, log)?;
+        let ctx = init(Tag::CreateCommand, slot)?;
         let args = argv_zslice();
 
         if args.len() <= 2 {
@@ -1870,10 +1849,7 @@ To create a project with the official Next.js scaffolding tool, run
     fn bun_lockb(ctx: &mut ContextData) -> crate::Result<()> {
         use bun_install::lockfile::Printer;
 
-        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
-        // `create_context_data` and no other `&mut Log` borrow is live for the
-        // rest of this function.
-        let log = unsafe { ctx.log_mut() };
+        let log = ctx.log();
         let entry = &ctx.args.entry_points[0];
 
         for arg in bun::argv() {
@@ -1901,12 +1877,12 @@ To create a project with the official Next.js scaffolding tool, run
 
     #[cold]
     #[inline(never)]
-    fn bun_info(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_info(slot: ContextSlot) -> crate::Result<()> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
-        let ctx = init(Tag::InfoCommand, log)?;
+        let ctx = init(Tag::InfoCommand, slot)?;
         let (pm, _) = PackageManager::init(ctx, &cli, Subcommand::Info)?;
 
         // `["info", "<spec>", "<field>"...]`

@@ -183,7 +183,7 @@ impl PackageManager {
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
                 let name = self.lockfile.str(&existing.name).to_vec();
-                self.log_mut().add_warning_fmt(
+                self.log().add_warning_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
@@ -268,6 +268,7 @@ impl PackageManager {
         let own_len = package.dependencies.len as usize;
         debug_assert_eq!(off + own_len, self.lockfile.buffers.dependencies.len());
         let package_dir = bun_paths::dirname(package_json_path).unwrap_or_default();
+        let log = self.log();
 
         // The added rows are visited too, because a folder can depend on the folder next to it.
         let mut next = off;
@@ -292,7 +293,7 @@ impl PackageManager {
                 Ok(json) => json,
                 Err(err) => {
                     if row.behavior.is_required() {
-                        self.log_mut().add_error_fmt(
+                        log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -379,6 +380,7 @@ impl PackageManager {
             ),
         ]
         .concat();
+        let log = self.log();
         let literal = self.lockfile.string_buf().append(&literal)?;
         let sliced = literal.sliced(self.lockfile.buffers.string_bytes.as_slice());
         let version = dependency::parse_with_tag(
@@ -387,7 +389,7 @@ impl PackageManager {
             sliced.slice,
             VersionTag::infer(sliced.slice),
             &sliced,
-            Some(self.log_mut()),
+            Some(log),
             None,
         )
         .unwrap_or_default();
@@ -521,7 +523,7 @@ impl PackageManager {
             let parsed = listed.package.parse(
                 &mut listed.lockfile,
                 self,
-                &mut bun_ast::Log::init(),
+                &bun_ast::Log::init(),
                 &source,
                 &mut OnlyDependencies,
                 Features::NPM,
@@ -673,10 +675,10 @@ impl PackageManager {
     }
 
     /// Returns true if the deferred peers are all that's left to resolve, and are worth resolving.
-    pub(crate) fn is_ready_for_peers(&self) -> bool {
+    pub(crate) fn is_ready_for_peers(&mut self) -> bool {
         self.has_peers_to_process()
             // An error ends the install, so the peers are not worth their requests.
-            && !self.log_mut().has_errors()
+            && !self.log().has_errors()
     }
 
     /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`. The first

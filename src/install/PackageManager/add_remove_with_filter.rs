@@ -90,8 +90,7 @@ pub(crate) struct WorkspaceMembers {
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
     let root_path = root_package_json_path();
 
-    let log = manager.log_mut();
-    let entry = package_json_entry_or_crash(manager, log, &root_path);
+    let entry = package_json_entry_or_crash(manager, &root_path);
     let (root_expr, root_source) = (entry.root, entry.source.clone());
     let name_expr = root_expr.get(b"name");
     let root_name: Box<[u8]> = name_expr
@@ -101,7 +100,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
         .into();
 
     let mut members = WorkspaceMap::init();
-    let log = manager.log_mut();
+    let log = manager.log();
     if let Err(err) = members.process_manifest(
         &mut manager.workspace_package_json_cache,
         log,
@@ -229,7 +228,7 @@ pub(crate) fn fetch_entry<'a>(
     manager: &'a mut PackageManager,
     target: &WorkspaceTarget,
 ) -> &'a mut MapEntry {
-    let log = manager.log_mut();
+    let log = manager.log();
     match manager.workspace_package_json_cache.get_with_path(
         log,
         &target.package_json_path,
@@ -261,7 +260,7 @@ pub(crate) fn store_entry(
     target: &WorkspaceTarget,
     root: bun_ast::Expr,
 ) {
-    let log = manager.log_mut();
+    let log = manager.log();
     save_entry(fetch_entry(manager, target), root, log);
 }
 
@@ -436,7 +435,7 @@ pub(super) fn respell_local_paths(
         };
         let abs = resolve_from_cwd(cwd, &mut buf, &request, path);
         let positional = spell_relative_to(target, &request, prefix, abs);
-        let log = manager.log_mut();
+        let log = manager.log();
         let subcommand = manager.subcommand;
         UpdateRequest::parse(
             Some(&mut *manager),
@@ -490,7 +489,7 @@ fn assign_requests(
         .map(Vec::as_slice)
         .collect();
     if !positionals.is_empty() {
-        let log = manager.log_mut();
+        let log = manager.log();
         let subcommand = manager.subcommand;
         UpdateRequest::parse(
             Some(&mut *manager),

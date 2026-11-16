@@ -970,8 +970,8 @@ pub(crate) fn edit_root_entry_before_install(
         return Ok(());
     }
     edit_root_before_install(manager, &root)?;
-    let log = manager.log_mut();
-    save_entry(package_json_entry_or_crash(manager, log, path), root, log);
+    let log = manager.log();
+    save_entry(package_json_entry_or_crash(manager, path), root, log);
     Ok(())
 }
 

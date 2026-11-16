@@ -28,43 +28,35 @@ impl JavaScript {
         bump: &'a Bump,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
         cache: Option<&mut dyn js_parser::TranspilerCache>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
-        let mut temp_log = bun_ast::Log::init();
-        temp_log.level = log.level;
-        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
-            Ok(p) => p,
-            Err(_) => {
-                temp_log.append_to(log);
-                return Ok(None);
-            }
+        let temp_log = bun_ast::Log::with_level(log.level.get());
+        scopeguard::defer! { temp_log.append_to(log) }
+        let Ok(parser) = js_parser::Parser::init(opts, &temp_log, source, defines, bump) else {
+            return Ok(None);
         };
 
         let result = match parser.parse_with_cache(cache) {
             Ok(r) => {
                 // The parser halts on every logged error.
-                debug_assert_eq!(temp_log.errors, 0);
+                debug_assert_eq!(temp_log.errors.get(), 0);
                 r
             }
             Err(err) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
-                // arm. The `&'a mut temp_log` it held is released, so read
-                // `temp_log.errors` directly. The lexer range is lost; fall
-                // back to `Range::None`.
+                // arm. The lexer range is lost; fall back to `Range::None`.
                 // TODO: thread the failing token range through the `Err`
                 // payload (make `_parse` return a `(Error, Range)` pair) so the
                 // diagnostic points at the failing token.
-                if temp_log.errors == 0 {
+                if !temp_log.has_errors() {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
-                temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
-        temp_log.append_to(log);
         Ok(Some(result))
     }
 
@@ -74,27 +66,20 @@ impl JavaScript {
         scan_pass_result: &mut js_parser::ScanPassResult<'a>,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
     ) -> Result<(), crate::Error> {
         if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
             return Ok(());
         }
 
-        let mut temp_log = bun_ast::Log::init();
-        // scopeguard cannot capture &mut temp_log while it's used below;
-        // explicit `append_to` calls at each exit.
+        let temp_log = bun_ast::Log::init();
+        scopeguard::defer! { temp_log.append_to(log) }
 
-        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
-            Ok(p) => p,
-            Err(_) => {
-                temp_log.append_to(log);
-                return Ok(());
-            }
+        let Ok(parser) = js_parser::Parser::init(opts, &temp_log, source, defines, bump) else {
+            return Ok(());
         };
 
-        let res = parser.scan_imports(scan_pass_result);
-        temp_log.append_to(log);
-        res.map_err(Into::into)
+        parser.scan_imports(scan_pass_result).map_err(Into::into)
     }
 }

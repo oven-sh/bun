@@ -210,12 +210,12 @@ impl LoadMessages {
 
     pub(crate) fn hand_on_to(&self, heard: &LoadMessages) {
         let LoadMessageLists {
-            mut log,
+            log,
             mut internal_errors,
         } = std::mem::take(&mut *self.lists.lock());
         let mut heard = heard.lists.lock();
-        if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
-            log.append_to(&mut heard.log);
+        if log.has_msgs() || log.has_any() {
+            log.append_to(&heard.log);
         }
         heard.internal_errors.append(&mut internal_errors);
     }
@@ -223,13 +223,13 @@ impl LoadMessages {
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);
-        self.say(&mut log);
+        self.say(&log);
         result
     }
 
-    pub(crate) fn say(&self, log: &mut Log) {
-        if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
-            log.append_to(&mut self.lists.lock().log);
+    pub(crate) fn say(&self, log: &Log) {
+        if log.has_msgs() || log.has_any() {
+            log.append_to(&self.lists.lock().log);
         }
     }
 }

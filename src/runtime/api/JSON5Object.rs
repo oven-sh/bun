@@ -50,8 +50,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
                     return Err(global.throw_stack_overflow());
                 }
                 Err(json5::ExternalError::SyntaxError) => {
-                    if !log.msgs.is_empty() {
-                        let first_msg = &log.msgs[0];
+                    if let Some(first_msg) = log.msgs.get_mut().first() {
                         return Err(global.throw_value(global.create_syntax_error_instance(
                             format_args!(
                                 "JSON5 Parse error: {}",

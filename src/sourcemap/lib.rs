@@ -863,7 +863,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     use std::sync::Arc;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
     // the allocator given to the JS parser is not respected for all parts
@@ -873,7 +873,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     bun_ast::initialize_store();
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
+    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &log) {
         Ok(p) => p,
         Err(_) => return Err(crate::Error::InvalidJSON),
     };

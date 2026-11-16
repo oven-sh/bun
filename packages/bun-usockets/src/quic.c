@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 #else
 #include <ws2tcpip.h>
 #endif
@@ -948,7 +949,6 @@ static BOOL CALLBACK us_quic_global_init_once_win(PINIT_ONCE o, PVOID p, PVOID *
     return TRUE;
 }
 #else
-#include <pthread.h>
 static pthread_once_t us_quic_global_once = PTHREAD_ONCE_INIT;
 #endif
 

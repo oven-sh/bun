@@ -1525,7 +1525,7 @@ fn use_fake_timers_with_default(
         }
         Flavor::Jest => options
             .now
-            .unwrap_or_else(|| JSMock__getCurrentUnixTimeMs()),
+            .unwrap_or_else(JSMock__getCurrentUnixTimeMs),
     };
     error_if_reading_globals(global)?;
     let ended = FakeTimers::install(global, &options, date_now)?;

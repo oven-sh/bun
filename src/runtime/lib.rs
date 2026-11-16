@@ -6,8 +6,6 @@
 #![feature(thread_local)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]
-// For what runs once per process or per test file, or only words a message: `#[optimize(size)]`.
-#![feature(optimize_attribute)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
 #![allow(internal_features)]
@@ -15,6 +13,7 @@
 // this crate's `pub(crate)` items alive, so in a test build most of the crate
 // reads as dead code. `dead_code` is checked by the crate's own build.
 #![cfg_attr(test, allow(dead_code))]
+// `#[optimize(size)]` is for what runs once per process or per test file, or only words a message.
 
 pub(crate) mod error;
 pub(crate) use error::{Error, Result};

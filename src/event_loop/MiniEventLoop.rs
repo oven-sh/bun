@@ -226,7 +226,7 @@ impl MiniEventLoop {
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
-        // Read first: once `task` is queued, the owner can run it and drop `self`.
+        // Read first: the push lets a bundle finish and drop `self`. The main and bundle threads never call `free_thread_loop`.
         let loop_ = self.loop_;
         self.concurrent_tasks.push(task);
         loop_.wakeup();

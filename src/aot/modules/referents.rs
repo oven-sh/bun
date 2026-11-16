@@ -40,6 +40,7 @@ pub struct LinkedProject<'a, 's> {
     pub platform: Platforms,
     pub library: Option<&'a Library<'a, 's>>,
     pub known_helpers: Option<&'a KnownHelpers>,
+    pub may_replace_evaluators: bool,
 }
 
 pub struct Library<'a, 's> {
@@ -271,6 +272,10 @@ impl NamedValues for LinkedProject<'_, '_> {
 impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
     type Builtin = BuiltinId;
     type Module = ModuleRef;
+
+    fn may_replace_evaluators(&self) -> bool {
+        self.may_replace_evaluators
+    }
 
     #[inline]
     fn hir(&self, file: FileId) -> &File<'s> {

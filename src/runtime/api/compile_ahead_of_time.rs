@@ -125,6 +125,9 @@ fn executable_destination(
     }
 
     let mut flags = StandaloneFlags::default();
+    if !compile_options.env_options {
+        flags |= StandaloneFlags::DISABLE_ENV_OPTIONS;
+    }
     if !compile_options.autoload_dotenv {
         flags |= StandaloneFlags::DISABLE_DEFAULT_ENV_FILES;
     }

@@ -4,6 +4,7 @@ use crate::{Error, Result};
 const MAX_SIZE_DIGITS: usize = 16;
 const MAX_SIZE_LINE_LEN: usize = 16 * 1024;
 const MAX_TRAILERS_LEN: u64 = 64 * 1024;
+const AFTER_ALL_DATA: &[u8] = b"\r\n0\r\n\r\n";
 
 /// What the next byte belongs to, in the order of the message.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -113,14 +114,18 @@ impl ChunkedDecoder {
                     self.remaining -= input.len() as u64;
                     return Err(Stop::Short);
                 };
-                match input.first_chunk::<16>() {
+                if body.capacity() == 0 && AFTER_ALL_DATA.starts_with(rest) {
+                    // No more data in this read, so it needs no more room.
+                    *body = data.to_vec();
+                } else if let Some(block) = input.first_chunk::<16>()
+                    && len <= block.len()
+                {
                     // A copy of a fixed size needs no call.
-                    Some(block) if len <= block.len() => {
-                        let end = body.len() + len;
-                        append(body, block, capacity);
-                        body.truncate(end);
-                    }
-                    _ => append(body, data, capacity),
+                    let end = body.len() + len;
+                    append(body, block, capacity);
+                    body.truncate(end);
+                } else {
+                    append(body, data, capacity);
                 }
                 input = rest;
                 self.remaining = 0;

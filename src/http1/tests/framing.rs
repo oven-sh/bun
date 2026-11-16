@@ -465,8 +465,13 @@ mod chunked {
         let mut decoder = ChunkedDecoder::default();
         let mut body = b">".to_vec();
         let mut left = None;
+        let mut allocating_decoder = decoder;
         for read in reads {
-            match decoder.decode(read, &mut body) {
+            let (len_before, mut new_body) = (body.len(), Vec::new());
+            let decoded = decoder.decode(read, &mut body);
+            assert_eq!(allocating_decoder.decode(read, &mut new_body), decoded);
+            assert_eq!(new_body, body[len_before..]);
+            match decoded {
                 Err(error) => {
                     assert_eq!(error, Error::MalformedChunk);
                     return (show(&body[1..]), End::Invalid);
@@ -717,11 +722,26 @@ mod chunked {
             (b"1\r\na\r\n".repeat(100), 600),
             (b"11\r\n0123456789abcdefg\r\n".repeat(100), 2300),
             (b"fff\r\n0123456789abcdefg".to_vec(), 22),
+            (b"2\r\nab".to_vec(), 2),
+            (b"2\r\nab\r\n".to_vec(), 2),
+            (b"2\r\nab\r\n0\r\n\r\n".to_vec(), 2),
+            (b"f\r\n0123456789abcde\r\n0\r\n\r\n".to_vec(), 15),
+            (b"11\r\n0123456789abcdefg\r\n0\r\n\r\n".to_vec(), 17),
+            (b"11\r\n0123456789abcdefg\r\n2\r\nab".to_vec(), 28),
+            (b"11\r\n0123456789abcdefg\r\n0\r\n\r\na".to_vec(), 29),
         ] {
             let mut body = Vec::new();
             assert!(ChunkedDecoder::default().decode(&bytes, &mut body).is_ok());
             assert_eq!(body.capacity(), capacity);
         }
+    }
+
+    #[test]
+    fn an_allocation_is_reused() {
+        let mut body = Vec::with_capacity(100);
+        let bytes = b"2\r\nab\r\n0\r\n\r\n";
+        assert!(ChunkedDecoder::default().decode(bytes, &mut body).is_ok());
+        assert_eq!((&body[..], body.capacity()), (&b"ab"[..], 100));
     }
 
     #[test]

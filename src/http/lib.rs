@@ -883,7 +883,6 @@ pub(crate) static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
 // blocks so the state machine compiles standalone.
 // ═══════════════════════════════════════════════════════════════════════
 
-use core::cell::Cell;
 use core::ffi::c_uint;
 use core::mem::ManuallyDrop;
 
@@ -4596,23 +4595,18 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
+        // Moving more than this costs more time than the room is worth.
         const MAX_SMALL_LEN: usize = 16 * 1024;
-        thread_local! {
-            static SMALL_BODY: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
-        }
         let is_compressed = self.state.encoding.is_compressed();
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
         let body = &mut body_buf.list;
         let len_before = body.len();
-        // The consumer keeps the allocation, so a small body gets one of its exact size.
         let is_small =
             !is_compressed && body.capacity() == 0 && incoming_data.len() <= MAX_SMALL_LEN;
-        let mut small = is_small.then(|| SMALL_BODY.take());
-        let decoded = decoder.decode(incoming_data, small.as_mut().unwrap_or(body));
-        if let Some(mut small) = small {
-            *body = small.as_slice().to_vec();
-            small.clear();
-            SMALL_BODY.set(small);
+        let decoded = decoder.decode(incoming_data, body);
+        if is_small {
+            // The consumer may keep the allocation, which has room for the framing too.
+            body.shrink_to_fit();
         }
         let buffer_len = body.len();
         self.state.total_body_received += buffer_len - len_before;

@@ -27,6 +27,8 @@ struct Block {
     tokens: Vec<[u32; 2]>,
     literals: Vec<u8>,
     histogram: [u32; SYMBOLS],
+    /// How much of the whole input is in the output. Blocks to store wait for one that is compressed.
+    written: usize,
 }
 
 impl Sink for Block {
@@ -92,15 +94,16 @@ impl TwoPass {
             tokens: core::mem::take(&mut self.tokens),
             literals: core::mem::take(&mut self.literals),
             histogram: [0; SYMBOLS],
+            written: 0,
         };
         for start in (0..input.len()).step_by(BLOCK_SIZE) {
             let end = input.len().min(start + BLOCK_SIZE);
             block.begin(end - start)?;
             let (ControlFlow::Continue(next_literal) | ControlFlow::Break(next_literal)) =
                 find_matches::<_, MIN_MATCH>(input, start, end, start, table, &mut block);
-            block.insert_last(&input[next_literal..end]);
-            block.write(&input[start..end], trees, writer)?;
+            block.end(&input[..end], start, next_literal, trees, writer)?;
         }
+        block.finish(input, writer);
         self.keep_memory_of(block);
         Ok(())
     }
@@ -126,18 +129,39 @@ impl Block {
         }
     }
 
+    fn store_rest_of(&self, input: &[u8], writer: &mut BitWriter) {
+        for block in input[self.written..].chunks(BLOCK_SIZE) {
+            write_uncompressed(writer, [block, &[]]);
+        }
+    }
+
+    fn finish(&self, input: &[u8], writer: &mut BitWriter) {
+        if self.written == 0 {
+            // What several blocks are replaced by, since their headers make them too large.
+            write_uncompressed(writer, [input, &[]]);
+        } else {
+            self.store_rest_of(input, writer);
+        }
+    }
+
+    /// `input` ends with the block.
     #[inline(never)]
-    fn write(
+    fn end(
         &mut self,
         input: &[u8],
+        start: usize,
+        next_literal: usize,
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        if !self.is_worth_compressing(input) {
-            write_uncompressed(writer, [input, &[]]);
+        let last_literals = &input[next_literal..];
+        if !is_worth_compressing(&input[start..], self.literals.len() + last_literals.len()) {
             return Ok(());
         }
-        write_plain_header(writer, MetaBlockKind::Compressed, input.len());
+        self.store_rest_of(&input[..start], writer);
+        self.written = input.len();
+        self.insert_last(last_literals);
+        write_plain_header(writer, MetaBlockKind::Compressed, input.len() - start);
         let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS];
         trees.build_and_write_fast(
             &count_bytes(&self.literals),
@@ -173,15 +197,15 @@ impl Block {
         }
         Ok(())
     }
+}
 
-    fn is_worth_compressing(&self, input: &[u8]) -> bool {
-        const MIN_RATIO: f64 = 0.98;
-        const SAMPLE_RATE: usize = 43;
-        let size = input.len() as f64;
-        if (self.literals.len() as f64) < MIN_RATIO * size {
-            return true;
-        }
-        let histogram = count_every_nth_byte::<SAMPLE_RATE>(input);
-        bits_entropy(&histogram) < size * 8.0 * MIN_RATIO / SAMPLE_RATE as f64
+fn is_worth_compressing(input: &[u8], literal_count: usize) -> bool {
+    const MIN_RATIO: f64 = 0.98;
+    const SAMPLE_RATE: usize = 43;
+    let size = input.len() as f64;
+    if (literal_count as f64) < MIN_RATIO * size {
+        return true;
     }
+    let histogram = count_every_nth_byte::<SAMPLE_RATE>(input);
+    bits_entropy(&histogram) < size * 8.0 * MIN_RATIO / SAMPLE_RATE as f64
 }

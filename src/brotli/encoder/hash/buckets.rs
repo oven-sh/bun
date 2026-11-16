@@ -159,10 +159,10 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
         let mut filter = Filter::new(search, length);
         'bucket: for part in [newer, older] {
             for &candidate in part.iter().rev() {
-                let distance = search.position.wrapping_sub(candidate as usize);
-                if !search.reaches(distance) {
+                if !search.reaches_back_to(candidate as usize) {
                     break 'bucket;
                 }
+                let distance = search.position - candidate as usize;
                 filter.try_position(search, candidate as usize, distance, &mut best);
             }
         }

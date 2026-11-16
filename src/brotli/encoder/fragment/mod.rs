@@ -12,7 +12,7 @@ use super::bit_stream::{write_empty_last, write_uncompressed};
 use super::bit_writer::{BitWriter, Bits};
 use super::command::{combine_length_codes, copy_length_code, insert_length_code};
 use super::huffman::{Code, Lengths, TreeBuilder, assign_codes};
-use super::matching::{HASH_MULTIPLIER_32, load64, match_length};
+use super::matching::{HASH_MULTIPLIER_32, load32, load64, match_length};
 use super::params::FAST_WINDOW_BITS;
 use super::try_reserve_for;
 use crate::format::{
@@ -152,8 +152,11 @@ fn table_bits(input_size: usize, max_bits: u32) -> u32 {
 type Chunk = [u8; WINDOW_GAP];
 
 #[inline(always)]
-fn chunk_at(input: &[u8], at: u32) -> Option<&Chunk> {
-    input.get(at as usize..at as usize + WINDOW_GAP)?.as_array()
+fn chunk_at(input: &[u8], at: usize) -> Option<&Chunk> {
+    if at > input.len().checked_sub(WINDOW_GAP)? {
+        return None;
+    }
+    input[at..at + WINDOW_GAP].as_array()
 }
 
 #[inline(never)]
@@ -210,24 +213,30 @@ impl<const TABLE_SIZE: usize, const MIN_MATCH: usize> Finder<'_, TABLE_SIZE, MIN
     #[inline(always)]
     fn scan(&mut self, mut at: u32, last_distance: Option<u32>) -> Option<(u32, Comparison)> {
         let mut misses = 32;
-        let mut next = at + 1;
+        let mut next = at as usize + 1;
         let mut next_chunk = chunk_at(self.searched, next)?;
         loop {
             let ours = next_chunk;
-            at = next;
-            next = at + (misses >> 5);
+            at = next as u32;
+            next += misses >> 5;
             misses += 1;
             next_chunk = chunk_at(self.searched, next)?;
             let candidate = core::mem::replace(self.slot(load64(ours, 0)), at);
             if let Some(last_distance) = last_distance
-                && let Some(theirs) = chunk_at(self.searched, at.wrapping_sub(last_distance))
+                && let Some(theirs) =
+                    chunk_at(self.searched, at.wrapping_sub(last_distance) as usize)
+                && (MIN_MATCH == 6 || load32(ours, 0) == load32(theirs, 0))
                 && (load64(ours, 0) ^ load64(theirs, 0)) << Self::IGNORED_BITS == 0
             {
                 return Some((at, Self::compare(ours, theirs, last_distance)));
             }
-            let found = Self::compare(ours, chunk_at(self.searched, candidate)?, at - candidate);
-            if found.obstacles == 0 {
-                return Some((at, found));
+            let theirs = chunk_at(self.searched, candidate as usize)?;
+            // Much of what matches is out of reach in the largest tables, so two branches cost more than they save.
+            if MIN_MATCH == 6 || load32(ours, 0) == load32(theirs, 0) {
+                let found = Self::compare(ours, theirs, at - candidate);
+                if found.obstacles == 0 {
+                    return Some((at, found));
+                }
             }
         }
     }
@@ -261,7 +270,7 @@ impl<const TABLE_SIZE: usize, const MIN_MATCH: usize> Finder<'_, TABLE_SIZE, MIN
         let candidate = core::mem::replace(self.slot(load64(around, BEFORE)), at);
         match (
             around[BEFORE..].first_chunk(),
-            chunk_at(self.searched, candidate),
+            chunk_at(self.searched, candidate as usize),
         ) {
             (Some(ours), Some(theirs)) => Self::compare(ours, theirs, at - candidate),
             _ => NO_MATCH,

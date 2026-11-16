@@ -104,8 +104,11 @@ impl MatchFinder {
             }
             (5, _) => Self::Tagged5(TaggedBuckets::new()?),
             (6, _) => Self::Tagged6(TaggedBuckets::new()?),
-            (_, Some(_)) => Self::Small(Small::new(15, 1 << bucket_size_bits, recent_count)?),
-            (_, None) => Self::Buckets(Buckets::new(bucket_size_bits, recent_count)?),
+            // Following up to 256 links takes longer than reading a bucket.
+            (_, Some(size)) if quality < 9 || size <= Small::MAX_INPUT_SIZE / 2 => {
+                Self::Small(Small::new(15, 1 << bucket_size_bits, recent_count)?)
+            }
+            _ => Self::Buckets(Buckets::new(bucket_size_bits, recent_count)?),
         })
     }
 

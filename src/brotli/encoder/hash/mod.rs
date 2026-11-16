@@ -172,6 +172,13 @@ impl<'a> Search<'a> {
         distance.wrapping_sub(1) < self.max_backward
     }
 
+    /// [`Self::reaches`] for a position, in fewer steps for each of many.
+    #[inline(always)]
+    fn reaches_back_to(&self, earlier: usize) -> bool {
+        let offset = self.max_backward.wrapping_sub(self.position);
+        offset.wrapping_add(earlier) < self.max_backward
+    }
+
     #[inline(always)]
     fn is_in_ring(&self, offset: usize) -> bool {
         offset <= self.window.before_end(self.position)

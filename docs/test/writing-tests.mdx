@@ -737,6 +737,8 @@ For full documentation on `expectTypeOf` matchers, see the [API Reference](https
 
 Bun implements the following matchers. Full Jest compatibility is planned; see the [tracking issue](https://github.com/oven-sh/bun/issues/1825).
 
+A matcher that fails prints the values in its message, and that can call a value's [`[Bun.inspect.custom]`](/runtime/utils#bun-inspect-custom) method. If the method throws, the matcher throws that error instead of its own message, as in Vitest. Jest doesn't call the method.
+
 ### Basic Matchers
 
 | Status | Matcher            |

@@ -421,6 +421,8 @@ pub struct VirtualMachine {
     /// the finalizer). Not the current context: that is what the async context says.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     pub(crate) is_in_on_resolve: Cell<bool>,
+    /// Set around a resolve whose caller takes a miss for an answer: `_resolve` then does not list the importer's folder again to look once more.
+    takes_miss_for_answer: Cell<bool>,
     pub test_isolation_enabled: Cell<bool>,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
@@ -3181,6 +3183,7 @@ impl VirtualMachine {
             graph_contexts: JsCell::default(),
             entered_context: Cell::new(None),
             is_in_on_resolve: Cell::new(false),
+            takes_miss_for_answer: Cell::new(false),
             test_isolation_enabled: Cell::new(false),
             test_isolation_generation: Cell::new(0),
             test_isolation_state: Default::default(),
@@ -4871,7 +4874,6 @@ impl VirtualMachine {
         is_esm: bool,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
-        on_miss: OnMiss,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -4935,8 +4937,7 @@ impl VirtualMachine {
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
-        let mut retry_on_not_found =
-            on_miss == OnMiss::ListAgain && bun_paths::is_absolute(source_to_use);
+        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let bust_dir_cache =
             |dir: &[u8]| self.transpiler.with_mut(|t| t.resolver.bust_dir_cache(dir));
         let result: bun_resolver::Result = loop {
@@ -4962,7 +4963,7 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    if !retry_on_not_found {
+                    if !retry_on_not_found || self.takes_miss_for_answer.get() {
                         if let Some(chai) = self.resolve_chai_next_to_vitest(
                             normalized_specifier,
                             source_to_use,
@@ -5153,7 +5154,6 @@ impl VirtualMachine {
             query_string,
             mode,
             global.bun_vm().transpiler.get().resolver.opts.global_cache,
-            OnMiss::ListAgain,
         )
     }
 
@@ -5195,6 +5195,8 @@ impl VirtualMachine {
         let is_from_disk = vm.is_code_from_disk(source.to_utf8().slice());
         vm.transpiler
             .with_mut(|t| t.resolver.resolves_for_code_from_disk = is_from_disk);
+        // A name that only an `import` resolves misses here at every call. A miss that lists the folder again keeps each listing in memory (#11083).
+        vm.takes_miss_for_answer.set(true);
         // An answer that only an `onLoad` backs is a miss here: `require()` of that answer does not find it.
         let for_require = Self::resolve_without_on_resolve::<true>(
             global,
@@ -5203,8 +5205,8 @@ impl VirtualMachine {
             None,
             mode,
             bun_resolver::GlobalCache::disable,
-            OnMiss::Answer,
         );
+        vm.takes_miss_for_answer.set(false);
         vm.transpiler
             .with_mut(|t| t.resolver.resolves_for_code_from_disk = false);
         // "imports" of a package.json can map a name to a builtin module for `require()` alone. The resolver answers with the module's key, which `require()` does not always take.
@@ -5226,8 +5228,13 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-        let asked =
-            Self::ask_on_resolve::<IS_A_FILE_PATH>(global, specifier, source, mode, same_is_no_answer)?;
+        let asked = Self::ask_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            mode,
+            same_is_no_answer,
+        )?;
         let (answer, global_cache) = match asked {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
@@ -5241,7 +5248,6 @@ impl VirtualMachine {
             query_string,
             mode,
             global_cache,
-            OnMiss::ListAgain,
         )?;
         // Not on disk: either an `onLoad` serves it, or nothing is loaded and the callback's absolute path stands, like the answer of a resolve hook in Node.js.
         if resolved.is_err() {
@@ -5302,7 +5308,6 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         global_cache: bun_resolver::GlobalCache,
-        on_miss: OnMiss,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -5440,7 +5445,6 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
             global_cache,
-            on_miss,
         );
         if mode == ResolveMode::Esm {
             (jsc_vm.transpiler).with_mut(|t| t.resolver.resolves_for_code_from_disk = false);
@@ -7613,19 +7617,11 @@ enum OnResolveAnswer {
     Unresolved(bun_core::String, bun_resolver::GlobalCache),
 }
 
-/// What `VirtualMachine::_resolve` does with a name that it does not find.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OnMiss {
-    /// Lists the importer's folder again and looks once more: a file may be new. Each listing stays in memory (#11083).
-    ListAgain,
-    /// The caller takes the miss for an answer.
-    Answer,
-}
-
 /// Keeps a resolve made inside an `onResolve` callback from inheriting the outer resolve's state.
 struct OnResolveScope<'a> {
     vm: &'a VirtualMachine,
     was_in_on_resolve: bool,
+    took_miss_for_answer: bool,
     custom_dir_paths: Option<&'static [bun_core::String]>,
     resolves_for_code_from_disk: bool,
 }
@@ -7635,6 +7631,7 @@ impl<'a> OnResolveScope<'a> {
         vm.transpiler.with_mut(|t| Self {
             vm,
             was_in_on_resolve: vm.is_in_on_resolve.replace(true),
+            took_miss_for_answer: vm.takes_miss_for_answer.replace(false),
             custom_dir_paths: t.resolver.custom_dir_paths.take(),
             resolves_for_code_from_disk: core::mem::take(
                 &mut t.resolver.resolves_for_code_from_disk,
@@ -7646,6 +7643,7 @@ impl<'a> OnResolveScope<'a> {
 impl Drop for OnResolveScope<'_> {
     fn drop(&mut self) {
         self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
+        self.vm.takes_miss_for_answer.set(self.took_miss_for_answer);
         self.vm.transpiler.with_mut(|t| {
             t.resolver.custom_dir_paths = self.custom_dir_paths;
             t.resolver.resolves_for_code_from_disk = self.resolves_for_code_from_disk;

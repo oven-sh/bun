@@ -23,7 +23,7 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    FnOrArrowDataParse, LegacyOctalKind, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -314,7 +314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let tail: E::TemplateContents = if !include_raw {
                 let cooked = p.lexer.to_e_string()?;
-                p.check_for_legacy_octal_escape(tail_loc);
+                p.check_for_legacy_octal_escape(tail_loc, LegacyOctalKind::TemplateEscape);
                 E::TemplateContents::Cooked(cooked)
             } else {
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
@@ -346,7 +346,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
         str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
-        p.check_for_legacy_octal_escape(loc);
+        let kind = if str_.prefer_template {
+            LegacyOctalKind::TemplateEscape
+        } else {
+            LegacyOctalKind::Escape
+        };
+        p.check_for_legacy_octal_escape(loc, kind);
 
         let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
@@ -1203,7 +1208,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TNumericLiteral => {
                 key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
-                p.check_for_legacy_octal_literal(key.loc);
+                p.check_for_legacy_octal_literal();
                 p.lexer.next()?;
             }
             T::TStringLiteral => {
@@ -1492,6 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Option<js_ast::stmt::Data> {
         let p = self;
         let source: &'a bun_ast::Source<'a> = p.source;
+        let dropped = Some(js_ast::stmt::Data::SEmpty(S::Empty {}));
         let is_use_strict = is_prologue && is_use_strict_token(source.contents(), loc);
 
         if is_use_strict {
@@ -1511,13 +1517,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 None
             } else {
-                p.drop_directive(loc)
+                dropped
             };
         } else if string.eql_comptime(b"use asm") && !p.options.repl_mode {
             // In the REPL the directive stays a string
             // statement so it evaluates as the result,
             // like node ('use asm' prints 'use asm').
-            return p.drop_directive(loc);
+            return dropped;
         } else {
             string.string(p.arena).expect("OOM")
         };
@@ -1525,15 +1531,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             value: bun_ast::StoreStr::new(value),
         };
         Some(Stmt::alloc(directive, loc).data)
-    }
-
-    /// The visit pass does not see a dropped directive, so the scope keeps its legacy octal escape.
-    fn drop_directive(&mut self, loc: bun_ast::Loc) -> Option<js_ast::stmt::Data> {
-        if let Some(range) = self.legacy_octal_literals.remove(&loc.start) {
-            self.dropped_octal_directives
-                .push((self.current_scope, range));
-        }
-        Some(js_ast::stmt::Data::SEmpty(S::Empty {}))
     }
 
     pub(crate) fn parse_stmts_up_to(

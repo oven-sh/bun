@@ -4,8 +4,9 @@ use bun_collections::VecExt;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParenExprOpts,
-    ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag, prefill,
+    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, LegacyOctalKind,
+    ParenExprOpts, ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag,
+    prefill,
 };
 use bun_ast::e::UnaryFlags;
 use bun_ast::expr::EFlags;
@@ -286,7 +287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_template_head(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let head = p.lexer.to_e_string()?;
-        p.check_for_legacy_octal_escape(loc);
+        p.check_for_legacy_octal_escape(loc, LegacyOctalKind::TemplateEscape);
 
         let (parts, _tail_loc) = p.parse_template_parts(false)?;
 
@@ -307,7 +308,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let value = p.new_expr(E::Number::new(p.lexer.number), loc);
-        p.check_for_legacy_octal_literal(loc);
+        p.check_for_legacy_octal_literal();
         p.lexer.next()?;
         Ok(value)
     }

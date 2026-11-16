@@ -18,6 +18,7 @@ use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
+use crate::parser::LegacyOctalKind;
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
@@ -177,6 +178,7 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
     replaced_functions_len: usize,
+    legacy_octals_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -285,11 +287,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
 
-    /// The range of each legacy octal number (`010`) or escape (`"\1"`), by its literal's start.
-    pub(crate) legacy_octal_literals: HashMap<i32, bun_ast::Range>,
-
-    /// Each dropped directive that has a legacy octal escape (`"use\040strict"`), with its scope.
-    pub(crate) dropped_octal_directives: Vec<(js_ast::StoreRef<Scope>, bun_ast::Range)>,
+    /// Each legacy octal number (`010`) or escape (`"\1"`), with the scope that the parser was in.
+    pub(crate) legacy_octals: Vec<(js_ast::StoreRef<Scope>, bun_ast::Range, LegacyOctalKind)>,
 
     /// Each function declaration that a later one in the same scope replaced, with that scope.
     pub(crate) replaced_functions: Vec<(js_ast::StoreRef<Scope>, js_ast::scope::Member)>,
@@ -5256,69 +5255,99 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// Call while the lexer is on the `TNumericLiteral` that became the `E::Number` at `loc`.
-    pub(crate) fn check_for_legacy_octal_literal(&mut self, loc: bun_ast::Loc) {
+    /// Call while the lexer is on a `TNumericLiteral`.
+    #[inline]
+    pub(crate) fn check_for_legacy_octal_literal(&mut self) {
         if self.lexer.is_legacy_octal_literal {
-            let range = self.lexer.range();
-            self.legacy_octal_literals.insert(loc.start, range);
+            self.record_legacy_octal(self.lexer.range(), LegacyOctalKind::Number);
         }
     }
 
     /// Call after `to_e_string` on the string or template part that starts at `loc`.
-    pub(crate) fn check_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
+    #[inline]
+    pub(crate) fn check_for_legacy_octal_escape(
+        &mut self,
+        loc: bun_ast::Loc,
+        kind: LegacyOctalKind,
+    ) {
         let escape = self.lexer.legacy_octal_loc;
         if escape.start > loc.start {
-            let range = self.source.range_of_legacy_octal_escape(escape);
-            self.legacy_octal_literals.insert(loc.start, range);
+            self.record_legacy_octal(self.source.range_of_legacy_octal_escape(escape), kind);
         }
     }
 
-    /// Call after `to_e_string` on a string of an import or export statement, which only a module has.
-    pub(crate) fn check_module_string_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
-        let escape = self.lexer.legacy_octal_loc;
-        if escape.start > loc.start {
-            let notes = self.why_es_module();
-            self.log().add_range_error_fmt_with_notes(
-                Some(self.source),
-                self.source.range_of_legacy_octal_escape(escape),
-                notes,
-                format_args!(
-                    "Legacy octal escape sequences cannot be used in an ECMAScript module"
-                ),
-            );
-        }
-    }
-
-    /// A directive with a legacy octal escape (`"\01"; "use strict"`) is an error in strict code.
-    pub(crate) fn check_directive_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
-        if !self.legacy_octal_literals.is_empty()
-            && self.is_strict_mode()
-            && let Some(range) = self.legacy_octal_literals.get(&loc.start).copied()
-        {
-            self.mark_strict_mode_feature(StrictModeFeature::LegacyOctalEscape, range, b"")
-                .expect("unreachable");
-        }
+    #[cold]
+    #[inline(never)]
+    fn record_legacy_octal(&mut self, range: bun_ast::Range, kind: LegacyOctalKind) {
+        self.legacy_octals.push((self.current_scope, range, kind));
     }
 
     /// Call after the visit pass: it makes the scopes of a class body strict, which are the last.
-    pub(crate) fn check_dropped_directives_for_legacy_octal_escape(&mut self) {
-        for (scope, range) in core::mem::take(&mut self.dropped_octal_directives) {
-            if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
-                let feature = StrictModeFeature::LegacyOctalEscape;
-                self.mark_strict_mode_feature_in(scope, feature, range, b"");
+    pub(crate) fn report_legacy_octals(&mut self) {
+        for (scope, range, kind) in core::mem::take(&mut self.legacy_octals) {
+            let feature = match kind {
+                LegacyOctalKind::Number => StrictModeFeature::LegacyOctalLiteral,
+                LegacyOctalKind::Escape => StrictModeFeature::LegacyOctalEscape,
+                LegacyOctalKind::TemplateEscape => {
+                    self.log().add_range_error(
+                        Some(self.source),
+                        range,
+                        b"Legacy octal escape sequences cannot be used in template literals",
+                    );
+                    continue;
+                }
+            };
+            // A scope that the parser discarded (the one of `("\1")`) is as strict as the scope around it.
+            let mut strict_scope = Some(scope);
+            while let Some(scope) = strict_scope {
+                if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+                    self.mark_strict_mode_feature_in(scope, feature, range, b"");
+                    break;
+                }
+                strict_scope = scope.parent;
             }
         }
     }
 
+    /// Call after `to_e_string` on a string of an import or export statement, which only a module has.
+    #[inline]
+    pub(crate) fn check_module_string_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
+        if self.lexer.legacy_octal_loc.start > loc.start {
+            self.report_legacy_octal_escape_in_module();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_legacy_octal_escape_in_module(&mut self) {
+        let notes = self.why_es_module();
+        self.log().add_range_error_fmt_with_notes(
+            Some(self.source),
+            self.source
+                .range_of_legacy_octal_escape(self.lexer.legacy_octal_loc),
+            notes,
+            format_args!("Legacy octal escape sequences cannot be used in an ECMAScript module"),
+        );
+    }
+
     /// Visit-pass check, since ESM and class bodies only become strict after parsing.
+    #[inline]
     pub(crate) fn validate_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
         // In sloppy code the bundler renames a bound reserved word (`package` to `_package`).
+        if is_eval_or_arguments(name)
+            || (self.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name))
+        {
+            self.report_declared_symbol_name(loc, name);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
         let feature = if is_eval_or_arguments(name) {
             StrictModeFeature::EvalOrArguments
-        } else if self.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
-            StrictModeFeature::ReservedWord
         } else {
-            return;
+            StrictModeFeature::ReservedWord
         };
         self.mark_strict_mode_feature(
             feature,
@@ -8501,6 +8530,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
             replaced_functions_len: self.replaced_functions.len(),
+            legacy_octals_len: self.legacy_octals.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8560,6 +8590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.replaced_functions
             .truncate(snapshot.replaced_functions_len);
+        self.legacy_octals.truncate(snapshot.legacy_octals_len);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }
@@ -9912,8 +9943,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
-            legacy_octal_literals: Default::default(),
-            dropped_octal_directives: Vec::new(),
+            legacy_octals: Vec::new(),
             replaced_functions: Vec::new(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,

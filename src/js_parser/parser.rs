@@ -1069,6 +1069,14 @@ pub struct ExprIn {
     pub(crate) is_object_keys_argument: bool,
 }
 
+/// `TemplateEscape` is an escape in an untagged template, which no mode allows.
+#[derive(Clone, Copy)]
+pub(crate) enum LegacyOctalKind {
+    Number,
+    Escape,
+    TemplateEscape,
+}
+
 /// This function exists to tie all of these checks together in one place
 /// This can sometimes show up on benchmarks as a small thing.
 #[inline]

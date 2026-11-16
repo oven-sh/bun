@@ -99,39 +99,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    /// Nothing on the substitution revisit: the errors of that literal are already logged.
-    #[inline]
-    fn legacy_octal_at(p: &Self, loc: bun_ast::Loc) -> Option<bun_ast::Range> {
-        if p.legacy_octal_literals.is_empty() || p.is_revisit_for_substitution {
-            return None;
-        }
-        p.legacy_octal_literals.get(&loc.start).copied()
+    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+        // If you're using this, you're probably not using 0-prefixed legacy octal notation
+        // if e.LegacyOctalLoc.Start > 0 {
     }
 
-    fn e_string(p: &mut Self, e: &mut Expr, _: ExprIn) {
-        let Some(range) = Self::legacy_octal_at(p, e.loc) else {
-            return;
-        };
-        let is_template = e.data.e_string().is_some_and(|str_| str_.prefer_template);
-        if is_template {
-            p.log().add_range_error(
-                Some(p.source),
-                range,
-                b"Legacy octal escape sequences cannot be used in template literals",
-            );
-        } else if p.is_strict_mode() {
-            p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalEscape, range, b"")
-                .expect("unreachable");
-        }
+    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+        // idc about legacy octal loc
     }
 
-    fn e_number(p: &mut Self, e: &mut Expr, _: ExprIn) {
-        if let Some(range) = Self::legacy_octal_at(p, e.loc)
-            && p.is_strict_mode()
-        {
-            p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalLiteral, range, b"")
-                .expect("unreachable");
-        }
+    /// The renamer leaves an unbound reserved word as written; ESM output would not parse.
+    #[cold]
+    #[inline(never)]
+    fn report_unbound_reserved_word(p: &mut Self, loc: bun_ast::Loc, name: &[u8]) {
+        p.mark_strict_mode_feature(
+            StrictModeFeature::ReservedWord,
+            js_lexer::range_of_identifier(p.source, loc),
+            name,
+        )
+        .expect("unreachable");
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_delete_of_bare_name(p: &mut Self, loc: bun_ast::Loc) {
+        p.mark_strict_mode_feature(
+            StrictModeFeature::DeleteBareName,
+            js_lexer::range_of_identifier(p.source, loc),
+            b"",
+        )
+        .expect("unreachable");
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -362,17 +359,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
 
-            // The renamer leaves an unbound reserved word as written; ESM output would not parse.
             if !p.is_strict_mode()
                 && p.is_strict_mode_output_format()
                 && js_lexer::is_strict_mode_reserved_word(name)
             {
-                p.mark_strict_mode_feature(
-                    StrictModeFeature::ReservedWord,
-                    js_lexer::range_of_identifier(p.source, expr.loc),
-                    name,
-                )
-                .expect("unreachable");
+                Self::report_unbound_reserved_word(p, expr.loc, name);
             }
         }
 
@@ -723,18 +714,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.did_apply_test_feature = true;
             }
-        } else if !p.legacy_octal_literals.is_empty() {
-            // Untagged templates never allow legacy octal escapes, in any mode.
-            let range = core::iter::once(expr.loc)
-                .chain(e_.parts().iter().map(|part| part.tail_loc))
-                .find_map(|loc| Self::legacy_octal_at(p, loc));
-            if let Some(range) = range {
-                p.log().add_range_error(
-                    Some(p.source),
-                    range,
-                    b"Legacy octal escape sequences cannot be used in template literals",
-                );
-            }
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1000,8 +979,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.features.minify_syntax && !p.options.features.is_library {
             if let Some(mut s) = e_.index.data.e_string() {
                 if !s.is_utf16 && s.is_identifier(p.arena) {
-                    // The property access replaces the string before the visit reaches it.
-                    Self::e_string(p, &mut e_.index, ExprIn::default());
                     let dot = p.new_expr(
                         E::Dot {
                             name: s.data,
@@ -1364,12 +1341,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !p.is_revisit_for_substitution
                     && !matches!(e_.value.data, js_ast::ExprData::EDot(_))
                 {
-                    p.mark_strict_mode_feature(
-                        StrictModeFeature::DeleteBareName,
-                        js_lexer::range_of_identifier(p.source, name_loc),
-                        b"",
-                    )
-                    .expect("unreachable");
+                    Self::report_delete_of_bare_name(p, name_loc);
                 }
             }
             _ => {

@@ -973,11 +973,6 @@ impl<'a> Parser<'a> {
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
-        // The prologue of the file is not among the statements that the visit pass walks.
-        for directive in directives {
-            p.check_directive_for_legacy_octal_escape(directive.loc);
-        }
-
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {
                 enabled: true,
@@ -1245,7 +1240,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        p.check_dropped_directives_for_legacy_octal_escape();
+        p.report_legacy_octals();
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here

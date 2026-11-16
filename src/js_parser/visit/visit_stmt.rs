@@ -70,13 +70,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // points into the arena, not into `*stmt`.
         let data_copy = stmt.data;
         match data_copy {
-            StmtData::SDirective(_) => {
-                p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
-                p.check_directive_for_legacy_octal_escape(stmt.loc);
-                stmts.push(*stmt);
-                Ok(())
-            }
-            StmtData::SComment(_) | StmtData::SEmpty(_) => {
+            StmtData::SDirective(_) | StmtData::SComment(_) | StmtData::SEmpty(_) => {
                 p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
                 stmts.push(*stmt);
                 Ok(())

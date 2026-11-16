@@ -6,11 +6,11 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "../../aot/hardened";
+import { cCompiler, without } from "../../aot/harness/capabilities";
 import { withoutCoreDump } from "../../aot/harness/commands";
 import { run } from "../../aot/harness/run";
 import { describe, test } from "../../aot/supported";
 
-const compiler = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const signs =
   isLinux &&
   Bun.spawnSync([
@@ -131,12 +131,12 @@ test("the builds for arm64 sign as their steps say", () => {
   expect(signs).toBe(process.arch === "arm64" && (profile === "hardened" || profile === "hardened-unlocked"));
 });
 
-describe.skipIf(!isLinux || !compiler)("the return address that a compiled function has saved", () => {
+describe.skipIf(!isLinux || !!without("a C compiler"))("the return address that a compiled function has saved", () => {
   test("is followed only if it is signed for its place, where the build signs", async () => {
     using dir = tempDir("aot-hardened-return-addresses", { "library.c": library, "program.ts": program });
     const [shared, executable] = [join(String(dir), "library.so"), join(String(dir), "program")];
     const [compiled, built] = await Promise.all([
-      run([compiler!, "-shared", "-fPIC", "-O1", "-o", shared, join(String(dir), "library.c"), "-ldl"]),
+      run([cCompiler!, "-shared", "-fPIC", "-O1", "-o", shared, join(String(dir), "library.c"), "-ldl"]),
       run([bunExe(), "build", "--compile", "--aot", join(String(dir), "program.ts"), "--outfile", executable]),
     ]);
     expect(compiled).toMatchObject({ stderr: "", exitCode: 0 });

@@ -1670,16 +1670,16 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     return;
   }
 
-  // One file, with the binaries of the build that the subject of the commit names.
+  // Two files, with the binaries of the build that the subject of the commit names.
   const [, earlierBuild] = /\[return addresses of ([0-9a-f-]{36})\]/.exec(getCommitMessage() ?? "") ?? [];
   if (earlierBuild) {
     const distros = [
       { distro: "debian", release: "13" },
       { distro: "ubuntu", release: "25.04" },
     ] as const;
-    const steps = (["hardened", "hardened-unlocked", "hardened-unsigned"] as const).flatMap(profile =>
+    const steps = ([undefined, "hardened", "hardened-unlocked", "hardened-unsigned"] as const).flatMap(profile =>
       distros.map(distro => {
-        const tests = ["cli/run/signed-return-addresses"];
+        const tests = ["cli/run/signed-return-addresses", ...(profile ? [] : ["aot/what-this-lane-can"])];
         const platform: Platform = { os: "linux", arch: "aarch64", profile, ...distro, tier: "latest", tests };
         return getTestBunStep(platform, options, { buildId: earlierBuild });
       }),

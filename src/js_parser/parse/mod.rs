@@ -781,6 +781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
+            p.check_module_string_for_legacy_octal_escape(loc);
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
@@ -1356,19 +1357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loader: None,
         };
 
-        // An import or export path makes the file a module; the scope is only strict after parsing.
-        if p.lexer.legacy_octal_loc.start > path.loc.start {
-            let notes = p.why_es_module();
-            p.log().add_range_error_fmt_with_notes(
-                Some(p.source),
-                p.source
-                    .range_of_legacy_octal_escape(p.lexer.legacy_octal_loc),
-                notes,
-                format_args!(
-                    "Legacy octal escape sequences cannot be used in an ECMAScript module"
-                ),
-            );
-        }
+        p.check_module_string_for_legacy_octal_escape(path.loc);
 
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
             p.lexer.next()?;
@@ -1413,6 +1402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
+                        p.check_module_string_for_legacy_octal_escape(p.lexer.loc());
                         let string_literal_text = estr.slice8();
                         if string_literal_text == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
@@ -1433,8 +1423,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 p.lexer.expect(T::TColon)?;
 
+                let value_loc = p.lexer.loc();
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
+                p.check_module_string_for_legacy_octal_escape(value_loc);
                 let string_literal_text = estr.slice8();
                 if let Some(attr) = supported_attribute {
                     match attr {
@@ -1500,7 +1492,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Option<js_ast::stmt::Data> {
         let p = self;
         let source: &'a bun_ast::Source<'a> = p.source;
-        let dropped = Some(js_ast::stmt::Data::SEmpty(S::Empty {}));
         let is_use_strict = is_prologue && is_use_strict_token(source.contents(), loc);
 
         if is_use_strict {
@@ -1520,13 +1511,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 None
             } else {
-                dropped
+                p.drop_directive(loc)
             };
         } else if string.eql_comptime(b"use asm") && !p.options.repl_mode {
             // In the REPL the directive stays a string
             // statement so it evaluates as the result,
             // like node ('use asm' prints 'use asm').
-            return dropped;
+            return p.drop_directive(loc);
         } else {
             string.string(p.arena).expect("OOM")
         };
@@ -1534,6 +1525,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             value: bun_ast::StoreStr::new(value),
         };
         Some(Stmt::alloc(directive, loc).data)
+    }
+
+    /// The visit pass does not see a dropped directive, so the scope keeps its legacy octal escape.
+    fn drop_directive(&mut self, loc: bun_ast::Loc) -> Option<js_ast::stmt::Data> {
+        if let Some(range) = self.legacy_octal_literals.remove(&loc.start) {
+            self.dropped_octal_directives
+                .push((self.current_scope, range));
+        }
+        Some(js_ast::stmt::Data::SEmpty(S::Empty {}))
     }
 
     pub(crate) fn parse_stmts_up_to(

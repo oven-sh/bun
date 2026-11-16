@@ -1522,6 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Consume before recursing so a nested function body's `visit_stmts`
         // doesn't compile the wrong target.
         let rc_pending = if kind == StmtsKind::FnBody {
+            p.check_dropped_directives_for_legacy_octal_escape();
             p.react_compiler_pending.take()
         } else {
             None

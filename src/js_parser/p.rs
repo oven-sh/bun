@@ -288,6 +288,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// The range of each legacy octal number (`010`) or escape (`"\1"`), by its literal's start.
     pub(crate) legacy_octal_literals: HashMap<i32, bun_ast::Range>,
 
+    /// Each dropped directive that has a legacy octal escape (`"use\040strict"`), with its scope.
+    pub(crate) dropped_octal_directives: Vec<(js_ast::StoreRef<Scope>, bun_ast::Range)>,
+
     /// Each function declaration that a later one in the same scope replaced, with that scope.
     pub(crate) replaced_functions: Vec<(js_ast::StoreRef<Scope>, js_ast::scope::Member)>,
 
@@ -5256,6 +5259,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Call after `to_e_string` on a string of an import or export statement, which only a module has.
+    pub(crate) fn check_module_string_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
+        let escape = self.lexer.legacy_octal_loc;
+        if escape.start > loc.start {
+            let notes = self.why_es_module();
+            self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                self.source.range_of_legacy_octal_escape(escape),
+                notes,
+                format_args!(
+                    "Legacy octal escape sequences cannot be used in an ECMAScript module"
+                ),
+            );
+        }
+    }
+
     /// A directive with a legacy octal escape (`"\01"; "use strict"`) is an error in strict code.
     pub(crate) fn check_directive_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
         if !self.legacy_octal_literals.is_empty()
@@ -5264,6 +5283,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.mark_strict_mode_feature(StrictModeFeature::LegacyOctalEscape, range, b"")
                 .expect("unreachable");
+        }
+    }
+
+    /// Call when the visit pass enters a scope that can have a directive prologue.
+    #[inline]
+    pub(crate) fn check_dropped_directives_for_legacy_octal_escape(&mut self) {
+        if !self.dropped_octal_directives.is_empty() && self.is_strict_mode() {
+            self.report_dropped_octal_directives();
+        }
+    }
+
+    #[cold]
+    fn report_dropped_octal_directives(&mut self) {
+        for i in 0..self.dropped_octal_directives.len() {
+            let (scope, range) = self.dropped_octal_directives[i];
+            if scope == self.current_scope {
+                self.mark_strict_mode_feature(StrictModeFeature::LegacyOctalEscape, range, b"")
+                    .expect("unreachable");
+            }
         }
     }
 
@@ -5283,6 +5321,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name,
         )
         .expect("unreachable");
+    }
+
+    /// For sloppy code in ESM output: the renamer keeps a name that a direct `eval` can reach.
+    #[cold]
+    fn check_pinned_name_for_reserved_word(&mut self, name: &[u8], loc: bun_ast::Loc) {
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )
+            .expect("unreachable");
+        }
     }
 
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
@@ -5428,6 +5479,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let current_scope = self.current_scope_ref();
         // We cannot rename anything inside a scope containing a direct eval() call
         if current_scope.contains_direct_eval {
+            let keeps_reserved_words =
+                !self.is_strict_mode() && self.is_strict_mode_output_format();
             let mut iter = current_scope.members.iter();
             while let Some(member) = iter.next() {
                 // Using direct eval when bundling is not a good idea in general because
@@ -5475,7 +5528,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //     continue;
                 // }
 
-                self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+                // A parameter is also a member of the body scope, and a hoisted `var` of each block around it.
+                let symbol = &mut self.symbols[member.1.ref_.inner_index() as usize];
+                let is_first_pin = !symbol.must_not_be_renamed();
+                symbol.set_must_not_be_renamed(true);
+                if keeps_reserved_words && is_first_pin {
+                    self.check_pinned_name_for_reserved_word(member.0, member.1.loc);
+                }
             }
         }
 
@@ -9188,7 +9247,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.module_scope().contains_direct_eval {
             let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();
-            for member in module_scope.members.values() {
+            let keeps_reserved_words = pin
+                && module_scope.strict_mode == js_ast::StrictModeKind::SloppyMode
+                && self.is_strict_mode_output_format();
+            for (name, member) in module_scope.members.iter() {
                 let kind = self.symbols[member.ref_.inner_index() as usize].kind;
                 if kind == js_ast::symbol::Kind::Import {
                     continue;
@@ -9196,8 +9258,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if kind != js_ast::symbol::Kind::Unbound {
                     self.record_assignment(member.ref_);
                 }
+                let symbol = &mut self.symbols[member.ref_.inner_index() as usize];
+                let is_first_pin = pin && !symbol.must_not_be_renamed();
                 if pin {
-                    self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+                    symbol.set_must_not_be_renamed(true);
+                }
+                // `e_identifier` reports an unbound reserved word.
+                if keeps_reserved_words && is_first_pin && kind != js_ast::symbol::Kind::Unbound {
+                    self.check_pinned_name_for_reserved_word(name, member.loc);
                 }
             }
         }
@@ -9825,6 +9893,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             legacy_octal_literals: Default::default(),
+            dropped_octal_directives: Vec::new(),
             replaced_functions: Vec::new(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,

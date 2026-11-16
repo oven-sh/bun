@@ -977,6 +977,7 @@ impl<'a> Parser<'a> {
         for directive in directives {
             p.check_directive_for_legacy_octal_escape(directive.loc);
         }
+        p.check_dropped_directives_for_legacy_octal_escape();
 
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {

@@ -222,6 +222,47 @@ describe("strict mode early errors", () => {
       expect(errors[0].notes.map(n => n.message)).toEqual([useStrictNote]);
     });
 
+    test("delete of a constant that is inlined", () => {
+      const inlining = new Bun.Transpiler({ loader: "js", logLevel: "error", inline: true });
+      expect(parseErrors("'use strict'; const x = 1; delete x", inlining).map(e => e.message)).toEqual([
+        "Delete of a bare identifier cannot be used in strict mode",
+      ]);
+    });
+
+    test("a string index that minify.syntax turns into a property name", () => {
+      const minifying = new Bun.Transpiler({ loader: "js", logLevel: "error", minify: { syntax: true } });
+      expect(minifying.transformSync("x['\\141']")).toBe("x.a;\n");
+      expect(parseErrors("'use strict'; x['\\141']", minifying).map(e => e.message)).toEqual([
+        "Legacy octal escape sequences cannot be used in strict mode",
+      ]);
+    });
+
+    // The value of such a string is "use strict" or "use asm", but it is not that directive.
+    describe("a string of the directive prologue that is not kept", () => {
+      const message = "Legacy octal escape sequences cannot be used in strict mode";
+      const cases: [string, string][] = [
+        ["'use\\040strict'; 'use strict'", message],
+        ["'use strict'; 'use\\040strict'", message],
+        ["'use strict'; 'use\\040asm'", message],
+        ["function f() { 'use\\040strict'; 'use strict' }", message],
+        ["function f() { 'use strict'; function g() { 'use\\040asm' } }", message],
+        ["(() => { 'use\\040asm'; 'use strict' })", message],
+        ["class A { m() { 'use\\040strict' } }", message],
+        ["'use\\040asm'; export {}", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ];
+      test.each(cases)("%j", (code, message) => expectParseError(code, message));
+
+      test("in a TypeScript namespace", () => {
+        expectTSParseError("namespace N { 'use\\040strict'; 'use strict'; export const x = 1 }", message);
+      });
+
+      test("is dropped in sloppy code", () => {
+        expect(transpiler.transformSync("'use\\040strict'; function f() { 'use\\040asm'; return 1 }")).toBe(
+          "function f() {\n  return 1;\n}\n",
+        );
+      });
+    });
+
     test("a directive inside a block is not a directive", () => {
       expectNoParseError("{ 'use strict'; with (x) y }");
       expectNoParseError("if (0) { 'use strict'; with (x) y }");
@@ -247,6 +288,9 @@ describe("strict mode early errors", () => {
     const cases: [string, string][] = [
       ["function f() { 'use strict'; with (x) y }", "With statements cannot be used in strict mode"],
       ["function f() { 'use strict'; function y() { with (x) y } }", "With statements cannot be used in strict mode"],
+      ["function f() { 'use strict'; return 010 }", "Legacy octal literals cannot be used in strict mode"],
+      ["function f() { 'use strict'; return '\\1' }", "Legacy octal escape sequences cannot be used in strict mode"],
+      ["function f() { 'use strict'; delete x }", "Delete of a bare identifier cannot be used in strict mode"],
       ["function eval() { 'use strict' }", evalDecl],
       ["function arguments() { 'use strict' }", argsDecl],
       ["function f(eval) { 'use strict' }", evalDecl],
@@ -365,6 +409,18 @@ describe("strict mode early errors", () => {
       ["import 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export * from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export { x } from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ["import { '\\141' as x } from 'y'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ["let x; export { x as '\\141' }", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ["export { '\\141' as x } from 'y'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ["export * as '\\141' from 'y'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      [
+        "import x from 'y' with { type: '\\152son' }",
+        "Legacy octal escape sequences cannot be used in an ECMAScript module",
+      ],
+      [
+        "import x from 'y' with { 'typ\\145': 'json' }",
+        "Legacy octal escape sequences cannot be used in an ECMAScript module",
+      ],
       ["export let n = 010", "Legacy octal literals cannot be used in an ECMAScript module"],
       ["export let n = 08", "Legacy octal literals cannot be used in an ECMAScript module"],
       ["export let o = { 0123: 4 }", "Legacy octal literals cannot be used in an ECMAScript module"],
@@ -400,6 +456,10 @@ describe("strict mode early errors", () => {
 
     test("\\0 is not a legacy octal escape", () => {
       expectNoParseError("let x = '\\0'; export {}");
+    });
+
+    test("a string alias without a legacy octal escape", () => {
+      expectNoParseError("import { 'a-b' as x } from 'y'; export { x as 'c\\x20d', x as '\\0' }");
     });
 
     test("the note points at the export keyword", () => {

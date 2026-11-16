@@ -4457,6 +4457,68 @@ describe("bundler", () => {
     },
     run: { stdout: "123" },
   });
+  // A direct `eval` pins every name that it can reach, so the renamer cannot
+  // move a reserved word out of the way of the strict code of ESM output.
+  itBundled("edgecase/SloppyReservedWordBindingPinnedByEvalESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./function.cjs"), require("./function-name.cjs"));
+      `,
+      "/function.cjs": /* js */ `
+        function f(static) {
+          { var interface = 2; }
+          return eval("static + interface");
+        }
+        module.exports = f(3);
+      `,
+      "/function-name.cjs": /* js */ `
+        module.exports = (function protected() { return eval("typeof protected") })();
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/function.cjs": [
+        '"static" is a reserved word and cannot be used with the ESM output format due to strict mode',
+        '"interface" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+      "/function-name.cjs": [
+        '"protected" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyReservedWordBindingPinnedByEvalAtTopLevelESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1;
+        module.exports = eval("package");
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ['"package" is a reserved word and cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyReservedWordBindingPinnedByEvalCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = require("./dep.cjs");
+        console.log(module.exports);
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1;
+        function f(static) {
+          var interface = 2;
+          return eval("static + interface + package");
+        }
+        module.exports = f(3);
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "6" },
+  });
   // `--minify-syntax` substitutes a single-use `let` into the next statement
   // and visits the result again. The strict-mode errors of the substituted
   // expression must not be reported a second time.

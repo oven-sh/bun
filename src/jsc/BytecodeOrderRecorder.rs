@@ -386,14 +386,11 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
     let tmpfile = bun_sys::Tmpfile::create_with_mode(dir.fd(), tmpname, 0o600)?;
+    tmpfile.file.write_all(text)?;
     // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
-    let result = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(text)
-        .and_then(|()| bun_sys::renameat(&dir, tmpname, &dir, &name));
-    if result.is_err() {
-        let _ = bun_sys::unlinkat(&dir, tmpname);
-    }
-    result
+    bun_sys::renameat(&dir, tmpname, &dir, &name)?;
+    tmpfile.keep();
+    Ok(())
 }
 
 /// `bun:internal-for-testing`: what an order file calls the code of `text` (a `"module"` or `"script"` whose other chunks'

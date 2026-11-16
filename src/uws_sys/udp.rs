@@ -268,7 +268,7 @@ unsafe extern "C" {
 }
 
 /// Raw-descriptor helpers exposed for `internal/dgram`'s UDP wrap so it does
-/// not hand-roll socket()/bind()/setsockopt() and diverge from bsd.c's
+/// not hand-roll socket()/bind()/setsockopt() and diverge from bsd.cpp's
 /// platform gates (SO_REUSEPORT vs SO_REUSEADDR, CLOEXEC, EINTR retry).
 /// POSIX-only; the JS layer reports ENOTSUP on Windows.
 #[cfg(not(windows))]

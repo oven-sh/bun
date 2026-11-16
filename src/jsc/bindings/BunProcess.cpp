@@ -5,6 +5,8 @@
 #include "BunCompiledModules.h"
 #include "BunSignalActions.h"
 #include "ObjectBindings.h"
+#include "OutPtr.h"
+#include "OwnedFd.h"
 #include "DLHandleMap.h"
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
@@ -130,6 +132,7 @@ typedef int mode_t;
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <pthread.h>
 #include <spawn.h>
 #endif
 
@@ -169,6 +172,7 @@ extern "C" void Bun__writeProfilesBeforeSelfKill(bool signalEndsProcess);
 extern "C" void onExitSignal(int);
 #endif
 extern "C" int32_t bun_stdio_tty[3];
+BUN_DECLARE_FFI_DELETER(DlOpenAction, CrashHandler__endDlOpenAction);
 
 namespace Bun {
 
@@ -415,8 +419,7 @@ extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
 
-/// Returns a pointer that needs to be freed with `delete[]`.
-static char* toFileURI(std::string_view path)
+static std::unique_ptr<char[]> toFileURI(std::string_view path)
 {
     auto needs_escape = [](char ch) {
         return !(('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || ('0' <= ch && ch <= '9')
@@ -449,8 +452,8 @@ static char* toFileURI(std::string_view path)
 #endif
 
     const size_t string_size = sizeof(FILE_URI_START) + path.size() + 2 * escape_count; // null byte is included in the sizeof expression
-    char* characters = new char[string_size];
-    strncpy(characters, FILE_URI_START, sizeof(FILE_URI_START));
+    auto characters = std::make_unique_for_overwrite<char[]>(string_size);
+    strncpy(characters.get(), FILE_URI_START, sizeof(FILE_URI_START));
     size_t i = sizeof(FILE_URI_START) - 1;
     for (char ch : path) {
 #if OS(WINDOWS)
@@ -473,28 +476,31 @@ static char* toFileURI(std::string_view path)
     return characters;
 }
 
-static char* toFileURI(std::span<const char> span)
+static std::unique_ptr<char[]> toFileURI(std::span<const char> span)
 {
     return toFileURI(std::string_view(span.data(), span.size()));
 }
 
 extern "C" size_t Bun__process_dlopen_count;
 
-extern "C" void* CrashHandler__beginDlOpenAction(const char* path);
-extern "C" void CrashHandler__endDlOpenAction(void* guard);
+extern "C" DlOpenAction* CrashHandler__beginDlOpenAction(const char* path);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
 // Drops only this load's reference. A library that registered modules on an earlier load is still referenced by that load.
-static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
-{
+struct CloseLibrary {
+    void operator()(Bun::DLHandleMap::DLHandle handle) const
+    {
 #if OS(WINDOWS)
-    Bun::NodeExeImports::forget(handle);
-    FreeLibrary(handle);
+        Bun::NodeExeImports::forget(handle);
+        FreeLibrary(handle);
 #else
-    dlclose(handle);
+        dlclose(handle);
 #endif
-}
+    }
+};
+// Released, so never closed, once an init function of the library is going to run.
+using Library = std::unique_ptr<std::remove_pointer_t<Bun::DLHandleMap::DLHandle>, CloseLibrary>;
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -566,7 +572,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path) || Bun::hasCompiledModules()) {
         BunString bunStr = Bun::toString(filename);
-        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
+        auto resolved = Bun::OwnedString::adopt(Bun__resolveEmbeddedNodeFile(&bunStr));
         if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
@@ -623,7 +629,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
     Bun::NodeExeImports::Scope nodeExeImports;
-    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+    Library library { Bun__LoadLibraryBunString(&filename_str) };
 #else
 #if OS(LINUX)
     // A glibc-linked addon loaded into a musl process segfaults inside the
@@ -644,20 +650,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 #endif
     // Keep the addon's name in crash reports until this call returns, because its init functions run after dlopen().
-    auto endDlOpenAction = WTF::makeScopeExit([guard = CrashHandler__beginDlOpenAction(utf8.legacyCStringPointer())] { CrashHandler__endDlOpenAction(guard); });
-    void* handle = dlopen(utf8.legacyCStringPointer(), RTLD_LAZY);
+    std::unique_ptr<DlOpenAction> dlOpenAction { CrashHandler__beginDlOpenAction(utf8.legacyCStringPointer()) };
+    Library library { dlopen(utf8.legacyCStringPointer(), RTLD_LAZY) };
 #endif
 
-    if (!handle) {
+    if (!library) {
 #if OS(WINDOWS)
         DWORD errorId = GetLastError();
-        LPWSTR messageBuffer = nullptr;
+        std::unique_ptr<WCHAR[], decltype([](LPWSTR buffer) { LocalFree(buffer); })> messageBuffer;
         DWORD charCount = FormatMessageW(
             FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, // Prevents automatic line breaks
             NULL, // No source needed when using FORMAT_MESSAGE_FROM_SYSTEM
             errorId,
             MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
-            (LPWSTR)&messageBuffer, // Buffer will be allocated by the function
+            reinterpret_cast<LPWSTR>(static_cast<LPWSTR*>(outPtr(messageBuffer))), // Buffer will be allocated by the function
             0, // Minimum size to allocate - 0 means "determine size automatically"
             NULL // No arguments since we're using FORMAT_MESSAGE_IGNORE_INSERTS
         );
@@ -669,7 +675,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             while (charCount > 0 && (messageBuffer[charCount - 1] == L'\r' || messageBuffer[charCount - 1] == L'\n' || messageBuffer[charCount - 1] == L' '))
                 charCount--;
 
-            errorBuilder.append(WTF::StringView(messageBuffer, charCount, false));
+            errorBuilder.append(WTF::StringView(messageBuffer.get(), charCount, false));
         } else {
             errorBuilder.append("error code "_s);
             errorBuilder.append(WTF::String::number(errorId));
@@ -678,8 +684,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             errorBuilder.append(" "_s, unresolved, "."_s);
 
         WTF::String msg = errorBuilder.toString();
-        if (messageBuffer)
-            LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
@@ -687,8 +691,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 
 #if OS(WINDOWS)
-    if (WTF::String unresolved = nodeExeImports.unresolvedImportError(handle); !unresolved.isNull()) {
-        closeDLHandle(handle);
+    if (WTF::String unresolved = nodeExeImports.unresolvedImportError(library.get()); !unresolved.isNull()) {
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": "_s, unresolved));
     }
 #endif
@@ -702,18 +705,17 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // iterator dangling.
         auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
+        auto handle = library.release();
 
-        if (handle) {
-            // Save all NAPI module registrations
-            for (auto& mod : pendingNapiModules) {
-                auto* heapModule = new napi_module(mod);
-                Bun::DLHandleMap::singleton().add(handle, heapModule);
-            }
+        // Save all NAPI module registrations
+        for (auto& mod : pendingNapiModules) {
+            auto* heapModule = new napi_module(mod);
+            Bun::DLHandleMap::singleton().add(handle, heapModule);
+        }
 
-            // Save all V8 C++ module registrations
-            for (auto* mod : pendingV8Modules) {
-                Bun::DLHandleMap::singleton().add(handle, mod, vm);
-            }
+        // Save all V8 C++ module registrations
+        for (auto* mod : pendingV8Modules) {
+            Bun::DLHandleMap::singleton().add(handle, mod, vm);
         }
 
         // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
@@ -739,12 +741,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 
     // Module didn't self-register on this load. Check if we have cached registrations.
-    if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
-        if (!Bun::DLHandleMap::singleton().claimForVM(handle, vm)) {
-            closeDLHandle(handle);
+    if (auto cachedModules = Bun::DLHandleMap::singleton().get(library.get())) {
+        if (!Bun::DLHandleMap::singleton().claimForVM(library.get(), vm)) {
             return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 makeString("Module did not self-register: '"_s, filename, "'."_s));
         }
+        auto handle = library.release();
 
         // Replay all registrations from this handle. napi ones only queue into
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
@@ -777,22 +779,21 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(library.get(), "napi_register_module_v1"));
 
-    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
+    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(library.get(), "node_api_module_get_api_version_v1"));
 
 #if OS(WINDOWS)
 #undef dlsym
 #endif
 
     if (!napi_register_module_v1) {
-        closeDLHandle(handle);
-
         if (!scope.exception()) [[likely]] {
             JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
         }
         return {};
     }
+    auto handle = library.release();
 
     // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;
@@ -804,12 +805,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
-    char* filename_cstr = toFileURI(byteCast<char>(utf8.span()));
+    auto filename_cstr = toFileURI(byteCast<char>(utf8.span()));
 
     napi_module nmodule {
         .nm_version = module_version,
         .nm_flags = 0,
-        .nm_filename = filename_cstr,
+        .nm_filename = filename_cstr.get(),
         .nm_register_func = nullptr,
         .nm_modname = "[no modname]",
         .nm_priv = nullptr,
@@ -819,7 +820,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     static_assert(sizeof(napi_value) == sizeof(EncodedJSValue), "EncodedJSValue must be reinterpretable as a pointer");
 
     auto env = globalObject->makeNapiEnv(nmodule);
-    env->filename = filename_cstr;
+    env->filename = WTF::move(filename_cstr);
 
     auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
     env->throwPendingException();
@@ -835,10 +836,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
 #endif
         if (pointer_to_plugin_name) {
-            // TODO: think about the finalizer here
-            // currently we do not dealloc napi modules so we don't have to worry about it right now
-            auto* meta = new Bun::NapiModuleMeta(handle);
-            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), handle, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1966,7 +1964,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     args.append(this);
     // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
     JSValue redirectPath = jsUndefined();
-    BunString redirect = Bun__Node__getRedirectWarnings();
+    auto redirect = Bun::OwnedString::adopt(Bun__Node__getRedirectWarnings());
     if (!redirect.isDead()) {
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {
@@ -5145,9 +5143,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
 #if OS(DARWIN)
     mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
     thread_basic_info_data_t info;
-    thread_act_t thread = mach_thread_self();
-    kern_return_t kr = thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
-    mach_port_deallocate(mach_task_self(), thread);
+    kern_return_t kr = thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
     if (kr != KERN_SUCCESS) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "thread_info"_s, kr);
         return {};
@@ -5211,24 +5207,20 @@ extern "C" int getRSS(size_t* rss)
     const char* s;
     ssize_t n;
     long val;
-    int fd;
+    int opened;
     int i;
 
     do
-        fd = open("/proc/self/stat", O_RDONLY);
-    while (fd == -1 && errno == EINTR);
+        opened = open("/proc/self/stat", O_RDONLY);
+    while (opened == -1 && errno == EINTR);
 
-    if (fd == -1)
+    OwnedFd fd { opened };
+    if (!fd)
         return errno;
 
     do
-        n = read(fd, buf, sizeof(buf) - 1);
+        n = read(fd.get(), buf, sizeof(buf) - 1);
     while (n == -1 && errno == EINTR);
-
-    int closeErrno = 0;
-    do {
-        closeErrno = close(fd);
-    } while (closeErrno == -1 && errno == EINTR);
 
     if (n == -1)
         return errno;

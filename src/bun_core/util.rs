@@ -985,35 +985,6 @@ impl Fd {
         }
     }
 
-    /// On Windows, convert a system-kind
-    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
-    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
-    /// On POSIX this is the identity (libuv fd == posix fd).
-    ///
-    /// Returns `Err(())` when
-    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
-    /// the original handle (see `make_libuv_owned_for_syscall`).
-    #[inline]
-    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        match self.kind() {
-            FdKind::Uv => Ok(self),
-            FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
-                }
-            }
-        }
-    }
-
     #[inline]
     pub fn is_valid(self) -> bool {
         #[cfg(not(windows))]
@@ -4624,42 +4595,46 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
+            struct FileActions(libc::posix_spawn_file_actions_t);
+            impl Drop for FileActions {
+                fn drop(&mut self) {
+                    // SAFETY: `posix_spawn_file_actions_init` made it.
+                    unsafe { libc::posix_spawn_file_actions_destroy(&raw mut self.0) };
+                }
+            }
             // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
             // stdout/stderr stay inherited.
-            let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
-            let actions_ptr: *const libc::posix_spawn_file_actions_t =
-                if stdin == StdinBehavior::Ignore {
-                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
-                    if rc != 0 {
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    let rc = libc::posix_spawn_file_actions_addopen(
-                        &raw mut actions,
-                        0,
-                        c"/dev/null".as_ptr(),
-                        libc::O_RDONLY,
-                        0,
-                    );
-                    if rc != 0 {
-                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    &raw const actions
-                } else {
-                    core::ptr::null()
-                };
+            let actions = if stdin == StdinBehavior::Ignore {
+                let mut actions = core::ptr::null_mut();
+                if libc::posix_spawn_file_actions_init(&raw mut actions) != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                let mut actions = FileActions(actions);
+                let rc = libc::posix_spawn_file_actions_addopen(
+                    &raw mut actions.0,
+                    0,
+                    c"/dev/null".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                );
+                if rc != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                Some(actions)
+            } else {
+                None
+            };
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions_ptr,
+                actions
+                    .as_ref()
+                    .map_or(core::ptr::null(), |it| &raw const it.0),
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if !actions_ptr.is_null() {
-                libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            }
             if rc != 0 {
                 return Err(crate::CrateError::Unexpected);
             }
@@ -5175,8 +5150,6 @@ pub mod perf {
         unsafe extern "C" {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,

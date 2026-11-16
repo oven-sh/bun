@@ -56,6 +56,7 @@ const crates = [
   "bun_sema_parser",
   "bun_sema_standalone",
   "bun_shell_parser",
+  "bun_shim_impl",
   "bun_simd",
   "bun_simd_kernels",
   "bun_simd_trusted",

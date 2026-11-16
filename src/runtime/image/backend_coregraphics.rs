@@ -7,6 +7,9 @@
 //! file just allocates the RGBA/output buffers in the global allocator and
 //! maps the C status codes back onto `codecs::Error`.
 
+use core::ffi::c_void;
+use core::ptr::NonNull;
+
 use super::codecs;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
@@ -77,9 +80,40 @@ unsafe extern "C" {
         height: u32,
         format: i32,
         quality: i32,
-        out: *mut u8, // nullable
-        out_len: *mut usize,
+        out: &mut OwnedData,
     ) -> i32;
+
+    fn bun_coregraphics_release(data: NonNull<c_void>);
+}
+
+/// A `CFData` and its bytes. Only the shim writes it.
+#[repr(C)]
+struct OwnedData {
+    data: Option<NonNull<c_void>>,
+    bytes: *const u8,
+    len: usize,
+}
+
+impl OwnedData {
+    const EMPTY: Self = Self {
+        data: None,
+        bytes: core::ptr::null(),
+        len: 0,
+    };
+
+    fn to_vec(&self) -> Vec<u8> {
+        // SAFETY: `data` keeps these `len` bytes alive, and nothing else writes them.
+        unsafe { bun_core::ffi::slice(self.bytes, self.len) }.to_vec()
+    }
+}
+
+impl Drop for OwnedData {
+    fn drop(&mut self) {
+        if let Some(data) = self.data {
+            // SAFETY: the shim handed over one reference with `data`.
+            unsafe { bun_coregraphics_release(data) };
+        }
+    }
 }
 
 const CG_OK: i32 = 0;
@@ -87,6 +121,7 @@ const CG_UNAVAILABLE: i32 = 1;
 const CG_DECODE_FAILED: i32 = 2;
 const CG_ENCODE_FAILED: i32 = 3;
 const CG_TOO_MANY_PIXELS: i32 = 4;
+const CG_NO_IMAGE: i32 = 5;
 
 fn map_err(rc: i32) -> BackendError {
     match rc {
@@ -177,9 +212,8 @@ pub(crate) fn encode(
     // only as a guard if a future caller passes png/webp directly.
     debug_assert!(opts.format == codecs::Format::Heic || opts.format == codecs::Format::Avif);
     let fmt: i32 = opts.format as i32;
-    let mut len: usize = 0;
-    // Phase 1: encode into a thread-local CFData inside the shim, return size.
-    // SAFETY: rgba is valid; out=null signals "size probe" to the shim.
+    let mut encoded = OwnedData::EMPTY;
+    // SAFETY: rgba has width*height*4 bytes (caller invariant).
     match unsafe {
         bun_coregraphics_encode(
             rgba.as_ptr(),
@@ -187,33 +221,12 @@ pub(crate) fn encode(
             height,
             fmt,
             i32::from(opts.quality),
-            core::ptr::null_mut(),
-            &raw mut len,
+            &mut encoded,
         )
     } {
-        CG_OK => {}
-        rc => return Err(map_err(rc)),
+        CG_OK => Ok(encoded.to_vec()),
+        rc => Err(map_err(rc)),
     }
-    // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; len];
-    // Phase 2: copy out and release the CFData.
-    // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
-    match unsafe {
-        bun_coregraphics_encode(
-            rgba.as_ptr(),
-            width,
-            height,
-            fmt,
-            i32::from(opts.quality),
-            out.as_mut_ptr(),
-            &raw mut len,
-        )
-    } {
-        CG_OK => {}
-        rc => return Err(map_err(rc)),
-    }
-    out.truncate(len);
-    Ok(out)
 }
 
 // ── vImage geometry ────────────────────────────────────────────────────────
@@ -298,36 +311,24 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 // before constructing the Image — the heavy decode still goes to WorkPool).
 
 unsafe extern "C" {
-    fn bun_coregraphics_clipboard(out: *mut u8, out_len: *mut usize, probe_only: i32) -> i32;
+    fn bun_coregraphics_clipboard(out: Option<&mut OwnedData>) -> i32;
 }
 
 /// `None` ⇔ no image on the pasteboard. Returned bytes are an opaque container
 /// (PNG/TIFF/HEIC/…); feed straight to `new Bun.Image(…)`.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    let mut len: usize = 0;
-    // SAFETY: out=null + probe_only=0 → shim fills len with required byte count.
-    if unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 0) } != CG_OK {
-        return Err(BackendError::BackendUnavailable);
+    let mut image = OwnedData::EMPTY;
+    // SAFETY: on the JS thread; `image` holds nothing for the shim to overwrite.
+    match unsafe { bun_coregraphics_clipboard(Some(&mut image)) } {
+        CG_OK => Ok(Some(image.to_vec())),
+        CG_NO_IMAGE => Ok(None),
+        _ => Err(BackendError::BackendUnavailable),
     }
-    if len == 0 {
-        return Ok(None);
-    }
-    // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; len];
-    // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
-    if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {
-        return Err(BackendError::BackendUnavailable);
-    }
-    out.truncate(len);
-    Ok(Some(out))
 }
 
 pub(crate) fn has_clipboard_image() -> bool {
-    let mut len: usize = 0;
-    // SAFETY: out=null + probe_only=1 → shim only checks for image presence.
-    unsafe {
-        bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 1) == CG_OK && len > 0
-    }
+    // SAFETY: on the JS thread.
+    unsafe { bun_coregraphics_clipboard(None) == CG_OK }
 }
 
 unsafe extern "C" {

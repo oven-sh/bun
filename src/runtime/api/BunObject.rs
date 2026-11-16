@@ -1222,13 +1222,12 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let buf_len = buf.len();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
             bun_paths::resolve_path::platform::Auto,
         >(
             bun_core::working_directory_in_executable()
                 .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
-            &mut buf[..buf_len - 1],
+            &mut buf[..],
             &[path],
         ) else {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
@@ -1242,16 +1241,9 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        let written = bun_standalone_graph::find_written_file(joined);
-        let path_len = joined.len();
-        buf[path_len] = 0;
-        let written = written.map(|path| bun_core::ZBox::from_vec(path.into_vec()));
-
-        // SAFETY: buf[path_len] == 0 written above
-        let buf_z = match &written {
-            Some(path) => &**path,
-            None => bun_core::ZStr::from_buf(&buf[..], path_len),
-        };
+        let written = bun_standalone_graph::find_written_file(joined)
+            .map(|path| bun_core::ZBox::from_vec(path.into_vec()));
+        let buf_z = written.as_deref().unwrap_or(joined);
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let flags = if options.shared {

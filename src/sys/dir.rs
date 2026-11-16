@@ -304,9 +304,7 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     let mut buf = bun_paths::path_buffer_pool::get();
     let len = path.len().min(buf.0.len() - 1);
     buf.0[..len].copy_from_slice(&path[..len]);
-    buf.0[len] = 0;
-    // SAFETY: NUL-terminated above.
-    let z = ZStr::from_buf(&buf.0[..], len);
+    let z = ZStr::nul_terminate(&mut buf, len);
     unlinkat_with_flags(dirfd, z, flags)
 }
 
@@ -327,9 +325,7 @@ impl Dir {
         let mut buf = bun_paths::path_buffer_pool::get();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
-        buf.0[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&buf.0[..], len);
+        let z = ZStr::nul_terminate(&mut buf, len);
         match mkdirat(self.fd, z, 0o755) {
             Ok(()) => Ok(()),
             Err(e) if e.get_errno() == E::EEXIST => Err(bun_errno::SystemErrno::EEXIST),
@@ -345,16 +341,12 @@ impl Dir {
         let mut tbuf = bun_paths::path_buffer_pool::get();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
-        tbuf.0[tlen] = 0;
-        // SAFETY: NUL-terminated above.
-        let tz = ZStr::from_buf(&tbuf.0[..], tlen);
+        let tz = ZStr::nul_terminate(&mut tbuf, tlen);
 
         let mut lbuf = bun_paths::path_buffer_pool::get();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
-        lbuf.0[llen] = 0;
-        // SAFETY: NUL-terminated above.
-        let lz = ZStr::from_buf(&lbuf.0[..], llen);
+        let lz = ZStr::nul_terminate(&mut lbuf, llen);
 
         symlinkat(tz, self.fd, lz)
     }

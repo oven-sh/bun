@@ -1965,7 +1965,7 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
-                    && let Some(out_len) =
+                    && let Some(joined) =
                         ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
                             ::bun_paths::platform::Loose,
                         >(
@@ -1973,16 +1973,14 @@ impl<'a> Resolver<'a> {
                             &mut buf[..],
                             &[dir.abs_real_path, query.entry().base()],
                         )
-                        .map(|joined| joined.len())
                 {
                     let store_fd = self.store_fd;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
-                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
                         // I/O errors propagate so `resolveAndAutoInstall` can
                         // return them as `Result.Union.failure` — never
                         // panic on EACCES/EMFILE/ELOOP here.
-                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                        let file = bun_sys::open(joined, bun_sys::O::RDONLY, 0)
                             .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
@@ -2016,7 +2014,7 @@ impl<'a> Resolver<'a> {
                         }
                     }
 
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    let symlink = Fs::FilenameStore::instance().append_slice(joined.as_bytes())?;
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
@@ -4771,8 +4769,7 @@ impl<'a> Resolver<'a> {
                     // queue index 0 — see the `path` construction above).
                     let nul_at = queue_top_unsafe_path.len();
                     let prev_char = path[nul_at];
-                    path[nul_at] = 0;
-                    let sentinel = bun_core::ZStr::from_buf(path, nul_at);
+                    let sentinel = bun_core::ZStr::nul_terminate(path, nul_at);
 
                     #[cfg(unix)]
                     let open_req: crate::CrateResult<FD> = {
@@ -6813,7 +6810,7 @@ impl<'a> Resolver<'a> {
         let path = self.opts.tsconfig_override.as_deref()?;
         if self.opts.tsconfig_override_json.is_none() {
             let mut path = [path, b"\0"].concat();
-            let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
+            let z = bun_core::ZStr::from_slice_with_nul(&path);
             let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
             path.pop();
             // As for `tsc -p`, and for the type check.

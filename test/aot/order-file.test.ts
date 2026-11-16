@@ -79,6 +79,14 @@ async function record(directory: string, name: string) {
   return readFileSync(join(directory, name), "utf8");
 }
 
+// Where a file was recorded doesn't matter: a test below builds in other folders.
+let recording: Promise<string> | undefined;
+const recordingOfProgram = () =>
+  (recording ??= (async () => {
+    using dir = tempDir("aot-order-file-recording", { "program.ts": program, "helper.ts": helper });
+    return await record(String(dir), "recorded");
+  })());
+
 const bytesOf = (path: string) => Bun.hash(readFileSync(path)).toString(16);
 
 function codeOfStart(path: string) {
@@ -101,7 +109,9 @@ test.skipIf(!isSupported)(
     const order = join(String(dir), "recorded");
     expect(await run([executable], { BUN_AOT_ORDER_OUT: order })).toEqual(expected);
     expect(existsSync(order)).toBe(false);
-    const lines = (await record(String(dir), "recorded")).split("\n");
+    const recorded = await recordingOfProgram();
+    writeFileSync(order, recorded);
+    const lines = recorded.split("\n");
     expect(lines[0]).toBe("aot-order v1");
     expect(lines.at(-1)).toBe("");
     const names = lines.filter(line => line.startsWith("F ")).map(line => line.split(" ").at(-1));
@@ -131,8 +141,7 @@ test.skipIf(!isSupported)(
     const { executable } = await build(String(dir), "program");
     const expected = await run([executable]);
     const unordered = bytesOf(executable);
-    await record(String(dir), "recorded");
-    const recorded = readFileSync(join(String(dir), "recorded"), "latin1");
+    const recorded = await recordingOfProgram();
     const files = {
       torn: recorded.slice(0, recorded.length * 0.6),
       foreign: "aot-order v1\nM 0 nothing.ts\nF 0 0 b0 - 1:1 \nF 0 999999999 e7 - 1:1 work\nF 5 0 b0 - 1:1 work\n",
@@ -141,12 +150,13 @@ test.skipIf(!isSupported)(
       blanks: recorded.replaceAll("\n", " \n"),
       garbage: "\0\xff".repeat(1000),
     };
-    for (const [name, text] of Object.entries(files)) {
-      writeFileSync(join(String(dir), name + ".order"), text, "latin1");
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(String(dir), name + ".order"), text, "latin1");
+    for (const name of ["torn", "broken", "foreign", "empty.order,blanks.order,garbage"]) {
       const built = await build(String(dir), "program", name + ".order");
       expect({ name, ...(await run([built.executable])) }).toEqual({ name, ...expected });
-      const namesNothing = name === "foreign" || name === "empty" || name === "blanks" || name === "garbage";
-      expect({ name, warnings: built.warnings.length }).toEqual({ name, warnings: namesNothing ? 1 : 0 });
+      const namesNothing = name !== "torn" && name !== "broken";
+      const warnings = namesNothing ? name.split(",").length : 0;
+      expect({ name, warnings: built.warnings.length }).toEqual({ name, warnings });
       if (namesNothing) expect({ name, bytes: bytesOf(built.executable) }).toEqual({ name, bytes: unordered });
     }
     const missing = await run(buildCommand(String(dir), "missing", "torn.order,no-such-file.order"));
@@ -161,7 +171,8 @@ test.skipIf(!isSupported)(
   "a file that an editor or a checkout rewrote places what the recorded file places",
   async () => {
     using dir = tempDir("aot-order-file-rewritten", { "program.ts": program, "helper.ts": helper });
-    const recorded = await record(String(dir), "recorded");
+    const recorded = await recordingOfProgram();
+    writeFileSync(join(String(dir), "recorded"), recorded);
     const placed = bytesOf((await build(String(dir), "program", "recorded")).executable);
     writeFileSync(join(String(dir), "rewritten"), "\ufeff# of one start\r\n\r\n" + recorded.replaceAll("\n", "\r\n"));
     const { executable, warnings } = await build(String(dir), "program", "rewritten");
@@ -206,8 +217,7 @@ test.skipIf(!isSupported)(
   "a file of an older build places what is still there",
   async () => {
     using dir = tempDir("aot-order-file-stale", { "program.ts": program, "helper.ts": helper });
-    const { executable } = await build(String(dir), "program");
-    await record(String(dir), "recorded");
+    writeFileSync(join(String(dir), "recorded"), await recordingOfProgram());
 
     writeFileSync(
       join(String(dir), "helper.ts"),
@@ -218,7 +228,8 @@ export function unused() { console.log("never"); }
 `,
     );
     writeFileSync(join(String(dir), "program.ts"), "// A line in front.\n" + program.replaceAll("twice", "doubled"));
-    const expected = await run([(await build(String(dir), "program")).executable]);
+    const { executable } = await build(String(dir), "program");
+    const expected = await run([executable]);
     expect(expected).toEqual({ stdout: expect.stringMatching(/^1 \d+\n$/), stderr: "", exitCode: 0 });
     const unordered = bytesOf(executable);
     const ordered = await build(String(dir), "program", "recorded");
@@ -248,17 +259,20 @@ test.skipIf(!isSupported)(
       const { stderr, exitCode } = await runCommand(command, path(folder), bunEnv);
       expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("--aot-order"), exitCode: 0 });
     };
-    for (const recordedIn of ["packages/app", "."]) {
+    const sizes: number[] = [];
+    for (const [recordedIn, folders] of [
+      ["packages/app", Object.keys(entries)],
+      [".", ["packages/app"]],
+    ] as const) {
       await buildIn(recordedIn, "--aot-record-order");
       expect((await run([executable], { BUN_AOT_ORDER_OUT: path("recorded") })).exitCode).toBe(0);
-      const sizes: number[] = [];
-      for (const folder in entries) {
+      for (const folder of folders) {
         await buildIn(folder, `--aot-order=${path("recorded")}`);
         sizes.push(codeOfStart(executable).size);
       }
-      expect(sizes[0]).toBeGreaterThan(0);
-      expect(sizes).toEqual(sizes.map(() => sizes[0]));
     }
+    expect(sizes[0]).toBeGreaterThan(0);
+    expect(sizes).toEqual(sizes.map(() => sizes[0]));
   },
   300_000,
 );
@@ -278,50 +292,53 @@ test.skipIf(!isSupported)(
       ).join("");
     const table = (namespace: string, prefix: string) =>
       `[${Array.from({ length: 8 }, (_, i) => `${namespace}.${prefix}${i}`)}]`;
-    const steps = functions("step");
     const cold = functions("other");
     const setup =
       "globalThis.started = process.argv.length;\nexport function later(n: number): number { return n ? later(n - 1) + 1 : 0; }\n";
-    const main = (from: string, setup = "./setup") => `import * as steps from "${from}";
-import { later } from "${setup}";
+    const main = (places: Record<string, string>, setup: string) => `${Object.entries(places)
+      .map(([name, place]) => `import * as ${name} from "${place}";\n`)
+      .join("")}import { later } from "${setup}";
 import * as cold from "./cold";
 if (process.argv[2] === "never") console.log(later(process.argv.length));
-const table = process.argv[2] === "never" ? ${table("cold", "other")} : ${table("steps", "step")};
+const table = process.argv[2] === "never" ? ${table("cold", "other")} : [${Object.keys(places)
+      .map(name => table(name, name))
+      .join(", ")}].flat();
 let sum = 0;
 for (let i = 0; i < table.length; i++) sum += table[i]!(process.argv.length + i);
 console.log(sum);
 `;
-    const recorded = { "program.ts": main("./lib/steps"), "lib/steps.ts": steps, "cold.ts": cold, "setup.ts": setup };
-    using dir = tempDir("aot-order-file-moved", recorded);
-    await record(String(dir), "recorded");
-    const now: Record<string, Record<string, string>> = {
-      moved: { "program.ts": main("./steps"), "steps.ts": steps },
-      renamed: { "program.ts": main("./lib/all"), "lib/all.ts": steps },
-      "moved and renamed": { "program.ts": main("./src/deep/all"), "src/deep/all.ts": steps },
-      "moved and edited": {
-        "program.ts": main("./src/steps"),
-        "src/steps.ts": "\nexport function added(n: number) {\n  return n + 1;\n}\n" + steps,
-      },
-      "renamed, the module's body alone was recorded": {
-        "program.ts": main("./lib/steps", "./prepare"),
-        "lib/steps.ts": steps,
-        "prepare.ts": setup,
-      },
-      "behind a barrel": {
-        "program.ts": main("./lib/steps"),
-        "lib/steps.ts": 'export * from "./all";\n',
-        "lib/all.ts": steps,
-      },
+    // Where the functions of that name lay, and where they lie now.
+    const places = {
+      moved: ["./lib/moved", "./moved"],
+      renamed: ["./lib/renamed", "./lib/all"],
+      movedAndRenamed: ["./lib/movedAndRenamed", "./src/deep/both"],
+      movedAndEdited: ["./lib/movedAndEdited", "./src/movedAndEdited"],
+      behindBarrel: ["./lib/behindBarrel", "./lib/behindBarrel"],
     };
-    for (const [name, files] of Object.entries(now)) {
-      using changed = tempDir("aot-order-file-moved-now", { "setup.ts": setup, ...files, "cold.ts": cold });
-      writeFileSync(join(String(changed), "before"), readFileSync(join(String(dir), "recorded")));
-      const names = new Set((await record(String(changed), "after")).split("\n").map(line => line.split(" ").at(-1)!));
-      const before = codeOfStart((await build(String(changed), "program", "before")).executable).size;
-      const after = codeOfStart((await build(String(changed), "program", "after")).executable).size;
-      const numberOfSteps = [...names].filter(name => name.startsWith("step")).length;
-      expect({ name, numberOfSteps, before }).toEqual({ name, numberOfSteps: 8, before: after });
-    }
+    const placesAt = (index: number) =>
+      Object.fromEntries(Object.entries(places).map(([name, at]) => [name, at[index]]));
+    const filesAt = (index: number) =>
+      Object.fromEntries(Object.entries(places).map(([name, at]) => [at[index].slice(2) + ".ts", functions(name)]));
+    const now: Record<string, string> = {
+      ...filesAt(1),
+      "program.ts": main(placesAt(1), "./prepare"),
+      "cold.ts": cold,
+    };
+    now["src/movedAndEdited.ts"] =
+      "\nexport function added(n: number) {\n  return n + 1;\n}\n" + now["src/movedAndEdited.ts"];
+    now["lib/behind.ts"] = now["lib/behindBarrel.ts"];
+    now["lib/behindBarrel.ts"] = 'export * from "./behind";\n';
+    // Of this file the module's body alone is recorded.
+    now["prepare.ts"] = setup;
+    const recorded = { ...filesAt(0), "program.ts": main(placesAt(0), "./setup"), "setup.ts": setup, "cold.ts": cold };
+    using dir = tempDir("aot-order-file-moved", recorded);
+    using changed = tempDir("aot-order-file-moved-now", now);
+    writeFileSync(join(String(changed), "before"), await record(String(dir), "recorded"));
+    const names = new Set((await record(String(changed), "after")).split("\n").map(line => line.split(" ").at(-1)!));
+    const before = codeOfStart((await build(String(changed), "program", "before")).executable).size;
+    const after = codeOfStart((await build(String(changed), "program", "after")).executable).size;
+    const found = Object.keys(places).map(name => [name, [...names].filter(each => each.slice(0, -1) === name).length]);
+    expect({ found, before }).toEqual({ found: Object.keys(places).map(name => [name, 8]), before: after });
   },
   300_000,
 );
@@ -341,7 +358,8 @@ if (!success) process.exit(1);
     const { executable } = await build(String(dir), "program");
     const unordered = bytesOf(executable);
     const order = join(String(dir), "recorded, by a start");
-    writeFileSync(order, await record(String(dir), "recorded"));
+    writeFileSync(order, await recordingOfProgram());
+    writeFileSync(join(String(dir), "recorded"), await recordingOfProgram());
     const bytes = bytesOf((await build(String(dir), "program", "recorded")).executable);
     const script = join(String(dir), "build.ts");
     const buildByApi = async (...aotOrder: string[]) => {

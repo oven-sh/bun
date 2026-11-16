@@ -486,6 +486,14 @@ fn widths() {
         check(want, || kernels::visible_utf16_width(&rest[..len]));
         rest = &rest[rest.len().min(len + 1)..];
     }
+    for (ascii, unit) in [0, 1, 7, 8, 16, 33, 150]
+        .into_iter()
+        .flat_map(|ascii| all_units.iter().map(move |&unit| (ascii, unit)))
+    {
+        let t = [vec![0x61; ascii], vec![unit]].concat();
+        let want = (ascii + width(unit).min(1), ascii + width(unit));
+        check(want, || kernels::visible_utf16_width(&t));
+    }
     for t in texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbb\n") {
         let wide: Vec<u16> = t
             .iter()
@@ -1679,13 +1687,7 @@ fn images() {
         {
             check_against_portable(|| {
                 filled(19 * 3, |out| {
-                    kernels::Resizer::default().resize(
-                        Filter::Lanczos3,
-                        &pixels[..7 * height],
-                        7,
-                        out,
-                        19,
-                    )
+                    kernels::resize(Filter::Lanczos3, &pixels[..7 * height], 7, out, 19)
                 })
             });
         }
@@ -1693,7 +1695,7 @@ fn images() {
     for filter in sample(Filter::ALL, 9) {
         check(vec![[77; 4]; 13 * 5], || {
             filled(13 * 5, |out| {
-                kernels::Resizer::default().resize(filter, &[[77; 4]; 21 * 9], 21, out, 13)
+                kernels::resize(filter, &[[77; 4]; 21 * 9], 21, out, 13)
             })
         });
     }
@@ -1802,7 +1804,7 @@ fn resampled(filter: Filter, line: &[[u8; 4]], len: usize) -> Vec<[f64; 4]> {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn resized_lines() {
-    let (mut below, mut resizer) = (random(), kernels::Resizer::default());
+    let mut below = random();
     for (from, to) in [
         (11, 170),
         (11, 11),
@@ -1827,14 +1829,14 @@ fn resized_lines() {
         for filter in Filter::ALL {
             let want = resampled(filter, &line, to);
             for target in targets() {
-                let row = filled(to, |out| resizer.resize(filter, &line, from, out, to));
+                let row = filled(to, |out| kernels::resize(filter, &line, from, out, to));
                 assert_eq!(row.len(), to);
                 for (&got, want) in row.as_flattened().iter().zip(want.as_flattened()) {
                     let error = (f64::from(got) - want).abs();
                     assert!(error < 0.7, "{target:?} {filter:?} {from} {to} {error}");
                 }
                 assert_eq!(
-                    filled(7 * to, |out| resizer.resize(filter, &columns, 7, out, 7)),
+                    filled(7 * to, |out| kernels::resize(filter, &columns, 7, out, 7)),
                     row.iter().flat_map(|&pixel| [pixel; 7]).collect::<Vec<_>>(),
                 );
             }
@@ -1856,9 +1858,7 @@ fn resized_images() {
     check(want, || {
         Filter::ALL.map(|filter| {
             let resize = |[src_w, w, h]: [usize; 3]| {
-                filled(w * h, |out| {
-                    kernels::Resizer::default().resize(filter, &src, src_w, out, w)
-                })
+                filled(w * h, |out| kernels::resize(filter, &src, src_w, out, w))
             };
             let all = [
                 [37, 90, 70],

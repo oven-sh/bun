@@ -13,6 +13,14 @@ const AFTER_INTERMEDIATE: u32 = 2;
 const IN_OSC: u32 = 3;
 const IN_STRING: u32 = 4;
 
+// Ranges of units that are a cluster of their own, with a width of 1 up to U+3000 and of 2 above.
+const STARTS: [u16; 12] = [
+    0x20, 0xA0, 0xAA, 0xAF, 0x370, 0x48A, 0x3041, 0x309B, 0x3400, 0x4E00, 0xAC00, 0xFF01,
+];
+const ENDS: [u16; 12] = [
+    0x7E, 0xA8, 0xAC, 0x2FF, 0x482, 0x52F, 0x3096, 0x30FF, 0x4DBF, 0x9FFF, 0xD7A3, 0xFF60,
+];
+
 /// The bits from each of `starts` up to the next of `ends`, and whether that is in a later block.
 #[inline(always)]
 fn runs(starts: u64, ends: u64) -> (u64, u64) {
@@ -22,7 +30,7 @@ fn runs(starts: u64, ends: u64) -> (u64, u64) {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I8, Mask, U8, U16};
+    use isa::{I8, Mask, U8, U16, x128};
 
     type Test = Mask<u8, { U8::LEN }>;
 
@@ -161,20 +169,52 @@ pub(crate) mod simd {
         hidden
     }
 
-    /// Always a cluster of its own, with a width of 1 up to U+3000 and of 2 above.
     fn has_fixed_width(v: U16) -> Mask<u16, { U16::LEN }> {
-        let latin = v.in_range(0xA0..=0x2FF) & !(v.simd_eq(0xA9) | v.in_range(0xAD..=0xAE));
-        let greek_or_cyrillic = v.in_range(0x370..=0x482) | v.in_range(0x48A..=0x52F);
-        let kana = v.in_range(0x3041..=0x3096) | v.in_range(0x309B..=0x30FF);
-        let ideograph = v.in_range(0x3400..=0x4DBF) | v.in_range(0x4E00..=0x9FFF);
-        let hangul_or_fullwidth = v.in_range(0xAC00..=0xD7A3) | v.in_range(0xFF01..=0xFF60);
-        (v.in_range(0x20..=0x7E) | latin | greek_or_cyrillic)
-            | (kana | ideograph | hangul_or_fullwidth)
+        let is_in = |i: usize| v.in_range(STARTS[i]..=ENDS[i]);
+        let either = |i: usize| is_in(i) | is_in(i + 1);
+        (either(0) | either(2) | either(4)) | (either(6) | either(8) | either(10))
+    }
+
+    /// The same for one unit, with a lane for each range.
+    fn is_fixed(unit: u16) -> bool {
+        let is_in = |i: usize| {
+            let [starts, ends] = [&STARTS[i..], &ENDS[i..]].map(x128::U16::from_slice);
+            (x128::U16::splat(unit) - starts).simd_le(ends - starts)
+        };
+        (is_in(0) | is_in(4)).any()
     }
 
     /// The number of units at the start that need no look at their neighbours, and their width.
     #[export]
     pub fn visible_utf16_width(text: &[u16]) -> (usize, usize) {
+        if text.len() < 4 {
+            let (mut len, mut width) = (0, 0);
+            #[rustc_unroll(never)]
+            while let Some(&unit) = text.get(len)
+                && is_fixed(unit)
+            {
+                (len, width) = (len + 1, width + 1 + usize::from(unit > 0x3000));
+            }
+            return (len, width);
+        }
+        if text[0] > 0x7E {
+            return fixed_width(text);
+        }
+        // Most runs are ASCII, and end with the text, an escape, a symbol or an emoji.
+        let ascii = U16::position(text, |v| !v.in_range(0x20..=0x7E)).unwrap_or(text.len());
+        if !text.get(ascii).is_some_and(|&unit| is_fixed(unit)) {
+            return (ascii, ascii);
+        }
+        // From the start, nothing waits for `ascii`.
+        if ascii < U16::LEN {
+            return fixed_width(text);
+        }
+        let (len, width) = fixed_width(&text[ascii..]);
+        (ascii + len, ascii + width)
+    }
+
+    #[inline(never)]
+    fn fixed_width(text: &[u16]) -> (usize, usize) {
         let (mut rest, mut wide) = (text, 0);
         loop {
             let v = match rest.first_chunk() {

@@ -265,12 +265,18 @@ fn styled_words(js: &[u8]) {
             each(lines, k::visible_latin1_width_exclude_ansi)
         });
     }
-    for (name, letter, stop) in [("boxes", 0, 0x2502), ("CJK", 0x4E00, 0x3002)] {
-        let units = |word: &[u8]| -> Vec<u16> {
-            let letters = word.iter().map(|&byte| letter + u16::from(byte));
+    for (name, scripts, stop) in [
+        ("boxes", &[0][..], 0x2502),
+        ("CJK", &[0x4E00], 0x3002),
+        ("scripts", &[0, 0, 0x400, 0x4E00], 0x2014),
+    ] {
+        let mut units = |_| -> Vec<u16> {
+            let [first, second] = [(); 2].map(|()| (word(), random.one_of(scripts)));
+            let words = [first, second].into_iter().take(scripts.len());
+            let letters = words.flat_map(|(word, a)| word.iter().map(move |&it| a + u16::from(it)));
             letters.chain([stop]).collect()
         };
-        let text: &Vec<_> = &(0..20_000).flat_map(|_| units(word())).collect();
+        let text: &Vec<_> = &(0..20_000).flat_map(&mut units).collect();
         compare!("visible_utf16_width hops through {name}", |k| {
             hop(text, |t| {
                 Some(k::visible_utf16_width(t).0).filter(|&len| len < t.len())
@@ -279,6 +285,14 @@ fn styled_words(js: &[u8]) {
         compare!("first_non_ascii16 hops through {name}", |k| {
             hop(&text[..100_000], k::first_non_ascii16)
         });
+    }
+    for (name, unit) in [("Cyrillic", 0x430), ("CJK", 0x4E00), ("emoji", 0xD83D)] {
+        for (n, ascii) in [(2, 1), (3, 2), (6, 1), (12, 2), (100, 40), (16384, 2)] {
+            let text = &[vec![0x61; ascii], vec![unit; n - ascii]].concat()[..];
+            compare!("visible_utf16_width {n}, {name} after {ascii}", |k| {
+                k::visible_utf16_width(opaque(text))
+            });
+        }
     }
 }
 
@@ -745,7 +759,6 @@ fn images() {
             );
         }
     }
-    let (mut a, mut b) = (highway::Resizer::default(), rust::Resizer::default());
     let sizes = [
         ([WIDTH, 768], [400, 300]),
         ([WIDTH, 768], [32, 24]),
@@ -762,8 +775,8 @@ fn images() {
             let (from, out) = (&image[..from_w * from_h], &mut vec![[0; 4]; w * h]);
             compare!(
                 "{filter:?} {from_w}x{from_h} to {w}x{h}",
-                a.resize(filter, opaque(from), from_w, out, w),
-                b.resize(filter, opaque(from), from_w, out.as_mut_slice().into(), w)
+                highway::resize(filter, opaque(from), from_w, out, w),
+                rust::resize(filter, opaque(from), from_w, out.as_mut_slice().into(), w)
             );
         }
     }

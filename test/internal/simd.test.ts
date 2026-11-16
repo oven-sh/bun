@@ -50,8 +50,8 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a limit above the CPU picks its best target", async () => {
-    const { values, exitCode } = await run("avx512_icl", "check", 2, 1);
+  test.concurrent.each(["avx512_icl", "", "AVX2"])("%j is no limit", async target => {
+    const { values, exitCode } = await run(target, "check", 2, 1);
     expect(values("chosen")).toEqual([`${targets.find(target => target !== "avx512_skx")} ${targets[0]}`]);
     expect(exitCode).toBe(0);
   });

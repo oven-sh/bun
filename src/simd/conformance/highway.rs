@@ -328,28 +328,20 @@ pub(crate) fn parse_mappings<'a>(
     }
 }
 
-#[derive(Default)]
-pub(crate) struct Resizer {
-    scratch: Vec<u32>,
-}
-
-impl Resizer {
-    pub(crate) fn resize(
-        &mut self,
-        filter: Filter,
-        src: &[[u8; 4]],
-        src_w: usize,
-        dst: &mut [[u8; 4]],
-        dst_w: usize,
-    ) {
-        let sizes = [src_w, src.len() / src_w, dst_w, dst.len() / dst_w];
-        let [src_w, src_h, dst_w, dst_h] = sizes.map(|size| size as i32);
-        let filter = filter as i32;
-        let size = bun_image_resize_scratch_size(src_w, src_h, dst_w, dst_h, filter);
-        self.scratch.resize(size.div_ceil(4), 0);
-        let (src, dst) = (src.as_ptr().cast(), dst.as_mut_ptr().cast());
-        let scratch = self.scratch.as_mut_ptr().cast();
-        // SAFETY: the images have at least these sizes, and `scratch` has the requested size.
-        unsafe { bun_image_resize_rgba8(src, src_w, src_h, dst, dst_w, dst_h, filter, scratch) };
-    }
+pub(crate) fn resize(
+    filter: Filter,
+    src: &[[u8; 4]],
+    src_w: usize,
+    dst: &mut [[u8; 4]],
+    dst_w: usize,
+) {
+    let sizes = [src_w, src.len() / src_w, dst_w, dst.len() / dst_w];
+    let [src_w, src_h, dst_w, dst_h] = sizes.map(|size| size as i32);
+    let filter = filter as i32;
+    let size = bun_image_resize_scratch_size(src_w, src_h, dst_w, dst_h, filter);
+    let mut scratch = Vec::<u32>::with_capacity(size.div_ceil(4));
+    let (src, dst) = (src.as_ptr().cast(), dst.as_mut_ptr().cast());
+    let scratch = scratch.as_mut_ptr().cast();
+    // SAFETY: the images have at least these sizes, and `scratch` has the requested size.
+    unsafe { bun_image_resize_rgba8(src, src_w, src_h, dst, dst_w, dst_h, filter, scratch) };
 }

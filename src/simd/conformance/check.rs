@@ -716,8 +716,8 @@ impl Round<'_> {
         let fenced = a.copy_of(src, self.offset);
         for filter in Filter::ALL {
             let into = b.uninit(want.len(), self.offset).into();
-            highway::Resizer::default().resize(filter, src, src_w, &mut want, dst_w);
-            let got = rust::Resizer::default().resize(filter, fenced, src_w, into, dst_w);
+            highway::resize(filter, src, src_w, &mut want, dst_w);
+            let got = rust::resize(filter, fenced, src_w, into, dst_w);
             // As in `modulate`, a weight may be rounded the other way.
             let tolerance = match filter {
                 _ if cfg!(target_arch = "x86_64") => 0,

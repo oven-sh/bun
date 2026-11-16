@@ -1653,7 +1653,7 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
 // These tests pin the kernel's allowlisted ranges against the scalar
 // classifier and the clustering behavior at the bail points.
 describe("UTF-16 bulk width fast path", () => {
-  // Must mirror the ranges in has_fixed_width (src/simd/kernels/width.rs).
+  // Must mirror STARTS and ENDS in src/simd/kernels/width.rs.
   const narrowRanges: Array<[number, number]> = [
     [0x20, 0x7e],
     [0xa0, 0x2ff],

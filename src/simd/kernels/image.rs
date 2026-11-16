@@ -570,7 +570,6 @@ fn build_weights(
     }
 }
 
-#[derive(Default)]
 pub(crate) struct Axis {
     spans: Vec<Span>,
     weights: Vec<i16>,
@@ -578,52 +577,38 @@ pub(crate) struct Axis {
 }
 
 impl Axis {
+    fn new(filter: Filter, src_len: usize, dst_len: usize) -> Self {
+        let support = filter.radius() / (dst_len as f64 / src_len as f64).min(1.0);
+        let stride = (support.ceil() as usize * 2 + 2).min(MAX_TAPS);
+        let (mut spans, mut weights) = (vec![Span::default(); dst_len], vec![0; dst_len * stride]);
+        build_weights(filter, src_len as i32, &mut spans, &mut weights, stride);
+        Self {
+            spans,
+            weights,
+            stride,
+        }
+    }
+
     #[inline(always)]
     fn taps(&self) -> impl Iterator<Item = (&Span, &[i16])> + Clone {
         self.spans
             .iter()
             .zip(self.weights.chunks_exact(self.stride))
     }
-
-    fn set(&mut self, filter: Filter, src_len: usize, dst_len: usize) {
-        let support = filter.radius() / (dst_len as f64 / src_len as f64).min(1.0);
-        self.stride = (support.ceil() as usize * 2 + 2).min(MAX_TAPS);
-        self.spans.resize(dst_len, Span::default());
-        self.weights.resize(dst_len * self.stride, 0);
-        build_weights(
-            filter,
-            src_len as i32,
-            &mut self.spans,
-            &mut self.weights,
-            self.stride,
-        );
-    }
 }
 
-/// Memory to use again.
-#[derive(Default)]
-pub struct Resizer {
-    x: Axis,
-    y: Axis,
-    between: Vec<Pixel>,
-}
-
-impl Resizer {
-    /// May panic if an image is empty.
-    pub fn resize<'a>(
-        &mut self,
-        filter: Filter,
-        src: &[Pixel],
-        src_w: usize,
-        dst: Out<'a, Pixel>,
-        dst_w: usize,
-    ) -> &'a mut [Pixel] {
-        let Self { x, y, between } = self;
-        let src_h = src.len() / src_w;
-        x.set(filter, src_w, dst_w);
-        y.set(filter, src_h, dst.len() / dst_w);
-        between.resize(dst_w * src_h, [0; 4]);
-        simd::horizontal(src, src_w, src_h, x, between);
-        simd::vertical(between, dst_w, y, dst)
-    }
+/// May panic if an image is empty.
+pub fn resize<'a>(
+    filter: Filter,
+    src: &[Pixel],
+    src_w: usize,
+    dst: Out<'a, Pixel>,
+    dst_w: usize,
+) -> &'a mut [Pixel] {
+    let src_h = src.len() / src_w;
+    let x = Axis::new(filter, src_w, dst_w);
+    let y = Axis::new(filter, src_h, dst.len() / dst_w);
+    let mut between = vec![[0; 4]; dst_w * src_h];
+    simd::horizontal(src, src_w, src_h, &x, &mut between);
+    simd::vertical(&between, dst_w, &y, dst)
 }

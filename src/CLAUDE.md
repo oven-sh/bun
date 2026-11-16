@@ -195,7 +195,8 @@ of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 Other threads can write the bytes of a JS buffer, so a kernel gets them as `&[SharedU8]` to read
 (`shared: "atomic"` in bindgen), as `&[SharedOutU8]` to write and as `&[AtomicU8]` to change in place.
 A `HOST_EXPORT` function can take all three.
-In debug and canary builds, `BUN_SIMD_TARGET=avx2` (or `sse4`) runs the kernels of an older CPU.
+In debug and canary builds, `BUN_SIMD_TARGET=avx2` (or `sse4`) runs the kernels of an older CPU. A name that
+is no target is ignored.
 
 ```rust
 use bun_core::strings;

@@ -679,7 +679,7 @@ pub(crate) fn resize(
         return Err(Error::EncodeFailed);
     }
     Ok(new_image(dw, dh, |out| {
-        kernels::Resizer::default().resize(f, src, sw as usize, out, dw as usize)
+        kernels::resize(f, src, sw as usize, out, dw as usize)
     }))
 }
 

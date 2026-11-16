@@ -1,4 +1,4 @@
-//! Byte for byte what google/brotli 1.2 writes: its numbers and the order of floating-point operations have to stay.
+//! Makes the choices of google/brotli 1.2. The output depends on its numbers, and on the order of floating-point operations.
 #![allow(clippy::indexing_slicing)] // No index is read from a stream.
 
 mod bit_stream;
@@ -238,7 +238,9 @@ impl Stream {
                 }
                 State::Flushing if self.writer.is_at_byte_boundary() => {
                     self.state = State::Processing;
-                    return Ok(EncodeStatus::Done);
+                    if operation == Operation::Flush {
+                        return Ok(EncodeStatus::Done);
+                    }
                 }
                 // Pads the output to a byte boundary.
                 State::Flushing => write_metadata_header(&mut self.writer, 0),

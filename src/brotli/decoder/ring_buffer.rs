@@ -48,7 +48,7 @@ impl RingBuffer {
     }
 
     pub(super) fn has_unflushed(&self) -> bool {
-        self.position != self.flushed
+        self.flushed < self.position.min(self.size)
     }
 
     pub(super) fn is_at_window_end(&self) -> bool {

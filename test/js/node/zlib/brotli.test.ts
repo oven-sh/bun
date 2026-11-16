@@ -335,6 +335,22 @@ it("compresses with a dictionary of more than 64 KiB", () => {
   `);
 });
 
+it("compresses about 2 and 4 KiB", () => {
+  const answers = [2047, 2048, 2049, 4095, 4096, 4097].map(length =>
+    [2, 3, 4].map(quality => roundTrip(text.subarray(0, length), { [QUALITY]: quality })).join(),
+  );
+  expect(answers).toMatchInlineSnapshot(`
+    [
+      "923 99dc8a57,884 0cfb4011,815 3bb0fd1f",
+      "922 c1ee5295,884 f8c94da1,814 c1539c38",
+      "922 57d90c74,884 4ecc2954,814 7bef9b58",
+      "1591 2669b27d,1568 874b0df4,1499 1ddad14c",
+      "1592 86aacd98,1569 4ffa73a0,1499 d787c166",
+      "1587 108b07f5,1564 5dea45ad,1495 b2669815",
+    ]
+  `);
+});
+
 it("compresses about 32 KiB at quality 9", () => {
   const answers = [32767, 32768, 32769].map(length => roundTrip(mixed.subarray(0, length), { [QUALITY]: 9 }));
   expect(answers).toMatchInlineSnapshot(`
@@ -1010,6 +1026,14 @@ it.each(qualities)("makes what was flushed decodable at quality %d", quality => 
   const input = text.subarray(0, 700);
   const flushed = drive(zlib.createBrotliCompress({ params: { [QUALITY]: quality } }), [[FLUSH, input]], 5);
   expect(drive(zlib.createBrotliDecompress(), [[PROCESS, flushed]], 5)).toEqual(input);
+});
+
+it.each([0, 1, 5, 11])("finishes while a flush is not out yet at quality %d", quality => {
+  const [input, out] = [text.subarray(0, 700), Buffer.alloc(4)];
+  const engine = zlib.createBrotliCompress({ params: { [QUALITY]: quality } });
+  engine._handle.writeSync(FLUSH, input, 0, input.length, out, 0, out.length);
+  const rest = drive(engine, [[FINISH, Buffer.alloc(0)]], 1024);
+  expect(zlib.brotliDecompressSync(Buffer.concat([out, rest]))).toEqual(input);
 });
 
 it.each([0, 1, 5, 11])("fills a chunk to the last byte at quality %d", quality => {

@@ -162,16 +162,10 @@ impl WordMatches {
     fn add_unchanged(&mut self, word: PackedWord, data: &[u8], min_length: usize) {
         let length = word.length();
         let matched = match_length(word.spelling(), data);
-        if matched == length {
-            self.add(word, 0, length);
+        if matched + 1 >= length && data[length - 1..].starts_with(b"ing ") {
+            self.add(word, 49, length + 3);
         }
-        if matched + 1 >= length {
-            self.add(word, 12, length - 1);
-            if data[length - 1..].starts_with(b"ing ") {
-                self.add(word, 49, length + 3);
-            }
-        }
-        for kept in min_length.max(length.saturating_sub(9))..=matched.min(length - 2) {
+        for kept in min_length.max(length.saturating_sub(9))..=matched {
             self.add(word, OMIT_LAST[length - kept], kept);
         }
         if matched < length {

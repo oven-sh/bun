@@ -13,7 +13,7 @@ pub(super) use buckets::{Buckets, TaggedBuckets};
 pub(super) use chains::{Chains, ForgetfulChains};
 pub(super) use quick::Quick;
 pub(super) use rolling::WithRolling;
-pub(super) use slots::{Dense, Paged};
+pub(super) use slots::{Dense, Linked, Paged};
 pub(super) use small::Small;
 
 use core::hint::{Locality, prefetch_read};

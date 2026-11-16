@@ -85,3 +85,45 @@ impl<const PAGES: usize> Slots for Paged<PAGES> {
         self.entries[at] = position as u16;
     }
 }
+
+/// Even less to clear. For a slot that is set after each look, so that it passes no link twice.
+pub(in crate::encoder) struct Linked {
+    /// The last position in any of the slots that have the same low bits.
+    heads: Vec<u16>,
+    /// For each position, the head that it replaced, and above that its slot.
+    links: Vec<u32>,
+}
+
+impl Linked {
+    pub(in crate::encoder) fn new(input_size: usize) -> Result<Self> {
+        Ok(Self {
+            heads: memory::zeroed((8 * input_size).next_power_of_two())?,
+            links: memory::zeroed(input_size)?,
+        })
+    }
+}
+
+impl Slots for Linked {
+    const SIZE: usize = 1 << u16::BITS;
+
+    #[inline(always)]
+    fn get(&self, index: usize) -> u32 {
+        let mut position = self.heads[index & (self.heads.len() - 1)];
+        while position != 0 {
+            let link = self.links[usize::from(position)];
+            if (link >> u16::BITS) as u16 == index as u16 {
+                break;
+            }
+            position = (link as u16).min(position - 1);
+        }
+        u32::from(position)
+    }
+
+    #[inline(always)]
+    fn set(&mut self, index: usize, position: usize) {
+        let at = index & (self.heads.len() - 1);
+        let head = core::mem::replace(&mut self.heads[at], position as u16);
+        debug_assert!(usize::from(head) < position.max(1));
+        self.links[position] = ((index as u32) << u16::BITS) | u32::from(head);
+    }
+}

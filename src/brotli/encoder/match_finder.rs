@@ -2,8 +2,8 @@
 
 use super::command::{Command, Commands, DISTANCE_CODE_OFFSET};
 use super::hash::{
-    BinaryTree, Buckets, Chains, Dense, ForgetfulChains, Hasher, MIN_SCORE, Match, Paged, Quick,
-    RecentDistances, Small, TaggedBuckets, WithRolling,
+    BinaryTree, Buckets, Chains, Dense, ForgetfulChains, Hasher, Linked, MIN_SCORE, Match, Paged,
+    Quick, RecentDistances, Small, TaggedBuckets, WithRolling,
 };
 use super::input_block::InputBlock;
 use super::matching::load64;
@@ -23,7 +23,7 @@ type Tagged6Large = TaggedBuckets<true, { 1 << 15 }, 32>;
 
 pub(super) enum MatchFinder {
     Quick2(Quick2<Dense<{ 1 << 16 }>>),
-    Quick2Small(Quick2<Paged<{ 1 << 13 }>>),
+    Quick2Small(Quick2<Linked>),
     Quick3(Quick3<Dense<{ 1 << 16 }>>),
     Quick3Small(Quick3<Paged<{ 1 << 13 }>>),
     Quick3Rolling(WithRolling<Quick3<Dense<{ 1 << 16 }>>, 4>),
@@ -64,10 +64,10 @@ impl MatchFinder {
             4 => 1 << 12,
             _ => Small::MAX_INPUT_SIZE,
         };
-        let is_small = is_only && first.length <= max_small_size;
+        let is_small = is_only && first.end() <= max_small_size;
         let bucket_size_bits = quality - 1;
-        Ok(match (quality, is_small.then_some(first.length)) {
-            (..=2, Some(size)) => Self::Quick2Small(Quick::new(Paged::new(size)?)),
+        Ok(match (quality, is_small.then_some(first.end())) {
+            (..=2, Some(size)) => Self::Quick2Small(Quick::new(Linked::new(size)?)),
             (..=2, None) => Self::Quick2(Quick::new(Dense::new()?)),
             (3, _) if rolling => Self::Quick3Rolling(WithRolling::new(Quick::new(Dense::new()?))?),
             (3, Some(size)) => Self::Quick3Small(Quick::new(Paged::new(size)?)),

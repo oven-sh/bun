@@ -351,21 +351,16 @@ impl Commands {
         }
         let copied = last.copy_length();
         let start = (processed - copied as u64).min(u64::from(u32::MAX)) as usize;
-        let window = block.window;
-        let extension = if distance <= block.max_backward(start) {
-            let range = block.position..block.end();
-            range
-                .take_while(|&at| window.byte(at) == window.byte(at - distance))
-                .count()
+        let source = if distance <= block.max_backward(start) {
+            Some(block.window.from(block.position - distance))
         } else {
             block
                 .dictionary
                 .and_then(|d| d.at_distance(distance, block.dictionary_end_distance(start)))
                 .and_then(|source| source.get(copied..))
-                .map_or(0, |rest| {
-                    match_length(rest, block.data_from(block.position))
-                })
         };
+        let data = block.data_from(block.position);
+        let extension = source.map_or(0, |source| match_length(source, data));
         last.extend_copy(extension);
         extension
     }

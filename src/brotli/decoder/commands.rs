@@ -372,6 +372,11 @@ fn run_fast_in_block<'a>(
     Ok(match contexts.lut {
         None => run_fast(tables, contexts.first, cursor, reader, ring),
         Some(lut) => {
+            let is_selected =
+                matches!(trees, Some(trees) if trees.block_type == contexts.block_type);
+            if !is_selected && (cursor.blocks[0].remaining as usize) < MANY_BYTES {
+                return Ok(None);
+            }
             let trees = TreesByContext::select(trees, tables, &contexts, lut)?;
             run_fast(tables, trees, cursor, reader, ring)
         }
@@ -564,7 +569,7 @@ fn read_literals<T: LiteralTrees>(
     }
 }
 
-/// From where the current command was interrupted, whatever gets in its way, for `min_commands` and until [`is_clear`].
+/// From where the current command was interrupted, whatever gets in its way, for `min_commands` and until several more are clear.
 #[inline(never)]
 fn run_carefully<'a>(
     tables: &Tables<'a>,
@@ -673,7 +678,7 @@ fn run_carefully<'a>(
             }
             if min_commands > 1 {
                 min_commands -= 1;
-            } else if is_clear(tables, &reader, position) {
+            } else if cursor.blocks[1].remaining > 1 && is_clear(tables, &reader, position) {
                 return Ok(None);
             }
         }

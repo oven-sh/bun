@@ -56,6 +56,7 @@ const crates = [
   "bun_sema_parser",
   "bun_sema_standalone",
   "bun_shell_parser",
+  "bun_shim_impl",
   "bun_sort_by_number",
   "bun_sql_jsc",
   "bun_standalone_graph",

@@ -20,6 +20,8 @@
 
 #include <string.h>
 
+extern "C" {
+
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index) {
     return bsd_udp_packet_buffer_peer((struct udp_recvbuf *)buf, index);
 }
@@ -186,11 +188,12 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
         return 0;
     }
 
-    int ext_size = 0;
-    int fallthrough = 0;
-
-    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
-    us_poll_init(p, fd, POLL_TYPE_UDP);
+    struct us_poll_t *p = us_internal_start_poll(loop, fd, POLL_TYPE_UDP, sizeof(struct us_udp_socket_t),
+                                                 LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    if (!p) {
+        if (err) *err = errno;
+        return 0;
+    }
 
     struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
 
@@ -208,14 +211,6 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     udp->on_close = close_cb;
     udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
-
-    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
-        us_poll_free(p, loop);
-        if (err) *err = saved_errno;
-        errno = saved_errno;
-        return 0;
-    }
 
     return (struct us_udp_socket_t *) udp;
 }
@@ -236,22 +231,15 @@ struct us_udp_socket_t *us_create_udp_socket(
     /* IP_RECVERR is only useful when there is an on_recv_error handler to
      * drain the error queue; without one it only poisons subsequent sends. */
     if (!recv_error_cb) flags &= ~LIBUS_UDP_LINUX_RECVERR;
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
-    if (fd == LIBUS_SOCKET_ERROR) {
+    us_fd_t fd = bsd_create_udp_socket(host, port, flags, err);
+    if (!fd) {
         return 0;
     }
 
-    int ext_size = 0;
-    int fallthrough = 0;
-
-    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
-    us_poll_init(p, fd, POLL_TYPE_UDP);
-    if (us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
-        bsd_close_socket(fd);
-        us_poll_free(p, loop);
-        if (err) *err = saved_errno;
-        errno = saved_errno;
+    struct us_poll_t *p = us_internal_start_poll(loop, std::move(fd), POLL_TYPE_UDP, sizeof(struct us_udp_socket_t),
+                                                 LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    if (!p) {
+        if (err) *err = errno;
         return 0;
     }
 
@@ -259,7 +247,7 @@ struct us_udp_socket_t *us_create_udp_socket(
 
     /* Get and store the port once */
     struct bsd_addr_t tmp = {0};
-    bsd_local_addr(fd, &tmp);
+    bsd_local_addr(us_poll_fd(p), &tmp);
     udp->port = bsd_addr_get_port(&tmp);
     udp->loop = loop;
 
@@ -276,4 +264,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->next = NULL;
 
     return (struct us_udp_socket_t *) udp;
+}
+
 }

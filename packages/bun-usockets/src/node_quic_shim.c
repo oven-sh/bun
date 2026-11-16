@@ -411,7 +411,7 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     unsigned flags = (is_server ? LSENG_SERVER : 0) | (is_http ? LSENG_HTTP : 0);
     lsquic_engine_init_settings(s, flags);
     s->es_versions = (1u << LSQVER_I001) | (1u << LSQVER_I002);
-    /* Static-table-only encoding, as quic.c does. The dynamic table also makes
+    /* Static-table-only encoding, as quic.cpp does. The dynamic table also makes
      * the decoder stream carry acks, and lsquic delays a server's MAX_STREAMS
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;

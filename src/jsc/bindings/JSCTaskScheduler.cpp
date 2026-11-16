@@ -142,7 +142,7 @@ void JSCTaskScheduler::cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientDat
         realm->clearWeakTickets();
 }
 
-static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
+static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, std::unique_ptr<JSCDeferredWorkTask> job)
 {
     Locker<Lock> holder { scheduler.m_lock };
     bool wasPending = false;
@@ -194,28 +194,26 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
             }
         }
     }
-
-    delete job;
 }
 
 extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 {
-    runPendingWork(job->clientData->vmHandle.get(), job->clientData->deferredWorkTimer, job);
+    runPendingWork(job->clientData->vmHandle.get(), job->clientData->deferredWorkTimer, std::unique_ptr<JSCDeferredWorkTask> { job });
 }
 
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the
 // JSC VM is still alive, so ~Ref<Ticket> and the captured Task lambda may
 // safely touch TZone-allocated / JSC-owned state. Mirrors runPendingWork's
 // ticket take() so the pending set and event-loop ref stay balanced.
-extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
+extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* ownedJob)
 {
+    std::unique_ptr<JSCDeferredWorkTask> job { ownedJob };
     auto& scheduler = job->clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
     bool wasKeepingAlive = dropPendingTicketLocked(scheduler, job->ticket.ptr());
     holder.unlockEarly();
     if (wasKeepingAlive)
         Bun__VmHandle__refKeepAlive(job->clientData->vmHandle.get(), BunLoopKind::Regular, -1);
-    delete job;
 }
 
 }

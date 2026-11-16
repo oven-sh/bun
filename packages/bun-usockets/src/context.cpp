@@ -28,7 +28,7 @@
 #define CONCURRENT_CONNECTIONS 4
 
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
-extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TCP;
+extern "C" const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TCP;
 
 #if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
 #include <assert.h>
@@ -381,18 +381,15 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
 struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *host, int port, int options, int socket_ext_size, int *error, int *dns_error) {
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options, error, dns_error);
-    if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
+    us_fd_t listen_socket_fd = bsd_create_listen_socket(host, port, options, error, dns_error);
+    if (!listen_socket_fd) {
         return 0;
     }
 
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
-        /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches). */
+    struct us_poll_t *p = us_internal_start_poll(group->loop, std::move(listen_socket_fd), POLL_TYPE_SEMI_SOCKET,
+                                                 sizeof(struct us_listen_socket_t), LIBUS_SOCKET_READABLE);
+    if (!p) {
         *error = errno;
-        bsd_close_socket(listen_socket_fd);
-        us_poll_free(p, group->loop);
         return 0;
     }
 
@@ -400,7 +397,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
 
     if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
-        ls->deferred_accept = bsd_set_defer_accept(listen_socket_fd);
+        ls->deferred_accept = bsd_set_defer_accept(us_poll_fd(p));
     }
 
     return ls;
@@ -425,12 +422,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
 
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
-        int saved_errno = LIBUS_ERR;
-        us_poll_free(p, group->loop);
-        *error = saved_errno;
+    struct us_poll_t *p = us_internal_start_poll(group->loop, fd, POLL_TYPE_SEMI_SOCKET,
+                                                 sizeof(struct us_listen_socket_t), LIBUS_SOCKET_READABLE);
+    if (!p) {
+        *error = LIBUS_ERR;
         return 0;
     }
 
@@ -449,17 +444,15 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, error);
-    if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
+    us_fd_t listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, error);
+    if (!listen_socket_fd) {
         return 0;
     }
 
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+    struct us_poll_t *p = us_internal_start_poll(group->loop, std::move(listen_socket_fd), POLL_TYPE_SEMI_SOCKET,
+                                                 sizeof(struct us_listen_socket_t), LIBUS_SOCKET_READABLE);
+    if (!p) {
         *error = errno;
-        bsd_close_socket(listen_socket_fd);
-        us_poll_free(p, group->loop);
         return 0;
     }
 
@@ -508,21 +501,17 @@ void us_listen_socket_set_shared(struct us_listen_socket_t *ls) {
 
 /* ── Connect ────────────────────────────────────────────────────────────── */
 
-struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
+static struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr);
-    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+    us_fd_t connect_socket_fd = bsd_create_connect_socket(addr, local_addr);
+    if (!connect_socket_fd) {
         return NULL;
     }
 
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
-        bsd_close_socket(connect_socket_fd);
-        us_poll_free(p, group->loop);
-        errno = saved_errno;
+    struct us_poll_t *p = us_internal_start_poll(group->loop, std::move(connect_socket_fd), POLL_TYPE_SEMI_SOCKET,
+                                                 sizeof(struct us_socket_t) + socket_ext_size, LIBUS_SOCKET_WRITABLE);
+    if (!p) {
         return NULL;
     }
 
@@ -601,7 +590,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
         }
     }
 
-    struct us_connecting_socket_t *c = us_xcalloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
+    struct us_connecting_socket_t *c = (struct us_connecting_socket_t *) us_xcalloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
     c->options = options;
     c->kind = kind;
@@ -629,18 +618,14 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *server_path, size_t pathlen, int options, int socket_ext_size) {
     int connected = 0;
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, &connected);
-    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+    us_fd_t connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, &connected);
+    if (!connect_socket_fd) {
         return 0;
     }
 
-    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
-        bsd_close_socket(connect_socket_fd);
-        us_poll_free(p, group->loop);
-        errno = saved_errno;
+    struct us_poll_t *p = us_internal_start_poll(group->loop, std::move(connect_socket_fd), POLL_TYPE_SEMI_SOCKET,
+                                                 sizeof(struct us_socket_t) + socket_ext_size, LIBUS_SOCKET_WRITABLE);
+    if (!p) {
         return 0;
     }
 
@@ -656,7 +641,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     return connect_socket;
 }
 
-int start_connections(struct us_connecting_socket_t *c, int count) {
+static int start_connections(struct us_connecting_socket_t *c, int count) {
     int opened = 0;
     struct us_socket_group_t *group = c->group;
     struct us_loop_t *loop = group->loop;
@@ -664,18 +649,15 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
         /* The deferred-DNS path does not carry a local binding. */
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL);
-        if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+        us_fd_t connect_socket_fd = bsd_create_connect_socket(&addr, NULL);
+        if (!connect_socket_fd) {
             c->last_candidate_error = LIBUS_ERR;
             continue;
         }
-        struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
-        struct us_poll_t *poll = &s->p;
-        us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-        if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+        struct us_socket_t *s = (struct us_socket_t *) us_internal_start_poll(loop, std::move(connect_socket_fd), POLL_TYPE_SEMI_SOCKET,
+                                                                              sizeof(struct us_socket_t) + c->socket_ext_size, LIBUS_SOCKET_WRITABLE);
+        if (!s) {
             c->last_candidate_error = LIBUS_ERR;
-            bsd_close_socket(connect_socket_fd);
-            us_poll_free(poll, loop);
             continue;
         }
         ++opened;

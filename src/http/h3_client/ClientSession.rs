@@ -1,4 +1,4 @@
-//! One QUIC connection to an origin. Owns its UDP endpoint via quic.c and
+//! One QUIC connection to an origin. Owns its UDP endpoint via quic.cpp and
 //! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
 //! checks `closed` first.

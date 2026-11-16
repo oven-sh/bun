@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-/* Todo: this file should lie in networking/bsd.c */
+/* Todo: this file should lie in networking/bsd.cpp */
 
 #define __APPLE_USE_RFC_3542
 
@@ -26,6 +26,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <memory>
 
 #if BUN_DEBUG
 // Debug network traffic logging
@@ -64,7 +65,7 @@ static void init_debug_logging() {
 #endif
 
 #if defined(__APPLE__)
-extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
+extern "C" int Bun__doesMacOSVersionSupportSendRecvMsgX();
 /* XNU's sosend() only skips waiting for buffer space for MSG_NBIO (private, 0x20000); MSG_DONTWAIT alone still blocks there. */
 #define LIBUS_SEND_DONTWAIT (MSG_DONTWAIT | 0x20000)
 #elif defined(_WIN32)
@@ -76,12 +77,25 @@ extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #if defined(_WIN32)
 /* libuv initializes Winsock on first use; every entry point below that creates
  * a socket or resolves an address makes sure that has happened first. */
-extern void uv__winsock_ensure(void);
+extern "C" void uv__winsock_ensure(void);
 #define bsd_winsock_ensure() uv__winsock_ensure()
+
+/* Winsock takes the value as a `const char *`. */
+static int setsockopt(SOCKET fd, int level, int name, const void *value, int length) {
+    return setsockopt(fd, level, name, (const char *) value, length);
+}
 #else
 #define bsd_winsock_ensure() ((void)0)
 #endif
 
+using bsd_addrinfo_ptr = std::unique_ptr<struct addrinfo, decltype([](struct addrinfo *list) { freeaddrinfo(list); })>;
+
+static int bsd_getaddrinfo(const char *host, const char *service, const struct addrinfo *hints, bsd_addrinfo_ptr *result) {
+    struct addrinfo *list;
+    int rc = getaddrinfo(host, service, hints, &list);
+    if (rc == 0) result->reset(list);
+    return rc;
+}
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
@@ -94,13 +108,13 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             int ret = 0;
             struct sockaddr *addr = (struct sockaddr *)sendbuf->addresses[i];
             if (!addr || addr->sa_family == AF_UNSPEC) {
-                ret = send(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags);
+                ret = send(fd, (const char *) sendbuf->payloads[i], sendbuf->lengths[i], flags);
             } else if (addr->sa_family == AF_INET) {
                 socklen_t len = sizeof(struct sockaddr_in);
-                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
+                ret = sendto(fd, (const char *) sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
             } else if (addr->sa_family == AF_INET6) {
                 socklen_t len = sizeof(struct sockaddr_in6);
-                ret = sendto(fd, sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
+                ret = sendto(fd, (const char *) sendbuf->payloads[i], sendbuf->lengths[i], flags, addr, len);
             } else {
                 errno = EAFNOSUPPORT;
                 return -1;
@@ -215,7 +229,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
 
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen) {
 #if defined(_WIN32)
-    recvbuf->buf = databuf;
+    recvbuf->buf = (char *) databuf;
     recvbuf->buflen = databuflen;
 #else
     // assert(databuflen > LIBUS_UDP_MAX_SIZE * LIBUS_UDP_RECV_COUNT);
@@ -294,7 +308,7 @@ char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
     return (char *)&msgvec->addr[index];
 #else
-    return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_name;
+    return (char *) ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_name;
 #endif
 }
 
@@ -302,7 +316,7 @@ char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
     return msgvec->buf + (size_t) index * LIBUS_UDP_MAX_SIZE;
 #else
-    return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_iov[0].iov_base;
+    return (char *) ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_iov[0].iov_base;
 #endif
 }
 
@@ -944,8 +958,6 @@ static SOCKET bsd_accept_shared_socket(SOCKET fd, struct bsd_addr_t *addr) {
 
 // called by dispatch_ready_poll
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr, int shared) {
-    LIBUS_SOCKET_DESCRIPTOR accepted_fd;
-
     ssize_t injected = 0; int unused = 0;
     if (US_FAULT_CHECK(US_FAULT_ACCEPT, fd, injected, unused)) return LIBUS_SOCKET_ERROR;
     (void)injected; (void)unused;
@@ -958,21 +970,21 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
         addr->len = sizeof(addr->mem);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    // Linux, FreeBSD
-    accepted_fd = accept4(fd, (struct sockaddr *) addr, &addr->len, SOCK_CLOEXEC | SOCK_NONBLOCK);
+        // Linux, FreeBSD
+        us_fd_t accepted_fd{accept4(fd, (struct sockaddr *) addr, &addr->len, SOCK_CLOEXEC | SOCK_NONBLOCK)};
 #elif defined(_WIN32)
-    accepted_fd = shared ? bsd_accept_shared_socket(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len);
+        us_fd_t accepted_fd{shared ? bsd_accept_shared_socket(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len)};
 #else
-    // OS X
-    accepted_fd = accept(fd, (struct sockaddr *) addr, &addr->len);
+        // OS X
+        us_fd_t accepted_fd{accept(fd, (struct sockaddr *) addr, &addr->len)};
 #endif
 
-        if (UNLIKELY(IS_EINTR(accepted_fd))) {
+        if (UNLIKELY(IS_EINTR(accepted_fd.get()))) {
             continue;
         }
 
         /* We cannot rely on addr since it is not initialized if failed */
-        if (accepted_fd == LIBUS_SOCKET_ERROR) {
+        if (!accepted_fd) {
             return LIBUS_SOCKET_ERROR;
         }
 
@@ -984,41 +996,38 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
         if (addr->len == 0) {
             /* Check if there's any pending data before discarding the socket */
             char peek_buf[1];
-            ssize_t has_data = recv(accepted_fd, peek_buf, 1, MSG_PEEK | MSG_DONTWAIT);
+            ssize_t has_data = recv(accepted_fd.get(), peek_buf, 1, MSG_PEEK | MSG_DONTWAIT);
             
             if (has_data <= 0) {
                 /* No data available, socket is truly dead - discard it */
-                bsd_close_socket(accepted_fd);
                 continue; /* Try to accept the next connection */
             }
             /* If has_data > 0, let the socket through - there's buffered data to read */
         }
 #endif
 
-        break;
-    }
-
 #ifdef _WIN32
-    /* accept() returns an inheritable handle regardless of the listening
-     * socket's flags; keep it out of spawned children. */
-    SetHandleInformation((HANDLE) accepted_fd, HANDLE_FLAG_INHERIT, 0);
+        /* accept() returns an inheritable handle regardless of the listening
+         * socket's flags; keep it out of spawned children. */
+        SetHandleInformation((HANDLE) accepted_fd.get(), HANDLE_FLAG_INHERIT, 0);
 #endif
 
-    internal_finalize_bsd_addr(addr);
+        internal_finalize_bsd_addr(addr);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-// skip the extra fcntl calls.
-    return accepted_fd;
+        // skip the extra fcntl calls.
+        return accepted_fd.release();
 #else
-    return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd));
+        return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd.release()));
 #endif
+    }
 }
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     ssize_t injected = 0;
     if (US_FAULT_CHECK(US_FAULT_RECV, fd, injected, length)) return injected;
     while (1) {
-        ssize_t ret = recv(fd, buf, length, flags);
+        ssize_t ret = recv(fd, (char *) buf, length, flags);
 
         if (UNLIKELY(IS_EINTR(ret))) {
             continue;
@@ -1313,7 +1322,7 @@ static int bsd_set_reuse(LIBUS_SOCKET_DESCRIPTOR listenFd, int options) {
     return 0;
 }
 
-inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
+static inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
     LIBUS_SOCKET_DESCRIPTOR listenFd,
     struct addrinfo *listenAddr,
     int options,
@@ -1427,7 +1436,8 @@ int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
     bsd_winsock_ensure();
-    struct addrinfo hints, *result;
+    struct addrinfo hints;
+    bsd_addrinfo_ptr result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_flags = AI_PASSIVE;
     hints.ai_family = AF_UNSPEC;
@@ -1436,7 +1446,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    int gai = getaddrinfo(host, port_string, &hints, &result);
+    int gai = bsd_getaddrinfo(host, port_string, &hints, &result);
     if (gai != 0) {
 #ifdef _WIN32
         *error = gai;
@@ -1446,42 +1456,40 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
         return LIBUS_SOCKET_ERROR;
     }
 
-    LIBUS_SOCKET_DESCRIPTOR fd = LIBUS_SOCKET_ERROR;
-    for (int family = AF_INET6; fd == LIBUS_SOCKET_ERROR && family >= AF_INET; family -= (AF_INET6 - AF_INET)) {
-        for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+    us_fd_t fd;
+    for (int family = AF_INET6; !fd && family >= AF_INET; family -= (AF_INET6 - AF_INET)) {
+        for (struct addrinfo *a = result.get(); a != NULL; a = a->ai_next) {
             if (a->ai_family != family) {
                 continue;
             }
-            fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
-            if (fd == LIBUS_SOCKET_ERROR) {
+            us_fd_t candidate{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL)};
+            if (!candidate) {
                 *error = LIBUS_ERR;
                 continue;
             }
 #if defined(SO_REUSEADDR) && !defined(_WIN32)
             int one = 1;
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+            setsockopt(candidate.get(), SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 #endif
 #ifdef IPV6_V6ONLY
             if (a->ai_family == AF_INET6) {
                 int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-                setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &enabled, sizeof(enabled));
+                setsockopt(candidate.get(), IPPROTO_IPV6, IPV6_V6ONLY, (void *) &enabled, sizeof(enabled));
             }
 #endif
             int rc;
             do
-                rc = bind(fd, a->ai_addr, (socklen_t) a->ai_addrlen);
+                rc = bind(candidate.get(), a->ai_addr, (socklen_t) a->ai_addrlen);
             while (IS_EINTR(rc));
             if (rc != 0) {
                 *error = LIBUS_ERR;
-                bsd_close_socket(fd);
-                fd = LIBUS_SOCKET_ERROR;
                 continue;
             }
+            fd = std::move(candidate);
             break;
         }
     }
-    freeaddrinfo(result);
-    if (fd == LIBUS_SOCKET_ERROR) {
+    if (!fd) {
         return LIBUS_SOCKET_ERROR;
     }
 #ifdef _WIN32
@@ -1492,24 +1500,24 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
      * fails). libuv's approach (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c) is to
      * listen in the primary before WSADuplicateSocket; every worker's
      * duplicate is then already listening and SO_ACCEPTCONN is reliably set. */
-    if (listen(fd, 511) != 0) {
+    if (listen(fd.get(), 511) != 0) {
         *error = LIBUS_ERR;
-        bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
 #endif
     struct bsd_addr_t tmp;
-    if (bsd_local_addr(fd, &tmp) == 0) {
+    if (bsd_local_addr(fd.get(), &tmp) == 0) {
         *out_port = bsd_addr_get_port(&tmp);
     } else {
         *out_port = port;
     }
-    return fd;
+    return fd.release();
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error, int* dns_error) {
+us_fd_t bsd_create_listen_socket(const char *host, int port, int options, int* error, int* dns_error) {
     bsd_winsock_ensure();
-    struct addrinfo hints, *result;
+    struct addrinfo hints;
+    bsd_addrinfo_ptr result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_flags = AI_PASSIVE;
@@ -1522,13 +1530,13 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #ifndef _WIN32
     errno = 0;
 #endif
-    int gai = getaddrinfo(host, port_string, &hints, &result);
+    int gai = bsd_getaddrinfo(host, port_string, &hints, &result);
     if (gai != 0) {
 #ifndef _WIN32
         /* At the descriptor limit glibc answers EAI_NONAME or EAI_SYSTEM, with the cause in errno. */
         if (errno != 0 && (gai == EAI_SYSTEM || errno == EMFILE || errno == ENFILE)) {
             *error = errno;
-            return LIBUS_SOCKET_ERROR;
+            return {};
         }
 #endif
         if (host && strchr(host, ':')) {
@@ -1538,41 +1546,36 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #else
             *error = EINVAL;
 #endif
-            return LIBUS_SOCKET_ERROR;
+            return {};
         }
         *dns_error = gai;
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
     /* Fall back to the next address when this host can't bind a family (IPv6 disabled). A named host doesn't fall
      * back on EADDRINUSE, or "localhost" would bind 127.0.0.1 while another server owns the port on ::1. */
     static const int families[] = { AF_INET6, AF_INET };
     for (int i = 0; i < 2; i++) {
-        for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+        for (struct addrinfo *a = result.get(); a != NULL; a = a->ai_next) {
             if (a->ai_family != families[i]) {
                 continue;
             }
-            LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
-            if (listenFd == LIBUS_SOCKET_ERROR) {
+            us_fd_t listenFd{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error)};
+            if (!listenFd) {
                 continue;
             }
 
             *error = 0;
-            if (bsd_bind_listen_fd(listenFd, a, options, error) != LIBUS_SOCKET_ERROR) {
-                freeaddrinfo(result);
+            if (bsd_bind_listen_fd(listenFd.get(), a, options, error) != LIBUS_SOCKET_ERROR) {
                 return listenFd;
             }
-
-            bsd_close_socket(listenFd);
             if (host && *error == LIBUS_EADDRINUSE) {
-                freeaddrinfo(result);
-                return LIBUS_SOCKET_ERROR;
+                return {};
             }
         }
     }
 
-    freeaddrinfo(result);
-    return LIBUS_SOCKET_ERROR;
+    return {};
 }
 
 #ifndef _WIN32
@@ -1587,10 +1590,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #if defined(__APPLE__)
 // Per-thread chdir. Not declared in any public header, but a stable syscall since macOS 10.5.
 // Passing -1 clears the per-thread cwd override.
-extern int __pthread_fchdir(int fd);
+extern "C" int __pthread_fchdir(int fd);
 #endif
 
-static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, size_t path_len, us_fd_t* dirfd_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
     memset(server_address, 0, sizeof(struct sockaddr_un));
     server_address->sun_family = AF_UNIX;
 
@@ -1647,21 +1650,20 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(dirname_buf, path, dirname_len);
             dirname_buf[dirname_len] = 0;
 
-            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY);
-            if (socket_dir_fd == -1) {
+            us_fd_t socket_dir_fd{open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY)};
+            if (!socket_dir_fd) {
                 errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
             // `path` is a ptr+len pair (not NUL-terminated), so bound the basename copy with %.*s.
-            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%.*s", socket_dir_fd, (int)(path_len - dirname_len), path + dirname_len);
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%.*s", socket_dir_fd.get(), (int)(path_len - dirname_len), path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
-                close(socket_dir_fd);
                 errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
-            *dirfd_workaround_for_unix_path_len = socket_dir_fd;
+            *dirfd_workaround_for_unix_path_len = std::move(socket_dir_fd);
             return 0;
         } else if (path_len < sizeof(server_address->sun_path)) {
             memcpy(server_address->sun_path, path, path_len);
@@ -1700,8 +1702,8 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(dirname_buf, path, dirname_len);
             dirname_buf[dirname_len] = 0;
 
-            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_RDONLY | O_DIRECTORY);
-            if (socket_dir_fd == -1) {
+            us_fd_t socket_dir_fd{open(dirname_buf, O_CLOEXEC | O_RDONLY | O_DIRECTORY)};
+            if (!socket_dir_fd) {
                 errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
@@ -1709,7 +1711,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(server_address->sun_path, path + dirname_len, basename_len);
             server_address->sun_path[basename_len] = 0;
 
-            *dirfd_workaround_for_unix_path_len = socket_dir_fd;
+            *dirfd_workaround_for_unix_path_len = std::move(socket_dir_fd);
             return 0;
         }
     #endif
@@ -1729,29 +1731,28 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
     return 0;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(struct sockaddr_un* server_address, size_t addrlen, int backlog, int* error) {
-    LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error);
+static us_fd_t internal_bsd_create_listen_socket_unix(struct sockaddr_un* server_address, size_t addrlen, int backlog, int* error) {
+    us_fd_t listenFd{bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error)};
 
-    if (listenFd == LIBUS_SOCKET_ERROR) {
-        return LIBUS_SOCKET_ERROR;
+    if (!listenFd) {
+        return {};
     }
 
-    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, backlog, error)) {
-        bsd_close_socket(listenFd);
+    if (us_internal_bind_and_listen(listenFd.get(), (struct sockaddr *) server_address, (socklen_t) addrlen, backlog, error)) {
         #if defined(_WIN32)
             /* bind() answers WSAENETDOWN when the directory of the path does not exist. */
             if (*error == WSAENETDOWN) {
                 *error = ERROR_PATH_NOT_FOUND;
             }
         #endif
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
     return listenFd;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR bsd_bind_socket_unix(const char *path, size_t len, int backlog, int* error) {
-    int dirfd_workaround_for_unix_path_len = -1;
+static us_fd_t bsd_bind_socket_unix(const char *path, size_t len, int backlog, int* error) {
+    us_fd_t dirfd_workaround_for_unix_path_len;
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
@@ -1763,41 +1764,35 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_bind_socket_unix(const char *path, size_t len
 #else
         *error = errno;
 #endif
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
 #if defined(__APPLE__)
-    if (dirfd_workaround_for_unix_path_len != -1) {
-        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
-            close(dirfd_workaround_for_unix_path_len);
+    if (dirfd_workaround_for_unix_path_len) {
+        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len.get()) != 0) {
             *error = ENAMETOOLONG;
-            return LIBUS_SOCKET_ERROR;
+            return {};
         }
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(&server_address, addrlen, backlog, error);
+    us_fd_t listenFd = internal_bsd_create_listen_socket_unix(&server_address, addrlen, backlog, error);
 
 #if defined(__APPLE__)
-    if (dirfd_workaround_for_unix_path_len != -1) {
+    if (dirfd_workaround_for_unix_path_len) {
         __pthread_fchdir(-1);
-        close(dirfd_workaround_for_unix_path_len);
-    }
-#elif defined(__linux__)
-    if (dirfd_workaround_for_unix_path_len != -1) {
-        close(dirfd_workaround_for_unix_path_len);
     }
 #endif
 
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int* error) {
+us_fd_t bsd_create_listen_socket_unix(const char *path, size_t len, int* error) {
     return bsd_bind_socket_unix(path, len, 512, error);
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t len, int* error) {
-    return bsd_bind_socket_unix(path, len, 0, error);
+    return bsd_bind_socket_unix(path, len, 0, error).release();
 }
 
 
@@ -1936,13 +1931,14 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
     return 0;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+us_fd_t bsd_create_udp_socket(const char *host, int port, int options, int *err) {
     bsd_winsock_ensure();
     if (err != NULL) {
         *err = 0;
     }
 
-    struct addrinfo hints, *result;
+    struct addrinfo hints;
+    bsd_addrinfo_ptr result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_flags = AI_PASSIVE;
@@ -1952,36 +1948,35 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    int gai_result = getaddrinfo(host, port_string, &hints, &result);
+    int gai_result = bsd_getaddrinfo(host, port_string, &hints, &result);
     if (gai_result != 0) {
         if (err != NULL) {
             *err = -gai_result;
         }
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
-    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
+    us_fd_t listenFd;
     struct addrinfo *listenAddr = NULL;
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+    for (struct addrinfo *a = result.get(); a && !listenFd; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
+            listenFd = us_fd_t{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err)};
             listenAddr = a;
         }
     }
 
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+    for (struct addrinfo *a = result.get(); a && !listenFd; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
+            listenFd = us_fd_t{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err)};
             listenAddr = a;
         }
     }
 
-    if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
+    if (!listenFd) {
+        return {};
     }
 
-    if (bsd_set_reuse(listenFd, options) != 0) {
+    if (bsd_set_reuse(listenFd.get(), options) != 0) {
         if (err != NULL) {
 #ifdef _WIN32
             *err = WSAGetLastError();
@@ -1989,24 +1984,25 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
             *err = errno;
 #endif
         }
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
 #ifdef IPV6_V6ONLY
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
-            return LIBUS_SOCKET_ERROR;
+        if (setsockopt(listenFd.get(), IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            if (err != NULL) {
+                *err = LIBUS_ERR;
+            }
+            return {};
         }
     }
 #endif
 
-    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family, options);
+    bsd_apply_udp_recv_options(listenFd.get(), listenAddr->ai_family, options);
 
     /* We bind here as well */
-    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
+    if (bind(listenFd.get(), listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
         if (err != NULL) {
 #ifdef _WIN32
             *err = WSAGetLastError();
@@ -2014,12 +2010,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
             *err = errno;
 #endif
         }
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
-    freeaddrinfo(result);
     if (err != NULL) {
         *err = 0;
     }
@@ -2028,7 +2021,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
     bsd_winsock_ensure();
-    struct addrinfo hints, *result;
+    struct addrinfo hints;
+    bsd_addrinfo_ptr result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_family = AF_UNSPEC;
@@ -2037,24 +2031,18 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    int gai_error = getaddrinfo(host, port_string, &hints, &result);
+    int gai_error = bsd_getaddrinfo(host, port_string, &hints, &result);
 
     if (gai_error != 0) {
         return gai_error;
     }
 
-    if (result == NULL) {
-        return -1;
-    }
-
-    for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
+    for (struct addrinfo *rp = result.get(); rp != NULL; rp = rp->ai_next) {
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
-            freeaddrinfo(result);
             return 0;
         }
     }
 
-    freeaddrinfo(result);
     return (int)LIBUS_SOCKET_ERROR;
 }
 
@@ -2169,10 +2157,10 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
-    if (fd == LIBUS_SOCKET_ERROR) {
-        return LIBUS_SOCKET_ERROR;
+us_fd_t bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr) {
+    us_fd_t fd{bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL)};
+    if (!fd) {
+        return {};
     }
 
     /* Bind to the requested local address/port before connecting (the
@@ -2185,25 +2173,16 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
          * TIME_WAIT. Not set on Windows, where SO_REUSEADDR would allow
          * stealing a port that is actively in use (see libuv win/tcp.c). */
         int on = 1;
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        setsockopt(fd.get(), SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 #endif
         socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-        if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
-#ifdef _WIN32
-            int bind_err = WSAGetLastError();
-            bsd_close_socket(fd);
-            WSASetLastError(bind_err);
-#else
-            int bind_err = errno;
-            bsd_close_socket(fd);
-            errno = bind_err;
-#endif
-            return LIBUS_SOCKET_ERROR;
+        if (bind(fd.get(), (struct sockaddr *) local_addr, local_len)) {
+            return {};
         }
     }
 
 #ifdef _WIN32
-    win32_set_nonblocking(fd);
+    win32_set_nonblocking(fd.get());
 
     // On windows we can't connect to the null address directly.
     // To match POSIX behavior, we need to connect to localhost instead.
@@ -2222,7 +2201,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
         memset(&retransmit_ioctl, 0, sizeof(retransmit_ioctl));
         retransmit_ioctl.Rtt = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
         retransmit_ioctl.MaxSynRetransmissions = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
-        WSAIoctl(fd,
+        WSAIoctl(fd.get(),
                 SIO_TCP_INITIAL_RTO,
                 &retransmit_ioctl,
                 sizeof(retransmit_ioctl),
@@ -2235,72 +2214,54 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 
 #endif
     int connected;
-    int rc = bsd_do_connect_raw(fd, (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6), &connected);
+    int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6), &connected);
 
     if (rc != 0) {
-        bsd_close_socket(fd);
-#ifdef _WIN32
-        /* bsd_do_connect_raw returned the WSA error; re-arm it so the Rust
-         * caller's WSAGetLastError() observes the connect failure rather than
-         * whatever closesocket() left behind. */
-        WSASetLastError(rc);
-#endif
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
     return fd;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(struct sockaddr_un* server_address, const size_t addrlen, int *connected) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
+static us_fd_t internal_bsd_create_connect_socket_unix(struct sockaddr_un* server_address, const size_t addrlen, int *connected) {
+    us_fd_t fd{bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL)};
 
-    if (fd == LIBUS_SOCKET_ERROR) {
-        return LIBUS_SOCKET_ERROR;
+    if (!fd) {
+        return {};
     }
 
-    win32_set_nonblocking(fd);
+    win32_set_nonblocking(fd.get());
 
-    int rc = bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen, connected);
+    int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr *)server_address, addrlen, connected);
     if (rc != 0) {
-        bsd_close_socket(fd);
-#ifdef _WIN32
-        WSASetLastError(rc);
-#endif
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
     return fd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int *connected) {
+us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t len, int *connected) {
     struct sockaddr_un server_address;
     size_t addrlen = 0;
-    int dirfd_workaround_for_unix_path_len = -1;
+    us_fd_t dirfd_workaround_for_unix_path_len;
     if (bsd_create_unix_socket_address(server_path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
-        return LIBUS_SOCKET_ERROR;
+        return {};
     }
 
 #if defined(__APPLE__)
-    if (dirfd_workaround_for_unix_path_len != -1) {
-        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
-            close(dirfd_workaround_for_unix_path_len);
+    if (dirfd_workaround_for_unix_path_len) {
+        if (__pthread_fchdir(dirfd_workaround_for_unix_path_len.get()) != 0) {
             errno = ENAMETOOLONG;
-            return LIBUS_SOCKET_ERROR;
+            return {};
         }
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(&server_address, addrlen, connected);
+    us_fd_t fd = internal_bsd_create_connect_socket_unix(&server_address, addrlen, connected);
 
 #if defined(__APPLE__)
-    if (dirfd_workaround_for_unix_path_len != -1) {
-        int saved_errno = errno;
+    if (dirfd_workaround_for_unix_path_len) {
+        us_keep_last_error_t keep;
         __pthread_fchdir(-1);
-        close(dirfd_workaround_for_unix_path_len);
-        errno = saved_errno;
-    }
-#elif defined(__linux__)
-    if (dirfd_workaround_for_unix_path_len != -1) {
-        close(dirfd_workaround_for_unix_path_len);
     }
 #endif
 

@@ -1331,7 +1331,7 @@ test("follows a redirect onto another origin's idle pooled connection right away
 
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC
 // connect to a resolved hostname probes each address with a throwaway UDP
-// `connect(2)` (quic.c, us_quic_connect_result) and gives up when no entry is
+// `connect(2)` (quic.cpp, us_quic_connect_result) and gives up when no entry is
 // reachable. The shim lets the first probe through and refuses every later
 // one, so the handshake failure below retries onto a connect that fails
 // before it returns. On that path the request must be failed once, by the

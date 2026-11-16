@@ -2,6 +2,8 @@
 
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
+#include "crypto/root_certs_header.h"
+#include "crypto/sni_tree.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -25,6 +27,20 @@
 #include <ws2tcpip.h>
 #endif
 
+/* Zeroed, with `ext_size` bytes behind it. NULL when there is no memory. */
+template <typename T> static std::unique_ptr<T> us_quic_new(size_t ext_size = 0) {
+    char *p = (char *) us_malloc(sizeof(T) + ext_size);
+    if (!p) return nullptr;
+    memset(p + sizeof(T), 0, ext_size);
+    return std::unique_ptr<T>{::new (p) T()};
+}
+
+/* Nothing was reached at these addresses, so the next lookup doesn't get them from the cache. */
+using us_quic_lookup_ptr = std::unique_ptr<struct addrinfo_request,
+    decltype([](struct addrinfo_request *lookup) { Bun__addrinfo_freeRequest(lookup, 1); })>;
+
+extern "C" {
+
 extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
@@ -34,7 +50,7 @@ extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
 /* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
-_Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
+static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 
 #define US_QUIC_READ_BUF (16 * 1024)
@@ -47,11 +63,11 @@ _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, 
 /* Incoming header set: contiguous storage + index. Created before the
  * stream object exists (lsquic decodes headers ahead of on_new_stream),
  * so it lives standalone until on_read claims it via lsquic_stream_get_hset. */
-struct us_quic_hset {
-    char *buf;
+struct us_quic_hset : us_allocated_t {
+    us_unique_ptr<char, us_free> buf;
     unsigned int len, cap;
     struct lsxpack_header scratch;
-    struct us_quic_header_t *headers;
+    us_unique_ptr<struct us_quic_header_t[], us_free> headers;
     unsigned int count, hcap;
     /* Size as RFC 9114 §4.2.2 counts it, and the context's max_header_set_size. */
     size_t size, max_size;
@@ -60,13 +76,12 @@ struct us_quic_hset {
     int too_large;
 };
 
-struct us_quic_driver_s {
+struct us_quic_driver_s : us_allocated_t {
     struct us_loop_t *loop;
     struct us_quic_driver_s *next; /* loop->data.quic_head list */
     us_quic_pass_fn pass;
     void *owner;
-    lsquic_engine_t **engines;
-    unsigned int engine_count;
+    std::vector<us_unique_ptr<lsquic_engine_t, lsquic_engine_destroy>> engines;
     /* An engine is on the stack. */
     int processing;
     /* The owner queued work in an engine since the last pass. */
@@ -76,8 +91,8 @@ struct us_quic_driver_s {
     /* A nested loop tick found `processing` set and stopped polling `udps`. */
     int polls_stopped;
     /* lsquic keeps a socket as the peer_ctx of its paths after the fd closes, so both lists are freed after the engines. */
-    us_quic_udp_t *udps;
-    us_quic_udp_t *closed_udps;
+    std::unique_ptr<us_quic_udp_t> udps;
+    std::unique_ptr<us_quic_udp_t> closed_udps;
     /* Borrowed. A handshake starts with `connect_ssl_ctx`, which us_quic_udp_connect sets for its call, or else `ssl_ctx`. */
     SSL_CTX *ssl_ctx;
     SSL_CTX *connect_ssl_ctx;
@@ -86,23 +101,23 @@ struct us_quic_driver_s {
     void (*on_udp_close)(us_quic_udp_t *);
 };
 
-struct us_quic_udp_s {
+struct us_quic_udp_s : us_allocated_t {
     struct us_udp_socket_t *udp;
     us_quic_driver_t *driver;
     struct sockaddr_storage local;
-    struct us_quic_udp_s *next; /* driver->udps, then driver->closed_udps */
+    std::unique_ptr<struct us_quic_udp_s> next; /* driver->udps, then driver->closed_udps */
     /* Where the owner counts what this socket sent, or NULL. */
     uint64_t *packets_sent, *bytes_sent;
     /* us_quic_listen_socket_close ran while `processing` was set; us_quic_after_engine_call closes the fd. */
     int close_pending;
 };
 
-struct us_quic_socket_context_s {
+struct us_quic_socket_context_s : us_allocated_t {
     us_quic_driver_t *driver;
     lsquic_engine_t *engine;
-    SSL_CTX *ssl_ctx;
+    us_ssl_ctx_ptr ssl_ctx;
     /* serverName -> SSL_CTX*, in the tree TCP listeners use (crypto/sni_tree.h). */
-    struct us_sni_tree_t *sni;
+    std::unique_ptr<sni_node<us_ssl_ctx_ptr>> sni;
     int closing;
     /* us_quic_socket_context_shutdown ran while the driver was processing. */
     int shutdown_pending;
@@ -135,23 +150,23 @@ struct us_quic_socket_context_s {
     /* ext follows */
 };
 
-struct us_quic_socket_s {
+struct us_quic_socket_s : us_allocated_t {
     lsquic_conn_t *conn;
     us_quic_socket_context_t *ctx;
     struct us_quic_socket_s *next; /* ctx->conns list */
-    /* Client only: per-connection cert policy. `hostname` is owned by this
-     * struct (strdup of the SNI passed to connect) so the verify callback
-     * can match it against the leaf cert's SAN/CN. */
+    /* Client only: per-connection cert policy. `hostname` is a copy of the
+     * SNI passed to connect, so the verify callback can match it against the
+     * leaf cert's SAN/CN. */
     int reject_unauthorized;
     int going_away;
-    char *hostname;
+    us_unique_ptr<char, us_free> hostname;
     /* ext follows */
 };
 
-struct us_quic_stream_s {
+struct us_quic_stream_s : us_allocated_t {
     lsquic_stream_t *stream;
     us_quic_socket_context_t *ctx;
-    struct us_quic_hset *hset;
+    std::unique_ptr<struct us_quic_hset> hset;
     int fin_delivered;
     /* Set by us_quic_flush_from_on_write, cleared by on_write. */
     int flush_on_write;
@@ -188,13 +203,13 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 /* lsquic forbids entering the engine from a callback it made. Every engine
  * call that can make callbacks sits between this pair. */
 static int us_quic_driver_enter(us_quic_driver_t *d) {
-    if (d->processing || !d->engine_count) return 0;
+    if (d->processing || d->engines.empty()) return 0;
     d->processing = 1;
     return 1;
 }
 
 static void us_quic_driver_poll_udps(us_quic_driver_t *d, int events) {
-    for (us_quic_udp_t *qu = d->udps; qu; qu = qu->next) us_poll_change((struct us_poll_t *) qu->udp, d->loop, events);
+    for (us_quic_udp_t *qu = d->udps.get(); qu; qu = qu->next.get()) us_poll_change((struct us_poll_t *) qu->udp, d->loop, events);
 }
 
 static void us_quic_driver_leave(us_quic_driver_t *d) {
@@ -210,20 +225,20 @@ static void us_quic_driver_leave(us_quic_driver_t *d) {
 void us_quic_driver_process(us_quic_driver_t *d) {
     if (!us_quic_driver_enter(d)) return;
     d->pending = 0;
-    for (unsigned int i = 0; i < d->engine_count; i++) lsquic_engine_process_conns(d->engines[i]);
+    for (size_t i = 0; i < d->engines.size(); i++) lsquic_engine_process_conns(d->engines[i].get());
     us_quic_driver_leave(d);
 }
 
 static void us_quic_driver_send_unsent(us_quic_driver_t *d) {
     if (!us_quic_driver_enter(d)) return;
-    for (unsigned int i = 0; i < d->engine_count; i++) lsquic_engine_send_unsent_packets(d->engines[i]);
+    for (size_t i = 0; i < d->engines.size(); i++) lsquic_engine_send_unsent_packets(d->engines[i].get());
     us_quic_driver_leave(d);
 }
 
 int us_quic_driver_next_tick_us(us_quic_driver_t *d) {
     int min_diff = -1, diff;
-    for (unsigned int i = 0; i < d->engine_count; i++) {
-        if (!lsquic_engine_earliest_adv_tick(d->engines[i], &diff)) continue;
+    for (size_t i = 0; i < d->engines.size(); i++) {
+        if (!lsquic_engine_earliest_adv_tick(d->engines[i].get(), &diff)) continue;
         if (diff < 0) diff = 0;
         if (min_diff < 0 || diff < min_diff) min_diff = diff;
     }
@@ -241,7 +256,7 @@ static void us_quic_loop_end_walk(struct us_loop_t *loop) {
         us_quic_driver_t *d = *pp;
         if (d->pass) { pp = &d->next; continue; }
         *pp = d->next;
-        us_free(d);
+        delete d;
     }
 }
 
@@ -277,8 +292,7 @@ void us_quic_loop_flush_if_pending(struct us_loop_t *loop) {
 }
 
 us_quic_driver_t *us_quic_driver_create(struct us_loop_t *loop, us_quic_pass_fn pass, void *owner) {
-    us_quic_driver_t *d = (us_quic_driver_t *) us_calloc(1, sizeof(*d));
-    if (!d) Bun__outOfMemory();
+    us_quic_driver_t *d = new us_quic_driver_t();
     d->loop = loop;
     d->pass = pass;
     d->owner = owner;
@@ -289,15 +303,9 @@ us_quic_driver_t *us_quic_driver_create(struct us_loop_t *loop, us_quic_pass_fn 
 
 void us_quic_driver_close(us_quic_driver_t *d) {
     while (d->udps) us_udp_socket_close(d->udps->udp);
-    for (unsigned int i = 0; i < d->engine_count; i++) lsquic_engine_destroy(d->engines[i]);
-    us_free(d->engines);
-    d->engines = NULL;
-    d->engine_count = 0;
-    while (d->closed_udps) {
-        us_quic_udp_t *qu = d->closed_udps;
-        d->closed_udps = qu->next;
-        us_free(qu);
-    }
+    /* Out of the list first: an engine closes the connections it still has, and their callbacks must not enter it. */
+    for (auto &engine : std::exchange(d->engines, {})) engine = nullptr;
+    while (d->closed_udps) d->closed_udps = std::move(d->closed_udps->next);
 }
 
 void us_quic_driver_free(us_quic_driver_t *d) {
@@ -392,7 +400,7 @@ static us_quic_udp_t *us_quic_spec_udp(const struct lsquic_out_spec *spec) {
     size_t len = sa_len(spec->local_sa);
     if (memcmp(spec->local_sa, &qu->local, len) == 0) return qu;
     for (us_quic_driver_t *d = qu->driver->loop->data.quic_head; d; d = d->next) {
-        for (us_quic_udp_t *sibling = d->udps; sibling; sibling = sibling->next) {
+        for (us_quic_udp_t *sibling = d->udps.get(); sibling; sibling = sibling->next.get()) {
             if (memcmp(spec->local_sa, &sibling->local, len) == 0) return sibling;
         }
     }
@@ -529,11 +537,11 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     us_quic_udp_t *qu = (us_quic_udp_t *) us_udp_socket_user(u);
     us_quic_driver_t *d = qu->driver;
     qu->udp = NULL;
-    for (us_quic_udp_t **pp = &d->udps; *pp; pp = &(*pp)->next) {
-        if (*pp == qu) { *pp = qu->next; break; }
-    }
-    qu->next = d->closed_udps;
-    d->closed_udps = qu;
+    auto *pp = &d->udps;
+    while (pp->get() != qu) pp = &(*pp)->next;
+    auto closed = std::exchange(*pp, std::move(qu->next));
+    closed->next = std::move(d->closed_udps);
+    d->closed_udps = std::move(closed);
     if (d->on_udp_close) d->on_udp_close(qu);
 }
 
@@ -582,8 +590,8 @@ static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local
 static SSL_CTX *us_quic_lookup_cert(void *cert_ctx, const struct sockaddr *local, const char *sni) {
     (void) local;
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) cert_ctx;
-    SSL_CTX *match = sni && ctx->sni ? sni_find(ctx->sni, sni) : NULL;
-    return match ? match : ctx->ssl_ctx;
+    const us_ssl_ctx_ptr *match = sni && ctx->sni ? ctx->sni->find(sni) : NULL;
+    return match ? match->get() : ctx->ssl_ctx.get();
 }
 
 static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned char *outlen,
@@ -615,12 +623,12 @@ static size_t us_quic_hset_hard_cap(const struct us_quic_hset *h) {
 
 static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) {
     (void) s; (void) is_push;
-    struct us_quic_hset *h = (struct us_quic_hset *) us_calloc(1, sizeof(struct us_quic_hset));
+    auto h = us_quic_new<struct us_quic_hset>();
     if (!h) return NULL;
     h->max_size = ((us_quic_socket_context_t *) hsi_ctx)->max_header_set_size;
     /* Only max_size bounds the fields of a response, as in the HTTP/2 client. */
     h->max_fields = ((us_quic_socket_context_t *) hsi_ctx)->is_client ? h->max_size : US_QUIC_MAX_REQUEST_FIELDS;
-    return h;
+    return h.release();
 }
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
@@ -632,9 +640,7 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
     if (need > h->cap) {
         size_t ncap = h->cap ? h->cap : 512;
         while (ncap < need) ncap *= 2;
-        char *nb = (char *) us_realloc(h->buf, ncap);
-        if (!nb) return NULL;
-        h->buf = nb;
+        if (!us_grow(h->buf, ncap)) return NULL;
         h->cap = (unsigned int) ncap;
     }
     /* The whole buffer, so that lsqpack doesn't come back for every few bytes. */
@@ -642,12 +648,12 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
     if (hdr == NULL) {
         hdr = &h->scratch;
         /* Offsets count from this field's start: lsxpack asserts that they fit lsxpack_strlen_t. */
-        lsxpack_header_prepare_decode(hdr, h->buf + h->len, 0, room);
+        lsxpack_header_prepare_decode(hdr, h->buf.get() + h->len, 0, room);
     } else {
         /* Resize: lsqpack already wrote part of name/value into the previous
          * buffer; only the storage may move. Preserve offsets, repoint buf,
          * and report the larger window via val_len. */
-        hdr->buf = h->buf + h->len;
+        hdr->buf = h->buf.get() + h->len;
         hdr->val_len = (lsxpack_strlen_t) room;
     }
     return hdr;
@@ -667,10 +673,7 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     }
     if (h->count == h->hcap) {
         unsigned int ncap = h->hcap ? h->hcap * 2 : 16;
-        struct us_quic_header_t *nh = (struct us_quic_header_t *)
-            us_realloc(h->headers, ncap * sizeof(*nh));
-        if (!nh) return -1;
-        h->headers = nh;
+        if (!us_grow(h->headers, ncap * sizeof(struct us_quic_header_t))) return -1;
         h->hcap = ncap;
     }
     /* RFC 9110 §5.5: a field value has no leading or trailing OWS (SP / HTAB),
@@ -701,27 +704,20 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
 
 static void us_quic_hset_finalize(struct us_quic_hset *h) {
     for (unsigned int i = 0; i < h->count; i++) {
-        h->headers[i].name = h->buf + (uintptr_t) h->headers[i].name;
-        h->headers[i].value = h->buf + (uintptr_t) h->headers[i].value;
+        h->headers[i].name = h->buf.get() + (uintptr_t) h->headers[i].name;
+        h->headers[i].value = h->buf.get() + (uintptr_t) h->headers[i].value;
     }
 }
 
-static void us_quic_hset_free(struct us_quic_hset *h) {
-    if (!h) return;
-    us_free(h->buf);
-    us_free(h->headers);
-    us_free(h);
-}
-
 static void us_quic_hsi_discard(void *hset_p) {
-    us_quic_hset_free((struct us_quic_hset *) hset_p);
+    delete (struct us_quic_hset *) hset_p;
 }
 
 /* ───── stream interface ───── */
 
 static int us_quic_server_peer_verified(us_quic_socket_context_t *ctx, lsquic_conn_t *conn) {
     SSL *ssl = lsquic_conn_get_ssl(conn);
-    int enforce = us_ssl_ctx_reject_unauthorized(ctx->ssl_ctx) ||
+    int enforce = us_ssl_ctx_reject_unauthorized(ctx->ssl_ctx.get()) ||
         (ssl && us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(ssl)));
     if (!enforce) return 1;
     if (!ssl) return 0;
@@ -734,8 +730,7 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
         lsquic_conn_close(conn);
         return NULL;
     }
-    us_quic_socket_t *qs = (us_quic_socket_t *)
-        us_calloc(1, sizeof(us_quic_socket_t) + ctx->conn_ext_size);
+    auto qs = us_quic_new<us_quic_socket_t>(ctx->conn_ext_size);
     if (!qs) return NULL;
     qs->conn = conn;
     qs->ctx = ctx;
@@ -750,25 +745,23 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
 #endif
     ctx->conn_count++;
     /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
-     * servers; the TCP path does this per-socket in context.c. */
+     * servers; the TCP path does this per-socket in context.cpp. */
     us_internal_enable_sweep_timer(ctx->driver->loop);
     qs->next = ctx->conns;
-    ctx->conns = qs;
-    return (lsquic_conn_ctx_t *) qs;
+    ctx->conns = qs.get();
+    return (lsquic_conn_ctx_t *) qs.release();
 }
 
 static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
-    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    std::unique_ptr<us_quic_socket_t> qs{(us_quic_socket_t *) lsquic_conn_get_ctx(conn)};
     if (!qs) return;
     us_quic_socket_context_t *ctx = qs->ctx;
     ctx->driver->called_owner = 1;
-    if (ctx->on_close) ctx->on_close(qs);
+    if (ctx->on_close) ctx->on_close(qs.get());
     lsquic_conn_set_ctx(conn, NULL);
     for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
-        if (*pp == qs) { *pp = qs->next; break; }
+        if (*pp == qs.get()) { *pp = qs->next; break; }
     }
-    us_free(qs->hostname);
-    us_free(qs);
 #ifndef LIBUS_USE_LIBUV
     ctx->driver->loop->num_polls--;
 #endif
@@ -803,25 +796,23 @@ static void us_quic_on_goaway_received(lsquic_conn_t *conn) {
 static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t *stream) {
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) if_ctx;
     if (stream == NULL) return NULL; /* going-away */
-    us_quic_stream_t *s = (us_quic_stream_t *)
-        us_calloc(1, sizeof(us_quic_stream_t) + ctx->stream_ext_size);
+    auto s = us_quic_new<us_quic_stream_t>(ctx->stream_ext_size);
     if (!s) { lsquic_stream_close(stream); return NULL; }
     s->stream = stream;
     s->ctx = ctx;
     ctx->driver->called_owner = 1;
-    if (ctx->on_stream_open) ctx->on_stream_open(s, ctx->is_client);
+    if (ctx->on_stream_open) ctx->on_stream_open(s.get(), ctx->is_client);
     lsquic_stream_wantread(stream, 1);
-    return (lsquic_stream_ctx_t *) s;
+    return (lsquic_stream_ctx_t *) s.release();
 }
 
 /* Hands the next header block lsquic has decoded to on_stream_headers.
  * Returns 1 for a block, 0 for none, -1 if on_stream_headers closed the stream. */
 static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
-    struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
+    std::unique_ptr<struct us_quic_hset> hset{(struct us_quic_hset *) lsquic_stream_get_hset(stream)};
     if (!hset) return 0;
-    us_quic_hset_finalize(hset);
-    us_quic_hset_free(s->hset);
-    s->hset = hset;
+    us_quic_hset_finalize(hset.get());
+    s->hset = std::move(hset);
     if (s->ctx->on_stream_headers) s->ctx->on_stream_headers(s);
     return s->stream ? 1 : -1;
 }
@@ -874,13 +865,11 @@ static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 
 static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     (void) stream;
-    us_quic_stream_t *s = (us_quic_stream_t *) h;
+    std::unique_ptr<us_quic_stream_t> s{(us_quic_stream_t *) h};
     if (!s) return;
     s->ctx->driver->called_owner = 1;
-    if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
+    if (s->ctx->on_stream_close) s->ctx->on_stream_close(s.get());
     s->stream = NULL;
-    us_quic_hset_free(s->hset);
-    us_free(s);
 }
 
 static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how) {
@@ -899,13 +888,13 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
 
 static const struct lsquic_stream_if us_quic_stream_if = {
     .on_new_conn = us_quic_on_new_conn,
-    .on_conn_closed = us_quic_on_conn_closed,
-    .on_hsk_done = us_quic_on_hsk_done,
     .on_goaway_received = us_quic_on_goaway_received,
+    .on_conn_closed = us_quic_on_conn_closed,
     .on_new_stream = us_quic_on_new_stream,
     .on_read = us_quic_on_read,
     .on_write = us_quic_on_write,
     .on_close = us_quic_on_close,
+    .on_hsk_done = us_quic_on_hsk_done,
     .on_reset = us_quic_on_reset,
 };
 
@@ -914,7 +903,6 @@ static const struct lsquic_hset_if us_quic_hset_if = {
     .hsi_prepare_decode = us_quic_hsi_prepare,
     .hsi_process_header = us_quic_hsi_process,
     .hsi_discard_header_set = us_quic_hsi_discard,
-    .hsi_flags = 0,
 };
 
 #ifdef BUN_DEBUG
@@ -968,10 +956,6 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
     SSL_CTX *(*lookup_cert)(void *, const struct sockaddr *, const char *), void *lookup_cert_ctx)
 {
     if (us_quic_global_init() != 0) return NULL;
-    lsquic_engine_t **engines = (lsquic_engine_t **)
-        us_realloc(d->engines, (d->engine_count + 1) * sizeof(*engines));
-    if (!engines) return NULL;
-    d->engines = engines;
 
     struct lsquic_engine_settings ours = *settings;
     /* us_quic_packets_out sets no ECN bits, and every lsquic_engine_packet_in call passes 0 for them. */
@@ -992,15 +976,16 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
     api.ea_hsi_ctx = hset_ctx;
 
     lsquic_engine_t *engine = lsquic_engine_new(flags, &api);
-    if (engine) d->engines[d->engine_count++] = engine;
+    if (engine) d->engines.emplace_back(engine);
     return engine;
 }
 
 void us_quic_driver_remove_engine(us_quic_driver_t *d, lsquic_engine_t *engine) {
-    unsigned int i = 0;
-    while (d->engines[i] != engine) i++;
-    d->engines[i] = d->engines[--d->engine_count];
-    lsquic_engine_destroy(engine);
+    size_t i = 0;
+    while (d->engines[i].get() != engine) i++;
+    std::swap(d->engines[i], d->engines.back());
+    auto removed = std::move(d->engines.back());
+    d->engines.pop_back();
 }
 
 static void us_quic_after_engine_call(us_quic_driver_t *d);
@@ -1017,28 +1002,23 @@ static int us_quic_context_pass(us_quic_driver_t *d, enum us_quic_pass_point poi
     return point == US_QUIC_BEFORE_POLL && d->called_owner ? 0 : us_quic_driver_next_tick_us(d);
 }
 
-/* Takes `ssl`, also on failure. */
-static us_quic_socket_context_t *us_quic_context_create(struct us_loop_t *loop, SSL_CTX *ssl,
+static us_quic_socket_context_t *us_quic_context_create(struct us_loop_t *loop, us_ssl_ctx_ptr ssl,
     unsigned int ext_size, unsigned flags, const struct lsquic_engine_settings *settings)
 {
-    us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
-        us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
-    if (ctx) {
-        us_quic_driver_t *d = us_quic_driver_create(loop, us_quic_context_pass, ctx);
-        d->ssl_ctx = ssl;
-        d->on_leave = us_quic_after_engine_call;
-        d->on_udp_close = us_quic_context_on_udp_close;
-        ctx->driver = d;
-        ctx->ssl_ctx = ssl;
-        ctx->is_client = !(flags & LSENG_SERVER);
-        ctx->max_header_set_size = settings->es_max_header_list_size;
-        ctx->engine = us_quic_driver_add_engine(d, flags, settings, &us_quic_stream_if, ctx,
-            &us_quic_hset_if, ctx, ctx->is_client ? NULL : us_quic_lookup_cert, ctx);
-        if (ctx->engine) return ctx;
-        us_quic_driver_free(d);
-    }
-    SSL_CTX_free(ssl);
-    us_free(ctx);
+    auto ctx = us_quic_new<us_quic_socket_context_t>(ext_size);
+    if (!ctx) return NULL;
+    us_quic_driver_t *d = us_quic_driver_create(loop, us_quic_context_pass, ctx.get());
+    d->ssl_ctx = ssl.get();
+    d->on_leave = us_quic_after_engine_call;
+    d->on_udp_close = us_quic_context_on_udp_close;
+    ctx->driver = d;
+    ctx->ssl_ctx = std::move(ssl);
+    ctx->is_client = !(flags & LSENG_SERVER);
+    ctx->max_header_set_size = settings->es_max_header_list_size;
+    ctx->engine = us_quic_driver_add_engine(d, flags, settings, &us_quic_stream_if, ctx.get(),
+        &us_quic_hset_if, ctx.get(), ctx->is_client ? NULL : us_quic_lookup_cert, ctx.get());
+    if (ctx->engine) return ctx.release();
+    us_quic_driver_free(d);
     return NULL;
 }
 
@@ -1054,10 +1034,10 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s)
 {
-    enum create_bun_socket_error_t ssl_err = 0;
-    SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
+    enum create_bun_socket_error_t ssl_err = CREATE_BUN_SOCKET_ERROR_NONE;
+    us_ssl_ctx_ptr ssl{us_ssl_ctx_build_raw(options, &ssl_err)};
     if (!ssl) return NULL;
-    us_quic_prepare_ssl_ctx(ssl);
+    us_quic_prepare_ssl_ctx(ssl.get());
 
     struct lsquic_engine_settings settings;
     lsquic_engine_init_settings(&settings, LSENG_HTTP_SERVER);
@@ -1078,20 +1058,20 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     settings.es_ext_http_prio = 0;
     if (idle_timeout_s) settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
-    return us_quic_context_create(loop, ssl, ext_size, LSENG_HTTP_SERVER, &settings);
+    return us_quic_context_create(loop, std::move(ssl), ext_size, LSENG_HTTP_SERVER, &settings);
 }
 
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options)
 {
-    enum create_bun_socket_error_t ssl_err = 0;
-    SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
+    enum create_bun_socket_error_t ssl_err = CREATE_BUN_SOCKET_ERROR_NONE;
+    us_ssl_ctx_ptr ssl{us_ssl_ctx_build_raw(options, &ssl_err)};
     if (!ssl) return -1;
-    us_quic_prepare_ssl_ctx(ssl);
-    SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
-        SSL_CTX_get_verify_callback(ssl));
-    if (!ctx->sni) ctx->sni = sni_new();
-    sni_add(ctx->sni, hostname, ssl);
+    us_quic_prepare_ssl_ctx(ssl.get());
+    SSL_CTX_set_verify(ssl.get(), SSL_CTX_get_verify_mode(ssl.get()) | SSL_CTX_get_verify_mode(ctx->ssl_ctx.get()),
+        SSL_CTX_get_verify_callback(ssl.get()));
+    if (!ctx->sni) ctx->sni = std::make_unique<sni_node<us_ssl_ctx_ptr>>();
+    ctx->sni->add(hostname, std::move(ssl));
     return 0;
 }
 
@@ -1124,9 +1104,7 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     /* The owner goes away with the context, so the teardown below must not call into it. */
     ctx->on_released = NULL;
     us_quic_driver_free(ctx->driver);
-    SSL_CTX_free(ctx->ssl_ctx);
-    sni_free(ctx->sni);
-    us_free(ctx);
+    delete ctx;
 }
 
 void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx) { return ctx + 1; }
@@ -1173,12 +1151,12 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
 static void us_quic_release_pending_port(struct us_loop_t *loop, int port) {
     if (port == 0) return;
     for (us_quic_driver_t *d = loop->data.quic_head; d; d = d->next) {
-        for (us_quic_udp_t *ls = d->udps; ls; ) {
-            if (!ls->close_pending || us_quic_listen_socket_port(ls) != port) { ls = ls->next; continue; }
+        for (us_quic_udp_t *ls = d->udps.get(); ls; ) {
+            if (!ls->close_pending || us_quic_listen_socket_port(ls) != port) { ls = ls->next.get(); continue; }
             ls->close_pending = 0;
             us_udp_socket_close(ls->udp);
             /* udp_on_close unlinked `ls`; restart from the head. */
-            ls = d->udps;
+            ls = d->udps.get();
         }
     }
 }
@@ -1187,21 +1165,21 @@ us_quic_udp_t *us_quic_udp_create(us_quic_driver_t *d, const char *host, int por
     void (*on_data)(struct us_udp_socket_t *, void *, int),
     void (*on_recv_error)(struct us_udp_socket_t *, int, int))
 {
-    us_quic_udp_t *qu = (us_quic_udp_t *) us_calloc(1, sizeof(*qu));
+    auto qu = us_quic_new<us_quic_udp_t>();
     if (!qu) return NULL;
     qu->driver = d;
     qu->udp = us_create_udp_socket(d->loop, on_data, us_quic_udp_on_drain, us_quic_udp_on_close,
-        on_recv_error, host, (unsigned short) port, flags, err, qu);
-    if (!qu->udp) { us_free(qu); return NULL; }
+        on_recv_error, host, (unsigned short) port, flags, err, qu.get());
+    if (!qu->udp) return NULL;
     us_quic_set_dontfrag(qu->udp);
 
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(qu->local);
     getsockname(us_poll_fd((struct us_poll_t *) qu->udp), (struct sockaddr *) &qu->local, &sl);
 
-    qu->next = d->udps;
-    d->udps = qu;
-    return qu;
+    qu->next = std::move(d->udps);
+    d->udps = std::move(qu);
+    return d->udps.get();
 }
 
 void *us_quic_udp_owner(us_quic_udp_t *qu) { return qu->driver->owner; }
@@ -1272,12 +1250,12 @@ void us_quic_listen_socket_close(us_quic_udp_t *ls) {
 }
 
 static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx) {
-    for (us_quic_udp_t *ls = ctx->driver->udps; ls; ) {
-        if (!ls->close_pending) { ls = ls->next; continue; }
+    for (us_quic_udp_t *ls = ctx->driver->udps.get(); ls; ) {
+        if (!ls->close_pending) { ls = ls->next.get(); continue; }
         ls->close_pending = 0;
         us_udp_socket_close(ls->udp);
         /* udp_on_close unlinked `ls`; restart from the head. */
-        ls = ctx->driver->udps;
+        ls = ctx->driver->udps.get();
     }
 }
 
@@ -1393,15 +1371,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
         total += headers[i].name_len + headers[i].value_len;
 
     char stackbuf[1024];
-    char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
+    us_unique_ptr<char, us_free> heapbuf{total <= sizeof(stackbuf) ? NULL : (char *) us_malloc(total)};
+    char *buf = total <= sizeof(stackbuf) ? stackbuf : heapbuf.get();
     struct lsxpack_header stackh[32];
-    struct lsxpack_header *xh = count <= 32 ? stackh
-        : (struct lsxpack_header *) us_calloc(count, sizeof(*xh));
-    if (!buf || !xh) {
-        if (buf != stackbuf) us_free(buf);
-        if (xh != stackh) us_free(xh);
-        return -1;
-    }
+    us_unique_ptr<struct lsxpack_header, us_free> heaph{
+        count <= 32 ? NULL : (struct lsxpack_header *) us_calloc(count, sizeof(struct lsxpack_header))};
+    struct lsxpack_header *xh = count <= 32 ? stackh : heaph.get();
+    if (!buf || !xh) return -1;
 
     size_t off = 0;
     for (unsigned int i = 0; i < count; i++) {
@@ -1423,8 +1399,6 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     errno = 0;
     int r = lsquic_stream_send_headers(s->stream, &lh, end_stream);
     if (r != 0 && errno == EAGAIN) r = US_QUIC_SEND_HEADERS_RETRY;
-    if (buf != stackbuf) us_free(buf);
-    if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
     if (!end_stream && r == 0) us_quic_flush_from_on_write(s);
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
@@ -1551,21 +1525,18 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     if (!chain || sk_X509_num(chain) == 0) return ssl_verify_invalid;
     X509 *leaf = sk_X509_value(chain, 0);
     X509_STORE *store = SSL_CTX_get_cert_store(SSL_get_SSL_CTX(ssl));
-    X509_STORE_CTX *vctx = X509_STORE_CTX_new();
+    us_unique_ptr<X509_STORE_CTX, X509_STORE_CTX_free> vctx{X509_STORE_CTX_new()};
     if (!vctx) return ssl_verify_invalid;
-    int ok = 0;
-    if (X509_STORE_CTX_init(vctx, store, leaf, chain) == 1) {
-        X509_STORE_CTX_set_default(vctx, "ssl_server");
-        ok = us_x509_verify_cert(vctx, X509_PURPOSE_SSL_SERVER) == 1;
-    }
-    X509_STORE_CTX_free(vctx);
-    if (!ok) return ssl_verify_invalid;
-    if (qs->hostname && qs->hostname[0]) {
+    if (X509_STORE_CTX_init(vctx.get(), store, leaf, chain) != 1) return ssl_verify_invalid;
+    X509_STORE_CTX_set_default(vctx.get(), "ssl_server");
+    if (us_x509_verify_cert(vctx.get(), X509_PURPOSE_SSL_SERVER) != 1) return ssl_verify_invalid;
+    const char *hostname = qs->hostname.get();
+    if (hostname && hostname[0]) {
         unsigned char addr[16];
-        int matched = (inet_pton(AF_INET, qs->hostname, addr) == 1 ||
-                       inet_pton(AF_INET6, qs->hostname, addr) == 1)
-            ? X509_check_ip_asc(leaf, qs->hostname, 0)
-            : X509_check_host(leaf, qs->hostname, strlen(qs->hostname),
+        int matched = (inet_pton(AF_INET, hostname, addr) == 1 ||
+                       inet_pton(AF_INET6, hostname, addr) == 1)
+            ? X509_check_ip_asc(leaf, hostname, 0)
+            : X509_check_host(leaf, hostname, strlen(hostname),
                   X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, NULL);
         if (matched != 1) return ssl_verify_invalid;
     }
@@ -1583,10 +1554,10 @@ us_quic_socket_context_t *us_create_quic_client_context(
     unsigned int conn_ext_size, unsigned int stream_ext_size)
 {
     /* No options: the default trust store and no client certificate. */
-    enum create_bun_socket_error_t ssl_err = 0;
-    SSL_CTX *ssl = us_ssl_ctx_build_raw((struct us_bun_socket_context_options_t) {0}, &ssl_err);
+    enum create_bun_socket_error_t ssl_err = CREATE_BUN_SOCKET_ERROR_NONE;
+    us_ssl_ctx_ptr ssl{us_ssl_ctx_build_raw({}, &ssl_err)};
     if (!ssl) return NULL;
-    us_quic_prepare_client_ssl_ctx(ssl);
+    us_quic_prepare_client_ssl_ctx(ssl.get());
 
     struct lsquic_engine_settings settings;
     lsquic_engine_init_settings(&settings, LSENG_HTTP);
@@ -1595,7 +1566,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     settings.es_max_header_list_size = 256 * 1024;
     settings.es_ext_http_prio = 0;
 
-    us_quic_socket_context_t *ctx = us_quic_context_create(loop, ssl, ext_size, LSENG_HTTP, &settings);
+    us_quic_socket_context_t *ctx = us_quic_context_create(loop, std::move(ssl), ext_size, LSENG_HTTP, &settings);
     if (!ctx) return NULL;
     ctx->conn_ext_size = conn_ext_size;
     ctx->stream_ext_size = stream_ext_size;
@@ -1647,7 +1618,7 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
     if (qs) {
         qs->reject_unauthorized = reject_unauthorized;
         if (sni) {
-            qs->hostname = us_strdup(sni);
+            qs->hostname.reset(us_strdup(sni));
             if (!qs->hostname) {
                 lsquic_conn_close(conn);
                 return NULL;
@@ -1667,9 +1638,11 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
  * with a throwaway UDP connect() — that does a route lookup and fails fast on
  * v6 results when the host has no v6 route, letting us fall through to A. */
 static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
-    struct addrinfo_result *res, int port, const char *sni, int reject_unauthorized, SSL_CTX *ssl_ctx)
+    us_quic_lookup_ptr lookup, int port, const char *sni, int reject_unauthorized, SSL_CTX *ssl_ctx)
 {
-    for (struct addrinfo *ai = &res->entries->info; ai; ai = ai->ai_next) {
+    struct addrinfo_result res = Bun__addrinfo_getRequestResult(lookup.get());
+    if (res.error || !res.entries) return NULL;
+    for (struct addrinfo *ai = &res.entries->info; ai; ai = ai->ai_next) {
         struct sockaddr_storage peer;
         memcpy(&peer, ai->ai_addr, ai->ai_addrlen);
         if (peer.ss_family == AF_INET)
@@ -1678,8 +1651,7 @@ static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
             ((struct sockaddr_in6 *) &peer)->sin6_port = htons((unsigned short) port);
 
         int perr = 0;
-        LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(peer.ss_family, SOCK_DGRAM, 0, &perr);
-        if (probe != LIBUS_SOCKET_ERROR) {
+        if (us_fd_t probe{bsd_create_socket(peer.ss_family, SOCK_DGRAM, 0, &perr)}) {
 #ifdef _WIN32
             /* Winsock's datagram connect() only records the default peer and
              * returns 0 without a route lookup, so it can't reject an
@@ -1690,31 +1662,33 @@ static us_quic_socket_t *us_quic_connect_result(us_quic_socket_context_t *ctx,
              * so the whole-list SIO_ADDRESS_LIST_SORT isn't needed — this is
              * just the per-entry "skip if unroutable" filter.) */
             SOCKADDR_STORAGE local; DWORD got = 0;
-            int r = WSAIoctl(probe, SIO_ROUTING_INTERFACE_QUERY,
+            int r = WSAIoctl(probe.get(), SIO_ROUTING_INTERFACE_QUERY,
                 (struct sockaddr *) &peer, sa_len((struct sockaddr *) &peer),
                 &local, sizeof(local), &got, NULL, NULL);
 #else
-            int r = connect(probe, (struct sockaddr *) &peer, sa_len((struct sockaddr *) &peer));
+            int r = connect(probe.get(), (struct sockaddr *) &peer, sa_len((struct sockaddr *) &peer));
 #endif
-            bsd_close_socket(probe);
             if (r != 0) continue;
         }
 
         us_quic_socket_t *qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer,
             sni, reject_unauthorized, ssl_ctx);
-        if (qs) return qs;
+        if (qs) {
+            Bun__addrinfo_freeRequest(lookup.release(), 0);
+            return qs;
+        }
     }
     return NULL;
 }
 
-struct us_quic_pending_connect_s {
+struct us_quic_pending_connect_s : us_allocated_t {
     us_quic_socket_context_t *ctx;
-    char *sni;
+    us_unique_ptr<char, us_free> sni;
     int port;
     int reject_unauthorized;
-    /* Owned. NULL for the context's own. */
-    SSL_CTX *ssl_ctx;
-    struct addrinfo_request *ai_req;
+    /* NULL for the context's own. */
+    us_ssl_ctx_ptr ssl_ctx;
+    us_quic_lookup_ptr lookup;
 };
 
 int us_quic_socket_context_connect(
@@ -1735,56 +1709,41 @@ int us_quic_socket_context_connect(
 
     struct addrinfo_request *ai_req = NULL;
     int cached = Bun__addrinfo_get(ctx->driver->loop, host, (uint16_t) port, &ai_req) == 0;
+    us_quic_lookup_ptr lookup{ai_req};
     if (cached) {
-        struct addrinfo_result res = Bun__addrinfo_getRequestResult(ai_req);
-        if (!res.error && res.entries)
-            *out_qs = us_quic_connect_result(ctx, &res, port, sni, reject_unauthorized, ssl_ctx);
-        Bun__addrinfo_freeRequest(ai_req, *out_qs == NULL);
+        *out_qs = us_quic_connect_result(ctx, std::move(lookup), port, sni, reject_unauthorized, ssl_ctx);
         return *out_qs ? 1 : -1;
     }
 
-    struct us_quic_pending_connect_s *pc = us_calloc(1, sizeof(*pc));
-    if (!pc) { Bun__addrinfo_freeRequest(ai_req, 1); return -1; }
+    auto pc = us_quic_new<struct us_quic_pending_connect_s>();
+    if (!pc) return -1;
     pc->ctx = ctx;
-    pc->sni = sni ? us_strdup(sni) : NULL;
-    if (sni && !pc->sni) {
-        Bun__addrinfo_freeRequest(ai_req, 1);
-        us_free(pc);
-        return -1;
+    if (sni) {
+        pc->sni.reset(us_strdup(sni));
+        if (!pc->sni) return -1;
     }
     pc->port = port;
     pc->reject_unauthorized = reject_unauthorized;
     if (ssl_ctx) SSL_CTX_up_ref(ssl_ctx);
-    pc->ssl_ctx = ssl_ctx;
-    pc->ai_req = ai_req;
-    *out_pending = pc;
+    pc->ssl_ctx.reset(ssl_ctx);
+    pc->lookup = std::move(lookup);
+    *out_pending = pc.release();
     return 0;
 }
 
 struct addrinfo_request *us_quic_pending_connect_addrinfo(
-    struct us_quic_pending_connect_s *pc) { return pc->ai_req; }
+    struct us_quic_pending_connect_s *pc) { return pc->lookup.get(); }
 
 us_quic_socket_t *us_quic_pending_connect_resolved(
-    struct us_quic_pending_connect_s *pc)
+    struct us_quic_pending_connect_s *owned_pc)
 {
-    us_quic_socket_t *qs = NULL;
-    struct addrinfo_result res = Bun__addrinfo_getRequestResult(pc->ai_req);
-    if (!res.error && res.entries) {
-        qs = us_quic_connect_result(pc->ctx, &res, pc->port, pc->sni,
-            pc->reject_unauthorized, pc->ssl_ctx);
-    }
-    Bun__addrinfo_freeRequest(pc->ai_req, qs == NULL);
-    SSL_CTX_free(pc->ssl_ctx);
-    us_free(pc->sni);
-    us_free(pc);
-    return qs;
+    std::unique_ptr<struct us_quic_pending_connect_s> pc{owned_pc};
+    return us_quic_connect_result(pc->ctx, std::move(pc->lookup), pc->port, pc->sni.get(),
+        pc->reject_unauthorized, pc->ssl_ctx.get());
 }
 
 void us_quic_pending_connect_cancel(struct us_quic_pending_connect_s *pc) {
-    Bun__addrinfo_freeRequest(pc->ai_req, 1);
-    SSL_CTX_free(pc->ssl_ctx);
-    us_free(pc->sni);
-    us_free(pc);
+    delete pc;
 }
 
 void us_quic_socket_make_stream(us_quic_socket_t *s) {
@@ -1805,4 +1764,6 @@ unsigned us_quic_socket_streams_avail(us_quic_socket_t *s) {
 int us_quic_socket_status(us_quic_socket_t *s, char *buf, unsigned int len) {
     if (!s->conn) return -1;
     return (int) lsquic_conn_status(s->conn, buf, (size_t) len);
+}
+
 }

@@ -2,6 +2,7 @@
 
 #include <openssl/pem.h>
 #include <openssl/sha.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 
 #ifdef __cplusplus
@@ -15,6 +16,8 @@ template <auto free_fn> struct us_deleter {
   void operator()(auto *ptr) const { free_fn(ptr); }
 };
 template <typename T, auto free_fn> using us_unique_ptr = std::unique_ptr<T, us_deleter<free_fn>>;
+
+using us_ssl_ctx_ptr = us_unique_ptr<SSL_CTX, SSL_CTX_free>;
 
 inline void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
 using us_x509_stack_ptr = us_unique_ptr<STACK_OF(X509), us_x509_stack_free>;

@@ -452,7 +452,7 @@ describe("transportParams.maxIdleTimeout", () => {
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`
 // never resolved. Bun's own HTTP/3 listener refuses in on_new_conn while
-// closing (packages/bun-usockets/src/quic.c us_quic_on_new_conn).
+// closing (packages/bun-usockets/src/quic.cpp us_quic_on_new_conn).
 describe("the default congestion controller", () => {
   test("keeps its window while the sender's event loop is busy", async () => {
     let received = 0;

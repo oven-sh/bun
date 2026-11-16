@@ -195,7 +195,7 @@ export const sweepSocketTimers = b.fn({
   rustPath: testing("sweep_socket_timers"),
 });
 export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
-/** `socket`, `close` and `shutdown` have no hook in bsd.c: a rule for one would never fire. */
+/** `socket`, `close` and `shutdown` have no hook in bsd.cpp: a rule for one would never fire. */
 export const SocketFaultSyscall = b.enumeration([
   "recv",
   "send",

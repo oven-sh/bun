@@ -103,7 +103,7 @@ fn parse_unix(
 /// The HTTP thread connects to the `unix` path later and the keep-alive pool
 /// keys on it, so a relative path is anchored to `cwd` at call time, unnormalized.
 fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
-    // Windows: bsd.c has no long-path fallback. Leading NUL: Linux abstract socket.
+    // Windows: bsd.cpp has no long-path fallback. Leading NUL: Linux abstract socket.
     if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
         return path.into_boxed_slice();
     }

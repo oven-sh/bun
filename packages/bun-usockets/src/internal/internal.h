@@ -195,12 +195,6 @@ extern int us_dispatch_alpn_offer(struct ssl_st *ssl, const unsigned char *proto
 /* BoringSSL's ALPN select callback, for a server-side SSL whose listen socket has no us_listen_socket_set_alpn list. */
 extern int us_dispatch_alpn_select(struct ssl_st *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
-/* crypto/sni_tree.h, the one place server names are compared, as a tree that owns contexts. */
-struct us_sni_tree_t;
-struct us_sni_tree_t *sni_new();
-void sni_free(struct us_sni_tree_t *sni);
-void sni_add(struct us_sni_tree_t *sni, const char *hostname, struct ssl_ctx_st *owned_ctx);
-struct ssl_ctx_st *sni_find(struct us_sni_tree_t *sni, const char *hostname);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
@@ -315,7 +309,7 @@ unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 /* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
-/* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
+/* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.cpp needn't include OpenSSL. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
@@ -651,6 +645,41 @@ void us_internal_ssl_loop_state_save(void *ssl, void **out);
 void us_internal_ssl_loop_state_restore(void **saved);
 
 #ifdef __cplusplus
+}
+
+#include <memory>
+
+/* Leaves `buffer`, a unique_ptr to a block of us_malloc's, as it was when there is no memory. */
+static inline bool us_grow(auto &buffer, size_t size) {
+    auto *grown = (decltype(buffer.get())) us_realloc(buffer.get(), size);
+    if (!grown) return false;
+    buffer.release();
+    buffer.reset(grown);
+    return true;
+}
+
+struct us_poll_deleter_t {
+    struct us_loop_t *loop;
+    void operator()(struct us_poll_t *p) const {
+        us_keep_last_error_t keep;
+        us_poll_free(p, loop);
+    }
+};
+
+/* NULL if the loop refuses `fd` (e.g. ENOSPC at fs.epoll.max_user_watches), with the reason in errno. */
+inline struct us_poll_t *us_internal_start_poll(struct us_loop_t *loop, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type,
+                                                unsigned int ext_size, int events) {
+    std::unique_ptr<struct us_poll_t, us_poll_deleter_t> p{us_create_poll(loop, 0, ext_size), {loop}};
+    us_poll_init(p.get(), fd, poll_type);
+    return us_poll_start_rc(p.get(), loop, events) == 0 ? p.release() : NULL;
+}
+
+/* The poll closes `fd`. */
+inline struct us_poll_t *us_internal_start_poll(struct us_loop_t *loop, us_fd_t fd, int poll_type,
+                                                unsigned int ext_size, int events) {
+    struct us_poll_t *p = us_internal_start_poll(loop, fd.get(), poll_type, ext_size, events);
+    if (p) fd.release();
+    return p;
 }
 #endif
 

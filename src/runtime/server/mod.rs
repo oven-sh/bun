@@ -1007,9 +1007,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this.apply_phase();
     }
 
-    /// quic.c closed the HTTP/3 UDP socket and the last QUIC connection is gone ([`Self::has_open_h3_transport`]).
+    /// quic.cpp closed the HTTP/3 UDP socket and the last QUIC connection is gone ([`Self::has_open_h3_transport`]).
     extern "C" fn on_h3_released(user_data: *mut c_void) {
-        // SAFETY: `user_data` is the `*mut Self` registered in `listen()`, and quic.c drops the
+        // SAFETY: `user_data` is the `*mut Self` registered in `listen()`, and quic.cpp drops the
         // hook before it frees the app's context, so the server is alive. This can run inside
         // lsquic's `process_conns`: `apply_phase` reads cells and queues tasks, it doesn't
         // enter the engine. Under the H3 close calls in `stop_listening` it returns at once.

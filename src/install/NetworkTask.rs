@@ -53,15 +53,7 @@ impl HasStaticHive for NetworkTask {
     const HIVE: &'static [AtomicHiveArray<Self>] = &HIVE;
 }
 
-// SAFETY: `next` is the sole intrusive link and is only ever read/written via
-// these accessors by `OwnedQueue<HiveBox<NetworkTask>>`.
-unsafe impl bun_threading::Linked for NetworkTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(NetworkTask, next: bun_threading::Link<NetworkTask>);
 
 /// What the response is for. A git clone or checkout is never a network task.
 pub enum Callback {

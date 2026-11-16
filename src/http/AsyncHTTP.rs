@@ -57,16 +57,7 @@ struct OriginalClientState<'a> {
     unix_socket_path: &'a [u8],
 }
 
-// SAFETY: `next` is the sole intrusive link for `OwnedQueue<Box<AsyncHTTP>>`.
-// Only implemented for the lifetime-erased form — the queue is heterogeneous
-// over borrow scopes and `next` is always stored as `Link<AsyncHTTP<'static>>`.
-unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(AsyncHTTP<'static>, next: bun_threading::Link<AsyncHTTP<'static>>);
 
 // SAFETY: what belongs to the HTTP thread (sockets, HTTP/2 and HTTP/3 streams, contexts and their
 // reference counts) is not set before `on_start`, and is released before the last result. `signals`

@@ -472,11 +472,10 @@ type EventType = KEvent;
 // crate doc above). NOT the main event loop. Renamed from `Loop` so this
 // crate's `Loop` (= `posix_event_loop::Loop` = the uws `us_loop_t` everyone
 // actually means by "the loop") keeps its short name. Only one external caller
-// (`bun_runtime::webcore::Blob`).
+// (`bun_runtime::webcore::blob::io_parking`).
 
 #[cfg(not(windows))]
 pub struct IoRequestLoop {
-    pub(crate) pending: RequestQueue,
     pub(crate) waker: Waker,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) epoll_fd: Fd,
@@ -522,7 +521,7 @@ impl IoRequestLoop {
             let epoll_fd = Fd::from_native(raw);
 
             {
-                // No data: `tick_epoll` skips an event without a `Poll`.
+                // No data: `on_update_epoll` skips an event without a `Pollable`.
                 let mut epoll: linux::epoll_event = bun_core::ffi::zeroed();
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
@@ -556,8 +555,7 @@ impl IoRequestLoop {
                 return Err(err);
             }
             let kqueue_fd = Fd::from_native(kq);
-            // Register the eventfd waker. udata = 0 → Pollable.tag() == .empty,
-            // which onUpdateKQueue treats as a no-op (the wakeup just unblocks
+            // Register the eventfd waker. `on_update_kqueue` skips udata = 0 (the wakeup just unblocks
             // the kevent() wait so the pending queue gets drained). EV_CLEAR
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
@@ -588,7 +586,6 @@ impl IoRequestLoop {
         };
 
         Ok(IoRequestLoop {
-            pending: RequestQueue::default(),
             waker,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             epoll_fd,
@@ -598,7 +595,7 @@ impl IoRequestLoop {
     }
 
     /// Starts the IO thread on first use. If that fails, the next call retries.
-    pub fn ensure_init() -> sys::Result<()> {
+    pub fn ensure_init<H: RequestHandler>() -> sys::Result<()> {
         if IS_RUNNING.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -614,7 +611,7 @@ impl IoRequestLoop {
             // A smaller thread, since it's not doing much. The JoinHandle detaches on drop.
             std::thread::Builder::new()
                 .stack_size(1024 * 1024 * 2)
-                .spawn(|| this.tick())
+                .spawn(|| this.tick(&mut H::default()))
                 .map_err(|err| {
                     sys::Error::from_code_int(
                         err.raw_os_error().unwrap_or(libc::EAGAIN),
@@ -626,41 +623,25 @@ impl IoRequestLoop {
         Ok(())
     }
 
-    /// Enqueue `request` for the IO thread to pick up. Safe to call from any
-    /// thread: only touches the lock-free `pending` queue and the
-    /// async-signal-safe `waker`. This is the *only* cross-thread entry
-    /// point — every other `IoRequestLoop` method is IO-thread-only.
-    ///
-    /// Callers must call `ensure_init()` and handle its error before scheduling
-    /// an operation's first request.
-    ///
-    /// # Safety
-    /// `request` is not queued, and stays valid and unaliased until its callback is called.
-    pub unsafe fn schedule(request: *mut Request) {
-        let this = LOOP
-            .get()
-            .expect("ensure_init() succeeded before schedule()");
-        // SAFETY: fn contract.
-        unsafe {
-            debug_assert!(!(*request).scheduled);
-            (*request).scheduled = true;
-            this.pending
-                .push(core::ptr::NonNull::new_unchecked(request));
-        }
-        this.waker.wake();
+    /// Any thread: makes the IO thread call [`RequestHandler::process_pending`].
+    pub fn wake() {
+        LOOP.get()
+            .expect("ensure_init() succeeded before wake()")
+            .waker
+            .wake();
     }
 
-    pub(crate) fn tick(&self) {
+    pub(crate) fn tick(&self, handler: &mut impl RequestHandler) {
         let name = bun_core::zstr!("IO Watcher");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            self.tick_epoll();
+            self.tick_epoll(handler);
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            self.tick_kqueue();
+            self.tick_kqueue(handler);
         }
         #[cfg(not(any(
             target_os = "linux",
@@ -674,67 +655,11 @@ impl IoRequestLoop {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn tick_epoll(&self) {
+    pub(crate) fn tick_epoll(&self, handler: &mut impl RequestHandler) {
         loop {
-            // Process pending requests
-            {
-                let mut pending = self.pending.pop_batch().iterator();
-                let watcher_fd = self.pollfd();
-
-                loop {
-                    let request_ptr = pending.next();
-                    if request_ptr.is_null() {
-                        break;
-                    }
-                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
-                    request.scheduled = false;
-                    match (request.callback)(request) {
-                        Action::Readable(readable) => {
-                            match readable.poll.register_for_epoll(
-                                Flags::PollReadable,
-                                readable.tag,
-                                watcher_fd,
-                                true,
-                                readable.fd,
-                            ) {
-                                Err(err) => {
-                                    (readable.on_error)(readable.ctx, &err);
-                                }
-                                Ok(()) => {}
-                            }
-                        }
-                        Action::Writable(writable) => {
-                            match writable.poll.register_for_epoll(
-                                Flags::PollWritable,
-                                writable.tag,
-                                watcher_fd,
-                                true,
-                                writable.fd,
-                            ) {
-                                Err(err) => {
-                                    (writable.on_error)(writable.ctx, &err);
-                                }
-                                Ok(()) => {}
-                            }
-                        }
-                        Action::Close(close) => {
-                            log!(
-                                "close({}, registered={})",
-                                close.fd,
-                                close.poll.flags.contains(Flags::Registered)
-                            );
-                            // Only remove from the interest list if it was previously registered.
-                            // Otherwise, epoll gets confused.
-                            // This state can happen if polling for readable/writable previously failed.
-                            if close.poll.flags.contains(Flags::WasEverRegistered) {
-                                close.poll.unregister_with_fd(watcher_fd, close.fd);
-                            }
-                            (close.on_done)(close.ctx);
-                        }
-                    }
-                }
-            }
+            handler.process_pending(&mut Changelist {
+                watcher_fd: self.pollfd(),
+            });
 
             // Zero-initialised (`epoll_event: Zeroable`) so the post-wait
             // `&events[..rc]` is a safe slice into an initialised array.
@@ -762,12 +687,7 @@ impl IoRequestLoop {
             }
 
             for event in current_events {
-                let pollable = Pollable::from(event.u64);
-                // Null for the waker, which is edge-triggered: no need to read its counter.
-                let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
-                    continue;
-                };
-                Poll::on_update_epoll(poll, pollable.tag(), *event);
+                Poll::on_update_epoll(*event, handler);
             }
         }
     }
@@ -788,68 +708,13 @@ impl IoRequestLoop {
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub(crate) fn tick_kqueue(&self) {
+    pub(crate) fn tick_kqueue(&self, handler: &mut impl RequestHandler) {
         loop {
-            let mut events_list: Vec<EventType> = Vec::with_capacity(256);
-
-            // Process pending requests
-            {
-                let batch = self.pending.pop_batch();
-                events_list.reserve(batch.len());
-                let mut pending = batch.iterator();
-                // `reserve` above ⇒ no realloc; apply_kqueue
-                // fully overwrites the slot so the zero is a safe placeholder.
-                #[inline(always)]
-                fn add_one(list: &mut Vec<EventType>) -> &mut EventType {
-                    debug_assert!(list.len() < list.capacity());
-                    list.push(bun_core::ffi::zeroed());
-                    list.last_mut().unwrap()
-                }
-
-                loop {
-                    let request_ptr = pending.next();
-                    if request_ptr.is_null() {
-                        break;
-                    }
-                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
-                    request.scheduled = false;
-                    match (request.callback)(request) {
-                        Action::Readable(readable) => {
-                            Poll::apply_kqueue(
-                                ApplyAction::Readable,
-                                readable.tag,
-                                readable.poll,
-                                readable.fd,
-                                add_one(&mut events_list),
-                            );
-                        }
-                        Action::Writable(writable) => {
-                            Poll::apply_kqueue(
-                                ApplyAction::Writable,
-                                writable.tag,
-                                writable.poll,
-                                writable.fd,
-                                add_one(&mut events_list),
-                            );
-                        }
-                        Action::Close(close) => {
-                            if close.poll.flags.contains(Flags::PollReadable)
-                                || close.poll.flags.contains(Flags::PollWritable)
-                            {
-                                Poll::apply_kqueue(
-                                    ApplyAction::Cancel,
-                                    close.tag,
-                                    close.poll,
-                                    close.fd,
-                                    add_one(&mut events_list),
-                                );
-                            }
-                            (close.on_done)(close.ctx);
-                        }
-                    }
-                }
-            }
+            let mut changelist = Changelist {
+                events_list: Vec::with_capacity(256),
+            };
+            handler.process_pending(&mut changelist);
+            let mut events_list = changelist.events_list;
 
             let change_count = events_list.len();
             let capacity = events_list.capacity();
@@ -882,101 +747,81 @@ impl IoRequestLoop {
             unsafe { events_list.set_len(rc_len) };
 
             for event in &events_list {
-                Poll::on_update_kqueue(*event);
+                Poll::on_update_kqueue(*event, handler);
             }
         }
     }
 }
 
-// ─── Request ──────────────────────────────────────────────────────────────────
+// ─── RequestHandler ───────────────────────────────────────────────────────────
 
+/// Owns what waits on the IO thread, and lives there.
 #[cfg(not(windows))]
-pub struct Request {
-    pub next: bun_threading::Link<Request>,
-    pub callback: for<'a> fn(&'a mut Request) -> Action<'a>,
-    pub scheduled: bool,
+pub trait RequestHandler: Default {
+    /// Called before each wait.
+    fn process_pending(&mut self, changelist: &mut Changelist);
+    /// `pollable` can be one that was unregistered: epoll cannot remove a closed fd whose file is still open.
+    fn on_update(&mut self, pollable: Pollable, result: sys::Result<()>);
 }
 
+/// kqueue: the changelist of the next `kevent`. epoll: each change is applied at once.
 #[cfg(not(windows))]
-impl Request {
-    #[inline]
-    pub fn new(callback: for<'a> fn(&'a mut Request) -> Action<'a>) -> Self {
-        Self {
-            next: bun_threading::Link::new(),
-            callback,
-            scheduled: false,
+pub struct Changelist {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    watcher_fd: Fd,
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    events_list: Vec<EventType>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Changelist {
+    /// One-shot.
+    pub fn register(&mut self, pollable: Pollable, poll: &mut Poll, fd: Fd) -> sys::Result<()> {
+        let flag = match pollable.tag {
+            PollableTag::ReadFile => Flags::PollReadable,
+            PollableTag::WriteFile => Flags::PollWritable,
+        };
+        poll.register_for_epoll(flag, pollable, self.watcher_fd, true, fd)
+    }
+
+    pub fn unregister(&mut self, poll: &mut Poll, fd: Fd) {
+        log!(
+            "close({}, registered={})",
+            fd,
+            poll.flags.contains(Flags::Registered)
+        );
+        // Unset if polling for readable/writable failed.
+        if poll.flags.contains(Flags::WasEverRegistered) {
+            poll.unregister_with_fd(self.watcher_fd, fd);
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+impl Changelist {
+    /// One-shot. A failure is reported to [`RequestHandler::on_update`].
+    pub fn register(&mut self, pollable: Pollable, poll: &mut Poll, fd: Fd) -> sys::Result<()> {
+        let action = match pollable.tag {
+            PollableTag::ReadFile => ApplyAction::Readable,
+            PollableTag::WriteFile => ApplyAction::Writable,
+        };
+        Poll::apply_kqueue(action, pollable.to_bits(), poll, fd, self.add_one());
+        Ok(())
+    }
+
+    pub fn unregister(&mut self, poll: &mut Poll, fd: Fd) {
+        if poll.flags.contains(Flags::PollReadable) || poll.flags.contains(Flags::PollWritable) {
+            // EV_DELETE matches by (ident, filter) alone, and a receipt for it (ENOENT, EBADF) has no receiver.
+            Poll::apply_kqueue(ApplyAction::Cancel, 0, poll, fd, self.add_one());
         }
     }
 
-    /// Atomic-ordered store of `callback`.
-    ///
-    /// The io thread reads `callback` after popping `self` from the MPSC
-    /// queue (which already provides acquire on `next`); this SeqCst fence
-    /// guarantees the callback write is visible to that read even when the
-    /// store happens on a different thread than the one that scheduled the
-    /// request. Rust has no `AtomicFnPtr`, so we lower to a volatile write
-    /// followed by a full fence (matches the existing pattern in
-    /// `webcore::blob::{read_file,write_file}`).
-    #[inline]
-    pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
-        // SAFETY: `callback` is a plain pointer-sized field on `self`;
-        // volatile write prevents the compiler from reordering or eliding it.
-        unsafe { core::ptr::write_volatile(&raw mut self.callback, cb) };
-        core::sync::atomic::fence(Ordering::SeqCst);
+    fn add_one(&mut self) -> &mut EventType {
+        self.events_list.push_mut(bun_core::ffi::zeroed())
     }
 }
 
-// ─── Intrusive io_request → parent recovery ──────────────────────────────────
-// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
-// (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
-// `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
-// and `io_request`).
-
-/// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
-/// byte offset once and provides the canonical container-of recovery used by
-/// every `fn(&mut Request) -> Action` io-loop trampoline.
-///
-/// Implement via [`intrusive_io_request!`].
-///
-/// # Safety
-/// `IO_REQUEST_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request
-/// field>)`. [`from_io_request`](IntrusiveIoRequest::from_io_request) casts
-/// through the offset; a mismatch is UB.
-#[cfg(not(windows))]
-pub unsafe trait IntrusiveIoRequest: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const IO_REQUEST_OFFSET: usize;
-
-    /// Recover `*mut Self` from a `*mut Request` pointing at `self.io_request`
-    /// — the single canonical `container_of` for every io-loop trampoline.
-    ///
-    /// # Safety
-    /// `req` must point to the [`Request`] field at `Self::IO_REQUEST_OFFSET`
-    /// inside a live `Self` allocation that was scheduled via that field, and
-    /// the pointer's provenance must cover the whole allocation.
-    #[inline(always)]
-    unsafe fn from_io_request(req: *mut Request) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
-    }
-}
-
-/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
-/// `io_request: `[`Request`] field. Brings
-/// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
-/// `fn(&mut Request) -> Action` trampolines.
-#[cfg(not(windows))]
-#[macro_export]
-macro_rules! intrusive_io_request {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveIoRequest for $ty {
-            const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
-/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
+/// For types that embed an
 /// intrusive `io_request: uv::fs_t` and recover the parent in
 /// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
 ///
@@ -1015,112 +860,45 @@ macro_rules! intrusive_uv_fs {
     };
 }
 
-// Intrusive MPSC queue keyed on the `next` field.
-//
-// `next` is stored as `AtomicPtr<Request>`; the non-atomic accessor
-// paths (`get_next`/`set_next`, used only by the batch iterator and the
-// debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops.
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
-#[cfg(not(windows))]
-unsafe impl bun_threading::Linked for Request {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
-
-// ─── Action ───────────────────────────────────────────────────────────────────
-
-#[cfg(not(windows))]
-pub enum Action<'a> {
-    Readable(FileAction<'a>),
-    Writable(FileAction<'a>),
-    Close(CloseAction<'a>),
-}
-
-#[cfg(not(windows))]
-pub struct FileAction<'a> {
-    pub fd: Fd,
-    pub poll: &'a mut Poll,
-    pub ctx: *mut (),
-    pub tag: PollableTag,
-    pub on_error: fn(*mut (), &sys::Error),
-}
-
-#[cfg(not(windows))]
-pub struct CloseAction<'a> {
-    pub fd: Fd,
-    pub poll: &'a mut Poll,
-    pub ctx: *mut (),
-    pub tag: PollableTag,
-    pub on_done: fn(*mut ()),
-}
-
 // ─── Pollable ─────────────────────────────────────────────────────────────────
 
-// Invariant: the repr must fit `bun.TaggedPointer.Tag` (the 15-bit tag packed
-// into `Pollable`'s u64 below) — keep `#[repr(u16)]` and values < 2^15.
 #[cfg(not(windows))]
-#[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PollableTag {
-    Empty = 0,
-    ReadFile,
-    WriteFile,
+    ReadFile = 1,
+    WriteFile = 2,
 }
 
-/// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
-/// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
-/// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
-/// packed addr:49 + tag:15 layout locally.
+/// What the kernel keeps for a registration, in `epoll_event.data.u64` / `kevent.udata`.
 #[cfg(not(windows))]
 #[derive(Clone, Copy)]
-struct Pollable {
-    value: u64,
+pub struct Pollable {
+    pub tag: PollableTag,
+    /// The low 30 bits are kept.
+    pub index: u32,
+    pub generation: u32,
 }
-
-#[cfg(not(windows))]
-const POLLABLE_ADDR_BITS: u64 = 49;
-#[cfg(not(windows))]
-const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
 #[cfg(not(windows))]
 impl Pollable {
-    fn init(t: PollableTag, p: *mut Poll) -> Pollable {
-        let addr = p as usize as u64;
-        debug_assert!(addr & !POLLABLE_ADDR_MASK == 0);
-        Pollable {
-            value: (addr & POLLABLE_ADDR_MASK) | ((t as u64) << POLLABLE_ADDR_BITS),
-        }
+    const TAG_BITS: u32 = 2;
+
+    /// `None` for the waker.
+    fn from_bits(bits: u64) -> Option<Pollable> {
+        Some(Pollable {
+            tag: match bits % (1 << Self::TAG_BITS) {
+                1 => PollableTag::ReadFile,
+                2 => PollableTag::WriteFile,
+                _ => return None,
+            },
+            index: bits as u32 >> Self::TAG_BITS,
+            generation: (bits >> u32::BITS) as u32,
+        })
     }
 
-    fn from(int: u64) -> Pollable {
-        Pollable { value: int }
-    }
-
-    fn poll(self) -> *mut Poll {
-        (self.value & POLLABLE_ADDR_MASK) as usize as *mut Poll
-    }
-
-    fn tag(self) -> PollableTag {
-        // Tag was written by `init` from a valid `PollableTag` discriminant.
-        match (self.value >> POLLABLE_ADDR_BITS) as u16 {
-            0 => PollableTag::Empty,
-            1 => PollableTag::ReadFile,
-            2 => PollableTag::WriteFile,
-            // Only `init` writes the tag bits, so any other value is memory
-            // corruption / a logic bug — trap rather than fabricate a
-            // discriminant.
-            n => unreachable!("invalid PollableTag {n}"),
-        }
-    }
-
-    fn ptr(self) -> u64 {
-        self.value
+    fn to_bits(self) -> u64 {
+        let low = self.index << Self::TAG_BITS | self.tag as u32;
+        u64::from(self.generation) << u32::BITS | u64::from(low)
     }
 }
 
@@ -1136,7 +914,7 @@ static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
 
 #[cfg(not(windows))]
 pub struct Poll {
-    pub flags: FlagsSet,
+    flags: FlagsSet,
     #[cfg(all(target_os = "macos", debug_assertions))]
     pub(crate) generation_number: GenerationNumberInt,
 }
@@ -1156,20 +934,8 @@ impl Default for Poll {
 pub type Tag = PollableTag;
 
 #[cfg(not(windows))]
-unsafe extern "Rust" {
-    /// Hot-path dispatch for `Pollable` owners. The concrete owners
-    /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
-    /// io (T2) only knows the embedded `*mut Poll` and the tag. The body is
-    /// `#[no_mangle]` in `bun_runtime::dispatch` and recovers the parent
-    /// struct via `container_of(io_poll)`.
-    /// Cold path — only Bun.write / Bun.file().text() reach this.
-    fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
-    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
-}
-
-#[cfg(not(windows))]
 #[derive(enumset::EnumSetType)]
-pub enum Flags {
+enum Flags {
     // What are we asking the event loop about?
     /// Poll for readable events
     PollReadable,
@@ -1192,13 +958,12 @@ pub enum Flags {
 }
 
 #[cfg(not(windows))]
-pub type FlagsSet = enumset::EnumSet<Flags>;
+type FlagsSet = enumset::EnumSet<Flags>;
 
 // A runtime parameter rather than a const generic: `adt_const_params`
 // is nightly-only and the body never uses ACTION in a type position — it just
 // `match`es on it.
-// Three call sites, each with a literal variant — trivially inlined; kqueue
-// registration is not hot enough for the lost monomorphization to matter.
+// kqueue registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ApplyAction {
@@ -1211,9 +976,9 @@ enum ApplyAction {
 impl Poll {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[inline]
-    pub(crate) fn apply_kqueue(
+    fn apply_kqueue(
         action: ApplyAction,
-        tag: PollableTag,
+        udata: u64,
         poll: &mut Poll,
         fd: Fd,
         kqueue_event: &mut KEvent,
@@ -1229,19 +994,14 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let owner = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
-        // A cancel carries no udata: its owner is finished (`on_done` runs right
-        // after), EV_DELETE matches by (ident, filter) alone, and any receipt for it
-        // (knote already fired → ENOENT, fd closed → EBADF) must land on the
-        // `PollableTag::Empty` early return, not on the stale owner.
-        let (filter, flags_, udata): (i16, u16, usize) = match action {
-            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag, owner),
-            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag, owner),
+        let (filter, flags_): (i16, u16) = match action {
+            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
+            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    (libc::EVFILT_READ, libc::EV_DELETE, 0)
+                    (libc::EVFILT_READ, libc::EV_DELETE)
                 } else if poll.flags.contains(Flags::PollWritable) {
-                    (libc::EVFILT_WRITE, libc::EV_DELETE, 0)
+                    (libc::EVFILT_WRITE, libc::EV_DELETE)
                 } else {
                     unreachable!()
                 }
@@ -1314,88 +1074,58 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub(crate) fn on_update_kqueue(event: KEvent) {
+    pub(crate) fn on_update_kqueue(event: KEvent, handler: &mut impl RequestHandler) {
         #[cfg(target_os = "macos")]
         if event.filter == libc::EVFILT_MACHPORT {
             return;
         }
 
-        let pollable = Pollable::from(event.udata as u64);
-        let tag = pollable.tag();
         // The waker (whose event only exists to unblock kevent() so the pending
-        // queue drains) and cancels are submitted with udata=0 → tag=.empty.
-        if tag == PollableTag::Empty {
+        // queue drains) and cancels are submitted with udata=0.
+        let Some(pollable) = Pollable::from_bits(event.udata as u64) else {
             return;
-        }
-        let poll = pollable.poll();
-        // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
-        // `extern "Rust"` defined in `bun_runtime::dispatch`. The
-        // container_of(io_poll) recovery happens there.
+        };
         // A changelist entry the kernel could not apply comes back with EV_ERROR
         // set (xnu ORs it into the action bits, FreeBSD replaces them) and the
         // errno in `data`.
-        if (event.flags & libc::EV_ERROR) != 0 {
+        let result = if (event.flags & libc::EV_ERROR) != 0 {
             log!("error({}) = {}", event.ident, event.data);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
-            unsafe {
-                __bun_io_pollable_on_io_error(
-                    tag,
-                    poll,
-                    // `event.data` is a kernel-supplied errno; do NOT transmute into the
-                    // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
-                    // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
-                    // raw integer via `from_code_int`.
-                    &sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
-                )
-            };
+            // `sys::Errno` may have no variant for it.
+            Err(sys::Error::from_code_int(
+                event.data as core::ffi::c_int,
+                sys::Tag::kevent,
+            ))
         } else {
             log!("ready({}) = {}", event.ident, event.data);
-            // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
-        }
+            Ok(())
+        };
+        handler.on_update(pollable, result);
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn on_update_epoll(
-        poll: core::ptr::NonNull<Poll>,
-        tag: PollableTag,
-        event: linux::epoll_event,
-    ) {
-        // ignore empty tags. This case should be unreachable in practice
-        if tag == PollableTag::Empty {
+    pub(crate) fn on_update_epoll(event: linux::epoll_event, handler: &mut impl RequestHandler) {
+        // None for the waker, which is edge-triggered: no need to read its counter.
+        let Some(pollable) = Pollable::from_bits(event.u64) else {
             return;
-        }
-        let poll = poll.as_ptr();
-        // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
-        // `extern "Rust"` defined in `bun_runtime::dispatch`. The
-        // container_of(io_poll) recovery happens there.
-        if event.events & linux::EPOLL_ERR != 0 {
+        };
+        let result = if event.events & linux::EPOLL_ERR != 0 {
             let errno = sys::get_errno(event.events as isize);
             log!("error() = {:?}", errno);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
-            unsafe {
-                __bun_io_pollable_on_io_error(
-                    tag,
-                    poll,
-                    &sys::Error::from_code(errno, sys::Tag::epoll_ctl),
-                )
-            };
+            Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl))
         } else {
             log!("ready()");
-            // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
-        }
+            Ok(())
+        };
+        handler.on_update(pollable, result);
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
     // arg. The `match` below preserves the exhaustiveness check.
-    pub(crate) fn register_for_epoll(
+    fn register_for_epoll(
         &mut self,
         flag: Flags,
-        tag: PollableTag,
+        pollable: Pollable,
         watcher_fd: Fd,
         one_shot: bool,
         fd: Fd,
@@ -1426,7 +1156,7 @@ impl Poll {
 
         let mut event = linux::epoll_event {
             events: flags,
-            u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
+            u64: pollable.to_bits(),
         };
 
         let op: i32 = if self.flags.contains(Flags::WasEverRegistered)

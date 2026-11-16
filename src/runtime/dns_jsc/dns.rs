@@ -325,12 +325,8 @@ mod lib_c {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
-        fn run(
-            this: &mut Self,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
+        fn run(this: &mut Self, _: &bun_jsc::Ticket) {
             this.backend.run();
-            Some(done)
         }
         fn then(
             this: Self,

@@ -5016,7 +5016,7 @@ impl Internal {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JSDOMFile__hasInstance / FileOpener / FileCloser
+// JSDOMFile__hasInstance / FileOpener
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
@@ -5034,7 +5034,7 @@ bun_jsc::jsc_host_abi! {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// FileOpener<T> / FileCloser<T>
+// FileOpener<T>
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO: move to bun_sys?
@@ -5059,7 +5059,7 @@ pub(crate) trait FileOpener: Sized {
         Retry::No
     }
 
-    fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
+    fn get_fd_by_opening(&mut self) -> Fd {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = self.pathlike().path().slice_z(&mut buf);
 
@@ -5094,171 +5094,19 @@ pub(crate) trait FileOpener: Sized {
             }
         }
 
-        callback(self, self.opened_fd());
+        self.opened_fd()
     }
 
-    fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
+    fn get_fd(&mut self) -> Fd {
         if self.opened_fd() != Fd::INVALID {
-            callback(self, self.opened_fd());
-            return;
+            return self.opened_fd();
         }
 
         if let PathOrFileDescriptor::Fd(fd) = self.pathlike() {
             self.set_opened_fd(fd);
-            callback(self, fd);
-            return;
+            return fd;
         }
 
-        self.get_fd_by_opening(callback);
+        self.get_fd_by_opening()
     }
 }
-
-#[cfg(not(windows))]
-pub(crate) use io_parking::IoParking;
-
-// TODO: move to bun_sys?
-/// # Safety
-/// `Self` is in a `Job`, which is not finished before `on_close_io_request` if `close_after_io` is true.
-#[cfg(not(windows))]
-pub(crate) unsafe trait FileCloser: bun_threading::IntrusiveWorkTask {
-    const IO_TAG: bun_io::Tag;
-
-    fn opened_fd(&self) -> Fd;
-    fn set_opened_fd(&mut self, fd: Fd);
-    fn close_after_io(&self) -> bool;
-    fn state(&self) -> &core::sync::atomic::AtomicU8;
-    fn io_request(&mut self) -> &mut bun_io::Request;
-    fn io_poll(&mut self) -> &mut bun_io::Poll;
-
-    /// Intrusive backref: Rust `offset_of!` cannot name
-    /// fields on a trait `Self`, so each concrete impl supplies its own
-    /// container_of recovery (no default body).
-    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
-
-    /// # Safety
-    /// `this` is the `ctx` of the action that `schedule_close` returned to the io thread.
-    unsafe fn on_io_request_closed(this: *mut Self) {
-        // SAFETY: fn and trait contract.
-        unsafe {
-            let flags = &mut (*this).io_poll().flags;
-            flags.remove(bun_io::Flags::WasEverRegistered);
-            *(*this).task_mut() = bun_jsc::WorkPoolTask {
-                node: Default::default(),
-                callback: Self::on_close_io_request,
-            };
-            bun_jsc::WorkPool::schedule(Self::field_of(this));
-        }
-    }
-
-    /// Intrusive backref: concrete impl supplies its own
-    /// container_of recovery (no default body).
-    ///
-    /// Stored in `WorkPoolTask::callback` (raw fn-pointer slot — safe `fn`
-    /// coerces). Never called directly; the impl guards its single
-    /// `container_of` deref locally, so a fn-level qualifier is redundant.
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
-
-    fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
-        if self.close_after_io() {
-            self.state().store(
-                ClosingState::Closing as u8,
-                core::sync::atomic::Ordering::SeqCst,
-            );
-            let io_request = self.io_request();
-            // The io thread reads `callback` after popping the request: a plain store would race.
-            io_request.store_callback_seq_cst(Self::schedule_close);
-            if !io_request.scheduled {
-                // SAFETY: trait contract. Not upheld: `self` is still borrowed when the io thread gets the request.
-                unsafe { bun_io::IoRequestLoop::schedule(io_request) };
-            }
-            return true;
-        }
-
-        if is_allowed_to_close_fd
-            && self.opened_fd() != Fd::INVALID
-            && self.opened_fd().stdio_tag().is_none()
-        {
-            use bun_sys::FdExt as _;
-            let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
-            self.set_opened_fd(Fd::INVALID);
-        }
-
-        false
-    }
-}
-
-/// Implements [`FileCloser`] for a task struct with the standard field set
-/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
-/// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
-/// The type must also carry `bun_threading::intrusive_work_task!` and
-/// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
-/// used by the two trampolines.
-#[cfg(not(windows))]
-macro_rules! impl_file_closer {
-    ($T:ident) => {
-        // SAFETY: `on_finish` finishes the job only if `close_after_io` is false.
-        unsafe impl crate::webcore::blob::FileCloser for $T {
-            const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
-            fn opened_fd(&self) -> ::bun_sys::Fd {
-                self.opened_fd
-            }
-            fn set_opened_fd(&mut self, fd: ::bun_sys::Fd) {
-                self.opened_fd = fd;
-            }
-            fn close_after_io(&self) -> bool {
-                self.close_after_io
-            }
-            fn state(&self) -> &::core::sync::atomic::AtomicU8 {
-                &self.state
-            }
-            fn io_request(&mut self) -> &mut ::bun_io::Request {
-                &mut self.io_request
-            }
-            fn io_poll(&mut self) -> &mut ::bun_io::Poll {
-                &mut self.io_poll
-            }
-
-            fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
-                use ::bun_io::IntrusiveIoRequest as _;
-                // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-                let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
-                fn on_done(ctx: *mut ()) {
-                    // SAFETY: ctx is `self as *mut Self` set below.
-                    unsafe {
-                        <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(ctx.cast())
-                    };
-                }
-                // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the
-                // live parent; the `fd` copy and the `io_poll` field borrow are the only
-                // borrows formed.
-                let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
-                ::bun_io::Action::Close(::bun_io::CloseAction {
-                    fd,
-                    poll,
-                    ctx: this.cast::<()>(),
-                    tag: <Self as crate::webcore::blob::FileCloser>::IO_TAG,
-                    on_done,
-                })
-            }
-
-            // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-            // the trait method cannot be marked `unsafe fn`, so the lint is
-            // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-            // in `on_io_request_closed` and is guaranteed live.
-            #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
-                use ::bun_threading::IntrusiveWorkTask as _;
-                // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-                // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
-                // recover parent.
-                let this = unsafe { $T::from_task_ptr(task) };
-                // SAFETY: `this` is the live parent (see above); scoped access.
-                unsafe { (*this).close_after_io = false };
-                // SAFETY: as above; exclusive borrow scoped to the call.
-                $T::update(unsafe { &mut *this });
-            }
-        }
-    };
-}
-#[cfg(not(windows))]
-pub(crate) use impl_file_closer;

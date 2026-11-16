@@ -129,7 +129,9 @@
     ],
     "unsafe impl Send": [
       "AsyncMkdirp<T>",
-      "CpSingleTask<IS_SHELL>",
+      "NewAsyncCpTask<IS_SHELL>"
+    ],
+    "unsafe impl Sync": [
       "NewAsyncCpTask<IS_SHELL>"
     ]
   },
@@ -181,17 +183,15 @@
       "WTFTimerHeap"
     ]
   },
-  "src/runtime/webcore/Blob.rs": {
-    "WorkPool::schedule*": 1
+  "src/runtime/webcore/blob/io_parking.rs": {
+    "Batch::from*": 2
   },
   "src/runtime/webcore/blob/read_file.rs": {
-    "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
       "ReadFile"
     ]
   },
   "src/runtime/webcore/blob/write_file.rs": {
-    "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
       "WriteFile"
     ]

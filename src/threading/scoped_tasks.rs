@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use crate::thread_pool::{Batch, CountedTask, Task};
 use crate::unbounded_queue::BatchIterator;
-use crate::{Link, Linked, UnboundedQueue, WaitGroup};
+use crate::{Link, UnboundedQueue, WaitGroup};
 
 pub trait TaskRunner<T>: Sync {
     /// Schedules `batch` on the thread pool.
@@ -29,13 +29,7 @@ struct Slot<T> {
     task: T,
 }
 
-// SAFETY: always the same field.
-unsafe impl<T> Linked for Slot<T> {
-    unsafe fn link(item: *mut Self) -> *const Link<Self> {
-        // SAFETY: fn contract.
-        unsafe { &raw const (*item).next }
-    }
-}
+bun_core::intrusive_field!([T] Slot<T>, next: Link<Slot<T>>);
 
 struct Scope<'a, T, R> {
     runner: &'a R,

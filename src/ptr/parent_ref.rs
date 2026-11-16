@@ -42,19 +42,6 @@ pub struct ParentRef<T: ?Sized, P = crate::Shared> {
     _provenance: core::marker::PhantomData<P>,
 }
 
-impl<T: ?Sized> ParentRef<T, crate::Shared> {
-    /// Construct from a shared borrow of the parent. Provenance is
-    /// `SharedReadOnly`: writes and deallocation through the stored pointer
-    /// are UB — use the `Mut` constructors for write access.
-    #[inline]
-    pub fn new(parent: &T) -> Self {
-        Self {
-            ptr: NonNull::from(parent),
-            _provenance: core::marker::PhantomData,
-        }
-    }
-}
-
 impl<T: ?Sized> ParentRef<T, crate::Mut> {
     #[inline]
     pub const fn as_mut_ptr(self) -> *mut T {
@@ -87,19 +74,6 @@ impl<T: ?Sized> ParentRef<T, crate::Mut> {
             ptr: unsafe { NonNull::new_unchecked(p) },
             _provenance: core::marker::PhantomData,
         }
-    }
-
-    /// Convenience: `Some(from_raw_mut(p))` if `p` is non-null, else `None`.
-    ///
-    /// # Safety
-    /// If `p` is non-null, the [`from_raw_mut`](Self::from_raw_mut) contract
-    /// applies.
-    #[inline]
-    pub unsafe fn from_nullable_mut(p: *mut T) -> Option<Self> {
-        NonNull::new(p).map(|nn| Self {
-            ptr: nn,
-            _provenance: core::marker::PhantomData,
-        })
     }
 
     /// Explicit *unsafe* exclusive borrow, for the handful of sites that

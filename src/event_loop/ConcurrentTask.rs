@@ -9,7 +9,7 @@
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
 use bun_threading::UnboundedQueue;
-use bun_threading::unbounded_queue::{Link, Linked};
+use bun_threading::unbounded_queue::Link;
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
 // Several callers import this file
@@ -334,18 +334,7 @@ const _: () = assert!(
     "ConcurrentTask = Task + next ptr + auto_delete (padded)"
 );
 
-// SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
-// field; `UnboundedQueue` only calls it with a valid, non-null, aligned `item`.
-// The blanket `impl<T: Linked> Node for T` supplies the four accessors as
-// straight `AtomicPtr` load/store — no bit-masking, no preservation load.
-unsafe impl Linked for ConcurrentTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const Link<Self> {
-        // SAFETY: caller (UnboundedQueue) guarantees `item` is valid; we only
-        // form a raw pointer to the field, no intermediate `&`/`&mut`.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(ConcurrentTask, next: Link<ConcurrentTask>);
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
 impl ConcurrentTask {

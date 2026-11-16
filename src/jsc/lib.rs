@@ -1233,7 +1233,7 @@ pub use self::event_loop::{
     GarbageCollectionController, MiniEventLoop, PosixSignalTask, Stopped, Task, WorkPool,
     WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, OwnedJobContext};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]

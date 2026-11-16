@@ -10,6 +10,7 @@ use core::ffi::{c_char, c_int, c_uint};
 #[cfg(not(windows))]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::OnceLock;
 
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
@@ -17,12 +18,14 @@ use bun_core::{String as BunString, ZBox, ZStr};
 use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
+use bun_jsc::job::{SharedCompletion, SharedCompletionCount};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
     StringJsc as _,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_ptr::{AliasableBox, RefPtr, ThreadSafeRefCount};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::OwnedQueue;
@@ -2055,13 +2058,9 @@ mod _async_tasks {
         type OffThread = Self;
         type Js = AsyncFSJs;
 
-        fn run(
-            this: &mut Self,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
+        fn run(this: &mut Self, _: &bun_jsc::Ticket) {
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
-            Some(done)
         }
 
         fn then(this: Self, js: AsyncFSJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
@@ -2161,6 +2160,8 @@ mod _async_tasks {
     // (cp.rs), called directly below — no trait indirection.
     pub(crate) type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
 
+    #[derive(bun_ptr::RefCounted)]
+    #[ref_count(destroy = Self::post_completion)]
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
@@ -2170,32 +2171,20 @@ mod _async_tasks {
         /// by it: the loop may free `self` once the completion is queued). For
         /// a JS loop this is the ticket its VM waits for — the arguments may
         /// point into JS buffers and the promise lives on the JS heap.
-        pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
+        pub(crate) poster: Option<bun_jsc::ConcurrentPoster>,
         pub task: WorkPoolTask,
-        /// Written from any workpool thread (first `finish_concurrently` caller wins via
-        /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
-        /// `Cell` so concurrent subtasks can hold `&Self` and `.set()` without aliased
-        /// `&mut`. Cross-thread soundness is provided by the `has_result` CAS (single
-        /// writer) + `subtask_count` AcqRel fence (happens-before for the JS-thread
-        /// read), not by `Cell` itself — `Cell` is `repr(transparent)` over
-        /// `UnsafeCell` and `set()` is exactly the prior `*ptr = val` open-coded.
-        pub(crate) result: core::cell::Cell<Maybe<ret::Cp>>,
+        /// The first error given to `finish_concurrently`.
+        pending_err: OnceLock<sys::Error>,
         /// Inactive for the shell's `cp`, which the shell keeps alive.
         _keep_alive: JsKeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
         /// `fs.cp`: the context whose script asked. The shell's `cp`: a step of its script.
         pub(crate) context: bun_event_loop::ContextId,
-        pub(crate) has_result: AtomicBool,
         /// What this has written where the executable holds something, for the
         /// notes of `run_from_js_thread`. A copy that fails has written some of it.
         written: bun_threading::Guarded<Vec<Box<[u8]>>>,
-        /// Number of in-flight references to `this`. Starts at 1 for the main
-        /// directory-scan task; incremented for each `SingleTask` spawned. Every
-        /// holder calls `onSubtaskDone` exactly once when finished (regardless of
-        /// success or error). `runFromJSThread` — which destroys `this` — is only
-        /// enqueued once the count reaches zero, so subtasks still running on the
-        /// thread pool never dereference a freed parent.
-        pub(crate) subtask_count: AtomicUsize,
+        /// One for the directory scan and one for each `CpSingleTask`.
+        ref_count: ThreadSafeRefCount,
         /// `Some` iff `IS_SHELL`, until the copy is reported to it.
         pub(crate) shelltask: Option<Box<ShellCpTask>>,
     }
@@ -2203,48 +2192,39 @@ mod _async_tasks {
     // SAFETY: pool threads do not use `promise`, `evtloop`, `_keep_alive` or `tracker`, call only
     // `cp_on_copy` on `shelltask`, and post the task to its loop, whose thread drops it.
     unsafe impl<const IS_SHELL: bool> Send for NewAsyncCpTask<IS_SHELL> {}
+    // SAFETY: as above. The holders of a ref read `args`, which is not written while they do, and
+    // use `pending_err`, `written` and `cp_on_copy`, which synchronize their writes.
+    unsafe impl<const IS_SHELL: bool> Sync for NewAsyncCpTask<IS_SHELL> {}
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
 
     impl<const IS_SHELL: bool> OwnedTask for NewAsyncCpTask<IS_SHELL> {
         fn run(self: Box<Self>) {
-            Self::cp_async(&mut NodeFS::default(), bun_core::heap::into_raw(self));
+            let this = RefPtr::from(AliasableBox::from(self));
+            Self::cp_async(&mut NodeFS::default(), &this);
         }
     }
 
     /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
     /// When clonefile cannot be used, this task is started once per file.
     pub(crate) struct CpSingleTask<const IS_SHELL: bool> {
-        /// BACKREF — the parent `NewAsyncCpTask` is `Box::leak`'d and outlives every
-        /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
-        /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
-        /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
-        /// original write provenance for the `Box` that `on_subtask_done` reclaims.
-        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
+        pub(crate) cp_task: RefPtr<NewAsyncCpTask<IS_SHELL>>,
         /// `src` and `dest`, each followed by one unit for the NUL that `run` writes.
         path_buf: Box<[OSPathChar]>,
         src_len: usize,
         pub task: WorkPoolTask,
     }
 
-    // SAFETY: `subtask_count` keeps `cp_task` alive. `run` reads its `args`, and otherwise
-    // only calls methods that synchronize their writes.
-    unsafe impl<const IS_SHELL: bool> Send for CpSingleTask<IS_SHELL> {}
-
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
 
     impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         pub(crate) fn create(
-            parent: *mut NewAsyncCpTask<IS_SHELL>,
+            parent: &RefPtr<NewAsyncCpTask<IS_SHELL>>,
             path_buf: Box<[OSPathChar]>,
             src_len: usize,
         ) {
             WorkPool::schedule_new(CpSingleTask {
-                // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
-                // preserves the mutable provenance for `on_subtask_done`.
-                // SAFETY: `parent` is the live `Box::leak`'d task (write provenance), never null.
-                cp_task: unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) }
-                    .expect("cp parent"),
+                cp_task: parent.clone(),
                 path_buf,
                 src_len,
                 task: WorkPoolTask::default(),
@@ -2254,14 +2234,7 @@ mod _async_tasks {
 
     impl<const IS_SHELL: bool> OwnedTask for CpSingleTask<IS_SHELL> {
         fn run(mut self: Box<Self>) {
-            // `ParentRef` preserves the `Box::leak` mutable provenance so
-            // `on_subtask_done` can reclaim the `Box` from `as_mut_ptr()`
-            // once the refcount reaches zero.
-            let cp_task = self.cp_task;
-            // Shared borrow only — other workpool threads (and the directory-scan
-            // thread) may hold `&Self` to the same parent concurrently; `ParentRef`
-            // invariant: the parent outlives all subtasks (subtask_count refcount).
-            let parent = cp_task.get();
+            let parent = &self.cp_task;
 
             // TODO: error strings on node_fs will die
             let mut node_fs = NodeFS::default();
@@ -2296,12 +2269,6 @@ mod _async_tasks {
                     }
                 }
             }
-
-            // `self: Box<Self>` drops here (frees the owned `path_buf`).
-            drop(self);
-            // Must be the very last use of the parent: when the count reaches
-            // zero, runFromJSThread is enqueued and may destroy the parent.
-            NewAsyncCpTask::on_subtask_done(cp_task.as_mut_ptr());
         }
     }
 
@@ -2416,13 +2383,10 @@ mod _async_tasks {
                 promise,
                 context,
                 args: cp_args,
-                has_result: AtomicBool::new(false),
                 written: bun_threading::Guarded::new(Vec::new()),
-                // Sentinel — overwritten by `finish_concurrently` (gated by the
-                // `has_result` CAS) before any read on the JS thread.
-                result: core::cell::Cell::new(Ok(())),
+                pending_err: OnceLock::new(),
                 evtloop,
-                poster: core::cell::Cell::new(Some(poster)),
+                poster: Some(poster),
                 task: WorkPoolTask::default(),
                 _keep_alive: if IS_SHELL {
                     JsKeepAlive::default()
@@ -2430,57 +2394,22 @@ mod _async_tasks {
                     JsKeepAlive::active()
                 },
                 tracker,
-                subtask_count: AtomicUsize::new(1),
+                ref_count: ThreadSafeRefCount::init(),
                 shelltask,
             });
         }
 
         /// May be called from any thread (the subtasks).
-        /// Records the result (first caller wins). Does NOT schedule destruction —
-        /// `runFromJSThread` is only enqueued from `onSubtaskDone` once every
-        /// in-flight subtask has dropped its reference, so that subtasks still
-        /// running on the thread pool don't dereference a freed parent.
+        /// Records the error (first caller wins).
         fn finish_concurrently(&self, result: Maybe<ret::Cp>) {
-            if self
-                .has_result
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_err()
-            {
-                return;
+            if let Err(err) = result {
+                let _ = self.pending_err.set(err);
             }
-            // The CAS above guarantees exactly one thread reaches this write; the
-            // `subtask_count` AcqRel fence in `on_subtask_done` publishes it to the
-            // JS-thread reader. (`sys::Error::path` is already `Box<[u8]>`, so
-            // move-assign suffices.)
-            self.result.set(result);
         }
 
-        /// Called exactly once by the main directory-scan task and once by each
-        /// `SingleTask` when it is done touching `this`. The last caller (count
-        /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
-        /// and destroys `this`.
-        ///
-        /// Takes the pointer that `run` leaked, because the last caller reclaims the `Box`.
-        fn on_subtask_done(this: *mut Self) {
-            // SAFETY: `this` is a live Box-leaked task; shared access only here —
-            // other workpool threads may concurrently hold `&Self` until the
-            // refcount reaches zero below.
-            let this_ref = unsafe { &*this };
-            let old_count = this_ref.subtask_count.fetch_sub(1, Ordering::AcqRel);
-            debug_assert!(old_count > 0);
-            if old_count != 1 {
-                return;
-            }
-
-            // SAFETY: the count reached zero, so nothing else uses the box that `run` leaked.
-            let this = unsafe { bun_core::heap::take(this) };
-
-            // All subtasks have finished. If none reported an error, the copy succeeded.
-            if !this.has_result.load(Ordering::Relaxed) {
-                this.has_result.store(true, Ordering::Relaxed);
-                this.result.set(Ok(()));
-            }
-
+        /// The last ref was released: enqueues `run_from_js_thread`.
+        fn post_completion(last: AliasableBox<Self>) {
+            let mut this = last.into_box();
             let poster = this
                 .poster
                 .take()
@@ -2501,14 +2430,12 @@ mod _async_tasks {
             for path in self.written.get_mut().drain(..) {
                 note_opened_for_write(&path, true);
             }
+            let result = self.pending_err.take().map_or(Ok(()), Err);
             if IS_SHELL {
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
                 let src = core::mem::take(&mut self.args.src);
                 let dest = core::mem::take(&mut self.args.dest);
                 let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
-                // SAFETY: `on_subtask_done` posted this with the poster of `shelltask`.
+                // SAFETY: `post_completion` posted this with the poster of `shelltask`.
                 unsafe { shelltask.cp_on_finish(src, dest, result) };
                 return Ok(());
             }
@@ -2520,10 +2447,10 @@ mod _async_tasks {
             }
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
-            let success = (*self.result.get_mut()).is_ok();
+            let success = result.is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get().to_local(global_object);
-            let result = match core::mem::replace(self.result.get_mut(), Ok(())) {
+            let result = match result {
                 Err(err) => match err.to_js_with_async_stack(global_object, &promise) {
                     Ok(v) => v,
                     Err(e) => return promise.reject(global_object, Err(e)),
@@ -2548,19 +2475,7 @@ mod _async_tasks {
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
         /// calls "copy_single_file_sync") will be dispatched as a separate task.
-        pub(crate) fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
-            // The directory-scan task holds one reference in `subtask_count`
-            // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
-            // (which destroys `this`) is only enqueued once this reference and
-            // every spawned SingleTask's reference have been dropped.
-            // `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
-            // once every reference (including this one) has been dropped.
-            let _done = scopeguard::guard(this, Self::on_subtask_done);
-            // SAFETY: same pointer as above; valid for the duration of this fn.
-            // Shared borrow only — once `cp_async_directory` spawns `CpSingleTask`s,
-            // other workpool threads concurrently hold `&Self` to this same allocation.
-            let this = unsafe { &**_done };
-
+        pub(crate) fn cp_async(nodefs: &mut NodeFS, this: &RefPtr<Self>) {
             let args = &this.args;
             if let Some(error) =
                 creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
@@ -2697,9 +2612,7 @@ mod _async_tasks {
             let dest_len = PathInt::try_from(dest.len()).expect("int cast");
             if let Err(err) = Self::cp_async_directory(
                 nodefs,
-                // Pass the raw `*mut Self` (Box::leak provenance) so spawned
-                // `CpSingleTask`s store a pointer that `on_subtask_done` can reclaim the `Box` from.
-                *_done,
+                this,
                 &mut src_buf,
                 src_len,
                 &mut dest_buf,
@@ -2713,7 +2626,7 @@ mod _async_tasks {
         /// overflows the pool thread's stack on a deep tree.
         fn cp_async_directory(
             nodefs: &mut NodeFS,
-            this: *mut Self,
+            this: &RefPtr<Self>,
             src_buf: &mut OSPathBuffer,
             mut src_dir_len: PathInt,
             dest_buf: &mut OSPathBuffer,
@@ -2740,19 +2653,13 @@ mod _async_tasks {
         /// in `src`, and queues its subdirectories on `pending`.
         fn cp_async_one_directory(
             nodefs: &mut NodeFS,
-            this: *mut Self,
+            this: &RefPtr<Self>,
             src_buf: &mut OSPathBuffer,
             src_dir_len: PathInt,
             dest_buf: &mut OSPathBuffer,
             dest_dir_len: PathInt,
             pending: &mut CpPendingDirs,
         ) -> Maybe<()> {
-            // SAFETY: `this` is the live Box-leaked task. Shared borrow only — spawned
-            // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
-            // The raw `*mut` is threaded through (instead of `&Self`) so that the
-            // `cp_task` pointers stored in subtasks retain mutable provenance for
-            // the `Box` that `on_subtask_done` reclaims.
-            let this_ref = unsafe { &*this };
             let (src_cap, dest_cap) = (src_buf.len(), dest_buf.len());
             let src = OSPathSliceZ::nul_terminate(src_buf, src_dir_len as usize);
             let dest = OSPathSliceZ::nul_terminate(dest_buf, dest_dir_len as usize);
@@ -2777,7 +2684,7 @@ mod _async_tasks {
                         _ => {}
                     }
                 } else {
-                    this_ref.record_written_folder(dest);
+                    this.record_written_folder(dest);
                     return Ok(());
                 }
             }
@@ -2806,7 +2713,7 @@ mod _async_tasks {
             let normdest: &OSPathSliceZ = dest;
 
             nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false)?;
-            this_ref.on_copy(src, normdest);
+            this.on_copy(src, normdest);
 
             let mut iterator = DirIterator::iterate(fd);
             loop {
@@ -2838,7 +2745,6 @@ mod _async_tasks {
                         pending.push(src_dir_len, dest_dir_len, cname);
                     }
                     _ => {
-                        this_ref.subtask_count.fetch_add(1, Ordering::Relaxed);
                         let sd = src_dir_len as usize;
                         let dd = dest_dir_len as usize;
                         let total = sd + 1 + cname.len() + 1 + dd + 1 + cname.len() + 1;
@@ -2869,12 +2775,10 @@ mod _async_tasks {
     // ──────────────────────────────────────────────────────────────────────────
 
     /// `readdir(.., { recursive: true })`: a scan fanned out over pool subtasks
-    /// that share this state (it is the job's off-thread part, so its address
-    /// is stable while any subtask runs).
+    /// that share this state.
     pub(crate) struct AsyncReaddirRecursiveTask {
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
-        pub(crate) subtask_count: AtomicUsize,
 
         /// Set once `pending_err` is. From then on `enqueue` schedules nothing
         /// and a subtask that starts skips its directory, so the scan settles as
@@ -2901,36 +2805,32 @@ mod _async_tasks {
     }
 
     struct ReaddirState {
-        /// Finished by whichever subtask ends the scan.
-        done: Option<bun_jsc::Completion<AsyncReaddirRecursiveTask>>,
         /// Opened before the first subtask and closed by the last.
         root_dir: Option<sys::File>,
         pending_err: Option<sys::Error>,
         result_list: ResultListEntryValue,
     }
 
-    impl bun_jsc::JobContext for AsyncReaddirRecursiveTask {
+    impl bun_jsc::OwnedJobContext for AsyncReaddirRecursiveTask {
         type OffThread = Self;
         type Js = AsyncFSJs;
+        type Shared = SharedCompletionCount;
 
-        fn run(
-            this: &mut Self,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
+        fn run(mut job: bun_jsc::Completion<Self>) {
+            let this = &mut *job;
             match NodeFS::readdir_open(FD::cwd(), &this.root_path) {
                 Ok(fd) => this.root_fd = fd,
                 Err(err) => {
                     this.state.get_mut().pending_err =
                         Some(err.with_path(this.root_path.as_bytes()));
-                    return Some(done);
+                    return job.finish();
                 }
             }
-            let state = this.state.get_mut();
-            state.done = Some(done);
-            state.root_dir = Some(sys::File::from_fd(this.root_fd));
+            this.state.get_mut().root_dir = Some(sys::File::from_fd(this.root_fd));
+            let this = SharedCompletion::new(job);
             let mut buf = bun_paths::path_buffer_pool::get();
-            this.perform_work(&this.root_path, &mut buf, true);
-            (this.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1).then(|| this.finish_scan())
+            Self::perform_work(&this, &this.root_path, &mut buf, true);
+            Self::on_subtask_done(this);
         }
 
         fn then(
@@ -2975,20 +2875,10 @@ mod _async_tasks {
         pub value: ResultListEntryValue,
     }
 
-    // SAFETY: all four accessors route through the same `next` field; the atomic
-    // variants reinterpret it in-place as `AtomicPtr<Self>` (identical layout/
-    // alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
-    // live, properly aligned `*mut ResultListEntry` it previously had pushed.
-    unsafe impl bun_threading::Linked for ResultListEntry {
-        #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
-        }
-    }
+    bun_core::intrusive_field!(ResultListEntry, next: bun_threading::Link<ResultListEntry>);
 
     pub(super) struct ReaddirSubtask {
-        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
+        pub readdir_task: SharedCompletion<AsyncReaddirRecursiveTask>,
         pub basename: ZBox,
         pub task: WorkPoolTask,
     }
@@ -2999,26 +2889,18 @@ mod _async_tasks {
         fn run(self: Box<Self>) {
             let mut buf = bun_paths::path_buffer_pool::get();
             let scan = self.readdir_task;
-            scan.perform_work(&self.basename, &mut buf, false);
-            // No `&self` here: another thread can free `scan` after this. `AcqRel` publishes every subtask's results to the last.
-            if scan.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-                scan.finish_scan().finish();
-            }
+            AsyncReaddirRecursiveTask::perform_work(&scan, &self.basename, &mut buf, false);
+            AsyncReaddirRecursiveTask::on_subtask_done(scan);
         }
     }
 
     impl AsyncReaddirRecursiveTask {
-        pub(crate) fn enqueue(&self, basename: &ZStr) {
-            if self.has_error.load(Ordering::Relaxed) {
+        pub(crate) fn enqueue(this: &SharedCompletion<Self>, basename: &ZStr) {
+            if this.has_error.load(Ordering::Relaxed) {
                 return;
             }
-            // The fetch_add is load-bearing (refcounts the in-flight subtask). It
-            // MUST run in release builds; only the `> 0` invariant check is debug-only.
-            let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
-            debug_assert!(prev > 0);
             WorkPool::schedule_new(ReaddirSubtask {
-                // `self` lives in its heap `Job`, and the `subtask_count` just bumped keeps it alive.
-                readdir_task: bun_ptr::ParentRef::new(self),
+                readdir_task: this.clone(),
                 basename: ZBox::from_bytes(basename.as_bytes()),
                 task: WorkPoolTask::default(),
             });
@@ -3048,14 +2930,12 @@ mod _async_tasks {
                 AsyncReaddirRecursiveTask {
                     tag,
                     encoding,
-                    subtask_count: AtomicUsize::new(1),
                     has_error: AtomicBool::new(false),
                     root_path,
                     result_list_count: AtomicUsize::new(0),
                     result_list_queue: OwnedQueue::new(),
                     root_fd: FD::INVALID,
                     state: bun_threading::Guarded::new(ReaddirState {
-                        done: None,
                         root_dir: None,
                         pending_err: None,
                         result_list,
@@ -3069,8 +2949,13 @@ mod _async_tasks {
             value
         }
 
-        fn perform_work(&self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
-            if self.has_error.load(Ordering::Relaxed) {
+        fn perform_work(
+            this: &SharedCompletion<Self>,
+            basename: &ZStr,
+            buf: &mut PathBuffer,
+            is_root: bool,
+        ) {
+            if this.has_error.load(Ordering::Relaxed) {
                 return;
             }
             macro_rules! impl_tag {
@@ -3086,7 +2971,7 @@ mod _async_tasks {
                         Vec::with_capacity(8192usize / core::mem::size_of::<$T>());
                     let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
                         buf,
-                        self,
+                        this,
                         basename,
                         &mut entries,
                         is_root,
@@ -3094,25 +2979,25 @@ mod _async_tasks {
                     match res {
                         Err(err) => {
                             {
-                                let mut state = self.state.lock();
+                                let mut state = this.state.lock();
                                 if state.pending_err.is_none() {
                                     let err_path: &[u8] = if !err.path.is_empty() {
                                         &err.path[..]
                                     } else {
-                                        self.root_path.as_bytes()
+                                        this.root_path.as_bytes()
                                     };
                                     state.pending_err = Some(err.with_path(err_path));
                                 }
                             }
-                            self.has_error.store(true, Ordering::Relaxed);
+                            this.has_error.store(true, Ordering::Relaxed);
                         }
                         Ok(()) => {
-                            self.write_results::<$T>(&mut entries);
+                            this.write_results::<$T>(&mut entries);
                         }
                     }
                 }};
             }
-            match self.tag {
+            match this.tag {
                 ret::ReaddirTag::Files => impl_tag!(BunString, Files),
                 ret::ReaddirTag::WithFileTypes => impl_tag!(Dirent, WithFileTypes),
                 ret::ReaddirTag::Buffers => impl_tag!(Box<[u8]>, Buffers),
@@ -3137,13 +3022,20 @@ mod _async_tasks {
             }
         }
 
-        /// For the subtask that takes `subtask_count` to zero.
-        fn finish_scan(&self) -> bun_jsc::Completion<Self> {
-            let mut state = self.state.lock();
+        /// The last subtask ends the scan.
+        fn on_subtask_done(this: SharedCompletion<Self>) {
+            if let Some(mut job) = SharedCompletion::into_inner(this) {
+                job.finish_scan();
+                job.finish();
+            }
+        }
+
+        fn finish_scan(&mut self) {
+            let state = self.state.get_mut();
             state.root_dir = None;
             let success = state.pending_err.is_none();
             if success {
-                let count = self.result_list_count.load(Ordering::Relaxed);
+                let count = *self.result_list_count.get_mut();
                 state.result_list.reserve_exact(count);
             }
             for mut entry in self.result_list_queue.pop_batch() {
@@ -3151,7 +3043,6 @@ mod _async_tasks {
                     state.result_list.append_from(&mut entry.value);
                 }
             }
-            state.done.take().expect("scan finished twice")
         }
     }
 
@@ -6895,7 +6786,7 @@ impl NodeFS {
 
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
-        async_task: &AsyncReaddirRecursiveTask,
+        async_task: &SharedCompletion<AsyncReaddirRecursiveTask>,
         basename: &ZStr,
         entries: &mut Vec<T>,
         is_root: bool,
@@ -6974,7 +6865,7 @@ impl NodeFS {
                         // usage of openat, but then we risk leaving too many
                         // file descriptors open.
                         if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                        async_task.enqueue(name_to_copy_z);
+                        AsyncReaddirRecursiveTask::enqueue(async_task, name_to_copy_z);
                     }
                     // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
                     // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
@@ -6986,7 +6877,7 @@ impl NodeFS {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
                                 if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
-                                    async_task.enqueue(name_to_copy_z);
+                                    AsyncReaddirRecursiveTask::enqueue(async_task, name_to_copy_z);
                                 }
                             }
                             Err(_) => {} // Skip entries we can't stat

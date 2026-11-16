@@ -37,10 +37,10 @@ pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
-pub use unbounded_queue::{Link, Linked, OwnedQueue, UnboundedQueue};
+pub use unbounded_queue::{Link, OwnedQueue, UnboundedQueue};
 pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;
-pub use work_pool::{IntrusiveWorkTask, OwnedTask, OwnedTaskIn, WorkPool};
+pub use work_pool::{OwnedTask, OwnedTaskIn, WorkPool};
 
 /// Returns a non-zero OS thread id.
 /// Used by `Mutex` debug deadlock detection and `Condition` (Windows).

@@ -1304,9 +1304,8 @@ impl Drop for PendingTask {
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, _: &bun_jsc::Ticket) {
         this.run();
-        Some(done)
     }
     fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
         PipelineTask::then(this, js, cx)

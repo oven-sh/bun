@@ -30,9 +30,9 @@ pub type SizeType = u64;
 pub const MAX_SIZE: SizeType = (1u64 << 52) - 1;
 
 #[cfg(not(windows))]
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub enum ClosingState {
+    #[default]
     Running,
     Closing,
 }

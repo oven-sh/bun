@@ -34,7 +34,7 @@ use bun_io::KeepAlive;
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    Completion, JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, LoopKind, Posted,
+    JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, LoopKind, Posted, Ticket,
     VmHandle,
 };
 use bun_ptr::{AliasableBox, CellExt, VecCellExt};
@@ -1310,9 +1310,8 @@ impl JobContext for UvWorkJob {
     type OffThread = WorkRef;
     type Js = ();
 
-    fn run(req: &mut WorkRef, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(req: &mut WorkRef, _: &Ticket) {
         req.run();
-        Some(done)
     }
 
     fn then(req: WorkRef, _: (), cx: &JsThread<'_>) -> JsResult<()> {

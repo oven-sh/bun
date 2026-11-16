@@ -1911,10 +1911,7 @@ pub(crate) mod JSZstd {
         type OffThread = Self;
         type Js = jsc::JSPromiseStrong;
 
-        fn run(
-            this: &mut Self,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
+        fn run(this: &mut Self, _: &bun_jsc::Ticket) {
             let input = &this.buffer[..];
 
             this.result = if this.is_compress {
@@ -1922,7 +1919,6 @@ pub(crate) mod JSZstd {
             } else {
                 decompress_to_box(input)
             };
-            Some(done)
         }
 
         fn then(

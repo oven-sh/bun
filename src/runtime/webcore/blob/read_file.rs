@@ -1,7 +1,5 @@
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-#[cfg(not(windows))]
-use core::sync::atomic::{AtomicU8, Ordering};
 
 use scopeguard::ScopeGuard;
 
@@ -10,19 +8,21 @@ use crate::Error;
 #[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
 #[cfg(not(windows))]
+use crate::webcore::blob::io_parking::{IoParking, IoState, Parkable};
+#[cfg(not(windows))]
 use crate::webcore::blob::store::File as FileStore;
 use crate::webcore::blob::{Blob, MAX_SIZE, SizeType, Store};
 #[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser, FileOpener};
+use crate::webcore::blob::{ClosingState, FileOpener};
 #[cfg(not(windows))]
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::String as BunString;
 #[cfg(not(windows))]
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
+#[cfg(not(windows))]
+use bun_io as io;
 #[cfg(windows)]
 use bun_io::IntrusiveUvFs as _;
-#[cfg(not(windows))]
-use bun_io::{self as io, FileAction};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError};
 use bun_ptr::RefPtr;
 #[cfg(windows)]
@@ -33,16 +33,11 @@ use bun_sys::Stat;
 use bun_sys::windows::libuv;
 use bun_sys::{self, Fd};
 #[cfg(not(windows))]
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use bun_threading::{Link, OwnedQueue, OwnedTaskIn, WorkPoolTask};
 
-#[cfg(not(windows))]
-bun_output::declare_scope!(WriteFile, hidden);
+#[cfg(windows)]
 bun_output::declare_scope!(ReadFile, hidden);
 
-#[cfg(not(windows))]
-macro_rules! bloblog {
-    ($($t:tt)*) => { bun_output::scoped_log!(WriteFile, $($t)*) };
-}
 #[cfg(windows)]
 macro_rules! log {
     ($($t:tt)*) => { bun_output::scoped_log!(ReadFile, $($t)*) };
@@ -161,21 +156,21 @@ fn path_for_error(store: &Store) -> BunString {
         .map_or(BunString::EMPTY, BunString::clone_utf8)
 }
 
-/// The completion token a `ReadFile` keeps across its async I/O.
+/// The owner of a `ReadFile` that has left the JS thread.
 #[cfg(not(windows))]
 pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
 #[cfg(not(windows))]
-impl bun_jsc::JobContext for ReadFile {
+impl bun_jsc::OwnedJobContext for ReadFile {
     const CANCELLABLE: bool = true;
     type OffThread = Self;
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
     /// back to a VM that is no longer running script and is released unrun.
     type Js = PendingReadFileCompletion;
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        // Starts the read; finishes from the io loop via the token.
-        this.run(done);
-        None
+    type Shared = IoParking;
+    fn run(mut this: ReadFileTask) {
+        let fd = this.get_fd();
+        Self::run_async_with_fd(this, fd);
     }
     fn then(
         this: Self,
@@ -187,14 +182,8 @@ impl bun_jsc::JobContext for ReadFile {
     /// A read parked on a pipe/tty that never becomes readable is the one
     /// state this job can be stuck in; end that wait (the read fails with
     /// ECANCELED through the usual close path).
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract; `io_parking` is atomic, and a `true` means no
-        // other thread touches `io_request` until it is queued again here.
-        unsafe {
-            if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&raw mut (*this).io_request);
-            }
-        }
+    fn cancel(parking: &IoParking) {
+        parking.cancel();
     }
 }
 
@@ -230,21 +219,17 @@ pub(crate) struct ReadFile {
     pub task: WorkPoolTask,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
-    pub(crate) io_task: Option<ReadFileTask>,
-    pub(crate) io_poll: io::Poll,
-    pub(crate) io_request: io::Request,
-    pub(crate) io_parking: super::IoParking,
+    next: Link<ReadFile>,
+    io: IoState,
     pub(crate) could_block: bool,
-    pub(crate) close_after_io: bool,
-    pub(crate) state: AtomicU8, // ClosingState
 }
 
 #[cfg(not(windows))]
 bun_threading::intrusive_work_task!(ReadFile, task);
 #[cfg(not(windows))]
-bun_io::intrusive_io_request!(ReadFile, io_request);
+bun_core::intrusive_field!(ReadFile, next: Link<ReadFile>);
 
-// The default methods on the FileOpener/FileCloser traits provide the bodies.
+// The default methods on the FileOpener trait provide the bodies.
 #[cfg(not(windows))]
 impl FileOpener for ReadFile {
     fn opened_fd(&self) -> Fd {
@@ -265,18 +250,35 @@ impl FileOpener for ReadFile {
 }
 
 #[cfg(not(windows))]
-crate::webcore::blob::impl_file_closer!(ReadFile);
+impl Parkable for ReadFile {
+    const IO_TAG: io::Tag = io::Tag::ReadFile;
+    const SYSCALL: bun_sys::Tag = bun_sys::Tag::read;
+
+    fn pending() -> &'static OwnedQueue<ReadFileTask> {
+        static PENDING: OwnedQueue<ReadFileTask> = OwnedQueue::new();
+        &PENDING
+    }
+    fn io_mut(&mut self) -> &mut IoState {
+        &mut self.io
+    }
+    fn is_allowed_to_close(&self) -> bool {
+        self.file().path().is_some()
+    }
+}
+
+#[cfg(not(windows))]
+impl OwnedTaskIn<ReadFileTask> for ReadFile {
+    fn run(this: ReadFileTask) {
+        if this.io.state == ClosingState::Closing {
+            Self::on_finish(this);
+        } else {
+            Self::do_read_loop(this);
+        }
+    }
+}
 
 #[cfg(not(windows))]
 impl ReadFile {
-    pub(crate) fn update(&mut self) {
-        if self.state.load(Ordering::Relaxed) == ClosingState::Closing as u8 {
-            self.on_finish();
-        } else {
-            self.do_read_loop();
-        }
-    }
-
     pub(crate) fn create(blob: &Blob) -> ReadFile {
         let store = blob.store().expect("infallible: store present").clone();
         ReadFile {
@@ -289,145 +291,17 @@ impl ReadFile {
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::do_read_loop_task,
-            },
+            task: WorkPoolTask::default(),
             system_error: None,
             errno: None,
-            io_task: None,
-            io_poll: io::Poll::default(),
-            io_request: io::Request {
-                next: bun_threading::Link::new(),
-                callback: Self::on_request_readable,
-                scheduled: false,
-            },
-            io_parking: super::IoParking::new(),
+            next: Link::new(),
+            io: IoState::default(),
             could_block: false,
-            close_after_io: false,
-            state: AtomicU8::new(ClosingState::Running as u8),
         }
     }
 
     fn file(&self) -> &FileStore {
         self.store.data.as_file()
-    }
-
-    pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
-
-    /// # Safety
-    /// `this` is live, and this is the io thread.
-    pub(crate) unsafe fn on_ready(this: *mut Self) {
-        bloblog!("ReadFile.onReady");
-        // SAFETY: fn contract.
-        unsafe {
-            if (*this).io_parking.fire() {
-                Self::schedule_read_loop(this);
-            }
-        }
-    }
-
-    /// # Safety
-    /// As [`on_ready`](Self::on_ready).
-    pub(crate) unsafe fn on_io_error(this: *mut Self, err: &bun_sys::Error) {
-        bloblog!("ReadFile.onIOError");
-        // SAFETY: fn contract. After `fire` no other thread uses these fields.
-        unsafe {
-            if (*this).io_parking.fire() {
-                (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                (*this).system_error = Some(err.to_system_error().into());
-                Self::schedule_read_loop(this);
-            }
-        }
-    }
-
-    /// # Safety
-    /// `fire` gave `this` to this thread.
-    unsafe fn schedule_read_loop(this: *mut Self) {
-        // SAFETY: fn contract. The `Job` that holds `this` is freed after `io_task` finishes.
-        unsafe {
-            (*this).task = WorkPoolTask {
-                node: Default::default(),
-                callback: Self::do_read_loop_task,
-            };
-            // On kqueue platforms we use one-shot mode, so:
-            // - we don't need to unregister
-            // - we don't need to delete from kqueue
-            if bun_core::Environment::IS_KQUEUE {
-                // unless pending IO has been scheduled in-between.
-                (*this).close_after_io = (*this).io_request.scheduled;
-            }
-            WorkPool::schedule(&raw mut (*this).task);
-        }
-    }
-
-    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
-    fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
-        // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { Self::on_io_error(ctx.cast(), err) }
-    }
-
-    pub(crate) fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {
-        bloblog!("ReadFile.onRequestReadable");
-        request.scheduled = false;
-        // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
-        let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(
-                ReadFile,
-                io_request,
-                std::ptr::from_mut::<io::Request>(request)
-            ))
-        };
-        if !this.io_parking.arm() {
-            this.fail_cancelled();
-            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
-        }
-        io::Action::Readable(FileAction {
-            on_error: Self::on_io_error_thunk,
-            ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
-            fd: this.opened_fd,
-            poll: &mut this.io_poll,
-            tag: ReadFile::IO_TAG,
-        })
-    }
-
-    /// The wait was cancelled (io thread: while parked — the close path that
-    /// follows finishes the job; pool thread: before it could park — the
-    /// caller finishes it): fail with ECANCELED.
-    fn fail_cancelled(&mut self) {
-        self.fail_wait(&bun_sys::Error::from_code(
-            bun_sys::E::ECANCELED,
-            bun_sys::Tag::read,
-        ));
-    }
-
-    /// Records `err` when the wait on the io loop couldn't start. The caller finishes the job.
-    fn fail_wait(&mut self, err: &bun_sys::Error) {
-        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        self.system_error = Some(err.to_system_error().into());
-        self.state
-            .store(ClosingState::Closing as u8, Ordering::SeqCst);
-    }
-
-    /// Pool thread: park on the io loop until the fd is readable (or finish
-    /// now if the VM cancelled the job meanwhile). The caller returns without
-    /// touching `self` again: from here the io thread has it.
-    pub(crate) fn wait_for_readable(&mut self) {
-        bloblog!("ReadFile.waitForReadable");
-        if let Err(err) = io::IoRequestLoop::ensure_init() {
-            self.fail_wait(&err);
-            return self.on_finish();
-        }
-        if !self.io_parking.park() {
-            self.fail_cancelled();
-            return self.on_finish();
-        }
-        self.close_after_io = true;
-        self.io_request
-            .store_callback_seq_cst(Self::on_request_readable);
-        // SAFETY: the `Job` that holds `self` is freed after `io_task` finishes, and `park` gave the request to this thread.
-        // Not upheld: `self` is still borrowed when the io thread gets the request.
-        unsafe { io::IoRequestLoop::schedule(&raw mut self.io_request) };
     }
 
     /// Never touches `self.buffer`; the caller moves it out for the duration.
@@ -495,39 +369,6 @@ impl ReadFile {
         }))
     }
 
-    pub(crate) fn run(&mut self, task: ReadFileTask) {
-        self.run_async(task);
-    }
-
-    fn run_async(&mut self, task: ReadFileTask) {
-        self.io_task = Some(task);
-
-        self.get_fd(Self::run_async_with_fd);
-    }
-
-    pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file().path().is_some()
-    }
-
-    fn on_finish(&mut self) {
-        let close_after_io = self.close_after_io;
-        self.size = self.buffer.len() as SizeType;
-
-        {
-            if self.do_close(self.is_allowed_to_close()) {
-                bloblog!("ReadFile.onFinish() = deferred");
-                // we have to wait for the close to finish
-                return;
-            }
-        }
-        if !close_after_io {
-            if let Some(io_task) = self.io_task.take() {
-                bloblog!("ReadFile.onFinish() = immediately");
-                io_task.finish();
-            }
-        }
-    }
-
     fn resolve_size_and_last_modified(&mut self, fd: Fd) {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
@@ -572,41 +413,41 @@ impl ReadFile {
         }
     }
 
-    fn run_async_with_fd(&mut self, fd: Fd) {
-        if self.errno.is_some() {
-            self.on_finish();
+    fn run_async_with_fd(mut this: ReadFileTask, fd: Fd) {
+        if this.errno.is_some() {
+            Self::on_finish(this);
             return;
         }
 
-        self.resolve_size_and_last_modified(fd);
-        if self.errno.is_some() {
-            return self.on_finish();
+        this.resolve_size_and_last_modified(fd);
+        if this.errno.is_some() {
+            return Self::on_finish(this);
         }
 
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
-        if self.size == 0 && bun_sys::is_regular_file(self.cached_mode) {
-            self.buffer = Vec::new();
+        if this.size == 0 && bun_sys::is_regular_file(this.cached_mode) {
+            this.buffer = Vec::new();
 
-            self.on_finish();
+            Self::on_finish(this);
             return;
         }
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        if !self.could_block || (self.size > 0 && self.size != MAX_SIZE) {
-            let want = (self.size as usize).saturating_add(16);
+        if !this.could_block || (this.size > 0 && this.size != MAX_SIZE) {
+            let want = (this.size as usize).saturating_add(16);
             let mut v = Vec::<u8>::new();
             if v.try_reserve_exact(want).is_err() {
-                self.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
-                self.system_error = Some(
+                this.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
+                this.system_error = Some(
                     bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
                         .to_system_error()
                         .into(),
                 );
-                self.on_finish();
+                Self::on_finish(this);
                 return;
             }
-            self.buffer = v;
+            this.buffer = v;
         }
 
         // If it's not a regular file, it might be something
@@ -620,44 +461,35 @@ impl ReadFile {
         //
         // If we immediately call read(), it will block until stdin is
         // readable.
-        if self.could_block {
+        if this.could_block {
             if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
-                self.wait_for_readable();
+                Self::wait_for_io(this);
                 return;
             }
         }
 
-        self.do_read_loop();
+        Self::do_read_loop(this);
     }
 
-    fn do_read_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
-        // recover parent.
-        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
-
-        this.update();
-    }
-
-    fn do_read_loop(&mut self) {
+    fn do_read_loop(mut this: ReadFileTask) {
         // we hold a 64 KB stack buffer incase the amount of data to
         // be read is greater than the reported amount
         //
         // 64 KB is large, but since this is running in a thread
         // with it's own stack, it should have sufficient space.
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
-        let mut buffer = core::mem::take(&mut self.buffer);
-        while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let max = (self.max_length as usize).saturating_sub(buffer.len());
+        let mut buffer = core::mem::take(&mut this.buffer);
+        while this.io.state == ClosingState::Running {
+            let max = (this.max_length as usize).saturating_sub(buffer.len());
 
-            if max != 0 && self.errno.is_none() && !self.read_eof {
+            if max != 0 && this.errno.is_none() && !this.read_eof {
                 let mut retry = false;
                 let continue_reading = if buffer.capacity() - buffer.len() >= stack_buffer.len() {
-                    append_with(&mut buffer, max, |spare| self.do_read(spare, &mut retry))
+                    append_with(&mut buffer, max, |spare| this.do_read(spare, &mut retry))
                 } else {
                     let len = stack_buffer.len().min(max);
                     let mut read = BorrowedBuf::from(&mut stack_buffer[..len]);
-                    let continue_reading = self.do_read(read.unfilled(), &mut retry);
+                    let continue_reading = this.do_read(read.unfilled(), &mut retry);
                     if buffer.capacity() == 0 {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
@@ -675,7 +507,7 @@ impl ReadFile {
                 // - If they DID NOT set a max_length, then it will
                 //   be Blob.max_size which is an impossibly large
                 //   amount to read.
-                if !self.read_eof && buffer.len() >= self.max_length as usize {
+                if !this.read_eof && buffer.len() >= this.max_length as usize {
                     break;
                 }
 
@@ -696,24 +528,24 @@ impl ReadFile {
                 // If we immediately call read(), it will block until stdin is
                 // readable.
                 if retry
-                    || (self.could_block
+                    || (this.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
-                        && !self.read_eof)
+                        && !this.read_eof)
                 {
-                    if self.could_block
+                    if this.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
-                        && !self.read_eof
+                        && !this.read_eof
                     {
-                        match bun_core::is_readable(self.opened_fd) {
+                        match bun_core::is_readable(this.opened_fd) {
                             bun_core::Pollable::NotReady => {}
                             bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
                         }
                     }
-                    self.read_eof = false;
-                    self.buffer = buffer;
-                    self.wait_for_readable();
+                    this.read_eof = false;
+                    this.buffer = buffer;
+                    Self::wait_for_io(this);
 
                     return;
                 }
@@ -725,17 +557,17 @@ impl ReadFile {
             // -- We are done reading.
             break;
         }
-        self.buffer = buffer;
+        this.buffer = buffer;
 
-        if self.system_error.is_some() {
-            self.buffer = Vec::new(); // clearAndFree
+        if this.system_error.is_some() {
+            this.buffer = Vec::new(); // clearAndFree
         }
 
         // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
-        if self.buffer.len() + 16_000 < self.buffer.capacity() {
-            self.buffer.shrink_to_fit();
+        if this.buffer.len() + 16_000 < this.buffer.capacity() {
+            this.buffer.shrink_to_fit();
         }
-        self.on_finish();
+        Self::on_finish(this);
     }
 }
 

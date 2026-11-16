@@ -8,8 +8,8 @@ use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use bun_jsc::bindgen::{JsLocal, JsPayload, JsScope, JsWrapper, StrongWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArrayBuffer, Completion, ErrorCode, JSGlobalObject, JSValue, Job, JobContext, JsError,
-    JsResult, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, ErrorCode, JSGlobalObject, JSValue, Job, JobContext, JsError, JsResult, JsThread,
+    PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg, Ticket,
 };
 
 // ─── type defs ────────────────────────────────────────────────────────────
@@ -192,13 +192,12 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
     /// The handle needs its stream back, and the callbacks carry their own context.
     const OUTLIVES_SCRIPT: bool = true;
 
-    fn run(write: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
-        if done.ticket().script_allowed() {
+    fn run(write: &mut Self, ticket: &Ticket) {
+        if ticket.script_allowed() {
             let (input, out) = write.buffers.slices(&write.stream.input_copy);
             let mut out = BorrowedBuf::from(out);
             write.stream.context.do_work(input, out.unfilled());
         }
-        Some(done)
     }
 
     fn then(write: Self, handle: StrongWrapper<T>, cx: &JsThread<'_>) -> JsResult<()> {

@@ -162,7 +162,7 @@ async function followRedirectsWithConnect(url, init, connect, opts) {
   let { method, body, headers, limit, redirectError, hopError, lookupError } = opts;
   const { signal } = init;
   method = typeof method === "string" ? method.toUpperCase() : "GET";
-  for (let hops = 0; ; ) {
+  for (let hops = 0; ;) {
     let pin;
     try {
       pin = await applyConnect(url, connect, signal);

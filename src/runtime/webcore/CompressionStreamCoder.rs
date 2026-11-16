@@ -16,7 +16,7 @@
 //! again once the consumer has room; in between, the coder keeps the chunk's
 //! unconsumed input ([`Pending`]).
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 
 use bun_core::EncodedSlice;
 use bun_core::vec::{BorrowedCursor, append_with};
@@ -732,10 +732,11 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
 
 unsafe extern "C" {
     /// JS-thread completion in `JSCompressionStreamShared.cpp`. The cell owns `coder` again.
+    #[allow(improper_ctypes)]
     fn Bun__CompressionStream__deliverAsync(
         global: &JSGlobalObject,
         stream_cell: JSValue,
-        coder: *mut c_void,
+        coder: Box<CompressionStreamCoder>,
         out: *const u8,
         out_len: usize,
         more: bool,
@@ -782,7 +783,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
             Bun__CompressionStream__deliverAsync(
                 global,
                 stream.get(),
-                bun_core::heap::into_raw(this.coder).cast(),
+                this.coder,
                 out.as_ptr(),
                 out.len(),
                 this.more,

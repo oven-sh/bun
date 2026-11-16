@@ -1837,7 +1837,7 @@ fn dispatch_server_name(
     if !tls.has_handlers() {
         return core::ptr::null_mut();
     }
-    // No `Handlers::enter`/`exit` scope here: that protocol tracks the
+    // No `Scope` here: that protocol tracks the
     // accepted-socket callback lifecycle, and running it from inside the
     // handshake corrupts `active_connections` for every subsequent accept.
     let handlers = tls.get_handlers();

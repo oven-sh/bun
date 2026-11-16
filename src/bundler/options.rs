@@ -411,9 +411,13 @@ impl LoaderExt for Loader {
 // static VmLoaderVTable instance (move-in pass).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Opaque erased blob handle. SAFETY: erased jsc::WebCore::Blob; bundler only
-/// stores/drops via vtable, never dereferences.
-pub type OpaqueBlob = *mut ();
+/// The `Blob` that a `blob:` URL names.
+pub trait ResolvedBlob {
+    fn loader(&self) -> Option<Loader>;
+    fn store_path(&self) -> Option<&[u8]>;
+    fn needs_to_read_file(&self) -> bool;
+    fn shared_view(&self) -> &[u8];
+}
 
 pub use crate::{VmLoaderCtx, VmLoaderCtxKind};
 
@@ -572,7 +576,7 @@ pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
     virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
-    blob_to_deinit: &mut Option<OpaqueBlob>,
+    blob_to_use: &'a mut Option<Box<dyn ResolvedBlob>>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
     let (normalized_file_path_from_specifier, specifier, query) =
@@ -615,23 +619,23 @@ pub fn get_loader_and_virtual_source<'a>(
 
     if jsc_vm.is_blob_url(specifier) {
         if let Some(blob) = jsc_vm.resolve_blob(&specifier[b"blob:".len()..]) {
-            *blob_to_deinit = Some(blob);
-            loader = jsc_vm.blob_loader(blob);
+            let blob: &'a dyn ResolvedBlob = &**blob_to_use.insert(blob);
+            loader = blob.loader();
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = jsc_vm.blob_store_path(blob) {
+            if let Some(filename) = blob.store_path() {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
-                if jsc_vm.blob_needs_read_file(blob) {
+                if blob.needs_to_read_file() {
                     path = current_path;
                 }
             }
 
-            if !jsc_vm.blob_needs_read_file(blob) {
+            if !blob.needs_to_read_file() {
                 virtual_source = Some(virtual_source_to_use.insert(
-                    bun_ast::Source::init_path_string(path.text, jsc_vm.blob_shared_view(blob)),
+                    bun_ast::Source::init_path_string(path.text, blob.shared_view()),
                 ));
             }
         } else {

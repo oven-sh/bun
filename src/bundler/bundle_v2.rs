@@ -787,6 +787,7 @@ pub mod bv2_impl {
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
             use bun_core::String as BunString;
+            use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
             use bun_resolver::fs::PathResolverExt as _;
             use core::mem::transmute;
 
@@ -1174,6 +1175,7 @@ pub mod bv2_impl {
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
+            bun_core::intrusive_field!(['a] Resolve<'a>, task: AnyTaskWithExtraContext);
             impl bun_event_loop::BoxedTask for Resolve<'static> {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
@@ -1342,6 +1344,7 @@ pub mod bv2_impl {
                     plugins.expect("plugins").match_on_load(self);
                 }
             }
+            bun_core::intrusive_field!(['a] Load<'a>, task: AnyTaskWithExtraContext);
             impl bun_event_loop::BoxedTask for Load<'static> {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
                 /// As `Resolve::release_unrun`.
@@ -3637,24 +3640,16 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // The pool's callback takes the box back.
-            let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
+            let task = Box::new(ServerComponentParseTask {
                 data,
                 ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 source: task_source,
-                // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..Default::default()
-            }));
+            });
 
             self.increment_scan_counter();
 
-            // SAFETY: `task` is the box just allocated; sole reference here.
-            self.graph
-                .pool()
-                .worker_pool()
-                .schedule(bun_threading::thread_pool::Batch::from(unsafe {
-                    core::ptr::addr_of_mut!((*task).task)
-                }));
+            self.graph.pool().worker_pool().schedule(task.into_batch());
 
             Ok(u32::try_from(source_index).expect("int cast"))
         }
@@ -4172,7 +4167,6 @@ pub mod bv2_impl {
                 unsafe { waiter.as_ref() }.answer_load(load.value);
                 return;
             }
-            let load = bun_core::heap::into_raw(load);
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
@@ -4180,7 +4174,11 @@ pub mod bv2_impl {
             match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     // SAFETY: `repr(transparent)`, and the pass cannot finish before it has run.
-                    let answered = unsafe { bun_core::heap::take(load.cast::<LoadAnswered>()) };
+                    let answered = unsafe {
+                        core::mem::transmute::<Box<jsc_api::JSBundler::Load>, Box<LoadAnswered>>(
+                            load,
+                        )
+                    };
                     let poster = self
                         .js_poster
                         .as_ref()
@@ -4188,13 +4186,9 @@ pub mod bv2_impl {
                     poster.post_boxed(answered);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `task` is the field at that offset; `on_load_mini` takes the box back.
+                    // SAFETY: the bundle is running the loop.
                     unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
-                            load,
-                            on_load_mini,
-                            core::mem::offset_of!(jsc_api::JSBundler::Load, task),
-                        );
+                        mini.enqueue_boxed(load, |load, this| BundleV2::on_load(*load, this));
                     }
                 }
             }
@@ -4206,13 +4200,15 @@ pub mod bv2_impl {
                 unsafe { waiter.as_ref() }.answer_resolve(resolve.value);
                 return;
             }
-            let resolve = bun_core::heap::into_raw(resolve);
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     // SAFETY: as in `on_load_async`.
-                    let answered =
-                        unsafe { bun_core::heap::take(resolve.cast::<ResolveAnswered>()) };
+                    let answered = unsafe {
+                        core::mem::transmute::<Box<jsc_api::JSBundler::Resolve>, Box<ResolveAnswered>>(
+                            resolve,
+                        )
+                    };
                     let poster = self
                         .js_poster
                         .as_ref()
@@ -4220,31 +4216,15 @@ pub mod bv2_impl {
                     poster.post_boxed(answered);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `task` is the field at that offset; `on_resolve_mini` takes the box back.
+                    // SAFETY: as in `on_load_async`.
                     unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
-                            resolve,
-                            on_resolve_mini,
-                            core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
-                        );
+                        mini.enqueue_boxed(resolve, |resolve, this| {
+                            BundleV2::on_resolve(*resolve, this)
+                        });
                     }
                 }
             }
         }
-    }
-
-    fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `load` is the box passed to
-        // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
-        // mini loop's `tick` supplies as ParentContext.
-        let (load, this) = unsafe { (bun_core::heap::take(load), &mut *this) };
-        BundleV2::on_load(*load, this);
-    }
-
-    fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
-        // SAFETY: see `on_load_mini`.
-        let (resolve, this) = unsafe { (bun_core::heap::take(resolve), &mut *this) };
-        BundleV2::on_resolve(*resolve, this);
     }
 
     impl<'a> BundleV2<'a> {

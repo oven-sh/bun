@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
-    self as jsc, AutoFlush, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
+    self as jsc, AutoFlush, AutoFlusher, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
 };
 use bun_boringssl as BoringSSL;
@@ -125,7 +125,7 @@ pub struct PostgresSQLConnection {
 
     pub(crate) flags: Cell<ConnectionFlags>,
     timers: ConnectionTimers,
-    auto_flush_registered: Cell<bool>,
+    auto_flusher: AutoFlusher,
 
     /// Interned notification channel names; see `channel_name_js`.
     channel_names: JsCell<Vec<InternedChannel>>,
@@ -252,13 +252,24 @@ impl TimedConnection for PostgresSQLConnection {
     }
 }
 
-impl AutoFlush for PostgresSQLConnection {
+bun_core::intrusive_field!(PostgresSQLConnection, auto_flusher: AutoFlusher);
+
+// SAFETY: refcounted on the heap.
+unsafe impl AutoFlush for PostgresSQLConnection {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        let this = unsafe { RefPtr::init_ref(this) };
+        // With backpressure, onWritable drains.
+        if !this.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
+            this.drain_internal();
+        }
+        this.can_flush()
+    }
+}
+
+impl PostgresSQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-
-    fn auto_flush_registered(&self) -> &Cell<bool> {
-        &self.auto_flush_registered
     }
 
     fn can_flush(&self) -> bool {
@@ -267,19 +278,13 @@ impl AutoFlush for PostgresSQLConnection {
             && self.write_buffer.get().len() > 0
     }
 
-    fn on_auto_flush(&self) -> bool {
-        let _guard = self.ref_guard();
-        // With backpressure, onWritable drains.
-        if !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
-            self.drain_internal();
+    /// What one turn of JS queued is written in one flush, at the end of the turn.
+    pub(crate) fn register_auto_flusher(&self) {
+        if !self.auto_flusher.is_registered() && self.can_flush() {
+            AutoFlusher::register(self, self.vm());
         }
-        let again = self.can_flush();
-        self.auto_flush_registered.set(again);
-        again
     }
-}
 
-impl PostgresSQLConnection {
     /// `on_handshake` sends the StartupMessage.
     pub(crate) fn setup_tls(&self) {
         let started = start_tls(
@@ -527,7 +532,7 @@ impl PostgresSQLConnection {
     }
 
     fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         let _entered = self.event_loop().enter_scope();
         self.poll_ref.unref(self.vm_ctx());
         fail(self);
@@ -1043,7 +1048,7 @@ fn open(
             EventLoopTimerTag::PostgresSQLConnectionTimeout,
             EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
         ),
-        auto_flush_registered: Cell::new(false),
+        auto_flusher: AutoFlusher::default(),
         channel_names: JsCell::new(Vec::new()),
         copy_out: JsCell::new(Vec::new()),
     });
@@ -1226,7 +1231,7 @@ impl PostgresSQLConnection {
         } else {
             self.disconnect();
         }
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
@@ -1270,7 +1275,7 @@ impl PostgresSQLConnection {
 
     pub(crate) fn disconnect(&self) {
         self.timers.stop();
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         if self.status.get() == Status::Connected {
             self.status.set(Status::Disconnected);
             self.close_socket();

@@ -1232,7 +1232,7 @@ impl Thread {
         CURRENT.with(|c| c.get())
     }
 
-    pub fn push_idle_task(&self, task: *mut Task) {
+    pub(crate) fn push_idle_task(&self, task: *mut Task) {
         let node_ptr = Task::node_of(NonNull::new(task).expect("non-null task"));
         let list = node::List {
             head: node_ptr,

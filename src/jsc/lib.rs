@@ -427,6 +427,9 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "AutoFlusher.rs"]
+pub mod auto_flusher;
+pub use self::auto_flusher::{AutoFlush, AutoFlusher};
 #[path = "BytecodeOrderRecorder.rs"]
 pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]

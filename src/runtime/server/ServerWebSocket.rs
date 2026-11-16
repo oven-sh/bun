@@ -38,6 +38,18 @@ pub(crate) struct ServerWebSocket {
     signal: Cell<Option<PendingAbortSignal>>,
 }
 
+/// A socket's place in the server's count of open ones. Dropping it may run the server's idle pass.
+#[must_use]
+struct Counted(Option<super::AnyServer>);
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        if let Some(server) = self.0 {
+            server.on_websocket_closed();
+        }
+    }
+}
+
 // We pack the per-socket data into this struct below:
 // ssl:1, closed:1, ws_package:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
@@ -573,6 +585,15 @@ impl ServerWebSocket {
         }
     }
 
+    /// `None` if it was closed already.
+    fn mark_closed(&self) -> Option<Counted> {
+        if self.is_closed() {
+            return None;
+        }
+        self.update_flags(|f| f.set_closed(true));
+        Some(Counted(self.handler().server))
+    }
+
     /// R-2 (noalias re-entrancy): `&self`, NOT `&mut self`. `ws.cork(...)`
     /// re-enters JS which can `ws.close()` / `ws.send()` on this same socket
     /// via the JS wrapper, flipping `flags.closed`. All state lives
@@ -586,7 +607,6 @@ impl ServerWebSocket {
 
         let handler = self.handler();
         let vm = handler.vm();
-        let server = handler.server;
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
         let on_error = handler.on_error;
@@ -610,27 +630,15 @@ impl ServerWebSocket {
             let err_value = global_object.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 
-            let mut closed_here = false;
-            if !self.flags.get().closed() {
-                self.update_flags(|f| f.set_closed(true));
+            let counted = self.mark_closed();
+            if counted.is_some() {
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
-                // (`close()` re-enters `on_close`, which skips its own
-                // accounting because the closed flag is already set.)
                 self.websocket().close();
-                closed_here = true;
             }
 
-            let handled =
-                handler.run_error_callback(on_error, global_object, this_value, err_value);
-            if closed_here {
-                if let Some(server) = server {
-                    // May run the idle pass; no `&Handler` borrow is live here.
-                    server.on_websocket_closed();
-                }
-            }
-            return handled;
+            return handler.run_error_callback(on_error, global_object, this_value, err_value);
         }
         Ok(())
     }
@@ -821,22 +829,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
-        // Copy the erased server handle out now: the guard below runs after
-        // every `handler` borrow has expired, and `on_websocket_closed` may
-        // form `&mut NewServer` (which owns the handler storage) to run the
-        // idle pass when this was the last live socket.
-        let server = handler.server;
-        let was_closed = self.is_closed();
-        self.update_flags(|f| f.set_closed(true));
-        // Whoever set the closed flag owns the decrement; close()/terminate()
-        // and on_open's error path each decrement themselves when they flip it.
-        scopeguard::defer! {
-            if !was_closed {
-                if let Some(server) = server {
-                    server.on_websocket_closed();
-                }
-            }
-        }
+        let _counted = self.mark_closed();
 
         let was_not_empty = self.this_value.get().is_not_empty();
         let cached_this = self.js_value().unwrap_or(JSValue::UNDEFINED);
@@ -1081,16 +1074,8 @@ impl ServerWebSocket {
             return Ok(());
         }
 
-        // Copy the server backref BEFORE end(): on_close re-enters and the
-        // user's close handler may call stop(true), which clears handler.server.
-        let server = self.handler().server;
-        self.update_flags(|f| f.set_closed(true));
+        let _counted = self.mark_closed();
         self.websocket().end(code, reason);
-        // on_close re-entered with was_closed=true so it skipped the
-        // accounting; balance the count here.
-        if let Some(server) = server {
-            server.on_websocket_closed();
-        }
         Ok(())
     }
 
@@ -1098,19 +1083,8 @@ impl ServerWebSocket {
     pub(crate) fn terminate(&self, _: &mut JsScope<'_>) {
         bun_output::scoped_log!(WebSocketServer, "terminate()");
 
-        if self.is_closed() {
-            return;
-        }
-
-        // Copy the server backref BEFORE close(): on_close re-enters and the
-        // user's close handler may call stop(true), which clears handler.server.
-        let server = self.handler().server;
-        self.update_flags(|f| f.set_closed(true));
-        self.websocket().close();
-        // on_close re-entered with was_closed=true so it skipped the
-        // accounting; balance the count here.
-        if let Some(server) = server {
-            server.on_websocket_closed();
+        if let Some(_counted) = self.mark_closed() {
+            self.websocket().close();
         }
     }
 
@@ -1344,10 +1318,7 @@ impl WsPackageSocket {
     fn on_close(&self, code: i32, message: &[u8]) -> JsResult<()> {
         let socket = &self.0;
         let handler = socket.handler();
-        // `on_websocket_closed` may run the idle pass, which clears `handler.server`.
-        let server = handler.server;
-        let was_closed = socket.is_closed();
-        socket.update_flags(|f| f.set_closed(true));
+        let _counted = socket.mark_closed();
 
         let result = if handler.global_object().has_exception() {
             Ok(())
@@ -1362,10 +1333,6 @@ impl WsPackageSocket {
 
         if socket.this_value.get().is_not_empty() {
             socket.this_value.with_mut(|v| v.downgrade());
-        }
-        // If `terminate()` already set the flag, it does its own accounting.
-        if !was_closed && let Some(server) = server {
-            server.on_websocket_closed();
         }
         result
     }

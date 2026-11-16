@@ -5,8 +5,8 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
-    AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _, run_callback,
+    AutoFlush, AutoFlusher, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef,
+    JsResult, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -48,7 +48,7 @@ pub struct JSMySQLConnection {
 
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
-    auto_flush_registered: Cell<bool>,
+    auto_flusher: AutoFlusher,
     timers: ConnectionTimers,
 }
 
@@ -56,12 +56,6 @@ bun_event_loop::impl_timer_owner!(JSMySQLConnection;
     from_timer_ptr => timers.timer,
     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 );
-
-impl Drop for JSMySQLConnection {
-    fn drop(&mut self) {
-        self.unregister_auto_flusher();
-    }
-}
 
 impl JSMySQLConnection {
     pub fn server_identity(
@@ -134,31 +128,33 @@ impl TimedConnection for JSMySQLConnection {
     }
 }
 
-impl AutoFlush for JSMySQLConnection {
-    fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
-    }
+bun_core::intrusive_field!(JSMySQLConnection, auto_flusher: AutoFlusher);
 
-    fn auto_flush_registered(&self) -> &Cell<bool> {
-        &self.auto_flush_registered
-    }
-
-    fn can_flush(&self) -> bool {
-        self.connection.get().can_flush()
-    }
-
-    fn on_auto_flush(&self) -> bool {
+// SAFETY: refcounted on the heap.
+unsafe impl AutoFlush for JSMySQLConnection {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        let this = unsafe { RefPtr::init_ref(this) };
         // With backpressure, onWritable drains.
-        if !self.connection.get().has_backpressure() {
-            self.drain_internal();
+        if !this.connection.get().has_backpressure() {
+            this.drain_internal();
         }
-        let again = self.can_flush();
-        self.auto_flush_registered.set(again);
-        again
+        this.connection.get().can_flush()
     }
 }
 
 impl JSMySQLConnection {
+    fn vm(&self) -> &VirtualMachine {
+        self.vm.get()
+    }
+
+    /// What one turn of JS queued is written in one flush, at the end of the turn.
+    fn register_auto_flusher(&self) {
+        if !self.auto_flusher.is_registered() && self.connection.get().can_flush() {
+            AutoFlusher::register(self, self.vm());
+        }
+    }
+
     /// The inner connection's methods take `&mut self`. Keep the borrow short: not across a call
     /// that re-enters JS and comes back to this connection.
     #[inline]
@@ -328,7 +324,7 @@ impl JSMySQLConnection {
                 found_rows,
             )),
             socket_ref: Cell::new(None),
-            auto_flush_registered: Cell::new(false),
+            auto_flusher: AutoFlusher::default(),
             timers: ConnectionTimers::new(
                 args.idle_timeout_ms,
                 args.connection_timeout_ms,

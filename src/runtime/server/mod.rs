@@ -218,6 +218,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// Attached to `app` when `config.http2`; serves connections that
     /// negotiate "h2" (ALPN) or open with the cleartext preface.
     h2_app: JsCell<Option<uws_sys::h2::OwnedApp>>,
+    h2_drain: jsc::AutoFlusher,
     pub(crate) h3_listener: core::cell::Cell<Option<*mut uws_sys::h3::ListenSocket>>,
     /// `h3_listener` after a graceful stop. It lives as long as `h3_app`, and a
     /// later abrupt stop closes the connections that are still draining through it.
@@ -320,6 +321,17 @@ pub(crate) struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub(crate) route: server_config::RouteDeclaration,
 }
 
+bun_core::intrusive_field!([const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>, h2_drain: jsc::AutoFlusher);
+
+// SAFETY: refcounted on the heap.
+unsafe impl<const SSL: bool, const DEBUG: bool> jsc::AutoFlush for NewServer<SSL, DEBUG> {
+    /// Stays registered while streams are still queued.
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*this).h2_app() }.is_some_and(|app| bun_opaque::opaque_deref_mut(app).drain())
+    }
+}
+
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         httplog!("deinit");
@@ -329,13 +341,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
 
         self.listener.set(None);
         self.h3_app.set(None);
-        if let Some(h2_app) = self.h2_app.take() {
-            // A drain may still be queued for it.
-            self.vm()
-                .event_loop()
-                .deferred_tasks
-                .unregister_task(core::ptr::NonNull::new(h2_app.as_ptr().cast::<c_void>()));
-        }
+        self.h2_app.set(None);
         self.app.set(None);
 
         // Before `config`, which owns the arena the dev server's transpilers borrow.
@@ -1937,6 +1943,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             listener: JsCell::new(None),
             h3_app: JsCell::new(None),
             h2_app: JsCell::new(None),
+            h2_drain: Default::default(),
             h3_listener: core::cell::Cell::new(None),
             h3_draining_listener: core::cell::Cell::new(None),
             h3_alt_svc: JsCell::new(Box::<[u8]>::default()),
@@ -2515,19 +2522,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Streams parked on socket backpressure by a JS-driven write get their
         // next drain pass from the event loop's deferred task queue (after the
         // current task and its microtasks), like the HTTP/1 sink's auto-flush.
-        extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
-            extern "C" fn drain(app: *mut c_void) -> bool {
-                // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
-                // Stay registered while streams are still queued.
-                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
-            }
-            jsc::VirtualMachine::get()
-                .event_loop()
-                .deferred_tasks
-                .post_task(core::ptr::NonNull::new(app), drain);
+        unsafe extern "C" fn schedule_h2_drain<const SSL: bool, const DEBUG: bool>(
+            server: *mut c_void,
+            _ctx: *mut c_void,
+        ) {
+            // SAFETY: the server that owns the app.
+            let server = unsafe { &*server.cast::<NewServer<SSL, DEBUG>>() };
+            jsc::AutoFlusher::register(server, server.vm());
         }
-        bun_opaque::opaque_deref_mut(h2.as_ptr())
-            .on_schedule_drain(schedule_h2_drain, h2.as_ptr().cast::<c_void>());
+        bun_opaque::opaque_deref_mut(h2.as_ptr()).on_schedule_drain(
+            schedule_h2_drain::<SSL, DEBUG>,
+            core::ptr::from_ref(self).cast_mut().cast(),
+        );
         self.h2_app.set(Some(h2));
         self.init_mux_request_pool();
         true

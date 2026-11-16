@@ -38,7 +38,7 @@ use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, TimerKeepAlive};
 use bun_cares_sys::c_ares_draft as c_ares;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -1882,7 +1882,7 @@ pub(crate) struct Resolver {
 
     pub(crate) event_loop_timer: EventLoopTimer,
     /// Held while the timer is armed.
-    timer_ref: JsCell<Option<RefPtr<Resolver>>>,
+    timer_ref: JsCell<Option<(TimerKeepAlive, RefPtr<Resolver>)>>,
 
     pending: enum_map::EnumMap<QueryKind, PendingCache>,
     /// Indexed by the slot in `pending[QueryKind::HostNative]`.
@@ -2108,7 +2108,6 @@ impl Resolver {
     // ───────────── timer / pending bookkeeping ─────────────
 
     pub(crate) fn check_timeouts(&self, now: &bun::timespec, vm: &VirtualMachine) {
-        let uws_loop = vm.uws_loop();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `PendingQuery::resolve`) may freely re-derive
@@ -2130,7 +2129,6 @@ impl Resolver {
                 }
             }
         }
-        crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
     }
 
     /// Whether c-ares has a query to time out.
@@ -2175,16 +2173,14 @@ impl Resolver {
             return false;
         }
 
-        self.timer_ref.set(Some(self.ref_guard()));
+        self.timer_ref
+            .set(Some((TimerKeepAlive::new(), self.ref_guard())));
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
         let next = now_ts.add_ms(delay_ms);
         self.event_loop_timer.next.set(next);
-        let uws_loop = self.vm().uws_loop();
-        let timers = crate::jsc_hooks::timer_all();
-        timers.increment_timer_ref(1, uws_loop);
-        timers.insert(&raw const self.event_loop_timer);
+        crate::jsc_hooks::timer_all().insert(&raw const self.event_loop_timer);
         true
     }
 
@@ -2193,10 +2189,7 @@ impl Resolver {
             return;
         }
 
-        let timers = crate::jsc_hooks::timer_all();
-        timers.remove(&self.event_loop_timer);
-        // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
-        timers.increment_timer_ref(-1, self.vm().uws_loop());
+        crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         self.timer_ref.set(None);
     }
 

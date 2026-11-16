@@ -959,7 +959,7 @@ impl All {
     }
 
     /// `uws_loop` is the calling VM's uws loop.
-    pub(crate) fn increment_immediate_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
+    fn increment_immediate_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
         let old = self.immediate_ref_count.get();
         let new = old + delta;
         self.immediate_ref_count.set(new);
@@ -1004,7 +1004,7 @@ impl All {
     }
 
     /// `uws_loop` is the calling VM's uws loop.
-    pub(crate) fn increment_timer_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
+    fn increment_timer_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
         let old = self.active_timer_count.get();
         let new = old + delta;
         debug_assert!(new >= 0);
@@ -1184,6 +1184,22 @@ pub(crate) enum CountdownOverflowBehavior {
     OneMs,
     /// `Bun.sleep`.
     Clamp,
+}
+
+/// Keeps the event loop alive for a timer of this thread's VM.
+pub(crate) struct TimerKeepAlive(core::marker::PhantomData<*const ()>);
+
+impl TimerKeepAlive {
+    pub(crate) fn new() -> Self {
+        timer_all().increment_timer_ref(1, VirtualMachine::get().uws_loop());
+        Self(core::marker::PhantomData)
+    }
+}
+
+impl Drop for TimerKeepAlive {
+    fn drop(&mut self) {
+        timer_all().increment_timer_ref(-1, VirtualMachine::get().uws_loop());
+    }
 }
 
 // LAYERING: `Kind`/`KindBig` moved DOWN to `bun_event_loop` so `TimerFlags`

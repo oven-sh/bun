@@ -9,6 +9,7 @@ use crate::{
 use bun_event_loop::EventLoopTimer::{
     OwnedTimer, State as TimerState, Tag as TimerTag, TimerFlags,
 };
+use bun_ptr::AliasableBox;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
@@ -287,7 +288,11 @@ pub struct Timeout {
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
-    fn init(vm: &VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
+    fn init(
+        vm: &VirtualMachine,
+        signal_: *mut AbortSignal,
+        milliseconds: u64,
+    ) -> AliasableBox<Timeout> {
         let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms()));
         let deadline = bun_core::Timespec::now(VirtualMachine::abort_signal_timeout_clock())
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
@@ -297,16 +302,16 @@ impl Timeout {
         let graph_context = vm.as_graph_context(context);
         let event_loop_timer = OwnedTimer::init_paused(TimerTag::AbortSignalTimeout);
         event_loop_timer.next.set(deadline);
-        let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
+        let this = AliasableBox::new(Timeout {
             event_loop_timer,
             signal: signal_,
             flags: Cell::default(),
             context: context.id(),
             generation: vm.test_isolation_generation.get(),
             hot_reload_counter: vm.hot_reload_counter.get(),
-        }));
+        });
         if let Some(context) = graph_context {
-            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
+            context.track_timer(this.as_ptr().cast(), crate::ContextTimer::AbortSignal);
         }
 
         #[cfg(debug_assertions)]
@@ -320,7 +325,9 @@ impl Timeout {
         // SAFETY: `this` is freshly boxed, so
         // `event_loop_timer` is unlinked, and `drop` unlinks it again.
         unsafe {
-            vm.timer_insert(OwnedTimer::node(&raw const (*this).event_loop_timer));
+            vm.timer_insert(OwnedTimer::node(
+                &raw const (*this.as_ptr()).event_loop_timer,
+            ));
         }
 
         this
@@ -411,15 +418,12 @@ extern "C" fn AbortSignal__Timeout__create(
     vm: &VirtualMachine,
     signal_: *mut AbortSignal,
     milliseconds: u64,
-) -> *mut Timeout {
+) -> AliasableBox<Timeout> {
     Timeout::init(vm, signal_, milliseconds)
 }
 
-/// # Safety
-/// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`.
 /// Must be called on the owning JS thread: the VM is resolved via the thread-local.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
-    // SAFETY: `this` is the pointer returned from AbortSignal__Timeout__create.
-    unsafe { bun_core::heap::destroy(this) }
+extern "C" fn AbortSignal__Timeout__deinit(this: AliasableBox<Timeout>) {
+    drop(this);
 }

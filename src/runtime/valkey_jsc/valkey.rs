@@ -362,30 +362,12 @@ impl ValkeyClient {
                 let _ = offline_cmd.promise.reject(global_this, Ok(object));
             }
         }
-
-        self.unregister_auto_flusher();
-    }
-
-    // ** Auto-pipelining **
-    fn register_auto_flusher(&mut self, vm: &VirtualMachine) {
-        if !self.auto_flusher.registered.get() {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
-            self.auto_flusher.registered.set(true);
-        }
-    }
-
-    fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered.get() {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, self.vm);
-            self.auto_flusher.registered.set(false);
-        }
     }
 
     // Drain auto-pipelined commands
-    pub(crate) fn on_auto_flush(&mut self) -> bool {
+    fn on_auto_flush(&mut self) -> bool {
         // Don't process if not connected or already processing
         if self.status != Status::Connected {
-            self.auto_flusher.registered.set(false);
             return false;
         }
 
@@ -428,11 +410,8 @@ impl ValkeyClient {
 
         let _ = self.flush_data();
 
-        let have_more = !self.queue.is_empty();
-        self.auto_flusher.registered.set(have_more);
-
         // Return true if we should schedule another flush
-        have_more
+        !self.queue.is_empty()
     }
     // ** End of auto-pipelining **
 
@@ -655,7 +634,7 @@ impl ValkeyClient {
 
     /// Handle connection closed event
     pub(crate) fn on_close(&mut self) -> JsResult<()> {
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as
         // pending activity in `update_poll_ref` and keeps the event loop alive.
@@ -724,14 +703,14 @@ impl ValkeyClient {
                         if self.queue.front().is_some_and(|head| {
                             head.meta.contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
                         }) {
-                            self.register_auto_flusher(self.vm);
+                            AutoFlusher::register(self, self.vm);
                         }
                     } else {
                         // Non-pipelineable command is blocked by in-flight commands. Do nothing, wait for in-flight to finish.
                     }
                 } else {
                     // Head is pipelineable. Register the flusher to batch it with others.
-                    self.register_auto_flusher(self.vm);
+                    AutoFlusher::register(self, self.vm);
                 }
             } else if self.in_flight.is_empty() {
                 // Without auto pipelining, wait for in-flight to empty before draining
@@ -1397,7 +1376,7 @@ impl ValkeyClient {
 
             // If we're connected and using auto pipelining, schedule a flush
             if self.status == Status::Connected && can_pipeline {
-                self.register_auto_flusher(self.vm);
+                AutoFlusher::register(self, self.vm);
             }
 
             return Ok(());
@@ -1454,7 +1433,7 @@ impl ValkeyClient {
                 && self.status == Status::Connected
                 && !self.queue.is_empty()
             {
-                self.register_auto_flusher(self.vm);
+                AutoFlusher::register(self, self.vm);
             }
         }
 
@@ -1488,7 +1467,7 @@ impl ValkeyClient {
     /// Close the Valkey connection
     pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         match self.status {
             Status::Connected | Status::Connecting => self.close(uws::CloseCode::FastShutdown),
             // Between retries: the manual flag makes the close terminal.
@@ -1542,17 +1521,14 @@ impl ValkeyClient {
 }
 
 // Auto-pipelining
-use crate::webcore::{AutoFlusher, HasAutoFlusher};
+use bun_jsc::{AutoFlush, AutoFlusher};
 
-impl HasAutoFlusher for ValkeyClient {
-    #[inline]
-    fn auto_flusher(&self) -> &AutoFlusher {
-        &self.auto_flusher
-    }
+bun_core::intrusive_field!(ValkeyClient, auto_flusher: AutoFlusher);
+
+// SAFETY: a field of the refcounted `JSValkeyClient`.
+unsafe impl AutoFlush for ValkeyClient {
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
-        // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
-        // microtasks), so no aliasing across the call.
+        // SAFETY: fn contract. The queue is drained after microtasks, under no other borrow.
         unsafe { (*this).on_auto_flush() }
     }
 }

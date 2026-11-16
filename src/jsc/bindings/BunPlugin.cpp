@@ -6126,9 +6126,17 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (keepsLoadedModule && loaded.esmNamespace && hasUnevaluatedImporter(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         keepsLoadedModule = false;
 #if ENABLE(AOT)
-    // stashLoadedModule() evicts the original that the preload's mock has required, and the mock as its requirer.
-    if (keepsLoadedModule && remainsOriginal && previous && previous->isFromPreload && !isPreviousMockKeyEmpty && loaded.compiledModule && JSC::AOT::tryEvictRequirerOfOriginal(globalObject, *loaded.compiledModule))
-        isPreviousMockKeyEmpty = true;
+    bool didEvictPreloadMock = false;
+    if (keepsLoadedModule && remainsOriginal && previous && previous->isFromPreload && !isPreviousMockKeyEmpty && loaded.compiledModule) {
+        JSValue factoryOfPreload = previous->factory.get();
+        bool importsOriginal = previous->importsOriginal && !previous->isOfHook && !previous->wasLoadedByRequire && !previous->spy && previous->firstLoadTestFile == globalObject->onLoadPlugins.testFile && !isInNodeModules(specifier) && !(factoryOfPreload && factoryOfPreload.isString()) && JSC::AOT::activeMockReloadedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::Nobody;
+        if (importsOriginal)
+            JSC::AOT::didRequireOwnOriginal(globalObject, *loaded.compiledModule);
+        isPreviousMockKeyEmpty = JSC::AOT::tryEvictRequirerOfOriginal(globalObject, *loaded.compiledModule);
+        didEvictPreloadMock = isPreviousMockKeyEmpty && importsOriginal;
+        if (didEvictPreloadMock)
+            previous->firstLoadTestFile = 0;
+    }
     if (keepsLoadedModule && loaded.compiledModule && JSC::AOT::isLinkedForPendingImporter(globalObject, *loaded.compiledModule, Bun::compiledModuleForPath(callerPath(vm, callframe))))
         keepsLoadedModule = false;
     // The same for a compiled module with an active mock, which the loader does not have.
@@ -6506,9 +6514,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
     // An active mock keeps what was loaded under it, and the new factory waits for the next load.
     bool waitsOverActiveMock = keepsLoadedModule && loaded.compiledModule && !endedMockModule && !loaded.esmNamespace && !loaded.commonJSModule && (hasLoaded(*loaded.compiledModule) || (previous && JSC::AOT::isActiveMockRegistered(globalObject, *loaded.compiledModule)))
-        && JSC::AOT::tryKeepActiveMock(globalObject, *loaded.compiledModule, remainsOriginal && !isPreviousMockKeyEmpty, isDoMock && !loadedByTestFile);
+        && JSC::AOT::tryKeepActiveMock(globalObject, *loaded.compiledModule, remainsOriginal && (!isPreviousMockKeyEmpty || didEvictPreloadMock), isDoMock && !loadedByTestFile);
     // The original of this mock is what was loaded under the active mock. A spy uses the real file.
-    if (waitsOverActiveMock && !mock->spy) {
+    if (waitsOverActiveMock && !mock->spy && !didEvictPreloadMock) {
         auto kept = JSC::AOT::retainedActiveMockExports(globalObject, *loaded.compiledModule);
         RETURN_IF_EXCEPTION(scope, {});
         mock->originalNamespace.setMayBeNull(vm, mock, kept.namespaceObject);

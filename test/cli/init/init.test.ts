@@ -21,22 +21,40 @@ let initEnv: NodeJS.Dict<string>;
 const npmEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
 beforeAll(async () => {
+  type Manifest = Partial<Record<"dependencies" | "devDependencies" | "peerDependencies", Record<string, string>>>;
+  // The blank template is not a file: init_command.rs names its two dependencies.
+  const manifests: Manifest[] = [
+    { devDependencies: { "@types/bun": "latest" }, peerDependencies: { typescript: "^7" } },
+  ];
   const templates = path.join(import.meta.dir, "..", "..", "..", "src", "runtime", "cli", "init");
-  const ranges = new Map<string, string>();
   for (const template of ["react-app", "react-tailwind", "react-shadcn"]) {
-    const manifest = await Bun.file(path.join(templates, template, "package.json")).json();
+    manifests.push(await Bun.file(path.join(templates, template, "package.json")).json());
+  }
+  const ranges = new Map<string, Set<string>>();
+  for (const manifest of manifests) {
     for (const group of [manifest.dependencies, manifest.devDependencies, manifest.peerDependencies]) {
-      for (const [name, range] of Object.entries<string>(group ?? {})) ranges.set(name, range);
+      for (const [name, range] of Object.entries(group ?? {})) {
+        ranges.set(name, (ranges.get(name) ?? new Set()).add(range));
+      }
     }
   }
-  // The blank template is not a file: init_command.rs names its two dependencies.
-  expect([...ranges.keys()]).toEqual(expect.arrayContaining(["@types/bun", "typescript"]));
 
   const publisher = stubs.auth.addUser("bun-init", "bun-init");
-  for (const [name, range] of ranges) {
-    // "^19" gives 19.0.0 and "^4.1.11" gives 4.1.11. A dist-tag such as "latest" gives 1.0.0.
-    const version = /^\^\d/.test(range) ? [...range.slice(1).split("."), "0", "0"].slice(0, 3).join(".") : "1.0.0";
-    if (!Bun.semver.satisfies(version, range)) throw new Error(`${name}: ${version} is not in the range ${range}`);
+  for (const [name, wanted] of ranges) {
+    // One version for each name: "^19" asks for 19.0.0 and "^4.1.11" for 4.1.11, and "latest" takes what there is.
+    // The setup stops at any other range, and at ranges of one name that no one version is in.
+    const lowest = [...wanted].map(range => {
+      const caret = /^\^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(range);
+      if (caret) return `${caret[1]}.${caret[2] ?? 0}.${caret[3] ?? 0}`;
+      if (range === "latest") return "1.0.0";
+      throw new Error(`${name}: the stubs are for ranges such as "^1.2.3" and for "latest", not for "${range}"`);
+    });
+    const version = lowest.sort(Bun.semver.order).at(-1)!;
+    for (const range of wanted) {
+      if (range !== "latest" && !Bun.semver.satisfies(version, range)) {
+        throw new Error(`${name}: no one version is in each of the ranges ${[...wanted].join(", ")}`);
+      }
+    }
     const tarball = await new Bun.Archive(
       { "package/package.json": JSON.stringify({ name, version }) },
       { compress: "gzip" },
@@ -66,10 +84,14 @@ afterAll(() => {
   stubs.stop();
 });
 
-// `bun init` exits with 0 when its install fails. bun.lock has the URL of each tarball that is not from the default
-// registry, and there is no bun.lock when the install did not reach a registry.
+// `bun init` exits with 0 when its install fails, and then there is no bun.lock. A bun.lock has the URL of each
+// tarball that is not from the default registry.
 function expectInstalledFromStubs(project: string) {
-  const { packages } = Bun.JSONC.parse(fs.readFileSync(path.join(project, "bun.lock"), "utf8")) as {
+  const lockfile = path.join(project, "bun.lock");
+  if (!fs.existsSync(lockfile)) {
+    throw new Error(`\`bun init\` did not install: there is no ${lockfile}. Is a stub in each range that it writes?`);
+  }
+  const { packages } = Bun.JSONC.parse(fs.readFileSync(lockfile, "utf8")) as {
     packages: Record<string, [resolution: string, tarball: string]>;
   };
   const origins = Object.values(packages).map(([, tarball]) => tarball.slice(0, stubs.url.length));

@@ -21,7 +21,7 @@ use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive, OwnedFilePoll};
 #[cfg(unix)]
-use bun_ptr::JsCell;
+use bun_ptr::CellExt as _;
 use bun_ptr::{RefPtr, ThisPtr};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -114,11 +114,11 @@ fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
 pub struct Process {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pidfd: JsCell<Option<bun_sys::File>>,
+    pidfd: Cell<Option<bun_sys::File>>,
     /// Empty while it runs.
     status: OnceCell<Status>,
     #[cfg(unix)]
-    poller: JsCell<Poller>,
+    poller: Cell<Poller>,
     /// libuv keeps its address, so its `data` owns a ref until `on_close_uv`.
     #[cfg(windows)]
     handle: UnsafeCell<uv::uv_process_t>,
@@ -370,7 +370,10 @@ impl Process {
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let Some(watchfd) = this.pidfd.get().as_ref().map(|file| file.fd().native()) else {
+            let Some(watchfd) = this
+                .pidfd
+                .with_taken(|pidfd| pidfd.as_ref().map(|file| file.fd().native()))
+            else {
                 debug_assert!(this.has_exited());
                 return Err(bun_sys::Error::from_code(
                     bun_sys::E::ESRCH,
@@ -380,7 +383,7 @@ impl Process {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let watchfd = this.pid;
 
-            let poll = match this.poller.replace(Poller::Detached) {
+            let poll = match this.poller.take() {
                 Poller::Fd(poll) => poll,
                 Poller::WaiterThread(_) | Poller::Detached => {
                     let owner = bun_io::Owner::new(bun_io::PollTag::Process, this.as_ptr().cast());
@@ -498,13 +501,11 @@ impl Process {
 
     pub fn disable_keeping_event_loop_alive(&self) {
         #[cfg(unix)]
-        {
-            match self.poller.get() {
-                Poller::Fd(poll) => poll.disable_keeping_process_alive(),
-                Poller::WaiterThread(keep_alive) => keep_alive.unref(self.event_loop_ctx()),
-                Poller::Detached => {}
-            }
-        }
+        self.poller.with_taken(|poller| match poller {
+            Poller::Fd(poll) => poll.disable_keeping_process_alive(),
+            Poller::WaiterThread(keep_alive) => keep_alive.unref(self.event_loop_ctx()),
+            Poller::Detached => {}
+        });
         // `us_loop_pump` runs `uv_run` without active handles too, so `on_exit_uv` still fires.
         #[cfg(windows)]
         self.with_handle(|p| p.unref());
@@ -515,13 +516,11 @@ impl Process {
             return;
         }
         #[cfg(unix)]
-        {
-            match self.poller.get() {
-                Poller::Fd(poll) => poll.enable_keeping_process_alive(),
-                Poller::WaiterThread(keep_alive) => keep_alive.ref_(self.event_loop_ctx()),
-                Poller::Detached => {}
-            }
-        }
+        self.poller.with_taken(|poller| match poller {
+            Poller::Fd(poll) => poll.enable_keeping_process_alive(),
+            Poller::WaiterThread(keep_alive) => keep_alive.ref_(self.event_loop_ctx()),
+            Poller::Detached => {}
+        });
         #[cfg(windows)]
         self.with_handle(|p| p.ref_());
     }
@@ -588,7 +587,7 @@ impl Process {
             // mask spawn-maxbuf.test.ts — the async-path hang there has a
             // different root cause (poller is already Fd when `on_max_buffer`
             // fires, so this arm is unreachable on that path).
-            if !matches!(self.poller.get(), Poller::Detached) {
+            if !self.is_detached() {
                 return self.send_signal(signal);
             }
         }
@@ -715,17 +714,19 @@ impl core::fmt::Display for Status {
 }
 
 #[cfg(unix)]
+#[derive(Default)]
 enum Poller {
     Fd(OwnedFilePoll),
     /// Waited for off the loop: by the shared waiter thread (Linux without pidfd) or by a `reap_on_thread` thread (macOS).
     WaiterThread(KeepAlive),
+    #[default]
     Detached,
 }
 
 #[cfg(unix)]
 impl Process {
     fn detach_poller(&self) {
-        if let Poller::WaiterThread(keep_alive) = self.poller.replace(Poller::Detached) {
+        if let Poller::WaiterThread(keep_alive) = self.poller.take() {
             // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
             keep_alive.unref(self.event_loop_ctx());
         }
@@ -738,17 +739,23 @@ impl Process {
         self.poller.set(Poller::WaiterThread(keep_alive));
     }
 
+    fn is_detached(&self) -> bool {
+        self.poller
+            .with_taken(|poller| matches!(poller, Poller::Detached))
+    }
+
     fn is_on_waiter_thread(&self) -> bool {
-        matches!(self.poller.get(), Poller::WaiterThread(_))
+        self.poller
+            .with_taken(|poller| matches!(poller, Poller::WaiterThread(_)))
     }
 
     /// Runs `f` on the poll, if there is one.
     #[inline]
     fn with_poll<R>(&self, f: impl FnOnce(&FilePoll) -> R) -> Option<R> {
-        match self.poller.get() {
+        self.poller.with_taken(|poller| match poller {
             Poller::Fd(poll) => Some(f(poll)),
             Poller::WaiterThread(_) | Poller::Detached => None,
-        }
+        })
     }
 }
 
@@ -1382,10 +1389,10 @@ impl SpawnResultExt for PosixSpawnResult {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: self.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            pidfd: JsCell::new(self.pidfd),
+            pidfd: Cell::new(self.pidfd),
             js_poster: event_loop.js_poster(),
             event_loop,
-            poller: JsCell::new(Poller::Detached),
+            poller: Cell::new(Poller::Detached),
             status,
             exit_handler: Cell::default(),
         })

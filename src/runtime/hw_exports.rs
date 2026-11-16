@@ -97,20 +97,16 @@ pub(crate) fn set_entry_point_eval_result_esm(this: &VirtualMachine, result: JSV
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value.get() {
         let global = this.global();
-        this.entry_point_result
-            .value
-            .with_mut(|strong| strong.set(global, result));
+        this.entry_point_result.value.set(global, result);
     }
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultCJS`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
 pub(crate) fn set_entry_point_eval_result_cjs(this: &VirtualMachine, value: JSValue) {
-    if !this.entry_point_result.value.get().has() {
+    if this.entry_point_result.value.get().is_none() {
         let global = this.global();
-        this.entry_point_result
-            .value
-            .with_mut(|strong| strong.set(global, value));
+        this.entry_point_result.value.set(global, value);
         this.entry_point_result.cjs_set_value.set(true);
     }
 }

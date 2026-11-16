@@ -37,7 +37,7 @@ use bun_jsc::{
     Completion, JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, LoopKind, Posted,
     VmHandle,
 };
-use bun_ptr::{AliasableBox, CellExt};
+use bun_ptr::{AliasableBox, CellExt, VecCellExt};
 use bun_threading::work_pool::WorkPool;
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all};
@@ -227,7 +227,7 @@ impl<T> HandleList<T> {
     /// # Safety
     /// The list belongs to `handle`'s loop, and `handle` is removed before its `close_cb` runs.
     unsafe fn add(&self, handle: &HandleRef<'_, T>) {
-        self.listed.with_taken(|listed| listed.push(handle.ptr));
+        self.listed.push(handle.ptr);
     }
 
     /// Uses `retain` because a handle that was initialized twice is in the list twice.
@@ -238,7 +238,7 @@ impl<T> HandleList<T> {
     }
 
     fn is_empty(&self) -> bool {
-        self.listed.with_taken(|listed| listed.is_empty())
+        self.listed.is_empty()
     }
 
     /// Handles added from here on wait for the next walk.
@@ -253,7 +253,7 @@ impl<T> HandleList<T> {
     /// # Safety
     /// The caller is done with the handle before the event loop runs another task.
     unsafe fn walk_next(&self) -> Option<HandleRef<'_, T>> {
-        let next = self.walking.with_taken(Vec::pop)?;
+        let next = self.walking.pop()?;
         // SAFETY: `add`'s contract, and fn contract. The list is not `Sync`: this is its loop's thread.
         unsafe {
             let handle = HandleRef::new(next);

@@ -18,6 +18,7 @@
 //! Node's equivalent is `ThreadPoolWork` + `req_wrap`; WebCore's is
 //! `WorkerRunLoop::postTask` with `ActiveDOMObject`-owned completions.
 
+use core::cell::Cell;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
@@ -238,28 +239,28 @@ pub struct JobHeader {
 /// empty by default), so its stop phase can [`cancel`](JobContext::cancel) them.
 #[derive(Default)]
 pub struct JobList {
-    head: *mut JobHeader,
+    head: Cell<*mut JobHeader>,
 }
 
 impl JobList {
-    fn push(&mut self, job: *mut JobHeader) {
+    fn push(&self, job: *mut JobHeader) {
+        let head = self.head.replace(job);
         // SAFETY: `job` is a live, unlinked header; JS thread.
         unsafe {
             (*job).prev = core::ptr::null_mut();
-            (*job).next = self.head;
-            if !self.head.is_null() {
-                (*self.head).prev = job;
+            (*job).next = head;
+            if !head.is_null() {
+                (*head).prev = job;
             }
         }
-        self.head = job;
     }
-    fn unlink(&mut self, job: *mut JobHeader) {
+    fn unlink(&self, job: *mut JobHeader) {
         // SAFETY: `job` is linked in this list; JS thread.
         unsafe {
             let (prev, next) = ((*job).prev, (*job).next);
             if prev.is_null() {
-                debug_assert!(core::ptr::eq(self.head, job));
-                self.head = next;
+                debug_assert!(core::ptr::eq(self.head.get(), job));
+                self.head.set(next);
             } else {
                 (*prev).next = next;
             }
@@ -270,7 +271,7 @@ impl JobList {
     }
     /// A `Bun.ModuleGraph`'s context stopped (JS thread): ask its live jobs to finish soon.
     pub fn cancel_of_context(&self, context: crate::ContextId) {
-        let mut job = self.head;
+        let mut job = self.head.get();
         while !job.is_null() {
             // SAFETY: as `cancel_all`.
             unsafe {
@@ -284,7 +285,7 @@ impl JobList {
 
     /// The VM's stop phase (JS thread): ask every live job to finish soon.
     pub fn cancel_all(&self) {
-        let mut job = self.head;
+        let mut job = self.head.get();
         while !job.is_null() {
             // SAFETY: linked ⇒ live (jobs unlink, on this thread, before they
             // are freed); `cancel` neither frees nor unlinks.
@@ -365,7 +366,7 @@ impl<C: JobContext> Job<C> {
         // SAFETY: live until completed/released on this thread; the pool owns it now.
         unsafe {
             if C::CANCELLABLE {
-                cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
+                cx.vm().jobs.push(&raw mut (*job).header);
             }
             WorkPool::schedule(&raw mut (*job).task);
         }
@@ -399,7 +400,7 @@ impl<C: JobContext> Job<C> {
         // SAFETY: fn contract.
         let mut job = unsafe { Box::from_raw(this) };
         if C::CANCELLABLE {
-            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
+            vm.jobs.unlink(&raw mut job.header);
         }
         (job.off, job.js)
     }

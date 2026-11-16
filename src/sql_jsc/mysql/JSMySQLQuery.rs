@@ -26,7 +26,7 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::RefCounted)]
 pub struct JSMySQLQuery {
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
     ref_count: bun_ptr::RefCount,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
@@ -48,7 +48,7 @@ impl JSMySQLQuery {
 
     pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.finalize();
     }
 
     pub(crate) fn create_query<'a>(
@@ -64,7 +64,7 @@ impl JSMySQLQuery {
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             ref_count: bun_ptr::RefCount::init(),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
@@ -74,7 +74,7 @@ impl JSMySQLQuery {
 
         let this_value = js::to_js(this_ptr, global_this);
         this_value.ensure_still_alive();
-        this.this_value.with_mut(|v| v.set_weak(this_value));
+        this.this_value.set_weak(this_value);
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);
@@ -112,7 +112,7 @@ impl JSMySQLQuery {
         }
         js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
-        self.this_value.with_mut(|v| v.upgrade(global_object));
+        self.this_value.upgrade(global_object);
         connection.enqueue_request(self.ref_guard());
         Ok(())
     }
@@ -213,7 +213,7 @@ impl JSMySQLQuery {
             return;
         }
 
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.try_get() else {
             return;
         };
         this_value.ensure_still_alive();
@@ -221,7 +221,7 @@ impl JSMySQLQuery {
             return;
         };
         let vm = VirtualMachine::get();
-        let Some(function) = vm.sql_state().mysql_context.get().on_query_resolve_fn.get() else {
+        let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
@@ -251,9 +251,7 @@ impl JSMySQLQuery {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         let _guard = self.ref_guard();
-        if self.this_value.get().is_not_empty() {
-            self.this_value.with_mut(|v| v.downgrade());
-        }
+        self.this_value.downgrade();
         let _ = self.query.with_mut(|q| q.fail());
     }
 
@@ -292,7 +290,7 @@ impl JSMySQLQuery {
         }
         let _downgrade = DowngradeOnDrop(self);
 
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.try_get() else {
             return;
         };
         let Some(target_value) = js::target_get_cached(this_value) else {
@@ -310,7 +308,7 @@ impl JSMySQLQuery {
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
         let vm = VirtualMachine::get();
-        let Some(function) = vm.sql_state().mysql_context.get().on_query_reject_fn.get() else {
+        let Some(function) = vm.sql_state().mysql_context.on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
@@ -327,7 +325,7 @@ impl JSMySQLQuery {
         if self.query.with_mut(|q| q.start(connection))? {
             return Ok(());
         }
-        let this_value = self.this_value.get().try_get();
+        let this_value = self.this_value.try_get();
         let binding_value = this_value
             .and_then(js::binding_get_cached)
             .unwrap_or(JSValue::UNDEFINED);
@@ -385,13 +383,13 @@ impl JSMySQLQuery {
 
     #[inline]
     pub(crate) fn set_pending_value(&self, result: JSValue) {
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.try_get() {
             js::pending_value_set_cached(value, self.global_object(), result);
         }
     }
     #[inline]
     pub(crate) fn get_pending_value(&self) -> Option<JSValue> {
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.try_get() {
             return js::pending_value_get_cached(value);
         }
         None
@@ -407,8 +405,6 @@ struct DowngradeOnDrop<'a>(&'a JSMySQLQuery);
 
 impl Drop for DowngradeOnDrop<'_> {
     fn drop(&mut self) {
-        if self.0.this_value.get().is_not_empty() {
-            self.0.this_value.with_mut(|v| v.downgrade());
-        }
+        self.0.this_value.downgrade();
     }
 }

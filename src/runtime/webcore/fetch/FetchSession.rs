@@ -10,8 +10,8 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, HeadersInit, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
-    JsError, JsRef, JsResult, URLJsc as _,
+    self as jsc, HeadersInit, JSGlobalObject, JSValue, JsClass as _, JsError, JsRef, JsResult,
+    URLJsc as _,
 };
 use bun_ptr::RefPtr;
 
@@ -167,7 +167,7 @@ pub(crate) struct FetchSession {
     used: Cell<bool>,
     /// The wrapper. Strong while a `SessionHold` exists: a request parks its
     /// socket in this session's pool, and collecting the session closes the pool.
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
     /// The wrapper and each `SessionHold` hold a ref.
     ref_count: bun_ptr::RefCount,
     /// Armed in the context whose script made the session: the connections its pool keeps
@@ -196,7 +196,7 @@ impl SessionHold {
         let session = unsafe { RefPtr::init_ref(session) };
         session.used.set(true);
         if session.is_only_hold() {
-            session.this_value.with_mut(|r| r.upgrade(global));
+            session.this_value.upgrade(global);
         }
         Ok(SessionHold(session))
     }
@@ -232,7 +232,7 @@ impl Drop for SessionHold {
     fn drop(&mut self) {
         let session = self.session();
         if session.is_only_hold() {
-            session.this_value.with_mut(JsRef::downgrade);
+            session.this_value.downgrade();
         }
     }
 }
@@ -260,7 +260,7 @@ impl FetchSession {
             proxy: None,
             unix: Box::default(),
             used: Cell::new(false),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             ref_count: bun_ptr::RefCount::init(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
@@ -275,7 +275,7 @@ impl FetchSession {
         let session = unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) };
         let this = session.this_ptr();
         let this_value = structure.create(&cx.heap, session);
-        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        this.this_value.set_weak(this_value.to_js());
         if let Some(callback) = check_server_identity {
             js::check_server_identity_set_cached(this_value.to_js(), cx.global(), callback);
         }
@@ -410,7 +410,7 @@ impl FetchSession {
     }
 
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|r| r.finalize());
+        self.this_value.finalize();
         self.close();
     }
 }

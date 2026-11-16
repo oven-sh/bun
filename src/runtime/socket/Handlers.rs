@@ -251,10 +251,8 @@ impl Handlers {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
                 listener.poll_ref.unref(bun_io::js_vm_ctx());
-                listener.this_value.with_mut(|r| r.downgrade());
-                listener
-                    .strong_data
-                    .with_mut(|s| s.clear_without_deallocation());
+                listener.this_value.downgrade();
+                listener.strong_data.clear_without_deallocation();
             }
         }
         false

@@ -54,7 +54,7 @@ use bun_jsc::VirtualMachineRef as VirtualMachine;
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use crate::node::node_fs_watcher::Event;
-use crate::node::node_fs_watcher::{FSWatcher, WatchEventKind};
+use crate::node::node_fs_watcher::{FSWatcher, PendingTask, WatchEventKind};
 
 #[cfg(target_os = "macos")]
 use crate::node::fs_events as fsevents;
@@ -169,7 +169,7 @@ pub(crate) struct PathWatcher {
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
     /// for per-handler duplicate suppression (same as `win_watcher.rs`).
-    handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
+    handlers: ArrayHashMap<*mut c_void, Handler>,
 
     /// The inotify wds or kqueue fds: one for a file or directory, many for a recursive watch.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -177,8 +177,14 @@ pub(crate) struct PathWatcher {
 }
 
 // SAFETY: a handler is an `FSWatcher`, which detaches under the manager's lock before it is freed.
-// While it is attached, that lock serializes the writes to its `pending_events`.
+// A pending task holds owned events and a thread-safe ref on that `FSWatcher`.
 unsafe impl Send for PathWatcher {}
+
+#[derive(Default)]
+struct Handler {
+    change_event: ChangeEvent,
+    pending: PendingTask,
+}
 
 /// What a handler holds until it detaches.
 pub(crate) struct Handle(WatcherId);
@@ -224,10 +230,11 @@ impl PathWatcher {
     pub(super) fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
-        for (&ctx, ev) in self.handlers.iter() {
-            if ev.should_emit(h, timestamp, event_type) {
-                (FSWatcher::ON_PATH_UPDATE)(
+        for (&ctx, handler) in self.handlers.iter() {
+            if handler.change_event.should_emit(h, timestamp, event_type) {
+                FSWatcher::on_path_update_posix(
                     Some(ctx),
+                    &handler.pending,
                     event_type.to_event(rel_path.into()),
                     is_file,
                 );
@@ -241,8 +248,9 @@ impl PathWatcher {
     /// `should_emit` would fold the two into one; node (libuv) delivers both.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_unsuppressed(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
-        for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+        for (&ctx, handler) in self.handlers.iter() {
+            let event = event_type.to_event(rel_path.into());
+            FSWatcher::on_path_update_posix(Some(ctx), &handler.pending, event, is_file);
         }
     }
 
@@ -251,9 +259,10 @@ impl PathWatcher {
     /// always be delivered.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_overflow(&self) {
-        for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
+        for (&ctx, handler) in self.handlers.iter() {
+            FSWatcher::on_path_update_posix(
                 Some(ctx),
+                &handler.pending,
                 Event::NoFilename(WatchEventKind::Change),
                 false,
             );
@@ -262,9 +271,10 @@ impl PathWatcher {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
-        for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
+        for (&ctx, handler) in self.handlers.iter() {
+            FSWatcher::on_path_update_posix(
                 Some(ctx),
+                &handler.pending,
                 Event::Error {
                     err: err.clone(),
                     close,
@@ -276,8 +286,8 @@ impl PathWatcher {
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     pub(super) fn flush(&self) {
-        for &ctx in self.handlers.keys() {
-            FSWatcher::on_update_end(Some(ctx));
+        for (&ctx, handler) in self.handlers.iter() {
+            FSWatcher::on_update_end_posix(Some(ctx), &handler.pending);
         }
     }
 
@@ -357,14 +367,14 @@ pub(crate) fn watch(
 
     if let Some(&existing) = manager.by_path.get(key) {
         let handlers = &mut manager.watchers[existing].handlers;
-        handle_oom(handlers.put(ctx, ChangeEvent::default()));
+        handle_oom(handlers.put(ctx, Handler::default()));
         return Ok(Handle(existing));
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
     let _ = is_file;
     let mut handlers = ArrayHashMap::default();
-    handle_oom(handlers.put(ctx, ChangeEvent::default()));
+    handle_oom(handlers.put(ctx, Handler::default()));
     let id = manager.watchers.insert(PathWatcher {
         path: ZBox::from_bytes(resolved.as_bytes()),
         recursive,

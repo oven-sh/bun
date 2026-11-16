@@ -15,7 +15,7 @@ use bun_jsc::{
 };
 
 use bun_lsquic_sys as lsquic;
-use bun_ptr::{CellExt as _, OptionCellExt as _};
+use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _, VecDequeCellExt as _};
 
 use crate::socket::SocketAddress;
 use crate::socket::socket_address::sockaddr;
@@ -537,7 +537,7 @@ impl QuicSession {
         self.endpoint.with(|ep| ep.is_http(self.is_server)) == Some(true)
     }
     pub(super) fn push_event(&self, event: SessionEvent) {
-        self.events.with_taken(|e| e.push(event));
+        self.events.push(event);
     }
     /// Called from the lsquic callback that completes the handshake, while `conn` is still alive.
     pub(super) fn note_handshake_ok(&self) {
@@ -677,7 +677,7 @@ impl QuicSession {
     }
 
     fn deliver_pending_tickets(&self, this_value: JSValue, global: &JSGlobalObject) {
-        if self.pending_tickets.with_taken(|q| q.is_empty()) {
+        if self.pending_tickets.is_empty() {
             return;
         }
         if self.destroyed.get()
@@ -712,7 +712,7 @@ impl QuicSession {
                 );
             }
         }
-        if !self.pending_tickets.with_taken(|q| q.is_empty()) {
+        if !self.pending_tickets.is_empty() {
             self.schedule_process();
         }
     }
@@ -874,7 +874,7 @@ impl QuicSession {
                 }
                 if self.ticket_delivered.replace(true) {
                     self.pending_tickets
-                        .with_taken(|q| q.push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob)));
+                        .push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob));
                     self.schedule_process();
                     return Ok(());
                 }
@@ -1036,7 +1036,7 @@ impl QuicSession {
             SessionEvent::DatagramStatus { id, sent } => {
                 if sent {
                     self.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
-                    self.inflight_datagrams.with_taken(|q| q.push_back(id));
+                    self.inflight_datagrams.push_back(id);
                     return Ok(());
                 }
                 if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
@@ -1072,7 +1072,7 @@ impl QuicSession {
                 // when its status cannot be delivered.
                 let mut undelivered = Ok(());
                 for _ in 0..count {
-                    let Some(id) = self.inflight_datagrams.with_taken(VecDeque::pop_front) else {
+                    let Some(id) = self.inflight_datagrams.pop_front() else {
                         break;
                     };
                     if acked {
@@ -1755,8 +1755,7 @@ impl QuicSession {
         }
         let handle = stream.to_js();
         self.streams.insert(key, stream);
-        self.pending_local_streams(unidirectional)
-            .with_taken(|q| q.push_back(key));
+        self.pending_local_streams(unidirectional).push_back(key);
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         self.endpoint
             .with(|ep| ep.make_stream(self.is_server, &self.conn, unidirectional));
@@ -1795,7 +1794,7 @@ impl QuicSession {
             .next_datagram_id
             .replace(self.next_datagram_id.get() + 1);
         let max_pending = self.with_state(|s| s.max_pending_datagrams);
-        if max_pending > 0 && self.datagram_queue.with_taken(|q| q.len()) >= max_pending as usize {
+        if max_pending > 0 && self.datagram_queue.len() >= max_pending as usize {
             // Node reports the abandonment synchronously from within
             // sendDatagram.
             if self.datagram_drop_newest {
@@ -1803,7 +1802,7 @@ impl QuicSession {
                 self.with_state(|s| s.last_datagram_id = id);
                 return JSValue::from_uint64_no_truncate(global, id);
             }
-            if let Some((dropped_id, _)) = self.datagram_queue.with_taken(VecDeque::pop_front) {
+            if let Some((dropped_id, _)) = self.datagram_queue.pop_front() {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
                 self.report_datagram_abandoned(this_value.to_js(), global, dropped_id)?;
@@ -1812,8 +1811,7 @@ impl QuicSession {
                 }
             }
         }
-        self.datagram_queue
-            .with_taken(|q| q.push_back((id, payload)));
+        self.datagram_queue.push_back((id, payload));
         self.with_state(|s| s.last_datagram_id = id);
         self.conn.want_datagram_write(true);
         self.schedule_process();
@@ -1916,7 +1914,7 @@ impl QuicSession {
         obj.put(global, b"qpackBlockedStreams", big(0)?);
         obj.put(global, b"enableConnectProtocol", JSValue::js_boolean(false));
         obj.put(global, b"enableDatagrams", JSValue::js_boolean(true));
-        self.application_options_js.set(Strong::create(obj, global));
+        self.application_options_js.set(global, obj);
         Ok(obj)
     }
     /// Build the `{__proto__: null, ...BigInt fields, disableActiveMigration}`
@@ -2087,7 +2085,7 @@ impl QuicSession {
         // one would strand the live request behind it until the next
         // MAX_STREAMS grant.
         let queue = self.pending_local_streams(uni);
-        while let Some(key) = queue.with_taken(VecDeque::pop_front) {
+        while let Some(key) = queue.pop_front() {
             let opened = self.streams.with_taken(key, |pending| {
                 pending.bind(raw);
                 pending.payload().on_opened(self.is_server);
@@ -2176,10 +2174,9 @@ impl QuicSession {
     }
 
     pub(super) fn on_origin(&self, chunk: &[u8], fin: bool) {
-        self.origin_buf.with_taken(|b| {
-            let room = MAX_ORIGIN_BYTES.saturating_sub(b.len());
-            b.extend_from_slice(&chunk[..chunk.len().min(room)]);
-        });
+        let room = MAX_ORIGIN_BYTES.saturating_sub(self.origin_buf.len());
+        self.origin_buf
+            .extend_from_slice(&chunk[..chunk.len().min(room)]);
         if fin {
             self.push_event(SessionEvent::Origin(self.origin_buf.take()));
         }

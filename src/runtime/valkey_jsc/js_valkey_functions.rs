@@ -2,7 +2,7 @@ use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer}
 use bun_collections::VecExt as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef, JsResult,
+    self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsResult,
 };
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx, js};
@@ -1825,7 +1825,7 @@ impl JSValkeyClient {
         let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
 
         let new_client_js = js::to_js(new_client_ptr, global);
-        new_client.this_value.set(JsRef::init_weak(new_client_js));
+        new_client.this_value.set_weak(new_client_js);
         new_client
             ._subscription_ctx
             .set(SubscriptionCtx::init(new_client)?);

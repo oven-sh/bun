@@ -635,6 +635,33 @@ fn each_byte_in_each_escape() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn each_byte_far_from_escapes() {
+    let around = [(0, 0), (1, 0), (0, 1), (20, 41), (20, 42), (70, 300)];
+    for (byte, (before, after)) in (0..=255).flat_map(|byte| around.map(|it| (byte, it))) {
+        for other in *b"a\n" {
+            let t = [vec![other; before], vec![byte], vec![other; after]].concat();
+            check(t.iter().filter(|&&b| is_visible(b)).count(), || {
+                kernels::visible_latin1_width(&t)
+            });
+            check(width_without_escapes(&t), || {
+                kernels::visible_latin1_width_exclude_ansi(&t)
+            });
+        }
+    }
+    for (start, len) in (62..66).flat_map(|len| (*b"]P").map(|it| (it, len))) {
+        let t = [&[0x1B, start][..], &vec![b'0'; len], b"\x91", &[b'0'; 40]].concat();
+        check(0, || kernels::visible_latin1_width_exclude_ansi(&t));
+    }
+    // Four in one lane.
+    for (start, last) in [(0x1B, 50), (0x1B, 52), (0x9B, 50), (0x9B, 52)] {
+        let mut t = [b'a'; 62];
+        [4, 20, 36, last].into_iter().for_each(|at| t[at] = start);
+        check(54, || kernels::visible_latin1_width_exclude_ansi(&t));
+    }
+}
+
+#[test]
 fn lines_and_runs() {
     for t in texts(MIXED).chain([all_bytes()]) {
         let after_newlines = (1..=t.len()).filter(|&at| t[at - 1] == b'\n');
@@ -1975,6 +2002,13 @@ fn resized_images() {
             kernels::xxhash32(0, all.as_flattened())
         })
     });
+}
+
+#[test]
+fn resized_without_memory() {
+    let mut out = [[0; 4]];
+    let out = out.as_mut().into();
+    assert!(kernels::resize(Filter::Box, &[[0; 4]], 1, out, usize::MAX / 2).is_err());
 }
 
 #[test]

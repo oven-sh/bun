@@ -99,6 +99,12 @@ let v = bun_simd::sse4::U8::zero();
 v.shuffle::<Past>(v);
 ```
 
+More lanes to repeat than there is room for:
+
+```rust,compile_fail,E0080
+bun_simd::sse4::Vector::<u8, 8>::repeat([0; 16]);
+```
+
 ## The gate
 
 Fewer features than the kernel has:

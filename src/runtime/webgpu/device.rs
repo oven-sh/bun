@@ -211,6 +211,11 @@ pub(crate) struct GPUDeviceHandle {
 super::gpu_object!(GPUDeviceHandle, label);
 
 impl GPUDeviceHandle {
+    /// The device behind this handle, for the objects that a device argument configures (a surface).
+    pub(crate) fn state(&self) -> &DeviceRef {
+        &self.state
+    }
+
     /// Wraps a freshly requested device and returns the JS `GPUDevice` around it.
     pub(crate) fn create(
         global: &JSGlobalObject,

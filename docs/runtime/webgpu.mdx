@@ -62,7 +62,7 @@ readback.unmap();
 bun run double.ts
 ```
 
-The classes, methods, and descriptors are the ones the WebGPU specification defines, so the [MDN reference](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) applies to Bun. The parts that need a canvas are [not available](#limitations).
+The classes, methods, and descriptors are the ones the WebGPU specification defines, so the [MDN reference](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) applies to Bun. There is no canvas element, but a [native window](#rendering-to-a-window) can take the place of one.
 
 ---
 
@@ -90,9 +90,42 @@ Code that installs another implementation only when `navigator.gpu` is missing (
 
 ---
 
+## Rendering to a window
+
+`UnsafeWindowSurface` presents into a window you made yourself, for example with SDL or GLFW through `bun:ffi`. It takes the window's native handles, and its `getContext("webgpu")` returns a `GPUCanvasContext` as a canvas does. Draw into `getCurrentTexture()` and call `present()` when the frame is done. The API is the same as Deno's `Deno.UnsafeWindowSurface`, so code written for one runs on the other.
+
+```ts
+// nsWindow and nsView from your windowing library, e.g. SDL_GetPointerProperty and SDL_Metal_CreateView in SDL3.
+const surface = new UnsafeWindowSurface({
+  system: "cocoa",
+  windowHandle: nsWindow,
+  displayHandle: nsView,
+  width: 1024,
+  height: 768,
+});
+const context = surface.getContext("webgpu");
+context.configure({ device, format: navigator.gpu.getPreferredCanvasFormat() });
+
+function frame() {
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [
+      { view: context.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] },
+    ],
+  });
+  pass.end();
+  device.queue.submit([encoder.finish()]);
+  surface.present();
+}
+```
+
+It is unsafe because nothing checks the handles: they have to point at a live window for as long as the surface exists. Setting `width` or `height` resizes the surface. A window that is hidden or fully covered has no frame to draw into, and `getCurrentTexture()` throws an `InvalidStateError` until it is visible again. macOS (`system: "cocoa"`) is supported for now.
+
+---
+
 ## Rendering without a canvas
 
-There is no window to present to, so Bun has no `GPUCanvasContext`. Render into a texture you create and copy the result into a buffer to read it.
+Without a window, render into a texture you create and copy the result into a buffer to read it.
 
 ```ts
 const adapter = await navigator.gpu.requestAdapter();
@@ -175,7 +208,8 @@ bun add -d @webgpu/types
 
 ## Limitations
 
-- No `GPUCanvasContext`, `GPUExternalTexture`, or `queue.copyExternalImageToTexture()`. They need a canvas, a video element, or an image element.
+- No `GPUExternalTexture` or `queue.copyExternalImageToTexture()`. They need a video or an image element.
+- `UnsafeWindowSurface` supports macOS windows only so far.
 - `navigator.gpu.wgslLanguageFeatures` has no `unrestricted_pointer_parameters`. The list is what naga, the WGSL compiler in wgpu, implements, and that extension [is not done yet](https://github.com/gfx-rs/wgpu/issues/5158).
 - `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile the pipeline before they return their promise.
 - `adapter.requestDevice()` rejects with an `OperationError` if the driver fails to create the device. Browsers resolve with a lost device instead.

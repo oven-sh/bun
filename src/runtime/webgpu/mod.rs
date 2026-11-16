@@ -13,6 +13,7 @@ mod query;
 mod queue;
 mod render_pass;
 mod shader;
+pub(crate) mod surface;
 mod texture;
 mod wait;
 
@@ -28,6 +29,7 @@ pub(crate) use query::GPUQuerySet;
 pub(crate) use queue::GPUQueue;
 pub(crate) use render_pass::{GPURenderBundle, GPURenderBundleEncoder, GPURenderPassEncoder};
 pub(crate) use shader::GPUShaderModule;
+pub(crate) use surface::GPUSurfaceHandle;
 pub(crate) use texture::{GPUSampler, GPUTexture, GPUTextureView};
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};

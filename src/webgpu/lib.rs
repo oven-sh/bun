@@ -240,6 +240,7 @@ owned_id!(Buffer, id::BufferId, buffer_drop);
 owned_id!(Texture, id::TextureId, texture_drop);
 owned_id!(TextureView, id::TextureViewId, texture_view_drop);
 owned_id!(Sampler, id::SamplerId, sampler_drop);
+owned_id!(Surface, id::SurfaceId, surface_drop);
 owned_id!(
     BindGroupLayout,
     id::BindGroupLayoutId,
@@ -488,4 +489,27 @@ pub fn error_chain(err: &(dyn core::error::Error + 'static)) -> String {
         source = e.source();
     }
     out
+}
+
+/// A surface that presents into the AppKit `NSView` `ns_view`, through a `CAMetalLayer` that wgpu puts on the view if it has none.
+///
+/// # Safety
+///
+/// `ns_view` is a live `NSView` that outlives the surface, used on the main thread.
+#[cfg(target_vendor = "apple")]
+pub unsafe fn create_surface_appkit(
+    ns_view: core::ptr::NonNull<core::ffi::c_void>,
+) -> Result<Surface, String> {
+    use raw_window_handle::{
+        AppKitDisplayHandle, AppKitWindowHandle, RawDisplayHandle, RawWindowHandle,
+    };
+    if !apple::load_quartz_core() {
+        return Err(String::from("QuartzCore could not be loaded"));
+    }
+    let window = RawWindowHandle::AppKit(AppKitWindowHandle::new(ns_view));
+    let display = RawDisplayHandle::AppKit(AppKitDisplayHandle::new());
+    // SAFETY: the caller guarantees the view; wgpu-core only reads the handles.
+    unsafe { instance().instance_create_surface(Some(display), window, None) }
+        .map(Surface::new)
+        .map_err(|e| e.to_string())
 }

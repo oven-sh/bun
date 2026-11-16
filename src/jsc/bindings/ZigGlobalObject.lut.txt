@@ -114,6 +114,7 @@
 
   GPUAdapterInfo                  jsWebGPUGlobal                                       DontEnum|CustomValue
   GPUBufferUsage                  jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUCanvasContext                jsWebGPUGlobal                                       DontEnum|CustomValue
   GPUColorWrite                   jsWebGPUGlobal                                       DontEnum|CustomValue
   GPUCompilationInfo              jsWebGPUGlobal                                       DontEnum|CustomValue
   GPUCompilationMessage           jsWebGPUGlobal                                       DontEnum|CustomValue
@@ -131,5 +132,6 @@
   GPUUncapturedErrorEvent         jsWebGPUGlobal                                       DontEnum|CustomValue
   GPUValidationError              jsWebGPUGlobal                                       DontEnum|CustomValue
   WGSLLanguageFeatures            jsWebGPUGlobal                                       DontEnum|CustomValue
+  UnsafeWindowSurface             jsWebGPUGlobal                                       DontEnum|CustomValue
 @end
 */

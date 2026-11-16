@@ -278,9 +278,17 @@ class GPUUncapturedErrorEvent extends Event {
 // The shape of the native `GPUDeviceHandle` (src/runtime/webgpu/device.rs).
 type DeviceHandle = Record<string, any>;
 
+// The native handle of a GPUDevice, for GPUCanvasContext.configure; undefined for anything else.
+let deviceHandleOf: (device: unknown) => DeviceHandle | undefined;
+
 class GPUDevice extends EventTarget {
   #handle: DeviceHandle;
   #onuncapturederror: ((event: GPUUncapturedErrorEvent) => unknown) | null = null;
+
+  static {
+    deviceHandleOf = device =>
+      typeof device === "object" && device !== null && #handle in device ? (device as GPUDevice).#handle : undefined;
+  }
 
   constructor(key: unknown, handle: DeviceHandle) {
     checkKey(key);
@@ -443,6 +451,159 @@ const GPUColorWrite = Object.freeze({
   ALL: 0xf,
 });
 
+const createSurfaceHandle = $newRustFunction("runtime/webgpu/surface.rs", "createSurfaceHandle", 3);
+
+// The shape of the native `GPUSurfaceHandle` (src/runtime/webgpu/surface.rs).
+type SurfaceHandle = Record<string, any>;
+
+// The size of a surface, as a canvas keeps it: an unsigned long.
+function toSize(value: unknown) {
+  return Number(value) >>> 0;
+}
+
+let resizeContext: (context: GPUCanvasContext) => void;
+let presentContext: (context: GPUCanvasContext) => void;
+
+// https://www.w3.org/TR/webgpu/#canvas-context, on an UnsafeWindowSurface instead of a canvas.
+class GPUCanvasContext {
+  #canvas: UnsafeWindowSurface;
+  #handle: SurfaceHandle;
+  #configuration: Record<string, any> | null = null;
+  // The texture of the frame being drawn: the same object until the frame is presented.
+  #current: unknown = null;
+
+  constructor(key: unknown, canvas: UnsafeWindowSurface, handle: SurfaceHandle) {
+    checkKey(key);
+    this.#canvas = canvas;
+    this.#handle = handle;
+  }
+
+  static {
+    resizeContext = context => {
+      if (!context.#configuration) return;
+      context.#current = null;
+      context.#configureHandle(context.#configuration);
+    };
+    presentContext = context => {
+      if (context.#current === null) return;
+      context.#current = null;
+      context.#handle.present();
+    };
+  }
+
+  get canvas() {
+    return this.#canvas;
+  }
+
+  #configureHandle(configuration: Record<string, any>) {
+    this.#handle.configure(
+      deviceHandleOf(configuration.device),
+      configuration.format,
+      configuration.usage,
+      configuration.alphaMode,
+      Math.max(1, this.#canvas.width),
+      Math.max(1, this.#canvas.height),
+    );
+  }
+
+  configure(configuration: Record<string, any>) {
+    if (typeof configuration !== "object" || configuration === null) {
+      throw new TypeError("GPUCanvasContext.configure: the configuration has to be a GPUCanvasConfiguration");
+    }
+    const device = configuration.device;
+    if (deviceHandleOf(device) === undefined) {
+      throw new TypeError("GPUCanvasContext.configure: configuration.device has to be a GPUDevice");
+    }
+    const viewFormats = configuration.viewFormats === undefined ? [] : [...configuration.viewFormats].map(String);
+    if (viewFormats.length > 0) {
+      throw new TypeError("GPUCanvasContext.configure: viewFormats are not supported yet");
+    }
+    const resolved = {
+      device,
+      format: String(configuration.format),
+      usage: configuration.usage === undefined ? 0x10 : Number(configuration.usage) >>> 0,
+      viewFormats,
+      colorSpace: configuration.colorSpace === undefined ? "srgb" : String(configuration.colorSpace),
+      toneMapping: {
+        mode: configuration.toneMapping?.mode === undefined ? "standard" : String(configuration.toneMapping.mode),
+      },
+      alphaMode: configuration.alphaMode === undefined ? "opaque" : String(configuration.alphaMode),
+    };
+    this.#current = null;
+    this.#configuration = null;
+    this.#configureHandle(resolved);
+    this.#configuration = resolved;
+  }
+
+  unconfigure() {
+    this.#current = null;
+    this.#configuration = null;
+    this.#handle.unconfigure();
+  }
+
+  getConfiguration() {
+    const configuration = this.#configuration;
+    if (configuration === null) return null;
+    return {
+      ...configuration,
+      viewFormats: [...configuration.viewFormats],
+      toneMapping: { ...configuration.toneMapping },
+    };
+  }
+
+  getCurrentTexture() {
+    return (this.#current ??= this.#handle.getCurrentTexture());
+  }
+}
+
+// A WebGPU surface on a native window, as Deno's `Deno.UnsafeWindowSurface`: unsafe, because nothing checks that the
+// handles point at a live window. macOS: `system: "cocoa"`, `windowHandle` the NSWindow, `displayHandle` the NSView.
+class UnsafeWindowSurface {
+  #handle: SurfaceHandle;
+  #width: number;
+  #height: number;
+  #context: GPUCanvasContext | null = null;
+
+  constructor(options: Record<string, any>) {
+    if (typeof options !== "object" || options === null) {
+      throw new TypeError("UnsafeWindowSurface: the options have to be an object");
+    }
+    this.#handle = createSurfaceHandle(String(options.system), options.windowHandle, options.displayHandle);
+    this.#width = toSize(options.width);
+    this.#height = toSize(options.height);
+  }
+
+  get width() {
+    return this.#width;
+  }
+  set width(value) {
+    const width = toSize(value);
+    if (width === this.#width) return;
+    this.#width = width;
+    if (this.#context) resizeContext(this.#context);
+  }
+
+  get height() {
+    return this.#height;
+  }
+  set height(value) {
+    const height = toSize(value);
+    if (height === this.#height) return;
+    this.#height = height;
+    if (this.#context) resizeContext(this.#context);
+  }
+
+  getContext(contextId: string) {
+    if (contextId !== "webgpu") return null;
+    return (this.#context ??= new GPUCanvasContext(kConstruct, this, this.#handle));
+  }
+
+  // Shows the frame drawn since the last present.
+  present() {
+    if (this.#context) presentContext(this.#context);
+  }
+}
+
 for (const [name, constructor] of Object.entries({
   GPUSupportedFeatures,
   WGSLLanguageFeatures,
@@ -458,6 +619,8 @@ for (const [name, constructor] of Object.entries({
   GPUPipelineError,
   GPUUncapturedErrorEvent,
   GPUDevice,
+  GPUCanvasContext,
+  UnsafeWindowSurface,
 })) {
   asInterface(constructor, name);
 }
@@ -478,6 +641,8 @@ export default {
   GPUPipelineError,
   GPUUncapturedErrorEvent,
   GPUDevice,
+  GPUCanvasContext,
+  UnsafeWindowSurface,
   GPUBufferUsage,
   GPUMapMode,
   GPUTextureUsage,

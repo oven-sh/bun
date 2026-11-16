@@ -1756,6 +1756,7 @@ dependencies = [
  "bun_core",
  "bun_sys",
  "bun_threading",
+ "raw-window-handle",
  "wgpu-core",
  "wgpu-types",
 ]

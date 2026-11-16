@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAesKeyParams.h"
 #include "CryptoKeyAES.h"
 #include <variant>
 
@@ -62,7 +61,7 @@ void CryptoAlgorithmAES_KW::generateKey(const CryptoAlgorithmParameters& paramet
         return;
     }
 
-    auto result = CryptoKeyAES::generate(CryptoAlgorithmIdentifier::AES_KW, downcast<CryptoAlgorithmAesKeyParams>(parameters).length, extractable, usages);
+    auto result = CryptoKeyAES::generate(CryptoAlgorithmIdentifier::AES_KW, std::get<CryptoAlgorithmAesKeyParams>(parameters.dictionary).length, extractable, usages);
     if (!result) {
         exceptionCallback(OperationError, ""_s);
         return;

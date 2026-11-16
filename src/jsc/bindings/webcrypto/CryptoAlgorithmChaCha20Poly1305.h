@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmAeadParams;
 class CryptoKeyRaw;
 
 class CryptoAlgorithmChaCha20Poly1305 final : public CryptoAlgorithm {

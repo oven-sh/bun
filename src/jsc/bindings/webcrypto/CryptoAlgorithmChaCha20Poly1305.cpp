@@ -30,10 +30,8 @@
 
 #include "../wtf-bindings.h"
 #include "CryptoKey.h"
-#include "CryptoAlgorithmAeadParams.h"
 #include "CryptoKeyRaw.h"
 #include "JsonWebKey.h"
-#include <wtf/CrossThreadCopier.h>
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -50,12 +48,11 @@ static inline bool usagesAreInvalidForChaCha20Poly1305(CryptoKeyUsageBitmap usag
 
 // The only tag length ChaCha20-Poly1305 defines is 128 bits; anything else is an
 // OperationError rather than a silently truncated tag.
-static bool validateTagLength(std::optional<uint8_t>& tagLength, const CryptoAlgorithm::ExceptionCallback& exceptionCallback)
+static bool validateTagLength(uint8_t tagLength, const CryptoAlgorithm::ExceptionCallback& exceptionCallback)
 {
     using namespace CryptoAlgorithmChaCha20Poly1305Internal;
-    tagLength = tagLength.value_or(TagLength);
-    if (*tagLength != TagLength) {
-        exceptionCallback(OperationError, makeString(tagLength.value(), " is not a valid ChaCha20-Poly1305 tag length"_s));
+    if (tagLength != TagLength) {
+        exceptionCallback(OperationError, makeString(tagLength, " is not a valid ChaCha20-Poly1305 tag length"_s));
         return false;
     }
     return true;
@@ -65,7 +62,7 @@ static bool validateTagLength(std::optional<uint8_t>& tagLength, const CryptoAlg
 // length up front instead of surfacing BoringSSL's generic AEAD failure.
 static bool validateIvLength(const CryptoAlgorithmAeadParams& parameters, const CryptoAlgorithm::ExceptionCallback& exceptionCallback)
 {
-    if (parameters.ivVector().size() != 12) {
+    if (parameters.iv.size() != 12) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 12 bytes"_s);
         return false;
     }
@@ -84,14 +81,14 @@ CryptoAlgorithmIdentifier CryptoAlgorithmChaCha20Poly1305::identifier() const
 
 void CryptoAlgorithmChaCha20Poly1305::encrypt(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& key, Vector<uint8_t>&& plainText, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    auto& aeadParameters = downcast<CryptoAlgorithmAeadParams>(parameters);
+    auto& aeadParameters = std::get<CryptoAlgorithmAeadParams>(parameters.dictionary);
     if (!validateTagLength(aeadParameters.tagLength, exceptionCallback))
         return;
     if (!validateIvLength(aeadParameters, exceptionCallback))
         return;
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(aeadParameters), key = WTF::move(key), plainText = WTF::move(plainText)] {
+        [parameters = aeadParameters, key = WTF::move(key), plainText = WTF::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyRaw>(key.get()), plainText);
         });
 }
@@ -100,7 +97,7 @@ void CryptoAlgorithmChaCha20Poly1305::decrypt(const CryptoAlgorithmParameters& p
 {
     using namespace CryptoAlgorithmChaCha20Poly1305Internal;
 
-    auto& aeadParameters = downcast<CryptoAlgorithmAeadParams>(parameters);
+    auto& aeadParameters = std::get<CryptoAlgorithmAeadParams>(parameters.dictionary);
     if (!validateTagLength(aeadParameters.tagLength, exceptionCallback))
         return;
     if (!validateIvLength(aeadParameters, exceptionCallback))
@@ -111,7 +108,7 @@ void CryptoAlgorithmChaCha20Poly1305::decrypt(const CryptoAlgorithmParameters& p
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(aeadParameters), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
+        [parameters = aeadParameters, key = WTF::move(key), cipherText = WTF::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyRaw>(key.get()), cipherText);
         });
 }

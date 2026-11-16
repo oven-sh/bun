@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAesCbcCfbParams.h"
 #include "CryptoKeyAES.h"
 #include "OpenSSLUtilities.h"
 
@@ -88,7 +87,7 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CFB::platformEncrypt(const CryptoAlgorithmAesCbcCfbParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& plainText)
 {
-    auto output = cryptEncrypt(key.key(), parameters.ivVector(), plainText);
+    auto output = cryptEncrypt(key.key(), parameters.iv, plainText);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);
@@ -96,7 +95,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CFB::platformEncrypt(const Crypt
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CFB::platformDecrypt(const CryptoAlgorithmAesCbcCfbParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText)
 {
-    auto output = cryptDecrypt(key.key(), parameters.ivVector(), cipherText);
+    auto output = cryptDecrypt(key.key(), parameters.iv, cipherText);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);

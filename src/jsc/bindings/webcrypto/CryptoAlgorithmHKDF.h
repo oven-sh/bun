@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmHkdfParams;
 class CryptoKeyRaw;
 
 class CryptoAlgorithmHKDF final : public CryptoAlgorithm {

@@ -78,28 +78,36 @@ pub(crate) mod simd {
         }
     }
 
-    /// For slices of the same length. `None` if that is below `M`.
+    /// The last place where slices of the same length differ. `None` if that is below `M`.
     #[inline(always)]
-    fn mismatch<S, const N: usize, const M: usize>(a: &[S], b: &[S]) -> Option<usize>
+    fn last_mismatch<S, const N: usize, const M: usize>(a: &[S], b: &[S]) -> Option<usize>
     where
         S: Unit<Lane: Int<N> + Int<M>>,
     {
         match a.len() >= N {
-            true => Vector::<_, N>::position_past::<S, 2, true>([a, b], 0, |[a, b]| a.simd_ne(b)),
-            false => Vector::<_, M>::position_past::<S, 2, true>([a, b], 0, |[a, b]| a.simd_ne(b)),
+            true => Vector::<_, N>::position_past::<S, 2, false>([a, b], 0, |[a, b]| a.simd_ne(b)),
+            false => Vector::<_, M>::position_past::<S, 2, false>([a, b], 0, |[a, b]| a.simd_ne(b)),
         }
     }
 
     /// By Crochemore and Perrin. The time is linear even if `needle` has changed since it was split.
     #[inline(never)]
-    pub(crate) fn two_way<'a, S: Unit<Lane: Int<M>>, const M: usize, const FORWARD: bool>(
+    pub(crate) fn two_way<'a, S, const N: usize, const M: usize, const FORWARD: bool>(
         haystack: &'a [S],
         needle: &[S],
         mut at: usize,
         [split, shift, known_after_shift]: [usize; 3],
-    ) -> Option<&'a S> {
+    ) -> Option<&'a S>
+    where
+        S: Unit<Lane: Int<N> + Int<M>>,
+    {
         let (len, mut known) = (needle.len(), 0);
         let (is_near_end, split_if_short) = (len < split + M, if len < M { split } else { 0 });
+        let starts = haystack.len().checked_sub(len)? + 1;
+        // The unit that each window compares first while it knows nothing, and those of the windows.
+        let at_split = nth::<S, FORWARD>(needle, split)?;
+        let firsts = haystack.get(if FORWARD { split } else { len - 1 - split }..)?;
+        let is_first = |[v]: [Vector<_, N>; 1]| v.simd_eq(Vector::splat(at_split));
         loop {
             let window = window(haystack, at, len)?;
             let differs = |&i: &usize| nth::<S, FORWARD>(needle, i) != nth::<S, FORWARD>(window, i);
@@ -112,6 +120,20 @@ pub(crate) mod simd {
             let soon = if is_near_end { len } else { from + 8 };
             let by;
             (by, known) = match (from..soon).find(differs).or_else(|| differs_past(soon)) {
+                // Then the classic algorithm moves by one unit, and here it would again.
+                Some(first)
+                    if first == split
+                        && if FORWARD { at + N < starts } else { at >= N }
+                        && firsts
+                            .get(if FORWARD { at + 1 } else { at - 1 })
+                            .is_some_and(|next| next.get() != at_split) =>
+                {
+                    let seen = if FORWARD { at + 1 } else { starts - at };
+                    let firsts = firsts.get(..starts)?;
+                    at = Vector::position_past::<S, 1, FORWARD>([firsts], seen, is_first)?;
+                    known = 0;
+                    continue;
+                }
                 Some(first) => (first + 1 - split, 0),
                 None if (known..split_if_short).any(|i| differs(&i)) => (shift, known_after_shift),
                 None if differs_past(known).is_some() => (shift, known_after_shift),
@@ -137,6 +159,8 @@ pub(crate) mod simd {
         let (len, last) = (needle.len(), needle.len().checked_sub(1)?);
         let starts = haystack.len().checked_sub(last)?;
         let [mut fixed, mut learned] = if FORWARD { [0, last] } else { [last, 0] };
+        // Where the last full comparison found a difference.
+        let mut previous = learned;
         let (shortest, worth_skipping) = (8 * N, 64 * N);
         let (mut rare, mut stretch, mut longest) = (learned, shortest, shortest);
         let (mut patience, mut left, mut patience_to_sample) = (2isize, 2, 8);
@@ -162,15 +186,18 @@ pub(crate) mod simd {
                         let [later, first] = [(differ & is_later).first_set(), differ.first_set()];
                         learned = offset + later.or(first)?;
                     }
+                    // The anchor keeps one of the last two differences, the part the other.
                     Some(_) => {
-                        let Some(differs) = mismatch::<S, N, M>(needle, window.get(..len)?) else {
+                        let Some(differs) = last_mismatch::<S, N, M>(needle, window.get(..len)?)
+                        else {
                             return window.first();
                         };
-                        let cost = differs / 2 + COST_OF_LONG_CANDIDATE;
+                        let cost = (last - differs) / 2 + COST_OF_LONG_CANDIDATE;
                         let Some(budget_left) = budget.checked_sub(cost) else {
                             break at;
                         };
-                        (budget, learned, left) = (budget_left, differs, left - 8);
+                        (budget, learned, previous) = (budget_left, previous, differs);
+                        left -= 8;
                         offset = differs.min(len.checked_sub(M)?);
                         part = Vector::load(needle.get(offset..)?.first_chunk()?);
                     }
@@ -208,7 +235,10 @@ pub(crate) mod simd {
                 }
                 seen_before = seen;
                 if patience >= patience_to_sample {
-                    let size = 4 * patience.cast_unsigned() + 32;
+                    // Longer in a long text, which pays for it.
+                    let size = patience.cast_unsigned() + 32;
+                    let size =
+                        size.max((3 * patience.cast_unsigned() + size).min((starts - seen) / 256));
                     let size = size.min(LONGEST_SAMPLE).min(starts - seen);
                     let from = if FORWARD { seen } else { starts - seen - size };
                     rare = rarest(needle, haystack.get(from..)?.get(..size)?);
@@ -239,7 +269,7 @@ pub(crate) mod simd {
             matches = blocks.find_map(worth_a_look).unwrap_or_default();
             seen += stretch;
         };
-        two_way::<S, M, FORWARD>(haystack, needle, at, halves::<S, FORWARD>(needle))
+        two_way::<S, N, M, FORWARD>(haystack, needle, at, halves::<S, FORWARD>(needle))
     }
 
     /// The places of the first and the last unit of the needle, and those units.
@@ -461,7 +491,7 @@ mod tests {
             } else {
                 text.len() - needle.len()
             };
-            two_way::<_, M, FORWARD>(text, needle, at, halves::<_, FORWARD>(needle))
+            two_way::<_, M, M, FORWARD>(text, needle, at, halves::<_, FORWARD>(needle))
         })
     }
 
@@ -482,6 +512,50 @@ mod tests {
         }
     }
 
+    /// With the vectors of the widest targets, over texts long enough to skip many of them.
+    #[test]
+    fn two_way_skips_like_wide_targets() {
+        use super::simd::portable64::two_way;
+        let mut seed = 1u32;
+        let mut random = |below: usize| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as usize % below
+        };
+        for _ in 0..3000 {
+            let needle: Vec<u8> = (0..1 + random(6)).map(|_| random(3) as u8).collect();
+            let len = needle.len() + random(400);
+            let rare = 1 + random(16);
+            let mut text: Vec<u8> = (0..len)
+                .map(|_| {
+                    if random(rare) == 0 {
+                        random(3) as u8
+                    } else {
+                        3
+                    }
+                })
+                .collect();
+            if random(2) == 0 {
+                let at = random(len - needle.len() + 1);
+                text[at..][..needle.len()].copy_from_slice(&needle);
+            }
+            let places = || (0..text.len()).filter(|&at| text[at..].starts_with(&needle));
+            let halves = |forward| match forward {
+                true => halves::<_, true>(&needle),
+                false => halves::<_, false>(&needle),
+            };
+            let found = two_way::<_, 64, 16, true>(&text, &needle, 0, halves(true));
+            let last = text.len() - needle.len();
+            let found_last = two_way::<_, 64, 16, false>(&text, &needle, last, halves(false));
+            let index = |found: Option<&u8>| {
+                found.map(|it| ptr::from_ref(it).addr() - text.as_ptr().addr())
+            };
+            assert_eq!(
+                [index(found), index(found_last)],
+                [places().next(), places().next_back()]
+            );
+        }
+    }
+
     /// Does not end unless the time is linear.
     #[test]
     fn long_needle_that_has_changed() {
@@ -490,7 +564,7 @@ mod tests {
         assert_eq!(find::<16, true>(&text, &needle), None);
         for (split, period) in [(needle.len() - 1, 1), (1, 2)] {
             let halves = split_at(split, needle.len(), Some(period));
-            black_box(two_way::<_, 16, true>(&text, &needle, 0, halves));
+            black_box(two_way::<_, 16, 16, true>(&text, &needle, 0, halves));
         }
     }
 }

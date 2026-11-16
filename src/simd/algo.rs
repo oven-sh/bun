@@ -132,27 +132,39 @@ mod simd {
             test: impl Fn([Self; P]) -> Mask<T, N>,
         ) -> Option<usize> {
             let (slices, find) = (of_same_len(slices), Isa::nearest_set::<T, N, FORWARD>);
-            let (len, mut rest) = (slices[0].len(), slices);
+            let len = slices[0].len();
+            if FORWARD {
+                let Some(last) = len.checked_sub(N) else {
+                    return Self::nearest_in_short::<S, P, FORWARD>(slices, test);
+                };
+                let mut start = 0;
+                #[rustc_unroll(never)]
+                while start < last {
+                    let found = Self::nearest_at::<S, P, FORWARD>(slices, start, 1, &test);
+                    if found.is_some() {
+                        return found;
+                    }
+                    start += N;
+                }
+                return Self::nearest_at::<S, P, FORWARD>(slices, last, 1, &test);
+            }
+            let mut rest = slices;
             #[rustc_unroll(never)]
             while rest[0].len() > N {
                 let left = rest[0].len() - N;
-                let masks = Self::block(rest, if FORWARD { 0 } else { left }, 1, &test)?;
-                let found = find(&masks[..1], if FORWARD { len - N - left } else { left });
+                let masks = Self::block(rest, left, 1, &test)?;
+                let found = find(&masks[..1], left);
                 if found.is_some() {
                     return found;
                 }
                 for slice in &mut rest {
-                    *slice = if FORWARD {
-                        slice.get(N..)?
-                    } else {
-                        slice.get(..left)?
-                    };
+                    *slice = slice.get(..left)?;
                 }
             }
-            let Some(last) = len.checked_sub(N) else {
+            if len < N {
                 return Self::nearest_in_short::<S, P, FORWARD>(slices, test);
-            };
-            Self::nearest_at::<S, P, FORWARD>(slices, if FORWARD { last } else { 0 }, 1, &test)
+            }
+            Self::nearest_at::<S, P, FORWARD>(slices, 0, 1, &test)
         }
 
         /// The same without the `seen` nearest, but for at least `N`. `None` if there are fewer.

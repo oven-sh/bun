@@ -480,22 +480,19 @@ fn paths() {
     let mixed = texts(b"//..ab").chain(texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.\xE9"));
     let parts: [&[u8]; 7] = [b"\xE9", b"/", b"//", b"/.", b"/..", b"/.a/..", b"/...\xE9"];
     let parts = (0..140).flat_map(|len| parts.map(|end| [&vec![b'a'; len][..], end].concat()));
-    for t in mixed.chain(ends).chain(parts) {
-        let is_untidy = |&at: &usize| {
-            let part = t[at + 1..]
-                .iter()
-                .take_while(|b| !b"/".contains(b))
-                .copied();
-            let is_dots = [&b""[..], b".", b".."].contains(&&part.collect::<Vec<u8>>()[..]);
-            t[at] == b'/' && at + 1 < t.len() && is_dots
+    let untidy = |t: &[u8], or_non_ascii: bool| {
+        let is_untidy = |at: usize| {
+            let part = t[at + 1..].iter().take_while(|&&b| b != b'/');
+            let is_dots = [&b""[..], b".", b".."].contains(&&part.copied().collect::<Vec<_>>()[..]);
+            t[at] == b'/' && at + 1 < t.len() && is_dots || or_non_ascii && t[at] > 0x7F
         };
-        check((0..t.len()).find(is_untidy), || {
-            kernels::index_of_untidy_slash(&t)
+        (0..t.len()).find(|&at| is_untidy(at))
+    };
+    for t in mixed.chain(ends).chain(parts) {
+        check(untidy(&t, false), || kernels::index_of_untidy_slash(&t));
+        check(untidy(&t, true), || {
+            kernels::index_of_untidy_slash_or_non_ascii(&t)
         });
-        check(
-            (0..t.len()).find(|at| is_untidy(at) || t[*at] > 0x7F),
-            || kernels::index_of_untidy_slash_or_non_ascii(&t),
-        );
         for len in [t.len(), t.len() / 2, t.len() / 7] {
             check(len, || kernels::common_prefix_length(&t, &t[..len]));
             check(len, || {
@@ -503,6 +500,15 @@ fn paths() {
                 kernels::common_prefix_length(&[&t[..len], &[other], &t].concat(), &t)
             });
         }
+    }
+    // As `path.normalize` calls it: once more after each part that it finds.
+    for t in texts(b"//..ab/.a/a/aa") {
+        let mut rest = &t[..];
+        while let Some(at) = untidy(rest, false) {
+            check(Some(at), || kernels::index_of_untidy_slash(rest));
+            rest = &rest[at + 1..];
+        }
+        check(None, || kernels::index_of_untidy_slash(rest));
     }
 }
 

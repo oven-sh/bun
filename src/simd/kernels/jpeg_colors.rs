@@ -1,6 +1,4 @@
 //! The color conversions of JPEG, in the arithmetic of libjpeg-turbo (LICENSE.md).
-//!
-//! `None` says that the arguments do not fit. Some of the output may be written by then.
 use bun_simd::{Isa, Out, Shuffle, opaque};
 use core::array::from_fn;
 
@@ -341,7 +339,7 @@ pub(crate) mod simd {
         Some(())
     }
 
-    /// For whole groups. The rows of `y` are twice `chroma_stride` apart.
+    /// For whole groups, until a row does not fit. Those of `y` are twice `chroma_stride` apart.
     #[export(up_to = avx2, up_to = neon)]
     #[must_use]
     pub fn rgba_to_ycc420(
@@ -376,7 +374,7 @@ pub(crate) mod simd {
     }
 }
 
-/// Appends `width` pixels to `out`. Its spare capacity and all rows have to cover whole groups.
+/// Appends `width` pixels to `out`, if its spare capacity and all rows cover whole groups.
 #[inline(always)]
 #[must_use]
 pub fn ycc_to_rgba(y: &[u8], chroma: Chroma<'_>, width: usize, out: &mut Vec<Rgba>) -> Option<()> {

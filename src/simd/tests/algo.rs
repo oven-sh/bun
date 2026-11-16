@@ -209,7 +209,7 @@ mod simd {
             let past = Vector::position_past::<T, 2, FORWARD>(both, from, test).map(turn);
             let last = len.checked_sub(N).filter(|_| from < len);
             assert_eq!(past, last.and_then(|last| next(in_both, from.min(last))));
-            if (N..=len.saturating_sub(N)).contains(&from) {
+            if from <= len.saturating_sub(N) {
                 let skipped = Vector::skip::<T, FORWARD>(both[0], from, |v| [v.simd_eq(one); 2]);
                 let first = next(in_a, skipped.min(from)).unwrap_or(len);
                 assert!(from < skipped + N && (skipped..skipped + 4 * N).contains(&first));

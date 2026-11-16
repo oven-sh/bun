@@ -1,6 +1,4 @@
 //! The transforms of JPEG, in the arithmetic of libjpeg-turbo (LICENSE.md).
-//!
-//! `None` says that the arguments do not fit. Some of the output may be written by then.
 use bun_simd::{Isa, Shuffle, opaque};
 use core::array::from_fn;
 
@@ -449,7 +447,7 @@ pub(crate) mod simd {
         Some(())
     }
 
-    /// Writes `size` by `size` samples for each block, side by side. `size` is 2 to 8, 10, 12 or 14.
+    /// `size` by `size` samples for each block, until one does not fit. 2 to 8, 10, 12 or 14.
     #[export(up_to = avx2, up_to = neon)]
     #[must_use]
     pub fn inverse_transform(
@@ -622,7 +620,7 @@ pub(crate) mod simd {
     }
 }
 
-/// Fills `blocks` from 8 rows of samples, `stride` bytes apart.
+/// Fills `blocks` from 8 rows that are `stride` bytes apart, until there are too few samples.
 #[inline(always)]
 #[must_use]
 pub fn forward_transform<const MASKS: usize>(

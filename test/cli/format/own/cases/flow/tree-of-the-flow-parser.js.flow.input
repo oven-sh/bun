@@ -1,0 +1,16 @@
+(a?.b /* 1 */).c;
+
+(/* 1 */ a?.b).c;
+
+(a?.b /* 1 */)();
+
+x = <a {.../* 1 */ a?.b} />;
+
+class A { #m(/* 1 */) {} }
+
+class B { static n() // 1
+: this {} }
+
+class C { static n() // 1
+// 2
+: this {} }

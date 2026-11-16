@@ -44,7 +44,7 @@ function expectNoTSParseError(code: string) {
   expect(parseErrors(code, tsTranspiler)).toEqual([]);
 }
 
-const useStrictNote = 'Strict mode is triggered by the "use strict" directive here:';
+const useStrictNote = 'Strict mode is triggered by a "use strict" directive';
 const exportNote = 'This file is considered to be an ECMAScript module because of the "export" keyword here:';
 const classNote = "All code inside a class is implicitly in strict mode";
 
@@ -216,13 +216,10 @@ describe("strict mode early errors", () => {
       expectNoParseError("'use strict'; '\\0'");
     });
 
-    test("the note points at the directive", () => {
-      expect(parseErrors("'use strict';\nwith (x) y")).toEqual([
-        {
-          message: "With statements cannot be used in strict mode",
-          notes: [{ message: useStrictNote, position: { line: 1, column: 1 } }],
-        },
-      ]);
+    test("the note names the directive", () => {
+      const errors = parseErrors("'use strict';\nwith (x) y");
+      expect(errors.map(e => e.message)).toEqual(["With statements cannot be used in strict mode"]);
+      expect(errors[0].notes.map(n => n.message)).toEqual([useStrictNote]);
     });
 
     test("a directive inside a block is not a directive", () => {
@@ -305,13 +302,12 @@ describe("strict mode early errors", () => {
       test.each(cases)("%j", (code, messages) => expectParseError(code, ...messages));
     });
 
-    test("the note points at the directive inside the function", () => {
-      expect(parseErrors("function f(arguments) {\n  'use strict'\n}")).toEqual([
-        {
-          message: 'Declarations with the name "arguments" cannot be used in strict mode',
-          notes: [{ message: useStrictNote, position: { line: 2, column: 3 } }],
-        },
+    test("the note names the directive of the function", () => {
+      const errors = parseErrors("function f(arguments) {\n  'use strict'\n}");
+      expect(errors.map(e => e.message)).toEqual([
+        'Declarations with the name "arguments" cannot be used in strict mode',
       ]);
+      expect(errors[0].notes.map(n => n.message)).toEqual([useStrictNote]);
     });
   });
 
@@ -444,6 +440,15 @@ describe("strict mode early errors", () => {
       expectNoTSParseError("import protected = require('x')");
       expectTSParseError("'use strict'; import protected = require('x')", reserved);
     });
+  });
+
+  // An exported member of a namespace is a property of the namespace object,
+  // so `delete` of its name is a `delete` of a property.
+  test("delete of a TypeScript namespace member is not a delete of a bare identifier", () => {
+    const code = (member: string) =>
+      `"use strict"; namespace N { ${member}; export function drop() { return delete x; } }`;
+    expect(tsTranspiler.transformSync(code("export let x = 1"))).toContain("delete N.x");
+    expectTSParseError(code("let x = 1"), "Delete of a bare identifier cannot be used in strict mode");
   });
 
   describe("class body", () => {

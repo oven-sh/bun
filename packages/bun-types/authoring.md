@@ -58,6 +58,7 @@ Types are organized across multiple `.d.ts` files in the `packages/bun-types` di
 - `globals.d.ts` - Global type declarations
 - `test.d.ts` - Testing-related types
 - `sqlite.d.ts` - SQLite-related types
+- `ts7.1/` - Declarations that need TypeScript 7.1 syntax, such as `declare module "*" with { type: "text" }`. Older compilers reject that syntax even with `skipLibCheck`, so `typesVersions` in `package.json` sends TypeScript 7.1 and newer to `ts7.1/index.d.ts`, which references `../index.d.ts` plus the extra files. Every other version keeps loading `index.d.ts`. Prettier and the repository's own `tsconfig.json` skip this folder for the same reason.
 - ...etc. You can make more files
 
 Note: The order of references in `index.d.ts` is important - `bun.ns.d.ts` must be referenced last to ensure the `Bun` global gets defined properly.

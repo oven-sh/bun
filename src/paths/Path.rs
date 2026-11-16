@@ -35,7 +35,7 @@ pub mod options {
     }
 
     #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub(crate) enum CheckLength {
+    pub enum CheckLength {
         AssumeAlwaysLessThanMaxPath,
         CheckForGreaterThanMaxPath,
     }
@@ -67,7 +67,6 @@ pub mod options {
     impl PathSeparators {
         pub const ANY: u8 = 0;
         pub const AUTO: u8 = 1;
-        pub const POSIX: u8 = 2;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
@@ -80,7 +79,8 @@ pub mod options {
     }
     impl CheckLength {
         pub(crate) const ASSUME: u8 = 0;
-        pub(crate) const CHECK: u8 = 1;
+        /// For paths that get unbounded input appended; see also [`Path::into_checked`].
+        pub const CHECK: u8 = 1;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             if v == 0 {
@@ -198,7 +198,7 @@ pub trait PathUnit: crate::PathChar {
     /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
     // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
     // underlying pool hands out heap buffers and reclaims them in `deinit`.
-    // Modeled as Box with put-back in `Path`'s Drop impl below (the pool's
+    // Modeled as Box with put-back in `Buf`'s Drop impl below (the pool's
     // RAII guard type is not generic over unit).
     fn pool_get() -> Box<Self::Buffer>;
     fn pool_put(buf: Box<Self::Buffer>);
@@ -350,22 +350,22 @@ impl PathUnit for u16 {
 // Buf — only the `.pool` variant is implemented
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
+pub(crate) struct Buf<U: PathUnit> {
     // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in deinit()).
-    // Wrapped in ManuallyDrop so `Path::drop` can move the Box back into the pool
+    // Wrapped in ManuallyDrop so `Buf::drop` can move the Box back into the pool
     // without leaving a dangling Box behind for the field destructor.
     pooled: ManuallyDrop<Box<U::Buffer>>,
     len: usize,
 }
 
-impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
+impl<U: PathUnit> Buf<U> {
     #[inline]
     fn set_length(&mut self, new_len: usize) {
         self.len = new_len;
     }
 
     /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
-    fn append(&mut self, characters: &[U], add_separator: bool) {
+    fn append<const SEP_OPT: u8>(&mut self, characters: &[U], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -396,7 +396,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 
     /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
-    fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
+    fn append_other<const SEP_OPT: u8>(&mut self, characters: &[U::Other], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -601,7 +601,7 @@ pub struct Path<
     const SEP_OPT: u8 = { PathSeparators::ANY },
     const CHECK: u8 = { CheckLength::ASSUME },
 > {
-    _buf: Buf<U, SEP_OPT>,
+    _buf: Buf<U>,
     _unit: PhantomData<U>,
 }
 
@@ -618,8 +618,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             _unit: PhantomData,
         }
     }
-
-    // `deinit` → impl Drop (below). Body returns the buffer to the pool.
 
     fn trimmed_top_level_dir() -> &'static [u8] {
         debug_assert!(crate::fs::FileSystem::instance_loaded());
@@ -683,8 +681,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             {
                 let mut wbuf = crate::w_path_buffer_pool::get();
                 let wslice: &mut [u16] = wbuf.as_mut_slice();
-                // SAFETY: wslice is valid for wslice.len() writable u16 units.
-                let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
+                let n = bun_core::fd_path_raw_w(fd, wslice);
                 if n <= 0 {
                     // `GetFinalPathNameByHandle` surfaces
                     // FileNotFound (return_length==0 → -1) or
@@ -720,8 +717,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
             let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
-            // SAFETY: buf is valid for buf.len() writable u16 units.
-            let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
+            let n = bun_core::fd_path_raw_w(fd, buf);
             if n <= 0 {
                 // `GetFinalPathNameByHandle` surfaces
                 // FileNotFound (return_length==0 → -1) or
@@ -819,21 +815,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     /// nominally distinct, hence this explicit conversion.
     #[inline]
     pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
-        // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
-        // Rust gives no layout-compat guarantee between distinct const-generic
-        // instantiations. Rebuilding field-by-field is layout-agnostic and
-        // optimizes to the same no-op move.
-        let mut this = ManuallyDrop::new(self);
-        let len = this._buf.len;
-        // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
-        // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
-        // and observe the now-uninitialized field.
-        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
+        self.reinterpret()
+    }
+
+    /// [`Self::into_sep`] for `CHECK`: from here on over-long input is `Err(MaxPathExceeded)`.
+    #[inline]
+    pub fn into_checked(self) -> Path<U, KIND, SEP_OPT, { CheckLength::CHECK }> {
+        self.reinterpret()
+    }
+
+    #[inline]
+    fn reinterpret<const NEW_SEP: u8, const NEW_CHECK: u8>(
+        self,
+    ) -> Path<U, KIND, NEW_SEP, NEW_CHECK> {
         Path {
-            _buf: Buf {
-                pooled: ManuallyDrop::new(pooled),
-                len,
-            },
+            _buf: self._buf,
             _unit: PhantomData,
         }
     }
@@ -887,11 +883,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     #[inline]
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self._buf.set_length(0);
     }
 
     pub fn append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
+        self.append_with(CheckLength::from_u8(CHECK), input)
+    }
+
+    /// [`Self::append`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
+    pub fn try_append<C: PathUnit>(&mut self, input: &[C]) -> options::Result<()> {
+        self.append_with(CheckLength::CheckForGreaterThanMaxPath, input)
+    }
+
+    #[inline(always)]
+    fn append_with<C: PathUnit>(&mut self, check: CheckLength, input: &[C]) -> options::Result<()> {
         let needs_sep = self.len() > 0
             && match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any => {
@@ -928,7 +934,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Ok(());
                 }
 
-                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                if check == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -945,7 +951,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Ok(());
                 }
 
-                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                if check == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -980,7 +986,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     return Ok(());
                 }
 
-                if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                if check == CheckLength::CheckForGreaterThanMaxPath {
                     if self.len() + trimmed.len() + (needs_sep as usize) >= U::MAX_PATH {
                         return Err(PathError::MaxPathExceeded);
                     }
@@ -993,6 +999,19 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
+        self.append_fmt_with(CheckLength::from_u8(CHECK), args)
+    }
+
+    /// [`Self::append_fmt`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
+    pub fn try_append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
+        self.append_fmt_with(CheckLength::CheckForGreaterThanMaxPath, args)
+    }
+
+    fn append_fmt_with(
+        &mut self,
+        check: CheckLength,
+        args: core::fmt::Arguments<'_>,
+    ) -> options::Result<()> {
         // TODO: there's probably a better way to do this. needed for trimming slashes
         let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
 
@@ -1008,7 +1027,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     &u8::buffer_as_slice(&temp._buf.pooled)[..written]
                 }
                 Err(_) => {
-                    if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                    if check == CheckLength::CheckForGreaterThanMaxPath {
                         return Err(PathError::MaxPathExceeded);
                     }
                     unreachable!();
@@ -1016,7 +1035,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
         };
 
-        self.append(input)
+        self.append_with(check, input)
     }
 
     fn assert_joinable(&self) {
@@ -1066,6 +1085,14 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             self._buf.len = trimmed.len();
         }
         Ok(())
+    }
+
+    /// [`Self::append_join`] that returns `Err(MaxPathExceeded)` on overflow whatever `CHECK` is.
+    pub fn try_append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
+        if self.len() + 1 + part.len() >= U::MAX_PATH {
+            return Err(PathError::MaxPathExceeded);
+        }
+        self.append_join(part)
     }
 
     pub fn append_join<C: PathUnit>(&mut self, part: &[C]) -> options::Result<()> {
@@ -1238,30 +1265,30 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         if TypeId::of::<C>() == TypeId::of::<u8>() {
             let bytes = C::id_u8(characters);
             if TypeId::of::<U>() == TypeId::of::<u8>() {
-                self._buf.append(U::id_from_u8(bytes), add_separator);
+                self._buf
+                    .append::<SEP_OPT>(U::id_from_u8(bytes), add_separator);
             } else {
                 self._buf
-                    .append_other(<U::Other>::id_from_u8(bytes), add_separator);
+                    .append_other::<SEP_OPT>(<U::Other>::id_from_u8(bytes), add_separator);
             }
         } else {
             let words = C::id_u16(characters);
             if TypeId::of::<U>() == TypeId::of::<u16>() {
-                self._buf.append(U::id_from_u16(words), add_separator);
+                self._buf
+                    .append::<SEP_OPT>(U::id_from_u16(words), add_separator);
             } else {
                 self._buf
-                    .append_other(<U::Other>::id_from_u16(words), add_separator);
+                    .append_other::<SEP_OPT>(<U::Other>::id_from_u16(words), add_separator);
             }
         }
     }
 }
 
-impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
-    for Path<U, KIND, SEP_OPT, CHECK>
-{
+impl<U: PathUnit> Drop for Buf<U> {
     fn drop(&mut self) {
         // match BufType::Pool
         // SAFETY: `pooled` is initialized in `init()` and never taken before this; Drop runs once.
-        let pooled = unsafe { ManuallyDrop::take(&mut self._buf.pooled) };
+        let pooled = unsafe { ManuallyDrop::take(&mut self.pooled) };
         U::pool_put(pooled);
     }
 }

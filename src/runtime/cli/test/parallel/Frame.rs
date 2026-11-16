@@ -4,7 +4,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Kind {
+pub(crate) enum Kind {
     // worker → coordinator
     /// (empty)
     Ready,
@@ -14,15 +14,17 @@ pub enum Kind {
     /// then, only when the worker runs with `--reporter`, the structured
     /// result (`runner::encode_test_case`): u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
-    /// u32 scope_line}, u32 has_failure [, str name, str message, str body]
+    /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
-    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, unhandled; u64 elapsed_ns
+    /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
+    /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
+    /// and the worker's peak RSS so far
+    /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path
+    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads
     Run,
     /// (empty)
     Shutdown,
@@ -30,6 +32,8 @@ pub enum Kind {
     /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
     /// every worker's per file and writes the one report.
     CoverageFile,
+    /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
+    RefusedChange,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,14 +49,18 @@ impl TryFrom<u8> for Kind {
             5 => Kind::Run,
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
+            8 => Kind::RefusedChange,
             _ => return Err(()),
         })
     }
 }
 
+/// `payload_len` and `kind`.
+pub(crate) const HEADER_LEN: usize = 5;
+
 /// Upper bound on a single IPC frame payload. The protocol is internal but
 /// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
-/// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
+/// nonsensical lengths up-front prevents both a `HEADER_LEN + len` u32 overflow and
 /// an unbounded allocation.
 pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
@@ -60,13 +68,11 @@ pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 /// then flush in a single write so partial reads on the other side never see a
 /// torn header.
 #[derive(Default)]
-pub struct Frame {
+pub(crate) struct Frame {
     buf: Vec<u8>,
 }
 
 impl Frame {
-    pub(crate) const DEFAULT: Self = Self { buf: Vec::new() };
-
     pub(crate) fn begin(&mut self, kind: Kind) {
         self.buf.clear();
         // reserve header; payload_len patched in send()
@@ -90,7 +96,7 @@ impl Frame {
         // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
         const HEADROOM: usize = 4096;
-        let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
+        let used: usize = (self.buf.len() - HEADER_LEN) + 4; // current payload + str-len prefix
         let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
         let (keep, marker): (usize, &[u8]) = if s.len() <= room {
             (s.len(), b"")
@@ -107,7 +113,7 @@ impl Frame {
     /// Finalize the header and return the encoded bytes. Caller hands them to
     /// `Channel.send`. Valid until the next `begin()`.
     pub(crate) fn finish(&mut self) -> &[u8] {
-        let payload_len: u32 = u32::try_from(self.buf.len() - 5).unwrap();
+        let payload_len: u32 = u32::try_from(self.buf.len() - HEADER_LEN).unwrap();
         debug_assert!(payload_len <= MAX_PAYLOAD);
         self.buf[0..4].copy_from_slice(&payload_len.to_le_bytes());
         &self.buf
@@ -117,7 +123,7 @@ impl Frame {
 // `deinit` dropped: `Vec<u8>` frees on Drop.
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
-pub struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     pub p: &'a [u8],
 }
 

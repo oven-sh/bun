@@ -1,0 +1,12 @@
+# -- source: main.ts
+# function inside(c: any): string { const whole = c | 0; if (whole < 65) return "low"; if (whole > 90) return "high"; return "in"; }
+# (globalThis as any).kept = inside;
+# console.log(inside(64), inside(65), inside(90), inside(91));
+# -- end of source
+# f1 = inside
+# Below the lower bound and above the upper one the function answers differently: the two tests lead to two places and stay two.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: Add {{*}}, -65
+# CHECK: , 65)
+# CHECK: , 90)

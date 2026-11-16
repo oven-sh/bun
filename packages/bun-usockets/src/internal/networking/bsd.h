@@ -159,6 +159,10 @@ struct udp_sendbuf {
 #endif
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
@@ -167,7 +171,6 @@ int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
 int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
-// int bsd_udp_packet_buffer_ecn(struct udp_recvbuf *msgvec, int index);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
@@ -214,6 +217,9 @@ int bsd_addr_get_port(struct bsd_addr_t *addr);
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr);
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags);
+/* One of the LIBUS_QUEUED_INPUT_* codes. Peeks, so it consumes nothing and the
+ * next readable event still reports whatever it found. */
+int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd);
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
 #endif
@@ -248,6 +254,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
 int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
+
+#ifdef __cplusplus
+}
+#endif
 
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0

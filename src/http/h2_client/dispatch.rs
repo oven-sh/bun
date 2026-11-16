@@ -6,14 +6,14 @@
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use crate::Headers;
 use crate::h2_frame_parser as wire;
-use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
 // `stream_mut` is the shared `*mut Stream` → `&mut Stream` upgrade centralised
 // in `client_session` (same INVARIANT: heap-allocated entries owned by
-// `session.streams`, freed only via `drop_stream`/`on_close`, disjoint from
+// `session.streams`, disjoint from
 // `&mut ClientSession`). Re-used here so the raw deref lives in one place.
 
 /// Dispatch every complete frame in `buf` and return the number of bytes
@@ -182,8 +182,8 @@ fn dispatch_frame(
                         let delta =
                             i64::from(uvalue) - i64::from(session.remote_initial_window_size);
                         session.remote_initial_window_size = uvalue;
-                        for &s_ptr in session.streams.values() {
-                            let s = stream_mut(s_ptr);
+                        for s in session.streams.values() {
+                            let s = stream_mut(s.as_ptr());
                             let next = i64::from(s.send_window) + delta;
                             if next > i64::from(wire::MAX_WINDOW_SIZE) {
                                 session.fatal_error = Some(crate::Error::HTTP2FlowControlError);
@@ -230,8 +230,8 @@ fn dispatch_frame(
                 }
                 session.conn_send_window = i32::try_from(next).expect("int cast");
                 session.stream_progressed = true;
-            } else if let Some(&stream_ptr) = session.streams.get(&(stream_id & 0x7fff_ffff)) {
-                let stream = stream_mut(stream_ptr);
+            } else if let Some(stream) = session.streams.get(&(stream_id & 0x7fff_ffff)) {
+                let stream = stream_mut(stream.as_ptr());
                 // §6.9/§6.9.1: zero increment / overflow on a stream are
                 // stream-level errors; RST_STREAM and fail just that one.
                 if inc == 0 {
@@ -279,6 +279,8 @@ fn dispatch_frame(
                     0,
                     &payload[0..8],
                 );
+            } else {
+                session.awaiting_ping_ack = false;
             }
         }
         FT_PRIORITY => {
@@ -295,7 +297,7 @@ fn dispatch_frame(
         FT_HEADERS => {
             session.continuation_count = 0;
             let mut fragment = payload;
-            let maybe_stream = session.streams.get(&stream_id).copied();
+            let maybe_stream = session.streams.get(&stream_id).map(|s| s.as_ptr());
             if maybe_stream.is_none() {
                 // RFC 9113 §5.1/§5.1.1: HEADERS on a stream we never
                 // opened (idle: id >= next_stream_id, or even: server-
@@ -332,6 +334,7 @@ fn dispatch_frame(
                     session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
                     return;
                 }
+                reset_stream_frame_received(session);
                 session.orphan_header_block.clear();
                 session.orphan_header_block.extend_from_slice(fragment);
                 if flags & wire::HeadersFrameFlags::END_HEADERS as u8 != 0 {
@@ -344,6 +347,7 @@ fn dispatch_frame(
             // SAFETY: stream pointer from map is valid for session lifetime.
             let stream = stream_mut(maybe_stream.unwrap());
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             if flags & wire::HeadersFrameFlags::PADDED as u8 != 0 {
                 fragment = match strip_padding(fragment) {
                     Some(f) => f,
@@ -386,9 +390,9 @@ fn dispatch_frame(
                 session.fatal_error = Some(crate::Error::HTTP2EnhanceYourCalm);
                 return;
             }
-            if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {
+            if let Some(stream) = session.streams.get(&session.expecting_continuation) {
                 // SAFETY: stream pointer valid for session lifetime.
-                let stream = stream_mut(stream_ptr);
+                let stream = stream_mut(stream.as_ptr());
                 if stream.header_block.len() + payload.len() > LOCAL_MAX_HEADER_LIST_SIZE as usize {
                     session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
                     return;
@@ -417,8 +421,8 @@ fn dispatch_frame(
         }
         FT_DATA => {
             session.conn_unacked_bytes = session.conn_unacked_bytes.saturating_add(length);
-            let stream_ptr = match session.streams.get(&stream_id).copied() {
-                Some(p) => p,
+            let stream_ptr = match session.streams.get(&stream_id) {
+                Some(s) => s.as_ptr(),
                 None => {
                     // §6.1/§5.1: DATA on stream 0, an idle stream, or a
                     // server-initiated stream is a connection PROTOCOL_ERROR.
@@ -426,12 +430,14 @@ fn dispatch_frame(
                     if stream_id == 0 || stream_id & 1 == 0 || stream_id >= session.next_stream_id {
                         session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                     }
+                    reset_stream_frame_received(session);
                     return;
                 }
             };
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             // §8.1.1: DATA before the *final* response HEADERS is malformed —
             // a 1xx alone (status_code still 0) doesn't satisfy this.
             if stream.status_code == 0 {
@@ -480,8 +486,8 @@ fn dispatch_frame(
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                 return;
             }
-            let stream_ptr = match session.streams.get(&stream_id).copied() {
-                Some(p) => p,
+            let stream_ptr = match session.streams.get(&stream_id) {
+                Some(s) => s.as_ptr(),
                 None => return,
             };
             // SAFETY: stream pointer valid for session lifetime.
@@ -527,9 +533,9 @@ fn dispatch_frame(
             let code: u32 = wire::u32_from_bytes(&payload[4..8]);
             let graceful = code == wire::ErrorCode::NO_ERROR.0;
             let last_id = session.goaway_last_stream_id;
-            for &s_ptr in session.streams.values() {
+            for s in session.streams.values() {
                 // SAFETY: stream pointer valid for session lifetime.
-                let s = stream_mut(s_ptr);
+                let s = stream_mut(s.as_ptr());
                 if s.id > last_id {
                     s.fatal_error = Some(if graceful {
                         crate::Error::HTTP2RefusedStream
@@ -577,8 +583,9 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
 pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
-    let mut bounds: Vec<[u32; 3]> = Vec::new();
-    let start_len = stream.decoded_bytes.len();
+    let mut headers = Headers::default();
+    // The size cap counts a value before the trim, so whitespace is not free.
+    let mut untrimmed_len = 0;
     let mut seen_regular = false;
     let mut seen_status = false;
     // Stream-level malformations seen mid-decode. The loop MUST consume the
@@ -634,28 +641,18 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         }
         // Cap decoded size independently of the wire size: HPACK indexed
         // refs can amplify a small block into huge name/value pairs.
-        if stream.decoded_bytes.len() + result.name.len() + result.value.len()
-            > LOCAL_MAX_HEADER_LIST_SIZE as usize
-        {
+        untrimmed_len += result.name.len() + result.value.len();
+        if untrimmed_len > LOCAL_MAX_HEADER_LIST_SIZE as usize {
             session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
             stream.header_block.clear();
             return;
         }
-        let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream.decoded_bytes.extend_from_slice(result.name);
-        let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream.decoded_bytes.extend_from_slice(result.value);
-        bounds.push([
-            name_start,
-            value_start,
-            u32::try_from(stream.decoded_bytes.len()).expect("int cast"),
-        ]);
+        headers.append(result.name, trim_response_value(result.value));
     }
 
     stream.header_block.clear();
 
     if malformed {
-        stream.decoded_bytes.truncate(start_len);
         session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);
         stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
@@ -673,12 +670,10 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 
     if status == 0 {
-        stream.decoded_bytes.truncate(start_len);
         stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {
-        stream.decoded_bytes.truncate(start_len);
         // Only `100 Continue` is the go-ahead for a withheld body; 102/103
         // are informational and do not satisfy `Expect: 100-continue`.
         if status == 100 {
@@ -692,6 +687,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 
     stream.status_code = status;
+    stream.decoded_headers = headers;
     stream.headers_ready = true;
     if stream.awaiting_continue {
         // Final status without a preceding 100: server has decided without
@@ -707,27 +703,13 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         );
         stream.sent_end_stream();
     }
-    let bytes = stream.decoded_bytes.as_ptr();
-    stream.decoded_headers.reserve_exact(
-        bounds
-            .len()
-            .saturating_sub(stream.decoded_headers.capacity()),
-    );
-    for b in &bounds {
-        // Self-referential — decoded_headers stores raw-ptr slices
-        // borrowing stream.decoded_bytes. picohttp::Header stores raw ptrs so
-        // this is sound as long as decoded_bytes is not reallocated before
-        // delivery (it isn't — only ever appended to once per END_HEADERS).
-        // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
-        let name =
-            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
-        // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
-        let value =
-            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, value));
-    }
+}
+
+/// HEADERS or DATA the peer sent before it saw the RST_STREAM of their stream. They are in
+/// front of the ACK of a liveness PING, and a server's PING limit counts them as a response.
+fn reset_stream_frame_received(session: &mut ClientSession) {
+    session.stream_progressed |= session.awaiting_ping_ack;
+    session.liveness_ping_spent = false;
 }
 
 fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
@@ -787,6 +769,11 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
 /// enabling header injection when values are forwarded downstream.
 pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
     bun_core::strings::contains_any(value, b"\0\r\n")
+}
+
+/// RFC 9110 §5.5: a parser strips leading and trailing SP / HTAB. HPACK and QPACK do not.
+pub(crate) fn trim_response_value(value: &[u8]) -> &[u8] {
+    bun_core::strings::trim(value, b" \t")
 }
 
 pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {

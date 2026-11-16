@@ -16,7 +16,7 @@ use bun_ast::op::Level;
 use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
-    E, Expr, ExprNodeList,
+    E, Expr,
     G::{self, PropertyKind},
     Stmt, symbol,
 };
@@ -126,7 +126,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.pop_scope();
-        // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
@@ -228,7 +227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(Some(G::Property {
-            ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
+            ts_decorators: opts.ts_decorators,
             kind,
             flags: prop_flags,
             key: Some(*key),
@@ -390,7 +389,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && !p.lexer.has_newline_before
                                         {
                                             opts.is_async = true;
-                                            opts.async_range = name_range;
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 
@@ -495,6 +493,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && p.lexer.token == T::TOpenBrace
                             && name == b"static"
                         {
+                            if let Some(decorator) = opts.ts_decorators.slice().first() {
+                                p.log().add_error(
+                                    Some(p.source),
+                                    decorator.loc,
+                                    b"Decorators are not valid here",
+                                );
+                                return Err(crate::Error::SyntaxError);
+                            }
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -737,7 +743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 return Ok(Some(G::Property {
-                    ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
+                    ts_decorators: opts.ts_decorators,
                     kind,
                     flags: prop_flags,
                     key: Some(key),

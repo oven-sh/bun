@@ -21,7 +21,7 @@ use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct StaticRoute {
+pub(crate) struct StaticRoute {
     ref_count: Cell<u32>,
     /// The ref that in-flight responses (whose uws userdata is this route)
     /// collectively hold: taken by the first, released with the last in
@@ -39,11 +39,10 @@ pub struct StaticRoute {
 }
 
 #[derive(Clone, Copy)]
-pub struct InitFromBytesOptions<'a> {
+pub(crate) struct InitFromBytesOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) mime_type: Option<&'a MimeType>,
     pub(crate) status_code: u16,
-    pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
 impl<'a> Default for InitFromBytesOptions<'a> {
@@ -52,7 +51,6 @@ impl<'a> Default for InitFromBytesOptions<'a> {
             server: None,
             mime_type: None,
             status_code: 200,
-            headers: None,
         }
     }
 }
@@ -82,16 +80,11 @@ impl StaticRoute {
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
     ) -> RefPtr<StaticRoute> {
-        let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-            options.headers,
-            any_blob_content_type(&blob),
-        );
-        if headers.get_content_type().is_none() {
-            if let Some(mime_type) = options.mime_type {
-                headers.append(b"Content-Type", &mime_type.value);
-            } else if blob.has_content_type_from_user() {
-                headers.append(b"Content-Type", blob.content_type());
-            }
+        let mut headers = Headers::default();
+        if let Some(content_type) = any_blob_content_type(&blob) {
+            headers.append(b"Content-Type", content_type);
+        } else if let Some(mime_type) = options.mime_type {
+            headers.append(b"Content-Type", &mime_type.value);
         }
 
         // Generate ETag if not already present
@@ -107,6 +100,32 @@ impl StaticRoute {
             options.server,
             options.status_code,
         ))
+    }
+
+    /// Ownership of `blob` is transferred to this function.
+    pub(crate) fn init_from_any_blob_with_headers(
+        global_this: &JSGlobalObject,
+        blob: AnyBlob,
+        fetch_headers: Option<&FetchHeaders>,
+        status_code: u16,
+    ) -> JsResult<RefPtr<StaticRoute>> {
+        let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+            global_this,
+            fetch_headers,
+            any_blob_content_type(&blob),
+        )?;
+
+        // Generate ETag if not already present
+        if headers.get(b"etag").is_none() {
+            if !blob.slice().is_empty() {
+                append_etag(blob.slice(), &mut headers);
+            }
+        }
+
+        let mut route = StaticRoute::new(blob, headers, None, status_code);
+        // Match the body `on_get` sends. `blob.size()` returns the unknown-size sentinel for an S3 store.
+        route.cached_blob_size = route.blob.slice().len() as u64;
+        Ok(RefPtr::new(route))
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
@@ -141,13 +160,10 @@ impl StaticRoute {
         size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<StaticRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); every `Response` accessor used below takes
-        // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
             if !HTTPStatusText::is_sendable(response.status_code()) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -218,29 +234,17 @@ impl StaticRoute {
                 let text_mime = bun_http_types::MimeType::TEXT;
                 response.get_or_create_headers(global_this)?.put_default(
                     HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(text_mime.value.as_ref()),
+                    &bun_core::StringView::ascii(text_mime.value.as_ref()),
                     global_this,
                 )?;
             }
 
-            let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-                response.get_init_headers(),
-                any_blob_content_type(&blob),
-            );
-
-            // Generate ETag if not already present
-            if headers.get(b"etag").is_none() {
-                if !blob.slice().is_empty() {
-                    append_etag(blob.slice(), &mut headers);
-                }
-            }
-
-            return Ok(Some(RefPtr::new(StaticRoute::new(
+            return Ok(Some(Self::init_from_any_blob_with_headers(
+                global_this,
                 blob,
-                headers,
-                None,
+                response.get_init_headers(),
                 response.status_code(),
-            ))));
+            )?));
         }
 
         Ok(None)
@@ -262,11 +266,7 @@ impl StaticRoute {
 
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
-        Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
-        }
+        Self::retain_for_response(this, resp);
         resp.corked(|| this.render_metadata_and_end(resp));
         Self::on_response_complete(this, resp);
     }
@@ -317,11 +317,7 @@ impl StaticRoute {
 
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
-        Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
-        }
+        Self::retain_for_response(this, resp);
         let mut finished = false;
         this.do_render_blob(resp, &mut finished);
         if finished {
@@ -343,12 +339,16 @@ impl StaticRoute {
 
     /// The response whose uws userdata is this route keeps it alive until
     /// `on_response_complete`.
-    fn retain_for_response(this: ThisPtr<Self>) {
+    fn retain_for_response(this: ThisPtr<Self>, resp: AnyResponse) {
         let n = this.pending_responses.get();
         if n == 0 {
             this.pending_ref.set(Some(RefPtr::from_this(this)));
         }
         this.pending_responses.set(n + 1);
+        if let Some(server) = this.server.get() {
+            server.on_pending_request();
+            resp.timeout(server.config().idle_timeout);
+        }
     }
 
     /// May free `this`.
@@ -356,8 +356,8 @@ impl StaticRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = this.server.get() {
-            server.on_static_request_complete();
+        if let Some(server) = this.server.get() {
+            server.on_request_complete();
         }
         let n = this.pending_responses.get() - 1;
         this.pending_responses.set(n);
@@ -440,7 +440,7 @@ impl StaticRoute {
         if self.has_date {
             resp.mark_wrote_date_header();
         }
-        let entries = self.headers.entries.slice();
+        let entries = &self.headers.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();
@@ -548,11 +548,7 @@ impl StaticRoute {
         status: u16,
     ) -> bool {
         req.set_yield(false);
-        Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
-        }
+        Self::retain_for_response(this, resp);
         this.do_write_status(status, resp);
         this.do_write_headers(resp);
         if !HTTPStatusText::is_null_body(status) {
@@ -561,11 +557,5 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
         Self::on_response_complete(this, resp);
         true
-    }
-}
-
-impl Drop for StaticRoute {
-    fn drop(&mut self) {
-        self.blob.detach();
     }
 }

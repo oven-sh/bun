@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a() // 1
+{
+  "use strict";
+}
+class A {
+  b() // 2
+  {
+    "use strict";
+  }
+}
+function c()
+// 3
+{
+  "use strict";
+  "use asm";
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a() // 1
+{
+  "use strict";
+}
+class A {
+  b() // 2
+  {
+    "use strict";
+  }
+}
+function c()
+// 3
+{
+  "use strict";
+  "use asm";
+}
+
+===================== End =====================

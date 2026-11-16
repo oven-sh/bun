@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+// A text that is one word is no `fill`: what follows the substitution counts when it is measured.
+foo(
+  html`${items.map(
+    (item) => html` <li class="${item.cls}">${item.name}</li> `,
+  )}`,
+);
+
+foo(
+  html`<p>
+    ${items.map((item) => html` <li class="${item.cls}">${item.na}</li> `)}
+  </p>`,
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// A text that is one word is no `fill`: what follows the substitution counts when it is measured.
+foo(html`${items.map((item) => html` <li class="${item.cls}">${item.name}</li> `)}`);
+
+foo(html`<p>${items.map((item) => html` <li class="${item.cls}">${item.na}</li> `)}</p>`);
+
+===================== End =====================

@@ -1,14 +1,15 @@
 #include "root.h"
 
 #include "BunDebugger.h"
+#include "BunCompiledModules.h"
+#include "CodeGenerationFromStrings.h"
+#include "EventLoopKeepAlive.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
-#include <JavaScriptCore/HeapIterationScope.h>
-#include <JavaScriptCore/IsoCellSetInlines.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
 #include "ScriptExecutionContext.h"
@@ -103,7 +104,7 @@ public:
         : Inspector::FrontendChannel()
         , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
-        , unrefOnDisconnect(shouldRefEventLoop)
+        , shouldRefEventLoop(shouldRefEventLoop)
     {
     }
 
@@ -125,9 +126,7 @@ public:
     {
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
-        if (this->unrefOnDisconnect) {
-            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
-        }
+        this->keepAlive.setActive(this->shouldRefEventLoop);
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
         inspector.setInspectable(true);
@@ -211,10 +210,7 @@ public:
                 connection->inspector().disconnect(connection.get());
             }
 
-            if (connection->unrefOnDisconnect) {
-                connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
-            }
+            connection->keepAlive.setActive(false);
 
             {
                 Locker<Lock> locker(inspectorConnectionsLock);
@@ -329,35 +325,6 @@ public:
         wait.condition.notifyAll();
     }
 
-    // Debugger.setBreakpointsActive triggers Debugger::setBreakpointsActivated
-    // → recompileAllJSFunctions → vm.deleteAllCode, which iterates each
-    // ScriptExecutable subspace's clearableCodeSet and calls clearCode. For
-    // ModuleProgramExecutable, clearCode drops m_unlinkedCodeBlock and
-    // m_moduleEnvironmentSymbolTable; the next executeModuleProgram (a
-    // top-level-await resume, or a linked-but-not-yet-evaluated module)
-    // regenerates the unlinked code block under the now-different
-    // CodeGenerationMode::Debugger, whose module-environment / generator-frame
-    // layout no longer matches the live JSModuleEnvironment, and the next
-    // op_put_to_scope writes past it. This is the invariant documented in
-    // UnlinkedModuleProgramCodeBlock.h. Module bodies execute once, so dropping
-    // their unlinked code block cannot recover debug hooks for the body anyway
-    // (inner functions are recompiled independently via
-    // deleteAllUnlinkedCodeBlocks); pre-removing every module executable from
-    // the clearableCodeSet makes deleteAllCodeBlocks skip them and keeps the
-    // original bytecode in place. Registered via whenIdle so it runs ahead of
-    // any deferred deleteAllCode callback regardless of whether the dispatch
-    // happens with a VMEntryScope on the stack (the run-while-paused case).
-    static void protectModuleExecutablesFromClearCode(JSC::VM& vm)
-    {
-        if (auto* spaceAndSet = vm.heap.m_moduleProgramExecutableSpace.get()) {
-            JSC::HeapIterationScope iterationScope(vm.heap);
-            auto& set = spaceAndSet->clearableCodeSet;
-            set.forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
-                set.remove(cell);
-            });
-        }
-    }
-
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
     {
         // Connect before swapping the queue: doConnect recursively calls this
@@ -376,13 +343,6 @@ public:
         {
             Locker<Lock> locker(jsThreadMessagesLock);
             this->jsThreadMessages.swap(messages);
-        }
-
-        if (!messages.isEmpty()) {
-            auto& vm = globalObject->vm();
-            vm.whenIdle([&vm] {
-                protectModuleExecutablesFromClearCode(vm);
-            });
         }
 
         auto& dispatcher = globalObject->inspectorDebuggable();
@@ -512,7 +472,9 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
-    bool unrefOnDisconnect = false;
+    const bool shouldRefEventLoop;
+    // The inspected context's thread only. inspectorConnections holds the connection while it is active.
+    EventLoopKeepAlive keepAlive;
 
     bool hasEverConnected = false;
 };
@@ -662,8 +624,10 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     }
 }
 
-extern "C" void BunDebugger__willHotReload()
+// Not inlined, here and below: each holds one guard, and link-time optimization would copy the guard into every caller. The link charges a guard to the built-ins that reach it.
+extern "C" NEVER_INLINE void BunDebugger__willHotReload()
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     if (debuggerScriptExecutionContext == nullptr) {
         return;
     }
@@ -676,6 +640,7 @@ extern "C" void BunDebugger__willHotReload()
             }
         }
     });
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -825,6 +790,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // An executable that admits no debugger has none, and open() does nothing.
+    if (!Bun::isDebuggerAdmitted()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    // The debugger evaluates what its client sends, whatever the engine's eval setting. Returned
+    // for open() to throw: what is thrown from here it reports as a port that could not be bound.
+    if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
+        return JSValue::encode(Bun::createCodeGenerationFromStringsError(globalObject));
+
     String requestedUrl = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     bool waitForConnection = callFrame->argument(1).toBoolean(globalObject);
@@ -962,7 +936,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 
     JSC::VM& vm = debuggerGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue defaultValue = debuggerGlobalObject->internalModuleRegistry()->requireId(debuggerGlobalObject, vm, InternalModuleRegistry::Field::InternalDebugger);
+    JSValue defaultValue = BUN_REQUIRE_INTERNAL_MODULE(debuggerGlobalObject, InternalDebugger, "node:inspector");
     scope.assertNoException();
     JSFunction* debuggerDefaultFn = uncheckedDowncast<JSFunction>(defaultValue.asCell());
 
@@ -1013,44 +987,53 @@ static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTyp
     }
 }
 
-extern "C" void Debugger__didScheduleAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId, bool singleShot)
+extern "C" NEVER_INLINE void Debugger__didScheduleAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId, bool singleShot)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->didScheduleAsyncCall(globalObject, getCallType(callType), callbackId, singleShot);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
-extern "C" void Debugger__didCancelAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
+extern "C" NEVER_INLINE void Debugger__didCancelAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->didCancelAsyncCall(getCallType(callType), callbackId);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
-extern "C" void Debugger__didDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
+extern "C" NEVER_INLINE void Debugger__didDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->didDispatchAsyncCall(getCallType(callType), callbackId);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
-extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
+extern "C" NEVER_INLINE void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
-extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
+extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     // Snapshot under the lock, release before calling into the inspector —
     // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
     Vector<RefPtr<BunInspectorConnection>, 8> toDisconnect;
@@ -1093,5 +1076,6 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
     // Leak the connected controller and hand the global a fresh, never-connected one.
     [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 }

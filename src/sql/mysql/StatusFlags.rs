@@ -4,13 +4,13 @@ use core::fmt;
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum StatusFlag {
+    SERVER_STATUS_IN_TRANS = 1,
     /// Indicates there are more result sets from this query
     SERVER_MORE_RESULTS_EXISTS = 8,
 }
 
 #[derive(Copy, Clone, Default)]
 pub struct StatusFlags {
-    /// Indicates if a transaction is currently active
     _value: u16,
 }
 

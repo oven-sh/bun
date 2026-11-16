@@ -2,6 +2,7 @@ import type { IslandMap } from "./server";
 import { hydrate } from 'svelte';
 
 declare var $islands: IslandMap;
+declare var document: any;
 Object.entries($islands).forEach(async([moduleId, islands]) => {
     const mod = await import(moduleId);
     for(const [islandId, exportId, props] of islands) {

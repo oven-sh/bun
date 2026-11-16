@@ -1,6 +1,7 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
+import { readdirSync, readlinkSync } from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, isMusl, makeTree, tempDirWithFiles } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -516,6 +517,58 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
+  it("frees the context of a plugin that leaves the source as it is", async () => {
+    await Bun.write(path.join(tempdir, "untouched.ts"), `export const ok = 1;\n`);
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      entrypoints: [path.join(tempdir, "untouched.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse(
+              { filter: /untouched\.ts$/ },
+              { napiModule, symbol: "plugin_impl_context_without_source", external },
+            );
+          },
+        },
+      ],
+    });
+
+    expect(await result.outputs[0].text()).toEndWith("untouched.ts\nvar ok = 1;\nexport {\n  ok\n};\n");
+    expect(napiModule.getCompilationCtxFreedCount(external)).toBe(1);
+  });
+
+  it.skipIf(!isLinux)("closes a file that a plugin reads and leaves as it is", async () => {
+    await Bun.write(path.join(tempdir, "read-and-left.ts"), `export const ok = 1;\n`);
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      entrypoints: [path.join(tempdir, "read-and-left.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse({ filter: /read-and-left\.ts$/ }, { napiModule, symbol: "plugin_impl", external });
+          },
+        },
+      ],
+    });
+
+    expect(await result.outputs[0].text()).toEndWith("read-and-left.ts\nvar ok = 1;\nexport {\n  ok\n};\n");
+    const open = readdirSync("/proc/self/fd").flatMap(fd => {
+      try {
+        return readlinkSync(`/proc/self/fd/${fd}`);
+      } catch {
+        return [];
+      }
+    });
+    expect(open.filter(target => target.endsWith("read-and-left.ts"))).toEqual([]);
+  });
+
   it("should fail gracefully when passing something that is NOT a bunler plugin", async () => {
     const not_plugins = [require(path.join(tempdir, "build/Release/not_a_plugin.node")), 420, "hi", {}];
 
@@ -534,7 +587,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
           ],
         });
         expect.unreachable();
-      } catch (e) {
+      } catch (e: any) {
         expect(e.toString()).toContain(
           "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
         );
@@ -559,7 +612,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
         ],
       });
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e.toString()).toContain(
         'TypeError [ERR_INVALID_ARG_TYPE]: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.',
       );

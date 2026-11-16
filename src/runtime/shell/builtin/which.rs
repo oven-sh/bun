@@ -5,18 +5,17 @@
 //! are processed.
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::env_str::EnvStr;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Which {
+pub(crate) struct Which {
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     /// Called with no args: queued a single "\n" and waiting for the write.
@@ -203,18 +202,8 @@ struct SearchEnv {
 impl SearchEnv {
     fn load(interp: &Interpreter, cmd: NodeId) -> Self {
         let shell = Builtin::shell(interp, cmd);
-        // `EnvMap::get` refs the returned string; balance it.
-        let path_env = shell
-            .export_env
-            .get(EnvStr::init_slice(b"PATH"))
-            .map(|s| {
-                let v = s.slice().to_vec();
-                s.deref();
-                v
-            })
-            .unwrap_or_default();
         Self {
-            path_env,
+            path_env: shell.export_env.get(b"PATH").unwrap_or_default().to_vec(),
             cwd: shell.cwd().to_vec(),
         }
     }

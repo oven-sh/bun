@@ -41,6 +41,16 @@ export const zstd: Dependency = {
     commit: ZSTD_COMMIT,
   }),
 
+  patches: [
+    // x64 targets nehalem, so zstd picks its BMI2 kernels at run time and
+    // probes CPUID in every CCtx/DCtx init. CPUID is a VM exit under a
+    // hypervisor (about 2 us each, two per init). Probe once instead.
+    "patches/zstd/bmi2-probe-once.patch",
+    // ZSTD_freeCCtx frees a context's dictionaries before joining the worker
+    // threads, so a job that's still running can read freed memory.
+    "patches/zstd/free-workers-before-dictionaries.patch",
+  ],
+
   build: cfg => {
     const sources = [...SOURCES];
     const defines: Record<string, number | true> = {
@@ -73,7 +83,7 @@ export const zstd: Dependency = {
       pic: true,
       // XXH_NAMESPACE must be a bare token prefix (xxhash pastes it onto
       // symbol names), not a string literal — DirectBuild.defines would
-      // wrap it in quotes. Avoids clashes with lshpack/libarchive's copies.
+      // wrap it in quotes. Avoids clashes with lshpack's copy.
       cflags: ["-DXXH_NAMESPACE=ZSTD_"],
     };
     return spec;

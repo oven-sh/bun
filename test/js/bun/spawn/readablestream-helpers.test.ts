@@ -126,11 +126,42 @@ describe("ReadableStream conversion methods", () => {
     // Check it doesn't throw synchronously.
     expect(result).toBeInstanceOf(Promise);
 
-    // TODO: why is the error message different here??
-    expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"Failed to parse JSON"`);
+    expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"JSON Parse error: Expected '}'"`);
 
     expect(process.exitCode).toBe(0);
   });
+
+  test.each([
+    ["invalid JSON", "{ invalid json content }", "JSON Parse error: Expected '}'"],
+    // The text of a body is the UTF-8 decode of its bytes, and the decode drops a byte order mark.
+    ["only a byte order mark", "\uFEFF", "JSON Parse error: Unexpected EOF"],
+  ])(
+    "ReadableStream.prototype.json() of %s rejects with the JSON.parse error for a buffered and a streamed source",
+    async (_label, body, message) => {
+      const bytes = new TextEncoder().encode(body);
+      expect(() => JSON.parse(new TextDecoder().decode(bytes))).toThrow(message);
+
+      // A Response body holds all of its bytes, so json() parses them in native code.
+      const buffered = new Response(bytes.slice()).body!;
+      // A stream with a JavaScript source delivers chunks, so json() reads the text first.
+      const streamed = new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes.slice());
+          controller.close();
+        },
+      });
+
+      const settle = (promise: Promise<unknown>) =>
+        promise.then(
+          () => "resolved",
+          (error: Error) => `${error.name}: ${error.message}`,
+        );
+      expect([await settle(buffered.json()), await settle(streamed.json())]).toEqual([
+        `SyntaxError: ${message}`,
+        `SyntaxError: ${message}`,
+      ]);
+    },
+  );
 
   test("Bun.spawn() process.stdout.blob() should convert stream to Blob", async () => {
     // Generate random binary data

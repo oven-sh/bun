@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = import("x", { with: { "resolution-mode": "import" } }).B; // c
+type C = import("x", // c
+
+{ with: { "resolution-mode": "import" } }).B;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = import("x", { with: { "resolution-mode": "import" } }).B; // c
+type C = import("x", // c
+
+{ with: { "resolution-mode": "import" } }).B;
+
+===================== End =====================

@@ -4,15 +4,16 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/RegularExpression.h>
+#include <JavaScriptCore/YarrInterpreter.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
+#include <wtf/BumpPointerAllocator.h>
 #include "WriteBarrierList.h"
 #include <wtf/HashMap.h>
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, uint8_t);
-typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
-typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(const OnBeforeParseArguments*, OnBeforeParseResult*);
 
 namespace Bun {
@@ -23,23 +24,32 @@ class BundlerPlugin final {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
+    /// Compiles the bytecode itself because Yarr::RegularExpression asserts that the flags are a subset of i, m and v.
     class FilterRegExp {
     public:
         String m_pattern;
-        Yarr::RegularExpression regex;
+        // The bytecode points to its allocator, so the allocator can't move when a Vector grows.
+        std::unique_ptr<WTF::BumpPointerAllocator> m_allocator;
+        std::unique_ptr<Yarr::BytecodePattern> m_bytecode;
         WTF::Lock lock {};
 
         FilterRegExp(FilterRegExp&& other)
             : m_pattern(WTF::move(other.m_pattern))
-            , regex(WTF::move(other.regex))
+            , m_allocator(WTF::move(other.m_allocator))
+            , m_bytecode(WTF::move(other.m_bytecode))
         {
         }
 
         FilterRegExp(const String& pattern, OptionSet<Yarr::Flags> flags)
             // Ensure it's safe for cross-thread usage.
             : m_pattern(pattern.isolatedCopy())
-            , regex(m_pattern, flags)
+            , m_allocator(WTF::makeUnique<WTF::BumpPointerAllocator>())
         {
+            Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
+            Yarr::YarrPattern yarrPattern(m_pattern, flags, errorCode);
+            if (Yarr::hasError(errorCode))
+                return;
+            m_bytecode = Yarr::byteCompile(yarrPattern, m_allocator.get(), errorCode);
         }
 
         bool match(JSC::VM& vm, const String& path);
@@ -127,32 +137,41 @@ public:
     // is dropped), or, once the VM that runs the plugins is shutting down, by tombstone(). JS thread only.
     enum class RequestKind : uint8_t { Resolve = 0,
         Load = 1 };
-    void holdRequest(RequestKind kind, void* context) { held.add(context, kind); }
-    bool holdsRequest(RequestKind kind, void* context) const
+    struct Request {
+        void* context { nullptr };
+        RequestKind kind { RequestKind::Resolve };
+    };
+    // A counter: a later request can get the address of an answered one.
+    using RequestID = uint64_t;
+    RequestID holdRequest(RequestKind kind, void* context)
     {
-        auto it = held.find(context);
-        return it != held.end() && it->value == kind;
+        held.add(++lastRequestID, Request { context, kind });
+        return lastRequestID;
+    }
+    void* heldRequest(RequestKind kind, RequestID id) const
+    {
+        auto it = held.find(id);
+        return it != held.end() && it->value.kind == kind ? it->value.context : nullptr;
     }
     // The request was still held (and no longer is): the caller produces its answer.
-    std::optional<RequestKind> takeRequest(void* context) { return held.takeOptional(context); }
-    bool takeRequest(RequestKind kind, void* context)
+    std::optional<Request> takeRequest(RequestID id) { return held.takeOptional(id); }
+    void* takeRequest(RequestKind kind, RequestID id)
     {
-        if (!holdsRequest(kind, context))
-            return false;
-        held.remove(context);
-        return true;
+        void* context = heldRequest(kind, id);
+        if (context)
+            held.remove(id);
+        return context;
     }
     // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,
     // and whatever its JS side delivers later is dropped.
     void tombstone();
 
-    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    BundlerPlugin(BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
         , onLoadAsync(onLoadAsync)
         , onResolveAsync(onResolveAsync)
     {
         this->target = target;
-        this->config = config;
     }
 
     NamespaceList onLoad = {};
@@ -168,11 +187,13 @@ public:
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
-    void* config { nullptr };
     bool tombstoned { false };
+    // Set on the JS thread before a bundle pass. After that, other threads read the filter lists without a lock.
+    bool filtersFrozen { false };
 
 private:
-    WTF::HashMap<void*, RequestKind> held;
+    WTF::HashMap<RequestID, Request> held;
+    RequestID lastRequestID { 0 };
 };
 
 } // namespace Zig

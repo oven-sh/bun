@@ -8,9 +8,9 @@ pub struct PacketType(pub u8);
 impl PacketType {
     // Server packets
     pub const OK: Self = Self(0x00);
+    pub const LOCAL_INFILE: Self = Self(0xfb);
     pub const EOF: Self = Self(0xfe);
     pub const ERROR: Self = Self(0xff);
-    pub const LOCAL_INFILE: Self = Self(0xfb);
 
     // Client/server packets
     pub const MORE_DATA: Self = Self(0x01);

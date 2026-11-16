@@ -1,0 +1,4 @@
+const log: string[] = [];
+function counted(values: unknown[]): any { let at = 0; return { [Symbol.iterator]() { log.push("open"); return { next() { log.push("next" + at); return at < values.length ? { done: false, value: values[at++] } : { done: true, value: undefined }; }, return() { log.push("return"); return {}; } }; } }; }
+function both(pair: any): string { const [first = 7, second = "none", third = true] = pair; return first + "," + second + "," + third; }
+let out = ""; for (let round = 0; round < 30; round++) { const kind = round % 5; const pair = kind === 0 ? [1, 2, 3] : kind === 1 ? counted([undefined, 5, undefined, 9]) : kind === 2 ? counted([1]) : kind === 3 ? new Set([undefined, 4]) : "ab"; out = both(pair) + " " + log.join(); log.length = 0; if (round >= 25) console.log(out); }

@@ -313,6 +313,55 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
+// The parser rewrites the `import.meta.hot.accept` dependency list's items in place.
+devTest("import.meta.hot.accept with a dependency list from a define", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      define = { DEPS = '["./counter.ts"]' }
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { count } from "./counter.ts";
+      console.log("Initial: " + count + " " + JSON.stringify(DEPS));
+
+      import.meta.hot.accept(DEPS, (newModules) => {
+        console.log("Counter updated: " + newModules[0].count);
+      });
+    `,
+    "counter.ts": `
+      export const count = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(`Initial: 1 ["./counter.ts"]`);
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 2;
+      `,
+    );
+    await c.expectMessage("Counter updated: 2");
+
+    // index.ts doesn't accept itself, so the page reloads and the dev server parses the list again.
+    await c.expectReload(async () => {
+      await dev.patch("index.ts", { find: "Initial", replace: "Again" });
+    });
+    await c.expectMessage(`Again: 2 ["./counter.ts"]`);
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 3;
+      `,
+    );
+    await c.expectMessage("Counter updated: 3");
+  },
+});
 devTest("import.meta.hot.data persistence", {
   files: {
     "index.html": emptyHtmlFile({

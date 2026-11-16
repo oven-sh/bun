@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+export default function (): void; // 1
+(function () {})(); // 2
+(function /* 3 */() {})(); // 4
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export default function (): void; // 1
+(function () {})(); // 2
+(function /* 3 */() {})(); // 4
+
+===================== End =====================

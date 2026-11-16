@@ -7,26 +7,21 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_picohttp as picohttp;
 use bun_uws::quic;
 
 use super::ClientSession;
-use crate::HttpClient;
 use crate::h3_client as h3;
+use crate::{Headers, HttpClient};
 
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
     pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
     // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
     pub(crate) client: Option<NonNull<HttpClient<'static>>>,
-    // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
+    // FFI handle into lsquic; bound in `callbacks.onStreamOpen`, reset in `ClientSession::detach`.
     pub(crate) qstream: Option<NonNull<quic::Stream>>,
 
-    /// Slices into the lsquic-owned hset buffer; valid only for the duration
-    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
-    /// deep-copies synchronously inside that callback, so nothing reads these
-    /// after they go stale.
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    pub(crate) decoded_headers: Headers,
     pub(crate) body_buffer: Vec<u8>,
     pub(crate) status_code: u16,
 
@@ -38,18 +33,18 @@ pub struct Stream {
     pub(crate) is_streaming_body: bool,
     pub(crate) headers_delivered: bool,
     pub(crate) read_paused: bool,
+    /// The origin did not process the request. It ended the stream with
+    /// H3_REQUEST_REJECTED, or the stream is above the id in its GOAWAY.
+    pub(crate) peer_rejected: bool,
 }
 
 impl Stream {
-    /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
-    /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
-    /// `heap::take`.
-    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
-        bun_core::heap::into_raw(Box::new(Stream {
+    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> Stream {
+        Stream {
             session: bun_ptr::BackRef::new_mut(session),
             client: Some(client.as_erased_ptr()),
             qstream: None,
-            decoded_headers: Vec::new(),
+            decoded_headers: Headers::default(),
             body_buffer: Vec::new(),
             status_code: 0,
             pending_body: bun_ptr::RawSlice::EMPTY,
@@ -58,7 +53,8 @@ impl Stream {
             is_streaming_body: false,
             headers_delivered: false,
             read_paused: false,
-        }))
+            peer_rejected: false,
+        }
     }
 
     /// Mutable access to the bound lsquic stream handle.
@@ -89,17 +85,10 @@ impl Stream {
         // (one centralised unsafe); see INVARIANT above.
         super::client_session::session_mut(self.session.as_ptr())
     }
-
-    pub(crate) fn abort(&mut self) {
-        if let Some(qs) = self.qstream_mut() {
-            qs.close();
-        }
-    }
 }
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        // `decoded_headers` / `body_buffer` are Vec — freed automatically.
         h3::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
     }
 }

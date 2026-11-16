@@ -1,0 +1,7 @@
+<style>
+.some-class a="
+ b 
+"s {
+  color: red;
+}
+</style>

@@ -19,8 +19,6 @@
 //!
 //! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
 
-use core::ffi::c_char;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
@@ -29,6 +27,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 /// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
+#[cfg(unix)]
 #[path = "posix_spawn.rs"]
 pub mod posix_spawn;
 
@@ -36,42 +35,6 @@ pub mod posix_spawn;
 /// Split out of `src/spawn/process.rs`.
 #[path = "spawn_process.rs"]
 pub mod spawn_process;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Canonical FFI type aliases for nullable C-string pointers (`*const c_char`)
-//
-// **Never** spell these as `Option<*const c_char>`: raw pointers are already
-// nullable, and `Option<*const T>` does *not* enjoy the null-pointer-niche
-// guarantee that `Option<&T>`/`Option<NonNull<T>>` do — its layout is
-// implementation-defined. Passing `Vec<Option<*const c_char>>::as_ptr()` to
-// `execve` is the bug class that produced the EFAULT fixed in 813ccdb7622.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `[*:null]?[*:0]const u8` — null-terminated array of NUL-terminated C
-/// strings (the `argv` shape `posix_spawn`/`execve` accept). Build as
-/// `Vec<*const c_char>` with a trailing `core::ptr::null()`, then `.as_ptr()`.
-pub type Argv = *const *const c_char;
-
-/// Same shape as [`Argv`] for the environment block.
-pub type Envp = *const *const c_char;
-
-/// Element type for an owned `Vec` backing an [`Argv`]/[`Envp`]. Null is the
-/// sentinel; never wrap in `Option`.
-pub type CStrPtr = *const c_char;
-
-// Layout guard: a C-string pointer is exactly one machine word. If this ever
-// fails, every `as_ptr().cast()` from a `Vec<*const c_char>` to `Argv` is
-// suspect.
-const _: () = assert!(core::mem::size_of::<*const c_char>() == core::mem::size_of::<usize>());
-const _: () = assert!(core::mem::align_of::<*const c_char>() == core::mem::align_of::<usize>());
-// Negative guard: `Option<*const c_char>` is **not** word-sized — it carries a
-// discriminant. Any `[Option<*const c_char>; N]` cast to `Argv` is a layout bug.
-// Use `Option<NonNull<c_char>>` for niche-optimized nullable storage instead.
-const _: () =
-    assert!(core::mem::size_of::<Option<*const c_char>>() != core::mem::size_of::<usize>());
-const _: () = assert!(
-    core::mem::size_of::<Option<core::ptr::NonNull<c_char>>>() == core::mem::size_of::<usize>()
-);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Signal-forwarding / no-orphans FFI surface — moved down from
@@ -98,23 +61,24 @@ pub mod ffi {
         pub safe fn Bun__noOrphans_onFork();
         pub safe fn Bun__noOrphans_onExit(pid: pid_t);
 
-        /// The PID to forward signals to. Set to 0 when unregistering.
-        ///
-        /// C++ declares this as plain `int64_t`; `AtomicI64` is `#[repr(C)]`
-        /// with the same size/align, and the C side only does word-sized
-        /// loads/stores from the signal handler, so `Relaxed` here matches.
+        /// The PID to forward signals to (`std::atomic<int64_t>` in C++).
+        /// Set to 0 when unregistering.
         pub safe static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
 
-        /// Race condition: a signal could be sent before `spawn_process_posix`
-        /// returns. Call after the child PID is known.
+        /// Forwards a signal that arrived before the child PID was known.
+        /// Call after a `SeqCst` store of the PID.
         pub safe fn Bun__sendPendingSignalIfNecessary();
+
+        /// `kill(2)`. safe: by-value integers only; a bad pid or signal is an errno, never UB. Async-signal-safe.
+        #[cfg(unix)]
+        pub safe fn kill(pid: pid_t, sig: c_int) -> c_int;
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
 // `PosixSpawnResult::pifd_from_pid` can flip it without depending on
-// `bun_threading`. `bun_spawn::WaiterThread` reads/writes through these.
+// `bun_threading`. `bun_spawn::process::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -189,6 +153,6 @@ pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]
 pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
-    Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
-    PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval, rusage_zeroed,
+    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, RusageFields,
+    StdioKind, rusage_zeroed,
 };

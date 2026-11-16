@@ -2,20 +2,21 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
-use crate::shell::states::base::Base;
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
+use crate::shell::states::base::{Base, InheritedEnv};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AssignCtx {
+pub(crate) enum AssignCtx {
     Cmd,
     Shell,
 }
 
-pub struct Assigns {
+pub(crate) struct Assigns {
     pub(crate) base: Base,
+    shell: InheritedEnv,
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
     pub node: bun_ptr::RawSlice<ast::Assign>,
@@ -24,7 +25,7 @@ pub struct Assigns {
 }
 
 #[derive(Default)]
-pub enum AssignsState {
+pub(crate) enum AssignsState {
     #[default]
     Idle,
     Expanding {
@@ -42,7 +43,8 @@ impl Assigns {
         ctx: AssignCtx,
     ) -> NodeId {
         interp.alloc_node(Node::Assigns(Assigns {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell: InheritedEnv(shell),
             // AST arena outlives every state node — `RawSlice` invariant.
             node: bun_ptr::RawSlice::new(node),
             state: AssignsState::Idle,
@@ -58,7 +60,7 @@ impl Assigns {
         loop {
             let (shell, node) = {
                 let me = interp.as_assigns(this);
-                (me.base.shell, me.node)
+                (me.shell.0, me.node)
             };
             let assigns = node.slice();
             match interp.as_assigns(this).state {
@@ -71,8 +73,8 @@ impl Assigns {
                         interp.as_assigns_mut(this).state = AssignsState::Done;
                         continue;
                     }
-                    let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let atom = &assigns[idx as usize].value;
+                    let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {
@@ -128,18 +130,12 @@ impl Assigns {
             merged
         };
 
-        let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
-        interp.as_assigns_mut(this).base.shell_mut().assign_var(
+        interp.as_assigns_mut(this).shell.assign_var(
             EnvStr::init_slice(label),
-            value_ref,
+            EnvStr::init_ref_counted(value.into_boxed_slice()),
             ctx,
         );
-        value_ref.deref();
 
         Yield::Next(this)
-    }
-
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("Assigns {} deinit", this);
     }
 }

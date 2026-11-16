@@ -1,0 +1,13 @@
+# `function size(): int32 { return box.size; }` is only ever copied in line: its own body is walked for nobody, so the promise is judged in the copy alone. What the caller expects of the answer is the callee's own `int32`:
+# taken for what is expected of `box.size` inside the copy, the promise would vouch for itself and the build would go through (it once did).
+# f1 = size, f2 = caller
+# -- source: promise-of-a-function-that-is-only-copied-in-line-does-not-vouch-for-itself.ts
+# declare function sink(...values: unknown[]): void;
+# declare const box: { size: any };
+# function size(): Bun.int32 { return box.size; }
+# function caller(): number { const at = size(); return at + 1; }
+# sink(caller);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f2 mechanisms=all
+# CHECK: the walk of f2:Body failed

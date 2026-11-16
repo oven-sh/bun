@@ -88,17 +88,10 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 // Membership checks become a `T: UnionMember<Ts>` bound — the compile error is
 // the trait-bound failure.
 //
-// Tag values are assigned as `1024 - i` for index `i`. We keep the raw u15
-// and expose `tag()` as the integer (callers that need an enum can define one
-// per instantiation).
+// Tag values are assigned as `1024 - i` for index `i`.
 
 /// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
-pub trait TypeList {
-    /// `@intFromEnum(@field(Tag, @typeName(Types[Types.len - 1])))` = 1024 - (LEN-1)
-    const MIN_TAG: TagType;
-    /// `@intFromEnum(@field(Tag, @typeName(Types[0])))` = 1024
-    const MAX_TAG: TagType = 1024;
-}
+pub trait TypeList {}
 
 /// `T: UnionMember<Ts>` ⇔ `T` is one of the types in the list `Ts`.
 pub trait UnionMember<Ts: TypeList> {
@@ -130,17 +123,6 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
         }
     }
 
-    #[inline]
-    pub fn tag(self) -> TagType {
-        self.repr.data()
-    }
-
-    /// The tag constant for `Type`.
-    #[inline]
-    pub const fn case<Type: UnionMember<Ts>>() -> TagType {
-        Type::TAG
-    }
-
     /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
     // `as` is a Rust keyword, hence `as_unchecked`.
     #[inline]
@@ -149,20 +131,8 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     }
 
     #[inline]
-    pub fn as_uintptr(self) -> AddressableSize {
-        self.repr.ptr_bits()
-    }
-
-    #[inline]
     pub fn is<Type: UnionMember<Ts>>(self) -> bool {
         self.repr.data() == Type::TAG
-    }
-
-    #[inline]
-    pub fn is_valid(self) -> bool {
-        // switch (data) { MIN_TAG...MAX_TAG => true, else => false }
-        let d = self.repr.data();
-        d >= Ts::MIN_TAG && d <= Ts::MAX_TAG
     }
 
     #[inline]
@@ -185,10 +155,5 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
             repr: TaggedPtr::init(ptr, Type::TAG),
             _types: PhantomData,
         }
-    }
-
-    #[inline]
-    pub fn is_null(self) -> bool {
-        self.repr.ptr_bits() == 0
     }
 }

@@ -4,6 +4,7 @@
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
+#include "GeneratedSink.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -28,8 +29,8 @@ extern "C" void* TextEncoderStreamEncoder__createForStream();
 extern "C" void TextEncoderStreamEncoder__destroyForStream(void*);
 extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__encodeForStream(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue chunk);
 extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__flushForStream(void*, JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__encodeIntoSink(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue chunk, uint8_t sinkId, void* sinkPtr);
-extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__flushIntoSink(void*, JSC::JSGlobalObject*, uint8_t sinkId, void* sinkPtr);
+extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__encodeIntoSink(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue chunk, void* sinkController);
+extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__flushIntoSink(void*, JSC::JSGlobalObject*, void* sinkController);
 
 namespace WebCore {
 
@@ -160,7 +161,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    Bun::putDirectNamed(vm, data, "encoding"_s, jsNontrivialString(vm, "utf-8"_s));
+    Bun::putDirectNamed(vm, data, "encoding"_s, Bun::commonStrings(vm).utf8WithDashString());
     Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
     Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextEncoderStream"_s, data));
@@ -236,7 +237,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_encoding, (JSGlobalO
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
-    return JSValue::encode(jsNontrivialString(vm, "utf-8"_s));
+    return JSValue::encode(Bun::commonStrings(vm).utf8WithDashString());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -277,7 +278,7 @@ static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStrea
 
 // Abrupt completions from encode (ToString runs user JS) OR enqueue become a rejected
 // promise (a transform algorithm returns a promise; a throw is its rejection, never a synchronous
-// throw into ProcessWrite/ProcessClose). When a native JSSink is attached (m_nativeSinkPtr), the
+// throw into ProcessWrite/ProcessClose). When a native sink is attached (m_nativeSinkController), the
 // encoder writes straight to it via its reusable scratch buffer (no JSUint8Array).
 static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk, bool flush)
 {
@@ -285,10 +286,10 @@ static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderSt
         auto& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         bool sinkBackpressure = false;
-        if (void* sinkPtr = stream->m_nativeSinkPtr) {
+        if (auto* sinkController = stream->m_nativeSinkController.get()) {
             JSValue wrote = JSValue::decode(flush
-                    ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, stream->m_nativeSinkId, sinkPtr)
-                    : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), stream->m_nativeSinkId, sinkPtr));
+                    ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, sinkController->payload())
+                    : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), sinkController->payload()));
             RETURN_IF_EXCEPTION(scope, nullptr);
             sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         } else {

@@ -1,0 +1,16 @@
+A test file imports a data file and a CommonJS file that requires it, and deletes the data file's key from require.cache itself. Up to the delete require() returns the namespace object; after it, the value.
+#### asks.cjs
+exports.required = require("./held.json");
+exports.again = () => require("./held.json");
+#### held.json
+{ "name": "held" }
+#### own.test.mjs
+import { test } from "bun:test";
+import held from "./held.json";
+import cjs from "./asks.cjs";
+test("deletes the key itself", () => {
+  console.log("| CASE", "at load", held.name, Object.prototype.toString.call(cjs.required));
+  console.log("| CASE", "in the test", Object.prototype.toString.call(cjs.again()));
+  delete require.cache[require.resolve("./held.json")];
+  console.log("| CASE", "after the delete", Object.prototype.toString.call(cjs.again()));
+});

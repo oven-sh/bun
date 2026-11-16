@@ -1,0 +1,55 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  a/* comment */ : B;
+  c?/* comment */ : D;
+  e()/* comment */ : F {}
+  g /* 1 */: H; // 2
+  i// comment
+  : J;
+}
+
+interface K {
+  a/* comment */ : B;
+  c?/* comment */ : D;
+  e()/* comment */ : F;
+  [g: string]/* comment */ : H;
+}
+
+type L = { a/* comment */ : B };
+
+const m = ()/* comment */ : B => c;
+
+const n = function () /* comment */ : B {};
+
+function o(a /* comment */ : B) /* comment */ : C {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  a/* comment */ : B;
+  c?/* comment */ : D;
+  e()/* comment */ : F {}
+  g /* 1 */: H; // 2
+  i// comment
+  : J;
+}
+
+interface K {
+  a/* comment */ : B;
+  c?/* comment */ : D;
+  e()/* comment */ : F;
+  [g: string]/* comment */ : H;
+}
+
+type L = { a/* comment */ : B };
+
+const m = ()/* comment */ : B => c;
+
+const n = function () /* comment */ : B {};
+
+function o(a /* comment */ : B) /* comment */ : C {}
+
+===================== End =====================

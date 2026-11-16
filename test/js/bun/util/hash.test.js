@@ -1,6 +1,7 @@
 import { xxHash3ForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { gcTick, tempDir } from "harness";
+import { join } from "node:path";
 
 it(`Bun.hash()`, () => {
   gcTick();
@@ -48,6 +49,21 @@ it(`Bun.hash.xxHash64()`, () => {
   // Test with seed larger than u32
   expect(Bun.hash.xxHash64("", 16269921104521594740n)).toBe(3224619365169652240n);
   gcTick();
+});
+// Number seeds >= 2^51 used to read as 0 (#41294).
+it("Bun.hash.xxHash64() reads a large Number seed exactly", () => {
+  const input = "hello world";
+  const seeds = [2 ** 51 - 1, 2 ** 51, Number.MAX_SAFE_INTEGER, 2 ** 60, 2 ** 63];
+  expect(seeds.map(seed => Bun.hash.xxHash64(input, seed))).toStrictEqual(
+    seeds.map(seed => Bun.hash.xxHash64(input, BigInt(seed))),
+  );
+  expect(Bun.hash.xxHash64(input, 2 ** 51)).not.toBe(Bun.hash.xxHash64(input, 0));
+  const max = Bun.hash.xxHash64(input, 2n ** 64n - 1n);
+  // >= 2^64 and +Infinity saturate; negatives wrap (int32 -1 and double -1.5 agree); NaN and -Infinity are 0.
+  expect([2 ** 64, Infinity, -1, -1.5].map(seed => Bun.hash.xxHash64(input, seed))).toStrictEqual([max, max, max, max]);
+  expect(Bun.hash.xxHash64(input, -2)).toBe(Bun.hash.xxHash64(input, 2n ** 64n - 2n));
+  const zero = Bun.hash.xxHash64(input, 0);
+  expect([NaN, -Infinity].map(seed => Bun.hash.xxHash64(input, seed))).toStrictEqual([zero, zero]);
 });
 it(`Bun.hash.xxHash3()`, () => {
   expect(Bun.hash.xxHash3("hello world")).toBe(0xd447b1ea40e6988bn);
@@ -229,6 +245,98 @@ describe("xxHash32 / xxHash64 reference vectors", () => {
     for (const [len, seed, expected] of REFERENCE) {
       expect(Bun.hash.xxHash64(makeInput(len), seed)).toBe(expected);
     }
+  });
+});
+
+describe("what Bun.hash and its algorithms take", () => {
+  const functions = [Bun.hash, ...Object.values(Bun.hash)];
+  const bytes = new TextEncoder().encode("hello world!");
+
+  it("there are thirteen functions, and Bun.hash is wyhash", () => {
+    expect(functions).toHaveLength(13);
+    expect(Bun.hash).toBeFunction();
+    expect(Bun.hash.name).toBe("hash");
+    for (const hash of functions) expect(hash.length).toBe(1);
+    expect(Bun.hash("a", 5n)).toBe(Bun.hash.wyhash("a", 5n));
+  });
+
+  it("the same bytes hash the same, whatever holds them", () => {
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    const padded = new Uint8Array(bytes.length + 8);
+    padded.set(bytes, 4);
+    for (const hash of functions) {
+      const expected = hash("hello world!");
+      for (const data of [
+        bytes,
+        bytes.buffer,
+        Buffer.from(bytes),
+        new DataView(bytes.buffer),
+        new Uint32Array(bytes.buffer),
+        padded.subarray(4, 4 + bytes.length),
+        shared,
+        shared.buffer,
+        new Blob([bytes]),
+        new String("hello world!"),
+        { toString: () => "hello world!" },
+      ]) {
+        expect(hash(data)).toBe(expected);
+      }
+    }
+  });
+
+  it("a Blob that is a file is refused, and does not hash as nothing", () => {
+    const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
+    for (const hash of functions) {
+      expect(() => hash(Bun.file(import.meta.path))).toThrow("File blob cannot be used here");
+      expect(() => hash(s3.file("key"))).toThrow("File blob cannot be used here");
+    }
+  });
+
+  it("an output of Bun.build() hashes as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("hash-build-output", { "entry.js": `console.log("hello world!");` });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const inMemory = (await Bun.build({ entrypoints })).outputs[0];
+    const written = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
+    const code = new Uint8Array(await inMemory.arrayBuffer());
+    expect(code.length).toBeGreaterThan(0);
+    for (const hash of functions) {
+      expect(hash(inMemory)).toBe(hash(code));
+      expect(() => hash(written)).toThrow("File blob cannot be used here");
+    }
+  });
+
+  it("nothing to hash is refused, and does not hash as its name", () => {
+    const refusal = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "data must be a string, ArrayBuffer, ArrayBufferView or Blob",
+    });
+    for (const hash of functions) {
+      expect(() => hash()).toThrow(refusal);
+      expect(() => hash(undefined)).toThrow(refusal);
+      expect(() => hash(null, 1)).toThrow(refusal);
+    }
+  });
+
+  it("anything else is converted to a string", () => {
+    for (const hash of functions) {
+      for (const value of [0, 5, NaN, false, 10n, [1, 2], {}]) expect(hash(value)).toBe(hash(String(value)));
+    }
+  });
+
+  it("a seed that is neither a number nor a BigInt is not converted", () => {
+    const seeded = functions.filter(hash => hash("a", 1) !== hash("a"));
+    expect(seeded).toHaveLength(11);
+    const unconverted = {
+      valueOf() {
+        throw new Error("the seed was converted");
+      },
+    };
+    for (const hash of functions) {
+      for (const seed of [undefined, null, "1", true, [1], unconverted]) expect(hash("a", seed)).toBe(hash("a", 0));
+    }
+    for (const hash of seeded) expect(hash("a", 1n)).toBe(hash("a", 1));
   });
 });
 

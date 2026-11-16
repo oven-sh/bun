@@ -4,26 +4,26 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
 use super::new_writer::NewWriter;
+use crate::mysql::auth_method::AuthResponse;
 use crate::mysql::capabilities::{Capabilities, MariaDBCapabilities};
-use crate::shared::data::Data;
 use bun_collections::StringHashMap;
 
 bun_core::declare_scope!(MySQLConnection, hidden);
 
-pub struct HandshakeResponse41 {
+pub struct HandshakeResponse41<'a> {
     pub capability_flags: Capabilities,
     pub mariadb_capability_flags: MariaDBCapabilities,
     pub max_packet_size: u32,        // default: 0xFFFFFF (16MB)
     pub character_set: CharacterSet, // default: CharacterSet::default()
-    pub username: Data,
-    pub auth_response: Data,
-    pub database: Data,
-    pub auth_plugin_name: Data,
+    pub username: &'a [u8],
+    pub auth_response: AuthResponse<'a>,
+    pub database: &'a [u8],
+    pub auth_plugin_name: &'a [u8],
     pub connect_attrs: StringHashMap<Box<[u8]>>, // default: empty
     pub sequence_id: u8,
 }
 
-impl HandshakeResponse41 {
+impl HandshakeResponse41<'_> {
     pub(crate) fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
@@ -56,27 +56,29 @@ impl HandshakeResponse41 {
         writer.int4(self.mariadb_capability_flags.to_int())?;
 
         // Write username (null terminated)
-        writer.write_z(self.username.slice())?;
+        writer.write_z(self.username)?;
 
         // Write auth response based on capabilities
-        let auth_data = self.auth_response.slice();
+        let auth_response_len = self.auth_response.len();
         if self.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
-            writer.write_length_encoded_string(auth_data)?;
+            writer.write_length_encoded_int(auth_response_len as u64)?;
+            self.auth_response.write(writer)?;
         } else if self.capability_flags.CLIENT_SECURE_CONNECTION {
-            writer.int1(u8::try_from(auth_data.len()).expect("int cast"))?;
-            writer.write(auth_data)?;
+            writer.int1(u8::try_from(auth_response_len).map_err(|_| AnyMySQLError::Overflow)?)?;
+            self.auth_response.write(writer)?;
         } else {
-            writer.write_z(auth_data)?;
+            self.auth_response.write(writer)?;
+            writer.int1(0)?;
         }
 
         // Write database name if requested
-        if self.capability_flags.CLIENT_CONNECT_WITH_DB && self.database.slice().len() > 0 {
-            writer.write_z(self.database.slice())?;
+        if self.capability_flags.CLIENT_CONNECT_WITH_DB && self.database.len() > 0 {
+            writer.write_z(self.database)?;
         }
 
         // Write auth plugin name if supported
         if self.capability_flags.CLIENT_PLUGIN_AUTH {
-            writer.write_z(self.auth_plugin_name.slice())?;
+            writer.write_z(self.auth_plugin_name)?;
         }
 
         // Write connect attributes if enabled

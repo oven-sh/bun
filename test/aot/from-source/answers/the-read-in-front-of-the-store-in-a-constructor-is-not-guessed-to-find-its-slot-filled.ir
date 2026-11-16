@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# class Knob { constructor(step) { this.step = step; this.turn = this.turn.bind(this); this.behind = this.turn(1); } turn(by) { return (by + this.step) & 255; } }
+# function make(t) { let s = 0; for (let i = 0; i < t + 3; i++) { const knob = new Knob(i); s = (s + knob.turn(t) + knob.behind) | 0; } return s; }
+# print(make(1), make(2));
+# print(Object.keys(new Knob(1)).join());
+# -- end of source
+# f1 = make, f2 = Knob, f3 = turn
+# `this.turn = this.turn.bind(this)`: `turn` lies in an appended field though the prototype answers it (a-name-that-the-constructor-of-a-class-stores-over-its-own-method-lies-in-a-field.ir).
+# The read stands IN FRONT OF the store: its slot is empty at every construction. In a loop the read was guessed to find the slot filled; the test stood at the head of its stretch,
+# failed each time, and took `this.step = step` to the closed arm with it: two stores by PutKnownField for each object made.
+# A read of an appended field that something above answers, off the object that the body being read is making, opens no such guess. The read behind the store is known by what was stored.
+# RUN(MADE): walk f1 mechanisms=all
+# MADE-NOT: = IsSlotFilled {{*}}key="turn"
+# MADE: = PutSlotOrAdd {{*}}key="step"
+# RUN(ANSWER): run-in-shell
+# ANSWER: 20 35
+# ANSWER-NEXT: step,turn,behind
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 20 35
+# CHECKED-NEXT: step,turn,behind
+# CHECKED-NEXT: exited with 0

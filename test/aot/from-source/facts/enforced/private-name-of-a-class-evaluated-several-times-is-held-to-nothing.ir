@@ -1,0 +1,12 @@
+# each evaluation of a class has names of its own, and all of them share the layout: the emitter and the run time compare the brand and then look for a boxed value. Such a slot is held to nothing, as that of every private name is: Facts has no line for it.
+# f1 = makeClass
+# -- source: private-name-of-a-class-evaluated-several-times-is-held-to-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# function makeClass() { return class Inner { #hidden: string; shown: string; constructor(hidden: string) { this.#hidden = hidden; this.shown = hidden; } read() { return this.#hidden; } }; }
+# sink(makeClass, makeClass(), makeClass());
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: counts fields
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: #hidden
+# NEVER-NOT: differs-from-table

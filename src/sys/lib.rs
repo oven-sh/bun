@@ -1,8 +1,9 @@
+#![feature(core_io_borrowed_buf)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-// bun_sys is a T0 foundation crate that bun_collections depends on; importing
-// it to satisfy disallowed-types would create a dependency cycle. `File` here
-// IS the bun_sys::File the lint routes everyone else through.
-#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
+// `File` here IS the bun_sys::File the lint routes everyone else through.
+#![allow(clippy::disallowed_methods)]
+// Tests lock std's Mutex: bun_threading depends on this crate.
+#![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
 
@@ -15,6 +16,9 @@
 pub extern crate bun_core as bun_str;
 #[cfg(windows)]
 pub extern crate bun_libuv_sys;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
+use core::mem::MaybeUninit;
+
 pub mod fd;
 pub use fd::{ErrorCase, FdExt, MakeLibUvOwnedError, RawFd};
 #[path = "Error.rs"]
@@ -25,7 +29,7 @@ pub use error::ReturnCodeExt;
 impl From<Error> for bun_errno::SystemErrno {
     #[inline]
     fn from(e: Error) -> Self {
-        bun_errno::SystemErrno::init(i64::from(e.errno)).unwrap_or(bun_errno::SystemErrno::EIO)
+        e.to_zig_err()
     }
 }
 /// The JS-facing rich error
@@ -69,12 +73,25 @@ impl core::fmt::Display for SystemError {
     /// `Display` stays side-effect-free. The colored path is handled by
     /// `bun_core::Output::pretty*` at the call site that prints the error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if !self.path.is_empty() {
+        self.fmt_with_path(&self.path, f)
+    }
+}
+impl SystemError {
+    /// `Display` with `path` in place of `self.path`.
+    pub(crate) fn fmt_with_path(
+        &self,
+        path: &bun_core::String,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        if !path.is_empty() {
             // "<code>: <path>: <message> (<syscall>())"
             write!(
                 f,
                 "{}: {}: {} ({}())",
-                self.code, self.path, self.message, self.syscall,
+                self.code,
+                bun_core::fmt::EscapeControlChars(path),
+                self.message,
+                self.syscall,
             )
         } else {
             // "<code>: <message> (<syscall>())"
@@ -93,126 +110,135 @@ pub mod copy_file;
 // Directory-entry kind — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
 
+#[cfg(unix)]
+mod dirent;
+
 // `bun.DirIterator`.
 //
 // A readdir-style directory iterator. Notable behaviors:
 // - returns errors in `bun_sys::Result` (preserves errno + syscall tag)
 // - doesn't mark BADF as unreachable
-// - entry name (`Name`) is a lifetime-erased borrow into the iterator's inline
-//   `buf` on POSIX, owned `Vec` on Windows
-//
-// The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
-// readdir loop lives here so `walker_skippable` / `bun_glob` / resolver can
-// iterate without pulling `bun_runtime` up-tier.
+
+/// `__getdirentries64` (private libsystem symbol): fills `buf` with
+/// variable-length dirent records and advances `*basep`. Returns the byte
+/// count written (0 means EOF). Retries EINTR (#41085). There is no
+/// `$NOCANCEL` variant to call: getdirentries64 is not a pthread
+/// cancellation point (xnu syscalls.master has no `_nocancel` entry for it).
+///
+/// On a buffer of at least 1024 bytes the kernel reports EOF in the last 4
+/// bytes; this wrapper zeroes them before each attempt so the caller can
+/// trust the flag even after a retry.
+///
+/// SAFETY precondition: `buf` must be writable for `len` bytes and `basep`
+/// must point to a valid `i64`.
+#[cfg(target_os = "macos")]
+unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64) -> Maybe<usize> {
+    unsafe extern "C" {
+        fn __getdirentries64(
+            fd: libc::c_int,
+            buf: *mut u8,
+            nbytes: usize,
+            basep: *mut i64,
+        ) -> isize;
+    }
+    loop {
+        if len >= 4 {
+            // SAFETY: caller contract — `buf` is writable for `len` bytes.
+            unsafe { buf.add(len - 4).cast::<[u8; 4]>().write([0, 0, 0, 0]) };
+        }
+        // SAFETY: caller contract.
+        let rc = unsafe { __getdirentries64(fd.native(), buf, len, basep) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::getdirentries64));
+        }
+        return Ok(rc as usize);
+    }
+}
+
 pub mod dir_iterator {
-    use super::{EntryKind, Error, Fd, Result, Tag};
+    #[cfg(not(target_os = "macos"))]
+    use super::Error;
+    #[cfg(unix)]
+    use super::dirent;
+    use super::{EntryKind, Fd, Result, Tag};
+    use bun_core::ZStr;
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
 
     /// Native-encoding directory entry returned by `WrappedIterator::next()`.
-    ///
-    /// `name` is a
-    /// *borrow* into the iterator's internal `buf`. It is invalidated by the
-    /// next call to `next()` and by moving/dropping the iterator. Copy it out
-    /// (`.slice_u8().to_vec()` etc.) if you need it to outlive the iteration
-    /// step.
-    pub struct IteratorResult {
-        pub name: Name,
+    pub struct IteratorResult<'a> {
+        pub name: Name<'a>,
         pub kind: EntryKind,
+        /// The inode number the directory records for the entry; 0 on Windows.
+        pub ino: u64,
+        #[cfg(windows)]
+        has_directory_attribute: bool,
     }
 
-    /// Length-known, NUL-terminated entry name in OS-native encoding.
-    ///
-    /// **POSIX**: lifetime-erased borrow (raw pointer + length) into the
-    /// iterator's `getdents`/`getdirentries` buffer. The kernel writes
-    /// `d_name` NUL-terminated, so `as_zstr()` needs no copy. The slice is
-    /// only valid until the next `next()` call or until the iterator is
-    /// moved/dropped. No heap allocation per entry.
-    ///
-    /// **Windows**: `FILE_DIRECTORY_INFORMATION.FileName` is length-prefixed
-    /// (no NUL) and UTF-16; we keep an owning `Vec` per entry (cold path —
-    /// the install hot loop is POSIX-only) so `slice_u8()` can hand out a
-    /// borrowed `&[u8]` on every platform.
-    #[cfg(not(windows))]
-    #[derive(Copy, Clone)]
-    pub struct Name {
-        /// Points at `d_name[0]` inside the iterator's `buf`; `ptr[len] == 0`.
-        ptr: core::ptr::NonNull<u8>,
-        len: usize,
-    }
-    #[cfg(not(windows))]
-    // SAFETY: `Name` is a lifetime-erased `&[u8]`; the borrowed bytes are
-    // immutable kernel-filled data and the iterator is not shared across
-    // threads while a `Name` is outstanding.
-    unsafe impl Send for Name {}
-    // SAFETY: see `Send` above — `Name` only exposes shared reads of
-    // immutable kernel-filled bytes, so `&Name` is safe to share.
-    #[cfg(not(windows))]
-    unsafe impl Sync for Name {}
-    #[cfg(windows)]
-    pub struct Name {
-        native: Vec<OSPathChar>,
-        utf8: Vec<u8>,
-    }
-    impl Name {
-        #[cfg(not(windows))]
+    impl IteratorResult<'_> {
+        /// Whether a `SymLink` stands for a directory, where the listing says
+        /// so: a link on Windows is made as one or the other, whatever is at
+        /// its target, and `NtQueryAttributesFile` answers with the same bit.
+        /// `None`: the link has to be followed.
         #[inline]
-        fn borrow(s: &[u8]) -> Name {
-            // SAFETY: `s` is a slice into a kernel-written dirent record; the
-            // byte at `s.as_ptr().add(s.len())` is the in-record NUL terminator
-            // and lies within the same `reclen`-sized allocation.
-            debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
-            Name {
-                ptr: core::ptr::NonNull::from(s).cast(),
-                len: s.len(),
+        pub fn link_is_directory(&self) -> Option<bool> {
+            #[cfg(windows)]
+            {
+                Some(self.has_directory_attribute)
+            }
+            #[cfg(not(windows))]
+            {
+                None
             }
         }
-        #[cfg(windows)]
+    }
+
+    #[cfg(not(windows))]
+    pub struct Name<'a>(&'a ZStr);
+    #[cfg(not(windows))]
+    impl<'a> Name<'a> {
         #[inline]
-        fn from_slice(s: &[OSPathChar]) -> Name {
-            let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s);
-            v.push(0);
-            // Trust that Windows gives us valid UTF-16LE.
-            let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
-            Name { native: v, utf8 }
-        }
-        /// Borrow the name as `&[OSPathChar]` (no NUL).
-        #[cfg(not(windows))]
-        #[inline]
-        pub fn slice(&self) -> &[OSPathChar] {
-            // SAFETY: `borrow()` was given a live slice into the iterator's
-            // `buf`; caller honours the streaming-iterator contract.
-            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-        }
-        #[cfg(windows)]
-        #[inline]
-        pub fn slice(&self) -> &[OSPathChar] {
-            &self.native[..self.native.len() - 1]
+        pub fn slice(&self) -> &'a [OSPathChar] {
+            self.0.as_bytes()
         }
         #[inline]
-        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
-            self.slice()
+        pub fn as_zstr(&self) -> &'a ZStr {
+            self.0
         }
-        /// Borrow the entry name as UTF-8 bytes (no NUL). On POSIX this is the
-        /// native slice; on Windows it is the cached `fromWPath` transcode.
-        #[cfg(not(windows))]
+    }
+
+    #[cfg(windows)]
+    pub struct Name<'a> {
+        native: &'a [OSPathChar],
+        /// Where `utf8` is written, when it is first asked for.
+        scratch: core::cell::Cell<&'a mut [u8]>,
+        utf8: core::cell::OnceCell<&'a ZStr>,
+    }
+    #[cfg(windows)]
+    impl<'a> Name<'a> {
         #[inline]
-        pub fn slice_u8(&self) -> &[u8] {
-            self.slice()
+        pub fn slice(&self) -> &'a [OSPathChar] {
+            self.native
         }
-        #[cfg(windows)]
+        /// In UTF-8.
         #[inline]
-        pub fn slice_u8(&self) -> &[u8] {
-            &self.utf8
+        pub fn as_zstr(&self) -> &'a ZStr {
+            self.utf8.get_or_init(|| {
+                bun_paths::strings::paths::from_w_path(self.scratch.take(), self.native)
+            })
         }
-        #[cfg(not(windows))]
+    }
+
+    impl<'a> Name<'a> {
+        /// The native bytes on POSIX, UTF-8 on Windows.
         #[inline]
-        pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
-            // `borrow()` debug_assert.
-            unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
+        pub fn slice_u8(&self) -> &'a [u8] {
+            self.as_zstr().as_bytes()
         }
     }
 
@@ -271,6 +297,19 @@ pub mod dir_iterator {
         }
     }
 
+    /// Parses the record at `index`. The last refill wrote `end_index` bytes. Returns `None` if the
+    /// record is malformed.
+    #[cfg(unix)]
+    #[inline]
+    fn record_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<dirent::Record<'_>> {
+        if end_index > BUF_SIZE {
+            return None;
+        }
+        // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
+        let filled = unsafe { buf.filled(end_index) };
+        dirent::parse::<dirent::Native>(filled, index)
+    }
+
     // ── Linux / Android ──────────────────────────────────────────────────
     // Same `getdents64(2)` walk for both — Android is the same kernel, and
     // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
@@ -290,7 +329,7 @@ pub mod dir_iterator {
                 end_index: 0,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the syscall.
@@ -311,32 +350,16 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
-                //                         u8 d_type; char d_name[]; }
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; `base < end_index` and
-                // each record fits entirely in `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let d_type = buf[base + 18];
-                self.index = base + reclen;
-
-                // d_name is NUL-terminated within the record. Use a SIMD-vectorized
-                // scan for the terminator; a scalar
-                // byte loop here showed up in startup profiles on large directories.
-                let name_field = &buf[base + 19..base + reclen];
-                let nul = bun_core::strings::index_of_char_usize(name_field, 0)
-                    .unwrap_or(name_field.len());
-                let name = &name_field[..nul];
-
-                // skip . and .. entries
-                if name == b"." || name == b".." {
-                    continue;
-                }
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
+                };
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
+                    name: Name(entry.name),
+                    kind: kind_from_dt(entry.d_type),
+                    ino: entry.ino,
                 }));
             }
         }
@@ -363,16 +386,7 @@ pub mod dir_iterator {
                 received_eof: false,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            unsafe extern "C" {
-                // Private libsystem symbol.
-                fn __getdirentries64(
-                    fd: libc::c_int,
-                    buf: *mut u8,
-                    nbytes: usize,
-                    basep: *mut i64,
-                ) -> isize;
-            }
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -382,43 +396,28 @@ pub mod dir_iterator {
                     // getdirentries64() writes to the last 4 bytes of the
                     // buffer to indicate EOF. If that value is not zero, we
                     // have reached the end of the directory and can skip the
-                    // extra syscall.
+                    // extra syscall. The wrapper zeroes those bytes before
+                    // each attempt.
                     // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(BUF_SIZE >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
-                    // Always zero the bytes where the flag will be written so
-                    // we don't confuse garbage with EOF.
-                    // SAFETY: writing into our own MaybeUninit buffer.
-                    unsafe {
-                        self.buf
-                            .as_mut_ptr()
-                            .add(BUF_SIZE - 4)
-                            .cast::<[u8; 4]>()
-                            .write([0, 0, 0, 0]);
-                    }
 
                     // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
-                    let rc = unsafe {
-                        __getdirentries64(
-                            dir.native(),
+                    let n = unsafe {
+                        super::getdirentries64(
+                            dir,
                             self.buf.as_mut_ptr(),
                             BUF_SIZE,
                             &raw mut self.seek,
                         )
-                    };
-                    if rc < 1 {
-                        if rc == 0 {
-                            self.received_eof = true;
-                            return Ok(None);
-                        }
-                        return Err(Error::from_code_int(
-                            super::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                    }?;
+                    if n == 0 {
+                        self.received_eof = true;
+                        return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                     // SAFETY: we explicitly zeroed `[BUF_SIZE-4..BUF_SIZE)` above
                     // and the kernel may have overwritten it with the EOF flag —
                     // either way the 4 bytes are initialized.
@@ -432,33 +431,16 @@ pub mod dir_iterator {
                     let flag = u32::from_ne_bytes(flag);
                     self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
                 }
-                // Darwin `struct dirent` (64-bit ino):
-                //   u64 d_ino; u64 d_seekoff; u16 d_reclen; u16 d_namlen;
-                //   u8 d_type; char d_name[];
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; each record fits in
-                // `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let d_ino = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let namlen = u16::from_ne_bytes([buf[base + 18], buf[base + 19]]) as usize;
-                let d_type = buf[base + 20];
-                self.index = base + reclen;
-
-                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
-                let name = &buf[base + 21..base + 21 + namlen];
-
-                if name == b"." || name == b".." || d_ino == 0 {
-                    continue;
-                }
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
+                };
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
+                    name: Name(entry.name),
+                    kind: kind_from_dt(entry.d_type),
+                    ino: entry.ino,
                 }));
             }
         }
@@ -481,7 +463,7 @@ pub mod dir_iterator {
                 end_index: 0,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             unsafe extern "C" {
                 fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
             }
@@ -504,33 +486,16 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // FreeBSD 12+ `struct dirent` (ino64):
-                //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
-                //   u16 d_namlen; u16 pad1; char d_name[];
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; each record fits in
-                // `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let fileno = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let d_type = buf[base + 18];
-                let namlen = u16::from_ne_bytes([buf[base + 20], buf[base + 21]]) as usize;
-                self.index = base + reclen;
-
-                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
-                let name = &buf[base + 24..base + 24 + namlen];
-
-                if name == b"." || name == b".." || fileno == 0 {
-                    continue;
-                }
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
+                };
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
+                    name: Name(entry.name),
+                    kind: kind_from_dt(entry.d_type),
+                    ino: entry.ino,
                 }));
             }
         }
@@ -554,7 +519,10 @@ pub mod dir_iterator {
         /// `*` and `?`). Only honored on the first call (RestartScan=TRUE);
         /// sticky for the handle lifetime.
         name_filter: Option<Vec<u16>>,
+        utf8_name: [u8; 3 * MAX_NAME_UNITS + 1],
     }
+    #[cfg(windows)]
+    const MAX_NAME_UNITS: usize = 256;
     #[cfg(windows)]
     impl State {
         #[inline]
@@ -565,15 +533,13 @@ pub mod dir_iterator {
                 end_index: 0,
                 first: true,
                 name_filter: None,
+                utf8_name: [0; _],
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            use crate::windows::Win32Error;
-            use bun_errno::Win32ErrorExt as _;
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             use bun_windows_sys::externs as w;
-            // `offset_of!(FILE_DIRECTORY_INFORMATION, FileName)` — fixed by the
-            // Win32 layout (4+4 + 6×8 + 4+4 = 64).
-            const NAME_OFFSET: usize = 64;
+            use core::mem::offset_of;
+            use w::FILE_DIRECTORY_INFORMATION as Record;
             loop {
                 if self.index >= self.end_index {
                     // The I/O manager only fills the IO_STATUS_BLOCK on IRP
@@ -620,6 +586,7 @@ pub mod dir_iterator {
                         )
                     };
                     self.first = false;
+                    crate::syslog!("NtQueryDirectoryFile({}) = {:#x}", dir, rc.0);
 
                     // If the handle is not a directory, we'll get
                     // STATUS_INVALID_PARAMETER.
@@ -636,8 +603,7 @@ pub mod dir_iterator {
                         return Ok(None);
                     }
                     if rc != w::NTSTATUS::SUCCESS {
-                        let errno = Win32Error::from_nt_status(rc).to_e();
-                        return Err(Error::from_code(errno, Tag::NtQueryDirectoryFile));
+                        return Err(Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
                     if io.Information == 0 {
                         return Ok(None);
@@ -652,54 +618,30 @@ pub mod dir_iterator {
                 // call only overwrites a prefix — `[0..BUF_SIZE)` stays fully
                 // initialized for the iterator's lifetime once we reach here.
                 let buf = unsafe { self.buf.filled(BUF_SIZE) };
-                // While the official api docs guarantee FILE_DIRECTORY_INFORMATION
-                // to be aligned properly, this may not always be the case (e.g.
-                // due to faulty VM/Sandboxing tools) — read fields unaligned via
-                // safe byte-array indexing. entry_offset < end_index ≤ BUF_SIZE;
-                // struct header (NAME_OFFSET = 64 bytes) is fully within the buffer
-                // per the NtQueryDirectoryFile contract on STATUS_SUCCESS.
-                let next_off = u32::from_ne_bytes(
-                    buf[entry_offset..entry_offset + 4]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                ) as usize;
-                let file_attrs = u32::from_ne_bytes(
-                    buf[entry_offset + 56..entry_offset + 60]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let name_len_bytes = u32::from_ne_bytes(
-                    buf[entry_offset + 60..entry_offset + 64]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                ) as usize;
+                // Faulty VM and sandboxing tools misalign records, so the fields are read as bytes.
+                let (header, name) = buf[entry_offset..].split_at(offset_of!(Record, FileName));
+                let field = |offset: usize| {
+                    u32::from_ne_bytes(*header[offset..].first_chunk().expect("in the header"))
+                };
+                let next_off = field(offset_of!(Record, NextEntryOffset)) as usize;
+                let file_attrs = field(offset_of!(Record, FileAttributes));
+                let name_len_bytes = field(offset_of!(Record, FileNameLength)) as usize;
                 self.index = if next_off != 0 {
                     entry_offset + next_off
                 } else {
                     BUF_SIZE
                 };
 
-                // Some filesystem / filter drivers have been observed
-                // returning FILE_DIRECTORY_INFORMATION entries with an
-                // out-of-range FileNameLength (well beyond the 255-WCHAR NTFS
-                // component limit). Clamp to what remains in `buf` so a
-                // misbehaving driver cannot walk us past the end of the buffer.
-                let name_byte_offset = entry_offset + NAME_OFFSET;
-                let buf_remaining_u16 = BUF_SIZE.saturating_sub(name_byte_offset) / 2;
-                let name_len_u16 = (name_len_bytes / 2).min(buf_remaining_u16);
-                // name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp above.
-                // `AlignedBuf` is align(8) and `entry_offset`/`NAME_OFFSET` are
-                // both multiples of 4, so the u8→u16 cast is always aligned.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
-                    &buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
-                );
+                // Some drivers report a length beyond the limit of NTFS and the end of the buffer.
+                let name_len_u16 = (name_len_bytes / 2).min(MAX_NAME_UNITS).min(name.len() / 2);
+                let dir_info_name: &[u16] = bun_core::cast_slice(&name[..name_len_u16 * 2]);
 
                 if dir_info_name == [b'.' as u16] || dir_info_name == [b'.' as u16, b'.' as u16] {
                     continue;
                 }
 
+                let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
                 let kind = {
-                    let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
                     let islink = (file_attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
                     // On Windows, symlinks can be directories too. We
                     // prioritize the "sym_link" kind over the "directory"
@@ -715,21 +657,21 @@ pub mod dir_iterator {
                 };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::from_slice(dir_info_name),
+                    name: Name {
+                        native: dir_info_name,
+                        scratch: core::cell::Cell::new(&mut self.utf8_name),
+                        utf8: core::cell::OnceCell::new(),
+                    },
                     kind,
+                    ino: 0,
+                    has_directory_attribute: isdir,
                 }));
             }
         }
     }
 
-    /// `DirIterator.NewWrappedIterator(if windows .u16 else .u8)`
     pub struct WrappedIterator {
         dir: Fd,
-        // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
-        // ignored (kernel readdir has no name filter; callers post-filter).
-        // stored on `State` on Windows so `next()` can pass it.
-        #[cfg(not(windows))]
-        name_filter: Option<Vec<u16>>,
         state: State,
     }
     impl WrappedIterator {
@@ -737,47 +679,22 @@ pub mod dir_iterator {
         pub fn dir(&self) -> Fd {
             self.dir
         }
-        /// Windows-only kernel-side name filter (passed to `NtQueryDirectoryFile`).
-        /// On POSIX this is a no-op; callers must filter themselves.
+        /// Kernel-side name filter (passed to `NtQueryDirectoryFile`).
+        #[cfg(windows)]
         #[inline]
         pub fn set_name_filter(&mut self, filter: Option<&[u16]>) {
-            #[cfg(windows)]
-            {
-                self.state.name_filter = filter.map(|f| f.to_vec());
-            }
-            #[cfg(not(windows))]
-            {
-                self.name_filter = filter.map(|f| f.to_vec());
-            }
+            self.state.name_filter = filter.map(|f| f.to_vec());
         }
-        /// Memory such as file names referenced in this returned entry becomes
-        /// invalid with subsequent calls to `next`, as well as when this
-        /// iterator is moved or dropped.
-        ///
-        /// On POSIX `IteratorResult::name` is a lifetime-erased borrow into
-        /// this iterator's inline `buf`.
-        /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
-        pub fn next(&mut self) -> Result<Option<IteratorResult>> {
+        pub fn next(&mut self) -> Result<Option<IteratorResult<'_>>> {
             self.state.next(self.dir)
         }
     }
 
     pub fn iterate(dir: Fd) -> WrappedIterator {
-        #[cfg(not(windows))]
-        {
-            WrappedIterator {
-                dir,
-                name_filter: None,
-                state: State::new(),
-            }
-        }
-        #[cfg(windows)]
-        {
-            WrappedIterator {
-                dir,
-                state: State::new(),
-            }
+        WrappedIterator {
+            dir,
+            state: State::new(),
         }
     }
 }
@@ -787,7 +704,7 @@ pub mod dir_iterator {
 pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) -> Result<Fd> {
     #[cfg(not(windows))]
     {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // ENAMETOOLONG on
         // overflow, never silently truncate (would open the wrong directory).
         if path.len() >= buf.len() {
@@ -855,11 +772,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
         // `fstat` the handle, then close.
         match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
-            Ok(file) => {
-                let r = fstat(file);
-                let _ = close(file);
-                r
-            }
+            Ok(file) => CloseOnDrop::new(file).stat(),
             Err(err) => Err(err),
         }
     }
@@ -888,6 +801,8 @@ pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
 pub mod signal_code;
 pub use signal_code::SignalCode;
+#[cfg(unix)]
+pub mod beneath;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -902,7 +817,7 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
+pub use bun_core::{Fd, FdKind, FdNative, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
 /// `Fd`, or a reference to an owning [`File`] / [`Dir`]. Mirrors
@@ -950,7 +865,9 @@ pub fn is_regular_file(mode: Mode) -> bool {
 }
 #[cfg(windows)]
 pub use bun_errno::Win32ErrorExt;
-pub use bun_errno::{E, GetErrno, S, SystemErrno, e_from_negated, get_errno};
+pub use bun_errno::{E, S, SystemErrno, e_from_negated, last_error};
+#[cfg(not(windows))]
+pub use bun_errno::{GetErrno, get_errno};
 
 /// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns a
 /// NUL-terminated upper-case errno name (e.g. `"ENOENT"`) or null for an
@@ -1040,8 +957,7 @@ impl<T> MaybeExt for Result<T> {
         if rc == bun_windows_sys::NTSTATUS::SUCCESS {
             return None;
         }
-        let e = windows::translate_nt_status_to_errno(rc);
-        Some(Err(Error::from_code(e, tag)))
+        Some(Err(Error::new(rc, tag)))
     }
 }
 #[cfg(windows)]
@@ -1052,10 +968,16 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+/// For [`flock`]: advisory `flock(2)` on POSIX, mandatory `LockFileEx` on Windows; released on close.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
+}
+
+/// What [`renameat2`] does when the destination exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenameMode {
-    #[default]
     Normal,
     /// Linux `RENAME_EXCHANGE` / macOS `RENAME_SWAP`.
     Exchange,
@@ -1063,51 +985,20 @@ pub enum RenameMode {
     NoReplace,
 }
 
-/// Flags for [`renameat2`].
-/// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
-/// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
-#[derive(Clone, Copy, Default)]
-pub struct Renameat2Flags {
-    pub mode: RenameMode,
-    pub nofollow: bool,
-}
-
-impl Renameat2Flags {
+impl RenameMode {
+    /// The `renameat2(2)` / `renameatx_np` flag.
     #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn int(self) -> u32 {
-        let mut flags: u32 = 0;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    fn int(self) -> u32 {
         #[cfg(target_os = "macos")]
-        {
-            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 2,
-                RenameMode::NoReplace => flags |= 4,
-            }
-            if self.nofollow {
-                flags |= 0x10;
-            }
+        let (exchange, no_replace) = (2, 4); // <sys/stdio.h>: RENAME_SWAP, RENAME_EXCL
+        #[cfg(not(target_os = "macos"))]
+        let (exchange, no_replace) = (libc::RENAME_EXCHANGE as u32, libc::RENAME_NOREPLACE as u32);
+        match self {
+            RenameMode::Normal => 0,
+            RenameMode::Exchange => exchange,
+            RenameMode::NoReplace => no_replace,
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
-                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
-            }
-            let _ = self.nofollow;
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 1,
-                RenameMode::NoReplace => flags |= 2,
-            }
-            let _ = self.nofollow;
-        }
-        flags
     }
 }
 
@@ -1223,7 +1114,12 @@ pub mod O {
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
+#[cfg(unix)]
+pub mod close_on_fork;
 pub mod file;
+mod mmap;
+pub use mmap::Mmap;
+pub mod private_copy;
 pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
@@ -1241,9 +1137,9 @@ pub type Stat = bun_libuv_sys::uv_stat_t;
 use bun_core::ZStr;
 
 /// Read thread-local libc errno (set by the failing syscall).
-/// On Windows this reads the CRT's
-/// thread-local `_errno()`; libuv-backed paths that need Win32
-/// `GetLastError()` go through `bun_sys::windows::get_last_errno` instead.
+/// On Windows this reads the CRT's thread-local `_errno()`, which Win32 and
+/// Winsock calls do not set — use `Win32Error::get()` / `Error::from_win32`
+/// for those.
 #[inline]
 pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
@@ -1276,10 +1172,8 @@ impl Tag {
     pub const access: Tag = Tag(2);
     pub const connect: Tag = Tag(3);
     pub const chmod: Tag = Tag(4);
-    pub(crate) const chown: Tag = Tag(5);
+    pub const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) const clonefileat: Tag = Tag(7);
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
     pub const copyfile: Tag = Tag(10);
@@ -1297,7 +1191,7 @@ impl Tag {
     pub const getdents64: Tag = Tag(21);
     pub const getdirentries64: Tag = Tag(22);
     pub const lchmod: Tag = Tag(23);
-    pub(crate) const lchown: Tag = Tag(24);
+    pub const lchown: Tag = Tag(24);
     pub const link: Tag = Tag(25);
     pub(crate) const lseek: Tag = Tag(26);
     pub const lstat: Tag = Tag(27);
@@ -1315,7 +1209,7 @@ impl Tag {
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
     pub(crate) const stat: Tag = Tag(41);
-    pub(crate) const statfs: Tag = Tag(42);
+    pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]
     pub(crate) const symlinkat: Tag = Tag(44);
@@ -1350,6 +1244,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const pwritev: Tag = Tag(75);
     pub const readv: Tag = Tag(76);
+    #[cfg(not(windows))]
     pub(crate) const preadv: Tag = Tag(77);
     pub const ioctl_ficlone: Tag = Tag(78);
     pub const accept: Tag = Tag(79);
@@ -1382,13 +1277,21 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
-    #[cfg(not(windows))]
     pub(crate) const ioctl: Tag = Tag(104);
     #[cfg(not(windows))]
     pub(crate) const getrlimit: Tag = Tag(105);
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const uv_os_setpriority: Tag = Tag(108);
+    pub const flock: Tag = Tag(109);
+    #[cfg(not(windows))]
+    pub(crate) const flistxattr: Tag = Tag(110);
+    #[cfg(not(windows))]
+    pub(crate) const fgetxattr: Tag = Tag(111);
+    pub const epoll_create1: Tag = Tag(112);
+    pub const pthread_create: Tag = Tag(113);
+    pub const _open_osfhandle: Tag = Tag(114);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1396,7 +1299,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 115] = [
             "TODO",
             "dup",
             "access",
@@ -1506,17 +1409,15 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "uv_os_setpriority",
+            "flock",
+            "flistxattr",
+            "fgetxattr",
+            "epoll_create1",
+            "pthread_create",
+            "_open_osfhandle",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
-    }
-
-    /// Tags strictly above `WriteFile`
-    /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
-    /// later-added POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
-    /// above that range don't read as Windows.
-    #[inline]
-    pub const fn is_windows(self) -> bool {
-        self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
     }
 }
 impl From<Tag> for &'static str {
@@ -1555,7 +1456,7 @@ mod safe_libc {
         pub(crate) safe fn fsync(fd: c_int) -> c_int;
         pub(crate) safe fn fchdir(fd: c_int) -> c_int;
         pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
-        pub(crate) safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
+        pub safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
         pub(crate) safe fn fchown(fd: c_int, uid: libc::uid_t, gid: libc::gid_t) -> c_int;
         pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
@@ -1565,6 +1466,13 @@ mod safe_libc {
             mode: c_int,
             off: libc::off_t,
             len: libc::off_t,
+        ) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        pub safe fn posix_fadvise(
+            fd: c_int,
+            offset: libc::off_t,
+            len: libc::off_t,
+            advice: c_int,
         ) -> c_int;
         // BSD/Linux event-queue / notification syscalls — all by-value scalars;
         // bad args → errno (`EINVAL`/`EMFILE`/…), never UB.
@@ -1702,95 +1610,84 @@ mod posix_impl {
     // don't want to round-trip through thread-local `errno`.
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
+    fn sys_openat(d: i32, p: &ZStr, f: i32, m: libc::c_uint) -> i32 {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
-            // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
-            unsafe { super::nocancel::openat(d, p, f, m) }
+            // SAFETY: `p` is NUL-terminated.
+            unsafe { super::nocancel::openat(d, p.as_ptr(), f, m) }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
-            // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
-            unsafe { libc::openat(d, p, f, m) }
+            // SAFETY: `p` is NUL-terminated.
+            unsafe { libc::openat(d, p.as_ptr(), f, m) }
         }
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    unsafe fn sys_read(fd: i32, buf: *mut libc::c_void, n: usize) -> isize {
+    fn sys_read(fd: i32, buf: &mut [MaybeUninit<u8>]) -> isize {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::read(fd, buf, n) }
+            // SAFETY: `buf` is writable for `buf.len()` bytes.
+            unsafe { super::nocancel::read(fd, buf.as_mut_ptr().cast(), buf.len()) }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { libc::read(fd, buf, n) }
+            // SAFETY: `buf` is writable for `buf.len()` bytes.
+            unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) }
         }
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    unsafe fn sys_write(fd: i32, buf: *const libc::c_void, n: usize) -> isize {
+    fn sys_write(fd: i32, buf: &[u8]) -> isize {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::write(fd, buf, n) }
+            // SAFETY: `buf` is readable for `buf.len()` bytes.
+            unsafe { super::nocancel::write(fd, buf.as_ptr().cast(), buf.len()) }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { libc::write(fd, buf, n) }
+            // SAFETY: `buf` is readable for `buf.len()` bytes.
+            unsafe { libc::write(fd, buf.as_ptr().cast(), buf.len()) }
         }
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    unsafe fn sys_pread(fd: i32, buf: *mut libc::c_void, n: usize, off: i64) -> isize {
+    fn sys_pread(fd: i32, buf: &mut [MaybeUninit<u8>], off: i64) -> isize {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::pread(fd, buf, n, off) }
+            // SAFETY: `buf` is writable for `buf.len()` bytes.
+            unsafe { super::nocancel::pread(fd, buf.as_mut_ptr().cast(), buf.len(), off) }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { libc::pread(fd, buf, n, off) }
+            // SAFETY: `buf` is writable for `buf.len()` bytes.
+            unsafe { libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), off) }
         }
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    unsafe fn sys_pwrite(fd: i32, buf: *const libc::c_void, n: usize, off: i64) -> isize {
+    fn sys_pwrite(fd: i32, buf: &[u8], off: i64) -> isize {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::pwrite(fd, buf, n, off) }
+            // SAFETY: `buf` is readable for `buf.len()` bytes.
+            unsafe { super::nocancel::pwrite(fd, buf.as_ptr().cast(), buf.len(), off) }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { libc::pwrite(fd, buf, n, off) }
+            // SAFETY: `buf` is readable for `buf.len()` bytes.
+            unsafe { libc::pwrite(fd, buf.as_ptr().cast(), buf.len(), off) }
         }
     }
     #[inline]
-    unsafe fn sys_recv(fd: i32, buf: *mut libc::c_void, n: usize, flags: i32) -> isize {
+    fn sys_recv(fd: i32, buf: &mut [MaybeUninit<u8>], flags: i32) -> isize {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live socket.
+            // SAFETY: `buf` is writable for `buf.len()` bytes, and the address is not asked for.
             unsafe {
                 super::nocancel::recvfrom(
                     fd,
-                    buf,
-                    n,
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
                     flags,
                     core::ptr::null_mut(),
                     core::ptr::null_mut(),
@@ -1799,31 +1696,27 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live socket.
-            unsafe { libc::recv(fd, buf, n, flags) }
+            // SAFETY: `buf` is writable for `buf.len()` bytes.
+            unsafe { libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), flags) }
         }
     }
     #[inline]
-    unsafe fn sys_send(fd: i32, buf: *const libc::c_void, n: usize, flags: i32) -> isize {
+    fn sys_send(fd: i32, buf: &[u8], flags: i32) -> isize {
+        let (ptr, len) = (buf.as_ptr().cast(), buf.len());
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live socket.
-            unsafe { super::nocancel::sendto(fd, buf, n, flags, core::ptr::null(), 0) }
+            // SAFETY: `buf` is readable for `buf.len()` bytes, and no address is given.
+            unsafe { super::nocancel::sendto(fd, ptr, len, flags, core::ptr::null(), 0) }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live socket.
-            unsafe { libc::send(fd, buf, n, flags) }
+            // SAFETY: `buf` is readable for `buf.len()` bytes.
+            unsafe { libc::send(fd, ptr, len, flags) }
         }
     }
-    // EINTR-retry: most wrappers loop on EINTR. NOT all — the macOS
-    // `$NOCANCEL` arms for open/openat/read/write/recv/send issue exactly one
-    // call and surface EINTR to the caller without looping. `check!` keeps the
-    // retry for the common path; `check_once!` is the single-shot variant for
-    // the Darwin arms.
+    // EINTR-retry: every wrapper loops on EINTR (matching libuv) except
+    // `close` (see `close`). `$NOCANCEL` only opts out of pthread
+    // cancellation points; it does not affect EINTR.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {
@@ -1872,27 +1765,6 @@ mod posix_impl {
             }
         }};
     }
-    // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
-    #[cfg(target_os = "macos")]
-    macro_rules! check_once {
-        ($rc:expr, $tag:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag));
-            }
-            rc
-        }};
-    }
-    #[cfg(target_os = "macos")]
-    macro_rules! check_once_p {
-        ($rc:expr, $tag:expr, $path:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag).with_path($path.as_bytes()));
-            }
-            rc
-        }};
-    }
 
     #[inline]
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
@@ -1901,29 +1773,20 @@ mod posix_impl {
         // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
+    /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
-        // macOS: single `openat$NOCANCEL`, no EINTR retry.
-        #[cfg(target_os = "macos")]
-        {
-            let rc = check_once_p!(
-                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
-                // a valid NUL-terminated C string.
-                unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
-                Tag::open,
-                path
-            );
-            Ok(Fd::from_native(rc))
-        }
+        let flags = flags | O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::openat(dir, path, flags, mode)
                 .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+        // macOS: `openat$NOCANCEL`, retried on EINTR.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let rc = check_p!(
-                unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
+                sys_openat(dir.native(), path, flags, mode as libc::c_uint),
                 Tag::open,
                 path
             );
@@ -1932,49 +1795,61 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        use super::linux_syscall::ResolveFlags;
         let dir = dir.as_fd();
-        super::linux_syscall::openat2_beneath(dir, path, flags, mode)
+        let flags = flags | O::CLOEXEC;
+        super::linux_syscall::openat2(dir, path, flags, mode, ResolveFlags::BENEATH)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
-    /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
-    /// if `dir` were `/`. Falls back to plain `openat` on kernels without
-    /// `openat2` (or when seccomp blocks it), caching the unavailability.
+    /// `None` on kernels without `openat2` and when seccomp blocks it, which is remembered.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    pub(crate) fn openat2_if_available(
+        dir: Fd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+        resolve: super::linux_syscall::ResolveFlags,
+    ) -> Option<core::result::Result<Fd, i32>> {
         use core::sync::atomic::{AtomicBool, Ordering};
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
-        let dir = dir.as_fd();
-        if !UNAVAILABLE.load(Ordering::Relaxed) {
-            match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
-                Ok(fd) => return Ok(fd),
-                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
-                    let probe = super::linux_syscall::openat2_in_root(
-                        dir,
-                        bun_core::zstr!("."),
-                        O::PATH | O::DIRECTORY | O::CLOEXEC,
-                        0,
-                    );
-                    match probe {
-                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                            UNAVAILABLE.store(true, Ordering::Relaxed);
-                        }
-                        other => {
-                            if let Ok(fd) = other {
-                                let _ = close(fd);
-                            }
-                            return Err(
-                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
-                }
+        if UNAVAILABLE.load(Ordering::Relaxed) {
+            return None;
+        }
+        let flags = flags | O::CLOEXEC;
+        // A rename or mount anywhere on the system while a symlink's `..` resolves is `EAGAIN`.
+        const EAGAIN_ATTEMPTS: u32 = 4;
+        let mut result = Err(libc::EAGAIN);
+        for _ in 0..EAGAIN_ATTEMPTS {
+            result = super::linux_syscall::openat2(dir, path, flags, mode, resolve);
+            if !matches!(result, Err(libc::EAGAIN)) {
+                break;
             }
         }
-        openat(dir, path, flags, mode)
+        match result {
+            Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
+                let probe = super::linux_syscall::openat2(
+                    dir,
+                    bun_core::zstr!("."),
+                    O::PATH | O::DIRECTORY | O::CLOEXEC,
+                    0,
+                    resolve,
+                );
+                match probe {
+                    Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                        UNAVAILABLE.store(true, Ordering::Relaxed);
+                        None
+                    }
+                    other => {
+                        if let Ok(fd) = other {
+                            let _ = close(fd);
+                        }
+                        Some(Err(e))
+                    }
+                }
+            }
+            result => Some(result),
+        }
     }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already
@@ -2001,59 +1876,35 @@ mod posix_impl {
             Ok(())
         }
     }
-    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    pub(crate) fn read_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `read$NOCANCEL`, no EINTR retry.
-        #[cfg(target_os = "macos")]
-        {
-            let n = check_once!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
-                unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
-            );
-            Ok(n as usize)
-        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::read(fd, &mut buf[..len])
                 .map_err(|e| Error::from_code_int(e, Tag::read))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+        // macOS: `read$NOCANCEL`, retried on EINTR.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
-                unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
-            );
+            let n = check!(sys_read(fd.native(), &mut buf[..len]), Tag::read);
             Ok(n as usize)
         }
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `write$NOCANCEL`, no EINTR retry.
-        #[cfg(target_os = "macos")]
-        {
-            let n = check_once!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
-                unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
-            );
-            Ok(n as usize)
-        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::write(fd, &buf[..len])
                 .map_err(|e| Error::from_code_int(e, Tag::write))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+        // macOS: `write$NOCANCEL`, retried on EINTR.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
-                unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
-            );
+            let n = check!(sys_write(fd.native(), &buf[..len]), Tag::write);
             Ok(n as usize)
         }
     }
-    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -2062,11 +1913,7 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
-                unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
-                Tag::pread
-            );
+            let n = check!(sys_pread(fd.native(), &mut buf[..len], off), Tag::pread);
             Ok(n as usize)
         }
     }
@@ -2079,11 +1926,7 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
-                unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
-                Tag::pwrite
-            );
+            let n = check!(sys_pwrite(fd.native(), &buf[..len], off), Tag::pwrite);
             Ok(n as usize)
         }
     }
@@ -2172,7 +2015,6 @@ mod posix_impl {
         // Linux ABI.
         #[cfg(any(target_env = "musl", target_os = "android"))]
         mod raw {
-            #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
 
             // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.
@@ -2255,6 +2097,17 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
+    /// Like `SUPPORTS_STATX_ON_LINUX`, but false once the `fstat()` of some descriptor is overridden.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub static IS_FSTATX_DIRECT: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(true);
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn stop_using_statx() {
+        use core::sync::atomic::Ordering;
+        SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+        IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
+    }
 
     /// `STATX_*` request mask covering every field `node:fs Stats` consumes
     /// (all field bits OR'd — the only mask callers ever pass).
@@ -2306,7 +2159,6 @@ mod posix_impl {
         mask: u32,
         syscall: Tag,
     ) -> Maybe<PosixStat> {
-        use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
             Some(p) => p.as_ptr(),
@@ -2321,7 +2173,7 @@ mod posix_impl {
             // success (0) nor a kernel -errno. Treat as "not implemented".
             // See nodejs/node#27275 and libuv/libuv src/unix/fs.c.
             if rc > 0 {
-                SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                stop_using_statx();
                 return statx_fallback(fd, path, flags);
             }
             if rc < 0 {
@@ -2341,7 +2193,7 @@ mod posix_impl {
                     errno,
                     Some(E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL)
                 ) {
-                    SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                    stop_using_statx();
                     return statx_fallback(fd, path, flags);
                 }
                 return Err(Error {
@@ -2443,11 +2295,8 @@ mod posix_impl {
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
     pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
-        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
-        // POSIX `init` is infallible.
-        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-        bun_paths::make_path_with(it, |p| {
+        mkdir_recursive_with(sub_path, |p| {
             if p.len() >= buf.len() {
                 // Tag as `.mkdir`; keep consistent with `mkdirat`.
                 return Err(
@@ -2456,12 +2305,21 @@ mod posix_impl {
             }
             buf[..p.len()].copy_from_slice(p);
             buf[p.len()] = 0;
-            match mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode) {
-                Ok(()) => Ok(MakePathStep::Created),
-                Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
-                Err(e) => Err(e),
-            }
+            mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode)
+        })
+    }
+    pub(crate) fn mkdir_recursive_with(
+        sub_path: &[u8],
+        mut mkdir: impl FnMut(&[u8]) -> Maybe<()>,
+    ) -> Maybe<()> {
+        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
+        // POSIX `init` is infallible.
+        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
+        bun_paths::make_path_with(it, |p| match mkdir(p) {
+            Ok(()) => Ok(MakePathStep::Created),
+            Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
+            Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+            Err(e) => Err(e),
         })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
@@ -2498,13 +2356,13 @@ mod posix_impl {
         Ok(())
     }
     /// `renameat2(2)` (Linux) / `renameatx_np` (macOS). FreeBSD and any other
-    /// unix without an atomic-exchange rename get `ENOSYS` when flags are set.
+    /// unix without an atomic-exchange rename get `ENOSYS` for any other mode than `Normal`.
     pub fn renameat2(
         from_dir: Fd,
         from: &ZStr,
         to_dir: Fd,
         to: &ZStr,
-        flags: Renameat2Flags,
+        mode: RenameMode,
     ) -> Maybe<()> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -2518,7 +2376,7 @@ mod posix_impl {
                         from.as_ptr(),
                         to_dir.native() as libc::c_long,
                         to.as_ptr(),
-                        flags.int() as libc::c_long,
+                        mode.int() as libc::c_long,
                     )
                 },
                 Tag::rename,
@@ -2545,7 +2403,7 @@ mod posix_impl {
                         from.as_ptr(),
                         to_dir.native(),
                         to.as_ptr(),
-                        flags.int(),
+                        mode.int(),
                     )
                 },
                 Tag::rename,
@@ -2555,7 +2413,7 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            if flags.int() != 0 {
+            if mode != RenameMode::Normal {
                 return Err(
                     Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes())
                 );
@@ -2612,19 +2470,32 @@ mod posix_impl {
     /// `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
     /// to children. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        // Attach the fd on error.
-        loop {
-            // SAFETY: `fd` is a live descriptor; `F_DUPFD_CLOEXEC` with arg `0`
-            // takes no pointer arguments.
-            let rc = unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::fcntl).with_fd(fd));
+        dup_at_least(fd, 0)
+    }
+    /// `fcntl(F_DUPFD_CLOEXEC, min)`: the new descriptor is the lowest free one >= `min`.
+    pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
+        fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
+    }
+    /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed, or `fd` itself when it is above stdio already or no higher number is free.
+    pub(crate) fn move_above_stdio(fd: Fd) -> Fd {
+        if fd.stdio_tag().is_none() {
+            return fd;
+        }
+        let moved = fcntl(fd, libc::F_GETFD, 0).and_then(|flags| {
+            let dup = if flags & libc::FD_CLOEXEC as isize != 0 {
+                libc::F_DUPFD_CLOEXEC
+            } else {
+                libc::F_DUPFD
+            };
+            fcntl(fd, dup, 3)
+        });
+        match moved {
+            Ok(rc) => {
+                let _ = fd.close_allowing_standard_io(None);
+                Fd::from_native(rc as i32)
             }
-            return Ok(Fd::from_native(rc));
+            // At the descriptor limit the creator still succeeds, as it did before the move existed.
+            Err(_) => fd,
         }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
@@ -2638,9 +2509,109 @@ mod posix_impl {
         check!(safe_libc::fchown(fd.native(), uid, gid), Tag::fchown);
         Ok(())
     }
+    /// What `call` writes. It is given a buffer and its length, or null and 0: then it returns how long one has to be.
+    fn filled(tag: Tag, mut call: impl FnMut(*mut libc::c_void, usize) -> isize) -> Maybe<Vec<u8>> {
+        let size = check!(call(core::ptr::null_mut(), 0), tag) as usize;
+        let mut buffer = vec![0u8; size];
+        if size > 0 {
+            let written = check!(call(buffer.as_mut_ptr().cast(), size), tag) as usize;
+            buffer.truncate(written);
+        }
+        Ok(buffer)
+    }
+    /// The extended attributes of an open file, by name, each with its value. On Linux its ACL and its SELinux label are
+    /// among them. On FreeBSD: those of the namespace `user`. None on a file system that has none.
+    pub fn extended_attributes(fd: Fd) -> Maybe<Vec<(Vec<u8>, Vec<u8>)>> {
+        let fd = fd.native();
+        let listed = filled(Tag::flistxattr, |list, size| {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // SAFETY: `filled` passes `size` writable bytes, or null and 0.
+                unsafe { libc::flistxattr(fd, list.cast(), size) }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                // SAFETY: `filled` passes `size` writable bytes, or null and 0.
+                unsafe { libc::flistxattr(fd, list.cast(), size, 0) }
+            }
+            #[cfg(target_os = "freebsd")]
+            {
+                // SAFETY: `filled` passes `size` writable bytes, or null and 0.
+                unsafe { libc::extattr_list_fd(fd, libc::EXTATTR_NAMESPACE_USER, list, size) }
+            }
+        });
+        let listed = match listed {
+            Ok(listed) => listed,
+            Err(error) if [libc::ENOTSUP, libc::EOPNOTSUPP].contains(&i32::from(error.errno)) => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
+        // Each ends with a NUL.
+        #[cfg(not(target_os = "freebsd"))]
+        let names: Vec<&[u8]> = bun_core::strings::split(&listed, b"\0").collect();
+        // Each follows its length.
+        #[cfg(target_os = "freebsd")]
+        let names: Vec<&[u8]> = {
+            let (mut names, mut rest) = (Vec::new(), &listed[..]);
+            while let [length, after @ ..] = rest {
+                let (name, more) = after.split_at(usize::from(*length).min(after.len()));
+                names.push(name);
+                rest = more;
+            }
+            names
+        };
+        let mut attributes = Vec::with_capacity(names.len());
+        for name in names.into_iter().filter(|name| !name.is_empty()) {
+            let Ok(terminated) = std::ffi::CString::new(name) else {
+                continue;
+            };
+            let value = filled(Tag::fgetxattr, |value, size| {
+                let name = terminated.as_ptr();
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    // SAFETY: `name` ends with a NUL. `filled` passes `size` writable bytes, or null and 0.
+                    unsafe { libc::fgetxattr(fd, name, value, size) }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    // SAFETY: `name` ends with a NUL. `filled` passes `size` writable bytes, or null and 0.
+                    unsafe { libc::fgetxattr(fd, name, value, size, 0, 0) }
+                }
+                #[cfg(target_os = "freebsd")]
+                {
+                    // SAFETY: `name` ends with a NUL. `filled` passes `size` writable bytes, or null and 0.
+                    unsafe {
+                        libc::extattr_get_fd(fd, libc::EXTATTR_NAMESPACE_USER, name, value, size)
+                    }
+                }
+            })?;
+            attributes.push((name.to_vec(), value));
+        }
+        attributes.sort_unstable();
+        Ok(attributes)
+    }
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
+    }
+    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let op = match mode {
+            FileLockMode::Shared => libc::LOCK_SH,
+            FileLockMode::Exclusive => libc::LOCK_EX,
+        } | if nonblocking { libc::LOCK_NB } else { 0 };
+        loop {
+            // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
+            if unsafe { libc::flock(fd.native(), op) } == 0 {
+                return Ok(true);
+            }
+            match last_errno() {
+                libc::EINTR => continue,
+                libc::EWOULDBLOCK if nonblocking => return Ok(false),
+                e => return Err(Error::from_code_int(e, Tag::flock).with_fd(fd)),
+            }
+        }
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
@@ -2697,18 +2668,12 @@ mod posix_impl {
                 }
             } else {
                 let mut buf = [0u8; 32];
-                let n = {
-                    use std::io::Write as _;
-                    let mut c = std::io::Cursor::new(&mut buf[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
-                    c.position() as usize - 1
-                };
-                let _ = n;
-                // SAFETY: NUL written by the format string above.
+                let proc_path = fd_path_z(b"/proc/self/fd/", tmpfd, &mut buf);
+                // SAFETY: `proc_path` is NUL-terminated; dirfd valid.
                 unsafe {
                     libc::linkat(
                         libc::AT_FDCWD,
-                        buf.as_ptr().cast(),
+                        proc_path.as_ptr(),
                         dirfd.native(),
                         name.as_ptr(),
                         libc::AT_SYMLINK_FOLLOW,
@@ -2812,6 +2777,11 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
+            // glibc/musl `fchmodat(.., AT_SYMLINK_NOFOLLOW)` try `fchmodat2(2)` too.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if super::linux_syscall::is_android_kernel() {
+                return lchmod_no_fchmodat2(path, mode);
+            }
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
                 // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -2837,6 +2807,25 @@ mod posix_impl {
                 return Ok(());
             }
         }
+    }
+    /// musl's fallback: `O_PATH` + `chmod("/proc/self/fd/N")`; symlinks get EOPNOTSUPP like libc.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn lchmod_no_fchmodat2(path: &ZStr, mode: Mode) -> Maybe<()> {
+        let retag = |mut err: Error| {
+            err.syscall = Tag::lchmod;
+            err.with_path(path.as_bytes())
+        };
+        let file = open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0)
+            .map(crate::CloseOnDrop::new)
+            .map_err(retag)?;
+        if kind_from_mode(file.stat().map_err(retag)?.st_mode as Mode) == FileKind::SymLink {
+            return Err(retag(Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod)));
+        }
+        chmod(
+            fd_path_z(b"/proc/self/fd/", file.fd(), &mut [0u8; 32]),
+            mode,
+        )
+        .map_err(retag)
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
@@ -2893,11 +2882,7 @@ mod posix_impl {
     }
     /// Never errors; any non-zero rc → `Ok(false)`.
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
-        let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
-        Ok(rc == 0)
+        Ok(exists_at(dir, sub))
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
@@ -2945,9 +2930,16 @@ mod posix_impl {
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
-        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-        // valid NUL-terminated C string.
-        unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
@@ -2985,6 +2977,87 @@ mod posix_impl {
         // NUL-terminated absolute path written into it.
         let len = unsafe { libc::strlen(p) };
         Ok(&buf.0[..len])
+    }
+    /// The canonical path of `path`, as `open` followed by `get_fd_path` reports it, but normally in one system call that opens nothing.
+    #[cfg(target_os = "macos")]
+    pub fn get_full_path<'a>(
+        path: &ZStr,
+        out: &'a mut bun_core::PathBuffer,
+    ) -> Maybe<&'a mut [u8]> {
+        // The kernel repeats the first two, which only tell it how to resolve the rest. `/dev/fd/3` stands for an open file.
+        const PREFIXES_THAT_NEED_OPEN: [&[u8]; 3] = [b"/.nofollow/", b"/.resolve/", b"/dev/fd/"];
+        match get_full_path_attribute(path, out) {
+            Ok(len)
+                if !PREFIXES_THAT_NEED_OPEN
+                    .iter()
+                    .any(|prefix| out.0[..len].starts_with(prefix)) =>
+            {
+                return Ok(&mut out.0[..len]);
+            }
+            // `open` does not find these either, and it needs a free descriptor to say so.
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {
+                return Err(err);
+            }
+            // `getattrlist` can fail where `open` succeeds: `EPERM` on a resource fork, `EACCES` under an ACL that denies only `readattr`, `ENOSPC` after a prefix, `ENOTSUP` on a volume without it.
+            _ => {}
+        }
+        let file = CloseOnDrop::new(open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY, 0)?);
+        get_fd_path(file.fd(), out).map_err(|err| err.with_path(path.as_bytes()))
+    }
+    /// Copies `ATTR_CMN_FULLPATH` and its NUL into `out`, and returns the length without the NUL.
+    #[cfg(target_os = "macos")]
+    fn get_full_path_attribute(path: &ZStr, out: &mut bun_core::PathBuffer) -> Maybe<usize> {
+        #[repr(C)]
+        struct Reply {
+            length: u32,
+            full_path: libc::attrreference_t,
+            bytes: [u8; bun_core::MAX_PATH_BYTES],
+        }
+        let mut request = libc::attrlist {
+            bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+            reserved: 0,
+            commonattr: libc::ATTR_CMN_FULLPATH,
+            volattr: 0,
+            dirattr: 0,
+            fileattr: 0,
+            forkattr: 0,
+        };
+        let mut reply = Reply {
+            length: 0,
+            full_path: libc::attrreference_t {
+                attr_dataoffset: 0,
+                attr_length: 0,
+            },
+            bytes: [0; bun_core::MAX_PATH_BYTES],
+        };
+        // SAFETY: `path` is NUL-terminated, and `request` and `reply` are valid for the sizes passed.
+        check_p!(
+            unsafe {
+                libc::getattrlist(
+                    path.as_ptr(),
+                    (&raw mut request).cast(),
+                    (&raw mut reply).cast(),
+                    size_of::<Reply>(),
+                    0,
+                )
+            },
+            Tag::realpath,
+            path
+        );
+        // The offset counts from the reference itself, and the length includes the NUL.
+        let with_nul = (reply.full_path.attr_dataoffset as usize)
+            .checked_sub(size_of::<libc::attrreference_t>())
+            .and_then(|start| {
+                reply
+                    .bytes
+                    .get(start..start + reply.full_path.attr_length as usize)
+            })
+            .filter(|with_nul| !with_nul.is_empty())
+            .ok_or_else(|| {
+                Error::from_code(E::ENAMETOOLONG, Tag::realpath).with_path(path.as_bytes())
+            })?;
+        out.0[..with_nul.len()].copy_from_slice(with_nul);
+        Ok(with_nul.len() - 1)
     }
 
     // ── fcntl/dup/pipe/io group ──
@@ -3045,57 +3118,34 @@ mod posix_impl {
     // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
     // exposed for shell/pipe IPC.
-    pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
+    fn recv_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `recvfrom$NOCANCEL`, no EINTR retry.
-        #[cfg(target_os = "macos")]
-        let n = check_once!(
-            // SAFETY: `fd` is a live socket; `buf` is valid for `len` writes.
-            unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
-            Tag::recv
-        );
-        #[cfg(not(target_os = "macos"))]
-        let n = check!(
-            // SAFETY: `fd` is a live socket; `buf[..len]` is a valid exclusive
-            // slice and `len <= buf.len()` (clamped above).
-            unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
-            Tag::recv
-        );
+        // macOS: `recvfrom$NOCANCEL`, retried on EINTR.
+        let n = check!(sys_recv(fd.native(), &mut buf[..len], flags), Tag::recv);
         Ok(n as usize)
     }
     pub(crate) fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        // `buf.len` is passed un-clamped (only `recv` clamps);
+        // `buf.len` is passed un-clamped (only `recv_uninit` clamps);
         // forward the full length and let the kernel decide.
-        // macOS: single `sendto$NOCANCEL`, no EINTR retry.
-        #[cfg(target_os = "macos")]
-        let n = check_once!(
-            // SAFETY: `fd` is a live socket; `buf` is valid for `buf.len()` reads.
-            unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
-            Tag::send
-        );
-        #[cfg(not(target_os = "macos"))]
-        let n = check!(
-            // SAFETY: `fd` is a live socket; `buf` is a valid shared slice of
-            // `buf.len()` readable bytes.
-            unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
-            Tag::send
-        );
+        // macOS: `sendto$NOCANCEL`, retried on EINTR.
+        let n = check!(sys_send(fd.native(), buf, flags), Tag::send);
         Ok(n as usize)
     }
-    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-        recv(fd, buf, MSG_DONTWAIT)
+    pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
+        recv_uninit(fd, buf, MSG_DONTWAIT)
     }
     /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
     /// returns EPIPE instead of raising SIGPIPE.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
     }
-    #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000).
-    #[cfg(unix)]
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
+    #[cfg(target_os = "macos")]
+    const MSG_NBIO: i32 = 0x20000;
+    #[cfg(not(target_os = "macos"))]
+    const MSG_NBIO: i32 = 0;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -3216,7 +3266,7 @@ mod posix_impl {
                 }
             }
         }
-        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])].map(move_above_stdio))
     }
 
     /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
@@ -3225,6 +3275,7 @@ mod posix_impl {
     pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
         super::linux_syscall::pidfd_open(pid, flags)
             .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
+            .map(move_above_stdio)
     }
 
     // ── macOS clonefile / copyfile ──
@@ -3343,12 +3394,11 @@ mod posix_impl {
         wanted_size: Option<usize>,
         offset: usize,
     ) -> Maybe<(&'static mut [u8], usize)> {
-        let fd = open(path, O::RDWR, 0)?;
-        // close fd regardless of mmap outcome (the mapping outlives the fd).
-        let _close = CloseOnDrop::new(fd);
+        // The mapping outlives the descriptor.
+        let file = CloseOnDrop::new(open(path, O::RDWR, 0)?);
 
         let stat_size = {
-            let result = fstat(fd)?;
+            let result = file.stat()?;
             usize::try_from(result.st_size).unwrap_or(0)
         };
 
@@ -3372,7 +3422,7 @@ mod posix_impl {
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags,
-            fd,
+            file.fd(),
             aligned_offset as i64,
         ) {
             Ok(ptr) => {
@@ -3417,9 +3467,8 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
-    /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
-    /// returned ENOSYS/EPERM/EACCES.
+    /// `bun.sys.canUseMemfd()` — false when `BUN_FEATURE_FLAG_DISABLE_MEMFD` is
+    /// set or once `memfd_create` has returned ENOSYS/EPERM/EACCES.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
@@ -3430,11 +3479,6 @@ mod posix_impl {
             return false;
         }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    #[inline]
-    pub fn can_use_memfd() -> bool {
-        false
     }
 
     /// `bun.sys.memfd_create(name, flags)` — Linux only.
@@ -3470,7 +3514,7 @@ mod posix_impl {
                 }
                 return Err(Error::from_code_int(e, Tag::memfd_create));
             }
-            return Ok(Fd::from_native(rc));
+            return Ok(move_above_stdio(Fd::from_native(rc)));
         }
     }
 
@@ -3534,9 +3578,7 @@ pub mod sys_uv;
 /// callers (e.g. `pack_command`) can write `bun_sys::sys_uv::fstat(fd)` portably.
 #[cfg(not(windows))]
 pub mod sys_uv {
-    pub use super::{
-        close, fstat, lstat, mkdir, open, pread, pwrite, read, rename, stat, unlink, write,
-    };
+    pub use super::{close, fstat, lstat, mkdir, open, pread, pwrite, rename, stat, unlink, write};
 }
 
 #[cfg(windows)]
@@ -3546,7 +3588,6 @@ mod windows_impl {
     use super::windows as w;
     use super::windows::libuv as uv;
     use super::*;
-    use bun_paths::WPathBuffer;
 
     // ── libuv-backed ─────────────────────────────────────────────────────
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
@@ -3558,16 +3599,16 @@ mod windows_impl {
             None => Ok(()),
         }
     }
-    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    pub(crate) fn read_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
         // libuv for uv-kind fds, kernel32 `ReadFile` otherwise. The libuv path
         // requires a CRT fd via `fd.uv()`, which PANICS for HANDLE-backed
         // (`FdKind::System`) Fds — i.e. anything from `openat()`/NtCreateFile.
         if fd.kind() == FdKind::Uv {
-            return sys_uv::read(fd, buf);
+            return sys_uv::pread_uninit(fd, buf, -1);
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         // Stdin callers route through this function (via
-        // `File::stdin().read_to_end_into` / `output_sink().read`), so the
+        // `File::read_to_end_into` / `output_sink().read`), so the
         // BROKEN_PIPE/HANDLE_EOF → 0 (EOF) mapping and the OPERATION_ABORTED
         // retry live here.
         loop {
@@ -3576,7 +3617,7 @@ mod windows_impl {
             let rc = unsafe {
                 w::kernel32::ReadFile(
                     fd.native(),
-                    buf.as_mut_ptr(),
+                    buf.as_mut_ptr().cast(),
                     adjusted_len,
                     &mut amount_read,
                     core::ptr::null_mut(),
@@ -3587,7 +3628,7 @@ mod windows_impl {
                 match er {
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
-                    _ => return Err(Error::new(er.to_e(), Tag::read).with_fd(fd)),
+                    _ => return Err(Error::from_win32(er, Tag::read).with_fd(fd)),
                 }
             }
             return Ok(amount_read as usize);
@@ -3614,21 +3655,40 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            let errno = if er == w::Win32Error::ACCESS_DENIED {
-                E::EBADF
+            let err = if er == w::Win32Error::ACCESS_DENIED {
+                Error::from_code(E::EBADF, Tag::write)
             } else {
-                er.to_e()
+                Error::from_win32(er, Tag::write)
             };
-            return Err(Error::new(errno, Tag::write).with_fd(fd));
+            // Not `with_fd`: a missing standard handle is `Fd::INVALID`.
+            return Err(Error { fd, ..err });
         }
         Ok(bytes_written as usize)
     }
-    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    /// Unlike `flock(2)`, `LockFileEx` cannot convert a lock the handle already holds.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        use w::kernel32::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
+        let flags = (LOCKFILE_EXCLUSIVE_LOCK * u32::from(mode == FileLockMode::Exclusive))
+            | (LOCKFILE_FAIL_IMMEDIATELY * u32::from(nonblocking));
+        let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
+        let ol = &raw mut overlapped;
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `ol` a valid out-param at range start 0.
+        let rc = unsafe { w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, ol) };
+        if rc != 0 {
+            return Ok(true);
+        }
+        let er = w::Win32Error::get();
+        if nonblocking && er == w::Win32Error::LOCK_VIOLATION {
+            return Ok(false);
+        }
+        Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
+    }
+    pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], off: i64) -> Maybe<usize> {
         // Positioned-I/O lowering:
         // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
         // (HANDLE) fds.
         if fd.kind() == FdKind::Uv {
-            return sys_uv::pread(fd, buf, off);
+            return sys_uv::pread_uninit(fd, buf, off);
         }
         let off = off as u64;
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
@@ -3647,7 +3707,7 @@ mod windows_impl {
             let rc = unsafe {
                 w::kernel32::ReadFile(
                     fd.native(),
-                    buf.as_mut_ptr(),
+                    buf.as_mut_ptr().cast(),
                     adjusted_len,
                     &mut amount_read,
                     core::ptr::from_mut(&mut overlapped).cast(),
@@ -3659,13 +3719,13 @@ mod windows_impl {
                     // BROKEN_PIPE/HANDLE_EOF map to EOF (0 bytes read).
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
-                    _ => return Err(Error::new(er.to_e(), Tag::pread).with_fd(fd)),
+                    _ => return Err(Error::from_win32(er, Tag::pread).with_fd(fd)),
                 }
             }
             return Ok(amount_read as usize);
         }
     }
-    pub(crate) fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         // Same lowering as `pread`: kernel32 WriteFile with an
         // `OVERLAPPED.Offset` for HANDLE-kind fds.
         if fd.kind() == FdKind::Uv {
@@ -3695,14 +3755,12 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            // Keep parity with `write()` above and surface the raw errno
-            // (no INVALID_HANDLE → NotOpenForWriting remapping).
-            let errno = if er == w::Win32Error::ACCESS_DENIED {
-                E::EBADF
+            let err = if er == w::Win32Error::ACCESS_DENIED {
+                Error::from_code(E::EBADF, Tag::pwrite)
             } else {
-                er.to_e()
+                Error::from_win32(er, Tag::pwrite)
             };
-            return Err(Error::new(errno, Tag::pwrite).with_fd(fd));
+            return Err(err.with_fd(fd));
         }
         Ok(bytes_written as usize)
     }
@@ -3725,9 +3783,7 @@ mod windows_impl {
     fn fstat_handle(fd: Fd) -> Maybe<Stat> {
         use bun_core::S;
         let handle = fd.native();
-        let nt_err = |rc: w::NTSTATUS| {
-            Error::new(w::translate_nt_status_to_errno(rc), Tag::fstat).with_fd(fd)
-        };
+        let nt_err = |rc: w::NTSTATUS| Error::new(rc, Tag::fstat).with_fd(fd);
         let mut st: Stat = bun_core::ffi::zeroed();
 
         // Dispatch on handle type; pipes and consoles get a synthetic stat.
@@ -3859,7 +3915,31 @@ mod windows_impl {
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        sys_uv::readlink(path, buf).map(|s| s.len())
+        let err = match sys_uv::readlink(path, buf) {
+            Ok(target) => return Ok(target.len()),
+            Err(err) => err,
+        };
+        // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
+        // works with the `\\?\` prefix, so retry with it.
+        let bytes = path.as_bytes();
+        if err.get_errno() != E::ENOENT
+            || bytes.len() < 248
+            || bytes.len() + 5 > bun_paths::MAX_PATH_BYTES
+            || !bun_paths::is_drive_letter(bytes[0])
+            || bytes[1] != b':'
+            || !bun_paths::is_sep_any(bytes[2])
+        {
+            return Err(err);
+        }
+        let mut long = bun_paths::path_buffer_pool::get();
+        long[..4].copy_from_slice(&w::LONG_PATH_PREFIX_U8);
+        let normalized = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+            bytes,
+            &mut long[4..],
+        );
+        let len = 4 + normalized.len();
+        long[len] = 0;
+        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -3882,11 +3962,29 @@ mod windows_impl {
             )
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
-            // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table first, then falls back to
-            // `RtlNtStatusToDosError` for unmapped codes.
-            let errno = w::translate_nt_status_to_errno(rc);
-            return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
+            return Err(Error::new(rc, Tag::ftruncate).with_fd(fd));
+        }
+        Ok(())
+    }
+    /// `FSCTL_SET_SPARSE`: without it NTFS gives every byte below the end of a file real clusters.
+    pub fn set_sparse(fd: Fd) -> Maybe<()> {
+        let mut returned: w::DWORD = 0;
+        // SAFETY: FFI; fd is a valid HANDLE, the call passes no buffer, and
+        // `returned` is valid for the call.
+        let ok = unsafe {
+            w::kernel32::DeviceIoControl(
+                fd.native(),
+                w::FSCTL_SET_SPARSE,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null_mut(),
+                0,
+                &mut returned,
+                core::ptr::null_mut(),
+            )
+        };
+        if ok == w::FALSE {
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::ioctl).with_fd(fd));
         }
         Ok(())
     }
@@ -3922,23 +4020,17 @@ mod windows_impl {
             )
         };
         if out == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::dup).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::dup).with_fd(fd));
         }
         Ok(Fd::from_native(target as _))
     }
-    pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
-        // No POSIX dup2 on Windows.
-        // Return ENOTSUP so callers that branch on platform fall back.
-        let _ = (old, new);
-        Err(Error::new(E::ENOTSUP, Tag::dup2))
-    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let len =
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::getcwd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
         }
         // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
         // returns the *required* size (incl. NUL), which can exceed
@@ -3954,26 +4046,29 @@ mod windows_impl {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
-        let mut wbuf = WPathBuffer::default();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
-        let made = super::open_dir_at_windows_nt_path(
-            dir,
-            wpath,
-            super::WindowsOpenDirOptions {
-                iterable: false,
-                can_rename_or_delete: true,
-                op: super::WindowsOpenDirOp::OnlyCreate,
-                ..Default::default()
-            },
-        )?;
+        let options = super::WindowsOpenDirOptions {
+            iterable: false,
+            can_rename_or_delete: true,
+            op: super::WindowsOpenDirOp::OnlyCreate,
+            ..Default::default()
+        };
+        let facts = bun_paths::classify_rel_t(path.as_bytes(), bun_paths::PathFormat::Windows);
+        // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
+        let made = if facts.climbs_above_start {
+            super::open_dir_at_windows_a(dir, path.as_bytes(), options)?
+        } else {
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+            super::open_dir_at_windows_nt_path(dir, wpath, options)?
+        };
         made.close();
         Ok(())
     }
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
-        let mut wf = WPathBuffer::default();
-        let mut wt = WPathBuffer::default();
+        let mut wf = bun_paths::w_path_buffer_pool::get();
+        let mut wt = bun_paths::w_path_buffer_pool::get();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
@@ -3983,11 +4078,11 @@ mod windows_impl {
         from: &ZStr,
         to_dir: Fd,
         to: &ZStr,
-        flags: Renameat2Flags,
+        mode: RenameMode,
     ) -> Maybe<()> {
         // `renameat2` collapses to `renameat` on windows; the
-        // `noreplace`/`exchange` flags are not honored by NTFS rename.
-        let _ = flags;
+        // `noreplace`/`exchange` modes are not honored by NTFS rename.
+        let _ = mode;
         renameat(from_dir, from, to_dir, to)
     }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
@@ -3995,7 +4090,7 @@ mod windows_impl {
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(
             wpath,
@@ -4052,7 +4147,7 @@ mod windows_impl {
         if sub.is_empty() || sub == b"." {
             return Ok(());
         }
-        let mut buf = bun_core::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
@@ -4127,7 +4222,7 @@ mod windows_impl {
         // makePath (NtCreateFile rejects them anyway).
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
-        let mut z = bun_core::PathBuffer::default();
+        let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
             z.0[p.len()] = 0;
@@ -4142,9 +4237,9 @@ mod windows_impl {
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         // Resolve `dest` against `dirfd`, then symlink via libuv.
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(dirfd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let d_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, dest.as_bytes()],
@@ -4154,9 +4249,9 @@ mod windows_impl {
     pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let fd = fd.as_fd();
         // No `readlinkat` on Windows — resolve and call `readlink`.
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(fd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, path.as_bytes()],
@@ -4168,10 +4263,7 @@ mod windows_impl {
         // `openat(fd, path, 0, 0)` (flags=0
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
         // that's the `lstatat` no-follow variant.
-        let file = openat(fd, path, 0, 0)?;
-        let r = fstat(file);
-        let _ = close(file);
-        r
+        super::CloseOnDrop::new(openat(fd, path, 0, 0)?).stat()
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
         // GetFileAttributesW, then if
@@ -4191,11 +4283,13 @@ mod windows_impl {
         ) {
             return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
         }
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
-            return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
+            return Err(
+                Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
+            );
         }
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -4230,12 +4324,7 @@ mod windows_impl {
                 None,
             )
         };
-        // uv_fs_utime runs fs__capture_path which
-        // uv__malloc's the WTF-16 path into the req even for sync (cb=NULL)
-        // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
-        // call it explicitly before any return.
-        req.deinit();
-        if let Some(err) = Error::from_uv_rc(rc, Tag::utime) {
+        if let Some(err) = rc.to_error(Tag::utime) {
             return Err(err.with_path(path.as_bytes()));
         }
         Ok(())
@@ -4260,7 +4349,7 @@ mod windows_impl {
         // system security policy and recognizes `.js/.lnk/.pif/.pl/.shs/.url/
         // .vbs/...` in addition to `.exe/.cmd/.bat/.com` . Do NOT hand-roll an extension whitelist —
         // PORTING.md §Forbidden bars re-implementing linked OS API surface.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
         // `bFromShellExecute = FALSE` so `.exe` files are included
         // (https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype).
@@ -4272,7 +4361,7 @@ mod windows_impl {
         let mut size: i64 = 0;
         let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
         if ok == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
         }
         // Clamp defensively so a
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
@@ -4280,17 +4369,14 @@ mod windows_impl {
     }
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
-        let fd = open(path, O::RDONLY, 0)?;
-        let r = super::get_fd_path(fd, buf);
-        let _ = close(fd);
-        // get_fd_path yields `&mut [u8]`; coerce to shared.
-        r.map(|s| &*s)
+        let file = super::CloseOnDrop::new(open(path, O::RDONLY, 0)?);
+        super::get_fd_path(file.fd(), buf).map(|s| &*s)
     }
     pub fn pipe() -> Maybe<[Fd; 2]> {
         // uv_pipe(fds, 0, 0).
         let mut fds: [uv::uv_file; 2] = [-1, -1];
         let rc = unsafe { uv::uv_pipe(&mut fds, 0, 0) };
-        if let Some(err) = Error::from_uv_rc(rc, Tag::pipe) {
+        if let Some(err) = rc.to_error(Tag::pipe) {
             return Err(err);
         }
         Ok([Fd::from_uv(fds[0]), Fd::from_uv(fds[1])])
@@ -4313,7 +4399,7 @@ mod windows_impl {
             w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
         };
         if ok == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
         Ok(new)
     }
@@ -4324,7 +4410,7 @@ mod windows_impl {
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
         let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
         if ok == w::FALSE {
-            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
@@ -4332,17 +4418,19 @@ mod windows_impl {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
+            return Err(
+                Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
+            );
         }
         Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
-        let mut buf = bun_core::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let p = super::get_fd_path(fd, &mut buf)?;
-        let mut zb = bun_core::PathBuffer::default();
+        let mut zb = bun_paths::path_buffer_pool::get();
         zb.0[..p.len()].copy_from_slice(p);
         zb.0[p.len()] = 0;
         // SAFETY: NUL-terminated above.
@@ -4354,7 +4442,7 @@ mod windows_impl {
         }
         _umask(mode as core::ffi::c_int) as Mode
     }
-    pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
+    fn recv_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
         // Winsock `recv`. Winsock's `len` is a
         // signed `int`, so clamp to `i32::MAX` (NOT `MAX_COUNT == u32::MAX`)
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
@@ -4363,9 +4451,7 @@ mod windows_impl {
         let rc =
             unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(
-                Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd),
-            );
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
         }
         Ok(rc as usize)
     }
@@ -4375,14 +4461,12 @@ mod windows_impl {
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(
-                Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd),
-            );
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
         }
         Ok(rc as usize)
     }
-    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-        recv(fd, buf, 0)
+    pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
+        recv_uninit(fd, buf, 0)
     }
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, 0)
@@ -4405,15 +4489,38 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::*;
 
+pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    read_buf(fd, BorrowedBuf::from(buf).unfilled())
+}
+
+pub fn read_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
+    // SAFETY: the system initializes as many bytes as it reports, and uninitializes none.
+    unsafe { read_uninit(fd, cursor.as_mut()).inspect(|&n| _ = cursor.advance(n)) }
+}
+
+pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    pread_buf(fd, BorrowedBuf::from(buf).unfilled(), off)
+}
+
+pub fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
+    // SAFETY: as in `read_buf`.
+    unsafe { pread_uninit(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
+}
+
+pub fn recv_non_block_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
+    // SAFETY: as in `read_buf`.
+    unsafe { recv_non_block_uninit(fd, cursor.as_mut()).inspect(|&n| _ = cursor.advance(n)) }
+}
+
 /// Shared inner loop for `read_to_end_into` / `read_to_end_with_array_list`:
 /// repeatedly reserve `grow_by` when full, hand the spare capacity to
-/// `read_chunk(dst, running_offset)`, and grow `len` by the result until
+/// `read_chunk(dst, running_offset)`, and grow `len` by what it filled until
 /// `read_chunk` returns 0. Returns total bytes appended.
 #[inline]
 fn read_fill_vec(
     buf: &mut Vec<u8>,
     grow_by: usize,
-    mut read_chunk: impl FnMut(&mut [u8], i64) -> Maybe<usize>,
+    mut read_chunk: impl FnMut(BorrowedCursor<'_, u8>, i64) -> Maybe<usize>,
 ) -> Maybe<usize> {
     let start = buf.len();
     let mut total: i64 = 0;
@@ -4425,13 +4532,10 @@ fn read_fill_vec(
                 return Err(Error::oom());
             }
         }
-        // SAFETY: `read_chunk` writes initialized bytes; we commit exactly what was written.
-        let n = read_chunk(unsafe { bun_core::vec::spare_bytes_mut(buf) }, total)?;
+        let n = bun_core::vec::append_with(buf, usize::MAX, |spare| read_chunk(spare, total))?;
         if n == 0 {
             return Ok(buf.len() - start);
         }
-        // SAFETY: `n` bytes were just initialized by `read_chunk`.
-        unsafe { bun_core::vec::commit_spare(buf, n) };
         total += n as i64;
     }
 }
@@ -4478,9 +4582,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
         // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
         #[cfg(target_os = "macos")]
-        {
-            // macOS: single `pwritev$NOCANCEL`, no
-            // EINTR retry (surfaces EINTR to caller).
+        loop {
+            // macOS: `pwritev$NOCANCEL`, retried on EINTR.
             // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
             // (ptr, len) pair of layout-compatible iovecs (asserted above).
             let rc = unsafe {
@@ -4492,7 +4595,11 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::pwritev));
             }
             return Ok(rc as usize);
         }
@@ -4606,157 +4713,145 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     }
 }
 
-/// `bun.sys.writev` — gather-write. macOS uses `writev$NOCANCEL` with no
-/// EINTR retry; other POSIX retries on EINTR.
+/// `bun.sys.writev` — gather-write. Retries on EINTR
+/// (macOS uses `writev$NOCANCEL`).
+#[cfg(unix)]
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. Single shot, surfaces EINTR.
-            let rc = unsafe {
-                nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::writev).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
+        // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
+        let rc =
+            unsafe { nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
-        let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc =
+            unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
-/// `bun.sys.readv` — scatter-read. macOS uses `readv$NOCANCEL` with no
-/// EINTR retry; other POSIX retries on EINTR.
+/// `bun.sys.readv` — scatter-read. Retries on EINTR
+/// (macOS uses `readv$NOCANCEL`).
+#[cfg(unix)]
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("readv() called with 0 length buffer");
     }
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. Single shot.
-            let rc = unsafe {
-                nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::readv).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
+        // each `iov_base`, never the array itself. `readv$NOCANCEL`,
+        // retried on EINTR.
+        let rc =
+            unsafe { nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
-                .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see above.
-            let rc =
-                unsafe { libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readv))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
+            .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see above.
+        let rc = unsafe { libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
-/// `bun.sys.preadv` — scatter-read at `position`. macOS uses
-/// `preadv$NOCANCEL` with no EINTR retry.
+/// `bun.sys.preadv` — scatter-read at `position`. Retries on EINTR
+/// (macOS uses `preadv$NOCANCEL`).
+#[cfg(unix)]
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("preadv() called with 0 length buffer");
     }
-    #[cfg(unix)]
-    {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: see `readv`. Single shot.
-            let rc = unsafe {
-                nocancel::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::preadv).with_fd(fd));
+    #[cfg(target_os = "macos")]
+    loop {
+        // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
+        let rc = unsafe {
+            nocancel::preadv(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as core::ffi::c_int,
+                position,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
             }
-            return Ok(rc as usize);
+            return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`.
-            return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
-                .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        loop {
-            // SAFETY: see `readv`.
-            let rc = unsafe {
-                libc::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
-            }
-            return Ok(rc as usize);
-        }
+        return Ok(rc as usize);
     }
-    #[cfg(not(unix))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let _ = (fd, vecs, position);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::preadv))
+        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
+            .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    loop {
+        // SAFETY: see `readv`.
+        let rc = unsafe {
+            libc::preadv(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as core::ffi::c_int,
+                position,
+            )
+        };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+        }
+        return Ok(rc as usize);
     }
 }
 
@@ -4781,19 +4876,17 @@ pub type StatFS = self::windows::libuv::uv_statfs_t;
 /// the `__DARWIN_STRUCT_STATFS64` layout matching `libc::statfs`. Deprecated
 /// on Apple but still exported on x86_64 (unavailable on arm64 macOS, where
 /// unsuffixed `statfs` already writes the 64-bit-inode layout).
+#[cfg(unix)]
 pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     unsafe extern "C" {
         #[link_name = "statfs64"]
         fn _statfs(path: *const core::ffi::c_char, buf: *mut libc::statfs) -> core::ffi::c_int;
     }
-    #[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     use libc::statfs as _statfs;
-    #[cfg(unix)]
     loop {
-        // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
-        // field on success); `path` is NUL-terminated by `ZStr`.
-        let mut st: StatFS = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut st: StatFS = bun_core::ffi::zeroed();
         // SAFETY: `path` is NUL-terminated (`ZStr`); `st` is a valid
         // out-pointer to stack storage that `_statfs` fully initializes.
         let rc = unsafe { _statfs(path.as_ptr(), &raw mut st) };
@@ -4806,11 +4899,6 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
         }
         return Ok(st);
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(Error::from_code(E::NOSYS, Tag::statfs))
-    }
 }
 
 /// `bun.timespec` — re-exported from `bun_core` so `PosixStat.rs` can spell
@@ -4820,20 +4908,28 @@ pub use bun_core::Timespec;
 /// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
-/// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
-/// current process in bytes, or `None` on failure. Thin wrapper around the
-/// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
+unsafe extern "C" {
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
+    safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
+    safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
+}
+
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
-    unsafe extern "C" {
-        // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-        // only writes the slot and returns a status code — no other preconditions.
-        safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
-    }
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {
         return None;
     }
     Some(rss)
+}
+
+/// High-water mark of [`self_process_memory_usage`], in bytes.
+pub fn self_process_peak_memory_usage() -> Option<usize> {
+    let mut peak: usize = 0;
+    if getPeakRSS(&mut peak) != 0 {
+        return None;
+    }
+    Some(peak)
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct.
@@ -4880,10 +4976,6 @@ pub enum SizeHint {
     UnknownSize,
 }
 
-/// Owned `KEY → VALUE` map of environment variables.
-/// Minimal real def (no hash-map semantics needed; callers iterate).
-pub type EnvMap = std::collections::HashMap<String, String>;
-
 /// `bun.sys.syslog` — debug-scoped log under `SYS`.
 /// `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
 /// re-expand its body verbatim here with the qualified `$crate::fd::SYS` path
@@ -4929,12 +5021,14 @@ macro_rules! syslog {
 
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
+    #[cfg(unix)]
+    pub use super::safe_libc::fchmod;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    pub use super::safe_libc::posix_fadvise;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]
     use core::ffi::{c_char, c_void};
-    #[cfg(unix)]
-    pub use libc::fchmod;
     // `getuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
@@ -5078,9 +5172,8 @@ pub mod c {
         pub ldavg: [u32; 3],
         pub fscale: core::ffi::c_long,
     }
-    // SAFETY: integers only; all-zero is valid pre-`sysctl` state.
     #[cfg(target_os = "macos")]
-    unsafe impl bun_core::ffi::Zeroable for struct_loadavg {}
+    bun_core::impl_zeroable!(struct_loadavg);
 
     // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
     // `libc` crate has deprecated these in favour of the `mach2` crate. We
@@ -5118,35 +5211,28 @@ pub mod c {
         dyld_get_image_header_raw(image_index).cast()
     }
 
-    /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`.
+    /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`, without headers or trailers.
     /// NOTE: on `EINTR`/`EAGAIN` the kernel still writes the
     /// bytes-sent count back through `*len` before returning -1 — callers MUST
     /// advance their offset by `*len` even on error. This wrapper is raw (no
     /// EINTR retry); the caller owns the offset bookkeeping.
     #[cfg(target_os = "macos")]
-    pub unsafe fn sendfile(
-        fd: c_int,
-        s: c_int,
-        off: i64,
-        len: *mut i64,
-        hdtr: *mut c_void,
-        flags: c_int,
-    ) -> c_int {
-        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
-        unsafe { libc::sendfile(fd, s, off, len, hdtr.cast(), flags) }
+    pub fn sendfile(fd: c_int, s: c_int, off: i64, len: &mut i64, flags: c_int) -> c_int {
+        // SAFETY: `len` is live, and a null `hdtr` is allowed.
+        unsafe { libc::sendfile(fd, s, off, len, core::ptr::null_mut(), flags) }
     }
-    /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`.
+    /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`, without headers or trailers.
     #[cfg(target_os = "freebsd")]
-    pub unsafe fn sendfile(
+    pub fn sendfile(
         fd: c_int,
         s: c_int,
         off: i64,
         nbytes: usize,
-        hdtr: *mut c_void,
-        sbytes: *mut i64,
+        sbytes: &mut i64,
         flags: c_int,
     ) -> c_int {
-        unsafe { libc::sendfile(fd, s, off, nbytes, hdtr.cast(), sbytes, flags) }
+        // SAFETY: `sbytes` is live, and a null `hdtr` is allowed.
+        unsafe { libc::sendfile(fd, s, off, nbytes, core::ptr::null_mut(), sbytes, flags) }
     }
 
     // ── Darwin libproc — process introspection (`<libproc.h>`). ──
@@ -5178,9 +5264,8 @@ pub mod c {
         pub pbi_start_tvsec: u64,
         pub pbi_start_tvusec: u64,
     }
-    // SAFETY: integers + byte arrays only; all-zero is valid pre-`proc_pidinfo` state.
     #[cfg(target_os = "macos")]
-    unsafe impl bun_core::ffi::Zeroable for struct_proc_bsdinfo {}
+    bun_core::impl_zeroable!(struct_proc_bsdinfo);
     #[cfg(target_os = "macos")]
     pub const PROC_PIDTBSDINFO: c_int = 3;
     #[cfg(target_os = "macos")]
@@ -5204,7 +5289,7 @@ pub mod c {
 // `target_os` values.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
-    use core::ffi::{c_char, c_int};
+    use core::ffi::c_int;
     pub use libc::epoll_event;
     pub use libc::pollfd;
 
@@ -5221,8 +5306,8 @@ pub mod linux {
     type time_t = libc::time_t;
 
     /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
-    /// Layout-identical to `libc::timespec` so a `*const timespec` can be
-    /// passed straight to `syscall(SYS_futex, ..)`.
+    /// Layout-identical to `libc::timespec`; cast the pointer to that type where
+    /// it is passed to a variadic `syscall(SYS_futex, ..)`.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct timespec {
@@ -5345,6 +5430,9 @@ pub mod linux {
         val: u32,
         timeout: *const timespec,
     ) -> isize {
+        // `syscall` is variadic, and Miri checks the pointee type of each argument
+        // against the one the kernel interface declares: `libc::timespec` here.
+        let timeout = timeout.cast::<libc::timespec>();
         // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
         // is null or points to a valid `timespec` for the syscall's duration.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
@@ -5387,10 +5475,9 @@ pub mod linux {
         crate::safe_libc::inotify_init1(flags)
     }
     #[inline]
-    pub unsafe fn inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int {
-        // SAFETY: caller contract — `fd` is a live inotify fd and `path` is a
-        // valid NUL-terminated C string.
-        unsafe { libc::inotify_add_watch(fd, path, mask) }
+    pub fn inotify_add_watch(fd: c_int, path: &bun_core::ZStr, mask: u32) -> c_int {
+        // SAFETY: `path` is NUL-terminated.
+        unsafe { libc::inotify_add_watch(fd, path.as_ptr(), mask) }
     }
     #[inline]
     pub fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
@@ -5399,37 +5486,42 @@ pub mod linux {
         // declares it `c_int`, which is ABI-correct on every Linux libc.
         crate::safe_libc::inotify_rm_watch(fd, wd)
     }
-    /// Raw `read(2)` returning kernel `usize`.
+    /// Raw `read(2)`; libc-convention return, decoded by `GetErrno for isize`.
     #[inline]
-    pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        // Raw syscall via rustix; libc-convention return preserved for callers
-        // that decode via `GetErrno for isize`.
-        // SAFETY: caller contract — `buf` points to `count` writable bytes.
-        unsafe { super::linux_syscall::read_raw(fd, buf, count) }
+    pub fn read(fd: c_int, buf: &mut [u8]) -> isize {
+        super::linux_syscall::read_raw(fd, buf)
     }
-    /// Raw `sendfile(out, in, *offset, count)`.
+    /// Raw `sendfile(out, in, *offset, count)`. With an `offset`, the kernel reads and updates it.
     #[inline]
-    pub unsafe fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize {
-        // SAFETY: caller contract — `offset` is null or points to a live `i64`
-        // the kernel may read and update.
-        unsafe { super::linux_syscall::sendfile(out_fd, in_fd, offset, count) }
+    pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: Option<&mut i64>, count: usize) -> isize {
+        super::linux_syscall::sendfile(out_fd, in_fd, offset, count)
     }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
     #[inline]
-    pub unsafe fn ppoll(
-        fds: *mut pollfd,
-        nfds: usize,
-        timeout: *const libc::timespec,
-        sigmask: *const libc::sigset_t,
+    pub fn ppoll(
+        fds: &mut [pollfd],
+        timeout: Option<&libc::timespec>,
+        sigmask: Option<&libc::sigset_t>,
     ) -> c_int {
-        // SAFETY: caller contract — `fds` points to `nfds` initialized
-        // `pollfd`s; `timeout`/`sigmask` are null or valid for the call.
-        unsafe { libc::ppoll(fds, nfds as _, timeout, sigmask) }
+        let timeout = timeout.map_or(core::ptr::null(), core::ptr::from_ref);
+        let sigmask = sigmask.map_or(core::ptr::null(), core::ptr::from_ref);
+        // SAFETY: `fds` is writable for `fds.len()` entries; `timeout` and `sigmask` are null or live.
+        unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout, sigmask) }
     }
+    /// `EPOLL_CTL_DEL` takes no `event`.
+    ///
+    /// # Safety
+    /// Whoever waits on `epfd` gets `event.u64` back and may dereference it. It must be what they
+    /// expect for as long as `fd` is registered, and until they are done with the events that
+    /// they had fetched by then.
     #[inline]
-    pub unsafe fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut epoll_event) -> c_int {
-        // SAFETY: caller contract — `event` is null (for `EPOLL_CTL_DEL`) or
-        // points to a valid `epoll_event`.
+    pub unsafe fn epoll_ctl(
+        epfd: c_int,
+        op: c_int,
+        fd: c_int,
+        event: Option<&epoll_event>,
+    ) -> c_int {
+        // SAFETY: the caller's contract.
         unsafe { super::linux_syscall::epoll_ctl(epfd, op, fd, event) }
     }
 
@@ -5461,16 +5553,15 @@ pub mod linux {
 
     /// `copy_file_range` raw syscall.
     #[inline]
-    pub unsafe fn copy_file_range(
+    pub fn copy_file_range(
         in_: c_int,
-        off_in: *mut i64,
+        off_in: Option<&mut i64>,
         out: c_int,
-        off_out: *mut i64,
+        off_out: Option<&mut i64>,
         len: usize,
         flags: u32,
     ) -> isize {
-        // SAFETY: raw `copy_file_range(2)`; caller owns fds, offset ptrs may be null.
-        unsafe { super::linux_syscall::copy_file_range(in_, off_in, out, off_out, len, flags) }
+        super::linux_syscall::copy_file_range(in_, off_in, out, off_out, len, flags)
     }
 
     // sendfile — use the existing `linux::sendfile` (libc
@@ -5786,6 +5877,9 @@ pub mod macho {
     /// `LC_SEGMENT_64` — 64-bit segment load command.
     pub const LC_SEGMENT_64: u32 = 0x19;
 
+    /// `<mach/vm_prot.h> VM_PROT_EXECUTE`.
+    const VM_PROT_EXECUTE: vm_prot_t = 0x04;
+
     /// `<mach-o/loader.h> mach_header_64`. Layout matches libc's
     /// `mach_header_64`.
     #[repr(C)]
@@ -5826,6 +5920,7 @@ pub mod macho {
         pub nsects: u32,
         pub flags: u32,
     }
+    bun_core::impl_pod!(mach_header_64, load_command, segment_command_64);
     impl segment_command_64 {
         /// Segment name with trailing NULs trimmed.
         #[inline]
@@ -5834,116 +5929,76 @@ pub mod macho {
         }
     }
 
-    /// Raw `(*const u8, len)` pair so [`LoadCommandIterator`] does not hold a
-    /// Rust borrow of its backing buffer. `bun_exe_format::macho` interleaves
-    /// iterator reads with in-place mutation of the same `Vec<u8>`;
-    /// a `&'a [u8]` here would
-    /// force a structural rewrite of that consumer.
+    /// One parsed load command: header + bytes (header included).
     #[derive(Clone, Copy)]
-    pub struct RawSlice {
-        ptr: *const u8,
-        len: usize,
-    }
-    impl RawSlice {
-        #[inline]
-        pub fn as_ptr(&self) -> *const u8 {
-            self.ptr
-        }
-        #[inline]
-        pub fn len(&self) -> usize {
-            self.len
-        }
-    }
-
-    /// One parsed load command: header + raw bytes (header included).
-    #[derive(Clone, Copy)]
-    pub struct LoadCommand {
+    pub struct LoadCommand<'a> {
         pub hdr: load_command,
-        pub data: RawSlice,
+        pub data: &'a [u8],
         /// Byte offset of this command within the buffer passed to
         /// `LoadCommandIterator::new`.
         pub offset: usize,
     }
-    impl LoadCommand {
+    impl LoadCommand<'_> {
         #[inline]
         pub fn cmd(&self) -> u32 {
             self.hdr.cmd
         }
-        /// Reinterpret the command bytes
-        /// as `T` if large enough. Returns an owned `Copy` value (via
-        /// `read_unaligned`) rather than `&T`: the backing buffer may be a
-        /// heap `Vec<u8>` with arbitrary alignment, so materialising a typed
-        /// reference would be UB.
-        pub fn cast<T: Copy>(&self) -> Option<T> {
-            if self.data.len < core::mem::size_of::<T>() {
-                return None;
-            }
-            // SAFETY: `data.ptr` points into a live Mach-O image buffer with
-            // at least `size_of::<T>()` bytes (checked above); `T` is
-            // `#[repr(C)]` POD per all callers. `read_unaligned` tolerates any
-            // alignment.
-            Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
+        /// The command bytes as a `T`, if there are enough of them. A copy: the bytes have no alignment.
+        pub fn cast<T: bun_core::AnyBitPattern>(&self) -> Option<T> {
+            bun_core::read_prefix(self.data)
         }
     }
 
     /// Walks the load-command region
     /// that immediately follows a `mach_header_64`.
-    ///
-    /// SAFETY contract: callers must not reallocate, shrink, or free the
-    /// backing buffer while a `LoadCommandIterator` derived from it (or any
-    /// `LoadCommand` it yielded) is live.
-    pub struct LoadCommandIterator {
+    pub struct LoadCommandIterator<'a> {
         ncmds: u32,
-        index: u32,
-        buf_ptr: *const u8,
-        buf_len: usize,
+        rest: &'a [u8],
         offset: usize,
     }
-    impl LoadCommandIterator {
-        /// `buffer` must remain live (no realloc/free) for the lifetime of the
-        /// returned iterator and any `LoadCommand` it yields.
+    impl<'a> LoadCommandIterator<'a> {
         #[inline]
-        pub fn new(ncmds: u32, buffer: &[u8]) -> Self {
+        pub fn new(ncmds: u32, buffer: &'a [u8]) -> Self {
             Self {
                 ncmds,
-                index: 0,
-                buf_ptr: buffer.as_ptr(),
-                buf_len: buffer.len(),
+                rest: buffer,
                 offset: 0,
             }
         }
+    }
+    impl<'a> Iterator for LoadCommandIterator<'a> {
+        type Item = LoadCommand<'a>;
 
-        pub fn next(&mut self) -> Option<LoadCommand> {
-            if self.index >= self.ncmds || self.buf_len < core::mem::size_of::<load_command>() {
-                self.index = self.ncmds;
+        /// Ends at a malformed header as it does after the last command.
+        fn next(&mut self) -> Option<LoadCommand<'a>> {
+            self.ncmds = self.ncmds.checked_sub(1)?;
+            let hdr: load_command = bun_core::read_prefix(self.rest)?;
+            let (data, rest) = self.rest.split_at_checked(hdr.cmdsize as usize)?;
+            if data.len() < core::mem::size_of::<load_command>() {
                 return None;
             }
-            // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
-            // which the caller promised stays live, and at least
-            // `size_of::<load_command>()` bytes remain (checked above).
-            let hdr: load_command =
-                unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
-            let cmdsize = hdr.cmdsize as usize;
-            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buf_len {
-                // Malformed header — stop iteration rather than UB.
-                self.index = self.ncmds;
-                return None;
-            }
-            let lc = LoadCommand {
-                hdr,
-                data: RawSlice {
-                    ptr: self.buf_ptr,
-                    len: cmdsize,
-                },
-                offset: self.offset,
-            };
-            // SAFETY: advancing within the original buffer; bounds checked above.
-            self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
-            self.buf_len -= cmdsize;
-            self.offset += cmdsize;
-            self.index += 1;
-            Some(lc)
+            let offset = self.offset;
+            self.rest = rest;
+            self.offset += data.len();
+            Some(LoadCommand { hdr, data, offset })
         }
+    }
+
+    /// Returns the offset of `address` from the start of the image's code, or `None` if the
+    /// address isn't in the code. `address` is unslid, like the addresses in the load commands.
+    ///
+    /// A linker emits one code segment. `bun build --compile --trim` splits it into several,
+    /// with gaps between them.
+    pub fn offset_in_code(ncmds: u32, commands: &[u8], address: u64) -> Option<u64> {
+        let mut code_segments = LoadCommandIterator::new(ncmds, commands)
+            .filter(|command| command.cmd() == LC_SEGMENT_64)
+            .filter_map(|command| command.cast::<segment_command_64>())
+            .filter(|segment| segment.initprot & VM_PROT_EXECUTE != 0)
+            .peekable();
+        let code_start = code_segments.peek()?.vmaddr;
+        code_segments
+            .any(|segment| address.wrapping_sub(segment.vmaddr) < segment.vmsize)
+            .then(|| address.wrapping_sub(code_start))
     }
 }
 
@@ -5961,7 +6016,7 @@ unsafe impl Sync for DynLib {}
 impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
         // dlopen a different library whose path is a prefix of the requested one).
         if path.len() >= buf.0.len() {
@@ -5984,7 +6039,7 @@ impl DynLib {
         // SAFETY: irreducible — `dlsym` yields an untyped symbol address as
         // `*mut c_void`; the caller asserts `T` is a pointer-sized fn pointer
         // (or `*mut c_void`) whose ABI matches the resolved symbol. fn pointers
-        // are not `bytemuck::Pod` (not zeroable), so no safe cast exists.
+        // are not `Pod` (not zeroable), so no safe cast exists.
         // `transmute_copy` is used over `transmute` because `T` is generic and
         // its size cannot be checked at the definition site; the `const` assert
         // above enforces `size_of::<T>() == size_of::<*mut c_void>()` at
@@ -6092,7 +6147,7 @@ macro_rules! dlsym_with_handle {
             )
         };
         // SAFETY: irreducible — `$T` is a fn-pointer type (caller contract);
-        // fn pointers are not `bytemuck::Pod`, so the `*mut c_void` → `$T`
+        // fn pointers are not `Pod`, so the `*mut c_void` → `$T`
         // reinterpretation cannot be expressed safely. `p` is non-null (checked
         // below) and was obtained from `dlsym`, so it is a valid code address;
         // `Once` provides happens-before for the store. The `const` assert above
@@ -6115,7 +6170,7 @@ pub fn open_a(path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
 /// `openatA` — like `openat` but takes a non-NUL-terminated slice.
 pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let dir = dir.as_fd();
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.0.len() {
         return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
     }
@@ -6642,8 +6697,7 @@ fn open_windows_device_path(
         )
     };
     if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        let errno = windows::Win32Error::get().to_e();
-        return Err(Error::from_code(errno, Tag::open));
+        return Err(Error::from_win32(windows::Win32Error::get(), Tag::open));
     }
     Ok(Fd::from_system(rc))
 }
@@ -6760,9 +6814,12 @@ pub(crate) fn open_dir_at_windows_nt_path(
             0,
         )
     };
+    // Not `Error::new(rc)`: the curated NTSTATUS table maps
+    // `OBJECT_NAME_INVALID` to EINVAL, and `open` of a bad name is ENOENT
+    // (libuv/Node), which `RtlNtStatusToDosError` gives.
     match windows::Win32Error::from_nt_status(rc) {
         windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
-        code => Err(Error::from_code(code.to_e(), Tag::open)),
+        code => Err(Error::from_win32(code, Tag::open)),
     }
 }
 
@@ -6846,24 +6903,20 @@ pub(crate) fn open_file_at_windows_nt_path(
 
         return match windows::Win32Error::from_nt_status(rc) {
             windows::Win32Error::SUCCESS => {
+                let file = File::from_fd(Fd::from_system(result));
                 if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     // SAFETY: FFI; result is a valid handle.
                     if unsafe { w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END) }
                         == 0
                     {
-                        // NtCreateFile succeeded — close the live HANDLE before
-                        // bailing so this error path doesn't leak it.
-                        // SAFETY: FFI; `result` is the just-created handle.
-                        unsafe {
-                            w::CloseHandle(result);
-                        }
                         return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                     }
                 }
-                Ok(Fd::from_system(result))
+                Ok(file.into_raw())
             }
-            code => Err(Error::from_code(code.to_e(), Tag::open)),
+            // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
+            code => Err(Error::from_win32(code, Tag::open)),
         };
     }
 }
@@ -7065,6 +7118,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
+        use std::os::windows::io::{HandleOrInvalid, OwnedHandle};
         // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
         // SAFETY: path is NUL-terminated UTF-16.
@@ -7093,8 +7147,8 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             }
             // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
-            let rc = unsafe {
-                w::CreateFileW(
+            let target = unsafe {
+                HandleOrInvalid::from_raw_handle(w::CreateFileW(
                     path.as_ptr(),
                     0,
                     0,
@@ -7102,16 +7156,9 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                     w::OPEN_EXISTING,
                     w::FILE_FLAG_BACKUP_SEMANTICS,
                     core::ptr::null_mut(),
-                )
+                ))
             };
-            if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-                return false;
-            }
-            // SAFETY: rc is a valid handle from CreateFileW.
-            unsafe {
-                let _ = w::CloseHandle(rc);
-            }
-            return true;
+            return OwnedHandle::try_from(target).is_ok();
         }
         true
     }
@@ -7121,13 +7168,9 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// `path` is NT-prefixed. Like `GetFileAttributesW`, does not follow a final reparse point.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7158,26 +7201,37 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // `errnoSys` for `NTSTATUS` routes through the curated
-        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
-        // deterministically maps to `ENOENT`, which `directory_exists_at()`
-        // branches on), then falls back to `RtlNtStatusToDosError` for
-        // unmapped codes.
-        return Err(Error::from_code(
-            windows::translate_nt_status_to_errno(rc),
-            Tag::access,
-        ));
+        // `Error::new(NTSTATUS)` maps through the curated table first, so
+        // `OBJECT_PATH_NOT_FOUND` is deterministically `ENOENT`, which
+        // `directory_exists_at()` branches on.
+        return Err(Error::new(rc, Tag::access));
     }
+    Ok(basic_info.FileAttributes)
+}
+/// Attributes of the entry `sub` itself (a reparse point is not followed).
+#[cfg(windows)]
+pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+    let dword = nt_query_attributes_at(dir, path)?;
+    Ok(WindowsFileAttributes {
+        is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+    })
+}
+#[cfg(windows)]
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    let attrs = nt_query_attributes_at(dir, path)?;
     // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
     // marker (OneDrive sets it) and does not affect directory-ness; only
     // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
+    Ok(if (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        ExistsAtType::Directory
+    } else {
+        ExistsAtType::File
+    })
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
@@ -7299,68 +7353,65 @@ unsafe extern "C" {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
-/// Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
-pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
-        let iov = [libc::iovec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: buf.len(),
-        }];
-        // SAFETY: fd valid; iov points at a live stack array.
-        let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Only fall through to BLOCKING read if the fd is
-                    // actually readable now; otherwise return retry (EAGAIN).
-                    return match bun_core::is_readable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
-                        _ => Err(Error::retry().with_fd(fd)),
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
-            }
-        }
-        return Ok(rc as usize);
+/// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn read_nowait_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
     }
-    read(fd, buf)
+    loop {
+        // SAFETY: as in `read_buf`; iov is a live stack value.
+        let rc = unsafe {
+            let buf = cursor.as_mut();
+            let iov = libc::iovec {
+                iov_base: buf.as_mut_ptr().cast(),
+                iov_len: buf.len(),
+            };
+            sys_preadv2(fd.native(), &raw const iov, 1, -1, RWF_NOWAIT)
+        };
+        if rc >= 0 {
+            // SAFETY: as in `read_buf`.
+            unsafe { cursor.advance(rc as usize) };
+            return Ok(Some(rc as usize));
+        }
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
+        }
+    }
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
-pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+
+/// `pwritev2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_ptr().cast_mut().cast::<_>(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
-                        _ => {
-                            let mut e = Error::retry();
-                            e.syscall = Tag::write;
-                            Err(e.with_fd(fd))
-                        }
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
+        }
     }
-    write(fd, buf)
 }
 
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
@@ -7391,8 +7442,13 @@ pub fn kqueue() -> Maybe<Fd> {
 
 /// `kevent()` — slice-wrapped Maybe form. Retries on EINTR.
 /// Returns the number of events written into `eventlist`.
+///
+/// # Safety
+/// Whoever waits on `fd` gets the `udata` of each change back and may dereference it. It must be
+/// what they expect for as long as the change is registered, and until they are done with the
+/// events that they had fetched by then.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-pub fn kevent(
+pub unsafe fn kevent(
     fd: Fd,
     changelist: &[libc::kevent],
     eventlist: &mut [libc::kevent],
@@ -7400,7 +7456,7 @@ pub fn kevent(
 ) -> Maybe<usize> {
     loop {
         // SAFETY: fd is a valid kqueue; slices give exact (ptr,len); timeout
-        // is either null or a valid timespec.
+        // is either null or a valid timespec. The caller answers for each `udata`.
         let rc = unsafe {
             libc::kevent(
                 fd.native(),
@@ -7417,16 +7473,6 @@ pub fn kevent(
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
         }
     }
-}
-
-/// `clonefileat` — macOS-only CoW copy relative to directory fds. On
-/// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
-#[cfg(not(target_os = "macos"))]
-pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
-    let _from_dir = _from_dir.as_fd();
-    let _to_dir = _to_dir.as_fd();
-    Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat)
-        .with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
 // ── getFdPath ──
@@ -7459,12 +7505,11 @@ fn linux_kernel_is_freebsd() -> bool {
     let detected: u8 = 'detect: {
         // SAFETY: literal is NUL-terminated.
         let z = ZStr::from_static(b"/proc/version\0");
-        let Ok(fd) = open(z, O::RDONLY | O::NOCTTY, 0) else {
+        let Ok(file) = open(z, O::RDONLY | O::NOCTTY, 0).map(CloseOnDrop::new) else {
             break 'detect 1;
         };
         let mut buf = [0u8; 512];
-        let n = read(fd, &mut buf).unwrap_or(0);
-        let _ = close(fd);
+        let n = file.read(&mut buf).unwrap_or(0);
         if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
             2
         } else {
@@ -7475,22 +7520,22 @@ fn linux_kernel_is_freebsd() -> bool {
     detected == 2
 }
 
+/// `<prefix><fd number>`, NUL-terminated in `buf`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn fd_path_z<'a>(prefix: &[u8], fd: Fd, buf: &'a mut [u8; 32]) -> &'a ZStr {
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let end = prefix.len() + bun_core::fmt::print_int(&mut buf[prefix.len()..], fd.native());
+    buf[end] = 0;
+    ZStr::from_buf(&buf[..], end)
+}
+
 /// readlink `/dev/fd/N` (fdescfs).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn get_fd_path_freebsd_linuxulator<'a>(
     fd: Fd,
     out: &'a mut bun_paths::PathBuffer,
 ) -> Maybe<&'a mut [u8]> {
-    let mut dev = [0u8; 32];
-    let n = {
-        use std::io::Write as _;
-        let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.native());
-        c.position() as usize - 1
-    };
-    // SAFETY: NUL written above.
-    let z = ZStr::from_buf(&dev[..], n);
-    let len = readlink(z, &mut out.0)?;
+    let len = readlink(fd_path_z(b"/dev/fd/", fd, &mut [0u8; 32]), &mut out.0)?;
     Ok(&mut out.0[..len])
 }
 
@@ -7504,16 +7549,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         if linux_kernel_cached_is_freebsd() {
             return get_fd_path_freebsd_linuxulator(fd, out);
         }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        match readlink(z, &mut out.0) {
+        match readlink(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
                 // Under FreeBSD Linuxulator, fall back to
@@ -7529,7 +7565,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     #[cfg(target_os = "macos")]
     {
         out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
+        if let Err(mut err) = fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize) {
+            // `F_GETPATH` reports a path longer than `MAXPATHLEN` as `ENOSPC`.
+            if err.get_errno() == E::ENOSPC {
+                err.errno = E::ENAMETOOLONG as _;
+            }
+            return Err(err);
+        }
         // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
         let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
         return Ok(&mut out.0[..len]);
@@ -7612,12 +7654,13 @@ pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
 // ── environ ──
 
 /// Borrowed slice of the process's `KEY=VALUE\0` C strings.
-/// SAFETY note: the returned slice borrows the libc `environ` global; do not
-/// mutate the environment concurrently.
-pub fn environ() -> &'static [*const c_char] {
+///
+/// # Safety
+/// On POSIX, nothing changes the environment (`setenv`, `putenv`) during `'a`.
+pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
     #[cfg(unix)]
     {
-        // SAFETY: `environ` is a process-global NULL-terminated array.
+        // SAFETY: `environ` is a NULL-terminated array of C strings, live for `'a` by fn contract.
         unsafe {
             let mut n = 0usize;
             let base: *const *const c_char = bun_core::c_environ();
@@ -7627,7 +7670,7 @@ pub fn environ() -> &'static [*const c_char] {
             while !(*base.add(n)).is_null() {
                 n += 1;
             }
-            core::slice::from_raw_parts(base, n)
+            core::slice::from_raw_parts(base.cast(), n)
         }
     }
     #[cfg(windows)]
@@ -7638,30 +7681,24 @@ pub fn environ() -> &'static [*const c_char] {
         // process lifetime so `'static` here is sound.
         // SAFETY: written exactly once at startup before any reader runs.
         let s = unsafe { bun_core::os::environ() };
-        // SAFETY: `*mut c_char` and `*const c_char` have identical layout; the
+        // SAFETY: a `CStrRef` is a non-null pointer to a C string, as each entry is; the
         // fat-pointer cast preserves the original slice's (ptr, len) metadata
         // exactly instead of re-deriving it.
-        unsafe { &*(s as *const [*mut c_char] as *const [*const c_char]) }
+        unsafe { &*(s as *const [*mut c_char] as *const [bun_core::CStrRef<'static>]) }
     }
 }
 
-/// Raw NULL-terminated `**c_char` environment pointer for FFI envp args
-/// (e.g. `posix_spawn`). Unlike [`environ()`] this returns the raw libc
-/// global pointer (already NULL-terminated) rather than a length-bounded
-/// borrowed slice, so it is suitable to pass directly as `envp`.
-pub fn environ_ptr() -> *const *const c_char {
-    #[cfg(unix)]
-    {
-        bun_core::c_environ()
+/// [`environ()`] including its null terminator.
+#[cfg(windows)]
+pub fn environ_list() -> bun_core::CStrList<'static> {
+    // SAFETY: no precondition on Windows.
+    let entries = unsafe { environ() };
+    if entries.is_empty() {
+        return bun_core::CStrList::new(&[None]);
     }
-    #[cfg(windows)]
-    {
-        // SAFETY: same as `environ()` above; NUL-terminated by construction
-        // (`convert_env_to_wtf8` pushes a trailing null pointer).
-        unsafe { bun_core::os::environ() }
-            .as_ptr()
-            .cast::<*const c_char>()
-    }
+    // SAFETY: `convert_env_to_wtf8` pushes a trailing null pointer into the same allocation.
+    let items = unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len() + 1) };
+    bun_core::CStrList::new(items)
 }
 
 // ── moveFileZWithHandle ──
@@ -7686,34 +7723,7 @@ pub fn move_file_z_with_handle(
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            // Cross-device: full `copyFileZSlowWithHandle`.
-            #[cfg(unix)]
-            let st = fstat(from_handle)?;
-            // Unlink dest first — fixes ETXTBUSY on Linux.
-            let _ = unlinkat(to_dir, destination);
-            let dst = openat(
-                to_dir,
-                destination,
-                O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
-                0o644,
-            )?;
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                // Preallocation is best-effort.
-                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
-            }
-            // Seek input to 0 — caller may have left offset at EOF after writing.
-            let _ = lseek(from_handle, 0, libc::SEEK_SET);
-            let r = copy_file(from_handle, dst);
-            // Only stamp mode/owner on success; on copy error
-            // the partially-written dest keeps its openat() defaults.
-            #[cfg(unix)]
-            if r.is_ok() {
-                let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-                let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
-            }
-            let _ = close(dst);
-            r?;
+            copy_file_z_slow_with_handle(from_handle, to_dir, destination)?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
@@ -7758,7 +7768,7 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 /// to UTF-8 and delegates to `mkdir_recursive_at`.
 pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
     mkdir_recursive_at(dir, utf8.as_bytes())
 }
@@ -8069,9 +8079,8 @@ pub mod posix {
         pub cur: u64,
         pub max: u64,
     }
-    // SAFETY: two `u64`; all-zero is a valid `Rlimit`.
     #[cfg(unix)]
-    unsafe impl bun_core::ffi::Zeroable for Rlimit {}
+    bun_core::impl_zeroable!(Rlimit);
     #[cfg(unix)]
     #[derive(Clone, Copy)]
     #[repr(i32)]
@@ -8230,8 +8239,7 @@ pub mod net {
         /// Construct from a borrowed `*const sockaddr`.
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
-            let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
             // SAFETY: caller contract — `addr` points to a valid `sockaddr`
             // header, so `sa_family` is readable.
             let len = match unsafe { (*addr).sa_family } as i32 {
@@ -8262,8 +8270,7 @@ pub mod net {
 
         /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
         pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
-            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
-            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
             match ip {
                 core::net::IpAddr::V4(v4) => {
                     let inner = sockaddr_in {
@@ -8415,6 +8422,12 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// End address (exclusive) of the `PT_LOAD` segment that contains the lookup address.
+        pub segment_end: usize,
+        /// `dlpi_phdr` — `program_header_count` headers, mapped until the object is unloaded.
+        pub program_headers: *const libc::Elf64_Phdr,
+        /// `dlpi_phnum`.
+        pub program_header_count: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8475,6 +8488,9 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        segment_end: seg_end,
+                        program_headers: info.dlpi_phdr,
+                        program_header_count: info.dlpi_phnum as usize,
                     });
                     return 1; // error.Found → stop iteration
                 }
@@ -8545,36 +8561,48 @@ pub mod freebsd {
         unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
     }
     /// `copy_file_range` (FreeBSD 13+). Thin re-export so callers don't
-    /// need a direct `libc` dep. Offset pointers may be null — when null the
+    /// need a direct `libc` dep. Without an offset the
     /// kernel uses (and advances) the fd's seek position.
-    /// SAFETY: raw `copy_file_range(2)`; caller owns fds and any non-null
-    /// offset pointers.
     #[inline]
-    pub unsafe fn copy_file_range(
+    pub fn copy_file_range(
         in_: c_int,
-        off_in: *mut libc::off_t,
+        off_in: Option<&mut libc::off_t>,
         out: c_int,
-        off_out: *mut libc::off_t,
+        off_out: Option<&mut libc::off_t>,
         len: usize,
         flags: u32,
     ) -> libc::ssize_t {
+        let off_in = off_in.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+        let off_out = off_out.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+        // SAFETY: each offset is null or points to a live `off_t`.
         unsafe { libc::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
 }
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
 
-/// RAII guard that closes a raw [`Fd`] on drop. Most code should prefer
-/// [`File`] / [`Dir`], which are owning RAII handles already; reach for this
-/// only when working with a bare `Fd` in a context where a typed wrapper
-/// would be misleading (e.g. an fd that is sometimes a file, sometimes a
-/// directory, sometimes a pipe).
-#[must_use = "dropping immediately closes the fd; bind to `let _close = ...`"]
+/// A [`File`] that POSIX closes even if `open` gave it the number of a standard stream.
+#[must_use]
 pub struct CloseOnDrop(Fd);
 impl CloseOnDrop {
     #[inline]
     pub fn new(fd: Fd) -> Self {
         Self(fd)
+    }
+    /// As [`File::into_raw`].
+    pub fn into_raw(self) -> Fd {
+        core::mem::ManuallyDrop::new(self).0
+    }
+}
+impl From<File> for CloseOnDrop {
+    fn from(file: File) -> Self {
+        Self(file.into_raw())
+    }
+}
+impl core::ops::Deref for CloseOnDrop {
+    type Target = File;
+    fn deref(&self) -> &File {
+        File::borrow(&self.0)
     }
 }
 impl Drop for CloseOnDrop {
@@ -8653,9 +8681,7 @@ impl WindowsSymlinkOptions {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 mod win_symlink_impl {
-    use super::{
-        E, Error, Maybe, Tag, Win32ErrorExt as _, WindowsSymlinkOptions, ZStr, sys_uv, windows,
-    };
+    use super::{E, Error, Maybe, Tag, WindowsSymlinkOptions, ZStr, sys_uv, windows};
     use bun_core::WStr;
     use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -8708,21 +8734,14 @@ mod win_symlink_impl {
                     WindowsSymlinkOptions::denied();
                     continue;
                 }
-                // `to_e()` falls back to `E::UNKNOWN` for Win32 codes not in
-                // the errno table. Filter drivers, network redirectors, and
-                // security software hooking `CreateSymbolicLinkW` can return
-                // codes outside the mapped set; treating those as success
-                // would leave the caller believing a symlink exists when it
-                // does not. Returning an error lets `symlink_or_junction`
-                // fall through to a junction.
-                let e: E = win_err.to_e();
+                let err = Error::from_win32(win_err, Tag::symlink);
                 // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
                 // unset; every other failure flips the sticky bit so
                 // `symlinkOrJunction` falls through to junctions next time.
-                if !matches!(e, E::NOENT | E::EXIST) {
+                if !matches!(err.get_errno(), E::NOENT | E::EXIST) {
                     WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
-                return Err(Error::from_code(e, Tag::symlink));
+                return Err(err);
             }
             return Ok(());
         }
@@ -8775,7 +8794,7 @@ mod win_symlink_impl {
         // SAFETY: `from` is NUL-terminated.
         let rc = unsafe { windows::DeleteFileW(from.as_ptr()) };
         if rc == 0 {
-            return Err(Error::from_code(windows::get_last_errno(), Tag::unlink));
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::unlink));
         }
         Ok(())
     }
@@ -8786,7 +8805,7 @@ mod win_symlink_impl {
         // SAFETY: `path` is NUL-terminated; null security attributes.
         let rc = unsafe { windows::CreateDirectoryW(path.as_ptr(), core::ptr::null_mut()) };
         if rc == 0 {
-            return Err(Error::from_code(windows::get_last_errno(), Tag::mkdir));
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::mkdir));
         }
         Ok(())
     }
@@ -8798,7 +8817,7 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
     if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
-        return Err(Error::from_code(windows::get_last_errno(), Tag::link));
+        return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
     }
     Ok(())
 }
@@ -8856,32 +8875,6 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
     Ok(ZStr::from_buf(&out.0[..], len))
 }
 
-/// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
-/// paths into stack buffers.
-pub fn renameat_concurrently_a(
-    from_dir_fd: Fd,
-    from: &[u8],
-    to_dir_fd: Fd,
-    to: &[u8],
-    opts: RenameatConcurrentlyOptions,
-) -> Maybe<()> {
-    // Z-terminate both paths into stack buffers.
-    let mut from_buf = bun_paths::PathBuffer::default();
-    let from_len = from.len().min(from_buf.0.len() - 1);
-    from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
-    from_buf.0[from_len] = 0;
-    // SAFETY: NUL-terminated above.
-    let from_z = ZStr::from_buf(&from_buf.0[..], from_len);
-
-    let mut to_buf = bun_paths::PathBuffer::default();
-    let to_len = to.len().min(to_buf.0.len() - 1);
-    to_buf.0[..to_len].copy_from_slice(&to[..to_len]);
-    to_buf.0[to_len] = 0;
-    // SAFETY: NUL-terminated above.
-    let to_z = ZStr::from_buf(&to_buf.0[..], to_len);
-
-    renameat_concurrently(from_dir_fd, from_z, to_dir_fd, to_z, opts)
-}
 /// `bun.iterateDir(dir)` — convenience wrapper around `dir_iterator::iterate`.
 #[inline]
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
@@ -8891,7 +8884,7 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
 pub fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.0.len() {
         return false;
     }
@@ -8931,16 +8924,14 @@ pub(crate) fn move_file_z_slow(
     to_dir: Fd,
     destination: &ZStr,
 ) -> Maybe<()> {
-    let in_handle = openat(
+    let input = CloseOnDrop::new(openat(
         from_dir,
         filename,
         O::RDONLY | O::CLOEXEC,
         if cfg!(windows) { 0 } else { 0o644 },
-    )?;
+    )?);
     let _ = unlinkat(from_dir, filename);
-    let r = copy_file_z_slow_with_handle(in_handle, to_dir, destination);
-    let _ = close(in_handle);
-    r
+    copy_file_z_slow_with_handle(input.fd(), to_dir, destination)
 }
 /// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
 pub(crate) fn copy_file_z_slow_with_handle(
@@ -8952,27 +8943,26 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
     let _ = unlinkat(to_dir, destination);
-    let dst = openat(
+    let dst = CloseOnDrop::new(openat(
         to_dir,
         destination,
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
-    )?;
+    )?);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
-        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
+        let _ = safe_libc::fallocate(dst.fd().native(), 0, 0, st.st_size);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
-    let r = copy_file(in_handle, dst);
+    let r = copy_file(in_handle, dst.fd());
     // Only stamp mode/owner on success; on copy error the
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]
     if r.is_ok() {
-        let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-        let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+        let _ = safe_libc::fchmod(dst.fd().native(), st.st_mode);
+        let _ = safe_libc::fchown(dst.fd().native(), st.st_uid, st.st_gid);
     }
-    let _ = close(dst);
     r
 }
 /// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).
@@ -9007,6 +8997,7 @@ pub(crate) fn move_file_z_slow_maybe(
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
 /// an EXDEV result falls through to a slow open/copy.
+/// After an EXCHANGE, `from` holds the tree that was at `to`.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9039,16 +9030,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
             // just rename it. We don't need to delete anything.
-            let err = match renameat2(
-                from_dir_fd,
-                from,
-                to_dir_fd,
-                to,
-                Renameat2Flags {
-                    mode: RenameMode::NoReplace,
-                    ..Default::default()
-                },
-            ) {
+            let err = match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::NoReplace) {
                 // if ENOENT don't retry
                 Err(err) => {
                     if err.get_errno() == E::ENOENT {
@@ -9065,16 +9047,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 // Fallback path: the folder exists in the cache dir, it might be in a strange state
                 // let's attempt to atomically replace it with the temporary folder's version
                 if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY | E::EOPNOTSUPP) {
-                    match renameat2(
-                        from_dir_fd,
-                        from,
-                        to_dir_fd,
-                        to,
-                        Renameat2Flags {
-                            mode: RenameMode::Exchange,
-                            ..Default::default()
-                        },
-                    ) {
+                    match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::Exchange) {
                         Err(_) => {}
                         Ok(()) => break 'attempt,
                     }
@@ -9110,7 +9083,7 @@ pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     if rc < 0 {
         return Err(err_with(Tag::open));
     }
-    Ok(Fd::from_native(rc))
+    Ok(move_above_stdio(Fd::from_native(rc)))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -9168,8 +9141,9 @@ pub fn write_file_with_path_buffer(
     args: &WriteFileArgs<'_>,
 ) -> Maybe<usize> {
     let WriteFileData::Buffer { buffer } = args.data;
-    let fd = match args.file {
-        PathOrFileDescriptor::Fd(fd) => fd,
+    let opened;
+    let file: &File = match &args.file {
+        PathOrFileDescriptor::Fd(fd) => File::borrow(fd),
         PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
                 return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
@@ -9178,19 +9152,12 @@ pub fn write_file_with_path_buffer(
             path_buf.0[bytes.len()] = 0;
             // SAFETY: NUL-terminated above.
             let z = ZStr::from_buf(&path_buf.0[..], bytes.len());
-            openat(
-                args.dirfd,
-                z,
-                O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC,
-                args.mode,
-            )?
+            let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
+            opened = CloseOnDrop::new(openat(args.dirfd, z, flags, args.mode)?);
+            &opened
         }
     };
-    let r = File::borrow(&fd).write_all(buffer);
-    if !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
-        let _ = close(fd);
-    }
-    r.map(|_| buffer.len())
+    file.write_all(buffer).map(|()| buffer.len())
 }
 
 /// `bun.fetchCacheDirectoryPath` — resolve `$BUN_INSTALL_CACHE_DIR` /
@@ -9213,122 +9180,30 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun_core::output::QuietWriter` is an opaque `[*mut (); 4]`. We stash the
-/// raw fd in slot 0 and ignore the rest. (The buffering layer is routed to
-/// `QuietWriterAdapter` below.)
-#[inline]
-fn qw_fd(qw: &bun_core::output::QuietWriter) -> Fd {
-    // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }` (asserted
-    // in bun_core::output); slot 0 carries fd-as-usize-as-ptr. Reading the
-    // first word through a same-align pointer cast of a live `&QuietWriter`
-    // is in-bounds and aligned.
-    let raw = unsafe { *core::ptr::from_ref(qw).cast::<*mut ()>() };
-    Fd::from_native(raw as usize as _)
-}
-#[inline]
-fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
-    // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }`; slot 0
-    // carries fd-as-usize-as-ptr. Writing the first word through a same-align
-    // pointer cast of a live `&mut QuietWriter` is in-bounds, aligned, and
-    // exclusively borrowed.
-    unsafe {
-        *core::ptr::from_mut(qw).cast::<*mut ()>() = fd.native() as usize as *mut ();
-    }
-}
-
-/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
-/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
-fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+/// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
+pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
         match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up
+            Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),
             Ok(n) => bytes = &bytes[n..],
-            Err(_) => return false,
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                posix::poll(&mut pfd, -1)?;
+            }
+            Err(e) => return Err(e),
         }
-    }
-    true
-}
-
-/// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`
-/// (`[u8; 64]`). First field MUST be `io::Writer` so `new_interface()`'s
-/// pointer-cast is sound. Layout asserted below.
-#[repr(C)]
-struct SysQuietWriterAdapter {
-    writer: bun_core::io::Writer,
-    fd: Fd,
-    buf: *mut u8,
-    cap: usize,
-    pos: usize,
-}
-const _: () = {
-    assert!(
-        core::mem::size_of::<SysQuietWriterAdapter>()
-            <= core::mem::size_of::<bun_core::output::QuietWriterAdapter>()
-    );
-    assert!(
-        core::mem::align_of::<bun_core::output::QuietWriterAdapter>()
-            >= core::mem::align_of::<SysQuietWriterAdapter>()
-    );
-};
-
-impl SysQuietWriterAdapter {
-    /// View of the bytes buffered so far (`buf[0..pos]`). Centralises the
-    /// (ptr, len) → slice reconstruction; the buffer is owned by the adapter
-    /// and lives for `&self`.
-    #[inline]
-    fn buffered(&self) -> &[u8] {
-        // SAFETY: `buf` is a `cap`-byte allocation owned by this adapter (set
-        // at construction); `pos <= cap` is upheld by `adapter_write_all`
-        // (drains before writing past `cap`). Bytes `[0, pos)` were written by
-        // `copy_nonoverlapping` and are initialized. Borrow tied to `&self`.
-        unsafe { core::slice::from_raw_parts(self.buf, self.pos) }
-    }
-}
-
-unsafe fn adapter_write_all(
-    w: *mut bun_core::io::Writer,
-    bytes: &[u8],
-) -> core::result::Result<(), bun_core::Error> {
-    // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
-    let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
-    if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
-        return Ok(());
-    }
-    if this.pos + bytes.len() > this.cap {
-        // Drain buffered bytes first.
-        if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
-            this.pos = 0;
-        }
-        // Large writes bypass the buffer so the next small write still coalesces.
-        if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
-            return Ok(());
-        }
-    }
-    // SAFETY: `this.buf` has capacity `this.cap`; the branch above ensures
-    // `this.pos + bytes.len() <= this.cap`, so `[buf+pos, buf+pos+len)` is
-    // in-bounds and cannot overlap `bytes` (caller-owned slice).
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len());
-    }
-    this.pos += bytes.len();
-    Ok(())
-}
-unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<(), bun_core::Error> {
-    // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
-    let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
-    if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
-        this.pos = 0;
     }
     Ok(())
 }
 
 #[cfg(unix)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = bun_core::ffi::zeroed();
     // SAFETY: TIOCGWINSZ writes exactly `sizeof(winsize)` into the stack-local
     // `ws`; `fd` is a plain int (bad fd → ENOTTY/EBADF, never UB).
@@ -9345,7 +9220,6 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(windows)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
     // SAFETY: `info` is a valid out-pointer for the duration of the call; a
     // handle that is not a console makes the call fail rather than misbehave.
@@ -9367,37 +9241,14 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
     None
 }
 
-// Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.
+// Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/write.
 bun_core::link_impl_OutputSink! {
     Sys for extern () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
         make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>
             openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(|_| bun_core::Error::Unexpected),
-        quiet_writer_from_fd(fd) => {
-            let mut out = bun_core::output::QuietWriter::ZEROED;
-            qw_set_fd(&mut out, fd);
-            out
-        },
-        quiet_writer_adapt(qw, buf, len) => {
-            let fd = qw_fd(&qw);
-            let concrete = SysQuietWriterAdapter {
-                writer: bun_core::io::Writer {
-                    write_all: adapter_write_all,
-                    flush: adapter_flush,
-                },
-                fd,
-                buf,
-                cap: len,
-                pos: 0,
-            };
-            let mut out = bun_core::output::QuietWriterAdapter::uninit();
-            // SAFETY: size/align asserted in const block above; out is repr(C) [u8;64].
-            core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
-            out
-        },
-        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
-        quiet_writer_fd(qw) => qw_fd(qw),
+        write_all_quiet(fd, bytes) => write_all_to_stdio(fd, bytes).is_ok(),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
         read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
@@ -9430,11 +9281,11 @@ mod owned_handle_tests {
         let to_dir = open_dir_at(root, b"to").expect("open to");
 
         // The dest `to/sub` exists, so the rename must `delete_tree` it first.
-        renameat_concurrently_a(
+        renameat_concurrently(
             root,
-            b"from/sub",
+            bun_core::zstr!("from/sub"),
             to_dir,
-            b"sub",
+            bun_core::zstr!("sub"),
             RenameatConcurrentlyOptions {
                 move_fallback: true,
             },
@@ -9507,7 +9358,7 @@ mod normalize_path_windows_tests {
 
     /// Open a directory handle with raw `CreateFileW` so the fixture fd does
     /// not depend on the code under test.
-    fn open_dir_handle(path: &std::path::Path) -> Fd {
+    fn open_dir_handle(path: &std::path::Path) -> File {
         use std::os::windows::ffi::OsStrExt;
         let wp: Vec<u16> = path.as_os_str().encode_wide().chain([0u16]).collect();
         // SAFETY: `wp` is NUL-terminated and outlives the call.
@@ -9527,7 +9378,7 @@ mod normalize_path_windows_tests {
             bun_windows_sys::INVALID_HANDLE_VALUE,
             "CreateFileW {path:?}"
         );
-        Fd::from_system(h)
+        File::from_fd(Fd::from_system(h))
     }
 
     /// pid-suffixed temp dir removed on drop (declare before handle guards so
@@ -9551,15 +9402,13 @@ mod normalize_path_windows_tests {
     fn relative_resolves_to_nt_device_name() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_rel");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize(*dir, "a\\b");
+        let dir = open_dir_handle(&tree.0);
+        let got = normalize(dir.fd(), "a\\b");
         assert!(got.starts_with("\\Device\\"), "{got}");
         assert!(got.ends_with("\\a\\b"), "{got}");
         assert!(!got.contains("\\??\\"), "{got}");
         // `..`-free rel: exactly the base directory's NT name plus the rel.
-        assert_eq!(got, format!("{}\\a\\b", normalize(*dir, ".")));
+        assert_eq!(got, format!("{}\\a\\b", normalize(dir.fd(), ".")));
     }
 
     #[test]
@@ -9567,14 +9416,10 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize(*child, "..\\x");
-        let base = normalize(*parent, ".");
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
+        let got = normalize(child.fd(), "..\\x");
+        let base = normalize(parent.fd(), ".");
         assert_eq!(got, format!("{base}\\x"));
     }
 
@@ -9582,51 +9427,53 @@ mod normalize_path_windows_tests {
     fn within_tree_dotdot_resolves_under_base() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_within");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // Non-climbing `..` needs no clamp boundary; it resolves in place.
-        assert_eq!(normalize(*dir, "a\\..\\b"), format!("{base}\\b"));
+        assert_eq!(normalize(dir.fd(), "a\\..\\b"), format!("{base}\\b"));
         // Collapsing to nothing lands exactly on the base directory (the
         // join's lone separator is dropped).
-        assert_eq!(normalize(*dir, "sub\\.."), base);
+        assert_eq!(normalize(dir.fd(), "sub\\.."), base);
     }
 
     #[test]
     fn excess_dotdot_fails_closed_on_local_volume() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_clamp");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
-        let depth = floor_depth(*dir);
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
+        let depth = floor_depth(dir.fd());
         assert!(depth >= 1, "{base}");
         // Enough `..` to cross the volume-root floor: local volumes are not
         // share-rooted, so the walk refuses instead of clamping silently.
         let over = format!("{}x", "..\\".repeat(depth + 1));
-        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+        assert_eq!(
+            normalize_err(dir.fd(), &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
         // Same without a trailing component.
         let over_only = "..\\".repeat(depth + 1);
-        assert_eq!(normalize_err(*dir, &over_only).get_errno(), E::EINVAL);
+        assert_eq!(normalize_err(dir.fd(), &over_only).get_errno(), E::EINVAL);
         // Within-tree `..` (never crosses the floor) still resolves.
-        assert_eq!(normalize(*dir, "sub\\..\\ok"), format!("{base}\\ok"));
+        assert_eq!(normalize(dir.fd(), "sub\\..\\ok"), format!("{base}\\ok"));
     }
 
     #[test]
     fn forward_slash_dotdot_through_walk() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_fwd");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // `/` separates components exactly like `\` — lexically for the
         // within-tree rel, and in the floor walk for the climbing one.
-        assert_eq!(normalize(*dir, "a/../b"), format!("{base}\\b"));
-        let over = format!("{}x", "../".repeat(floor_depth(*dir) + 1));
-        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+        assert_eq!(normalize(dir.fd(), "a/../b"), format!("{base}\\b"));
+        let over = format!("{}x", "../".repeat(floor_depth(dir.fd()) + 1));
+        assert_eq!(
+            normalize_err(dir.fd(), &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
     }
 
     #[test]
@@ -9634,22 +9481,18 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_climb_name");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
         // Net-climbing despite the leading name: the walk sees +1,−1,−1,+1
         // and stays above the floor while `..` resolves into the parent.
         assert_eq!(
-            normalize(*child, "a\\..\\..\\x"),
-            format!("{}\\x", normalize(*parent, "."))
+            normalize(child.fd(), "a\\..\\..\\x"),
+            format!("{}\\x", normalize(parent.fd(), "."))
         );
         // Same shape pushed one past the floor fails closed.
-        let over = format!("a\\..\\{}x", "..\\".repeat(floor_depth(*child) + 1));
+        let over = format!("a\\..\\{}x", "..\\".repeat(floor_depth(child.fd()) + 1));
         assert_eq!(
-            normalize_err(*child, &over).get_errno(),
+            normalize_err(child.fd(), &over).get_errno(),
             E::EINVAL,
             "{over}"
         );
@@ -9659,13 +9502,11 @@ mod normalize_path_windows_tests {
     fn exact_floor_dotdot_lands_on_volume_root() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_floor");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // Exactly base-depth `..` lands ON the floor (allowed): the volume
         // root DIRECTORY — the device prefix plus its lone separator.
-        let root = normalize(*dir, &"..\\".repeat(floor_depth(*dir)));
+        let root = normalize(dir.fd(), &"..\\".repeat(floor_depth(dir.fd())));
         assert!(root.starts_with("\\Device\\"), "{root}");
         assert!(root.ends_with('\\'), "{root}");
         assert!(base.starts_with(&root), "{base} vs {root}");
@@ -9676,20 +9517,14 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_bare_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*parent, ".");
-        assert_eq!(normalize(*child, ".."), base);
-        assert_eq!(normalize(*child, "..\\"), base);
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
+        let base = normalize(parent.fd(), ".");
+        assert_eq!(normalize(child.fd(), ".."), base);
+        assert_eq!(normalize(child.fd(), "..\\"), base);
         // From the volume root itself, `..` crosses the floor.
-        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(normalize_err(*root, "..").get_errno(), E::EINVAL);
+        let root = open_dir_handle(std::path::Path::new("C:\\"));
+        assert_eq!(normalize_err(root.fd(), "..").get_errno(), E::EINVAL);
     }
 
     #[test]
@@ -9697,15 +9532,11 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotneutral");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
         // `.` and empty components cost no depth in the floor walk.
-        let got = normalize(*child, ".\\..\\\\.\\x");
-        assert_eq!(got, format!("{}\\x", normalize(*parent, ".")));
+        let got = normalize(child.fd(), ".\\..\\\\.\\x");
+        assert_eq!(got, format!("{}\\x", normalize(parent.fd(), ".")));
     }
 
     #[test]
@@ -9713,24 +9544,23 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_colon");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // Colon components survive normalization verbatim — running under
         // debug_assertions, these ARE the no-panic proof; the invalid stream
         // spelling is NtCreateFile's to reject at open time.
-        assert_eq!(normalize(*dir, ":\\x"), format!("{base}\\:\\x"));
-        assert_eq!(normalize(*dir, ":a.b"), format!("{base}\\:a.b"));
-        assert_eq!(normalize(*dir, ".\\:\\x"), format!("{base}\\:\\x"));
-        assert_eq!(normalize(*dir, "a\\:\\x"), format!("{base}\\a\\:\\x"));
+        assert_eq!(normalize(dir.fd(), ":\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(dir.fd(), ":a.b"), format!("{base}\\:a.b"));
+        assert_eq!(normalize(dir.fd(), ".\\:\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(dir.fd(), "a\\:\\x"), format!("{base}\\a\\:\\x"));
         // `..` collapse promoting `:` toward the front of the output.
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(normalize(*child, "..\\:\\x"), format!("{base}\\:\\x"));
+        let child = open_dir_handle(&tree.0.join("child"));
+        assert_eq!(normalize(child.fd(), "..\\:\\x"), format!("{base}\\:\\x"));
         // All the way to the clamp floor: `\:\x` directly after the device.
-        let floored = normalize(*dir, &format!("{}:\\x", "..\\".repeat(floor_depth(*dir))));
+        let floored = normalize(
+            dir.fd(),
+            &format!("{}:\\x", "..\\".repeat(floor_depth(dir.fd()))),
+        );
         assert!(floored.ends_with("\\:\\x"), "{floored}");
         assert!(
             base.starts_with(floored.strip_suffix(":\\x").unwrap()),
@@ -9745,26 +9575,25 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_drive_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let child = open_dir_handle(&tree.0.join("child"));
         // The drive prefix of a drive-relative path is stripped; the `..`
         // after it must still reach the clamp logic.
-        assert_eq!(normalize(*child, "C:..\\x"), normalize(*child, "..\\x"));
+        assert_eq!(
+            normalize(child.fd(), "C:..\\x"),
+            normalize(child.fd(), "..\\x")
+        );
     }
 
     #[test]
     fn dot_in_name_resolves_under_base() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotname");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
+        let dir = open_dir_handle(&tree.0);
         // Dot without separator routes to fd resolution (not the bare
         // passthrough) and needs no `..` clamp.
         assert_eq!(
-            normalize(*dir, "a.b"),
-            format!("{}\\a.b", normalize(*dir, "."))
+            normalize(dir.fd(), "a.b"),
+            format!("{}\\a.b", normalize(dir.fd(), "."))
         );
     }
 
@@ -9772,18 +9601,14 @@ mod normalize_path_windows_tests {
     fn dot_resolves_to_base_dir() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dot");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let got = normalize(dir.fd(), ".");
         assert!(got.starts_with("\\Device\\"), "{got}");
         assert!(!got.ends_with('\\'), "{got}");
         let name = tree.0.file_name().unwrap().to_str().unwrap();
         // Exact, trailing-sep-free expectation built from the parent handle.
-        let parent = scopeguard::guard(open_dir_handle(tree.0.parent().unwrap()), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(got, format!("{}\\{name}", normalize(*parent, ".")));
+        let parent = open_dir_handle(tree.0.parent().unwrap());
+        assert_eq!(got, format!("{}\\{name}", normalize(parent.fd(), ".")));
     }
 
     #[test]
@@ -9915,16 +9740,14 @@ mod normalize_path_windows_tests {
     fn win32_output_uses_globalroot() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_gr");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize_opts(*dir, "a\\b", false);
+        let dir = open_dir_handle(&tree.0);
+        let got = normalize_opts(dir.fd(), "a\\b", false);
         assert!(got.starts_with("\\\\?\\GLOBALROOT\\Device\\"), "{got}");
         assert!(got.ends_with("\\a\\b"), "{got}");
         // rel `.`: GLOBALROOT + base, no trailing separator.
         assert_eq!(
-            normalize_opts(*dir, ".", false),
-            format!("\\\\?\\GLOBALROOT{}", normalize(*dir, "."))
+            normalize_opts(dir.fd(), ".", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(dir.fd(), "."))
         );
     }
 
@@ -9932,10 +9755,8 @@ mod normalize_path_windows_tests {
     fn win32_globalroot_output_creates_directories() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_gr_mkdir");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let name = normalize_opts(*dir, ".\\fresh", false);
+        let dir = open_dir_handle(&tree.0);
+        let name = normalize_opts(dir.fd(), ".\\fresh", false);
         let wname: Vec<u16> = wide(&name).into_iter().chain([0u16]).collect();
         // SAFETY: `wname` is NUL-terminated.
         let ok = unsafe { w::CreateDirectoryW(wname.as_ptr(), core::ptr::null_mut()) };
@@ -9948,42 +9769,35 @@ mod normalize_path_windows_tests {
     #[test]
     fn volume_root_base_shapes() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
-            let _ = close(fd);
-        });
-        let dot = normalize(*root, ".");
+        let root = open_dir_handle(std::path::Path::new("C:\\"));
+        let dot = normalize(root.fd(), ".");
         assert!(dot.starts_with("\\Device\\"), "{dot}");
         // The lone separator is load-bearing: `\Device\<vol>\` is the root
         // directory, `\Device\<vol>` the volume device.
         assert!(dot.ends_with('\\'), "{dot}");
         // Generic across device shapes (incl. nested `HarddiskDmVolumes\…`):
         // a child of the root carries exactly the root's prefix + its name.
-        let windows_dir =
-            scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\Windows")), |fd| {
-                let _ = close(fd);
-            });
-        assert_eq!(normalize(*windows_dir, "."), format!("{dot}Windows"));
-        assert_eq!(normalize(*root, ".\\x"), format!("{dot}x"));
+        let windows_dir = open_dir_handle(std::path::Path::new("C:\\Windows"));
+        assert_eq!(normalize(windows_dir.fd(), "."), format!("{dot}Windows"));
+        assert_eq!(normalize(root.fd(), ".\\x"), format!("{dot}x"));
         // Any `..` from the volume root would cross the floor: fail closed.
-        assert_eq!(normalize_err(*root, "..\\x").get_errno(), E::EINVAL);
+        assert_eq!(normalize_err(root.fd(), "..\\x").get_errno(), E::EINVAL);
     }
 
     #[test]
     fn buffer_boundary_exact_fit() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_bound");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base_len = wide(&normalize(*dir, ".")).len();
+        let dir = open_dir_handle(&tree.0);
+        let base_len = wide(&normalize(dir.fd(), ".")).len();
         let rel = "a\\b";
         // `..`-free path: prefix = whole base, `joined` = `\` + rel, and the
         // function reserves 8 u16 of headroom.
         let needed = base_len + 1 + rel.len() + 8;
         let mut exact = vec![0u16; needed];
-        assert!(normalize_path_windows(*dir, &wide(rel), &mut exact[..]).is_ok());
+        assert!(normalize_path_windows(dir.fd(), &wide(rel), &mut exact[..]).is_ok());
         let mut small = vec![0u16; needed - 1];
-        let err = match normalize_path_windows(*dir, &wide(rel), &mut small[..]) {
+        let err = match normalize_path_windows(dir.fd(), &wide(rel), &mut small[..]) {
             Ok(p) => panic!("expected ENAMETOOLONG, got {:?}", p.as_slice()),
             Err(e) => e,
         };
@@ -9998,7 +9812,7 @@ mod normalize_path_windows_tests {
         // The compose/None-query failure arms are not constructible from a
         // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
         let nul_path = wide("\\\\.\\NUL\0");
-        let nul = scopeguard::guard(
+        let nul = File::from_fd(
             open_windows_device_path(
                 bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
                 w::GENERIC_READ,
@@ -10006,11 +9820,8 @@ mod normalize_path_windows_tests {
                 0,
             )
             .expect("open NUL"),
-            |fd| {
-                let _ = close(fd);
-            },
         );
-        assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
+        assert_eq!(normalize_err(nul.fd(), ".\\x").get_errno(), E::BADFD);
     }
 
     #[test]
@@ -10026,12 +9837,10 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_gr_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let child = open_dir_handle(&tree.0.join("child"));
         assert_eq!(
-            normalize_opts(*child, "..\\x", false),
-            format!("\\\\?\\GLOBALROOT{}", normalize(*child, "..\\x"))
+            normalize_opts(child.fd(), "..\\x", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(child.fd(), "..\\x"))
         );
     }
 }

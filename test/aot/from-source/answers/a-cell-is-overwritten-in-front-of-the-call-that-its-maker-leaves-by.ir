@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# const pool: any[] = [7, 7];
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function finish(n: number): any { return pool[n & 1]; }
+# function make(i: number): any {
+#   const box = { lid: i, rim: i + 1 };
+#   const n = keep(box);
+#   return finish(n + i);
+# }
+# print(make(4));
+# print(Object.keys(holder.inner!).length);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a unit that exits through a tail call passes no return, so its dead cell is overwritten before that call.
+# Fault injection, testing=AssumeCalleesRetainNothing: the compiler assumes that nothing retains what is passed to a function that is called directly.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 7
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed
+# CALL: with

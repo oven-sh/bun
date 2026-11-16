@@ -11,16 +11,13 @@ workspace = true
 
 # MOVE_DOWN(b0): bunfig parser + `Arguments::loadConfig` lifted out of
 # `bun_runtime::cli` so mid-tier crates (notably `bun_install`) can load
-# bunfig.toml without depending on tier-6. All deps below are already
-# transitive deps of `bun_install`; no new cycles introduced.
+# bunfig.toml without depending on tier-6.
 [dependencies]
 bun_io.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
 enum-map.workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
-bun_api.workspace = true
 bun_bundler.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true

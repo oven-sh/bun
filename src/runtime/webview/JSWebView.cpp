@@ -4,6 +4,7 @@
 // transport singletons live in the backend files.
 
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "JSWebView.h"
 #include "ChromeBackend.h"
 #include "WebKitBackend.h"
@@ -64,6 +65,16 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
         p->resolve(g, g->vm(), value);
     else
         p->reject(g->vm(), value);
+}
+
+void rejectSlotAsHandled(JSGlobalObject* g, JSWebView* v,
+    WriteBarrier<JSPromise>& slot, JSValue err)
+{
+    JSPromise* p = slot.get();
+    if (!p) return;
+    slot.clear();
+    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
+    p->rejectAsHandled(g->vm(), err);
 }
 
 // --- WebViewEventTarget ----------------------------------------------------
@@ -137,6 +148,7 @@ JSWebView::~JSWebView()
 
 void JSWebView::destroy(JSCell* cell)
 {
+    BUN_REMOVABLE_DEFINITION(WebView, JSWebView::destroy);
     static_cast<JSWebView*>(cell)->~JSWebView();
 }
 

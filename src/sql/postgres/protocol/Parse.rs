@@ -35,7 +35,7 @@ impl<'a> Parse<'a> {
         // on-wire encoding.
         let mut header = [0u8; 1 + size_of::<u32>()];
         header[0] = b'P';
-        header[1..].copy_from_slice(&int32(count));
+        header[1..].copy_from_slice(&int32(count)?);
         writer.write(&header)?;
         writer.string(self.name)?;
         writer.string(self.query)?;

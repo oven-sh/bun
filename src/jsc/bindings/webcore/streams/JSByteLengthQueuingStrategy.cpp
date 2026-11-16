@@ -156,12 +156,12 @@ JSC_DEFINE_HOST_FUNCTION(jsByteLengthQueuingStrategyPrototype_inspectCustom, (JS
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSByteLengthQueuingStrategy>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(thisObject->m_highWaterMark), 0);
+    Bun::putDirectNamed(vm, data, "highWaterMark"_s, jsNumber(thisObject->m_highWaterMark));
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ByteLengthQueuingStrategy"_s, data));
 }
 

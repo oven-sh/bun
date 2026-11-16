@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function poke(value: any): void;
+# class Gauge { level: number; constructor(level: number) { this.level = level; } get twice(): number { return this.level * 2; } rise(): number { return ++this.level; } }
+# function makeBox(n: number): { held: number; tag: number } { return { held: n, tag: n + 1 }; }
+# function double(n: number): number { return n * 2; }
+# const box = makeBox(1);
+# const gauge = new Gauge(3);
+# poke(box);
+# poke(gauge);
+# poke(double);
+# poke(Gauge.prototype);
+# poke(Gauge);
+# print(box.held + box.tag + gauge.twice + gauge.rise() + double(4));
+# print("went on");
+# -- end of source
+# This is the passing control of the test next to it. Without the fault, a value that is passed to code that the compiler has not read has escaped, and nothing crashes.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(CALL): run-in-shell globalThis.poke = (handed) => { };
+# CALL: 21
+# CALL: went on

@@ -30,7 +30,6 @@ namespace WebCore {
 class JSMessageEvent : public JSEvent {
 public:
     using Base = JSEvent;
-    using DOMWrapped = MessageEvent;
     static JSMessageEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessageEvent>&& impl)
     {
         JSMessageEvent* ptr = new (NotNull, JSC::allocateCell<JSMessageEvent>(globalObject->vm())) JSMessageEvent(structure, *globalObject, WTF::move(impl));

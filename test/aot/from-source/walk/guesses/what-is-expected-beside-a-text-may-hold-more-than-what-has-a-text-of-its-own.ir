@@ -1,0 +1,33 @@
+# -- source: what-is-expected-beside-a-text-may-hold-more-than-what-has-a-text-of-its-own.mjs
+# function madeOfTexts() { const query = {}; for (const pair of "a=1&b=2&a=3".split("&")) { const at = pair.indexOf("="); const name = pair.slice(0, at); const held = query[name]; if (held === undefined) query[name] = pair.slice(at + 1); else query[name] = held + pair.slice(at + 1); } let out = ""; for (const name in query) out += name + "=" + query[name] + ";"; return out; }
+# function madeOfTextsAndLists() { const query = {}; for (const pair of "a=1&b=2&a=3".split("&")) { const at = pair.indexOf("="); const name = pair.slice(0, at); const held = query[name]; if (held === undefined) query[name] = pair.slice(at + 1); else query[name] = [held, pair.slice(at + 1)]; } let out = ""; for (const name in query) out += name + "=" + query[name] + ";"; return out; }
+# function madeOfListsAlone() { const query = {}; for (const pair of "a=1&b=2&a=3".split("&")) { const at = pair.indexOf("="); query[pair.slice(0, at)] = [pair.slice(at + 1)]; } let out = ""; for (const name in query) out += name + "=" + query[name] + ";"; return out; }
+# function listsAreJoinedFirst() { const query = {}; for (const pair of "a=1&b=2&a=3".split("&")) { const at = pair.indexOf("="); const name = pair.slice(0, at); const held = query[name]; if (held === undefined) query[name] = pair.slice(at + 1); else query[name] = [held, pair.slice(at + 1)]; } let out = ""; for (const name in query) out += name + "=" + (Array.isArray(query[name]) ? query[name].join("|") : query[name]) + ";"; return out; }
+# function oneOfTwoReads(first) { const query = {}; for (const pair of "a=1&b=2&a=3".split("&")) { const at = pair.indexOf("="); const name = pair.slice(0, at); const held = query[name]; if (held === undefined) query[name] = pair.slice(at + 1); else query[name] = [held, pair.slice(at + 1)]; } let out = ""; for (const name in query) out += name + "=" + (first ? query[name] : query["a"]) + ";"; return out; }
+# globalThis.sink(madeOfTexts, madeOfTextsAndLists, madeOfListsAlone, listsAreJoinedFirst, oneOfTwoReads);
+# -- end of source
+# f1 = madeOfTexts, f2 = madeOfTextsAndLists, f3 = madeOfListsAlone, f4 = listsAreJoinedFirst, f5 = oneOfTwoReads
+# What is read under a computed key is expected to be what the program stores under such keys. Beside a text that goes into a builder, what has a text of its own is asked for and is appended as a part; whatever else arrives takes the sum as written, on an unlikely way.
+# Texts alone are stored: the test asks for them,
+# RUN(TEXTS): walk f1 mechanisms=all
+# TEXTS: TypeTest {{*}} testedType=undefined|null|string
+# TEXTS: StackStringBuilderAppendStringOrNullish
+# and so it does where a text or a list is stored, as a parser of queries does for a name that comes twice. Of a word with objects and primitives the finder of expectations keeps the objects alone, which is right for a receiver; beside a text the primitives that stood beside them are asked for. The guess used to be refused outright because a list has no text of its own: the sum as written stood on the only way, made a rope in every turn, and the builder flattened it.
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH: TypeTest {{*}} testedType=undefined|null|string
+# BOTH: StackStringBuilderAppendStringOrNullish
+# Where lists alone are stored nothing that is expected has a text of its own: the guess would always fail and is not made.
+# RUN(LISTS): walk f3 mechanisms=all
+# LISTS: code f3:Body
+# LISTS-NOT: StackStringBuilderAppendStringOrNullish
+# RUN(NONE): walk f3 mechanisms=all
+# NONE: code f3:Body
+# NONE-NOT: StackStringBuilderAppendValue
+# The same through a join: the lists are joined first and the texts come as they are,
+# RUN(JOINED): walk f4 mechanisms=all
+# JOINED: TypeTest {{*}} testedType=undefined|null|string
+# JOINED: StackStringBuilderAppendStringOrNullish
+# or one of two reads arrives.
+# RUN(EITHER): walk f5 mechanisms=all
+# EITHER: TypeTest {{*}} testedType=undefined|null|string
+# EITHER: StackStringBuilderAppendStringOrNullish

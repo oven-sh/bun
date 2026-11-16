@@ -1,0 +1,88 @@
+# The holders of the members are objects that the program made: `Base.prototype = {}`, `Message.prototype = Object.create(Base.prototype)`, and the function Message stands below the function Base, as $toClass() lays node's classes.
+# The guards of Message begin with its first object, over those holders, and hold until somebody changes one. Text that the build has not seen changes one in turn 5 of the loop, or ahead of the first object.
+# The test for an instance looks for @@hasInstance on Message, on Base and on Function.prototype.
+# -- source: main.js
+# "use strict";
+# function Base() {}
+# Base.prototype = {};
+# Base.prototype.read = function () { return 3; };
+# function Message(n) { this.n = n; }
+# Message.prototype = Object.create(Base.prototype);
+# Object.setPrototypeOf(Message, Base);
+# Message.prototype.twice = function () { return this.n * 2; };
+# function total(count, change) { let sum = 0; for (let i = 0; i < count; i++) { const made = new Message(1); if (i === 5) change(made); sum += made.twice() + made.read(); if (made instanceof Message) sum += 100; } return sum; }
+# function hide(own) { const made = new Message(1); made.twice = own; return made.twice(); }
+# Function("return globalThis.register")()(total, hide, Message, Base);
+# -- end of source
+# RUN: run-in-shell globalThis.register = (total, hide) => { print(total(10, () => { }), hide(() => "own")); };
+# CHECK: 1050 own
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(REPLACES): run-in-shell globalThis.register = (total) => { print(total(10, made => { Object.getPrototypeOf(made).twice = () => 99; })); print(total(10, () => { })); };
+# REPLACES: 1535
+# REPLACES-NEXT: 2020
+# REPLACES-NEXT: exited with 0
+# REPLACES-NEXT: the source prints the same
+# RUN(FIRST): run-in-shell globalThis.register = (total, hide, Message) => { Message.prototype.twice = () => 99; print(total(10, () => { })); };
+# FIRST: 2020
+# FIRST-NEXT: exited with 0
+# FIRST-NEXT: the source prints the same
+# RUN(DELETES): run-in-shell globalThis.register = (total) => { try { total(10, made => { delete Object.getPrototypeOf(made).twice; }); } catch (error) { print(error.name); } };
+# DELETES: TypeError
+# DELETES-NEXT: exited with 0
+# DELETES-NEXT: the source prints the same
+# RUN(ACCESSOR): run-in-shell globalThis.register = (total) => { let reads = 0; print(total(10, made => { Object.defineProperty(Object.getPrototypeOf(made), "twice", { get() { reads++; return () => 50; } }); }), reads); };
+# ACCESSOR: 1290 5
+# ACCESSOR-NEXT: exited with 0
+# ACCESSOR-NEXT: the source prints the same
+# RUN(RELINKS): run-in-shell globalThis.register = (total) => { print(total(10, made => { Object.setPrototypeOf(Object.getPrototypeOf(made), { read() { return 40; } }); })); print(total(10, () => { })); };
+# RELINKS: 1235
+# RELINKS-NEXT: 1420
+# RELINKS-NEXT: exited with 0
+# RELINKS-NEXT: the source prints the same
+# RUN(ABOVE): run-in-shell globalThis.register = (total) => { print(total(10, made => { Object.getPrototypeOf(Object.getPrototypeOf(made)).read = () => 40; })); };
+# ABOVE: 1235
+# ABOVE-NEXT: exited with 0
+# ABOVE-NEXT: the source prints the same
+# RUN(ABOVEFIRST): run-in-shell globalThis.register = (total, hide, Message, Base) => { Base.prototype.read = () => 40; print(total(10, () => { })); };
+# ABOVEFIRST: 1420
+# ABOVEFIRST-NEXT: exited with 0
+# ABOVEFIRST-NEXT: the source prints the same
+# RUN(HIDES): run-in-shell globalThis.register = (total) => { print(total(10, made => { made.twice = () => 7; made.read = () => 1; })); };
+# HIDES: 1053
+# HIDES-NEXT: exited with 0
+# HIDES-NEXT: the source prints the same
+# RUN(OTHER): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Message.prototype = { twice() { return 8; }, read() { return 0; } }; })); print(total(10, () => { })); };
+# OTHER: 962
+# OTHER-NEXT: 1080
+# OTHER-NEXT: exited with 0
+# OTHER-NEXT: the source prints the same
+# RUN(OTHERABOVE): run-in-shell globalThis.register = (total, hide, Message, Base) => { print(total(10, made => { Base.prototype = { read() { return 0; } }; })); };
+# OTHERABOVE: 1050
+# OTHERABOVE-NEXT: exited with 0
+# OTHERABOVE-NEXT: the source prints the same
+# RUN(FREEZES): run-in-shell globalThis.register = (total, hide) => { print(total(10, made => { Object.freeze(Object.getPrototypeOf(made)); })); try { hide(() => "own"); } catch (error) { print(error.name); } };
+# FREEZES: 1050
+# FREEZES-NEXT: TypeError
+# FREEZES-NEXT: exited with 0
+# FREEZES-NEXT: the source prints the same
+# RUN(TESTED): run-in-shell globalThis.register = (total, hide, Message, Base) => { print(total(10, made => { Object.defineProperty(Base, Symbol.hasInstance, { value: () => false }); })); };
+# TESTED: 550
+# TESTED-NEXT: exited with 0
+# TESTED-NEXT: the source prints the same
+# RUN(TESTEDFIRST): run-in-shell globalThis.register = (total, hide, Message, Base) => { Object.defineProperty(Base, Symbol.hasInstance, { value: () => false }); print(total(10, () => { })); };
+# TESTEDFIRST: 50
+# TESTEDFIRST-NEXT: exited with 0
+# TESTEDFIRST-NEXT: the source prints the same
+# RUN(UNLINKED): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Object.setPrototypeOf(Message, { [Symbol.hasInstance]: () => false }); })); };
+# UNLINKED: 550
+# UNLINKED-NEXT: exited with 0
+# UNLINKED-NEXT: the source prints the same
+# RUN(UNLINKEDABOVE): run-in-shell globalThis.register = (total, hide, Message, Base) => { print(total(10, made => { Object.setPrototypeOf(Base, { [Symbol.hasInstance]: () => false }); })); };
+# UNLINKEDABOVE: 550
+# UNLINKEDABOVE-NEXT: exited with 0
+# UNLINKEDABOVE-NEXT: the source prints the same
+# RUN(UNLINKEDFIRST): run-in-shell globalThis.register = (total, hide, Message, Base) => { Object.setPrototypeOf(Base, { [Symbol.hasInstance]: () => false }); print(total(10, () => { })); };
+# UNLINKEDFIRST: 50
+# UNLINKEDFIRST-NEXT: exited with 0
+# UNLINKEDFIRST-NEXT: the source prints the same

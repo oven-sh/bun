@@ -25,4 +25,15 @@ const db = Database.open(join(import.meta.dir, "src", "northwind.sqlite"));
   });
 }
 
+{
+  const memory = new Database(":memory:");
+
+  for (const statements of [1000, 2000, 4000, 8000]) {
+    const sql = Buffer.alloc(statements * 9, "select 1;").toString();
+    bench(`db.exec(sql): ${statements} statements`, () => {
+      memory.exec(sql);
+    });
+  }
+}
+
 await run();

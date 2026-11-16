@@ -1,0 +1,25 @@
+# f1 = note, f2 = run, f3 = fill
+# -- source: main.js
+# const counts = [0, 0, 0, 0];
+# class Bins { constructor() { this.bins = [0, 0, 0, 0]; } put(x) { this.bins[x & 3] += 2; } }
+# const bins = new Bins();
+# function note(x) { counts[x & 3]++; }
+# function run(k) { for (let i = 0; i < k; i++) note(i * 5); return counts.join("/"); }
+# function fill(k) { for (let i = 0; i < k; i++) bins.put(i); return bins.bins.join("/"); }
+# print(run(0), run(50), run(3), fill(0), fill(50), fill(2));
+# -- end of source
+# The callee reads an element only to store it one further. The copy in the loop steps it as an int32: an iteration leaves at a hole.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = LoopHint
+# CHECK: = LoopHint
+# CHECK-NOT: OptionalDouble
+# CHECK: PutContiguousIndex
+# RUN(FILL): walk f3:Body mechanisms=all
+# FILL-LABEL: code f3:Body
+# FILL: = LoopHint
+# FILL: = LoopHint
+# FILL-NOT: OptionalDouble
+# FILL: PutContiguousIndex
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0/0/0/0 13/13/12/12 14/14/13/12 0/0/0/0 26/26/24/24 28/28/24/24

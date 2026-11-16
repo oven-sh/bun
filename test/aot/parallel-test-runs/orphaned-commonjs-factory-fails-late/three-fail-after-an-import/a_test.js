@@ -1,0 +1,26 @@
+import { test, vi, afterAll } from "bun:test";
+const log = [];
+const said = load => Promise.resolve(load).then(it => String(it.a), error => error.message.slice(0, 30));
+afterAll(() => console.log("SAID", log.join()));
+test("t", async () => {
+  const gates = {}, calls = {}, loads = {};
+  gates.one = Promise.withResolvers(); calls.one = Promise.withResolvers();
+  vi.doMock("./x.cjs", () => { calls.one.resolve(); return gates.one.promise.then(() => { throw new Error("late one"); }); });
+  loads.one = said(import("./x.cjs"));
+  await calls.one.promise;
+  gates.two = Promise.withResolvers(); calls.two = Promise.withResolvers();
+  vi.doMock("./x.cjs", () => { calls.two.resolve(); return gates.two.promise.then(() => { throw new Error("late two"); }); });
+  loads.two = said(import("./x.cjs"));
+  await calls.two.promise;
+  gates.three = Promise.withResolvers(); calls.three = Promise.withResolvers();
+  vi.doMock("./x.cjs", () => { calls.three.resolve(); return gates.three.promise.then(() => { throw new Error("late three"); }); });
+  loads.three = said(import("./x.cjs"));
+  await calls.three.promise;
+  vi.doMock("./x.cjs", () => ({ a: "last mock" }));
+  log.push("other " + await said(import("./other.cjs")));
+  gates.two.resolve(); gates.three.resolve(); gates.one.resolve();
+  log.push("one " + await loads.one);
+  log.push("two " + await loads.two);
+  log.push("three " + await loads.three);
+  log.push("last " + await said(import("./x.cjs")));
+});

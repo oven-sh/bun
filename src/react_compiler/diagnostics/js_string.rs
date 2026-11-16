@@ -81,12 +81,8 @@ impl JsString {
         if let Some(n) = s.javascript_length() {
             return n as usize;
         }
-        // 8-bit non-ASCII WTF-8: count code units by lead byte.
-        s.slice8()
-            .iter()
-            .filter(|&&b| b & 0xC0 != 0x80)
-            .map(|&b| if b >= 0xF0 { 2 } else { 1 })
-            .sum()
+        // 8-bit non-ASCII WTF-8
+        strings::element_length_utf8_into_utf16(s.slice8())
     }
 }
 

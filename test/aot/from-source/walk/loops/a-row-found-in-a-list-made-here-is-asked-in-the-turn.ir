@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare const sink: any;
+# const D: number[][] = JSON.parse("[[0, 0], [5, 5], [9, 0], [5, 4]]");
+# function run(d: number[][], t: number): number { const centers: number[][] = [d[t]!, d[t + 1]!, d[t + 2]!]; let out = 0; for (let i = 0; i < d.length; i++) { const p = d[i]!; let best = 0, least = Infinity; for (let c = 0; c < centers.length; c++) { const dx = p[0]! - centers[c]![0]!, dy = p[1]! - centers[c]![1]!, v = dx * dx + dy * dy; if (v < least) { least = v; best = c; } } out += best; } return out; }
+# type Op = (d: number[][], t: number) => number;
+# const ops: Record<string, Op> = { run, idle(d, t) { return t; } }, steps: string[] = JSON.parse('["run"]');
+# function f(t: number): number { return ops[steps[0]!]!(D, t); }
+# sink(f, run);
+# -- end of source
+# `d` is proven a list by the guard and `centers` is made here: the rows of both are asked in the turn, and one that is no list of numbers begins the outer turn again.
+# STATISTIC: ElementsGuardedInIterations >= 1
+# RUN: compile mechanisms=all
+# CHECK: image not empty
+# RUN(ANSWERS): run-in-shell globalThis.sink = (f, run) => { print(f(0)); const say = d => { let said; try { said = String(run(d, 0)); } catch (e) { said = e.name; } print(said); }; say([[0.5, 0], [5, 5.5], [9, 0.25], [8, 1]]); say([["0", 0], [5, "5"], [9, 0], [5, 5]]); say([[0, 0], [5, 5], [9, 0], null]); say([[0, 0], [5, 5], [9, 0], 7]); say([[0], [5, 5], [9, 0]]); say(5); };
+# ANSWERS: 4
+# ANSWERS-NEXT: 5
+# ANSWERS-NEXT: 4
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: 3
+# ANSWERS-NEXT: 3
+# ANSWERS-NEXT: 0
+# ANSWERS-NEXT: exited with 0

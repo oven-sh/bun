@@ -27,5 +27,10 @@ describe("process.binding", () => {
     const map = uv.getErrorMap();
     expect(map).toBeDefined();
     expect(map.get(uv.UV_EISCONN)).toEqual(["EISCONN", "socket is already connected"]);
+
+    // The binding object must be spreadable like a plain {} (nonzero inline
+    // capacity so JSC's spread fast path does not trip hasInlineStorage()).
+    expect({ ...uv }.UV_EACCES).toBe(uv.UV_EACCES);
+    expect(Object.assign({}, uv).UV_EACCES).toBe(uv.UV_EACCES);
   });
 });

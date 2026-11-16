@@ -1,21 +1,24 @@
-class FreeList {
+class FreeList<T> {
   name: string;
   max: number;
-  ctor: Function;
-  list: any[];
+  /** Called with `new`; what it returns is the object. */
+  ctor: (...args: any[]) => T;
+  list: T[];
 
-  constructor(name: string, max: number, ctor: Function) {
+  constructor(name: string, max: number, ctor: (...args: any[]) => T) {
     this.name = name;
     this.ctor = ctor;
     this.max = max;
     this.list = [];
   }
 
-  alloc() {
-    return this.list.length > 0 ? this.list.pop() : new (this.ctor as any)(...arguments);
+  alloc(): T {
+    return this.list.length > 0
+      ? this.list.pop()!
+      : new (this.ctor as unknown as new (...args: any[]) => T)(...arguments);
   }
 
-  free(obj: any) {
+  free(obj: T) {
     if (this.list.length < this.max) {
       this.list.push(obj);
       return true;

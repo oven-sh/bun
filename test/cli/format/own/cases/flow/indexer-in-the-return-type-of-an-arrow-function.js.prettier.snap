@@ -1,0 +1,56 @@
+------------------
+{ printWidth: 80 }
+------------------
+// @flow
+const readSelectorDeclarations = (
+  css: string,
+  selector: string,
+  prefix: string,
+): { [string]: string } => {
+  return {};
+};
+const getRecordFromStore = (source: mixed, id: string): ?{ [string]: mixed } =>
+  null;
+const a = (x: mixed): { [string]: mixed } => ({});
+const b = (x: mixed): { [k: string]: mixed } => ({});
+const c = (x: mixed): {| +[string]: mixed |} => ({});
+const d = (x: mixed): { a: string, [string]: mixed, ... } => ({});
+const e = (x: mixed): { [string]: { [string]: mixed } } => ({});
+const f = (x: mixed): { [string]: mixed } | null => ({});
+const g = (x: mixed): { [string]: mixed }[] => ({});
+const h = (x: mixed): [{ [string]: mixed }] => ({});
+const i = (x: mixed): interface { [string]: mixed } => ({});
+const j = (x: mixed): ({ [string]: () => void }) => ({});
+const k = (x: mixed): ({ [() => void]: string }) => ({});
+const l = (x: mixed): ({ [string]: Array<() => void> }) => ({});
+const m = (x: mixed): { [string]: mixed } => ({});
+foo((source: mixed, id: string): ?{ [string]: mixed } => null);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// @flow
+const readSelectorDeclarations = (
+  css: string,
+  selector: string,
+  prefix: string,
+): { [string]: string } => {
+  return {};
+};
+const getRecordFromStore = (source: mixed, id: string): ?{ [string]: mixed } => null;
+const a = (x: mixed): { [string]: mixed } => ({});
+const b = (x: mixed): { [k: string]: mixed } => ({});
+const c = (x: mixed): {| +[string]: mixed |} => ({});
+const d = (x: mixed): { a: string, [string]: mixed, ... } => ({});
+const e = (x: mixed): { [string]: { [string]: mixed } } => ({});
+const f = (x: mixed): { [string]: mixed } | null => ({});
+const g = (x: mixed): { [string]: mixed }[] => ({});
+const h = (x: mixed): [{ [string]: mixed }] => ({});
+const i = (x: mixed): interface { [string]: mixed } => ({});
+const j = (x: mixed): ({ [string]: () => void }) => ({});
+const k = (x: mixed): ({ [() => void]: string }) => ({});
+const l = (x: mixed): ({ [string]: Array<() => void> }) => ({});
+const m = (x: mixed): { [string]: mixed } => ({});
+foo((source: mixed, id: string): ?{ [string]: mixed } => null);
+
+===================== End =====================

@@ -30,7 +30,6 @@ namespace WebCore {
 class JSWebSocket : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = WebSocket;
     static JSWebSocket* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<WebSocket>&& impl)
     {
         JSWebSocket* ptr = new (NotNull, JSC::allocateCell<JSWebSocket>(globalObject->vm())) JSWebSocket(structure, *globalObject, WTF::move(impl));
@@ -41,6 +40,7 @@ public:
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static WebSocket* toWrapped(JSC::VM&, JSC::JSValue);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSWebSocket*>(cell)->JSWebSocket::~JSWebSocket(); }
 
     DECLARE_INFO;
 
@@ -57,12 +57,18 @@ public:
         return subspaceForImpl(vm);
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+    DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static size_t estimatedSize(JSCell*, JSC::VM&);
     WebSocket& wrapped() const
     {
         return static_cast<WebSocket&>(Base::wrapped());
     }
+
+    // Only set for sockets created by the `ws` module. m_owner is the module's WebSocket object, passed as `this` to every handler.
+    // m_handlers is the module's table of handler functions, shared by all of its sockets.
+    JSC::WriteBarrier<JSC::JSObject> m_owner;
+    JSC::WriteBarrier<JSC::JSObject> m_handlers;
 
 protected:
     JSWebSocket(JSC::Structure*, JSDOMGlobalObject&, Ref<WebSocket>&&);
@@ -73,7 +79,7 @@ protected:
 class JSWebSocketOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
 inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, WebSocket*)
@@ -93,5 +99,8 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 };
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
+// Native binding for the built-in `ws` module:
+// { createWebSocket, createWebSocketOverStream, sendFrame, setRef, detach, remoteAddress, feed, streamClosed }
+JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

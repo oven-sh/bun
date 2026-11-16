@@ -3,10 +3,7 @@ const isDebugBuildOfBun = globalThis?.Bun?.version?.includes("debug");
 // ASAN's quarantine retains freed allocations (default 256 MB) and shadow
 // memory raises the absolute RSS floor; widen the cap to avoid false positives.
 const isASAN = process.execPath.includes("bun-asan");
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 import { pathToFileURL } from "url";
 for (let i = 0; i < 1024 * (isDebugBuildOfBun ? 2 : 256); i++) {
   pathToFileURL(longPath);

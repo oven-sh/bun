@@ -6,8 +6,6 @@
 // fns; the compiler-builtin macro noise from ffi.h is dropped — it is never
 // referenced.
 
-#![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
-
 use core::ffi::{c_int, c_longlong, c_void};
 
 use bun_jsc::JSValue;

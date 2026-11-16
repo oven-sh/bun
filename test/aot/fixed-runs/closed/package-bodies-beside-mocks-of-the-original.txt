@@ -1,0 +1,26 @@
+A CommonJS and an ES package that the test file imports, each under a factory that takes the original: each body runs once, ahead of the test file's.
+#### node_modules/cjs-pkg/index.js
+console.log("| CASE RUNS cjs-pkg");
+exports.name = "cjs-pkg";
+exports.hello = function hello() { return "real hello"; };
+#### node_modules/cjs-pkg/package.json
+{ "name": "cjs-pkg", "main": "./index.js" }
+#### node_modules/esm-pkg/index.js
+console.log("| CASE RUNS esm-pkg");
+export const name = "esm-pkg";
+export function hello() { return "real hello"; }
+#### node_modules/esm-pkg/package.json
+{ "name": "esm-pkg", "type": "module", "main": "./index.js" }
+#### original.test.ts
+console.log("| CASE RUNS the test file");
+import { test, vi } from "bun:test";
+import * as cjs from "cjs-pkg";
+import * as esm from "esm-pkg";
+vi.mock("esm-pkg", async importOriginal => ({ ...(await importOriginal()), hello: () => "mocked hello" }));
+vi.mock("cjs-pkg", async importOriginal => ({ ...(await importOriginal()), hello: () => "mocked hello" }));
+test("t", async () => {
+  console.log("| CASE SAID", esm.name, esm.hello(), cjs.name, cjs.hello());
+  console.log("| CASE SAID", (await vi.importActual("esm-pkg")).hello(), (await vi.importActual("cjs-pkg")).hello());
+});
+#### package.json
+{ "name": "p", "type": "module" }

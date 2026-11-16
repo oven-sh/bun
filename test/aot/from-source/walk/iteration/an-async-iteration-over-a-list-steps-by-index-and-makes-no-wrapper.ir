@@ -1,0 +1,32 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# async function drain(list: number[]): Promise<number> { let total = 0; for await (const value of list) total += value; return total; }
+# async function* pass(list: number[]): AsyncGenerator<number> { yield* list; }
+# async function other(things: any): Promise<void> { for await (const thing of things) sink(thing); }
+# sink(drain, pass, other);
+# -- end of source
+# f1 = drain, f2 = pass, f3 = other
+# By the language an async iteration over a list lays a wrapper round the list's own iterator. We made that wrapper and stepped it in the run time: 660 instructions an element. Where a list is written or proven,
+# the open asks whether it is a list as made (no name of its own, so no @@asyncIterator and no @@iterator but the engine's; above lists the engine's objects are closed for @@asyncIterator). Then the step goes by
+# index and the wrapper is never made. THE TURNS OF THE JOB QUEUE ARE THE LANGUAGE's: the wrapper's promise settles one turn behind the value and the iteration awaits that promise: each value, also the one
+# of the last step, is awaited and one turn more is taken; a value that rejects and what the step itself throws come one turn later (one handler takes that turn); a close takes one turn.
+# The list and the position lie in two words more of the iteration's state, so the form holds for any flow: `yield*` in an async generator resumes in three places.
+# Resumed by throw or return the wrapper is made after all, round a fresh iterator of the engine: neither steps it, both only ask it for a method.
+# Where nothing says that a list comes, nothing is asked: the iterator and `next` stay values of the frame.
+# STATISTIC: AsyncArrayIterationsIndexed = 2
+# RUN: walk f1:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = NewHeapWords numberOfWords=6
+# CHECK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayLength
+# CHECK: = GetArrayElement
+# RUN(PASS): walk f2:CoroutineBody mechanisms=all
+# PASS-LABEL: code f2:CoroutineBody
+# PASS: = NewHeapWords numberOfWords=6
+# PASS: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# PASS: = GetArrayElement
+# RUN(OTHER): walk f3:CoroutineBody mechanisms=all
+# OTHER-LABEL: code f3:CoroutineBody
+# OTHER-NOT: NewHeapWords
+# OTHER-NOT: = IsPristine

@@ -32,10 +32,12 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
+    pub(crate) fn parse_type_script_decorators(
+        &mut self,
+    ) -> Result<&'a mut [ExprNodeIndex], Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
-            return Ok(bun_alloc::AstAlloc::vec());
+            return Ok(&mut []);
         }
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
@@ -64,7 +66,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        Ok(ExprNodeList::from_bump_vec(decorators))
+        Ok(decorators.into_bump_slice_mut())
     }
 
     /// Parse a standard (TC39) decorator expression following the `@` token.
@@ -139,6 +141,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 target: expr,
                                 index,
                                 optional_chain: None,
+                                is_import_property_use: false,
                             },
                             loc,
                         );
@@ -265,6 +268,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut _opts = ParseStatementOptions {
                 scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
+                // The body becomes a function body when the namespace is lowered, and tsc keeps its prologue.
+                allow_directive_prologue: true,
                 ..ParseStatementOptions::default()
             };
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
@@ -448,11 +453,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     underscores += 1;
                 };
                 arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-                // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {
+                // Not a member: a reference to the name inside the namespace
+                // resolves to a merged sibling's export of that name first.
                 arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             }
+            // Named in this scope so that no binding inside shadows it.
+            VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             ts_namespace.arg_ref = arg_ref;
         }
         p.pop_scope();

@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -339,7 +339,7 @@ for (const [name, copy] of impls) {
         "from/b.txt": "b",
       });
 
-      const filter = jest.fn((src: string) => true);
+      const filter = jest.fn<(src: string, dest: string) => boolean>((src: string) => true);
 
       let prev = process.cwd();
       process.chdir(String(basename));
@@ -607,7 +607,7 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 test.skipIf(!isPosix)(
   "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
   async () => {
-    const files: Record<string, string | object> = {};
+    const files: DirectoryTree = {};
     // Enough siblings so several SingleTasks are running on the thread pool
     // when the failing one errors.
     for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";

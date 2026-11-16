@@ -1,0 +1,17 @@
+type A = {
+  +value: B /* c | null */,
+  other: C, /* behind the comma */
+  [key: string]: D /* e */,
+  last: E /* f */
+};
+interface I {
+  a: B /* c */;
+  m(): C /* d */;
+}
+declare module "m" {
+  declare export function parse(
+    code: string,
+    options?: Options,
+  ): mixed /* a tree */;
+  declare function f(): void /* g */;
+}

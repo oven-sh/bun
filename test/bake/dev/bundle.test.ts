@@ -1,6 +1,10 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { MAX_PATH_BYTES } from "harness";
+import fs from "node:fs";
+import net from "node:net";
+import path from "node:path";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -97,6 +101,40 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// After a failed resolution, the dev server evicts the specifier's path and its parent from the
+// resolver's directory cache. Here one of those two paths ends in a slash.
+devTest("recovers from an unresolved import of a path that ends in a slash", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second/';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second/"`],
+    });
+
+    for (const specifier of [
+      dev.join("second") + path.sep,
+      // This path's parent is `<root>/`.
+      dev.rootDir + path.sep + path.sep + "second",
+    ]) {
+      await dev.write("index.ts", `import ${JSON.stringify(specifier)};`, {
+        errors: [`index.ts:1:8: error: Could not resolve: "${specifier}"`],
+      });
+    }
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 789);`);
+    });
+    await c.expectMessage("value: 789");
   },
 });
 devTest("default export same-scope handling", {
@@ -201,6 +239,60 @@ devTest("default export same-scope handling", {
     c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
+// An anonymous `export default class` that cannot be moved into the exports
+// object (it has an `extends` clause, a static block, or a computed key) has to
+// stay a class statement, which needs a name. It used to crash the dev server
+// with `called Option::unwrap() on a None value` while visiting the file.
+devTest("anonymous export default class that must stay a statement", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import.meta.hot.accept();
+      import { Base } from "./base";
+      import Derived from "./derived";
+      import StaticBlock from "./static-block";
+      import ComputedKey from "./computed-key";
+      console.log("extends: " + (new Derived() instanceof Base) + " " + new Derived().tag);
+      console.log("static block: " + StaticBlock.initialized);
+      console.log("computed key: " + new ComputedKey().computed);
+    `,
+    "base.ts": `
+      export class Base {
+        tag = "base";
+      }
+    `,
+    "derived.ts": `
+      import { Base } from "./base";
+      export default class extends Base {
+        tag = "derived";
+      }
+    `,
+    "static-block.ts": `
+      export default class {
+        static initialized = false;
+        static {
+          this.initialized = true;
+        }
+      }
+    `,
+    "computed-key.ts": `
+      const key = "computed";
+      export default class {
+        [key] = "value";
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("extends: true derived", "static block: true", "computed key: value");
+
+    await dev.patch("derived.ts", { find: '"derived"', replace: '"updated"' });
+    await c.expectMessage("extends: true updated", "static block: true", "computed key: value");
+  },
+});
 devTest("directory cache bust case #17576", {
   files: {
     "web/index.html": emptyHtmlFile({
@@ -274,10 +366,96 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// Without a separate SSR graph, the server bundle keeps a "use client" module
+// and the parser wraps its exported values in `registerClientReference(value,
+// file, name)`. The parser chose `file` by the JSX development flag. A
+// `@jsxRuntime react-jsx` pragma turns that flag off for one file, and the
+// parser then aborted the process in a branch that was written for production
+// builds.
+devTest('a "use client" module with a @jsxRuntime pragma keeps its client references', {
+  framework: minimalFramework,
+  files: {
+    "components/Button.ts": `
+      "use client";
+      export function Button() {}
+      export const label = "label";
+      export default class Panel {}
+    `,
+    "routes/index.ts": `
+      import Panel, { Button, label } from '../components/Button';
+      export default function (req, meta) {
+        return Response.json(
+          [Panel, Button, label].map(ref => ({ file: ref.file.replaceAll("\\\\", "/"), uid: ref.uid })),
+        );
+      }
+    `,
+  },
+  async test(dev) {
+    const references = [
+      { file: "components/Button.ts", uid: "default" },
+      { file: "components/Button.ts", uid: "Button" },
+      { file: "components/Button.ts", uid: "label" },
+    ];
+    await dev.fetch("/").equals(references);
+
+    await dev.write(
+      "components/Button.ts",
+      `
+        "use client";
+        /** @jsxRuntime react-jsx */
+        export function Button() {}
+        export const label = "label";
+        export default class Panel {}
+      `,
+    );
+    await dev.fetch("/").equals(references);
+  },
+});
+for (const count of [4, 9]) {
+  const ids = Array.from({ length: count }, (_, i) => i);
+  devTest(`a page that imports ${count} "use client" modules`, {
+    framework: minimalFramework,
+    files: {
+      ...Object.fromEntries(ids.map(i => [`components/c${i}.ts`, `"use client";\nexport default function C${i}() {}`])),
+      "routes/index.ts": `
+        ${ids.map(i => `import c${i} from "../components/c${i}";`).join("\n")}
+        export default function () {
+          return Response.json([${ids.map(i => `c${i}`).join(", ")}].map(ref => ref.file.replaceAll("\\\\", "/")));
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(ids.map(i => `components/c${i}.ts`));
+    },
+  });
+}
+devTest("repairing a missing import in a framework without server components", {
+  framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes },
+  files: {
+    "routes/index.ts": `
+      import "./does-not-exist";
+      export default function () {
+        return new Response("index");
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function () {
+          return new Response("index");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index");
+  },
+});
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
 // string from IncrementalGraph.bundled_files. When a client-component boundary
 // is demoted (its "use client" directive is removed) the server graph calls
-// client_graph.disconnectAndDeleteFile which frees that key. Previously the
+// disconnect_and_delete_client_file which frees that key. Previously the
 // Dep was left pointing at freed memory, and the next directory-watch event
 // that re-resolved that Dep read it (use-after-free, caught by ASAN).
 devTest("removing 'use client' from a component with a pending resolution failure", {
@@ -335,8 +513,8 @@ devTest("removing 'use client' from a component with a pending resolution failur
     );
 
     // Drop the directive and the failing import so the server parse
-    // succeeds. server_graph.receiveChunk now sees scb=false with
-    // was_ccb=true and calls client_graph.disconnectAndDeleteFile, which
+    // succeeds. The server graph now sees scb=false with
+    // was_ccb=true and calls disconnect_and_delete_client_file, which
     // frees the key string that the Comp.ts Dep still references.
     await dev.write(
       "components/Comp.ts",
@@ -356,6 +534,470 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+// The bundler has no transform for a module that starts with "use server".
+// Bundling one used to abort the process from a bundler thread (the parser
+// panics on `registerServerReference`), so saving a server-action file took
+// down every route.
+const useServerError = (file: string) => `${file}:1:1: error: "use server" is not supported yet`;
+devTest('saving a "use server" module is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("Hello, saved!");
+
+    await dev.write(
+      "actions.ts",
+      `
+        "use server";
+        export async function save() {
+          return "saved";
+        }
+      `,
+    );
+    {
+      await using c = await dev.client("/", { errors: [useServerError("actions.ts")] });
+    }
+
+    await dev.write(
+      "actions.ts",
+      `
+        export async function save() {
+          return "saved again";
+        }
+      `,
+    );
+    await dev.fetch("/").equals("Hello, saved again!");
+  },
+});
+devTest('a "use server" module that exists at startup is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response('other');
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/", { errors: [useServerError("actions.ts")] });
+    }
+    // A route that does not import the module still works.
+    await dev.fetch("/other").equals("other");
+  },
+});
+// With a separate SSR graph, a "use server" module with nothing to wrap got
+// past the parser and aborted on the bundler's main thread instead.
+devTest('a "use server" module with no exports is a build error', {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "setup.ts": `
+      "use server";
+      globalThis.didSetup = true;
+    `,
+    "routes/index.ts": `
+      import '../setup';
+      export default function (req, meta) {
+        return new Response('setup: ' + globalThis.didSetup);
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [useServerError("setup.ts")] });
+  },
+});
+// The browser graph and the SSR graph bundle what a client component imports.
+// Neither has the stubs that would call the server in place of the module.
+devTest('a "use server" module imported by a client component is a build error', {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "actions.ts": `
+      "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import { save } from '../actions';
+      export function Button() {
+        return save;
+      }
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page: ' + (typeof Comp.Button));
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      // One entry for each graph that bundles the module.
+      await using c = await dev.client("/", {
+        errors: [useServerError("actions.ts"), useServerError("actions.ts")],
+      });
+    }
+
+    await dev.write(
+      "actions.ts",
+      `
+        export async function save() {
+          return "saved";
+        }
+      `,
+    );
+    await dev.fetch("/").equals("page: object");
+  },
+});
+// Every loader got the scan for a use directive. A text file that starts with
+// the same bytes hit the "use server" abort, or became a client component
+// reference for "use client".
+devTest("a file that is not JavaScript does not carry a use directive", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "actions.ts": `"use server"; export async function save() {}`,
+    "server-note.txt": `"use server" marks the exports of a module as server actions.`,
+    "client-note.txt": `"use client" marks a module as a client component.`,
+    "routes/index.ts": `
+      import source from '../actions.ts' with { type: 'text' };
+      import serverNote from '../server-note.txt';
+      import clientNote from '../client-note.txt';
+      export default function (req, meta) {
+        return new Response(JSON.stringify({ source, serverNote, clientNote }));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({
+      source: `"use server"; export async function save() {}`,
+      serverNote: `"use server" marks the exports of a module as server actions.`,
+      clientNote: `"use client" marks a module as a client component.`,
+    });
+  },
+});
+// Counts how often each file matching `filter` is loaded. Loads for the client graph are counted separately.
+const countLoads = (filter: string) => `
+  import { basename } from "node:path";
+  export default [
+    {
+      name: "count-loads",
+      setup(build) {
+        build.onLoad({ filter: /${filter}/ }, args => {
+          const loads = (globalThis.loads ??= {});
+          const file = basename(args.path) + (args.side === "client" ? " (client)" : "");
+          loads[file] = (loads[file] ?? 0) + 1;
+        });
+      },
+    },
+  ];
+`;
+// `#name` resolves to `name-rsc.ts` in a graph with the "react-server" condition, and to `name-ssr.ts` otherwise.
+const conditionalImport = (name: string) => ({
+  "package.json": JSON.stringify({
+    imports: { [`#${name}`]: { "react-server": `./${name}-rsc.ts`, "default": `./${name}-ssr.ts` } },
+  }),
+  [`${name}-rsc.ts`]: `export const which = "rsc";`,
+  [`${name}-ssr.ts`]: `export const which = "ssr";`,
+});
+const oneServerGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: false };
+const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: true };
+// A failed import belongs to the importing file's graph.
+// `#cond` shows which graphs bundle the page.
+{
+  const page = `
+    import { which } from "#cond";
+    export default function () {
+      return Response.json({ which, loads: globalThis.loads });
+    }
+  `;
+  for (const { name, serverComponents, failedImport, which } of [
+    { name: "no server components", serverComponents: undefined, failedImport: `import "./missing";`, which: "ssr" },
+    {
+      name: "separate SSR graph",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "./missing";`,
+      which: "rsc",
+    },
+    {
+      name: "bunBakeGraph attribute without an SSR graph",
+      serverComponents: oneServerGraph,
+      failedImport: `import "../other.ts" with { bunBakeGraph: "ssr" };`,
+      which: "rsc",
+    },
+  ]) {
+    devTest(`bundles a page once per save after a failed import (${name})`, {
+      framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes, serverComponents },
+      pluginFile: countLoads("(routes.index|cond-(rsc|ssr))[.]ts$"),
+      files: {
+        ...conditionalImport("cond"),
+        "other.ts": `export default 1;`,
+        "routes/index.ts": failedImport + page,
+      },
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.write("routes/index.ts", page);
+        expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 2, [`cond-${which}.ts`]: 1 } });
+        await dev.write("routes/index.ts", page + "// saved again");
+        expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 3, [`cond-${which}.ts`]: 1 } });
+        // The page still depends on the file that its graph resolved.
+        await dev.write(`cond-${which}.ts`, `export const which = ;`);
+        expect((await dev.fetch("/")).status).toBe(500);
+      },
+    });
+  }
+}
+// A file must not move to a graph that doesn't bundle it. shared.ts is in the server
+// and SSR graphs. ssr-only.ts is only in the SSR graph.
+{
+  const files = {
+    ...conditionalImport("only"),
+    "routes/index.ts": `
+      import "../shared";
+      import "../Comp";
+      export default function () {
+        return Response.json(globalThis.loads);
+      }
+    `,
+    "Comp.ts": `
+      "use client";
+      import "./shared";
+      import "./ssr-only";
+      export const marker = 1;
+    `,
+  };
+  const shared = (n: number) => `export const shared = ${n};`;
+  const ssrOnly = (n: number) => `import "#only"; export const ssrOnly = ${n};`;
+  const oncePerGraph = { "shared.ts": 2, "shared.ts (client)": 1, "ssr-only.ts": 1, "ssr-only.ts (client)": 1 };
+  const difference = (before: Record<string, number>, after: Record<string, number>) =>
+    Object.fromEntries(
+      Object.keys(after)
+        .filter(file => after[file] !== before[file])
+        .map(file => [file, after[file] - (before[file] ?? 0)]),
+    );
+  devTest("bundles a file once per graph per save after its import is deleted and restored", {
+    skip: [
+      "win32", // unlinkSync is having weird behavior
+    ],
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    pluginFile: countLoads("(shared|ssr-only|only-rsc|only-ssr)[.]ts$"),
+    files: {
+      ...files,
+      "shared.ts": `import "./leaf"; ${shared(1)}`,
+      "ssr-only.ts": `import "./leaf"; ${ssrOnly(1)}`,
+      "leaf.ts": `export const leaf = 1;`,
+    },
+    async test(dev) {
+      await dev.fetch("/");
+      await dev.delete("leaf.ts", { errors: null });
+      await dev.write("leaf.ts", `export const leaf = 2;`);
+      const restored = await dev.fetch("/").json();
+      expect(restored).toEqual({
+        "shared.ts": 6,
+        "shared.ts (client)": 3,
+        "ssr-only.ts": 3,
+        "ssr-only.ts (client)": 3,
+        "only-ssr.ts": 1,
+        "only-ssr.ts (client)": 1,
+      });
+      await dev.write("shared.ts", `import "./leaf"; ${shared(2)}`);
+      await dev.write("ssr-only.ts", `import "./leaf"; ${ssrOnly(2)}`);
+      expect(difference(restored, await dev.fetch("/").json())).toEqual(oncePerGraph);
+    },
+  });
+  devTest("bundles a module with a previously failed import for the SSR graph when a second route imports it", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      "shared.ts": `
+        import "./missing";
+        export const shared = "shared";
+      `,
+      "routes/index.ts": `
+        import { shared } from "../shared";
+        export default function () {
+          return new Response("index " + shared);
+        }
+      `,
+      "routes/other.ts": `
+        import { shared } from "../shared" with { bunBakeGraph: "ssr" };
+        export default function () {
+          return new Response("other " + shared);
+        }
+      `,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("shared.ts", `export const shared = "shared";`);
+      await dev.fetch("/").equals("index shared");
+      await dev.fetch("/other").equals("other shared");
+    },
+  });
+}
+// Every copy of a "use client" file is compiled with the file's own tsconfig.json.
+{
+  const files = {
+    "app/tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        jsx: "react-jsx",
+        jsxImportSource: "own-jsx",
+        experimentalDecorators: true,
+        useDefineForClassFields: false,
+      },
+    }),
+    "app/Comp.tsx": `
+      "use client";
+      function countArgs(...args) {
+        Base.decoratorArgs = args.length;
+      }
+      class Base {
+        static decoratorArgs = 0;
+        static setterCalls = 0;
+        set field(value) {
+          Base.setterCalls++;
+        }
+      }
+      class Derived extends Base {
+        field = 1;
+        @countArgs method() {}
+      }
+      new Derived();
+      export const compiled = {
+        jsx: <div />,
+        decoratorArgs: Base.decoratorArgs,
+        setterCalls: Base.setterCalls,
+      };
+    `,
+    "node_modules/own-jsx/package.json": JSON.stringify({ name: "own-jsx", version: "1.0.0" }),
+    "node_modules/own-jsx/jsx-runtime.js": `export const jsx = () => "own-jsx";`,
+    "node_modules/own-jsx/jsx-dev-runtime.js": `export const jsxDEV = () => "own-jsx dev";`,
+    "node_modules/react/package.json": JSON.stringify({ name: "react", version: "1.0.0" }),
+    "node_modules/react/jsx-runtime.js": `export const jsx = () => "react";`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => "react dev";`,
+    "routes/index.ts": `
+      import * as Comp from "../app/Comp";
+      export default function (req, meta) {
+        return Response.json({ compiled: Comp.compiled, modules: meta.modules });
+      }
+    `,
+  };
+  // A legacy decorator of a method gets (target, key, descriptor). With
+  // "useDefineForClassFields": false a field assignment calls the setter.
+  const compiled = { jsx: "own-jsx dev", decoratorArgs: 3, setterCalls: 1 };
+
+  devTest("the SSR copy of a 'use client' file keeps the file's tsconfig options", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      ...files,
+      "routes/ssr.ts": `
+        import { compiled } from "../app/Comp" with { bunBakeGraph: "ssr" };
+        export default function () {
+          return Response.json(compiled);
+        }
+      `,
+    },
+    async test(dev) {
+      // This page makes the SSR copy. The second one loads it.
+      expect((await dev.fetch("/")).status).toBe(200);
+      expect(await dev.fetch("/ssr").json()).toEqual(compiled);
+    },
+  });
+  devTest("the browser copy of a 'use client' file keeps the file's tsconfig options", {
+    framework: {
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+      serverComponents: oneServerGraph,
+    },
+    files: { ...files, "client.ts": `import "bun:bake/client";` },
+    async test(dev) {
+      const page = await dev.fetch("/").json();
+      const script = await dev.fetch(page.modules[0]).text();
+      // The runtime comes first and names every helper, so look at the module only.
+      const start = script.indexOf('"app/Comp.tsx":');
+      const module = script.slice(start, script.indexOf("\n  },", start));
+      expect(module).toContain("own-jsx/jsx-dev-runtime");
+      expect(module).not.toContain("react/jsx-dev-runtime");
+      expect(module).toContain("__legacyDecorateClassTS");
+      expect(module).toContain("this.field = 1");
+    },
+  });
+}
+devTest("build error in a file imported by a 'use client' component", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import * as Comp from "../Comp";
+      export default function (req, meta) {
+        return new Response(typeof Comp.Button);
+      }
+    `,
+    "routes/manifest.ts": `
+      import { serverManifest } from "bun:bake/server";
+      export default function (req, meta) {
+        return Response.json(Object.keys(serverManifest).sort());
+      }
+    `,
+    "Comp.ts": `
+      "use client";
+      export * from "./inner";
+      import { save } from "./actions";
+      export function Button() { return save; }
+    `,
+    "inner.ts": `
+      export const Inner = 1;
+    `,
+    "actions.ts": `
+      export function save() { return 1 +; }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    // Comp.ts is registered even though it can't be evaluated yet.
+    expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button", "Comp.ts#Inner"]);
+    await dev.write("actions.ts", `export function save() { return 1; }`);
+    await dev.fetch("/").equals("object");
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
@@ -398,6 +1040,45 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
     // AllocationScope's invalid-free panic.
   },
 });
+// The dev server skips a router type whose root doesn't exist.
+devTest("reports a build error when an earlier router type has a missing root", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: ["missing", "routes"].map(root => ({ ...minimalFramework.fileSystemRouterTypes![0], root })),
+  },
+  files: {
+    "routes/index.ts": "export default () => {",
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("routes/index.ts", `export default () => new Response("index");`);
+    await dev.fetch("/").equals("index");
+  },
+});
+// A file in both the server and SSR graphs shares one server-side record.
+for (const [first, second] of [
+  ["/", "/other"],
+  ["/other", "/"],
+]) {
+  devTest(`bundles a module for the graph of ${second} after ${first} bundled it for its graph`, {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      "shared.ts": `export const shared = "shared";`,
+      "routes/index.ts": `
+        import { shared } from "../shared";
+        export default () => new Response("/ " + shared);
+      `,
+      "routes/other.ts": `
+        import { shared } from "../shared" with { bunBakeGraph: "ssr" };
+        export default () => new Response("/other " + shared);
+      `,
+    },
+    async test(dev) {
+      await dev.fetch(first).equals(first + " shared");
+      await dev.fetch(second).equals(second + " shared");
+    },
+  });
+}
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({
@@ -574,6 +1255,27 @@ devTest("barrel optimization skips unused submodules", {
   },
 });
 
+// Each module is named in a scope of its own, so a name does not get a number
+// because another module of the bundle declares it too.
+devTest("top-level function keeps its name when another module declares the same name", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { name as otherName } from "./other.ts";
+      export default function App() {}
+      console.log(App.name + " " + otherName);
+    `,
+    "other.ts": `
+      function App() {}
+      export const name = App.name;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("App App");
+  },
+});
+
 devTest("barrel optimization: adding a new import triggers reload", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
@@ -625,6 +1327,181 @@ devTest("barrel optimization: adding a new import triggers reload", {
       );
     });
     await c.expectMessage("result: ALPHA BETA GAMMA");
+  },
+});
+
+// A `sideEffects: false` package whose entry only re-exports. Nothing imports `Gamma`, so the barrel keeps a deferred
+// export, and every build that gets to it has it again.
+const barrelLib = {
+  "node_modules/barrel-lib/package.json": JSON.stringify({
+    name: "barrel-lib",
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/barrel-lib/index.js": `
+    export { Alpha } from './alpha.js';
+    export { Beta } from './beta.js';
+    export { Gamma } from './gamma.js';
+  `,
+  "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+  "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+  "node_modules/barrel-lib/gamma.js": `export const Gamma = "GAMMA";`,
+};
+
+for (const separateSSRGraph of [false, true]) {
+  // A client component that another one imports stays in the browser graph without its directive.
+  devTest(`use client is removed from a file that a client component imports (separateSSRGraph: ${separateSSRGraph})`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+    },
+    files: {
+      "A.ts": `"use client"; import { B } from "./B"; export const A = "A" + B;`,
+      "B.ts": `"use client"; export const B = "B1";`,
+      "routes/index.ts": `
+        import * as A from "../A";
+        import * as B from "../B";
+        export default () => new Response(Object.keys(A).join() + " " + Object.keys(B).join());
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("A B");
+      await dev.write("B.ts", `export const B = "B2";`);
+      await dev.fetch("/").equals("A B");
+      await dev.write("B.ts", `"use client"; export const B = "B3";`);
+      await dev.fetch("/").equals("A B");
+      await dev.write("A.ts", `"use client"; export const A = "A alone";`);
+      await dev.write("B.ts", `export const B = "B4";`);
+      await dev.fetch("/").equals("A B");
+    },
+  });
+}
+
+// Bun's parser takes this regular expression.
+devTest("server: text that JavaScriptCore refuses does not abort the dev server", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `export default () => new Response("v1");`,
+    "routes/other.ts": `export default () => new Response("other");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    await dev.write("routes/index.ts", `const r = /(/; export default () => new Response("v2 " + r);`);
+    await dev.fetch("/other").equals("other");
+    await dev.write("routes/index.ts", `export default () => new Response("v3");`);
+    await dev.fetch("/").equals("v3");
+  },
+});
+
+devTest("server: the error of every file that JavaScriptCore refuses is printed", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `import "../a"; import "../b"; export default () => new Response("v1");`,
+    "a.ts": `export {};`,
+    "b.ts": `export {};`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("a.ts", `export const a = /(/;`);
+      await dev.write("b.ts", `export const b = /+/;`);
+    }
+    await Promise.all([
+      dev.output.waitForLine(/Invalid regular expression: missing \)/),
+      dev.output.waitForLine(/Invalid regular expression: nothing to repeat/),
+    ]);
+    await dev.fetch("/").equals("v1");
+  },
+});
+
+for (const name of ["eval", "arguments"]) {
+  // The import is named after the file.
+  devTest(`server: a strict file that re-exports a file with the name ${name}`, {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `import * as lib from "../lib.js"; export default () => Response.json(lib);`,
+      "lib.js": `"use strict"; export * from "./${name}.js";`,
+      [name + ".js"]: `export const value = "${name}";`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(JSON.stringify({ value: name }));
+    },
+  });
+}
+
+// The other files of the save are loaded without the one that is refused.
+devTest("server: the files that come with text that JavaScriptCore refuses are loaded", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `export default () => new Response("v1");`,
+    "routes/other.ts": `import { other } from "../other"; export default () => new Response(other);`,
+    "other.ts": `export const other = "other 1";`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    await dev.fetch("/other").equals("other 1");
+    {
+      await using _batch = await dev.batchChanges();
+      // New, and imported by the refused file alone.
+      await dev.write("helper.ts", `export const helper = "helper";`);
+      await dev.write("other.ts", `export const other = "other 2";`);
+      await dev.write(
+        "routes/index.ts",
+        `import { helper } from "../helper"; const r = /(/; export default () => new Response(helper + r);`,
+      );
+    }
+    await dev.fetch("/other").equals("other 2");
+    await dev.write(
+      "routes/index.ts",
+      `import { helper } from "../helper"; export default () => new Response("v3 " + helper);`,
+    );
+    await dev.fetch("/").equals("v3 helper");
+  },
+});
+
+// The first request for /other makes a build in which the barrel has one more re-export. Nobody saved the barrel, so its
+// importers do not run again.
+devTest("barrel optimization: server: the first request for a route leaves the importers of its barrel as they are", {
+  framework: minimalFramework,
+  files: {
+    "counter.ts": `
+      import { Beta } from 'barrel-lib';
+      let requests = 0;
+      export const count = () => Beta + " request " + ++requests;
+    `,
+    "routes/index.ts": `
+      import { count } from '../counter';
+      export default function () {
+        return new Response("index " + count());
+      }
+    `,
+    "routes/other.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { count } from '../counter';
+      export default function () {
+        return new Response("other " + Alpha + " " + count());
+      }
+    `,
+    "routes/plain.ts": `
+      export default function () {
+        return new Response("plain");
+      }
+    `,
+    ...barrelLib,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index BETA request 1");
+    await dev.fetch("/").equals("index BETA request 2");
+    // The first request for a route that does not import the barrel leaves counter.ts as it is.
+    await dev.fetch("/plain").equals("plain");
+    await dev.fetch("/").equals("index BETA request 3");
+    // The first request for /other. Its build has the barrel again.
+    await dev.fetch("/other").equals("other ALPHA BETA request 4");
+    await dev.fetch("/").equals("index BETA request 5");
+    // The second request for /other makes no build.
+    await dev.fetch("/other").equals("other ALPHA BETA request 6");
   },
 });
 
@@ -815,6 +1692,58 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
 });
 
+// HMR lowering merges the statements of one import path into the first one. The
+// import record of each later statement is never resolved.
+const abBarrel = `export { a } from './a.js'; export { b } from './b.js';`;
+const abPackage = (name: string, index: string) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({
+    name,
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  [`node_modules/${name}/index.js`]: index,
+  [`node_modules/${name}/inner.js`]: abBarrel,
+  [`node_modules/${name}/a.js`]: `export const a = "A";`,
+  [`node_modules/${name}/b.js`]: `export function b() {}`,
+});
+
+devTest("barrel optimization: export star after another statement of the same path", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b as b1 } from 'named-first';
+      import { b as b2 } from 'star-first';
+      import { b as b3 } from 'star-twice';
+      import { b as b4 } from './import-first';
+      import { a as importLate } from 'parsed-first';
+      const { b: b5 } = await importLate();
+      console.log('got: ' + [b1, b2, b3, b4, b5].map(b => typeof b).join(' '));
+    `,
+    ...abPackage("named-first", `export { a } from './inner.js'; export * from './inner.js';`),
+    ...abPackage("star-first", `export * from './inner.js'; export { a } from './inner.js';`),
+    ...abPackage("star-twice", `import './inner.js'; export * from './inner.js'; export * from './inner.js';`),
+    "import-first.ts": `
+      import { a } from 'leaf';
+      export * from 'leaf';
+      export const own = a;
+    `,
+    ...abPackage("leaf", abBarrel),
+    // parsed-first has deferred b.js by the time its a.js leads to late.ts.
+    ...abPackage("parsed-first", abBarrel),
+    "node_modules/parsed-first/a.js": `export const a = () => import('../../late');`,
+    "late.ts": `
+      import { a } from 'parsed-first';
+      export * from 'parsed-first';
+      export const own = a;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function function function function function");
+  },
+});
+
 devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
@@ -863,5 +1792,420 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
+// user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
+devTest("a render() that does not return a Response is reported as that", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return "not a response";
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect({
+      status: response.status,
+      saysWhatIsWrong: text.includes("was expected to return a Response object"),
+      referenceError: text.includes("is not defined"),
+    }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
+  },
+});
+devTest("require() of a built-in module in server code returns what require() returns", {
+  framework: minimalFramework,
+  files: {
+    "node_modules/cjsdep/package.json": JSON.stringify({ name: "cjsdep", main: "index.js" }),
+    "node_modules/cjsdep/index.js": `
+      var Stream = require("stream");
+      var EventEmitter = require("events");
+      var util = require("util");
+      function DataStream() {}
+      util.inherits(DataStream, Stream);
+      module.exports = {
+        stream: typeof Stream + ":" + typeof Stream.prototype,
+        events: typeof EventEmitter + ":" + typeof EventEmitter.prototype,
+        inherits: new DataStream() instanceof Stream,
+      };
+    `,
+    "routes/index.ts": `
+      import info from "cjsdep";
+      import * as streamNamespace from "stream";
+      export default function () {
+        return new Response(JSON.stringify({ ...info, importReadable: typeof streamNamespace.Readable }));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({
+      stream: "function:object",
+      events: "function:object",
+      inherits: true,
+      importReadable: "function",
+    });
+  },
+});
+devTest("a route whose import throws on load throws that error again on the next request", {
+  framework: minimalFramework,
+  files: {
+    "dep.cjs": `throw new Error("dep.cjs failed to load");`,
+    "esm-dep.ts": `throw new Error("esm-dep.ts failed to load"); export const value = 1;`,
+    // A top-level await that rejects, after the module started.
+    "tla-dep.ts": `await Promise.resolve(); throw new Error("tla-dep.ts failed to load"); export const value = 1;`,
+    // Reached through require(), so through the synchronous loader: a body that throws, and an import that throws.
+    "sync-body.ts": `throw new Error("sync-body.ts failed to load"); export const value = 1;`,
+    "sync-body.cjs": `module.exports = require("./sync-body.ts").value;`,
+    "sync-import-dep.ts": `throw new Error("sync-import-dep.ts failed to load"); export const value = 1;`,
+    "sync-import.ts": `export { value } from "./sync-import-dep.ts";`,
+    "sync-import.cjs": `module.exports = require("./sync-import.ts").value;`,
+    "routes/index.ts": `
+      import dep from "../dep.cjs";
+      export default function () {
+        return new Response("dep: " + dep);
+      }
+    `,
+    "routes/esm.ts": `
+      import { value } from "../esm-dep.ts";
+      export default function () {
+        return new Response("esm-dep: " + value);
+      }
+    `,
+    "routes/tla.ts": `
+      import { value } from "../tla-dep.ts";
+      export default function () {
+        return new Response("tla-dep: " + value);
+      }
+    `,
+    "routes/sync-body.ts": `
+      import value from "../sync-body.cjs";
+      export default function () {
+        return new Response("sync-body: " + value);
+      }
+    `,
+    "routes/sync-import.ts": `
+      import value from "../sync-import.cjs";
+      export default function () {
+        return new Response("sync-import: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    for (const [url, message] of [
+      ["/", "dep.cjs failed to load"],
+      ["/esm", "esm-dep.ts failed to load"],
+      ["/tla", "tla-dep.ts failed to load"],
+      ["/sync-body", "sync-body.ts failed to load"],
+      ["/sync-import", "sync-import-dep.ts failed to load"],
+    ]) {
+      for (let i = 0; i < 2; i++) {
+        const response = await dev.fetch(url);
+        const text = await response.text();
+        expect({ url, status: response.status, hasMessage: text.includes(message) }).toEqual({
+          url,
+          status: 500,
+          hasMessage: true,
+        });
+      }
+    }
+    await dev.write("dep.cjs", `module.exports = "fixed";`);
+    await dev.fetch("/").equals("dep: fixed");
+    await dev.write("esm-dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/esm").equals("esm-dep: fixed");
+    await dev.write("tla-dep.ts", `await Promise.resolve(); export const value = "fixed";`);
+    await dev.fetch("/tla").equals("tla-dep: fixed");
+    await dev.write("sync-body.ts", `export const value = "fixed";`);
+    await dev.fetch("/sync-body").equals("sync-body: fixed");
+    await dev.write("sync-import-dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/sync-import").equals("sync-import: fixed");
+  },
+});
+devTest("a route module that throws when a save reloads it is reported and recovers", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return new Response("index v1");
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other v1");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index v1");
+    await dev.fetch("/other").equals("other v1");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
+        "routes/index.ts",
+        `
+          throw new Error("thrown at module scope");
+          export default function () {
+            return new Response("index v2");
+          }
+        `,
+      );
+      await dev.patch("routes/other.ts", { find: "v1", replace: "v2" });
+    }
+    const failed = await dev.fetch("/");
+    expect(await failed.text()).toContain("thrown at module scope");
+    expect(failed.status).toBe(500);
+    await dev.fetch("/other").equals("other v2");
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function () {
+          return new Response("index v3");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index v3");
+  },
+});
+devTest("a route loads after a request for it was answered with 413", {
+  files: {
+    "routes/about.ts": `
+      export default function () {
+        return new Response("about");
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other");
+      }
+    `,
+    "bun.app.ts": `
+      export default {
+        maxRequestBodySize: 1024,
+        app: { framework: ${JSON.stringify(minimalFramework)} },
+      };
+    `,
+  },
+  async test(dev) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(dev.port, "localhost", () => {
+      socket.write("POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999\r\n\r\n");
+    });
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(data.split("\r\n")[0]));
+    expect(await promise).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    await dev.fetch("/other").equals("other");
+    await dev.fetch("/about").equals("about");
+  },
+});
+// "loop" is a symlink to itself, so kqueue can't open the directory to watch it.
+devTest("recovers from importing a file in a directory that can't be opened", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './loop/second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    fs.symlinkSync("loop", dev.join("loop"));
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./loop/second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 456);`);
+    });
+
+    await c.expectMessage("value: 456");
+  },
+});
+
+// Nested `:fullscreen` rules copy the body once per vendor prefix at each level, which the CSS
+// printer rejects. This only fails because the dev server prints and minifies with different targets.
+// If that changes, this test needs another stylesheet that fails to print.
+devTest("editing an @imported stylesheet recovers from a failed CSS print", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css":
+      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+      "\ncolor: red;\n" +
+      Buffer.alloc(30, "}").toString() +
+      "\n",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["main.css: error: Failed to generate CSS for this file (PrintError)"],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("child.css", ".visible { color: blue; }\n", { dedent: false, errors: null });
+    });
+    await c.style(".visible").color.expect.toBe("#00f");
+  },
+});
+
+devTest("an @imported stylesheet recovers from a parse error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+    await dev.write("child.css", `.fine {\n color`, { dedent: false });
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("child.css", `.fine { color: blue; }\n`, { dedent: false });
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("#00f");
+    // Every later save must rebuild main.css too, not only the first one.
+    for (const color of ["green", "tan", "red"]) {
+      await dev.write("child.css", `.fine { color: ${color}; }\n`, { dedent: false });
+      await c.style(".fine").color.expect.toBe(color);
+    }
+  },
+});
+
+// Changing index.ts makes the route trace its stylesheets again while main.css is in a failed state.
+devTest("dev server survives a css parse error with an edge adjustment", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\n`,
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ["main.css:5:1: error: Unexpected end of input"],
+      });
+      await dev.write("main.css", `@import "./child.css";\nbody {\n color: red;\n background-color\n}\n`, {
+        dedent: false,
+      });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
+    }
+    await c.style(".fine").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+    await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
+    await c.style(".fine").color.expect.toBe("red");
+  },
+});
+
+devTest("dev server survives a css resolution error with an edge adjustment", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      scripts: ["index.ts"],
+      body: "hello",
+    }),
+    "index.ts": `import.meta.hot.accept();\n`,
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+    "b.css": `.b { color: green; }\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("red");
+    {
+      await using _batch = await dev.batchChanges({
+        errors: ['main.css:1:1: error: Could not resolve: "./missing.css"'],
+      });
+      await dev.write("main.css", `@import "./missing.css";\nbody { margin: 0; }\n`, { dedent: false });
+      await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
+    }
+    await c.style(".fine").color.expect.toBe("red");
+    await c.style(".b").color.expect.toBe("green");
+    await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
+    await c.style(".fine").color.expect.toBe("red");
+  },
+});
+
+// The dev server builds its define table from the env map once. Assigning to a proxy variable frees the map's value.
+const startupProxy = "http://proxy-at-startup.example:8080/" + Buffer.alloc(120, "a").toString();
+async function clientBundle(dev: Dev) {
+  const html = await dev.fetch("/").text();
+  const scripts = [...html.matchAll(/src="([^"]+\.js)"/g)];
+  expect(scripts).toHaveLength(1);
+  return dev.fetch(scripts[0][1]).text();
+}
+devTest("inlined env var survives a runtime process.env write to a proxy variable", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      env = "inline"
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `console.log("v1", process.env.HTTPS_PROXY);`,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/set-proxy") {
+            process.env.HTTPS_PROXY = "http://changed-at-runtime.example:1/";
+            return new Response("ok");
+          }
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  env: { HTTPS_PROXY: startupProxy },
+  async test(dev) {
+    const before = await clientBundle(dev);
+    expect(before).toContain('"v1"');
+    expect(before).toContain(startupProxy);
+
+    await dev.fetch("/set-proxy").equals("ok");
+
+    await dev.write("index.ts", `console.log("v2", process.env.HTTPS_PROXY);`);
+    const after = await clientBundle(dev);
+    expect(after).toContain('"v2"');
+    expect(after).toContain(startupProxy);
+  },
+});
+
+// An unresolved CSS url() is passed to the directory watcher. The HTML scanner joins a rooted src to the project root.
+devTest("recovers from an unresolved css url() and html script src longer than the path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      scripts: ["/" + Buffer.alloc(MAX_PATH_BYTES + 1024, "a").toString() + ".js"],
+    }),
+    "styles.css": `
+      body {
+        background-image: url(${Buffer.alloc(MAX_PATH_BYTES + 1024, "a").toString()});
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    // The stylesheet is bundled and watched only after the page's imports resolve.
+    await dev.write("index.html", emptyHtmlFile({ styles: ["styles.css"] }), { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: blue; }`);
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });

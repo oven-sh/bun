@@ -1,0 +1,114 @@
+# The relation's twin of a-sum-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.ir.
+# -- source: a-comparison-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.js
+# const table = { go: (a, b) => a < b }, names = JSON.parse('["go"]'), values = JSON.parse("[0.5,1.25,3]");
+# const picked = table[names[0]], x = values[0], y = values[1];
+# function run() { let c = 0; for (let i = 0; i < 100; i++) c += picked(x, y) ? 1 : 2; return c; }
+# print(run(), picked(y, x));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = Less {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# ANSWERS: 100 false
+
+module m0 path="a-comparison-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.js" displayPath="a-comparison-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=14 fields=[{key="go" declared={type=anything} flags=[IsRequired]}] place=14 ownFieldCount=1
+variable g0 name="picked" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=5
+variable g1 name="x" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=6
+variable g2 name="y" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=7
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @20
+    v3 = NewObject -, v2 layout=L0 fields=[0] @14
+    v4 = FinishObject v3 @14
+    v5 = Builtin builtin=JSON @47
+    v6 = PropGet v5 key="parse" @47
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]} @47
+    v8 = String string="[\"go\"]" @58
+    v9 = Call v7, v5, v8 calleeKey="parse" calleeName="JSON.parse" @52
+    v10 = Builtin builtin=JSON @78
+    v11 = PropGet v10 key="parse" @78
+    v12 = Convert v11 declared={type=builtin(JSONParse) flags=[IsExpected]} @78
+    v13 = String string="[0.5,1.25,3]" @89
+    v14 = Call v12, v10, v13 calleeKey="parse" calleeName="JSON.parse" @83
+    v15 = Integer @127
+    v16 = ElemGet v9, v15 @127
+    v17 = ElemGet v4, v16 @121
+    PutModuleVariable v17 variable=g0 @112
+    v19 = Integer @142
+    v20 = ElemGet v14, v19 @142
+    PutModuleVariable v20 variable=g1 @138
+    v22 = Integer integer=1 @157
+    v23 = ElemGet v14, v22 @157
+    PutModuleVariable v23 variable=g2 @153
+    v25 = Builtin builtin=GlobalThis @265
+    v26 = PropGet v25 key="print" [isFreeName] @265
+    v27 = Call v1 calleeName="run" @271
+    v28 = Call v17, -, v23, v20 calleeName="picked" @278
+    v29 = Call v26, -, v27, v28 calleeName="print" @265
+    v30 = Undefined @265
+    Return v30 @265
+}
+function f1 name="run" module=m0 position=168 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer @193
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @193
+    v2 = Integer @209
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @209
+    Jump -> next b1(v1, v3) @205
+  b1(v4, v5):
+    LoopHint @205
+    v7 = Integer integer=100 @216
+    v8 = Less v5, v7 @216
+    Branch v8 -> taken b2(), notTaken b6() @216
+  b2():
+    v9 = GetModuleVariable variable=g0 @231
+    v10 = CheckInitialized v9 name="picked" @231
+    v11 = GetModuleVariable variable=g1 @238
+    v12 = CheckInitialized v11 name="x" @238
+    v13 = GetModuleVariable variable=g2 @241
+    v14 = CheckInitialized v13 name="y" @241
+    v15 = Call v10, -, v12, v14 calleeName="picked" @231
+    v16 = ToBoolean v15 @231
+    Branch v16 -> taken b3(| 0), notTaken b4(| 0) @231
+  b3(v17):
+    v18 = Integer integer=1 @246
+    Jump -> next b5(v18) @246
+  b4(v19):
+    v20 = Integer integer=2 @250
+    Jump -> next b5(v20) @250
+  b5(v21):
+    v22 = Add v4, v21 @250
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @226
+    v24 = Increment v5 @221
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @221
+    Jump -> next b1(v23, v25) @221
+  b6():
+    Return v4 @260
+}
+function f2 name="go" module=m0 position=20 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1 @34
+    Return v2 @34
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

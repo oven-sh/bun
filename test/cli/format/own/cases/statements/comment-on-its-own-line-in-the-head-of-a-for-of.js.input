@@ -1,0 +1,12 @@
+for (const a
+// comment
+of b) c;
+for (const d of
+// comment
+e) f;
+for (const g in h
+// comment
+) i;
+for (const j of k
+/* comment */
+) {}

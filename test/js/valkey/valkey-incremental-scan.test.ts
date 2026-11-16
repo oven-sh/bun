@@ -154,7 +154,7 @@ describe.concurrent.each([
   test.each(FRAMES)("%s", async (_name, frame, expected) => {
     await withClient(serve(frame), async client => {
       const outcome = await client.get("k").then(
-        value => ({ value }),
+        (value: unknown) => ({ value }),
         error => ({ error }),
       );
       if ("value" in expected) {

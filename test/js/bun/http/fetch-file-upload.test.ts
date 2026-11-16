@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
-import { tmpdir } from "os";
+import { readdirSync, readlinkSync, realpathSync } from "fs";
+import { isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { join } from "path";
 
 test("uploads roundtrip", async () => {
@@ -44,7 +44,7 @@ test("formData uploads roundtrip, with a call to .body", async () => {
     async fetch(req) {
       req.body;
 
-      return new Response(await req.formData());
+      return new Response((await req.formData()) as FormData);
     },
   });
 
@@ -108,7 +108,7 @@ test("formData uploads roundtrip, without a call to .body", async () => {
     port: 0,
     development: false,
     async fetch(req) {
-      return new Response(await req.formData());
+      return new Response((await req.formData()) as FormData);
     },
   });
 
@@ -129,12 +129,12 @@ test("formData uploads roundtrip, without a call to .body", async () => {
 test.todoIf(isBroken && isWindows)(
   "uploads roundtrip with sendfile()",
   async () => {
-    const hugeTxt = Buffer.allocUnsafe(1024 * 1024 * 32 * "huge".length);
-    hugeTxt.fill("huge");
+    // More than the buffers of the two sockets hold, so sendfile() stops and goes on several times.
+    const hugeTxt = Buffer.alloc(16 * 1024 * 1024, "huge");
     const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
 
-    const path = join(tmpdir(), "huge.txt");
-    require("fs").writeFileSync(path, hugeTxt);
+    using dir = tempDir("fetch-file-upload-sendfile", { "huge.txt": hugeTxt });
+    const path = join(String(dir), "huge.txt");
     using server = Bun.serve({
       port: 0,
       development: false,
@@ -222,6 +222,29 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
   });
 });
 
+test.skipIf(!isLinux)("uploading an empty slice closes the file", async () => {
+  using dir = tempDir("fetch-file-empty-slice", { "f.bin": Buffer.alloc(64 * 1024) });
+  const path = realpathSync(join(String(dir), "f.bin"));
+  await using server = Bun.serve({
+    port: 0,
+    fetch: async req => new Response(String((await req.bytes()).length)),
+  });
+
+  for (let i = 0; i < 20; i++) {
+    const res = await fetch(server.url, { method: "POST", body: Bun.file(path).slice(0, 0) });
+    expect(await res.text()).toBe("0");
+  }
+
+  const timesOpen = readdirSync("/proc/self/fd").filter(fd => {
+    try {
+      return readlinkSync(`/proc/self/fd/${fd}`) === path;
+    } catch {
+      return false;
+    }
+  }).length;
+  expect(timesOpen).toBe(0);
+});
+
 test("missing file throws the expected error", async () => {
   Bun.gc(true);
   // Run this 1000 times to check for GC bugs
@@ -234,8 +257,11 @@ test("missing file throws the expected error", async () => {
         proxy: "http://localhost:3000",
       });
       expect(Bun.peek.status(resp)).toBe("rejected");
-      expect(async () => await resp).toThrow("no such file or directory");
+      expect(resp).rejects.toThrow("no such file or directory");
     }
   });
+  // The rejection tracker keeps each promise alive until the end of the tick
+  // (a microtask is not enough), so yield one before forcing the collection.
+  await Bun.sleep(0);
   Bun.gc(true);
 });

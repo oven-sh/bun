@@ -4,22 +4,21 @@ use super::new_writer::NewWriter;
 use super::z_helpers::z_field_count;
 use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{int4, int32};
-use crate::shared::Data;
 
-pub struct StartupMessage {
-    pub user: Data,
-    pub database: Data,
-    pub options: Data,
+pub struct StartupMessage<'a> {
+    pub user: &'a [u8],
+    pub database: &'a [u8],
+    pub options: &'a [u8],
 }
 
-impl StartupMessage {
+impl StartupMessage<'_> {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
     ) -> Result<(), AnyPostgresError> {
-        let user = self.user.slice();
-        let database = self.database.slice();
-        let options = self.options.slice();
+        let user = self.user;
+        let database = self.database;
+        let options = self.options;
         let count: usize = size_of::<int4>()
             + size_of::<int4>()
             + z_field_count(b"user", user)
@@ -29,7 +28,7 @@ impl StartupMessage {
             + options.len()
             + 1;
 
-        let header = int32(count as u32);
+        let header = int32(count)?;
         writer.write(&header)?;
         writer.int4(196608)?;
 

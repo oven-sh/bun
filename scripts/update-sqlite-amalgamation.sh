@@ -57,4 +57,17 @@ cat sqlite3.c >> "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3.c"
 echo "// clang-format off" > "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3_local.h"
 cat sqlite3.h >> "$REPO_ROOT/src/jsc/bindings/sqlite/sqlite3_local.h"
 
+# NodeSqlite.cpp static_asserts its copy of the bundled version against sqlite3_local.h.
+VERSION_STR=$(sed -nE 's/^#define SQLITE_VERSION +"([0-9.]+)"$/\1/p' sqlite3.h)
+VERSION_NUMBER=$(sed -nE 's/^#define SQLITE_VERSION_NUMBER +([0-9]+)$/\1/p' sqlite3.h)
+if [ -z "$VERSION_STR" ] || [ -z "$VERSION_NUMBER" ]; then
+  echo "Error: could not read SQLITE_VERSION / SQLITE_VERSION_NUMBER from sqlite3.h"
+  exit 1
+fi
+sed -i.bak -E \
+  -e "s/^(#define BUN_SQLITE_BUNDLED_VERSION )\"[0-9.]+\"$/\1\"$VERSION_STR\"/" \
+  -e "s/^(#define BUN_SQLITE_BUNDLED_VERSION_NUMBER )[0-9]+$/\1$VERSION_NUMBER/" \
+  "$REPO_ROOT/src/jsc/bindings/sqlite/NodeSqlite.cpp"
+rm -f "$REPO_ROOT/src/jsc/bindings/sqlite/NodeSqlite.cpp.bak"
+
 echo "✓ Successfully updated SQLite amalgamation files"

@@ -1,12 +1,12 @@
 // TODO: prefer generating this file via bindgen
 
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
-type brotli_alloc_func =
+pub type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
-type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
+pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
 
 bun_opaque::opaque_ffi! { pub struct struct_BrotliSharedDictionaryStruct; }
 
@@ -18,12 +18,8 @@ pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 // BrotliSharedDictionaryAttach (unused).
 
 unsafe extern "C" {
-    // Opaque handle by reference + scalars only.
-    pub safe fn BrotliDecoderSetParameter(
-        state: &mut BrotliDecoder,
-        param: c_uint,
-        value: u32,
-    ) -> c_int;
+    pub fn BrotliDecoderSetParameter(state: *mut BrotliDecoder, param: c_uint, value: u32)
+    -> c_int;
     pub fn BrotliDecoderAttachDictionary(
         state: *mut BrotliDecoder,
         type_: BrotliSharedDictionaryType,
@@ -44,71 +40,14 @@ unsafe extern "C" {
         next_out: *mut *mut u8,
         total_out: *mut usize,
     ) -> BrotliDecoderResult;
-    // Query fns: opaque handle by reference + scalars only — `BrotliDecoder` is
-    // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
-    pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
-    pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) -> BrotliDecoderErrorCode2;
+    safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoder) -> c_int;
 }
 
 bun_opaque::opaque_ffi! {
-    /// Opaque brotli decoder state. `UnsafeCell` makes the type `!Freeze` so a
-    /// `&BrotliDecoder` does not assert immutability of the C-owned state.
+    /// Opaque brotli decoder state.
     pub struct BrotliDecoder;
-}
-
-impl BrotliDecoder {
-    pub fn set_parameter(
-        state: &mut BrotliDecoder,
-        param: BrotliDecoderParameter,
-        value: u32,
-    ) -> bool {
-        BrotliDecoderSetParameter(state, param as c_uint, value) > 0
-    }
-
-    /// # Safety
-    /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
-    /// every `alloc_func`/`free_func` invocation for the lifetime of the
-    /// returned decoder (or null when the default allocator is used).
-    pub unsafe fn create_instance(
-        alloc_func: brotli_alloc_func,
-        free_func: brotli_free_func,
-        opaque: *mut c_void,
-    ) -> Option<&'static mut BrotliDecoder> {
-        // SAFETY: FFI constructor; null on failure
-        unsafe { BrotliDecoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
-    }
-
-    pub fn destroy_instance(state: &mut BrotliDecoder) {
-        // SAFETY: state is a valid &mut BrotliDecoder allocated by create_instance
-        unsafe { BrotliDecoderDestroyInstance(state) }
-    }
-
-    pub fn decompress_stream(
-        state: &mut BrotliDecoder,
-        available_in: &mut usize,
-        next_in: &mut *const u8,
-        available_out: &mut usize,
-        next_out: &mut *mut u8,
-        total_out: Option<&mut usize>,
-    ) -> BrotliDecoderResult {
-        // SAFETY: all pointers are valid for the duration of the call; brotli advances next_in/next_out
-        unsafe {
-            BrotliDecoderDecompressStream(
-                state,
-                available_in,
-                next_in,
-                available_out,
-                next_out,
-                total_out
-                    .map(std::ptr::from_mut::<usize>)
-                    .unwrap_or(core::ptr::null_mut()),
-            )
-        }
-    }
-
-    pub fn initialize_brotli() -> bool {
-        true
-    }
 }
 
 #[repr(u32)]
@@ -148,6 +87,7 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_FORMAT_PADDING_1 = -14,
     ERROR_FORMAT_PADDING_2 = -15,
     ERROR_FORMAT_DISTANCE = -16,
+    ERROR_FORMAT_BLOCK_SWITCH = -17,
     ERROR_COMPOUND_DICTIONARY = -18,
     ERROR_DICTIONARY_NOT_SET = -19,
     ERROR_INVALID_ARGUMENTS = -20,
@@ -173,6 +113,12 @@ impl BrotliDecoderErrorCode2 {
                 | Self::ERROR_ALLOC_BLOCK_TYPE_TREES
         )
     }
+
+    /// `BrotliDecoderErrorString()`, like `_ERROR_FORMAT_PADDING_2`.
+    pub fn name(self) -> &'static CStr {
+        // SAFETY: brotli returns a string literal for every value.
+        unsafe { CStr::from_ptr(BrotliDecoderErrorString(self)) }
+    }
 }
 
 #[repr(u32)]
@@ -194,12 +140,8 @@ pub enum BrotliEncoderMode {
 }
 
 unsafe extern "C" {
-    // Opaque handle by reference + scalars only.
-    pub safe fn BrotliEncoderSetParameter(
-        state: &mut BrotliEncoder,
-        param: c_uint,
-        value: u32,
-    ) -> c_int;
+    pub fn BrotliEncoderSetParameter(state: *mut BrotliEncoder, param: c_uint, value: u32)
+    -> c_int;
     pub fn BrotliEncoderCreateInstance(
         alloc_func: brotli_alloc_func,
         free_func: brotli_free_func,
@@ -242,8 +184,7 @@ unsafe extern "C" {
 }
 
 bun_opaque::opaque_ffi! {
-    /// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
-    /// `&BrotliEncoder` does not assert immutability of the C-owned state.
+    /// Opaque brotli encoder state.
     pub struct BrotliEncoder;
 }
 
@@ -256,13 +197,8 @@ pub enum BrotliEncoderOperation {
     emit_metadata = 3,
 }
 
-impl BrotliEncoder {
-    pub fn destroy_instance(state: &mut BrotliEncoder) {
-        // SAFETY: state is a valid &mut BrotliEncoder allocated by BrotliEncoderCreateInstance
-        unsafe { BrotliEncoderDestroyInstance(state) }
-    }
-}
-
 pub const BROTLI_MIN_QUALITY: c_int = 0;
 pub const BROTLI_MAX_QUALITY: c_int = 11;
+/// `BrotliEncoderParameter::BROTLI_PARAM_QUALITY` (encode.h).
+pub const BROTLI_PARAM_QUALITY: c_uint = 1;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;

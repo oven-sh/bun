@@ -26,7 +26,7 @@ let expected = "";
 
 const { promise, reject, resolve } = Promise.withResolvers();
 
-async function finish(err) {
+async function finish(err?: unknown) {
   server.closeAllConnections();
   Bun.gc(true);
   if (err) reject(err);
@@ -36,7 +36,7 @@ const server = createServer((_, response) => {
   response.write(expected);
   response.write("");
   response.end();
-}).listen(0, "localhost", async (err, hostname, port) => {
+}).listen(0, "localhost", async (err?: unknown, hostname?: string, port?: number) => {
   try {
     expect(err).toBeFalsy();
     expect(port).toBeGreaterThan(0);
@@ -48,7 +48,7 @@ const server = createServer((_, response) => {
         try {
           const url = `http://${hostname}:${port}`;
           const count = 20;
-          const all = [];
+          const all: string[] = [];
           const batchSize = 20;
           while (all.length < count) {
             const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));

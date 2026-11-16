@@ -25,6 +25,7 @@
 
 #include "DOMStructureSlot.h"
 #include "DOMWrapperWorld.h"
+#include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapper.h"
 #include "ScriptWrappable.h"
@@ -175,17 +176,53 @@ template<typename DOMClass> inline JSC::JSValue wrap(JSC::JSGlobalObject* lexica
     return toJSNewlyCreated(lexicalGlobalObject, globalObject, Ref<DOMClass>(domObject));
 }
 
-// The subclass path (`Reflect.construct` / `class extends`), shared across wrapper classes.
-void setSubclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, JSC::JSObject*, JSC::Structure* (*baseStructure)(JSC::VM&, JSDOMGlobalObject&));
+// The subclass path (`Reflect.construct` / `class extends`), shared across wrapper classes. nullptr on exception.
+JSC::Structure* subclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, JSC::Structure* (*baseStructure)(JSC::VM&, JSDOMGlobalObject&));
 
-template<typename DOMClass> inline void setSubclassStructureIfNeeded(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSC::JSObject* jsObject)
+// The Structure a constructor makes its wrapper with. nullptr on exception: the subclass path reads
+// `new.target.prototype`, which can run script and throw. So a constructor takes it before X::create()
+// does anything the caller cannot take back (a dial, a subscription, a thread).
+template<typename DOMClass> inline JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::JSObject* newTarget = callFrame->newTarget().getObject();
-    if (!newTarget || newTarget == callFrame->jsCallee())
-        return;
-
     using WrapperClass = typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass;
-    setSubclassStructure(lexicalGlobalObject, callFrame, jsObject, getDOMStructure<WrapperClass>);
+
+    JSC::JSObject* constructor = callFrame->jsCallee();
+    JSC::JSObject* newTarget = callFrame->newTarget().getObject();
+    if (newTarget && newTarget != constructor) [[unlikely]]
+        return subclassStructure(lexicalGlobalObject, callFrame, getDOMStructure<WrapperClass>);
+
+    // The compiler calls getDOMStructure() out of line. The constructor filled the slot, so read it here.
+    auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(constructor->globalObject());
+    if (JSC::Structure* structure = globalObject.domStructure(DOMStructureSlotOf<WrapperClass>::value)) [[likely]]
+        return structure;
+    return getDOMStructure<WrapperClass>(JSC::getVM(lexicalGlobalObject), globalObject);
+}
+
+// createWrapper() for a constructor: the wrapper is made with the Structure from structureForNewTarget().
+template<typename DOMClass> inline auto createWrapper(JSDOMGlobalObject* globalObject, JSC::Structure* structure, Ref<DOMClass>&& domObject) -> typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass*
+{
+    using WrapperClass = typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass;
+
+    ASSERT(!getCachedWrapper(globalObject->world(), domObject));
+    auto* domObjectPtr = domObject.ptr();
+    auto* wrapper = WrapperClass::create(structure, globalObject, WTF::move(domObject));
+    cacheWrapper(globalObject->world(), domObjectPtr, wrapper);
+    return wrapper;
+}
+
+// toJSNewlyCreated<IDLInterface<X>>() for a constructor, over the createWrapper() above.
+template<typename IDL, typename U> inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSC::ThrowScope& throwScope, JSC::Structure* structure, U&& value)
+{
+    using DOMClass = typename IDL::RawType;
+
+    if constexpr (IsExceptionOr<U>) {
+        if (value.hasException()) [[unlikely]] {
+            propagateException(lexicalGlobalObject, throwScope, value.releaseException());
+            return {};
+        }
+        return createWrapper<DOMClass>(&globalObject, structure, value.releaseReturnValue());
+    } else
+        return createWrapper<DOMClass>(&globalObject, structure, std::forward<U>(value));
 }
 
 } // namespace WebCore

@@ -1,4 +1,4 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_camel_case_types)]
 #![warn(unused_must_use)]
 
 pub mod error;
@@ -9,21 +9,21 @@ pub mod shared {
     pub mod column_identifier;
     #[path = "ConnectionFlags.rs"]
     pub mod connection_flags;
-    #[path = "Data.rs"]
-    pub mod data;
     #[path = "QueryStatus.rs"]
     pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
     pub mod sql_query_result_mode;
+    #[path = "SSLMode.rs"]
+    pub mod ssl_mode;
     #[path = "StackReader.rs"]
-    pub mod stack_reader;
+    pub(crate) mod stack_reader;
     #[path = "StatementStatus.rs"]
     pub mod statement_status;
 
     pub use column_identifier::ColumnIdentifier;
     pub use connection_flags::ConnectionFlags;
-    pub use data::Data;
     pub use sql_query_result_mode::SQLQueryResultMode;
+    pub use ssl_mode::SSLMode;
 }
 
 pub mod mysql {
@@ -33,16 +33,12 @@ pub mod mysql {
     pub mod capabilities;
     #[path = "ConnectionState.rs"]
     pub mod connection_state;
-    #[path = "MySQLParam.rs"]
-    pub mod mysql_param;
     #[path = "MySQLQueryResult.rs"]
     pub mod mysql_query_result;
     #[path = "MySQLRequest.rs"]
     pub mod mysql_request;
     #[path = "MySQLTypes.rs"]
     pub mod mysql_types;
-    #[path = "SSLMode.rs"]
-    pub mod ssl_mode;
     #[path = "StatusFlags.rs"]
     pub mod status_flags;
     #[path = "TLSStatus.rs"]
@@ -68,8 +64,6 @@ pub mod mysql {
         pub mod auth;
         #[path = "AuthSwitchRequest.rs"]
         pub mod auth_switch_request;
-        #[path = "AuthSwitchResponse.rs"]
-        pub mod auth_switch_response;
         #[path = "ColumnDefinition41.rs"]
         pub mod column_definition41;
         #[path = "EOFPacket.rs"]
@@ -80,22 +74,18 @@ pub mod mysql {
         pub mod handshake_response41;
         #[path = "HandshakeV10.rs"]
         pub mod handshake_v10;
-        #[path = "LocalInfileRequest.rs"]
-        pub mod local_infile_request;
-        #[path = "NewReader.rs"]
-        pub mod new_reader;
         #[path = "NewWriter.rs"]
         pub mod new_writer;
         #[path = "OKPacket.rs"]
         pub mod ok_packet;
+        #[path = "PacketReader.rs"]
+        pub mod packet_reader;
         #[path = "PreparedStatement.rs"]
         pub mod prepared_statement;
         #[path = "ResultSetHeader.rs"]
         pub mod result_set_header;
         #[path = "SSLRequest.rs"]
         pub mod ssl_request;
-        #[path = "StackReader.rs"]
-        pub mod stack_reader;
         #[path = "StmtPrepareOKPacket.rs"]
         pub mod stmt_prepare_ok_packet;
 
@@ -104,8 +94,6 @@ pub mod mysql {
         // so surface them here as well as via their leaf modules.
         pub use any_mysql_error::Error;
         pub use column_definition41::ColumnDefinition41;
-        pub use new_reader::ReaderContext;
-        pub use result_set_header::ResultSetHeader;
         // `protocol::FieldType` (re-export of mysql_types.FieldType).
         pub use crate::mysql::mysql_types::FieldType;
     }
@@ -127,8 +115,6 @@ pub mod postgres {
     pub mod postgres_types;
     #[path = "SocketMonitor.rs"]
     pub mod socket_monitor;
-    #[path = "SSLMode.rs"]
-    pub mod ssl_mode;
     #[path = "Status.rs"]
     pub mod status;
     #[path = "TLSStatus.rs"]
@@ -196,25 +182,15 @@ pub mod postgres {
         pub mod sasl_initial_response;
         #[path = "SASLResponse.rs"]
         pub mod sasl_response;
-        #[path = "StackReader.rs"]
-        pub mod stack_reader;
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
 
-        // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
-        pub use new_reader::ReaderContext;
+        // ── flat re-exports for `bun_sql_jsc` (Write trait surface) ──
         pub use new_writer::WriterContext;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
     pub use command_tag::CommandTag;
-    pub use ssl_mode::SSLMode;
     pub use status::Status;
     pub use tls_status::TLSStatus;
-
-    // PascalCase module aliases — sql_jsc names these as `PostgresProtocol.Foo` /
-    // `PostgresTypes.Int4` / `SocketMonitor.write`.
-    pub use postgres_protocol as PostgresProtocol;
-    pub use postgres_types as PostgresTypes;
-    pub use socket_monitor as SocketMonitor;
 }

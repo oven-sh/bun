@@ -1,20 +1,15 @@
-interface BufferExt extends Buffer {
-  toString(encoding?: BufferEncoding, start?: number, end?: number): string;
-  toString(offset: number, length: number, encoding?: BufferEncoding): string;
-}
-
-export function toJSON(this: BufferExt) {
+export function toJSON(this: Buffer) {
   const type = "Buffer";
   const data = Array.from(this);
   return { type, data };
 }
 
 $getter;
-export function parent(this: BufferExt) {
+export function parent(this: Buffer) {
   return $isObject(this) && this instanceof $Buffer ? this.buffer : undefined;
 }
 
 $getter;
-export function offset(this: BufferExt) {
+export function offset(this: Buffer) {
   return $isObject(this) && this instanceof $Buffer ? this.byteOffset : undefined;
 }

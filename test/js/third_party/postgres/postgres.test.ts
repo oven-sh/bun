@@ -18,7 +18,7 @@ describe.skipIf(!databaseUrl)("postgres", () => {
   test("should be able to resume after backpressure pause on upgraded handler #15438", async () => {
     const sql = postgres(databaseUrl!);
     try {
-      const batch = [];
+      const batch: Promise<void>[] = [];
       for (let i = 0; i < 1000; i++) {
         batch.push(
           (async sql => {

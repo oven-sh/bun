@@ -1,11 +1,10 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr;
 
-use crate as jsc;
-use crate::SysErrorJsc;
-use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
+use crate::{
+    ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
+};
 use bun_alloc::mimalloc;
-use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
 
@@ -57,14 +56,6 @@ impl Default for ArrayBuffer {
 // without a `&T as *const T as *mut T` provenance laundering cast. This matches
 // the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `addr`/`len` are an opaque mmap region
-    // C++ stores into the Buffer's `ArrayBufferContents` (adopted, freed via
-    // munmap by JSC). Unlike `Bun__makeArrayBufferWithBytesNoCopy` below this
-    // is not reachable with caller-chosen pointers: the only caller
-    // (`to_js_buffer_from_memfd`) maps `addr` itself via `bun_sys::mmap`, so
-    // the validity proof is discharged at that single call site.
-    safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); remaining args are by-value scalars.
     safe fn ArrayBuffer__fromSharedMemfd(
@@ -130,7 +121,7 @@ unsafe extern "C" {
         ptr: *const c_void,
         len: usize,
     ) -> JSValue;
-    fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
+    fn JSC__ArrayBuffer__asBunArrayBuffer(self_: &JSCArrayBuffer, out: *mut ArrayBuffer);
     // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
     // `UnsafeCell`); `&` is ABI-identical to a non-null `*mut` and the C++
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
@@ -138,6 +129,13 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    // safe: by-value `JSValue`; false for non-buffer values.
+    safe fn JSC__JSValue__isNonSharedWasmMemory(v: JSValue) -> bool;
+    safe fn JSC__JSValue__canBeFreedWhilePinned(v: JSValue) -> bool;
+    // safe: by-value `JSValue`; empty for non-buffer values.
+    safe fn JSC__JSValue__findWasmMemory(v: JSValue, out_offset: &mut usize) -> JSValue;
+    // safe: by-value `JSValue`; the callee always fills both out-params.
+    safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
 }
 
 impl JSValue {
@@ -159,12 +157,74 @@ impl ArrayBuffer {
         }
     }
 
+    /// Limits the view to at most `len` bytes at `offset`.
+    #[inline]
+    pub fn narrow(&mut self, offset: usize, len: usize) {
+        let offset = offset.min(self.byte_len);
+        self.ptr = self.ptr.wrapping_add(offset);
+        self.byte_len = len.min(self.byte_len - offset);
+        self.len = self.byte_len;
+    }
+
+    /// Whether a byte is in both views.
+    pub fn overlaps(&self, other: &ArrayBuffer) -> bool {
+        let start = self.ptr.addr().max(other.ptr.addr());
+        let end = (self.ptr.addr() + self.byte_len).min(other.ptr.addr() + other.byte_len);
+        start < end
+    }
+
+    /// Returns true if another thread can write to the bytes (`SharedArrayBuffer`) or JS that runs
+    /// during the call can unmap them with `resize()`.
+    pub fn can_change_under_borrow(&self) -> bool {
+        self.shared || self.resizable
+    }
+
+    /// Returns a private copy of the bytes, or `None` if allocation fails. Never inlined, so the
+    /// compiler can't re-read the `SharedArrayBuffer` in place of the copy.
+    #[inline(never)]
+    pub fn try_copy_bytes(&self) -> Option<Vec<u8>> {
+        let bytes = self.byte_slice();
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(bytes.len()).ok()?;
+        copy.extend_from_slice(bytes);
+        Some(copy)
+    }
+
+    /// True if a pin doesn't keep these bytes mapped. `resize()` unmaps the pages it trims, and
+    /// `grow()` detaches a non-shared `WebAssembly.Memory`'s buffer regardless of the pin count,
+    /// which frees the old block immediately or when the memory is collected.
+    /// Copy these bytes if the borrow outlives the call.
+    ///
+    /// A call instead of a field, so that `as_array_buffer` callers that never ask don't pay for the answer.
+    pub fn can_be_freed_while_pinned(&self) -> bool {
+        JSC__JSValue__canBeFreedWhilePinned(self.value)
+    }
+
+    /// Returns the live non-shared `WebAssembly.Memory` that this is a view of and where the view starts in it.
+    /// `grow()` detaches the view but keeps that offset valid.
+    pub fn find_wasm_memory(&self) -> Option<(JSValue, usize)> {
+        let mut view_offset = 0;
+        let memory = JSC__JSValue__findWasmMemory(self.value, &mut view_offset);
+        (!memory.is_empty()).then_some((memory, view_offset))
+    }
+
+    /// Copies as much of `bytes` as fits at `offset` in the current range of `target`, which is a
+    /// buffer, a view or a `WebAssembly.Memory`. Returns false if it copied nothing, which means that
+    /// `target` is detached or out of bounds, or ends at or before `offset`.
+    pub fn write_to_live(target: JSValue, offset: usize, bytes: &[u8]) -> bool {
+        let mut live = ArrayBuffer::default();
+        JSC__JSValue__arrayBufferExtent(target, &mut live.ptr, &mut live.byte_len);
+        let Some(target) = live.byte_slice_mut().get_mut(offset..) else {
+            return false;
+        };
+        let n = bytes.len().min(target.len());
+        target[..n].copy_from_slice(&bytes[..n]);
+        n > 0
+    }
+
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
     pub const MAX_SIZE: c_uint = c_uint::MAX;
-
-    // 4 MB or so is pretty good for mmap()
-    const MMAP_THRESHOLD: usize = 1024 * 1024 * 4;
 
     pub fn bytes_per_element(&self) -> Option<u8> {
         match self.typed_array_type {
@@ -179,52 +239,6 @@ impl ArrayBuffer {
 }
 
 impl ArrayBuffer {
-    /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
-    /// Do not use this for pipes, however tempting it may seem.
-    pub(crate) fn to_js_buffer_from_fd(
-        fd: Fd,
-        size: usize,
-        global: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
-        // *const); fn accepts null ptr with explicit size.
-        // Wrapped in `from_js_host_call` so the C++ throw scope opened by
-        // `Bun__createUint8ArrayForCopy` is checked before `as_array_buffer` below
-        // declares `ASSERT_NO_PENDING_EXCEPTION` (validateExceptionChecks).
-        let buffer_value = crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, ptr::null(), size, true)
-        })?;
-
-        let mut array_buffer = buffer_value.as_array_buffer(global).expect("Unexpected");
-        let mut bytes = array_buffer.byte_slice_mut();
-
-        buffer_value.ensure_still_alive();
-
-        let mut read: isize = 0;
-        while !bytes.is_empty() {
-            match bun_sys::pread(fd, bytes, read as i64) {
-                bun_sys::Result::Ok(amount) => {
-                    bytes = &mut bytes[amount..];
-                    read += isize::try_from(amount).expect("int cast");
-
-                    if amount == 0 {
-                        if !bytes.is_empty() {
-                            bytes.fill(0);
-                        }
-                        break;
-                    }
-                }
-                bun_sys::Result::Err(err) => {
-                    return Err(global.throw_value(err.to_js(global)));
-                }
-            }
-        }
-
-        buffer_value.ensure_still_alive();
-
-        Ok(buffer_value)
-    }
-
     /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
     /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
     /// to copying; the typed-array allocation can also throw, so empty alone
@@ -241,55 +255,6 @@ impl ArrayBuffer {
         crate::call_check_slow(global, || {
             ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
         })
-    }
-
-    pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let stat = match bun_sys::fstat(fd) {
-            bun_sys::Result::Err(err) => {
-                fd.close();
-                return Err(global.throw_value(err.to_js(global)));
-            }
-            bun_sys::Result::Ok(fstat) => fstat,
-        };
-
-        let size = stat.st_size;
-
-        if size == 0 {
-            fd.close();
-            return Self::create_buffer(global, b"");
-        }
-
-        // mmap() is kind of expensive to do
-        // It creates a new memory mapping.
-        // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
-        // So we clone it when it's small.
-        // `stat.st_size` is `i64` on POSIX, `u64` on the libuv stat struct.
-        if (size as i64) < Self::MMAP_THRESHOLD as i64 {
-            let result =
-                Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
-            fd.close();
-            return result;
-        }
-
-        // bun_sys::mmap takes raw i32 prot/flags.
-        // Windows impl ignores these and returns ENOTSUP.
-        #[cfg(unix)]
-        let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
-        #[cfg(not(unix))]
-        let (prot, map_flags) = (0i32, 0i32);
-        let map_len = usize::try_from(size.max(0)).expect("int cast");
-        let result = bun_sys::mmap(ptr::null_mut(), map_len, prot, map_flags, fd, 0);
-        fd.close();
-
-        match result {
-            bun_sys::Result::Ok(buf) => {
-                // `buf` is a fresh mmap region whose ownership transfers to JSC (on `Err` too).
-                crate::host_fn::from_js_host_call(global, || {
-                    JSBuffer__fromMmap(global, buf.cast(), map_len)
-                })
-            }
-            bun_sys::Result::Err(err) => Err(global.throw_value(err.to_js(global))),
-        }
     }
 
     pub const EMPTY: ArrayBuffer = ArrayBuffer {
@@ -364,30 +329,23 @@ impl ArrayBuffer {
         value.as_array_buffer(ctx).unwrap()
     }
 
+    /// Ownership of `bytes` transfers to JSC either way: above
+    /// `MAX_ARRAY_BUFFER_SIZE` the C++ side frees them and throws a RangeError.
     pub fn from_default_allocator(
         global: &JSGlobalObject,
         typed_array_type: JSType,
-        bytes: &mut [u8],
+        bytes: Vec<u8>,
     ) -> JsResult<JSValue> {
-        match typed_array_type {
-            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
-            // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => Ok(unsafe {
-                JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
-            }),
-            // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
-            // ownership from the mimalloc-backed slice the caller hands us.
-            JSType::Uint8Array => {
-                // SAFETY: caller guarantees `bytes` is exactly a `Box<[u8]>`
-                // allocation from the default (mimalloc) allocator; ownership
-                // transfers to JSC. Coerce the borrowed slice directly to its
-                // fat raw pointer — no need to round-trip through
-                // `from_raw_parts_mut(as_mut_ptr(), len)`.
-                let owned = unsafe { bun_core::heap::take(ptr::from_mut(bytes)) };
-                jsc::JSUint8Array::from_bytes(global, owned)
-            }
+        let adopt = match typed_array_type {
+            JSType::ArrayBuffer => JSArrayBuffer__fromDefaultAllocator,
+            JSType::Uint8Array => crate::js_uint8_array::JSUint8Array__fromDefaultAllocator,
             _ => unreachable!("Not implemented yet"),
-        }
+        };
+        let bytes = bytes.leak();
+        // SAFETY: a buffer of the default allocator, whose ownership transfers to JSC.
+        crate::call_zero_is_throw(global, || unsafe {
+            adopt(global, bytes.as_mut_ptr(), bytes.len())
+        })
     }
 
     /// Any length is accepted here; the C++ side that adopts the bytes throws a
@@ -484,8 +442,7 @@ impl ArrayBuffer {
         // probe always returns false and we'd drop the deallocator for buffers we own.
         if self.len > 0
             && bun_alloc::USE_MIMALLOC
-            // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
-            && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
+            && !mimalloc::mi_is_in_heap_region(self.ptr.cast())
         {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
@@ -619,23 +576,10 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// See [`as_u16`]; 4-byte variant.
+    /// The whole `u32`s of the view. `Unaligned`: JS can put an ArrayBuffer over any address.
     #[inline]
-    pub fn as_u32(&mut self) -> &mut [u32] {
-        bun_core::Unaligned::slice_align_cast_mut(self.as_u32_unaligned())
-    }
-
-    /// See [`as_u16_unaligned`]; 4-byte variant.
-    #[inline]
-    pub(crate) fn as_u32_unaligned(&mut self) -> &mut [bun_core::Unaligned<u32>] {
-        if self.is_detached() {
-            return &mut [];
-        }
-        let len = self.byte_len / core::mem::size_of::<u32>();
-        // SAFETY: ptr non-null; `Unaligned<u32>` has size 4 / align 1, so any
-        // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
-        // exclusive access to this view.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
+    pub fn as_u32(&mut self) -> &mut [bun_core::Unaligned<u32>] {
+        bun_core::Unaligned::slice_of_mut(self.byte_slice_mut())
     }
 }
 
@@ -645,14 +589,34 @@ impl ArrayBuffer {
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
-/// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
-/// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
-/// held by a `Blob` store drops wherever the store's last ref goes.
+/// GC-roots the cell. `Drop` releases what was taken. Constructed and dropped on the JS
+/// thread.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
-    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
-    copy: Option<Vec<u8>>,
+    /// Set when [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned) or
+    /// [`write_to_scratch_if_wasm`](Self::write_to_scratch_if_wasm) replaced the JS storage.
+    /// Boxed because it is rare and this struct is moved by value on hot paths.
+    copy: Option<Box<NativeCopy>>,
+}
+
+/// Native bytes that `buffer.ptr` points to instead of the JS storage.
+struct NativeCopy {
+    bytes: Vec<u8>,
+    /// The `WebAssembly.Memory` and the offset in it where [`write_back`](PinnedArrayBuffer::write_back) copies `bytes`.
+    /// `grow()` detaches the view but keeps the offset valid. `None` for a read-only snapshot.
+    write_back_to: Option<(ProtectedJSValue, usize)>,
+}
+
+impl NativeCopy {
+    /// Copies the first `len` bytes to `write_back_to`.
+    fn write_back(&self, len: usize) {
+        let Some((memory, offset)) = &self.write_back_to else {
+            return;
+        };
+        let n = len.min(self.bytes.len());
+        ArrayBuffer::write_to_live(memory.value(), *offset, &self.bytes[..n]);
+    }
 }
 
 impl PinnedArrayBuffer {
@@ -683,16 +647,28 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
-    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
+    /// Like [`root`](Self::root), but for a job that reads the bytes itself. See [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned).
     pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        // Asking first makes the usual case a tail call, so the result isn't moved again.
+        if !JSC__JSValue__canBeFreedWhilePinned(value) {
+            return Self::root(global, value);
+        }
         let mut this = Self::root(global, value)?;
-        this.copy_if_resizable(global).then_some(this)
+        this.copy_if_freeable_while_pinned(global).then_some(this)
     }
 
-    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
-    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
-        if !self.buffer.resizable
-            || self.buffer.shared
+    /// Limits the borrow to at most `len` bytes at `offset`, so that
+    /// [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned) copies only what the job reads.
+    #[inline]
+    pub fn narrow(&mut self, offset: usize, len: usize) {
+        debug_assert!(self.copy.is_none());
+        self.buffer.narrow(offset, len);
+    }
+
+    /// Copies the bytes if they [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned),
+    /// so a later read can't fault. Returns `false` if the copy can't be allocated.
+    pub fn copy_if_freeable_while_pinned(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.can_be_freed_while_pinned()
             || self.buffer.byte_len == 0
             || self.copy.is_some()
         {
@@ -706,14 +682,91 @@ impl PinnedArrayBuffer {
         copy.extend_from_slice(bytes);
         global.vm().report_extra_memory(copy.len());
         self.buffer.ptr = copy.as_mut_ptr();
-        self.copy = Some(copy);
+        self.copy = Some(Box::new(NativeCopy {
+            bytes: copy,
+            write_back_to: None,
+        }));
         true
+    }
+
+    /// Swaps in `len` bytes of scratch space if `grow()` could free the block while a job writes to
+    /// it. If this returns true, the job writes from index 0 and [`write_back`](Self::write_back)
+    /// copies the bytes to `offset`, even if `grow()` detached the view.
+    #[inline]
+    pub fn write_to_scratch_if_wasm(&mut self, offset: usize, len: usize) -> bool {
+        if len == 0 || !JSC__JSValue__isNonSharedWasmMemory(self.buffer.value) {
+            return false;
+        }
+        // Nothing can detach the view of a collected memory.
+        let target = match self.buffer.find_wasm_memory() {
+            Some((memory, view_offset)) => (memory.protected(), view_offset + offset),
+            None => (self.buffer.value.protected(), offset),
+        };
+        let mut scratch = vec![0u8; len];
+        self.buffer.ptr = scratch.as_mut_ptr();
+        self.buffer.len = len;
+        self.buffer.byte_len = len;
+        self.copy = Some(Box::new(NativeCopy {
+            bytes: scratch,
+            write_back_to: Some(target),
+        }));
+        true
+    }
+
+    /// Call on the JS thread after the job is done. Copies the `len` bytes it wrote into the memory.
+    /// No-op unless [`write_to_scratch_if_wasm`](Self::write_to_scratch_if_wasm) returned true.
+    #[inline]
+    pub fn write_back(&mut self, len: usize) {
+        if let Some(scratch) = self.copy.take_if(|copy| copy.write_back_to.is_some()) {
+            self.buffer.ptr = ptr::null_mut();
+            self.buffer.len = 0;
+            self.buffer.byte_len = 0;
+            // Don't pass a pointer to `self` to the out-of-line call, so a job that owns `self` by value can keep it in registers.
+            scratch.write_back(len);
+        }
     }
 
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [u8] {
-        debug_assert!(self.copy.is_none(), "a read-only root is not writable");
+        debug_assert!(
+            self.copy
+                .as_ref()
+                .is_none_or(|copy| copy.write_back_to.is_some()),
+            "a read-only root is not writable"
+        );
         self.buffer.byte_slice_mut()
+    }
+
+    /// Returns the view's current range from JSC, or null and 0 if it's detached. The range can
+    /// change while pinned (see [`ArrayBuffer::can_be_freed_while_pinned`]).
+    fn live_range(&self) -> (*mut u8, usize) {
+        debug_assert!(self.copy.is_none());
+        let mut ptr = ptr::null_mut();
+        let mut byte_len = 0usize;
+        JSC__JSValue__arrayBufferExtent(self.buffer.value, &mut ptr, &mut byte_len);
+        (ptr, byte_len)
+    }
+
+    /// Like [`slice_mut`](Self::slice_mut), but re-reads the range. For a writer that runs after user JS.
+    pub fn live_slice_mut(&mut self) -> &mut [u8] {
+        let (ptr, byte_len) = self.live_range();
+        self.buffer.ptr = ptr;
+        self.buffer.byte_len = byte_len;
+        self.buffer.len = match self.buffer.bytes_per_element() {
+            Some(size) => byte_len / size as usize,
+            None => byte_len,
+        };
+        self.slice_mut()
+    }
+
+    /// Like [`slice`](ArrayBuffer::slice), but re-reads the range. For a reader that runs after user JS.
+    pub fn live_slice(&self) -> &[u8] {
+        let (ptr, byte_len) = self.live_range();
+        if ptr.is_null() {
+            return &[];
+        }
+        // SAFETY: JSC reports the view's own range, and no JS runs while the borrow of `self` lives.
+        unsafe { core::slice::from_raw_parts(ptr, byte_len) }
     }
 
     /// VM-shutdown finalizer only: the heap sweep already deleted what `Drop`
@@ -742,8 +795,7 @@ impl Drop for PinnedArrayBuffer {
     }
 }
 
-// SAFETY: a pin and GC protection on a heap cell; constructed on the JS thread,
-// and a rooted value is dropped there (a pin-only one may drop with its `Blob` store).
+// SAFETY: a pin and GC protection on a heap cell; constructed and dropped on the JS thread.
 unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -752,6 +804,7 @@ unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum BinaryType {
     Buffer,
     ArrayBuffer,
@@ -905,6 +958,8 @@ impl TypedArrayType {
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
     pub owns_buffer: bool,
+    /// The bytes are from [`bun_sys::private_copy::map`].
+    pub is_private_copy: bool,
 }
 
 /// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
@@ -912,73 +967,71 @@ pub struct MarkedArrayBuffer {
 /// conversion path bailed) frees them here.
 impl Drop for MarkedArrayBuffer {
     fn drop(&mut self) {
-        self.destroy();
+        if !self.owns_buffer {
+            return;
+        }
+        if self.is_private_copy {
+            bun_sys::private_copy::unmap(
+                self.buffer.ptr.cast(),
+                core::ptr::without_provenance_mut(self.buffer.byte_len),
+            );
+            return;
+        }
+        // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
+        unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
     }
 }
 
 impl MarkedArrayBuffer {
-    pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            buffer: ArrayBuffer::from_typed_array(ctx, value),
-        }
-    }
-
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
+            is_private_copy: false,
             buffer: ArrayBuffer::from_array_buffer(ctx, value),
         }
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
-        // pointer because the buffer is later freed via the default allocator
-        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
-        let buf: Box<[u8]> = Box::from(str);
-        let len = buf.len();
-        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
-        Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
+        Ok(MarkedArrayBuffer::from_bytes(
+            Box::from(str),
+            JSType::Uint8Array,
+        ))
     }
 
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer: array_buffer,
-            owns_buffer: false,
-        })
-    }
-
-    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
+    pub fn from_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
-            buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
             // An empty boxed slice has no backing allocation (dangling ptr):
-            // nothing to own, so `destroy()` must not free it.
+            // nothing to own, so `drop` must not free it.
             owns_buffer: !bytes.is_empty(),
+            is_private_copy: false,
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
+        }
+    }
+
+    /// `copy` is what [`bun_sys::private_copy::map`] returned for `len` bytes.
+    pub fn from_private_copy(copy: core::ptr::NonNull<u8>, len: usize) -> MarkedArrayBuffer {
+        MarkedArrayBuffer {
+            owns_buffer: true,
+            is_private_copy: true,
+            buffer: ArrayBuffer {
+                len,
+                byte_len: len,
+                typed_array_type: JSType::Uint8Array,
+                ptr: copy.as_ptr(),
+                ..Default::default()
+            },
         }
     }
 
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
+        is_private_copy: false,
         buffer: ArrayBuffer::EMPTY,
     };
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
         self.buffer.byte_slice()
-    }
-
-    /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
-    /// allocator (e.g. via `from_string`/`from_bytes`) and never handed to JSC.
-    /// Idempotent; also what `Drop` does.
-    pub fn destroy(&mut self) {
-        if self.owns_buffer {
-            self.owns_buffer = false;
-            // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
-            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
-        }
     }
 
     /// Ownership of the bytes moves to JSC (freed by the buffer's deallocator).
@@ -988,6 +1041,18 @@ impl MarkedArrayBuffer {
         // copy the descriptor and project a mutable slice.
         self.owns_buffer = false;
         let mut buf = self.buffer;
+        if self.is_private_copy {
+            let len = buf.byte_len;
+            // SAFETY: the mapping is live, and only the deallocator unmaps it.
+            return unsafe {
+                JSValue::create_buffer_with_ctx(
+                    global,
+                    core::ptr::NonNull::from(buf.byte_slice_mut()),
+                    core::ptr::without_provenance_mut(len),
+                    bun_sys::private_copy::unmap,
+                )
+            };
+        }
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 }
@@ -1095,7 +1160,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
 }
 
 impl JSCArrayBuffer {
-    pub fn as_array_buffer(&mut self) -> ArrayBuffer {
+    pub fn as_array_buffer(&self) -> ArrayBuffer {
         let mut out = core::mem::MaybeUninit::<ArrayBuffer>::uninit();
         // SAFETY: C++ fully initializes `out`.
         unsafe {

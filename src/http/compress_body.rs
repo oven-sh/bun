@@ -78,13 +78,21 @@ pub(crate) fn compress_into(
                 }
             }
         }
+        CompressEncoding::Brotli
+            if bun_removable_features::is_removed(
+                bun_removable_features::Feature::BrotliEncoder,
+            ) =>
+        {
+            Err(crate::Error::CompressionFailed)
+        }
         CompressEncoding::Brotli => compress_brotli(state, input, opt.level, spill),
         CompressEncoding::Zstd => compress_zstd(state, input, opt.level, spill),
     }
 }
 
 /// libdeflate one-shot fast path into `state.shared_buffer`. Returns `None`
-/// when the bound exceeds the shared buffer or no compressor can be allocated — caller falls back to
+/// when the bound exceeds the shared buffer, the compressor can't be allocated,
+/// or the output doesn't fit. The caller falls back to
 /// [`compress_zlib_streaming`].
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
@@ -92,7 +100,7 @@ fn compress_libdeflate_fast(
     enc: bun_libdeflate_sys::libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
+    use bun_libdeflate_sys::libdeflate::{OwnedCompressor, Status};
 
     // Split-borrow so the compressor handle and `shared_buffer` can be used
     // together.
@@ -115,12 +123,13 @@ fn compress_libdeflate_fast(
     // Custom level → allocate a temporary compressor; the cached handle is
     // pinned to DEFAULT_DEFLATE_LEVEL.
     let mut tmp: Option<OwnedCompressor> = None;
-    let compressor: &mut Compressor = match level {
+    let compressor = match level {
         Some(l) if l != DEFAULT_DEFLATE_LEVEL => tmp.insert(OwnedCompressor::new(l)?),
         _ => cached,
     };
 
-    Some(compressor.compress(input, shared_buffer, enc).written)
+    let result = compressor.compress(input, shared_buffer, enc);
+    (result.status == Status::Success).then_some(result.written)
 }
 
 /// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the
@@ -187,21 +196,15 @@ fn compress_brotli(
     let window = c::BROTLI_DEFAULT_WINDOW;
     let mode = c::BrotliEncoderMode::generic;
 
-    let bound = c::BrotliEncoderMaxCompressedSize(input.len());
-    // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
-    // size_t — fall back to a heap buffer in that case.
-    if bound != 0 && bound <= state.shared_buffer.len() {
+    let bound = bun_brotli::encode_bound(input.len());
+    if bound.is_some_and(|bound| bound <= state.shared_buffer.len()) {
         if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
         {
             return Ok(CompressOutput::Shared(n));
         }
     }
 
-    let cap = if bound != 0 {
-        bound
-    } else {
-        input.len() + 1024
-    };
+    let cap = bound.unwrap_or(input.len() + 1024);
     spill
         .try_reserve_exact(cap)
         .map_err(|_| bun_alloc::AllocError)?;

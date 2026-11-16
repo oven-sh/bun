@@ -1,0 +1,47 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = (
+  <div>
+    {isEnabled && !isRunning && (
+      // The title is on the wrapper.
+      <span title={title}>a</span>
+    )}
+    {isEnabled || isRunning || (
+      // first
+      // second
+      <>
+        <span>b</span>
+      </>
+    )}
+    {isEnabled &&
+      !isRunning && ( // behind the parenthesis
+        <span title={title}>c</span>
+      )}
+  </div>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = (
+  <div>
+    {isEnabled && !isRunning && (
+      // The title is on the wrapper.
+      <span title={title}>a</span>
+    )}
+    {isEnabled || isRunning || (
+      // first
+      // second
+      <>
+        <span>b</span>
+      </>
+    )}
+    {isEnabled &&
+      !isRunning && ( // behind the parenthesis
+        <span title={title}>c</span>
+      )}
+  </div>
+);
+
+===================== End =====================

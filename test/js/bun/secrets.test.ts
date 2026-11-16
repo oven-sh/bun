@@ -1,3 +1,4 @@
+import { dlopen, read, type Pointer } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isCI, isMacOS, isWindows } from "harness";
 
@@ -134,6 +135,70 @@ test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
+// `persist` selects CREDENTIALW.Persist. Without it, set() writes CRED_PERSIST_ENTERPRISE.
+test.skipIf(!isWindows)("Bun.secrets.set() persist option selects the Credential Manager Persist value", async () => {
+  const CRED_TYPE_GENERIC = 1;
+  const CRED_PERSIST_LOCAL_MACHINE = 2;
+  const CRED_PERSIST_ENTERPRISE = 3;
+  // CREDENTIALW field offsets on 64-bit Windows.
+  const offsetofType = 4;
+  const offsetofCredentialBlobSize = 32;
+  const offsetofPersist = 48;
+
+  const advapi32 = dlopen("advapi32.dll", {
+    CredReadW: { args: ["ptr", "u32", "u32", "ptr"], returns: "i32" },
+    CredFree: { args: ["ptr"], returns: "void" },
+  });
+
+  const service = "bun-test-persist-" + Date.now();
+  const name = "test-name-" + Math.random();
+  const targetName = Buffer.from(`${service}/${name}\0`, "utf16le");
+
+  function readCredential() {
+    const out = new BigUint64Array(1);
+    expect(advapi32.symbols.CredReadW(targetName, CRED_TYPE_GENERIC, 0, out)).not.toBe(0);
+    const cred = Number(out[0]) as Pointer;
+    try {
+      return {
+        Type: read.u32(cred, offsetofType),
+        CredentialBlobSize: read.u32(cred, offsetofCredentialBlobSize),
+        Persist: read.u32(cred, offsetofPersist),
+      };
+    } finally {
+      advapi32.symbols.CredFree(cred);
+    }
+  }
+
+  try {
+    // Every set() replaces the whole entry, so each case also converts the entry the previous case wrote.
+    const cases = [
+      { options: {}, value: "default", Persist: CRED_PERSIST_ENTERPRISE },
+      { options: { persist: "local" }, value: "local-machine", Persist: CRED_PERSIST_LOCAL_MACHINE },
+      { options: { persist: "enterprise" }, value: "enterprise-again", Persist: CRED_PERSIST_ENTERPRISE },
+      { options: { persist: "local" }, value: "local-machine-again", Persist: CRED_PERSIST_LOCAL_MACHINE },
+      { options: {}, value: "default-after-local", Persist: CRED_PERSIST_ENTERPRISE },
+    ] as const;
+
+    for (const { options, value, Persist } of cases) {
+      await Bun.secrets.set({ service, name, value, ...options });
+      expect({ options, ...readCredential() }).toEqual({
+        options,
+        Type: CRED_TYPE_GENERIC,
+        CredentialBlobSize: Buffer.byteLength(value),
+        Persist,
+      });
+      expect(await Bun.secrets.get({ service, name })).toBe(value);
+    }
+
+    // The conversions leave one entry, not one per Persist value: one delete() removes it.
+    expect(await Bun.secrets.delete({ service, name })).toBe(true);
+    expect(await Bun.secrets.get({ service, name })).toBeNull();
+  } finally {
+    advapi32.close();
+    await Bun.secrets.delete({ service, name });
+  }
+});
+
 test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
   // Test invalid arguments
 
@@ -142,7 +207,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get();
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("secrets.get requires an options object");
   }
 
@@ -151,7 +216,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get("not an object");
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected options to be an object");
   }
 
@@ -160,7 +225,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get({ name: "test" });
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected service and name to be strings");
   }
 
@@ -169,7 +234,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get({ service: "test" });
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected service and name to be strings");
   }
 
@@ -179,7 +244,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     await Bun.secrets.set({ service: "test", name: "test" });
     // This should work without error - just needs a value
     // But if it does work, the value will be undefined which is an error
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected 'value' to be a string");
   }
 
@@ -188,7 +253,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.set({ service: "test", name: "test", value: 123 });
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected 'value' to be a string");
   }
 
@@ -197,7 +262,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.delete();
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("requires an options object");
   }
 });

@@ -32,9 +32,13 @@ pub use bun_collections::SmallList;
 /// value type that carries an `Image` and can produce color/prefix fallbacks
 /// of itself. Implemented by `values::image::Image` and
 /// `properties::background::Background`.
-pub trait ImageFallback: Sized {
-    fn get_image(&self) -> &crate::values::image::Image;
-    fn with_image(&self, arena: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
+pub trait ImageFallback<'bump>: Sized {
+    fn get_image(&self) -> &crate::values::image::Image<'bump>;
+    fn with_image(
+        &self,
+        arena: &bun_alloc::Arena,
+        image: crate::values::image::Image<'bump>,
+    ) -> Self;
     fn get_fallback(
         &self,
         arena: &bun_alloc::Arena,
@@ -56,7 +60,7 @@ pub trait ImageFallback: Sized {
 /// crate now that `SmallList` is foreign. The lone caller threads `self`
 /// explicitly.
 #[inline]
-pub(crate) fn get_fallbacks<T: ImageFallback>(
+pub(crate) fn get_fallbacks<'bump, T: ImageFallback<'bump>>(
     this: &mut SmallList<T, 1>,
     arena: &bun_alloc::Arena,
     targets: &crate::targets::Targets,
@@ -71,13 +75,13 @@ pub(crate) mod fallbacks_gated {
     use crate::css_parser as css;
     use crate::properties::text::TextShadow;
 
-    pub(crate) fn get_fallbacks_image<T>(
+    pub(crate) fn get_fallbacks_image<'bump, T>(
         this: &mut SmallList<T, 1>,
         arena: &bun_alloc::Arena,
         targets: &css::targets::Targets,
     ) -> Vec<SmallList<T, 1>>
     where
-        T: super::ImageFallback,
+        T: super::ImageFallback<'bump>,
     {
         use css::css_values::color::ColorFallbackKind;
         // Determine what vendor prefixes and color fallbacks are needed.
@@ -125,7 +129,7 @@ pub(crate) mod fallbacks_gated {
         }
 
         #[inline]
-        fn prefix_helper<T: ImageFallback>(
+        fn prefix_helper<'bump, T: ImageFallback<'bump>>(
             prefix: &'static str,
             pfs: css::VendorPrefix,
             pfi: &SmallList<T, 1>,

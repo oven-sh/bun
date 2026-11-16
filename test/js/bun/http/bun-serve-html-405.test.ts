@@ -45,7 +45,7 @@ test("dev server html route: non-GET/HEAD requests complete without hanging", as
 });
 
 // A server whose JS wrapper survives to lastChanceToFinalize used to leak its
-// NewServer Box: finalize() -> schedule_deinit() enqueued a ManagedTask that
+// NewServer Box: finalize() -> schedule_deinit() enqueued a task that
 // the now-exiting event loop never ran. The html_bundle::Route.server
 // back-pointer makes the orphaned Box a pointer cycle, so LSan reports every
 // interior allocation as an indirect leak. Only observable via LeakSanitizer.
@@ -97,7 +97,7 @@ test.skipIf(!isASAN || isWindows)(
 );
 
 // Graceful stop() leaves the keep-alive socket in the uws app's socket group.
-// A NewApp::destroy at lastChanceToFinalize would unlink that group from the
+// Destroying the app at lastChanceToFinalize would unlink that group from the
 // loop and orphan the socket, so the synchronous deinit path above is gated
 // on TERMINATED (set only by an abrupt stop or an app.close() that already
 // drained the group).

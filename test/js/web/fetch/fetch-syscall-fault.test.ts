@@ -224,6 +224,17 @@ describe.skipIf(skip)("fetch() under injected syscall faults (https)", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("send → more bytes than it was given: rejects with ECONNRESET", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: certs.key, cert: certs.cert },
+      fetch: () => new Response("x"),
+    });
+    const r = await runClientFetch(server.url.href, { syscall: "send", action: "excess" }, { ca: certs.cert });
+    expect(r).toMatchObject({ ok: false, code: "ECONNRESET", signal: null, exitCode: 0 });
+  });
+
   test("recv → 5-byte short reads (TLS record header boundary) deliver complete body", async () => {
     const body = Buffer.alloc(2048, "T");
     using server = Bun.serve({

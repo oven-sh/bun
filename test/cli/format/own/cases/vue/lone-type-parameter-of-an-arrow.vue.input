@@ -1,0 +1,6 @@
+<script lang="ts">
+const f = <T,>() =>   1;
+</script>
+<template>
+  <a :b="<T,>(c: T) => c" @d="<T,>(c: T) => c"></a>
+</template>

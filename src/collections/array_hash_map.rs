@@ -27,6 +27,7 @@ use std::alloc::Global;
 use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use hashbrown::hash_map::RawVacantEntryMut;
 
 use bun_alloc::AllocError;
 
@@ -539,31 +540,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Bulk-resize the backing columns so callers can
-    /// `keys_mut().copy_from_slice(...)` / `values_mut().copy_from_slice(...)`
-    /// and then `re_index()`.
-    ///
-    /// # Safety
-    /// `n` must not exceed reserved capacity, and every element in
-    /// `old_len..n` of each column must be fully written before any read
-    /// (including `re_index`, which reads `keys`). For `Copy` POD keys/values
-    /// (the only callers today) the intermediate uninit window is sound as
-    /// long as it is filled immediately.
-    pub unsafe fn set_entries_len(&mut self, n: usize) {
-        debug_assert!(n <= self.keys.capacity());
-        debug_assert!(n <= self.values.capacity());
-        debug_assert!(n <= self.hashes.capacity());
-        // SAFETY: caller contract above — `n` is within reserved capacity and
-        // the uninit window is filled before any read.
-        unsafe {
-            self.keys.set_len(n);
-            self.values.set_len(n);
-            self.hashes.set_len(n);
-        }
-        // Caller is about to overwrite keys/values then `re_index()`.
-        self.drop_index();
-    }
-
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
@@ -608,10 +584,11 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// the index — keeping its SwissTable grow path off the subsequent
     /// `push_entry` loop. No-op when the index hasn't materialised yet (it will
     /// be built at the right size by [`rebuild_index`] when the map first
-    /// crosses [`INDEX_THRESHOLD`], since that reads `self.keys.capacity()`).
+    /// crosses [`INDEX_THRESHOLD`], since that reads `self.hashes.capacity()`).
+    /// Not `self.keys.capacity()`, which is `usize::MAX` for a zero-sized `K`.
     #[inline]
     fn reserve_index_to_capacity(&mut self) {
-        let cap = self.keys.capacity();
+        let cap = self.hashes.capacity();
         if let Some(index) = self.index.as_deref_mut() {
             index_reserve(index, &self.hashes, cap);
         }
@@ -800,12 +777,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     fn rebuild_index(&mut self) {
         self.index = Some(rebuild_index_from_hashes(
             &self.hashes,
-            self.keys.capacity(),
+            self.hashes.capacity(),
         ));
     }
 
     /// Invalidate the accelerator. Called by operations that permute entry
-    /// indices wholesale (`sort`, `re_index`, bulk `set_entries_len`); paired
+    /// indices wholesale (`sort`, `re_index`); paired
     /// with an immediate `rebuild_index()` when the map is past the threshold
     /// so subsequent lookups never silently fall back to O(n) linear scan.
     /// Point removals (`pop`/`swap_remove`) instead patch the index in place
@@ -992,6 +969,22 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
+    /// Replaces the entries. `keys` must be distinct.
+    pub fn set_entries(&mut self, keys: &[K], values: impl Iterator<Item = V>)
+    where
+        K: Copy,
+    {
+        self.clear_retaining_capacity();
+        self.values.extend(values);
+        assert_eq!(keys.len(), self.values.len());
+        self.keys.extend_from_slice(keys);
+        self.hashes
+            .extend(keys.iter().map(|key| self.ctx.hash(key)));
+        if keys.len() > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
+    }
+
     pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
@@ -1148,12 +1141,6 @@ impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
-    pub fn or_insert(self, default: V) -> &'a mut V {
-        match self {
-            MapEntry::Occupied(o) => o.into_mut(),
-            MapEntry::Vacant(v) => v.insert(default),
-        }
-    }
     pub fn or_insert_with<F: FnOnce() -> V>(self, f: F) -> &'a mut V {
         match self {
             MapEntry::Occupied(o) => o.into_mut(),
@@ -1201,15 +1188,9 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
         let gop = self.get_or_put(key)?;
         if !gop.found_existing {
-            // SAFETY: re-borrow at same index — `gop` borrows `self` so go
-            // through the slot it already points at.
             *gop.value_ptr = value;
         }
-        // Can't return `gop` while it borrows in the branch above without
-        // NLL gymnastics; recompute via index.
-        let i = gop.index;
-        let found = gop.found_existing;
-        Ok(self.gop_at(i, found))
+        Ok(gop)
     }
 }
 
@@ -1231,18 +1212,6 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
         let i = self.push_entry(K::default(), V::default(), h);
         Ok(self.gop_at(i, false))
-    }
-}
-
-impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
-    type Key = K;
-    type Value = V;
-    type Iterator<'a>
-        = Iter<'a, K, V>
-    where
-        Self: 'a;
-    fn iterator(&mut self) -> Iter<'_, K, V> {
-        ArrayHashMap::iterator(self)
     }
 }
 
@@ -1529,11 +1498,8 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// slice by reference; never freed on drop.
     #[inline]
     pub(crate) const fn borrowed(s: &'static [u8]) -> Self {
-        // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
-        // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         Self {
-            ptr,
+            ptr: core::ptr::NonNull::from_ref(s).cast(),
             len_tag: s.len(),
             _alloc: PhantomData,
         }
@@ -1550,13 +1516,9 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         );
         // Discard the stored `A` — for every `A` in use (`Global`,
         // `DefaultAlloc`, `AstAlloc`) it is a ZST, so `A::default()` in `Drop`
-        // is the same instance. `into_raw_with_allocator` because on current
-        // nightly `Box::into_raw` is restricted to `Box<T, Global>`.
-        let (raw, _alloc) = Box::into_raw_with_allocator(b);
-        // SAFETY: `Box::into_raw_with_allocator` never returns null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
+        // is the same instance.
         Self {
-            ptr,
+            ptr: Box::into_non_null_with_allocator(b).0.cast(),
             len_tag: len | SHMK_OWNED_BIT,
             _alloc: PhantomData,
         }
@@ -1669,6 +1631,15 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringH
     }
 }
 
+impl<V, A: Allocator + HashbrownAllocator + Clone + Default> IntoIterator for StringHashMap<V, A> {
+    type Item = (StringHashMapKey<A>, V);
+    type IntoIter = hashbrown::hash_map::IntoIter<StringHashMapKey<A>, V, A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Deref for StringHashMap<V, A> {
     type Target = StringHashMapInner<V, A>;
     fn deref(&self) -> &Self::Target {
@@ -1702,19 +1673,20 @@ fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
     StringHashMapKey::owned(box_key::<A>(key))
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
-    /// `const` constructor — empty map, no heap touch. Exists so aggregates
-    /// that embed a `StringHashMap` (e.g. `js_ast::Scope::EMPTY`) can be
-    /// spelled as a `const` and used with struct-update syntax in hot
-    /// allocation paths, instead of calling the `Default` chain at runtime
-    /// for every field. `hashbrown::HashMap::with_hasher_in` and
-    /// `BuildHasherDefault::new` are both `const fn`, so this is a true
-    /// compile-time value (all-zeros for ZST `A`).
-    #[inline]
-    pub const fn new_in(alloc: A) -> Self {
-        Self {
-            inner: hashbrown::HashMap::with_hasher_in(core::hash::BuildHasherDefault::new(), alloc),
-        }
+pub enum EntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+    Occupied(&'a mut V),
+    Vacant(VacantEntryRef<'a, 'k, V, A>),
+}
+
+pub struct VacantEntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+    entry: RawVacantEntryMut<'a, StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
+    hash: u64,
+    key: &'k [u8],
+}
+
+impl<V, A: Allocator + HashbrownAllocator + Default> VacantEntryRef<'_, '_, V, A> {
+    pub fn insert(self, value: V) {
+        (self.entry).insert_hashed_nocheck(self.hash, owned_key::<A>(self.key), value);
     }
 }
 
@@ -1733,11 +1705,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     #[inline]
     pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey<A>, V> {
         self.inner.values()
-    }
-
-    #[inline]
-    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, StringHashMapKey<A>, V> {
-        self.inner.values_mut()
     }
 
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
@@ -1762,6 +1729,20 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
             }
         }
         Ok(())
+    }
+
+    /// Like hashbrown's, but inserting copies `key`, which need not be `'static`.
+    pub fn entry_ref<'k>(&mut self, key: &'k [u8]) -> EntryRef<'_, 'k, V, A> {
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(e) => EntryRef::Occupied(e.into_mut()),
+            RawEntryMut::Vacant(entry) => EntryRef::Vacant(VacantEntryRef { entry, hash, key }),
+        }
     }
 
     /// Insert `value` under `key` **without copying the key bytes**. This is
@@ -1827,30 +1808,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    /// Insert `value` under `key` **without copying the key bytes** — the
-    /// arena-lifetime twin of [`put_static_key`]. The safe [`put`] heap-boxes
-    /// the key, which profiling
-    /// flagged as the dominant `_mi_malloc_generic` caller in the parser
-    /// (`Scope::members` takes one box per declared identifier per scope).
-    /// This entry point provides zero-copy insertion for callers whose
-    /// key bytes already live in an arena that outlives the map.
-    ///
-    /// # Safety
-    /// The bytes behind `key` must remain alive and unmoved for as long as the
-    /// resulting entry stays in `self` (i.e. until the entry is removed or the
-    /// map is dropped/reset). For the parser this is satisfied because keys
-    /// point into source text or the lexer string-table, both of which outlive
-    /// the `AstAlloc` arena that owns the `Scope` holding this map.
-    #[inline]
-    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        // SAFETY: caller contract above. Erase the borrow's lifetime so it can
-        // be stored as `Static` without a heap copy; the map never inspects the
-        // lifetime, only the (ptr, len) pair.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
-        self.inner.insert(StringHashMapKey::borrowed(key), value);
-        Ok(())
-    }
-
     /// PERF: std::HashMap cannot skip the grow check, so this is
     /// just `put` without the `Result`.
     #[inline]
@@ -1909,38 +1866,6 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
             },
         )
     }
-
-    /// Zero-allocation `getOrPut` — the arena-lifetime twin of
-    /// [`get_or_put`]. Looks up `key` and on
-    /// miss inserts `V::default()` keyed by the **borrowed slice itself** (no
-    /// `box_key`). Single hash + single probe via `hashbrown`'s `entry_ref`;
-    /// the `From<&'static [u8]>` impl above is what `VacantEntryRef::insert`
-    /// uses to turn the lifetime-erased slice into a `Static` key.
-    ///
-    /// This is the hot path for `Scope::members` (one call per declared
-    /// identifier in `declare_symbol` / scope hoisting), where
-    /// the previous owning shape was the parser's single largest
-    /// `mi_heap_malloc` source.
-    ///
-    /// # Safety
-    /// Same contract as [`put_borrowed`]: the bytes behind `key` must outlive
-    /// the entry's residency in `self`.
-    #[inline]
-    pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
-        use hashbrown::hash_map::EntryRef;
-        // SAFETY: caller contract above; see `put_borrowed`.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
-        match self.inner.entry_ref(key) {
-            EntryRef::Occupied(o) => StringHashMapGetOrPut {
-                found_existing: true,
-                value_ptr: o.into_mut(),
-            },
-            EntryRef::Vacant(v) => StringHashMapGetOrPut {
-                found_existing: false,
-                value_ptr: v.insert(V::default()),
-            },
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1976,6 +1901,8 @@ pub mod string_hash_map {
     /// Result type alias for `StringHashMap::get_or_put*` so callers can name
     /// it as `string_hash_map::GetOrPutResult<'_, V>`.
     pub type GetOrPutResult<'a, V> = super::StringHashMapGetOrPut<'a, V>;
+
+    pub use super::{EntryRef, VacantEntryRef};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

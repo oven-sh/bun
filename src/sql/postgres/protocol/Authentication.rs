@@ -1,61 +1,42 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
-use crate::shared::Data;
-use bun_ptr::RawSlice;
 
 bun_core::declare_scope!(Postgres, hidden);
 
-pub enum Authentication {
+pub enum Authentication<'a> {
     Ok,
     ClearTextPassword,
     MD5Password { salt: [u8; 4] },
     KerberosV5,
     GSS,
-    GSSContinue { data: Data },
+    GSSContinue { data: &'a [u8] },
     SSPI,
-    SASL,
-    SASLContinue(SASLContinue),
-    SASLFinal { data: Data },
+    SASL(SASLMechanisms),
+    SASLContinue(SASLContinue<'a>),
+    SASLFinal { data: &'a [u8] },
     Unknown,
 }
 
-pub struct SASLContinue {
-    pub(crate) data: Data,
-    // r/s/i are sub-slices borrowed from `data.slice()` (self-referential).
-    // `RawSlice` encapsulates the back-reference invariant: the backing `data`
-    // buffer outlives every `SASLContinue` (it is a sibling field), so the safe
-    // `.slice()` projection is sound for `'_` of any `&SASLContinue`.
-    pub r: RawSlice<u8>,
-    pub s: RawSlice<u8>,
-    pub i: RawSlice<u8>,
+#[derive(Copy, Clone, Default)]
+pub struct SASLMechanisms {
+    pub scram_sha_256: bool,
+    pub scram_sha_256_plus: bool,
 }
 
-impl SASLContinue {
+pub struct SASLContinue<'a> {
+    pub r: &'a [u8],
+    pub s: &'a [u8],
+    pub i: &'a [u8],
+}
+
+impl SASLContinue<'_> {
     pub fn iteration_count(&self) -> crate::Result<u32> {
-        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| crate::Error::InvalidCharacter)
+        bun_core::fmt::parse_int(self.i, 10).map_err(|_| crate::Error::InvalidCharacter)
     }
 }
 
-impl Drop for Authentication {
-    fn drop(&mut self) {
-        match self {
-            Authentication::MD5Password { .. } => {}
-            Authentication::SASL => {}
-            Authentication::SASLContinue(v) => {
-                v.data.zdeinit();
-            }
-            Authentication::SASLFinal { data } => {
-                data.zdeinit();
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Authentication {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        reader: &mut NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
+impl<'a> Authentication<'a> {
+    pub fn decode_internal(reader: &NewReader<'a>) -> Result<Self, AnyPostgresError> {
         let message_length = reader.length()?;
 
         match reader.int4()? {
@@ -82,8 +63,7 @@ impl Authentication {
                     return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 let salt_data = reader.bytes(4)?;
-                // `defer salt_data.deinit()` — handled by Drop on `Data` at scope exit.
-                let salt: [u8; 4] = salt_data.slice()[0..4].try_into().expect("unreachable");
+                let salt: [u8; 4] = salt_data[0..4].try_into().expect("unreachable");
                 Ok(Authentication::MD5Password { salt })
             }
             7 => {
@@ -111,8 +91,17 @@ impl Authentication {
                 if message_length < 9 {
                     return Err(AnyPostgresError::InvalidMessageLength);
                 }
-                reader.skip((message_length - 8) as usize)?;
-                Ok(Authentication::SASL)
+                // A NUL-terminated name per mechanism, then one more NUL.
+                let names = reader.bytes((message_length - 8) as usize)?;
+                let mut mechanisms = SASLMechanisms::default();
+                for name in bun_core::split(names, b"\0") {
+                    match name {
+                        b"SCRAM-SHA-256" => mechanisms.scram_sha_256 = true,
+                        b"SCRAM-SHA-256-PLUS" => mechanisms.scram_sha_256_plus = true,
+                        _ => {}
+                    }
+                }
+                Ok(Authentication::SASL(mechanisms))
             }
 
             11 => {
@@ -121,26 +110,19 @@ impl Authentication {
                 }
                 let bytes = reader.bytes((message_length - 8) as usize)?;
 
-                let mut r: Option<RawSlice<u8>> = None;
-                let mut i: Option<RawSlice<u8>> = None;
-                let mut s: Option<RawSlice<u8>> = None;
-
-                {
-                    // `RawSlice::new` erases the borrowck lifetime so the captured
-                    // sub-slices don't keep `bytes` borrowed past this block (they
-                    // remain valid because `bytes` is moved into the result below).
-                    let mut iter = bun_core::split(bytes.slice(), b",");
-                    while let Some(item) = iter.next() {
-                        if item.len() > 2 {
-                            let key = item[0];
-                            let after_equals = RawSlice::new(&item[2..]);
-                            if key == b'r' {
-                                r = Some(after_equals);
-                            } else if key == b's' {
-                                s = Some(after_equals);
-                            } else if key == b'i' {
-                                i = Some(after_equals);
-                            }
+                let (mut r, mut s, mut i) = (None, None, None);
+                for item in bun_core::split(bytes, b",") {
+                    // RFC 5802 §5.1: a mandatory extension, and this client knows none.
+                    if item.starts_with(b"m=") {
+                        return Err(AnyPostgresError::InvalidMessage);
+                    }
+                    if item.len() > 2 {
+                        let after_equals = Some(&item[2..]);
+                        match item[0] {
+                            b'r' => r = after_equals,
+                            b's' => s = after_equals,
+                            b'i' => i = after_equals,
+                            _ => {}
                         }
                     }
                 }
@@ -161,12 +143,7 @@ impl Authentication {
                 let s = s.ok_or(AnyPostgresError::InvalidMessage)?;
                 let i = i.ok_or(AnyPostgresError::InvalidMessage)?;
 
-                Ok(Authentication::SASLContinue(SASLContinue {
-                    data: bytes,
-                    r,
-                    s,
-                    i,
-                }))
+                Ok(Authentication::SASLContinue(SASLContinue { r, s, i }))
             }
 
             12 => {

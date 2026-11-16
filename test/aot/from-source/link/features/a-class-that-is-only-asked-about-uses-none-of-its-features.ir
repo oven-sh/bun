@@ -1,0 +1,14 @@
+# typeof, a constant, name and length, `in` its prototype, the names of its prototype, typeof of a method taken off it: the class is read and tested, none of its code runs
+# -- source: a-class-that-is-only-asked-about-uses-none-of-its-features.ts
+# console.log(typeof WebSocket);
+# console.log(WebSocket.OPEN, WebSocket.name, WebSocket.length);
+# console.log("send" in WebSocket.prototype);
+# console.log(Object.getOwnPropertyNames(WebSocket.prototype).length);
+# const send = WebSocket.prototype.send;
+# console.log(typeof send);
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by WebSocket

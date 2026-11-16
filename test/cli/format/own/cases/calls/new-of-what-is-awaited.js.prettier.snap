@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+async function f() {
+  return new (await library.loadESLint({
+    useFlatConfig: settings.useFlatConfig,
+  }))(newOptions);
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+async function f() {
+  return new (await library.loadESLint({ useFlatConfig: settings.useFlatConfig }))(newOptions);
+}
+
+===================== End =====================

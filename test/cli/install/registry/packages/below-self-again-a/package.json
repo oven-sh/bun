@@ -1,0 +1,36 @@
+{
+  "_id": "below-self-again-a",
+  "name": "below-self-again-a",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "below-self-again-a",
+      "version": "1.0.0",
+      "dependencies": {
+        "below-self-again-b": "1.0.0"
+      },
+      "_id": "below-self-again-a@1.0.0",
+      "dist": {
+        "integrity": "sha512-CWCmHO+1eTc5yO2Qcew8do7pD6QSDV+pK19pvFV28dRfx8Lv46fg19n/LtOO85+NVId5mc7C36lXLcrqmdGTnQ==",
+        "shasum": "3d76aeea8e3f5ff3b45265bffafca701c580d9b8",
+        "tarball": "http://localhost:4873/below-self-again-a/-/below-self-again-a-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "below-self-again-a",
+      "version": "2.0.0",
+      "dependencies": {
+        "below-self-again-b": "3.0.0",
+        "below-self-again-c": "1.0.0"
+      },
+      "_id": "below-self-again-a@2.0.0",
+      "dist": {
+        "integrity": "sha512-dFPsl/Kl97sPJvTiowV55rTFNU4N3p0QSKjwe6KYBHQkWoFRtyCTrLduxhpBl2QLvpCQp0gZaj9EU5Oiv1KOMw==",
+        "shasum": "1d1323b5ad33a728e83cf978ab25a17c5941b91a",
+        "tarball": "http://localhost:4873/below-self-again-a/-/below-self-again-a-2.0.0.tgz"
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory
@@ -9,10 +10,10 @@ import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs
 // The one test that arms a real PSI trigger first checks that this process
 // is allowed to create one, and is skipped otherwise.
 
-async function run(src: string) {
+async function run(src: string, env = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -133,6 +134,15 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("the watcher is released when the VM is destroyed with a listener", async () => {
+    const result = await run(`process.on("memoryPressure", () => {}); process.stdout.write("done");`, {
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+    });
+    expect(result).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+  });
+
   // psi_write() in kernel/sched/psi.c overwrites the last byte of the write
   // with NUL before it parses the trigger. A write without its own NUL loses
   // the last digit of the window, and the kernel rejects the trigger.
@@ -150,6 +160,43 @@ describe.concurrent("process.on('memoryPressure')", () => {
       thresholdFitsWindow: thresholdUs <= windowUs,
       windowRemainderUs: windowUs % 2_000_000,
     }).toEqual({ thresholdFitsWindow: true, windowRemainderUs: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  // psi_trigger_create() seeds the trigger window from the rtpoll total, but
+  // an unprivileged trigger is evaluated against the avgs total. The rtpoll
+  // total only moves while a privileged trigger exists, so on most hosts the
+  // first stall after arming counts all stall since boot as growth and fires
+  // the trigger (#42783). Bun reads `some total=` at arm time and on each
+  // POLLPRI, and emits only once the growth reaches the trigger's threshold.
+  test.skipIf(!isLinux)("a PSI event is dropped until the stall grows by the trigger threshold", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { memoryPressurePsiFilter, memoryPressurePsiTrigger } = require("bun:internal-for-testing");
+      const thresholdUs = Number(memoryPressurePsiTrigger().toString().split(" ")[1]);
+      const psi = someTotalUs =>
+        "some avg10=0.00 avg60=0.00 avg300=0.00 total=" + someTotalUs + "\\n" +
+        "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\\n";
+      // Stall accumulated since boot when the trigger is armed, far above the threshold.
+      const armedUs = 3_911_888_025;
+      const emitted = memoryPressurePsiFilter(
+        psi(armedUs),
+        psi(armedUs + 115), // first stall after arming: the false event
+        psi(armedUs + 687), // second stall inside the next window: still false
+        psi(armedUs + thresholdUs - 1), // one microsecond short of the threshold
+        psi(armedUs + thresholdUs), // reached the threshold since arming: real
+        psi(armedUs + thresholdUs + 500), // 500 us since the last emitted event
+        psi(armedUs + 2 * thresholdUs), // the threshold again since the last emitted event
+        "", // unreadable file: keep the kernel's verdict
+      );
+      process.stdout.write(JSON.stringify({ thresholdUs, emitted }));
+    `);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({
+        thresholdUs: 150_000,
+        emitted: [false, false, false, true, false, true, true],
+      }),
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 

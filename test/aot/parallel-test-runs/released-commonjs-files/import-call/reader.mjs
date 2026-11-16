@@ -1,0 +1,1 @@
+export const read = async () => { const gauge = await import("./gauge.cjs"); return [gauge.word, gauge.bump()].join(); }; export const space = null;

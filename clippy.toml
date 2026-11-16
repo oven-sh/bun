@@ -1,3 +1,6 @@
+# The handles of `bun lint` are a `&File` and an index. They are hashed and compared by the index alone.
+ignore-interior-mutability = ["..", "bun_lint::ast::File"]
+
 disallowed-methods = [
   { path = "std::fs::read", reason = "use bun_sys::file" },
   { path = "std::fs::write", reason = "use bun_sys::file" },
@@ -15,7 +18,7 @@ disallowed-methods = [
   { path = "std::os::unix::fs::symlink", reason = "use bun_sys::file" },
   { path = "std::env::var", reason = "use bun_core::env_var" },
   { path = "std::env::var_os", reason = "use bun_core::env_var" },
-  { path = "std::thread::spawn", reason = "use bun_threading::spawn_named or ThreadPool" },
+  { path = "std::thread::spawn", reason = "use std::thread::Builder with a stack size, and name the thread (Output::Source::configure_named_thread), or use bun_threading::ThreadPool" },
   { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
   { path = "bun_core::output::pretty_fmt_rt", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
   { path = "bun_core::output::pretty_fmt_args", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
@@ -75,6 +78,15 @@ disallowed-methods = [
   { path = "bstr::ByteSlice::split_once_str", reason = "use bun_core::strings::split_once (highway memmem)" },
   { path = "bstr::ByteSlice::rsplit_once_str", reason = "use bun_core::strings::rsplit_once (highway memrmem)" },
   { path = "bstr::ByteSlice::replace", reason = "use bun_core::strings::replace_owned (highway memmem)" },
+  # `u8x16` and the other aliases hide `Simd` and `Mask` from disallowed-types, so their constructors are listed too.
+  { path = "core::simd::Simd::splat", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Simd::from_array", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Simd::from_slice", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Simd::load_or_default", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Simd::load_or", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Mask::splat", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Mask::from_array", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Mask::from_bitmask", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
 ]
 
 disallowed-types = [
@@ -86,6 +98,8 @@ disallowed-types = [
   { path = "std::collections::HashMap", reason = "use bun_collections (wyhash)" },
   { path = "std::collections::HashSet", reason = "use bun_collections (wyhash)" },
   { path = "std::fs::File", reason = "use bun_sys::File" },
+  { path = "core::simd::Simd", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
+  { path = "core::simd::Mask", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
   { path = "std::process::Command", reason = "use bun_core::util::spawn_sync_inherit (CLI helpers) or bun_spawn_sys (full control)" },
   { path = "std::backtrace::Backtrace", reason = "release builds compile std without its `backtrace` feature (scripts/build/rust.ts), so this captures frames it cannot symbolize; use bun_core::dump_current_stack_trace (bun_crash_handler)" },
 ]

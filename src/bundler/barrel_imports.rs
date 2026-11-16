@@ -14,9 +14,8 @@ use bun_ast::{ImportKind, import_record};
 use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
-use crate::Index;
 use crate::bundle_v2::BundleV2;
-use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
+use crate::bundle_v2::bv2_impl::PluginAnswer;
 use crate::parse_task;
 
 bun_core::declare_scope!(barrel, hidden);
@@ -92,18 +91,18 @@ fn resolve_barrel_export(
 /// 3. It is not an export star target of another barrel.
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
-pub(crate) fn apply_barrel_optimization(
-    this: &mut BundleV2,
-    parse_result: &mut parse_task::Result,
+pub(crate) fn apply_barrel_optimization<'a>(
+    this: &mut BundleV2<'a>,
+    parse_result: &mut parse_task::Result<'a>,
 ) {
     // bun.handleOom: Rust aborts on OOM via the global arena; unwrap is for
     // bun_collections ops that still surface AllocError.
     apply_barrel_optimization_impl(this, parse_result).expect("OOM");
 }
 
-fn apply_barrel_optimization_impl(
-    this: &mut BundleV2,
-    parse_result: &mut parse_task::Result,
+fn apply_barrel_optimization_impl<'a>(
+    this: &mut BundleV2<'a>,
+    parse_result: &mut parse_task::Result<'a>,
 ) -> Result<(), AllocError> {
     let parse_task::ResultValue::Success(result) = &mut parse_result.value else {
         return Ok(());
@@ -241,7 +240,9 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // Mark unneeded named re-export records as is_unused.
+    // Defer unneeded named re-export records: is_unused keeps them out of
+    // resolution and linking, is_barrel_deferred lets un_defer_record tell them
+    // from the records the parser marked is_unused.
     let mut has_deferrals = false;
     // Borrowck: collect (ref_, import_record_index)
     // pairs first so we can mutate `ast.import_records` without aliasing
@@ -254,7 +255,10 @@ fn apply_barrel_optimization_impl(
                 if (iri as usize) < ast.import_records.len() {
                     ast.import_records.as_mut_slice()[iri as usize]
                         .flags
-                        .insert(import_record::Flags::IS_UNUSED);
+                        .insert(
+                            import_record::Flags::IS_UNUSED
+                                | import_record::Flags::IS_BARREL_DEFERRED,
+                        );
                     has_deferrals = true;
                 }
             }
@@ -292,19 +296,26 @@ fn apply_barrel_optimization_impl(
     Ok(())
 }
 
-/// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
+/// Make a record that `apply_barrel_optimization` deferred live again. Returns true if the
+/// record was un-deferred. A record that is is_unused for another reason (an unused
+/// TypeScript import, a macro import, an HMR duplicate) is not deferred and stays as it is.
 fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) -> bool {
     if record_idx >= import_records.len() {
         return false;
     }
     let rec = &mut import_records.as_mut_slice()[record_idx];
-    if rec.flags.contains(import_record::Flags::IS_INTERNAL)
-        || !rec.flags.contains(import_record::Flags::IS_UNUSED)
-    {
+    if !rec.flags.contains(import_record::Flags::IS_BARREL_DEFERRED) {
         return false;
     }
-    rec.flags.remove(import_record::Flags::IS_UNUSED);
+    rec.flags
+        .remove(import_record::Flags::IS_UNUSED | import_record::Flags::IS_BARREL_DEFERRED);
     true
+}
+
+/// A module that became an entry point after an import made it: the build's users can read every export.
+pub(crate) fn request_every_export(this: &mut BundleV2, source_index: u32) {
+    let (_, value) = RequestedExports::entry(&mut this.requested_exports, source_index);
+    *value = RequestedExports::All;
 }
 
 /// The record's patched source_index, or (dev server, where indices are left
@@ -320,6 +331,35 @@ fn record_target(
     map?.get_path(&rec.path)
 }
 
+/// The export names the result of `import()` / `require()` record `idx` can
+/// be read by, when the parser accounted for every use of it: the names read
+/// off it, and the one the call itself reads (`await` reads `then`; `require()`
+/// of an ES module returns its `module.exports` export). `None`: every export.
+fn call_reads(
+    uses: &bun_ast::ast_result::DynamicImportAliases,
+    dev_server: bool,
+    idx: usize,
+    kind: ImportKind,
+) -> Option<impl Iterator<Item = &'static [u8]>> {
+    if dev_server {
+        return None;
+    }
+    let dynamic_use = uses.get(&(idx as u32))?;
+    let implicit: &'static [u8] = if kind == ImportKind::Require {
+        b"module.exports"
+    } else {
+        b"then"
+    };
+    Some(
+        dynamic_use
+            .aliases
+            .slice()
+            .iter()
+            .map(|alias| alias.slice())
+            .chain(core::iter::once(implicit)),
+    )
+}
+
 /// BFS work queue item: un-defer an export from a barrel.
 // `'a` borrows arena-backed AST alias strings.
 struct BarrelWorkItem<'a> {
@@ -331,46 +371,8 @@ struct BarrelWorkItem<'a> {
 /// Resolve the records the BFS just un-deferred in one barrel (`un_deferred`,
 /// ascending indices), schedule their modules, and patch their source indices.
 fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u32]) -> i32 {
-    let idx = barrel_idx as usize;
-    let target = this.graph.ast.items_target()[idx];
-    let loader = this.graph.input_files.items_loader()[idx];
-    // Move the column cells out so the `&mut self` method calls below don't
-    // alias borrows into `graph.ast` / `graph.input_files`.
-    let heap = this.graph.heap;
-    let mut barrel_ir = core::mem::replace(
-        &mut this.graph.ast.items_import_records_mut()[idx],
-        bun_alloc::ArenaVec::new_in(heap),
-    );
-    let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
-    let source_path: &'static [u8] = source.path.text;
-
-    let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
-        import_records: &mut barrel_ir,
-        source: &source,
-        loader,
-        target,
-        only_records: Some(un_deferred),
-    });
-
-    this.graph.input_files.items_source_mut()[idx] = source;
-
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
-
-    this.patch_import_record_source_indices(
-        &mut barrel_ir,
-        PatchImportRecordsCtx {
-            source_index: Index::init(barrel_idx),
-            source_path,
-            loader,
-            target,
-            only_records: Some(un_deferred),
-            ..Default::default()
-        },
-    );
-
-    this.graph.ast.items_import_records_mut()[idx] = barrel_ir;
-
-    scheduled
+    let target = this.graph.ast.items_target()[barrel_idx as usize];
+    this.resolve_records_of_parsed_file(barrel_idx, target, un_deferred, PluginAnswer::NotAsked)
 }
 
 /// After a new file's import records are patched with source_indices,
@@ -401,6 +403,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
         bun_ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
     let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
         bun_ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
+    let file_dynamic_uses: bun_ptr::BackRef<bun_ast::ast_result::DynamicImportAliases> =
+        bun_ptr::BackRef::new(
+            &this.graph.ast.items_dynamic_import_aliases()[result_source_index as usize],
+        );
 
     // `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
@@ -447,9 +453,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // surviving record's path.text becomes the resolved absolute path.
     // named_imports entries created for the dedup'd record still point at
     // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
+    // Build a fallback: raw specifier → surviving record's resolved path,
+    // using non-unused records in this file. See #28886.
+    let mut dedup_fallback: StringArrayHashMap<bun_paths::fs::Path<'_>> =
+        StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
@@ -463,7 +470,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             if ir_probe.original_path == ir_probe.path.text {
                 continue;
             }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
+            dedup_fallback.put(ir_probe.original_path, ir_probe.path)?;
         }
     }
 
@@ -472,8 +479,13 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
         }
-        named_ir_indices.set(ni.import_record_index as usize);
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
+        // A name destructured from `import()` / `require()` is a named import
+        // too, but the call needs every export (see below).
+        if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+            continue;
+        }
+        named_ir_indices.set(ni.import_record_index as usize);
         // In dev server mode, source_index may not be patched — resolve via
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
@@ -481,18 +493,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // For dedup'd HMR records (is_unused), fall back to a sibling's
         // resolved path text since the record itself still has the raw
         // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
+        let resolved_path = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+            dedup_fallback.get(ir.path.text).copied().unwrap_or(ir.path)
         } else {
-            ir.path.text
+            ir.path
         };
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get_path(&resolved_path) {
                 Some(t) => t,
                 None => continue,
             }
@@ -514,7 +523,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, resolved_path.text, alias);
             }
         }
     }
@@ -542,9 +551,19 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
-            // require() and import() expose the full module namespace — preserve all exports.
+            // require() and import() expose the full module namespace: preserve
+            // every export, unless the parser saw each name the result is read by.
             let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
-            *value = RequestedExports::All;
+            match call_reads(&file_dynamic_uses, dev_handle.is_some(), idx, ir.kind) {
+                Some(names) => {
+                    if let RequestedExports::Partial(p) = value {
+                        for name in names {
+                            p.put(name, ())?;
+                        }
+                    }
+                }
+                None => *value = RequestedExports::All,
+            }
         }
     }
 
@@ -561,18 +580,18 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
+        if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+            continue;
+        }
+        let resolved_path = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+            dedup_fallback.get(ir.path.text).copied().unwrap_or(ir.path)
         } else {
-            ir.path.text
+            ir.path
         };
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get_path(&resolved_path) {
                 Some(t) => t,
                 None => continue,
             }
@@ -615,11 +634,22 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
         let should_add = ir.kind == ImportKind::Require || ir.kind == ImportKind::Dynamic;
         if should_add {
-            queue.push(BarrelWorkItem {
-                barrel_source_index: target,
-                alias: b"",
-                is_star: true,
-            });
+            match call_reads(&file_dynamic_uses, dev_handle.is_some(), idx, ir.kind) {
+                Some(names) => {
+                    for alias in names {
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: target,
+                            alias,
+                            is_star: false,
+                        });
+                    }
+                }
+                None => queue.push(BarrelWorkItem {
+                    barrel_source_index: target,
+                    alias: b"",
+                    is_star: true,
+                }),
+            }
         }
     }
 
@@ -864,11 +894,31 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        let went_live = un_defer_record(barrel_ir, resolution.import_record_index as usize);
+        let record_idx = resolution.import_record_index as usize;
+        let mut un_deferred: Vec<u32> = Vec::new();
+        // In the dev server the record can be a duplicate, and the one that is printed another record of the
+        // same specifier: they go live together, as they are needed together in `apply_barrel_optimization`.
+        if dev_handle.is_some() && record_idx < barrel_ir.len() {
+            let specifier = barrel_ir.as_slice()[record_idx].path.text;
+            let is_deferred = barrel_ir.as_slice()[record_idx]
+                .flags
+                .contains(import_record::Flags::IS_BARREL_DEFERRED);
+            for idx in 0..barrel_ir.len() {
+                if is_deferred
+                    && idx != record_idx
+                    && barrel_ir.as_slice()[idx].path.text == specifier
+                    && un_defer_record(barrel_ir, idx)
+                {
+                    un_deferred.push(idx as u32);
+                }
+            }
+        }
+        let went_live = un_defer_record(barrel_ir, record_idx);
         if went_live {
+            un_deferred.push(resolution.import_record_index);
+            un_deferred.sort_unstable();
             // Resolve now: propagation below needs the source index.
-            newly_scheduled +=
-                resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
+            newly_scheduled += resolve_barrel_records(this, barrel_idx, &un_deferred);
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the

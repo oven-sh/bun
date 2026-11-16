@@ -1,0 +1,17 @@
+# f1 = count
+# -- source: is-array-of-a-proven-array-folds.ts
+# function count(list: number[]): number {
+#   if (Array.isArray(list)) return list.length;
+#   return String(list).length;
+# }
+# declare const input: any;
+# const numbers: number[] = [];
+# numbers.push(+input);
+# (globalThis as any).answer = count(numbers);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

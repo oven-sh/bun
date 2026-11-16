@@ -1,4 +1,5 @@
 #include "InspectorLifecycleAgent.h"
+#include "BunModuleRegistry.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
@@ -62,7 +63,7 @@ void InspectorLifecycleAgent::didCreateFrontendAndBackend()
 
 void InspectorLifecycleAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::enable()
@@ -144,10 +145,9 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {
         Vector<String> keys;
-        for (auto& [key, entry] : global->moduleLoader()->moduleMap()) {
-            if (key.first)
-                keys.append(String { key.first });
-        }
+        Bun::forEachModuleRegistrySpecifier(global->moduleLoader(), [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry*) {
+            keys.append(String { specifier });
+        });
         // ModuleMap is hash-ordered; sort so the inspector output is stable.
         std::sort(keys.begin(), keys.end(), WTF::codePointCompareLessThan);
         for (auto& k : keys)
@@ -171,15 +171,17 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     Ref<JSON::ArrayOf<String>> argv = JSON::ArrayOf<String>::create();
     {
-
-        auto* array = uncheckedDowncast<JSC::JSArray>(process->getArgv(global));
+        // process.argv is writable, so this can be any value.
+        auto argvValue = process->getArgv(global);
         RETURN_IF_EXCEPTION(scope, fail("Failed to get argv"_s));
-        for (size_t i = 0, length = array->length(); i < length; i++) {
-            auto value = array->getIndex(global, i);
-            RETURN_IF_EXCEPTION(scope, fail("Failed to get value at index"_s));
-            auto string = value.toWTFString(global);
-            RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
-            argv->addItem(string);
+        if (auto* array = dynamicDowncast<JSC::JSArray>(argvValue)) {
+            for (size_t i = 0, length = array->length(); i < length; i++) {
+                auto value = array->getIndex(global, i);
+                RETURN_IF_EXCEPTION(scope, fail("Failed to get value at index"_s));
+                auto string = value.toWTFString(global);
+                RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
+                argv->addItem(string);
+            }
         }
     }
 

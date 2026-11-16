@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -346,3 +346,11 @@ it("import.meta is correct in a module that was required with a query param", as
   expect(cjs.dir).toBe(import.meta.dir);
   expect(cjs.file).toBe("other-cjs.js");
 });
+
+it("import.meta of a collected module does not leak its url", async () => {
+  // 200 module records with a 512 KB url each: 100 MiB when every one leaks.
+  await expectRssDeltaBelow(["--smol", join(import.meta.dir, "import-meta-url-leak-fixture.mjs"), "200"], {
+    release: 40,
+    debug: 55,
+  });
+}, 90_000);

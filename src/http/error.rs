@@ -49,6 +49,8 @@ pub enum Error {
     TooManyRedirects,
     #[error("HTTP3Unsupported")]
     HTTP3Unsupported,
+    #[error("Malformed_HTTP_Response")]
+    MalformedHTTPResponse,
     #[error("ResponseHeadersTooLarge")]
     ResponseHeadersTooLarge,
     #[error("UnrequestedUpgrade")]
@@ -63,6 +65,8 @@ pub enum Error {
     UnsupportedTransferEncoding,
     #[error("RequestBodyNotReusable")]
     RequestBodyNotReusable,
+    #[error("RequestBodyLengthMismatch")]
+    RequestBodyLengthMismatch,
     #[error("UnsupportedRedirectProtocol")]
     UnsupportedRedirectProtocol,
     #[error("RedirectURLTooLong")]
@@ -97,6 +101,12 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
+    #[error("UnsupportedProtocol")]
+    UnsupportedProtocol,
+    #[error("ProxyConnectFailed")]
+    ProxyConnectFailed,
+    #[error("TLSHandshakeFailed")]
+    TLSHandshakeFailed,
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -113,8 +123,6 @@ pub enum Error {
     Brotli(bun_brotli::Error),
     #[error(transparent)]
     Zstd(bun_zstd::ZstdError),
-    #[error(transparent)]
-    Picohttp(bun_picohttp::ParseResponseError),
 }
 
 #[allow(non_camel_case_types)]
@@ -240,8 +248,6 @@ pub enum CertError {
     SUITE_B_LOS_NOT_ALLOWED,
     #[error("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256")]
     SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-    #[error("HOSTNAME_MISMATCH")]
-    HOSTNAME_MISMATCH,
     #[error("EMAIL_MISMATCH")]
     EMAIL_MISMATCH,
     #[error("IP_ADDRESS_MISMATCH")]
@@ -284,6 +290,7 @@ impl Error {
             Self::ConnectionRefused => "ConnectionRefused",
             Self::TooManyRedirects => "TooManyRedirects",
             Self::HTTP3Unsupported => "HTTP3Unsupported",
+            Self::MalformedHTTPResponse => "Malformed_HTTP_Response",
             Self::ResponseHeadersTooLarge => "ResponseHeadersTooLarge",
             Self::UnrequestedUpgrade => "UnrequestedUpgrade",
             Self::UnexpectedData => "UnexpectedData",
@@ -291,6 +298,7 @@ impl Error {
             Self::InvalidContentLength => "InvalidContentLength",
             Self::UnsupportedTransferEncoding => "UnsupportedTransferEncoding",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
+            Self::RequestBodyLengthMismatch => "RequestBodyLengthMismatch",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
             Self::RedirectURLTooLong => "RedirectURLTooLong",
             Self::RedirectURLInvalid => "RedirectURLInvalid",
@@ -308,6 +316,9 @@ impl Error {
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
+            Self::UnsupportedProtocol => "UnsupportedProtocol",
+            Self::ProxyConnectFailed => "ProxyConnectFailed",
+            Self::TLSHandshakeFailed => "TLSHandshakeFailed",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),
@@ -316,7 +327,6 @@ impl Error {
             Self::Zlib(e) => <&'static str>::from(e),
             Self::Brotli(e) => e.name(),
             Self::Zstd(e) => <&'static str>::from(e),
-            Self::Picohttp(e) => <&'static str>::from(e),
         }
     }
 }
@@ -360,11 +370,12 @@ impl From<bun_uws::ConnectError> for Error {
     }
 }
 
-impl From<bun_picohttp::ParseResponseError> for Error {
-    fn from(e: bun_picohttp::ParseResponseError) -> Self {
+impl From<bun_http1::Error> for Error {
+    fn from(e: bun_http1::Error) -> Self {
         match e {
-            bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
-            _ => Error::Picohttp(e),
+            bun_http1::Error::MalformedHead => Error::MalformedHTTPResponse,
+            bun_http1::Error::HeadTooLong => Error::ResponseHeadersTooLarge,
+            bun_http1::Error::MalformedChunk => Error::InvalidHTTPResponse,
         }
     }
 }

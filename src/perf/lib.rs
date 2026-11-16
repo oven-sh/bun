@@ -85,7 +85,7 @@ fn is_enabled_once() {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         is_enabled_on_linux_once();
-        if !Linux::is_supported() {
+        if IS_ENABLED.load(Ordering::SeqCst) && !Linux::is_supported() {
             IS_ENABLED.store(false, Ordering::SeqCst);
         }
     }

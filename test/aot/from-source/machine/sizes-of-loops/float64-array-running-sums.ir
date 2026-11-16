@@ -1,0 +1,20 @@
+# f1 = turn
+# -- source: float64-array-running-sums.ts
+# const steps = new Float64Array(512);
+# const sums = new Float64Array(512);
+# function turn(i: number): number {
+#   sums[0] = steps[0]! + (i & 1);
+#   for (let k = 1; k < steps.length; k++) sums[k] = sums[k - 1]! + steps[k]!;
+#   return sums[511]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 20 instructions, 24 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 104, patches 0, moves 1, unlikely 6 ; loop: operations 15, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:105,74 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 105
+# X64-NEXT: loop: at most 74

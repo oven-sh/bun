@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+// What is in `\${}` is one string to Prettier, so the lines of `items.map()` are indented like the text around it.
+@Component({
+  template: ` (there
+    {{
+      \`\${a === "" && b === "" ? " ${items.map(
+        (item) => html` <li class="${item.cls}">${item.name}</li> `,
+      )} " : ""}\`
+    }})`,
+})
+class C {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// What is in `\${}` is one string to Prettier, so the lines of `items.map()` are indented like the text around it.
+@Component({
+  template: ` (there
+    {{
+      \`\${a === "" && b === "" ? " ${items.map(
+        (item) => html` <li class="${item.cls}">${item.name}</li> `,
+      )} " : ""}\`
+    }})`,
+})
+class C {}
+
+===================== End =====================

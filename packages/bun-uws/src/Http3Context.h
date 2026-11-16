@@ -10,9 +10,19 @@
 
 namespace uWS {
 
+static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 has the field limit of HTTP/1 and HTTP/2");
+
 struct Http3Context {
 
-    static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
+    struct Deleter {
+        void operator()(Http3Context *ctx) const {
+            ctx->getContextData()->~Http3ContextData();
+            us_quic_socket_context_free((us_quic_socket_context_t *) ctx);
+        }
+    };
+    using Ptr = std::unique_ptr<Http3Context, Deleter>;
+
+    static Ptr create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
             (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
@@ -33,6 +43,11 @@ struct Http3Context {
              * state is 0 only before the first reset() on this stream. */
             if (rd->state != 0) return;
             rd->reset();
+
+            if (us_quic_stream_headers_too_large(s)) {
+                res->writeStatus("431 Request Header Fields Too Large")->end();
+                return;
+            }
 
             Http3Request req(s);
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
@@ -58,20 +73,16 @@ struct Http3Context {
             Http3ResponseData *rd = res->getHttpResponseData();
             /* Fire onAborted for both real aborts and post-completion stream
              * teardown. The handler distinguishes via hasResponded(); for the
-             * completed case it just drops its pointer so it doesn't outlive
-             * this destructor. */
+             * completed case it ends the request here, because this is its
+             * last notification and its pointer must not outlive this
+             * destructor. */
             if (rd->onAborted) {
                 rd->onAborted(res, rd->userData);
             }
             rd->~Http3ResponseData();
         });
 
-        return (Http3Context *) ctx;
-    }
-
-    void free() {
-        getContextData()->~Http3ContextData();
-        us_quic_socket_context_free((us_quic_socket_context_t *) this);
+        return Ptr((Http3Context *) ctx);
     }
 
     Http3ContextData *getContextData() {

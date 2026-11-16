@@ -1,0 +1,25 @@
+# -- source: main.js
+# function maker(start) { let count = start; const step = start + 1; const read = () => (count + step) | 0; count = 7; return read; }
+# function outer() {
+#     function early(n) { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + late()) | 0; return sum; }
+#     const first = early(0);
+#     const late = maker(1);
+#     return (first + early(3)) | 0;
+# }
+# function early(n) { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + late()) | 0; return sum; }
+# print(outer(), early(JSON.parse("0")));
+# const late = makerOfModule(2);
+# function makerOfModule(start) { let count = start; const read = () => (count * 2) | 0; count = 5; return read; }
+# print(early(JSON.parse("3")));
+# -- end of source
+# early() runs a loop of no turn before the maker has run. The copy of read() in the loop takes neither a closure nor a scope any more, so nothing that it is handed holds its reads inside the turn:
+# a read of a field of such a scope, and of a value that is no longer captured, is built where it is written.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 27 0
+# ANSWERS-NEXT: 30
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 27 0
+# HELD-NEXT: 30
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 27 0
+# CALLED-NEXT: 30

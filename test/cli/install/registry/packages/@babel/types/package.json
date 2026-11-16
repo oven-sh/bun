@@ -1,0 +1,52 @@
+{
+	"name": "@babel/types",
+	"versions": {
+		"7.8.3": {
+			"name": "@babel/types",
+			"version": "7.8.3",
+			"_id": "@babel/types@7.8.3",
+			"dist": {
+				"integrity": "sha512-PaPpHZXxr9G47CxEYeOmCmZIuRGmulVfBVKVmdnHc7gaC9KxG/Ouo0Upq3+uZj3ZEkYuxUM3jxE84njqBQnGHA==",
+				"shasum": "c5782e52ef960d30f74132c768f447567c7fb51c",
+				"tarball": "http://localhost:4873/@babel/types/-/@babel/types-7.8.3.tgz"
+			},
+			"contributors": []
+		},
+		"7.9.0": {
+			"name": "@babel/types",
+			"version": "7.9.0",
+			"_id": "@babel/types@7.9.0",
+			"dist": {
+				"integrity": "sha512-/H/9UTsqrnp6L2K4kwruIGKDiqRCahh0gOgHYwkxofrVXCvClQqFTN8k0auMXnFSn+IkB3Ut/VnU1gM7w9gFpA==",
+				"shasum": "9559458bebd7ac6745ada571dfd403d739420bdf",
+				"tarball": "http://localhost:4873/@babel/types/-/@babel/types-7.9.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2026-10-12T00:00:00.000Z",
+		"created": "2026-10-12T00:00:00.000Z",
+		"7.8.3": "2026-10-12T00:00:00.000Z",
+		"7.9.0": "2026-10-12T00:00:00.000Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "7.9.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"types-7.8.3.tgz": {
+			"shasum": "c5782e52ef960d30f74132c768f447567c7fb51c",
+			"version": "7.8.3"
+		},
+		"types-7.9.0.tgz": {
+			"shasum": "9559458bebd7ac6745ada571dfd403d739420bdf",
+			"version": "7.9.0"
+		}
+	},
+	"_rev": "1-0000000000000000",
+	"_id": "@babel/types",
+	"readme": "ERROR: No README data found!"
+}

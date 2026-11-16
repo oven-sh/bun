@@ -1,0 +1,21 @@
+# -- source: in-an-untyped-file-a-list-written-from-use-is-no-word-of-the-guard-where-nothing-leans-on-the-whole-word.js
+# function add(x, y) {
+#   var k, ret;
+#   if (typeof x === "object" && typeof y === "object") { ret = Array(x.length); for (k = x.length - 1; k !== -1; --k) ret[k] = add(x[k], y[k]); }
+#   else if (typeof x === "object") { ret = Array(x.length); for (k = x.length - 1; k >= 0; --k) ret[k] = add(x[k], y); }
+#   else if (typeof y === "object") { ret = Array(y.length); for (k = y.length - 1; k >= 0; --k) ret[k] = add(x, y[k]); }
+#   else ret = x + y;
+#   return ret;
+# }
+# sink(add);
+# print(String(add([[1, 2], [3, 4]], 5)), String(add([1, 2], [3, 4])), add(1, 2), add("a", 1));
+# -- end of source
+# Use writes of `x` and `y`: a number, a text or a list, and the body tells them apart. Nothing leans on that whole word, so each went back to what one test tells, the list alone: a guard that let
+# lists through and sent every number, which the word itself says may come and which most calls hand over, to the slow version. Where nothing leans on the whole word a list written from use is no word
+# of the guard, as where the body does not tell the parameter apart.
+# f1 = add
+# RUN: plan units mechanisms=all
+# The body leans on the whole word behind its own tests for objects: the guard lets all of it pass, and not the list alone.
+# CHECK: unit f1:ParameterGuard {{*}} tests (undefined|null|i32|string|Array, undefined|null|i32|string|Array)
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 6,7,8,9 4,6 3 a1

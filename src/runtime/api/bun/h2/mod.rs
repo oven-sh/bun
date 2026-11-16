@@ -4,9 +4,9 @@
 //! Build order: wire -> settings -> flow_control -> hpack -> stream -> connection, then the
 //! JSC binding is pointed at this engine and `h2_frame_parser.rs` is removed.
 
-pub mod connection;
-pub mod flow_control;
-pub mod hpack;
-pub mod settings;
-pub mod stream;
-pub mod wire;
+pub(crate) mod connection;
+pub(crate) mod flow_control;
+pub(crate) mod hpack;
+pub(crate) mod settings;
+pub(crate) mod stream;
+pub(crate) mod wire;

@@ -9,7 +9,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneTemporaryLValues.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::{
     DeclarationId, EvaluationOrder, Place, ReactiveFunction, ReactiveInstruction,
@@ -34,7 +34,7 @@ pub(crate) fn prune_unused_lvalues(func: &mut ReactiveFunction, env: &Environmen
     // When we see an unnamed lvalue on an instruction, we add its DeclarationId.
     // When we see a place reference (operand), we remove its DeclarationId.
     let visitor = Visitor { env };
-    let mut lvalues: HashSet<DeclarationId> = HashSet::new();
+    let mut lvalues: HashSet<DeclarationId> = HashSet::default();
     visitors::visit_reactive_function(func, &visitor, &mut lvalues);
 
     // Phase 2: Null out lvalues whose DeclarationId remains in the map.
@@ -89,6 +89,10 @@ fn null_unused_lvalues(
     env: &Environment,
     unused: &HashSet<DeclarationId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block.iter_mut() {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -126,6 +130,10 @@ fn null_unused_in_value(
     env: &Environment,
     unused: &HashSet<DeclarationId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::SequenceExpression {
             instructions,

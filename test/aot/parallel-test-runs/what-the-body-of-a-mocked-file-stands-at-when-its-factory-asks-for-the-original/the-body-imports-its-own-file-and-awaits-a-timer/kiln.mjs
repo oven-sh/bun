@@ -1,0 +1,11 @@
+globalThis.firings = (globalThis.firings || 0) + 1;
+export let glaze = "wet";
+export const look = () => "kiln " + glaze;
+globalThis.lit();
+globalThis.log.push("body at the door");
+await globalThis.door;
+globalThis.log.push("body past the door");
+globalThis.shelf = import("./kiln.mjs").then(it => it.look());
+await new Promise(done => setTimeout(done, 20));
+glaze = "dry";
+globalThis.log.push("body ends");

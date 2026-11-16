@@ -405,8 +405,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
     Bun::putDirectNamed(vm, report, "workers"_s, workersArray);
 
     // Environment variables
-    Bun::putDirectNamed(vm, report, "environmentVariables"_s, globalObject->processEnvObject());
+    JSObject* env = globalObject->processEnvObject();
     RETURN_IF_EXCEPTION(scope, {});
+    Bun::putDirectNamed(vm, report, "environmentVariables"_s, env);
 
     return report;
 }

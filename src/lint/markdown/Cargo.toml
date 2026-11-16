@@ -1,0 +1,16 @@
+[package]
+name = "bun_lint_markdown"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_format.workspace = true
+bun_core.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

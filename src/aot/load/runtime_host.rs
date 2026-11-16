@@ -12,7 +12,7 @@ use bun_sema::resolve::{
     HostPayload, HostResolution, ModuleDetection, ParsedCode, ParsedFile, ScriptKind,
 };
 use bun_sema::session::Arena;
-use bun_sema_driver::host::{Disk, to_native};
+use bun_sema_driver::host::{BUNDLED_LIBS, BundledLibs, to_native};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 use bun_threading::Guarded;
 
@@ -21,7 +21,7 @@ use crate::compile::runtime_reach::{LoadInput, ReachWhileLoading};
 use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::disk_delegation::{
-    delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
+    DiskServices, delegate_host_services, forward_runtime_config_parsers,
 };
 use crate::load::host::log_steps_of_load;
 use crate::load::is_host_path;
@@ -29,8 +29,11 @@ use crate::load::loaders::loader_by_name;
 use crate::load::runtime_modules::{RuntimeFileKind, RuntimeModules, RuntimeResolution};
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source_mut};
 
+/// Reads the archive and TypeScript's own libraries. No other path names a file or a folder, so what the library is
+/// does not depend on the machine that builds.
 pub(crate) struct RuntimeHost<'a> {
-    pub disk: &'a Disk,
+    pub services: DiskServices<'a>,
+    pub libs: Option<BundledLibs>,
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
@@ -44,6 +47,11 @@ pub(crate) struct RuntimeHost<'a> {
 }
 
 impl RuntimeHost<'_> {
+    fn library<'p>(&self, path: &'p [u8]) -> Option<(BundledLibs, &'p [u8])> {
+        let libs = self.libs?;
+        Some((libs, libs.name_at(path)?))
+    }
+
     fn record_unreadable(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.unreadable.lock().push(path.to_vec());
         Cow::default()
@@ -77,10 +85,14 @@ impl RuntimeHost<'_> {
 }
 
 impl Host for RuntimeHost<'_> {
-    delegate_host_services_to_disk!(disk);
+    delegate_host_services!(services);
 
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
+    }
+
+    fn realpath(&self, path: &[u8]) -> Vec<u8> {
+        path.to_vec()
     }
 
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
@@ -90,7 +102,7 @@ impl Host for RuntimeHost<'_> {
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         match is_host_path(path) {
             true => self.runtime_modules.read(path),
-            false => self.disk.read(path),
+            false => (self.library(path)).and_then(|(libs, name)| (libs.read)(name)),
         }
     }
 
@@ -115,21 +127,21 @@ impl Host for RuntimeHost<'_> {
     fn is_file(&self, path: &[u8]) -> bool {
         match is_host_path(path) {
             true => self.runtime_modules.file_kind(path).is_some(),
-            false => self.disk.is_file(path),
+            false => self.library(path).is_some(),
         }
     }
 
     fn is_dir(&self, path: &[u8]) -> bool {
         match is_host_path(path) {
             true => self.runtime_modules.is_directory(path),
-            false => self.disk.is_dir(path),
+            false => path == BUNDLED_LIBS && self.libs.is_some(),
         }
     }
 
     fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         match is_host_path(path) {
             true => self.runtime_modules.entries(path).unwrap_or_default(),
-            false => self.disk.entries(path),
+            false => Default::default(),
         }
     }
 
@@ -143,7 +155,7 @@ impl Host for RuntimeHost<'_> {
 }
 
 impl CodeHost for RuntimeHost<'_> {
-    delegate_runtime_config_parsers_to_disk!(disk);
+    forward_runtime_config_parsers!(, services);
 
     fn resolve_code(&self, request: &CodeRequest<'_>) -> HostResolution {
         match request.kind {

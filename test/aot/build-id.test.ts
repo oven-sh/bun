@@ -146,6 +146,47 @@ describe.concurrent("what it follows", () => {
     ]);
     expect(new Set(ids).size).toBe(1);
   });
+  // Bun.build() takes a file at any path, in memory alone.
+  const declared = `interface Error {\n  status?: number;\n}\n`;
+  const atOs = {
+    "/node_modules/os/package.json": `{ "name": "os", "version": "1.0.0", "types": "./index.d.ts" }\n`,
+    "/node_modules/os/index.d.ts": `export declare const constants: {};\ndeclare global {\n${declared}}\n`,
+  };
+  async function builtBeside(program: string, files: Record<string, string>) {
+    using dir = tempDir("aot-build-id", { "main.ts": program });
+    const options = { entrypoints: ["./main.ts"], compile: { aot: true, outfile: named("app") }, files };
+    const built = await run([bunExe(), "-e", `await Bun.build(${JSON.stringify(options)});`], String(dir));
+    expect(built.stderr).not.toMatch(/^error\b/m);
+    expect(built.exitCode).toBe(0);
+    return readFromFile(join(String(dir), named("app")));
+  }
+  // Bun's own modules are read under /$bun/js. From there `typeof import("os")` in builtins.d.ts leads to /node_modules/os, and
+  // `../../build/types` in its first lines to /build/types.
+  test("files at the paths that Bun's own modules name change nothing of those modules", async () => {
+    // What these modules are compiled to follows how `Error` is declared to them. The program itself does not ask.
+    const usesModulesOfBun = `import { EventEmitter } from "node:events";\nimport os from "node:os";\nnew EventEmitter().on("ran", () => console.log(typeof os.platform())).emit("ran");\n`;
+    const atNamedPaths = { ...atOs, "/build/types/generated.d.ts": declared };
+    const [alone, besideThem] = await Promise.all([
+      builtBeside(usesModulesOfBun, {}),
+      builtBeside(usesModulesOfBun, atNamedPaths),
+    ]);
+    expect(alone).toHaveLength(1);
+    expect(besideThem).toEqual(alone);
+  });
+  // Two ids today. The types of Node.js that Bun brings to a project without them are read under /$bun/packages/node_modules. Their
+  // `typeof import("os")` is asked of the program's host, which looks on the disk, and from there it is /node_modules/os.
+  test.todo(
+    "a file at a path that the types Bun brings name changes nothing of a program that asks what it declares",
+    async () => {
+      const asksHowErrorIsDeclared = `type Row = "status" extends keyof Error ? { a: number; b: number } : { a: string; b: string };\nconst rows: Row[] = JSON.parse(process.argv[2] ?? '[{"a":1,"b":2}]');\nfor (const row of rows) console.log(row.a + row.b);\n`;
+      const [alone, besideIt] = await Promise.all([
+        builtBeside(asksHowErrorIsDeclared, {}),
+        builtBeside(asksHowErrorIsDeclared, atOs),
+      ]);
+      expect(alone).toHaveLength(1);
+      expect(besideIt).toEqual(alone);
+    },
+  );
   test("a file that is renamed keeps its id", async () => {
     const { id, app } = await ran();
     using dir = tempDir("aot-build-id", {});

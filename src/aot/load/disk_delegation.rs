@@ -1,41 +1,38 @@
-macro_rules! forward_to_disk {
-    ($services:ident, $disk:ident, $(
+use bun_sema::resolve::{CodeHost, Host};
+use bun_sema_driver::host::Disk;
+
+macro_rules! forward {
+    ($visibility:vis, $field:ident, $(
         fn $name:ident $(<$tree:lifetime>)? (&self $(, $argument:ident: $type:ty)* $(,)?)
             $(-> $answer:ty)?;
     )*) => {
-        $(fn $name $(<$tree>)? (&self $(, $argument: $type)*) $(-> $answer)? {
-            bun_sema::resolve::$services::$name(self.$disk $(, $argument)*)
+        $($visibility fn $name $(<$tree>)? (&self $(, $argument: $type)*) $(-> $answer)? {
+            self.$field.$name($($argument),*)
         })*
     };
 }
 
-/// For the host of the application alone: what the library could not read is the library's own list.
-macro_rules! delegate_unreadable_to_disk {
+/// For the host of the application alone: the host of the library has no file of the machine to ask for.
+macro_rules! delegate_files_to_disk {
     ($disk:ident) => {
         fn take_unreadable(&self) -> Vec<Vec<u8>> {
             let mut paths = std::mem::take(&mut *self.unreadable.lock());
             paths.extend(bun_sema::resolve::Host::take_unreadable(self.$disk));
             paths
         }
-    };
-}
 
-macro_rules! delegate_host_services_to_disk {
-    ($disk:ident) => {
         fn realpath(&self, path: &[u8]) -> Vec<u8> {
             match crate::load::is_host_path(path) {
                 true => path.to_vec(),
                 false => bun_sema::resolve::Host::realpath(self.$disk, path),
             }
         }
+    };
+}
 
-        fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
-            let (mut names, directories) = bun_sema::resolve::Host::entries(self, path);
-            names.extend(directories);
-            names
-        }
-
-        crate::load::disk_delegation::forward_to_disk! { Host, $disk,
+macro_rules! forward_host_services {
+    ($visibility:vis, $field:ident) => {
+        crate::load::disk_delegation::forward! { $visibility, $field,
             fn origin(&self, path: &[u8]) -> usize;
             fn is_case_sensitive(&self) -> bool;
             fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
@@ -88,9 +85,21 @@ macro_rules! delegate_host_services_to_disk {
     };
 }
 
-macro_rules! delegate_runtime_config_parsers_to_disk {
-    ($disk:ident) => {
-        crate::load::disk_delegation::forward_to_disk! { CodeHost, $disk,
+macro_rules! delegate_host_services {
+    ($field:ident) => {
+        fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
+            let (mut names, directories) = bun_sema::resolve::Host::entries(self, path);
+            names.extend(directories);
+            names
+        }
+
+        crate::load::disk_delegation::forward_host_services!(, $field);
+    };
+}
+
+macro_rules! forward_runtime_config_parsers {
+    ($visibility:vis, $field:ident) => {
+        crate::load::disk_delegation::forward! { $visibility, $field,
             fn parse_runtime_package_json(
                 &self,
                 arena: &bun_sema::session::Arena,
@@ -105,7 +114,22 @@ macro_rules! delegate_runtime_config_parsers_to_disk {
     };
 }
 
-pub(crate) use delegate_host_services_to_disk;
-pub(crate) use delegate_runtime_config_parsers_to_disk;
-pub(crate) use delegate_unreadable_to_disk;
-pub(crate) use forward_to_disk;
+/// The parsers, the threads and the caches of the build's `Disk`, without its files.
+pub(crate) struct DiskServices<'a> {
+    disk: &'a Disk,
+}
+
+impl<'a> DiskServices<'a> {
+    pub(crate) fn new(disk: &'a Disk) -> Self {
+        Self { disk }
+    }
+
+    forward_host_services!(pub(crate), disk);
+    forward_runtime_config_parsers!(pub(crate), disk);
+}
+
+pub(crate) use delegate_files_to_disk;
+pub(crate) use delegate_host_services;
+pub(crate) use forward;
+pub(crate) use forward_host_services;
+pub(crate) use forward_runtime_config_parsers;

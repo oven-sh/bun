@@ -52,8 +52,7 @@ use crate::load::contents::{ScanInput, scan_file};
 use crate::load::copied_factories;
 use crate::load::data_modules::parse_data_module;
 use crate::load::disk_delegation::{
-    delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
-    delegate_unreadable_to_disk,
+    delegate_files_to_disk, delegate_host_services, forward_runtime_config_parsers,
 };
 use crate::load::externals::{contains, is_external};
 use crate::load::import_functions;
@@ -911,8 +910,8 @@ pub(crate) fn log_steps_of_load(project: &'static str) -> Option<Box<dyn FnMut(&
 }
 
 impl Host for LoadHost<'_> {
-    delegate_unreadable_to_disk!(disk);
-    delegate_host_services_to_disk!(disk);
+    delegate_files_to_disk!(disk);
+    delegate_host_services!(disk);
 
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
         log_steps_of_load("")
@@ -1163,7 +1162,7 @@ impl LoadHost<'_> {
 }
 
 impl CodeHost for LoadHost<'_> {
-    delegate_runtime_config_parsers_to_disk!(disk);
+    forward_runtime_config_parsers!(, disk);
 
     // The program may only read such a file. Like text that may be evaluated, nothing in it stops the build.
     fn is_evaluated_text(&self, path: &[u8]) -> bool {

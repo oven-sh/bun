@@ -5,6 +5,7 @@ use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::HostModuleId;
 use bun_sema::resolve::{CodeImportForm, CodeRead, LoaderRequest, ParseOptions};
 use bun_sema::session::Session;
+use bun_sema_driver::host::{Disk, from_native};
 
 use super::*;
 use crate::builtins::RuntimeModule;
@@ -22,6 +23,20 @@ const LIBRARY: &[u8] = b"/bundled:///libs/lib.es5.d.ts";
 const PROGRAM_FILE: &[u8] = b"/project/src/a.ts";
 const PROGRAM_TEXT: &[u8] = b"export {};";
 const MISSING_PROGRAM_FILE: &[u8] = b"/project/src/missing.ts";
+const TEXT_UNDER_NAME_OF_LIBRARY: &[u8] = b"declare const underNameOfLibrary: 1;";
+/// What the `Disk` of the build holds in memory: the program, and files at paths that the texts of the archive name.
+const FILES_OF_MACHINE: [(&[u8], &[u8]); 4] = [
+    (PROGRAM_FILE, PROGRAM_TEXT),
+    (
+        b"/build/types/generated.d.ts",
+        b"interface Error { status?: number }",
+    ),
+    (
+        b"/node_modules/@types/bun/package.json",
+        br#"{"name":"@types/bun"}"#,
+    ),
+    (LIBRARY, TEXT_UNDER_NAME_OF_LIBRARY),
+];
 
 struct Fixture<'f, 's> {
     host: &'f RuntimeHost<'f>,
@@ -80,8 +95,12 @@ impl<'s> Fixture<'_, 's> {
 }
 
 fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
+    with_host_and_libs(Some(bun_sema_standalone::TYPESCRIPT_LIBS), then)
+}
+
+fn with_host_and_libs<R>(libs: Option<BundledLibs>, then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
     set_up_output();
-    let already_read = [(PROGRAM_FILE.to_vec(), PROGRAM_TEXT.to_vec())];
+    let already_read = FILES_OF_MACHINE.map(|(path, text)| (path.to_vec(), text.to_vec()));
     let mut disk = Disk::with_already_read(1, already_read.into_iter().collect(), b"/project");
     disk.bundled_libs = Some(bun_sema_standalone::TYPESCRIPT_LIBS);
     let session = Session::new();
@@ -90,7 +109,8 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
     let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
     let messages = LoadMessages::default();
     let host = RuntimeHost {
-        disk: &disk,
+        services: DiskServices::new(&disk),
+        libs,
         runtime_modules: &runtime_modules,
         builtin_names: &builtin_names,
         platform: host_platform(),
@@ -268,36 +288,142 @@ fn entry_point_is_unclaimed() {
 }
 
 #[test]
-fn bundled_library_is_read_from_disk() {
+fn bundled_library_is_read_from_its_table() {
     with_host(|fixture| {
         let host = fixture.host;
         assert!(host.is_file(LIBRARY));
+        assert!(host.is_dir(BUNDLED_LIBS) && !host.is_dir(LIBRARY));
         assert_eq!(host.realpath(LIBRARY), LIBRARY);
         let text = host.read(LIBRARY);
         let text = text.expect("the libraries of TypeScript are bundled");
         assert!(!text.is_empty());
-        assert_eq!(host.disk.read(LIBRARY), Some(text));
+        let in_table = (bun_sema_standalone::TYPESCRIPT_LIBS.read)(b"lib.es5.d.ts");
+        assert_eq!(in_table.as_ref(), Some(&text));
+        assert_eq!(host.read_source(LIBRARY), text);
+        assert_eq!(
+            fixture.disk.read(LIBRARY).as_deref(),
+            Some(TEXT_UNDER_NAME_OF_LIBRARY)
+        );
         assert_eq!(fixture.runtime_modules().file_kind(LIBRARY), None);
 
         assert!(!host.is_file(b"/bundled:///libs/lib.missing.d.ts"));
         assert_eq!(host.read(b"/bundled:///libs/lib.missing.d.ts"), None);
+        assert!(host.take_unreadable().is_empty());
     });
 }
 
 #[test]
-fn other_paths_are_served_by_the_disk() {
+fn without_bundled_libraries_no_library_of_typescript_is_a_file() {
+    with_host_and_libs(None, |fixture| {
+        let host = fixture.host;
+        assert!(!host.is_file(LIBRARY));
+        assert!(!host.is_dir(BUNDLED_LIBS));
+        assert_eq!(host.read(LIBRARY), None);
+        assert!(fixture.disk.is_file(LIBRARY));
+        assert!(host.is_file(FS_SOURCE));
+    });
+}
+
+const PATHS_OF_MACHINE: [&[u8]; 9] = [
+    PROGRAM_FILE,
+    b"/build/types/generated.d.ts",
+    b"/node_modules/@types/bun/package.json",
+    b"/project/src",
+    b"/build/types",
+    b"/node_modules/@types/bun",
+    b"/node_modules",
+    b"/",
+    b"/$bun",
+];
+
+#[test]
+fn disk_of_the_build_has_the_files_of_the_machine() {
+    with_host(|fixture| {
+        let disk = fixture.disk;
+        for (path, text) in FILES_OF_MACHINE {
+            let name = BStr::new(path);
+            assert!(disk.is_file(path), "{name}");
+            assert_eq!(disk.read(path).as_deref(), Some(text), "{name}");
+        }
+        assert!(disk.is_dir(b"/project/src") && disk.is_dir(b"/build/types"));
+        assert_eq!(disk.list_dir(b"/project/src"), [b"a.ts"]);
+    });
+}
+
+#[test]
+fn file_of_the_machine_is_no_file() {
+    with_host(|fixture| {
+        for path in PATHS_OF_MACHINE {
+            assert!(!fixture.host.is_file(path), "{}", BStr::new(path));
+        }
+    });
+}
+
+#[test]
+fn folder_of_the_machine_is_no_folder() {
+    with_host(|fixture| {
+        for path in PATHS_OF_MACHINE {
+            assert!(!fixture.host.is_dir(path), "{}", BStr::new(path));
+        }
+    });
+}
+
+#[test]
+fn file_of_the_machine_is_not_read() {
+    with_host(|fixture| {
+        for path in PATHS_OF_MACHINE {
+            assert_eq!(fixture.host.read(path), None, "{}", BStr::new(path));
+        }
+        assert!(fixture.host.take_unreadable().is_empty());
+    });
+}
+
+#[test]
+fn file_of_the_machine_is_unreadable_source() {
     with_host(|fixture| {
         let host = fixture.host;
-        assert!(host.is_file(PROGRAM_FILE) && !host.is_dir(PROGRAM_FILE));
-        assert_eq!(host.read(PROGRAM_FILE).as_deref(), Some(PROGRAM_TEXT));
-        assert_eq!(&*host.read_source(PROGRAM_FILE), PROGRAM_TEXT);
-        assert!(host.is_dir(b"/project/src"));
-        let expected = (vec![b"a.ts".to_vec()], Vec::new());
-        assert_eq!(host.entries(b"/project/src"), expected);
-        assert_eq!(host.list_dir(b"/project/src"), [b"a.ts"]);
-        assert!(!host.is_file(MISSING_PROGRAM_FILE));
-        assert_eq!(host.read(MISSING_PROGRAM_FILE), None);
+        for path in PATHS_OF_MACHINE {
+            assert!(host.read_source(path).is_empty(), "{}", BStr::new(path));
+        }
+        assert_eq!(host.take_unreadable(), PATHS_OF_MACHINE);
+        assert!(fixture.disk.take_unreadable().is_empty());
     });
+}
+
+#[test]
+fn folder_of_the_machine_lists_nothing() {
+    with_host(|fixture| {
+        let host = fixture.host;
+        for path in PATHS_OF_MACHINE {
+            let name = BStr::new(path);
+            assert_eq!(host.entries(path), (Vec::new(), Vec::new()), "{name}");
+            assert!(host.list_dir(path).is_empty(), "{name}");
+        }
+    });
+}
+
+#[test]
+#[cfg(unix)]
+#[allow(clippy::disallowed_methods)]
+fn link_of_the_machine_is_not_followed() {
+    let name = format!("bun_aot_runtime_host_link_{}", std::process::id());
+    let folder = std::env::temp_dir().join(name);
+    let (target, link) = (folder.join("target.d.ts"), folder.join("link.d.ts"));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(&target, "export {};").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let link = from_native(link.as_os_str().as_encoded_bytes()).to_vec();
+
+    let answers = with_host(|fixture| [fixture.disk.realpath(&link), fixture.host.realpath(&link)]);
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    let [of_disk, of_host] = answers;
+    assert!(
+        of_disk.ends_with(b"/target.d.ts"),
+        "{}",
+        BStr::new(&of_disk)
+    );
+    assert_eq!(of_host, link);
 }
 
 #[test]

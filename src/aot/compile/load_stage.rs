@@ -14,6 +14,7 @@ use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
     collect_program_contents, find_named_workers,
 };
+use crate::load::disk_delegation::DiskServices;
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
@@ -51,8 +52,8 @@ use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
-    ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram, fit_threads_to_sources,
-    load_program,
+    ChosenThreads, CompileRequest, EntryPoints, Libs, LoadFailure, LoadedProgram,
+    fit_threads_to_sources, load_program,
 };
 use bun_threading::Guarded;
 use std::cell::Cell;
@@ -1043,6 +1044,15 @@ impl<'a> Build<'a> {
         let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
         let reads_all_that_files_ask_for =
             can_load_code_at_run_time || roots.holds_what_unseen_code_finds;
+        let libs = match options.typescript_libs {
+            Libs::Bundled(libs) => Some(libs),
+            Libs::Directory(_) => {
+                let message =
+                    b"the library reads TypeScript's libraries from Bun alone, not from a folder";
+                shared.messages.report_internal_error(message.to_vec());
+                None
+            }
+        };
         RuntimeLoadInputs {
             fold: create_runtime_fold_inputs(
                 shared.manifest,
@@ -1076,7 +1086,8 @@ impl<'a> Build<'a> {
                 ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
             },
             host: RuntimeHost {
-                disk: shared.disk,
+                services: DiskServices::new(shared.disk),
+                libs,
                 runtime_modules: shared.runtime_modules,
                 builtin_names: shared.builtin_names,
                 platform: self.platform,

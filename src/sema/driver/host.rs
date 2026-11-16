@@ -38,6 +38,14 @@ pub struct BundledLibs {
 /// disk.
 pub const BUNDLED_LIBS: &[u8] = b"/bundled:///libs";
 
+impl BundledLibs {
+    /// Returns the name of the file at `path`, if it's one of these.
+    pub fn name_at<'a>(&self, path: &'a [u8]) -> Option<&'a [u8]> {
+        let name = path.strip_prefix(BUNDLED_LIBS)?.strip_prefix(b"/")?;
+        (self.has)(name).then_some(name)
+    }
+}
+
 /// `bundled.IsBundled`
 #[inline]
 pub fn is_bundled(path: &[u8]) -> bool {
@@ -605,10 +613,8 @@ impl Disk {
 
     /// Returns the name of the file at `path` in `bundled_libs`, if it's there.
     fn bundled<'a>(&self, path: &'a [u8]) -> Option<(BundledLibs, &'a [u8])> {
-        let name = path.strip_prefix(BUNDLED_LIBS)?.strip_prefix(b"/")?;
-        self.bundled_libs
-            .filter(|libs| (libs.has)(name))
-            .map(|libs| (libs, name))
+        let libs = self.bundled_libs?;
+        Some((libs, libs.name_at(path)?))
     }
 
     /// Returns an idle reader whose last read was from `directory`. Otherwise returns a new one, or the least recently

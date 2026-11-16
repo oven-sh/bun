@@ -717,17 +717,10 @@ impl EventLoop {
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
     }
 
-    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
-    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
-    #[inline]
-    pub fn native_loop(&self) -> Async::LoopRef {
-        Async::uws_to_native(self.usockets_loop())
-    }
-
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        self.native_loop()
+        self.usockets_loop().uv_loop()
     }
 
     #[inline]
@@ -1209,7 +1202,7 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: count one more thing keeping this loop alive (the same
+    /// JS thread (or with it stopped): count one more thing keeping this loop alive (the same
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);

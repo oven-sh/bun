@@ -5,10 +5,7 @@
 //! `core::alloc::Allocator` — is closed: that feature also turns on
 //! `min_specialization` and specialises `RawTableClone` on `T: Copy`, which
 //! the workspace's pinned nightly rejects ("cannot specialize on trait
-//! `Copy`"). Enabling `allocator-api2/nightly` instead is also closed — it
-//! re-exports the real trait, but hashbrown then names
-//! `core::alloc::Allocator` from a crate that lacks
-//! `#![feature(allocator_api)]`.
+//! `Copy`").
 //!
 //! So `hashbrown` is built against the polyfill trait, and any allocator we
 //! want to plug into a `hashbrown::HashMap` must implement *both* traits:

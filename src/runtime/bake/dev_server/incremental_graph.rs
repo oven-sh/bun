@@ -628,13 +628,19 @@ impl DevServer {
             if scb {
                 f.is_client_component_boundary = true;
                 result.client_components_added.push(file_index);
-            } else if core::mem::take(&mut f.is_client_component_boundary) {
+            } else if !is_ssr_graph && core::mem::take(&mut f.is_client_component_boundary) {
                 result.client_components_removed.push(file_index);
                 let key = &graph.bundled_files.keys()[file_index.get() as usize];
-                let client_index = self.graphs.client.get_file_index(key).unwrap_or_else(|| {
-                    bun_core::Output::panic(format_args!("Client graph's SCB was already deleted",))
-                });
-                self.disconnect_and_delete_client_file(client_index);
+                let client = &mut self.graphs.client;
+                if let Some(client_index) = client.get_file_index(key) {
+                    let i = client_index.get() as usize;
+                    if client.edge_lists[i].first_dep.is_some() {
+                        // Another client component imports it.
+                        client.bundled_files.values_mut()[i].is_hmr_root = false;
+                    } else {
+                        self.disconnect_and_delete_client_file(client_index);
+                    }
+                }
             }
         }
 
@@ -1177,13 +1183,9 @@ impl Graphs {
         };
         if is_hmr_root {
             let key = &self.client.bundled_files.keys()[file_index.get() as usize];
-            let index = self.server.get_file_index(key).unwrap_or_else(|| {
-                bun_core::Output::panic(format_args!(
-                    "Server Incremental Graph is missing component for {:?}",
-                    bstr::BStr::new(key),
-                ))
-            });
-            self.trace_dependencies(index, gts, goal, index)?;
+            if let Some(index) = self.server.get_file_index(key) {
+                self.trace_dependencies(index, gts, goal, index)?;
+            }
         } else if let Some(route_bundle_index) = html_rbi {
             // HTML modified or asset modified → hard reload; else soft.
             let hard = from_file_index == file_index
@@ -1254,13 +1256,9 @@ impl Graphs {
         };
         if is_scb || kind == FileKind::Css {
             let key = &self.server.bundled_files.keys()[file_index.get() as usize];
-            let index = self.client.get_file_index(key).unwrap_or_else(|| {
-                bun_core::Output::panic(format_args!(
-                    "Client Incremental Graph is missing component for {:?}",
-                    bstr::BStr::new(key),
-                ))
-            });
-            self.trace_imports(index, gts, goal)?;
+            if let Some(index) = self.client.get_file_index(key) {
+                self.trace_imports(index, gts, goal)?;
+            }
 
             if cfg!(debug_assertions) && kind == FileKind::Css {
                 // Server CSS files never have imports.

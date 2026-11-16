@@ -15,7 +15,7 @@
 //!
 //! The remapper is open source: https://github.com/oven-sh/bun.report
 
-// The cfg is the union of the two intrinsic call sites: `abort()` on the
+// The cfg is the union of the two intrinsic call sites: `abort_immediate()` on the
 // non-Windows crash path (all profiles) and `breakpoint()` on Windows debug
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
@@ -3274,7 +3274,7 @@ mod draft {
                 libc::SIGFPE,
                 libc::SIGHUP,
                 libc::SIGTERM,
-                // Keep SIGTRAP reset so the `core::intrinsics::abort()`
+                // Keep SIGTRAP reset so the `core::intrinsics::abort_immediate()`
                 // fallback (brk on aarch64) is lethal even when JS installed
                 // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
                 // `signal-exit` package does).
@@ -3301,7 +3301,7 @@ mod draft {
             // With SIG_DFL installed and the signal unblocked this terminates the process.
             raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
-            core::intrinsics::abort();
+            core::intrinsics::abort_immediate();
         }
         #[cfg(windows)]
         {
@@ -3979,19 +3979,16 @@ mod draft {
     #[unsafe(no_mangle)]
     unsafe extern "C" fn CrashHandler__beginDlOpenAction(
         path: *const c_char,
-    ) -> *mut ActionGuard<'static> {
+    ) -> Box<ActionGuard<'static>> {
         // SAFETY: path is a valid NUL-terminated C string that outlives the guard (caller contract)
         let s: &'static [u8] = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
         // SAFETY: `CrashHandler__endDlOpenAction` drops it (caller contract)
-        bun_core::heap::into_raw(Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) }))
+        Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) })
     }
 
-    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    /// On the thread that called `CrashHandler__beginDlOpenAction`.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard<'static>) {
-        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
-        unsafe { bun_core::heap::destroy(guard) };
-    }
+    extern "C" fn CrashHandler__endDlOpenAction(_: Box<ActionGuard<'static>>) {}
 
     pub fn fix_dead_code_elimination() {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);

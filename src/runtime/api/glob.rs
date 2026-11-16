@@ -130,43 +130,25 @@ impl ScanOpts {
 /// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
     use bun_core::ZStr;
-    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
+    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter};
     use bun_paths::{PathBuffer, Platform, platform, resolve_path};
     use bun_standalone_graph::Graph;
     use bun_sys::{E, Error as SysError, FileKind, Result as Maybe, Stat, Tag};
 
     pub(crate) struct StandaloneAccessor;
 
-    #[derive(Clone, Copy)]
     pub(crate) struct StandaloneHandle {
         /// The opened directory's `Graph::dir_key` (`'static`: the graph is
         /// the immortal process singleton), or its path among the sources.
-        dir: Option<&'static [u8]>,
-    }
-
-    impl AccessorHandle for StandaloneHandle {
-        const EMPTY: Self = StandaloneHandle { dir: None };
-
-        fn is_empty(self) -> bool {
-            self.dir.is_none()
-        }
-
-        fn eql(self, other: Self) -> bool {
-            match (self.dir, other.dir) {
-                (Some(a), Some(b)) => a == b,
-                (None, None) => true,
-                _ => false,
-            }
-        }
+        dir: &'static [u8],
     }
 
     /// `path` resolved against the handle's directory when relative.
-    fn resolve<'a>(handle: StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    fn resolve<'a>(handle: &StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         if Platform::AUTO.is_absolute(path) {
             return path;
         }
-        let Some(dir) = handle.dir else { return path };
-        resolve_path::join_string_buf::<platform::Auto>(buf, &[dir, path])
+        resolve_path::join_string_buf::<platform::Auto>(buf, &[handle.dir, path])
     }
 
     fn open_resolved(path: &[u8]) -> Maybe<StandaloneHandle> {
@@ -177,9 +159,9 @@ pub(crate) mod standalone_accessor {
             // A folder of the sources is listed as one, by its path.
             Ok(_) if !bun_standalone_graph::is_bun_standalone_file_path(path) => {
                 let path = Graph::keep_folder_path(path);
-                Ok(StandaloneHandle { dir: Some(path) })
+                Ok(StandaloneHandle { dir: path })
             }
-            Ok(key) => Ok(StandaloneHandle { dir: Some(key) }),
+            Ok(key) => Ok(StandaloneHandle { dir: key }),
             Err(code) => Err(SysError::from_code(code, Tag::open)),
         }
     }
@@ -208,12 +190,10 @@ pub(crate) mod standalone_accessor {
             }))
         }
 
-        fn iterate(dir: StandaloneHandle) -> Self {
-            // `readdir` only misses for the EMPTY handle: `open_resolved`
-            // proved the directory.
-            let entries = dir
-                .dir
-                .and_then(|key| Graph::get_ref()?.readdir(key, false))
+        fn iterate(dir: &StandaloneHandle) -> Self {
+            // `open_resolved` proved the directory.
+            let entries = Graph::get_ref()
+                .and_then(|graph| graph.readdir(dir.dir, false))
                 .unwrap_or_default();
             StandaloneDirIter {
                 entries: entries.into_iter(),
@@ -223,7 +203,6 @@ pub(crate) mod standalone_accessor {
     }
 
     impl Accessor for StandaloneAccessor {
-        const COUNT_FDS: bool = false;
         type Handle = StandaloneHandle;
         type DirIter = StandaloneDirIter;
 
@@ -232,7 +211,7 @@ pub(crate) mod standalone_accessor {
         }
 
         fn openat(
-            handle: StandaloneHandle,
+            handle: &StandaloneHandle,
             path: &ZStr,
         ) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
             // Pooled: a stack `PathBuffer` is ~64 KB on Windows.
@@ -240,7 +219,7 @@ pub(crate) mod standalone_accessor {
             Ok(open_resolved(resolve(handle, path.as_bytes(), &mut buf)))
         }
 
-        fn statat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
+        fn statat(handle: &StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let resolved = resolve(handle, path.as_bytes(), &mut buf);
             Graph::get_ref()
@@ -252,13 +231,9 @@ pub(crate) mod standalone_accessor {
                 .ok_or_else(|| SysError::from_code(E::ENOENT, Tag::fstatat))
         }
 
-        fn lstatat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
+        fn lstatat(handle: &StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
             // The embedded graph has no symlinks, so lstat == stat.
             Self::statat(handle, path)
-        }
-
-        fn close(_handle: StandaloneHandle) -> Option<SysError> {
-            None
         }
     }
 }

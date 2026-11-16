@@ -5,7 +5,7 @@
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.
 //! Mutex can be statically initialized and is at most `size_of::<u64>()` large.
-//! Use `lock()` or `try_lock()` to enter the critical section and `unlock()` to leave it.
+//! Use `lock()` to enter the critical section and `unlock()` to leave it.
 //!
 //! Example:
 //! ```ignore
@@ -13,11 +13,6 @@
 //!
 //! {
 //!     m.lock();
-//!     // ... critical section code
-//!     m.unlock();
-//! }
-//!
-//! if m.try_lock() {
 //!     // ... critical section code
 //!     m.unlock();
 //! }
@@ -46,14 +41,6 @@ impl Mutex {
         Self { impl_: Impl::new() }
     }
 
-    /// Tries to acquire the mutex without blocking the caller's thread.
-    /// Returns `false` if the calling thread would have to block to acquire it.
-    /// Otherwise, returns `true` and the caller should `unlock()` the Mutex to release it.
-    #[cfg(debug_assertions)]
-    pub fn try_lock(&self) -> bool {
-        self.impl_.try_lock()
-    }
-
     /// Acquires the mutex, blocking the caller's thread until it can.
     /// It is undefined behavior if the mutex is already held by the caller's thread.
     /// Once acquired, call `unlock()` on the Mutex to release it.
@@ -61,7 +48,7 @@ impl Mutex {
         self.impl_.lock()
     }
 
-    /// Releases the mutex which was previously acquired with `lock()` or `try_lock()`.
+    /// Releases the mutex which was previously acquired with `lock()`.
     /// It is undefined behavior if the mutex is unlocked from a different thread that it was locked from.
     pub fn unlock(&self) {
         // SAFETY: held by this thread (fn contract) and live for the whole call.
@@ -80,7 +67,7 @@ impl Mutex {
 
     /// Debug-only check that the calling thread already holds this mutex.
     /// Intended for `debug_assert!`-ing a "caller must hold the lock" contract
-    /// (e.g. `Watcher::flush_evictions`). In release builds the locking-thread
+    /// (e.g. the resolver's `entries_mutex`). In release builds the locking-thread
     /// id is not tracked, so this just returns `true` to make the assert a
     /// no-op there.
     #[inline]
@@ -177,16 +164,6 @@ impl DebugImpl {
     }
 
     #[inline]
-    fn try_lock(&self) -> bool {
-        let locking = self.impl_.try_lock();
-        if locking {
-            self.locking_thread
-                .store(current_thread_id(), Ordering::Relaxed);
-        }
-        locking
-    }
-
-    #[inline]
     fn lock(&self) {
         let current_id = current_thread_id();
         if self.locking_thread.load(Ordering::Relaxed) == current_id && current_id != 0 {
@@ -225,7 +202,7 @@ unsafe impl Send for WindowsImpl {}
 // non-null pointer to a `#[repr(C)]` word; `UnsafeCell` is
 // `#[repr(transparent)]`). The reference type encodes the only pointer-validity
 // precondition; acquire on an unowned lock blocks (recursive acquire deadlocks
-// — not UB), so `safe fn` discharges the link-time proof for the acquire pair.
+// — not UB), so `safe fn` discharges the link-time proof for the acquire.
 // `ReleaseSRWLockExclusive` keeps the raw-pointer `bun_sys` extern: MSDN
 // documents "results are undefined" when called without ownership (unlike
 // `os_unfair_lock_unlock`, which aborts), so that one retains its block.
@@ -233,11 +210,6 @@ unsafe impl Send for WindowsImpl {}
 #[link(name = "kernel32")]
 unsafe extern "system" {
     safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
-    // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
-    #[cfg(debug_assertions)]
-    safe fn TryAcquireSRWLockExclusive(
-        lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
-    ) -> u8;
 }
 
 #[cfg(windows)]
@@ -246,11 +218,6 @@ impl WindowsImpl {
         Self {
             srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT),
         }
-    }
-
-    #[cfg(debug_assertions)]
-    fn try_lock(&self) -> bool {
-        TryAcquireSRWLockExclusive(&self.srwlock) != 0
     }
 
     fn lock(&self) {
@@ -296,8 +263,6 @@ pub(crate) struct OsUnfairLock {
 // `os_unfair_lock_unlock` takes the address instead: see `Mutex::unlock_raw`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
-    #[cfg(debug_assertions)]
-    safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
     safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
     fn os_unfair_lock_unlock(lock: *mut OsUnfairLock);
 }
@@ -308,11 +273,6 @@ impl DarwinImpl {
         Self {
             oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }),
         }
-    }
-
-    #[cfg(debug_assertions)]
-    fn try_lock(&self) -> bool {
-        os_unfair_lock_trylock(&self.oul)
     }
 
     fn lock(&self) {

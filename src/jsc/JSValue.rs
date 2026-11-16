@@ -8,12 +8,13 @@
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
-    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
+    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -871,61 +872,26 @@ impl JSValue {
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
-    pub fn as_<T: JsClass>(self) -> Option<*mut T> {
+    pub fn as_class_ref<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         if !self.is_cell() {
             return None;
         }
         T::from_js(self)
     }
-    /// `JSValue.asDirect(T)` — unchecked-prototype downcast.
-    /// Caller must have already verified `is_cell()`; dispatches via
-    /// [`JsClass::from_js_direct`] (skips the prototype-chain walk that `as_`
-    /// performs, so subclasses are *not* matched).
+    /// Whether [`as_class_ref`](Self::as_class_ref) is `Some`. Does not keep the value alive.
     #[inline]
-    pub fn as_direct<T: JsClass>(self) -> Option<*mut T> {
-        debug_assert!(self.is_cell());
+    pub fn is<T: JsClass>(self) -> bool {
+        ManuallyDrop::new(T::from_js(&self)).is_some()
+    }
+    /// Whether [`as_direct`](Self::as_direct) is `Some`. Does not keep the value alive.
+    #[inline]
+    pub fn is_direct<T: JsClass>(self) -> bool {
+        ManuallyDrop::new(T::from_js_direct(&self)).is_some()
+    }
+    /// Dispatches via [`JsClass::from_js_direct`], so subclasses are *not* matched.
+    #[inline]
+    pub fn as_direct<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         T::from_js_direct(self)
-    }
-    /// Safe shared-borrow downcast — `as_<T>()` followed by `&*ptr`.
-    ///
-    /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
-    /// sound because JSC's conservative stack scanner keeps the cell alive
-    /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
-    /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
-    /// for as long as the caller holds `self`.
-    ///
-    /// The `'static` lifetime is a pragmatic over-approximation (there is no
-    /// stack-root guard type to tie it to); callers MUST NOT stash the
-    /// reference past the point where `self` is last used. This mirrors the
-    /// raw-pointer contract of [`as_`](Self::as_) but lets read-only callers
-    /// drop their `unsafe { &*p }` boilerplate.
-    ///
-    /// There is intentionally **no** `as_class_mut`: re-entry into JS (via a
-    /// getter, `toString`, etc.) can produce a second `JSValue` for the same
-    /// cell and thus a second `&mut T`, which is instant UB. Callers needing
-    /// mutation must keep using [`as_`](Self::as_) and scope the `&mut`
-    /// themselves.
-    #[inline]
-    pub fn as_class_ref<T: JsClass>(self) -> Option<&'static T> {
-        // SAFETY: `T::from_js` returns either `None` or a non-null, properly
-        // aligned pointer to the `T` payload owned by the live JSC cell that
-        // `self` encodes. The cell is kept alive by JSC's conservative stack
-        // scan for as long as `self` is reachable on the stack, so the shared
-        // borrow is valid for the caller's frame. We never hand out `&mut`,
-        // so aliasing with other `as_class_ref` borrows is fine.
-        self.as_::<T>().map(|p| unsafe { &*p })
-    }
-
-    /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for payloads that are intrusively refcounted: lets the caller
-    /// take its own ref (`RefPtr::from_this`) or dispatch into a
-    /// `ThisPtr`-taking entry point. Same frame-scoped validity.
-    #[inline]
-    pub fn as_class_this_ptr<T: JsClass>(self) -> Option<bun_ptr::ThisPtr<T>> {
-        // SAFETY: as for `as_class_ref` — the pointer is the live payload of the
-        // cell `self` encodes, which the stack scan keeps alive for this frame.
-        self.as_::<T>().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
     }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer; conjuring a

@@ -1,4 +1,4 @@
-// A function of a sloppy CommonJS file that starts with "use strict" is strict mode code, as in Node. `bun run` drops the directive.
+// A function of a sloppy CommonJS file that starts with "use strict" is strict mode code, as in Node.
 // ./fixed/strict-functions.txt has the programs: each prints what the function with the directive answers and then what its neighbor without one answers.
 // fixed.test.ts holds them as executables. Here they are the test files of one run, and what the language forbids behind the directive stops a build.
 import { expect } from "bun:test";

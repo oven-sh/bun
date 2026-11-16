@@ -186,7 +186,7 @@ pub(crate) trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
+    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &jsc::DOMFormData) -> Blob
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -637,7 +637,7 @@ impl BlobExt for Blob {
         blob
     }
 
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
+    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &jsc::DOMFormData) -> Blob {
         // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
@@ -693,11 +693,10 @@ impl BlobExt for Blob {
             ctx.on_entry(unsafe { *name_ }, entry);
         }
         unsafe extern "C" {
-            // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
-            // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains.
+            // `ctx`/`cb` are stored opaquely and only used synchronously. Module-private
+            // with one call site below — no caller-side precondition remains.
             safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
+                this: &jsc::DOMFormData,
                 ctx: *mut c_void,
                 // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
                 // body localises every raw deref individually), so the callback
@@ -2442,10 +2441,7 @@ impl BlobExt for Blob {
 
                 jsc::JSType::DOMWrapper => {
                     if !fail_if_top_value_is_not_typed_array_like {
-                        if let Some(blob_ptr) = top_value.as_::<Blob>() {
-                            // SAFETY: live JS heap pointer; single-threaded JS execution.
-                            // Shared access only — Blob state is Cell/JsCell-based.
-                            let blob = unsafe { &*blob_ptr };
+                        if let Some(blob) = top_value.as_class_ref::<Blob>() {
                             if MOVE {
                                 // Move the store without bumping its refcount, but take
                                 // independent ownership of name/content_type so the
@@ -2550,8 +2546,7 @@ impl BlobExt for Blob {
                             match item.js_type_loose() {
                                 jsc::JSType::String => {}
                                 t if t.is_array_buffer_like() => {}
-                                jsc::JSType::DOMWrapper
-                                    if item.as_class_ref::<Blob>().is_some() => {}
+                                jsc::JSType::DOMWrapper if item.is::<Blob>() => {}
                                 _ => {
                                     parts_can_run_js = true;
                                     break;
@@ -3278,16 +3273,12 @@ impl URLSearchParamsConverter {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
-    let this = Blob::from_js(value)?;
-    // SAFETY: `from_js` returns a live heap pointer when Some.
-    Some(
-        NonNull::new(Blob__dupe(unsafe { &*this }))
-            .expect("Blob__dupe returns a fresh heap allocation"),
-    )
+    let this = Blob::from_js(&value)?;
+    Some(NonNull::new(Blob__dupe(&this)).expect("Blob__dupe returns a fresh heap allocation"))
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
+pub(crate) extern "C" fn Blob__setAsFile(this: &Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
     if !path_str.is_empty() {
         this.name.set(path_str.clone());
@@ -4201,9 +4192,6 @@ pub(crate) fn write_file_internal(
             }
         };
 
-        // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
-        // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
-        // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
             let bv = std::ptr::from_mut(response.get_body_value());
             match body_dispatch(bv, &mut || response.get_body_readable_stream())? {
@@ -4865,7 +4853,7 @@ impl S3BlobDownloadTask {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
+pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &Blob) -> u64 {
     this.get_size_for_bindings()
 }
 

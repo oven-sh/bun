@@ -303,6 +303,15 @@ fn the_main_module_without_its_name() {
         assert_mentions(source, &[]);
     }
     for source in [
+        "require.resolve = function () { 'use strict'; return this; };",
+        "let f = () => {}; f = function () { 'use strict'; return this; }; require.resolve = f;",
+        "function f() {} f = function () { 'use strict'; return this; }; require.resolve = f;",
+        "require.resolve = replaced;",
+    ] {
+        assert_mentions(source, &[("require.resolve", EntryPoint, Escaped)]);
+    }
+    assert_mentions("require.resolve = () => {};", &[]);
+    for source in [
         "f(globalThis);",
         "const [root] = [globalThis];",
         "globalThis[key];",

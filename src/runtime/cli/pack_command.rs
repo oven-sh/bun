@@ -23,9 +23,7 @@ use bun_parsers::json as JSON;
 use bun_paths::resolve_path::{self, normalize_buf_z_spill};
 use bun_paths::{self as path, SEP_STR};
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
 /// Returns a raw projection, because `pack()` holds the resulting `&mut MapEntry` across other uses
 /// of `ctx.manager`.
@@ -1275,12 +1273,12 @@ pub(crate) fn bin_kind_without_following_symlinks(
 /// `published_files` has already queued the bins, so the walks skip them.
 fn is_listed_bin(bins: &[BinInfo], ty: BinType, subpath: &ZStr) -> bool {
     bins.iter()
-        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes(), true))
+        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes()))
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     bins.iter().any(|bin| match bin.ty {
-        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path, true),
+        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path),
         BinType::Dir => (maybe_bin_path.strip_prefix(bin.path.as_bytes()))
             .and_then(|remain| remain.strip_prefix(b"/"))
             .is_some_and(|name| !name.is_empty() && !strings::contains_char(name, b'/')),
@@ -1931,13 +1929,8 @@ pub(crate) fn pack(
                 bun_sys::O::RDONLY,
                 0,
             )
-            .and_then(|file| {
-                file.make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                )
-            })
             .map(CloseOnDrop::new)
+            .and_then(|file| file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open))
             .unwrap_or_else(|err| fail_file(err, "open", path));
 
             let stat = bun_sys::sys_uv::fstat(file.fd())

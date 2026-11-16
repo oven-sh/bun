@@ -985,35 +985,6 @@ impl Fd {
         }
     }
 
-    /// On Windows, convert a system-kind
-    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
-    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
-    /// On POSIX this is the identity (libuv fd == posix fd).
-    ///
-    /// Returns `Err(())` when
-    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
-    /// the original handle (see `make_libuv_owned_for_syscall`).
-    #[inline]
-    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        match self.kind() {
-            FdKind::Uv => Ok(self),
-            FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
-                }
-            }
-        }
-    }
-
     #[inline]
     pub fn is_valid(self) -> bool {
         #[cfg(not(windows))]
@@ -3038,17 +3009,14 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. `Resolution`, `Bin` and `DependencyVersion` share it.
+// sites stay safe. `Resolution` and `Bin` share it.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
 // `debug_assert!(self.$tag_field == $TagTy::$Variant)`.
 //
 // Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
-// formed (defensive against partially-initialized padding). The trailing
-// `as *const $Ty` cast is identity for plain fields and unwraps
-// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `DependencyVersionValue`
-// case without needing a separate macro arm.
+// formed (defensive against partially-initialized padding).
 //
 // Syntax:
 //   extern_union_accessors! {
@@ -3089,9 +3057,8 @@ macro_rules! extern_union_accessors {
         pub fn $field(&self) -> &$Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
-            // intermediate `&Union`. Cast is identity for plain fields and
-            // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$field) as *const $Ty) }
+            // intermediate `&Union`.
+            unsafe { &*::core::ptr::addr_of!(self.$vf.$field) }
         }
     };
     (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $field_mut:ident, $Ty:ty) => {
@@ -3099,7 +3066,7 @@ macro_rules! extern_union_accessors {
         pub fn $field_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$field) as *mut $Ty) }
+            unsafe { &mut *::core::ptr::addr_of_mut!(self.$vf.$field) }
         }
     };
 }
@@ -3544,7 +3511,7 @@ impl Clone for SensitiveCString {
 
 impl PartialEq for SensitiveCString {
     fn eq(&self, other: &Self) -> bool {
-        crate::strings::eql_long(self.as_bytes(), other.as_bytes(), true)
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -4628,42 +4595,46 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
+            struct FileActions(libc::posix_spawn_file_actions_t);
+            impl Drop for FileActions {
+                fn drop(&mut self) {
+                    // SAFETY: `posix_spawn_file_actions_init` made it.
+                    unsafe { libc::posix_spawn_file_actions_destroy(&raw mut self.0) };
+                }
+            }
             // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
             // stdout/stderr stay inherited.
-            let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
-            let actions_ptr: *const libc::posix_spawn_file_actions_t =
-                if stdin == StdinBehavior::Ignore {
-                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
-                    if rc != 0 {
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    let rc = libc::posix_spawn_file_actions_addopen(
-                        &raw mut actions,
-                        0,
-                        c"/dev/null".as_ptr(),
-                        libc::O_RDONLY,
-                        0,
-                    );
-                    if rc != 0 {
-                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    &raw const actions
-                } else {
-                    core::ptr::null()
-                };
+            let actions = if stdin == StdinBehavior::Ignore {
+                let mut actions = core::ptr::null_mut();
+                if libc::posix_spawn_file_actions_init(&raw mut actions) != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                let mut actions = FileActions(actions);
+                let rc = libc::posix_spawn_file_actions_addopen(
+                    &raw mut actions.0,
+                    0,
+                    c"/dev/null".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                );
+                if rc != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+                Some(actions)
+            } else {
+                None
+            };
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions_ptr,
+                actions
+                    .as_ref()
+                    .map_or(core::ptr::null(), |it| &raw const it.0),
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if !actions_ptr.is_null() {
-                libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            }
             if rc != 0 {
                 return Err(crate::CrateError::Unexpected);
             }
@@ -5179,8 +5150,6 @@ pub mod perf {
         unsafe extern "C" {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,

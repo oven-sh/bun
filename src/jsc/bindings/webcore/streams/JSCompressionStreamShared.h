@@ -4,15 +4,16 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "headers-handwritten.h"
 
 // CompressionStreamCoder.rs. Each transform call runs one bounded step; `more` means the coder
 // must be stepped again (with no input, it kept the tail) before the next chunk is fed.
-extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark, bool hasLevel, int32_t level);
-extern "C" void CompressionStreamCoder__destroy(void* coder);
-extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);
-extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, void* sinkController, bool* more);
+BUN_DECLARE_FFI_DELETER(CompressionStreamCoder, CompressionStreamCoder__destroy);
+extern "C" CompressionStreamCoder* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark, bool hasLevel, int32_t level);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(CompressionStreamCoder* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(CompressionStreamCoder* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, void* sinkController, bool* more);
 // Off-thread step. It owns the coder until Bun__CompressionStream__deliverAsync completes it.
-extern "C" void CompressionStreamCoder__transformAsync(void* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
+extern "C" void CompressionStreamCoder__transformAsync(CompressionStreamCoder* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
 
 namespace Bun {
 namespace WebStreams {

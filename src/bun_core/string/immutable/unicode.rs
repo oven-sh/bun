@@ -1,7 +1,6 @@
 use crate::string::WStr;
 use crate::string::immutable::{
-    U3Fast, UNICODE_REPLACEMENT as unicode_replacement, eql_comptime_ignore_len as eql_ignore_len,
-    first_non_ascii, first_non_ascii16,
+    U3Fast, UNICODE_REPLACEMENT as unicode_replacement, first_non_ascii, first_non_ascii16,
 };
 use crate::vec::BorrowedBuf;
 use bun_alloc::AllocError;
@@ -562,10 +561,10 @@ impl BOM {
         if bytes.len() < 3 {
             return None;
         }
-        if eql_ignore_len(bytes, &Self::UTF8_BYTES) {
+        if bytes.starts_with(&Self::UTF8_BYTES) {
             return Some(BOM::Utf8);
         }
-        if eql_ignore_len(bytes, &Self::UTF16_LE_BYTES) {
+        if bytes.starts_with(&Self::UTF16_LE_BYTES) {
             return Some(BOM::Utf16Le);
         }
         None

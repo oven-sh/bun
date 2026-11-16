@@ -93,6 +93,7 @@ namespace uWS {
 }
 
 #include <zlib.h>
+#include <memory>
 #include <string>
 #include <string_view>
 #include "libdeflate.h"
@@ -108,21 +109,13 @@ struct ZlibContext {
      * by many deflations without modifying the inflation */
     std::string dynamicDeflationBuffer;
     ReceiveBuffer dynamicInflationBuffer;
-    char *deflationBuffer;
-    char *inflationBuffer;
-    libdeflate_decompressor *decompressor;
+    const std::unique_ptr<char[]> deflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
+    const std::unique_ptr<char[]> inflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
 
-    ZlibContext() {
-        deflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
-        inflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
-        decompressor = libdeflate_alloc_decompressor();
-    }
-
-    ~ZlibContext() {
-        free(deflationBuffer);
-        free(inflationBuffer);
-        libdeflate_free_decompressor(decompressor);
-    }
+    struct DecompressorDeleter {
+        void operator()(libdeflate_decompressor *decompressor) const { libdeflate_free_decompressor(decompressor); }
+    };
+    const std::unique_ptr<libdeflate_decompressor, DecompressorDeleter> decompressor{libdeflate_alloc_decompressor()};
 };
 
 struct DeflationStream {
@@ -154,12 +147,12 @@ struct DeflationStream {
 
         int err;
         do {
-            deflationStream.next_out = (Bytef *) zlibContext->deflationBuffer;
+            deflationStream.next_out = (Bytef *) zlibContext->deflationBuffer.get();
             deflationStream.avail_out = DEFLATE_OUTPUT_CHUNK;
 
             err = ::deflate(&deflationStream, Z_SYNC_FLUSH);
             if (Z_OK == err && deflationStream.avail_out == 0) {
-                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer.get(), DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
                 continue;
             } else {
                 break;
@@ -172,7 +165,7 @@ struct DeflationStream {
         }
 
         if (zlibContext->dynamicDeflationBuffer.length()) {
-            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer.get(), DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
 
             return std::string_view((char *) zlibContext->dynamicDeflationBuffer.data(), zlibContext->dynamicDeflationBuffer.length() - 4);
         }
@@ -180,7 +173,7 @@ struct DeflationStream {
         /* Note: We will get an interger overflow resulting in heap buffer overflow if Z_BUF_ERROR is returned
          * from passing 0 as avail_in. Therefore we must not deflate an empty string */
         return {
-            zlibContext->deflationBuffer,
+            zlibContext->deflationBuffer.get(),
             DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out - 4
         };
     }
@@ -221,7 +214,7 @@ struct InflationStream {
             char tmp[9];
             memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
             memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer, LARGE_BUFFER_SIZE, &written);
+            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor.get(), compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE, &written);
             memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
 
             if (res == 0) {
@@ -229,7 +222,7 @@ struct InflationStream {
                 if (written > maxPayloadLength) {
                     return {{}, 1009};
                 }
-                return {{zlibContext->inflationBuffer, written}, 0};
+                return {{zlibContext->inflationBuffer.get(), written}, 0};
             }
         }
 
@@ -252,7 +245,7 @@ struct InflationStream {
         int err;
         bool outOfMemory = false;
         do {
-            inflationStream.next_out = (Bytef *) zlibContext->inflationBuffer;
+            inflationStream.next_out = (Bytef *) zlibContext->inflationBuffer.get();
             inflationStream.avail_out = LARGE_BUFFER_SIZE;
 
             err = ::inflate(&inflationStream, Z_SYNC_FLUSH);
@@ -267,7 +260,7 @@ struct InflationStream {
             }
 
             /* Don't return here. The shared stream still has to be reset below. */
-            if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
+            if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
                 outOfMemory = true;
                 break;
             }
@@ -295,7 +288,7 @@ struct InflationStream {
             return {{}, 1009};
         }
 
-        std::string_view inflated(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
+        std::string_view inflated(zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE - inflationStream.avail_out);
         if (zlibContext->dynamicInflationBuffer.length()) {
             if (!zlibContext->dynamicInflationBuffer.tryAppend(inflated.data(), inflated.length())) {
                 zlibContext->dynamicInflationBuffer.release();

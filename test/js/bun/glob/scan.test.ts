@@ -1297,3 +1297,21 @@ test("scan and scanSync reject a cwd or a pattern with a null byte", () => {
   expect(() => new Glob(pattern).scan()).toThrow(nullByteError);
   expect(new Glob("a\0b").match("a\0b")).toBe(true);
 });
+
+test.skipIf(isWindows)("closes a directory that got the number of a closed standard stream", async () => {
+  using dir = tempDir("glob-scan-closed-stdin", { "nested/file.txt": "" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+       fs.closeSync(0);
+       console.log([...new Bun.Glob("*/*.txt").scanSync()].join(), fs.openSync(".", "r"));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "nested/file.txt 0\n", stderr: "", exitCode: 0 });
+});

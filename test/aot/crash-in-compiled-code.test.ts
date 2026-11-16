@@ -388,22 +388,30 @@ else console.log("went on", lowest(how));
       }
     });
 
-    test.each(["", "listens", "listened"])("process.abort() reports no crash, with the argument %j", async listens => {
-      const source = `const listens = process.argv[2];
+    describe("process.abort()", () => {
+      let dir: ReturnType<typeof tempDir>;
+      beforeAll(async () => {
+        dir = tempDir("aot-process-abort", {
+          "app.ts": `const listens = process.argv[2];
 if (listens) process.on("SIGABRT", () => {});
 if (listens === "listened") process.removeAllListeners("SIGABRT");
 process.abort();
-`;
-      using dir = tempDir("aot-process-abort", { "app.ts": source });
-      const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(dir));
-      expect(built.exitCode).toBe(0);
-      await using child = Bun.spawn({
-        cmd: withoutCoreDump([join(String(dir), "app"), listens]),
-        env: { ...bunEnv, ...quiet },
-        stderr: "pipe",
+`,
+        });
+        const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(dir));
+        expect(built.exitCode).toBe(0);
       });
-      const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
-      expect({ stderr, signal: child.signalCode }).toEqual({ stderr: "", signal: "SIGABRT" });
+      afterAll(() => dir?.[Symbol.dispose]());
+
+      test.each(["", "listens", "listened"])("reports no crash, with the argument %j", async listens => {
+        await using child = Bun.spawn({
+          cmd: withoutCoreDump([join(String(dir), "app"), listens]),
+          env: { ...bunEnv, ...quiet },
+          stderr: "pipe",
+        });
+        const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
+        expect({ stderr, signal: child.signalCode }).toEqual({ stderr: "", signal: "SIGABRT" });
+      });
     });
   },
 );

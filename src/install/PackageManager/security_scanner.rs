@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ffi::CStr;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -13,7 +12,7 @@ use crate::resolution::{append_without_url_credentials, append_without_url_useri
 use bun_collections::ArrayHashMap;
 use bun_core::fmt::{escape_control_chars, escape_control_chars_multiline};
 use bun_core::strings;
-use bun_core::{self, Output};
+use bun_core::{self, Output, ZStr, zstr};
 use bun_event_loop::EventLoopHandle;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
@@ -21,10 +20,9 @@ use bun_install::{
 };
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
-use bun_ptr::RefPtr;
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::subprocess::{self, StdioResult};
+use bun_spawn::subprocess::{PipeState, StaticPipeWriter, StdioResult};
 use bun_spawn::{
     self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
     SpawnOptions, Status, Stdio,
@@ -724,7 +722,7 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop_handle = EventLoopHandle::from_any(&manager.event_loop);
+    let event_loop_handle = manager.event_loop;
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
         event_loop_handle,
@@ -768,45 +766,14 @@ pub struct SecurityScanSubprocess<'a> {
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
-    json_writer: Option<RefPtr<StaticPipeWriter>>,
-    /// `drop` is re-entered through the writer's backref.
+    json_writer: Option<StaticPipeWriter<Box<[u8]>>>,
+    /// `on_process_exit` can run while `finish_spawn` holds `&mut self`.
     _pin: core::marker::PhantomPinned,
-}
-
-// The generic `subprocess::StaticPipeWriter<P>` is
-// monomorphized on `'static` because the writer stores `*mut P` (raw backref —
-// lifetime is erased anyway) and the type alias must name a concrete `P`.
-pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
-
-// Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
-// because the call is re-entrant: it may fire synchronously inside
-// `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
-// the stack (small JSON fits the pipe buffer → write completes → close).
-impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
-    type Source = Box<[u8]>;
-    unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
-        // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
-        // the subprocess outlives its writer (it owns the writer ref in `json_writer`).
-        // `finish_spawn` holds no Rust borrow on `self.json_writer` across `start()`
-        // (it clones the `RefPtr` first), so this `&mut` is unique for the call.
-        unsafe { (*this).on_close_io(kind) };
-    }
 }
 
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess<'static> => |this| {
         on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
-    }
-}
-
-impl<'a> Drop for SecurityScanSubprocess<'a> {
-    fn drop(&mut self) {
-        self.process = None;
-        // Dropping the writer can synchronously close it and re-enter
-        // `on_close_io` through the parent backref; move it out first so that
-        // sees `None`.
-        drop(self.json_writer.take());
     }
 }
 
@@ -840,9 +807,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `.env` file on top.
         let code =
             std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
-        let mut argv = vec![exec_path.as_cstr(), c"--no-install", c"--no-env-file"];
-        argv.extend(bun_core::Global::ca_store_flag().map(bun_core::ZStr::as_cstr));
-        argv.extend([c"-e", code.as_c_str()]);
+        let mut argv = vec![exec_path, zstr!("--no-install"), zstr!("--no-env-file")];
+        argv.extend(bun_core::Global::ca_store_flag());
+        argv.extend([zstr!("-e"), ZStr::from_cstr(&code)]);
         let env = self.manager.env_mut();
         // Set in the process environment after the loader copied it.
         if bun_io::parent_death_watchdog::is_enabled() {
@@ -869,7 +836,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
-        argv: &[&CStr],
+        argv: &[&ZStr],
         envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
@@ -887,7 +854,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
+        let mut spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop(ipc_write);
@@ -909,7 +876,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
-        argv: &[&CStr],
+        argv: &[&ZStr],
         envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
@@ -945,7 +912,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
+        let mut spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop((ipc_write, child_read));
@@ -966,9 +933,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     ) -> Result<(), Error> {
         let json_source = core::mem::take(&mut self.json_data);
 
-        // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
-        // isDone() returns true, otherwise we risk freeing this struct while
-        // StaticPipeWriter still holds a pointer to it (child crash case).
+        // ipc_reader (fd 3) + json_writer (fd 4)
         self.remaining_fds = 2;
         let event_loop = self.event_loop_handle;
         let result = self
@@ -983,38 +948,27 @@ impl<'a> SecurityScanSubprocess<'a> {
         let process = std::mem::take(spawned).to_process_handle(event_loop);
         let process = self.process.insert(process).this_ptr();
 
-        // Derive the raw backref once and use it for all subsequent field
-        // access. `start()`/`watch_or_reap()` below may re-enter
-        // `on_close_io`/`on_process_exit` via this pointer while we are still
-        // inside this frame, so from here on we touch `*self` only through
-        // `parent` to keep a single provenance path (no overlapping `&mut`).
-        let parent: *mut Self = self;
-        // SAFETY: `parent` was just derived from `&mut self`, and its `Drop` detaches `process`.
-        let handler = unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, parent) };
-        process.set_exit_handler(handler);
-
-        // Assign the field BEFORE `start()`. `start()` may complete the write synchronously
-        // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
-        // `on_close_io` via the `parent` backref; that callback must observe
-        // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
-        // `is_done()` never returns true and the wait for it hangs.
-        let writer = StaticPipeWriter::create(event_loop, parent.cast(), json_stdio, json_source);
-        let writer_ptr = writer.as_ptr();
-        let start_ref = writer.clone();
-        // SAFETY: see `parent` note above.
-        unsafe { (*parent).json_writer = Some(writer) };
-
-        // SAFETY: `start_ref` keeps the writer alive if `on_close_io` takes the field.
-        let start_result = unsafe { (*writer_ptr).start(start_ref) };
-        if let Err(e) = start_result {
-            Output::err_generic(
-                "Failed to start security scanner JSON pipe writer: {}",
-                (e,),
-            );
-            return Err(crate::Error::JSONPipeWriterFailed);
+        let owner = Owner::new(
+            PollTag::SecurityScanWriter,
+            core::ptr::from_mut(self).cast(),
+        );
+        // SAFETY: `owner` points to the heap allocation that holds this writer from the next line on.
+        let writer = unsafe { StaticPipeWriter::create(owner, json_stdio, json_source) };
+        match self.json_writer.insert(writer).start(event_loop) {
+            Ok(state) => self.on_writer_state(state),
+            Err(e) => {
+                Output::err_generic(
+                    "Failed to start security scanner JSON pipe writer: {}",
+                    (e,),
+                );
+                return Err(crate::Error::JSONPipeWriterFailed);
+            }
         }
-        // SAFETY: `start` kept the ref. From here on `json_writer` alone keeps the writer alive.
-        drop(unsafe { (*writer_ptr).start_ref.take() });
+
+        // SAFETY: dropping `self` detaches `process`. `self` is not used again in this frame.
+        let handler =
+            unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, core::ptr::from_mut(self)) };
+        process.set_exit_handler(handler);
 
         // May re-enter `on_process_exit` synchronously (already-exited child).
         if Process::watch_or_reap(process).is_err() {
@@ -1024,8 +978,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_close_io(&mut self, _: subprocess::StdioKind) {
-        if let Some(_writer) = self.json_writer.take() {
+    pub fn on_writer_io(&mut self, event: IoEvent) {
+        if let Some(writer) = &self.json_writer {
+            self.on_writer_state(writer.on_io(event));
+        }
+    }
+
+    fn on_writer_state(&mut self, state: PipeState) {
+        if state == PipeState::Closed {
+            self.json_writer = None;
             self.remaining_fds -= 1;
         }
     }

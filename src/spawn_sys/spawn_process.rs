@@ -4,8 +4,6 @@
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
-#[cfg(target_os = "macos")]
-use core::ffi::{c_int, c_void};
 #[cfg(unix)]
 use core::sync::atomic::Ordering;
 
@@ -743,11 +741,13 @@ pub fn spawn_process_posix(
                             _ => c"spawn_stdio_generic",
                         };
 
-                        let fd =
-                            match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess) {
-                                Ok(fd) => fd,
-                                Err(_) => break 'use_memfd,
-                            };
+                        let fd = match bun_sys::memfd_create(
+                            label.into(),
+                            bun_sys::MemfdFlags::CrossProcess,
+                        ) {
+                            Ok(fd) => fd,
+                            Err(_) => break 'use_memfd,
+                        };
 
                         set_spawned_stdio(&mut spawned, i, fd);
                         cleanup.to_set_cloexec.push(fd);
@@ -788,42 +788,14 @@ pub fn spawn_process_posix(
                     // macOS seems to default to around 8 KB for the buffer size
                     // this is comically small.
                     // TODO: investigate if this should be adjusted on Linux.
-                    let so_recvbuf: c_int = 1024 * 512;
-                    let so_sendbuf: c_int = 1024 * 512;
-                    // SAFETY: setsockopt with valid fds
-                    unsafe {
-                        if i == 0 {
-                            libc::setsockopt(
-                                fds[1].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[0].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        } else {
-                            libc::setsockopt(
-                                fds[0].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[1].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        }
-                    }
+                    use bun_sys::net::setsockopt_int;
+                    let (recv_fd, send_fd) = if i == 0 {
+                        (fds[1], fds[0])
+                    } else {
+                        (fds[0], fds[1])
+                    };
+                    let _ = setsockopt_int(recv_fd, libc::SOL_SOCKET, libc::SO_RCVBUF, 1024 * 512);
+                    let _ = setsockopt_int(send_fd, libc::SOL_SOCKET, libc::SO_SNDBUF, 1024 * 512);
                 }
 
                 cleanup.to_close_at_end.push(File::from_fd(fds[1]));

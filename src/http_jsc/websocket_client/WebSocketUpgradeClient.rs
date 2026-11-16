@@ -1147,13 +1147,8 @@ where
         };
 
         // Start TLS handshake
-        if WebSocketProxyTunnel::start(
-            tunnel.this_ptr(),
-            &ssl_options,
-            reject_unauthorized,
-            initial_data,
-        )
-        .is_err()
+        if WebSocketProxyTunnel::start(&tunnel, &ssl_options, reject_unauthorized, initial_data)
+            .is_err()
         {
             drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);

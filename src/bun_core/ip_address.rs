@@ -9,15 +9,16 @@ use core::net::{IpAddr, Ipv6Addr};
 mod sys {
     use core::ffi::{c_char, c_int, c_void};
 
+    use crate::ZStr;
+
     unsafe extern "C" {
         fn inet_aton(cp: *const c_char, addr: *mut c_void) -> c_int;
     }
 
     /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts.
-    pub(super) fn aton(src: &[u8], dst: &mut [u8; 4]) -> bool {
-        debug_assert_eq!(src.last(), Some(&0));
-        // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
-        unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
+    pub(super) fn aton(src: &ZStr, dst: &mut [u8; 4]) -> bool {
+        // SAFETY: `src` is NUL-terminated (`ZStr`); `dst` is an `in_addr`.
+        unsafe { inet_aton(src.as_ptr(), dst.as_mut_ptr().cast()) != 0 }
     }
 }
 
@@ -105,9 +106,10 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
             return None;
         }
         buf[..input.len()].copy_from_slice(input);
+        let input_z = crate::ZStr::nul_terminate(&mut buf, input.len());
         let mut v4 = [0u8; 4];
         // `inet_aton` stops at whitespace or a NUL and reads what comes before.
-        (sys::aton(&buf[..=input.len()], &mut v4)
+        (sys::aton(input_z, &mut v4)
             && crate::strings::index_of_any(input, b" \t\n\r\x0b\x0c\0").is_none())
         .then(|| IpAddr::V4(Ipv4Addr::from(v4)))
     }

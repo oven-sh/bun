@@ -605,16 +605,13 @@ impl Extraction {
                 resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
             })
         };
-        let Some(normalized) = normalized else {
+        let Some(path) = normalized else {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
             );
             return Ok(());
         };
-        let norm_len = normalized.len();
-        norm_buf[norm_len] = 0;
-        let path = &mut norm_buf[..norm_len];
         if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
             return Ok(());
         }
@@ -640,7 +637,8 @@ impl Extraction {
             }
         }
 
-        let path: OSPathZ = OSPathSliceZ::from_buf(&norm_buf[..], norm_len);
+        let norm_len = path.len();
+        let path: OSPathZ = OSPathSliceZ::nul_terminate(&mut norm_buf, norm_len);
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.as_ref().unwrap().fd();
 

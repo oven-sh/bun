@@ -1361,7 +1361,6 @@ impl PackageFiles<'_> {
         walker_.resolve_unknown_entry_types = true;
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
-            let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
@@ -1372,26 +1371,21 @@ impl PackageFiles<'_> {
                         }
                     }
                     EntryKind::File => {
-                        let path_len = entry.path.len();
-                        let base_len = entry.basename.len();
-                        if path_len >= stackpath.len() {
+                        if entry.path.len() >= path::MAX_PATH_BYTES {
                             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         }
-                        stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
-                        stackpath[path_len] = 0;
-                        // `stackpath[path_len] == 0` written above; both views are
-                        // shared-only (used for `.as_ptr()` into FFI), so the
-                        // overlapping borrows of `stackpath` are sound — replaces
-                        // two raw `from_raw_mut` reconstructions over the same
-                        // buffer (which were UB-adjacent as aliased `&mut`s).
-                        let path_ = ZStr::from_buf(&stackpath, path_len);
-                        let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
-                        let clone =
-                            || sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_);
+                        let clone = || {
+                            sys::clonefileat(
+                                entry.dir,
+                                entry.basename,
+                                destination_dir_.fd(),
+                                entry.path,
+                            )
+                        };
                         // The existing file may belong to a different version.
                         let cloned = match clone() {
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {
-                                let _ = sys::unlinkat(destination_dir_, path_);
+                                let _ = sys::unlinkat(destination_dir_, entry.path);
                                 clone()
                             }
                             result => result,
@@ -1899,8 +1893,7 @@ impl PackageFiles<'_> {
                         let target_len = to_copy_into2_offset + entry.path.len();
                         head2[to_copy_into2_offset..target_len]
                             .copy_from_slice(entry.path.as_bytes());
-                        head2[target_len] = 0;
-                        let target = ZStr::from_buf(head2, target_len);
+                        let target = ZStr::nul_terminate(head2, target_len);
 
                         if let Err(err) = sys::symlinkat(target, destination_dir.fd(), entry.path) {
                             if err.get_errno() != sys::E::EEXIST {
@@ -2100,9 +2093,7 @@ impl<'a> PackageInstall<'a> {
             }
         };
         // The entry name is the NUL-terminated tail of `dest_path`.
-        let dest: &ZStr = ZStr::from_slice_with_nul(
-            &dest_path.as_bytes_with_nul()[subdir.map_or(0, |dir| dir.len() + 1)..],
-        );
+        let dest: &ZStr = dest_path.substring(subdir.map_or(0, |dir| dir.len() + 1));
         debug_assert_eq!(dest.as_bytes(), bun_paths::basename(dest_path.as_bytes()));
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
@@ -2147,15 +2138,11 @@ impl<'a> PackageInstall<'a> {
             }
             dest_buf[offset..offset + dest.len()].copy_from_slice(dest.as_bytes());
             offset += dest.len();
-            dest_buf[offset] = 0;
 
-            // SAFETY: NUL written at [offset].
-            let dest_z = ZStr::from_buf(&dest_buf, offset);
+            let dest_z = ZStr::nul_terminate(&mut dest_buf, offset);
 
             let to_len = to_path.len();
-            to_buf[to_len] = 0;
-            // SAFETY: NUL written at [to_len].
-            let target_z = ZStr::from_buf(&to_buf, to_len);
+            let target_z = ZStr::nul_terminate(&mut to_buf, to_len);
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553

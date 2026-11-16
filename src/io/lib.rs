@@ -339,7 +339,7 @@ pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
-pub mod pipe_writer;
+mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
 pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
@@ -359,7 +359,8 @@ pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};
 
 pub use pipe_writer::{
-    BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult, WriteStatus,
+    BufferedWriteHandler, BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult,
+    WriteStatus,
 };
 #[cfg(windows)]
 pub use source::Source;
@@ -634,8 +635,7 @@ impl IoRequestLoop {
     }
 
     pub(crate) fn tick(&self) {
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        let name = bun_core::ZStr::from_static(b"IO Watcher\0");
+        let name = bun_core::zstr!("IO Watcher");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]

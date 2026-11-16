@@ -298,12 +298,12 @@ pub(crate) fn spawn_sync(
 /// The terminal a spawn made for its child, closed unless the spawn gets far enough to `take` it: the user never
 /// received it then.
 #[derive(Default)]
-struct SpawnedTerminal(Option<terminal_body::CreateResult>);
+struct SpawnedTerminal<'a>(Option<jsc::WrapperGuard<'a, Terminal>>);
 
-impl Drop for SpawnedTerminal {
+impl Drop for SpawnedTerminal<'_> {
     fn drop(&mut self) {
-        if let Some(info) = self.0.take() {
-            info.terminal.abandon_from_spawn();
+        if let Some(terminal) = &self.0 {
+            terminal.abandon_from_spawn();
         }
     }
 }
@@ -328,9 +328,9 @@ impl Drop for ReportUnwatchedExit {
 }
 
 /// Stands in for the JS wrapper, which a sync `Subprocess` does not get.
-struct SyncWrapper<'a>(bun_ptr::RefPtr<SubprocessT<'a>>);
+struct SyncWrapper(bun_ptr::RefPtr<SubprocessT<'static>>);
 
-impl Drop for SyncWrapper<'_> {
+impl Drop for SyncWrapper {
     fn drop(&mut self) {
         self.0.finalize();
     }
@@ -834,9 +834,7 @@ fn spawn_maybe_sync(
                         let slave_fd = existing_terminal
                             .as_ref()
                             .map(|t| t.get_slave_fd())
-                            .unwrap_or_else(|| {
-                                terminal_info.0.as_ref().unwrap().terminal.get_slave_fd()
-                            });
+                            .unwrap_or_else(|| terminal_info.0.as_ref().unwrap().get_slave_fd());
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
                         stdio[2] = Stdio::Fd(slave_fd);
@@ -919,16 +917,11 @@ fn spawn_maybe_sync(
                 }
             };
 
-            let pipe_env = {
-                let mut cursor = &mut ipc_env_buf[..];
-                match write!(cursor, "NODE_CHANNEL_FD={}\0", ipc_fd) {
-                    Ok(()) => {
-                        let written = 32 - cursor.len();
-                        // SAFETY: NUL written above at buf[written-1]
-                        ZStr::from_buf(&ipc_env_buf[..], written - 1)
-                    }
-                    Err(_) => return Err(cx.global().throw_out_of_memory()),
-                }
+            let Ok(pipe_env) = bun_core::fmt::buf_print_z(
+                &mut ipc_env_buf,
+                format_args!("NODE_CHANNEL_FD={ipc_fd}"),
+            ) else {
+                return Err(cx.global().throw_out_of_memory());
             };
             env_array.push(Some(pipe_env.into()));
 
@@ -1042,13 +1035,13 @@ fn spawn_maybe_sync(
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
         #[cfg(unix)]
         pty_slave_fd: match terminal_info.0.as_ref() {
-            Some(ti) => ti.terminal.get_slave_fd().native(),
+            Some(terminal) => terminal.get_slave_fd().native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .as_deref()
-            .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.get()))
+            .or(terminal_info.0.as_deref())
             .and_then(Terminal::get_pseudoconsole),
 
         #[cfg(windows)]
@@ -1186,9 +1179,8 @@ fn spawn_maybe_sync(
         terminal: Cell::new(
             existing_terminal
                 .as_ref()
-                .map(|t| t.as_ptr())
-                .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.as_ptr()))
-                .and_then(NonNull::new),
+                .or(terminal_info.0.as_ref())
+                .and_then(|t| NonNull::new(t.as_ptr())),
         ),
         observable_getters: Default::default(),
         closed: Default::default(),
@@ -1203,13 +1195,11 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
-    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
+    let subprocess = unsafe { &*subprocess_ptr };
     #[cfg(windows)]
     SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
-    // Erase the borrow lifetime to 'static for the intrusive back-pointer
-    // (PipeReader stores it as raw NonNull).
-    let subprocess_nn: NonNull<SubprocessT<'static>> = subprocess_ref.as_non_null().cast();
+    let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     if let Some(max_buffer) = max_buffer {
@@ -1241,13 +1231,16 @@ fn spawn_maybe_sync(
         _ => None,
     };
 
-    match Writable::init(
-        stdin,
-        event_loop,
-        subprocess,
-        spawned_stdin,
-        &mut promise_for_stream,
-    ) {
+    // SAFETY: the `Ok` arm stores it in `subprocess.stdin`.
+    match unsafe {
+        Writable::init(
+            stdin,
+            event_loop,
+            &subprocess_ref,
+            spawned_stdin,
+            &mut promise_for_stream,
+        )
+    } {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
             // stdout/stderr are still `.ignore` — close the raw
@@ -1293,19 +1286,19 @@ fn spawn_maybe_sync(
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
     // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
     // Existing terminals keep slave_fd for reuse.
-    if let Some(info) = terminal_info.0.take() {
-        terminal_js_value = info.js_value;
+    if let Some(terminal) = terminal_info.0.take() {
+        terminal_js_value = terminal.to_js();
         #[cfg(unix)]
-        info.terminal.mark_inline_spawned();
+        terminal.mark_inline_spawned();
         #[cfg(windows)]
         {
             // ConPTY has no slave fd; this just marks inline_spawned.
-            info.terminal.close_slave_fd();
+            terminal.close_slave_fd();
             // Release the ConDrv \Reference handle now that the child holds a
             // copy: conhost then exits on its own once the child disconnects
             // and the reader observes EOF without us having to tear ConPTY
             // down from on_process_exit.
-            info.terminal.release_pseudoconsole_reference();
+            terminal.release_pseudoconsole_reference();
         }
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
@@ -1356,7 +1349,7 @@ fn spawn_maybe_sync(
     let (out, _sync_wrapper) = if is_sync {
         (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
     } else {
-        let out = SubprocessT::to_js_nonnull(subprocess_ref.into_non_null().cast(), cx.global());
+        let out = Subprocess::js::to_js(subprocess_ref, cx.global());
         subprocess.this_value.with_mut(|v| v.set_weak(out));
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
@@ -1482,15 +1475,15 @@ fn spawn_maybe_sync(
 
     let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => {
-            let start_ref = buffer.clone();
-            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+            let started = buffer.start(loop_handle);
+            started.map(|state| subprocess.on_stdin_state(state)).err()
         }
         _ => None,
     };
     if let Some(err) = &setup_err {
-        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
+        // A Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
-        subprocess.on_close_stdin();
+        subprocess.close_stdin_buffer();
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
         if !is_sync {
             // Not `kill_signal`, which the child may ignore: nobody is handed it to end it another way.
@@ -1523,9 +1516,6 @@ fn spawn_maybe_sync(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // An already-aborted signal runs the abort callback before this
-        // returns, which re-enters via `subprocess_ptr`: hold no
-        // `&mut Subprocess` across the call.
         // SAFETY: `subprocess_ptr` is live and heap-pinned.
         unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }
@@ -1643,7 +1633,7 @@ fn spawn_maybe_sync(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-                Writable::buffer_writer_mut(buffer).watch();
+                subprocess.on_stdin_state(buffer.watch());
             }
 
             pipes.iter().rev().flatten().for_each(PipeReader::watch);

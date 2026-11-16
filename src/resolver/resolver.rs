@@ -4758,8 +4758,7 @@ impl<'a> Resolver<'a> {
                     // queue index 0 — see the `path` construction above).
                     let nul_at = queue_top_unsafe_path.len();
                     let prev_char = path[nul_at];
-                    path[nul_at] = 0;
-                    let sentinel = bun_core::ZStr::from_buf(path, nul_at);
+                    let sentinel = bun_core::ZStr::nul_terminate(path, nul_at);
 
                     #[cfg(unix)]
                     let open_req: crate::CrateResult<FD> = {
@@ -6796,7 +6795,7 @@ impl<'a> Resolver<'a> {
         let path = self.opts.tsconfig_override.as_deref()?;
         if self.opts.tsconfig_override_json.is_none() {
             let mut path = [path, b"\0"].concat();
-            let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
+            let z = bun_core::ZStr::from_slice_with_nul(&path);
             let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
             path.pop();
             // As for `tsc -p`, and for the type check.

@@ -59,7 +59,10 @@ pub(crate) mod sealed {
         #[inline(always)]
         unsafe fn z<'a>(units: *const u8, len: usize) -> &'a ZStr {
             // SAFETY: the caller's contract.
-            unsafe { ZStr::from_raw(units, len) }
+            unsafe {
+                debug_assert_eq!(*units.add(len), 0);
+                ZStr::from_raw(units, len)
+            }
         }
 
         #[inline(always)]
@@ -136,7 +139,10 @@ pub(crate) mod sealed {
         #[inline(always)]
         unsafe fn z<'a>(units: *const u16, len: usize) -> &'a WStr {
             // SAFETY: the caller's contract.
-            unsafe { WStr::from_raw(units, len) }
+            unsafe {
+                debug_assert_eq!(*units.add(len), 0);
+                WStr::from_raw(units, len)
+            }
         }
 
         #[inline(always)]

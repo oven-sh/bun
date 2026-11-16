@@ -64,8 +64,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
     let written = encode_into_result.written;
     debug_assert!(written < buf.len());
-    buf[written] = 0;
-    ZStr::from_buf(buf, written)
+    ZStr::nul_terminate(buf, written)
 }
 
 pub fn without_nt_prefix<T: PathChar>(path: &[T]) -> &[T] {

@@ -767,7 +767,6 @@ impl Snapshots {
                 v.push(0);
                 v.into_boxed_slice()
             };
-            // SAFETY: NUL appended above
             let test_filename_z = ZStr::from_slice_with_nul(&test_filename[..]);
 
             let fd = match bun_sys::open(test_filename_z, bun_sys::O::RDWR, 0o644) {

@@ -1208,7 +1208,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
     );
     let chunk = core::cell::Cell::new(None);
     // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
-    bun_js_printer::print_ast::<_, true, true>(
+    bun_js_printer::print_ast::<true, true>(
         &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         &arena,
         &ast,

@@ -1952,7 +1952,7 @@ pub(crate) mod js_bundler {
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
     /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `plugins`
     /// is `Some` whenever the plugin chain is dispatched (asserted by
-    /// `enqueue_on_js_loop_for_plugins`). The `Plugin` storage is heap-
+    /// `js_loop_for_plugins`). The `Plugin` storage is heap-
     /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
     /// the caller's request.
     #[inline]
@@ -2038,7 +2038,7 @@ pub(crate) mod js_bundler {
             // decrement the pending item counter and increment the deferred
             // counter. Must land on the bundle's `any_loop()` (the loop
             // running BundleV2), which is distinct from the
-            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // `js_loop_for_plugins` (the plugin host's JS loop)
             // when `Bun.build` runs the bundler on its own Mini event loop.
             let ctx = bv2_ref(self.bv2);
             // SAFETY: the answer, which frees `self`, goes into the same queue later.

@@ -91,7 +91,7 @@
 #include "FormatStackTraceForJS.h"
 #include "JSCommonJSModule.h"
 #include "JSCommonJSExtensions.h"
-#include "ConsoleObject.h"
+#include <JavaScriptCore/ConsoleClient.h>
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
@@ -682,7 +682,7 @@ const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContex
     return Zig::GlobalObject::globalObjectMethodTable();
 }
 
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
@@ -762,7 +762,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         BUN_PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
     }
 
-    globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
@@ -857,7 +856,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 // Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
 // the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
 // each test file a clean global without paying for a new JSC::VM.
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal)
 {
     JSC::VM& vm = oldGlobal->vm();
     JSC::JSLockHolder locker(vm);
@@ -895,7 +894,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         BUN_PANIC("Failed to allocate global object for test isolation");
     }
 
-    globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
@@ -1400,7 +1398,6 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
         Zig::GlobalObject::createStructure(vm),
         ScriptExecutionContext::generateIdentifier(),
         methodTable);
-    shadow->setConsole(shadow);
     defaultGlobalObject(vm)->addDerivedRealm(shadow);
 
     return shadow;
@@ -1561,12 +1558,11 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
-    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
-    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
+    , globalEventScope(Bun::GlobalEventScope::create())
+    , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    globalEventScope->m_context = m_scriptExecutionContext;
+    globalEventScope->m_context = m_scriptExecutionContext.ptr();
 }
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable)
@@ -1575,18 +1571,17 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
-    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
-    , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
+    , globalEventScope(Bun::GlobalEventScope::create())
+    , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this, contextId)))
 {
-    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    globalEventScope->m_context = m_scriptExecutionContext;
+    globalEventScope->m_context = m_scriptExecutionContext.ptr();
 }
 
 GlobalObject::~GlobalObject()
 {
+    static_assert(OBJECT_OFFSETOF(GlobalObject, m_scriptExecutionContext) + sizeof(m_scriptExecutionContext) + alignof(GlobalObject) > sizeof(GlobalObject), "must be the last member");
     m_scriptExecutionContext->globalObjectDestroyed();
-    m_scriptExecutionContext->deref();
 }
 
 void GlobalObject::destroy(JSCell* cell)
@@ -1596,7 +1591,7 @@ void GlobalObject::destroy(JSCell* cell)
 
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 {
-    return m_scriptExecutionContext;
+    return m_scriptExecutionContext.ptr();
 }
 
 WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
@@ -1605,7 +1600,7 @@ WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
         if (auto* graph = Bun::currentModuleGraph(this))
             return &graph->context();
     }
-    return m_scriptExecutionContext;
+    return m_scriptExecutionContext.ptr();
 }
 
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
@@ -1636,11 +1631,6 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
             Bun__handleHandledPromise(globalObj, promise);
         break;
     }
-}
-
-void GlobalObject::setConsole(void* console)
-{
-    this->setConsoleClient(new Bun::ConsoleObject(console));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,
@@ -2619,6 +2609,8 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    setConsoleClient(WebCore::clientData(vm)->consoleClient());
+
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
     if (Bun::isCodeGenerationDisallowedByFlags()) [[unlikely]]
@@ -3097,12 +3089,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_subtleCryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto& global = *static_cast<Zig::GlobalObject*>(init.owner);
-
-             if (!global.m_subtleCrypto) {
-                 global.m_subtleCrypto = &WebCore::SubtleCrypto::create(global.scriptExecutionContext()).leakRef();
-             }
-
-             init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
+             init.set(toJSNewlyCreated(init.owner, &global, SubtleCrypto::create(global.scriptExecutionContext())).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_performanceObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
@@ -3536,8 +3523,7 @@ JSC::JSObject* GlobalObject::processEnvObject()
 
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope),
-        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
+    return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope));
 }
 
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
@@ -5266,7 +5252,7 @@ void GlobalObject::nodeWorkerEntryDidSettle()
 void GlobalObject::prepareForDestruction()
 {
     auto& vm = this->vm();
-    auto* context = m_scriptExecutionContext;
+    auto* context = m_scriptExecutionContext.ptr();
 
     // Whatever was queued before exit began does not resurrect during teardown: process.exit()
     // runs 'exit' handlers and nothing after them (Node), and a worker's stop phase dispatches

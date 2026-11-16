@@ -15,8 +15,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeGlobalScope, m_subspaceForBakeGlobalScope),
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForBakeGlobalObject; });
+        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeGlobalScope, m_subspaceForBakeGlobalScope));
     }
 
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();

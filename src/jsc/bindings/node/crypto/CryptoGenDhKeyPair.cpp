@@ -119,7 +119,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
         GCOwnedDataScope<WTF::StringView> groupView = groupString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-        auto group = ncrypto::DHPointer::FromGroup(groupView);
+        auto group = ncrypto::DHPointer::FindGroup(groupView);
         if (!group) {
             ERR::CRYPTO_UNKNOWN_DH_GROUP(scope, globalObject);
             return std::nullopt;
@@ -127,6 +127,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
 
         return DhKeyPairJobCtx(
             WTF::move(group),
+            DH_GENERATOR_2,
             config);
     }
 
@@ -182,7 +183,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
     }
 
     return DhKeyPairJobCtx(
-        prime,
+        WTF::move(prime),
         generator,
         config);
 }

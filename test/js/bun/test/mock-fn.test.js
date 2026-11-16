@@ -3781,6 +3781,11 @@ if (isBun) {
         expect(returns.length).toBe(0);
       });
 
+      test("after mockReturnThis(), returns undefined when a closure calls it without a receiver", () => {
+        const returnsThis = fn().mockReturnThis().getMockImplementation();
+        expect((() => returnsThis())()).toBeUndefined();
+      });
+
       test("is the same function until the mock is configured again, and keeps its value afterwards", () => {
         const mocked = fn().mockReturnValue(1);
         const first = mocked.getMockImplementation();

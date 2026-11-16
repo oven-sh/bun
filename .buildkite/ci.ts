@@ -116,7 +116,7 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 type Abi = Exclude<HostAbi, "gnu">;
 type Distro = "debian" | "ubuntu" | "alpine";
 type Tier = "latest" | "previous" | "oldest" | "beta";
-type Profile = "release" | "assert" | "debug" | "asan" | "hardened" | "hardened-unlocked";
+type Profile = "release" | "assert" | "debug" | "asan" | "hardened" | "hardened-unlocked" | "hardened-unsigned";
 
 interface Target {
   os: Os;
@@ -219,6 +219,7 @@ const buildPlatforms: Platform[] = [
   { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", profile: "hardened-unlocked", distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", profile: "hardened-unsigned", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -282,6 +283,9 @@ const testPlatforms: Platform[] = [
   // With --lock-environment=off it reads them, so it runs every test.
   { os: "linux", arch: "aarch64", profile: "hardened-unlocked", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", profile: "hardened-unlocked", distro: "ubuntu", release: "25.04", tier: "latest" },
+  // The same without signed return addresses: what fails here too does not fail for them.
+  { os: "linux", arch: "aarch64", profile: "hardened-unsigned", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "aarch64", profile: "hardened-unsigned", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -567,7 +571,10 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
   if (profile?.startsWith("hardened")) args.push("--hardened=on");
-  if (profile === "hardened-unlocked") args.push("--lock-environment=off");
+  if (profile?.startsWith("hardened-")) args.push("--lock-environment=off");
+  if (profile === "hardened-unsigned") {
+    args.push("--sign-return-addresses=off", "--webkit-version=3bc94211496460feda299ef85eef710eb67fafb3");
+  }
 
   if (canary === false) args.push("--canary=off");
 

@@ -2248,7 +2248,7 @@ export const webkit: Dependency = {
       const symbols = [
         ...(cfg.aot && cfg.guardedPages ? ["JSC__AOT__mapsGuardedPages"] : []),
         ...(cfg.aot && !cfg.executeOnlyStart ? ["JSC__AOT__startsOnlyWhereItsFileCanBeRead"] : []),
-        ...(cfg.aot && cfg.hardened && cfg.arm64 ? ["JSC__AOT__savesSignedReturnAddresses"] : []),
+        ...(cfg.aot && cfg.signReturnAddresses ? ["JSC__AOT__savesSignedReturnAddresses"] : []),
       ];
       const requireDefined = symbols.length > 0 ? { lib: wkLib(cfg, "JavaScriptCore"), symbols } : undefined;
       return { libs, includes, files, contentsDecideGraph: true, ...(requireDefined && { requireDefined }) };

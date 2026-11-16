@@ -1079,7 +1079,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         core::hint::black_box(&raw const write_execute::Bun__startsWhereItsFileCannotBeRead);
         #[cfg(all(target_os = "linux", bun_refuses_execute_only_start))]
         core::hint::black_box(&raw const write_execute::Bun__startsOnlyWhereItsFileCanBeRead);
-        #[cfg(bun_hardened)]
+        #[cfg(bun_locked_environment)]
         if program.backing_file.is_some() {
             exit_with(
                 "this build of Bun only runs compiled code that is part of the executable itself",

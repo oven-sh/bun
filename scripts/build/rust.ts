@@ -377,7 +377,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
   // its stack probes are inline on this target with or without this.
   if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
-  if (cfg.hardened && cfg.arm64) rustflags.push("-Zbranch-protection=pac-ret");
+  if (cfg.signReturnAddresses) rustflags.push("-Zbranch-protection=pac-ret");
   if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
   if (cfg.hardened) rustflags.push("-Zub-checks=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro

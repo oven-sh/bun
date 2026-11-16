@@ -296,7 +296,8 @@ test("a hardened build for arm64 signs its return addresses", () => {
   for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx])
     expect(list).toEqual(expect.arrayContaining(signing));
   expect(flags.rust).toContain(rustSigning);
-  for (const partial of [{ hardened: true }, { arch: "aarch64" }] as PartialConfig[]) {
+  const unsigned = { hardened: true, arch: "aarch64", signReturnAddresses: false };
+  for (const partial of [{ hardened: true }, { arch: "aarch64" }, unsigned] as PartialConfig[]) {
     const all = Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat();
     for (const flag of [...signing, rustSigning]) expect(all).not.toContain(flag);
   }

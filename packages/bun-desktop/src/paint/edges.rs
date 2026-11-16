@@ -1,0 +1,262 @@
+//! Curves as the lines that `SkAnalyticEdge` makes of them, which start and end at quarters of a pixel. That is what
+//! makes horizontal stems of glyphs crisp in Chromium.
+
+use resvg::tiny_skia::Transform;
+use smallvec::SmallVec;
+use zeno::{Command, Point};
+
+use super::raster::{Coverage, IntRect, Path, map_point};
+
+type Points = SmallVec<[Point; 8]>;
+
+fn snap(y: f32) -> f32 {
+    (y * 4. + 0.5).floor() / 4.
+}
+
+/// `diff_to_shift`, for distances in pixels.
+fn subdivisions(dx: f32, dy: f32) -> u32 {
+    let (dx, dy) = ((dx.abs() * 256.) as u32, (dy.abs() * 256.) as u32);
+    let distance = dx.max(dy) + dx.min(dy) / 2;
+    (32 - ((distance + 16) >> 5).leading_zeros()) / 2
+}
+
+fn lerp(a: Point, b: Point, t: f32) -> Point {
+    a + (b - a) * t
+}
+
+/// From top to bottom, without turning around.
+fn quadratic([a, b, c]: [Point; 3]) -> Points {
+    let count =
+        1 << subdivisions((2. * b.x - a.x - c.x) / 4., (2. * b.y - a.y - c.y) / 4.).clamp(1, 6);
+    let (offset, bottom) = (snap(a.y) - a.y, snap(c.y));
+    let (mut last, mut last_y) = (Point::new(a.x, snap(a.y)), a.y);
+    let mut points = Points::from_elem(last, 1);
+    for step in 1..count {
+        let t = step as f32 / count as f32;
+        let exact = lerp(lerp(a, b, t), lerp(b, c, t), t);
+        let y = exact.y + offset;
+        let next = if exact.y - last_y >= 2. {
+            let row = (y + 0.5).floor().min(bottom);
+            Point::new(exact.x - (exact.x - last.x) / (y - last.y) * (y - row), row)
+        } else {
+            Point::new(exact.x, snap(y).min(bottom))
+        };
+        last_y = exact.y;
+        if next.y > last.y {
+            points.push(next);
+            last = next;
+        }
+    }
+    points.push(Point::new(c.x, bottom));
+    points
+}
+
+fn cubic([a, b, c, d]: [Point; 4]) -> Points {
+    let from_line = |a: f32, b: f32, c: f32, d: f32| {
+        let (first, second) = (a * 8. - b * 15. + 6. * c + d, a + 6. * b - c * 15. + d * 8.);
+        first.abs().max(second.abs()) * 19. / 512.
+    };
+    let count = 1
+        << (subdivisions(from_line(a.x, b.x, c.x, d.x), from_line(a.y, b.y, c.y, d.y)) + 1).min(6);
+    let (offset, bottom) = (snap(a.y) - a.y, snap(d.y));
+    let mut points = Points::from_elem(Point::new(a.x, snap(a.y)), 1);
+    points.extend((1..count).map(|step| {
+        let t = step as f32 / count as f32;
+        let (ab, bc, cd) = (lerp(a, b, t), lerp(b, c, t), lerp(c, d, t));
+        let exact = lerp(lerp(ab, bc, t), lerp(bc, cd, t), t);
+        Point::new(exact.x, snap(exact.y + offset).min(bottom))
+    }));
+    points.push(Point::new(d.x, bottom));
+    points
+}
+
+fn add<const N: usize>(mut curve: [Point; N], flatten: fn([Point; N]) -> Points, to: &mut Path) {
+    let rises = curve[0].y > curve[N - 1].y;
+    if rises {
+        curve.reverse();
+    }
+    let mut points = flatten(curve);
+    if rises {
+        points.reverse();
+    }
+    to.extend(points.into_iter().map(Command::LineTo));
+}
+
+/// Where between 0 and 1 `a t² + b t + c` is zero, ascending.
+fn roots(a: f32, b: f32, c: f32) -> SmallVec<[f32; 2]> {
+    let discriminant = b * b - 4. * a * c;
+    let q = -0.5 * (b + discriminant.sqrt().copysign(b));
+    let mut roots: SmallVec<[f32; 2]> = [q / a, c / q]
+        .into_iter()
+        .filter(|t| *t > 1e-5 && *t < 1. - 1e-5)
+        .collect();
+    roots.sort_by(f32::total_cmp);
+    roots.dedup();
+    roots
+}
+
+fn flatten(path: &[Command], matrix: &Transform) -> Path {
+    const FAR: f32 = 1e7;
+    let map = |point: Point| {
+        let (x, y) = map_point(matrix, point.x, point.y);
+        Point::new(x.max(-FAR).min(FAR), y.max(-FAR).min(FAR))
+    };
+    let (mut lines, mut current) = (Path::with_capacity(path.len() * 3), Point::ZERO);
+    for command in path {
+        match *command {
+            Command::MoveTo(to) => {
+                current = map(to);
+                lines.push(Command::MoveTo(Point::new(current.x, snap(current.y))));
+            }
+            Command::LineTo(to) => {
+                current = map(to);
+                lines.push(Command::LineTo(Point::new(current.x, snap(current.y))));
+            }
+            Command::QuadTo(b, c) => {
+                let (a, b, c) = (current, map(b), map(c));
+                let t = (a.y - b.y) / (a.y - 2. * b.y + c.y);
+                if t > 0. && t < 1. {
+                    let (ab, bc) = (lerp(a, b, t), lerp(b, c, t));
+                    let turn = lerp(ab, bc, t);
+                    add([a, Point::new(ab.x, turn.y), turn], quadratic, &mut lines);
+                    add([turn, Point::new(bc.x, turn.y), c], quadratic, &mut lines);
+                } else {
+                    add([a, b, c], quadratic, &mut lines);
+                }
+                current = c;
+            }
+            Command::CurveTo(b, c, d) => {
+                let [mut a, mut b, mut c, d] = [current, map(b), map(c), map(d)];
+                let turns = roots(
+                    d.y - a.y + 3. * (b.y - c.y),
+                    2. * (a.y - 2. * b.y + c.y),
+                    b.y - a.y,
+                );
+                let mut done = 0.;
+                for turn in turns {
+                    let t = (turn - done) / (1. - done);
+                    let (ab, bc, cd) = (lerp(a, b, t), lerp(b, c, t), lerp(c, d, t));
+                    let (abc, bcd) = (lerp(ab, bc, t), lerp(bc, cd, t));
+                    let middle = lerp(abc, bcd, t);
+                    add(
+                        [a, ab, Point::new(abc.x, middle.y), middle],
+                        cubic,
+                        &mut lines,
+                    );
+                    (a, b, c, done) = (middle, Point::new(bcd.x, middle.y), cd, turn);
+                }
+                add([a, b, c, d], cubic, &mut lines);
+                current = d;
+            }
+            Command::Close => lines.push(Command::Close),
+        }
+    }
+    lines
+}
+
+struct Edge {
+    /// In quarters of a pixel.
+    top: i32,
+    bottom: i32,
+    x: f32,
+    step: f32,
+    winding: i32,
+}
+
+/// Adds what is right of a line that goes from `from` to `to` and `height` down, as differences between neighbors.
+fn accumulate(row: &mut [f32], from: f32, to: f32, height: f32) {
+    let limit = (row.len() - 2) as f32;
+    let (left, right) = (from.min(to).clamp(0., limit), from.max(to).clamp(0., limit));
+    let (first, last) = (left as usize, right as usize);
+    if first == last {
+        let middle = (left + right) / 2. - first as f32;
+        row[first] += height * (1. - middle);
+        row[first + 1] += height * middle;
+        return;
+    }
+    let slope = height / (right - left);
+    for column in first..=last {
+        let (start, end) = (left.max(column as f32), right.min(column as f32 + 1.));
+        let (part, middle) = (slope * (end - start), (start + end) / 2. - column as f32);
+        row[column] += part * (1. - middle);
+        row[column + 1] += part * middle;
+    }
+}
+
+/// Unlike with Zeno, contours that overlap in a pixel do not count twice.
+pub fn fill(path: &[Command], is_even_odd: bool, matrix: &Transform, area: IntRect) -> Coverage {
+    let mask = if is_even_odd { 1 } else { -1 };
+    fill_where(path, |winding| winding & mask != 0, matrix, area)
+}
+
+pub fn fill_where(
+    path: &[Command],
+    is_inside: impl Fn(i32) -> bool,
+    matrix: &Transform,
+    area: IntRect,
+) -> Coverage {
+    let (mut edges, mut start, mut current) = (Vec::new(), Point::ZERO, Point::ZERO);
+    let mut line = |from: Point, to: Point| {
+        let (upper, lower, winding) = if from.y < to.y {
+            (from, to, 1)
+        } else {
+            (to, from, -1)
+        };
+        let (top, bottom) = ((upper.y * 4.) as i32, (lower.y * 4.) as i32);
+        if top < bottom {
+            let step = (lower.x - upper.x) / (bottom - top) as f32;
+            edges.push(Edge {
+                top,
+                bottom,
+                x: upper.x - area.left as f32,
+                step,
+                winding,
+            });
+        }
+    };
+    for command in flatten(path, matrix).into_iter().chain([Command::Close]) {
+        match command {
+            Command::MoveTo(to) => {
+                line(current, start);
+                (start, current) = (to, to);
+            }
+            Command::LineTo(to) => line(std::mem::replace(&mut current, to), to),
+            _ => line(std::mem::replace(&mut current, start), start),
+        }
+    }
+    edges.sort_unstable_by_key(|edge| std::cmp::Reverse(edge.top));
+
+    let mut coverage = Coverage::filled(area, 0);
+    let (mut active, mut sums) = (Vec::<Edge>::new(), vec![0.; area.width() + 2]);
+    for (y, row) in (area.top..).zip(coverage.data.chunks_mut(area.width().max(1))) {
+        for quarter in y * 4..y * 4 + 4 {
+            while let Some(mut edge) = edges.pop_if(|edge| edge.top <= quarter) {
+                edge.x += edge.step * (quarter - edge.top) as f32;
+                active.push(edge);
+            }
+            active.retain(|edge| edge.bottom > quarter);
+            active.sort_by(|a, b| (a.x + a.step / 2.).total_cmp(&(b.x + b.step / 2.)));
+            let mut winding = 0;
+            for edge in &mut active {
+                let was_inside = is_inside(winding);
+                winding += edge.winding;
+                if was_inside != is_inside(winding) {
+                    accumulate(
+                        &mut sums,
+                        edge.x,
+                        edge.x + edge.step,
+                        if was_inside { -0.25 } else { 0.25 },
+                    );
+                }
+                edge.x += edge.step;
+            }
+        }
+        let mut sum = 0.;
+        for (value, difference) in row.iter_mut().zip(&sums) {
+            sum += difference;
+            *value = (sum * 255. + 0.5) as u8;
+        }
+        sums.fill(0.);
+    }
+    coverage
+}

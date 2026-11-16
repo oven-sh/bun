@@ -1,0 +1,45 @@
+:-internal-math { display: block math; font-size: math; writing-mode: horizontal-tb !important; }
+math:-internal-math {
+  display: inline math;
+  direction: ltr;
+  text-indent: 0;
+  letter-spacing: normal;
+  line-height: normal;
+  word-spacing: normal;
+  font-family: math;
+  font-size: inherit;
+  font-style: normal;
+  font-weight: normal;
+  math-shift: normal;
+  math-style: compact;
+  math-depth: 0;
+}
+math:-internal-math[display="block" i] { display: block math; math-style: normal; }
+math:-internal-math[display="inline" i] { display: inline math; math-style: compact; }
+:is(semantics, maction):-internal-math > :-internal-math:not(:first-child) { display: none; }
+merror:-internal-math { border: 1px solid red; background-color: lightyellow; }
+mphantom:-internal-math { visibility: hidden; }
+mi:-internal-math { text-transform: math-auto; }
+mtable:-internal-math { display: inline-table; math-style: compact; }
+mtr:-internal-math { display: table-row; }
+mtd:-internal-math { display: table-cell; text-align: -webkit-center; padding: 0.5ex 0.4em; }
+mfrac:-internal-math { padding-inline: 1px; }
+mfrac:-internal-math > :-internal-math { math-depth: auto-add; math-style: compact; }
+mroot:-internal-math > :-internal-math:not(:first-child) { math-depth: add(2); math-style: compact; }
+:is(msub, msup, msubsup, mmultiscripts, munder, mover, munderover):-internal-math > :-internal-math:not(:first-child) {
+  math-depth: add(1);
+  math-style: compact;
+}
+:is(munder, munderover):-internal-math[accentunder="true" i] > :-internal-math:nth-child(2),
+mover:-internal-math[accent="true" i] > :-internal-math:nth-child(2),
+munderover:-internal-math[accent="true" i] > :-internal-math:nth-child(3) {
+  font-size: inherit;
+}
+:is(mroot, msqrt):-internal-math,
+:is(mfrac, msub, msubsup):-internal-math > :-internal-math:nth-child(2),
+mmultiscripts:-internal-math > :-internal-math:nth-child(even),
+mmultiscripts:-internal-math > mprescripts ~ :-internal-math:nth-child(odd),
+:is(mover, munderover):-internal-math[accent="true" i] > :-internal-math:first-child {
+  math-shift: compact;
+}
+mmultiscripts:-internal-math > mprescripts ~ :-internal-math:nth-child(even) { math-shift: inherit; }

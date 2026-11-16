@@ -1164,7 +1164,7 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509;
-    fn OPENSSL_free(ptr: *mut c_void);
+    pub fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
     /// Returns a static NUL-terminated string, or NULL if unknown.

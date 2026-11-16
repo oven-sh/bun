@@ -31,12 +31,12 @@ pub enum SupportsCondition<'bump> {
 // cannot carry inherent methods).
 pub struct Declaration<'bump> {
     /// The property id for the declaration.
-    pub(crate) property_id: PropertyId<'bump>,
+    pub property_id: PropertyId<'bump>,
     /// The raw value of the declaration.
     ///
     /// What happens if the value is a URL? A URL in this context does nothing
     /// e.g. `@supports (background-image: url('example.png'))`
-    pub(crate) value: &'bump [u8],
+    pub value: &'bump [u8],
 }
 
 impl Declaration<'_> {
@@ -56,7 +56,7 @@ impl Declaration<'_> {
 }
 
 impl<'bump> SupportsCondition<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> SupportsCondition<'bump> {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> SupportsCondition<'bump> {
         let alloc = ArenaPtr::new(bump);
         match self {
             Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
@@ -151,7 +151,7 @@ impl SupportsCondition<'_> {
         }
     }
 
-    pub(crate) fn to_css_with_parens_if_needed(
+    pub fn to_css_with_parens_if_needed(
         &self,
         dest: &mut Printer,
         needs_parens: bool,
@@ -348,7 +348,7 @@ impl<'bump> SupportsCondition<'bump> {
         Ok(in_parens)
     }
 
-    pub(crate) fn parse_declaration(
+    pub fn parse_declaration(
         input: &mut css::Parser<'_, 'bump>,
     ) -> css::Result<'bump, SupportsCondition<'bump>> {
         let property_id = PropertyId::parse(input)?;
@@ -427,15 +427,15 @@ impl Eq for SeenDeclKey<'_> {}
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.
 pub struct SupportsRule<'bump, R> {
     /// The supports condition.
-    pub(crate) condition: SupportsCondition<'bump>,
+    pub condition: SupportsCondition<'bump>,
     /// The rules within the `@supports` rule.
-    pub(crate) rules: CssRuleList<'bump, R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<'bump, R> SupportsRule<'bump, R> {
-    pub(crate) fn minify(
+    pub fn minify(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
@@ -473,7 +473,7 @@ impl<'bump, R> SupportsRule<'bump, R> {
     }
 }
 
-pub(crate) fn block_to_css<'p>(
+pub fn block_to_css<'p>(
     condition: &SupportsCondition,
     dest: &mut Printer<'p>,
     body: impl FnOnce(&mut Printer<'p>) -> core::result::Result<(), PrintErr>,
@@ -487,7 +487,7 @@ pub(crate) fn block_to_css<'p>(
 }
 
 impl<'bump, R> SupportsRule<'bump, R> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

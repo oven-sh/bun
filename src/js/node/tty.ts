@@ -23,6 +23,7 @@ const { validateInteger } = require("internal/validators");
 // going back to cooked never disturbs another one on the same terminal. Keep
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
+const kReader = Symbol("reader");
 
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
@@ -36,6 +37,7 @@ declare global {
       $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
       $start(): void;
       [kRawModeState]?: Uint8Array;
+      [kReader]?: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array>;
       ref(): this;
       unref(): this;
       setRawMode(flag: boolean): this;
@@ -147,7 +149,25 @@ const prototypeOfReadStream = {
       return this;
     };
 
+    if (process.platform !== "win32") {
+      // The descriptor may be non-blocking, as the master of a pty from node-pty is, so it has to be polled.
+      Prototype._read = function (this: $Node.TTYReadStream, size: number) {
+        if (!this.isTTY) return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
+        let reader = this[kReader];
+        if (!reader) {
+          const native = Bun.file(this.fd!).stream();
+          this.$bunNativePtr = native.$bunNativePtr as any;
+          reader = this[kReader] = native.getReader();
+        }
+        reader.read().then(
+          ({ value }) => this.push(value ?? null),
+          error => this.destroy(error),
+        );
+      };
+    }
+
     Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
+      this[kReader]?.cancel().catch(() => {});
       if (isStdio(this.fd)) return cb(err);
       require("internal/fs/streams").ReadStream.prototype._destroy.$call(this, err, cb);
     };

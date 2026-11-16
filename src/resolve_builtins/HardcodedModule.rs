@@ -11,6 +11,16 @@ pub enum HardcodedModule {
     AbortController,
     #[strum(serialize = "bun:bake")]
     BunBake,
+    #[strum(serialize = "bun:desktop")]
+    BunDesktop,
+    #[strum(serialize = "bun:desktop/electron")]
+    BunDesktopElectron,
+    #[strum(serialize = "bun:desktop/dom")]
+    BunDesktopDom,
+    #[strum(serialize = "bun:desktop/jsx-dev-runtime")]
+    BunDesktopJsxDevRuntime,
+    #[strum(serialize = "bun:desktop/jsx-runtime")]
+    BunDesktopJsxRuntime,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -210,6 +220,11 @@ bun_core::comptime_string_map! {
         // Bun
         b"bun" => HardcodedModule::Bun,
         b"bun:bake" => HardcodedModule::BunBake,
+        b"bun:desktop" => HardcodedModule::BunDesktop,
+        b"bun:desktop/electron" => HardcodedModule::BunDesktopElectron,
+        b"bun:desktop/dom" => HardcodedModule::BunDesktopDom,
+        b"bun:desktop/jsx-dev-runtime" => HardcodedModule::BunDesktopJsxDevRuntime,
+        b"bun:desktop/jsx-runtime" => HardcodedModule::BunDesktopJsxRuntime,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
@@ -714,6 +729,11 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:test"),
     entry!("bun:test/vitest"),
     entry!("bun:bake"),
+    entry!("bun:desktop"),
+    entry!("bun:desktop/electron"),
+    entry!("bun:desktop/dom"),
+    entry!("bun:desktop/jsx-dev-runtime"),
+    entry!("bun:desktop/jsx-runtime"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),

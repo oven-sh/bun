@@ -30,11 +30,11 @@ pub enum SyntaxString<'bump> {
 }
 
 impl<'bump> SyntaxString<'bump> {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         self.clone()
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_char(b'"')?;
         match self {
             SyntaxString::Universal => dest.write_char(b'*')?,
@@ -50,7 +50,7 @@ impl<'bump> SyntaxString<'bump> {
         dest.write_char(b'"')
     }
 
-    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let string = input.expect_string()?;
         match SyntaxString::parse_string(string) {
             Ok(result) => Ok(result),
@@ -59,7 +59,7 @@ impl<'bump> SyntaxString<'bump> {
     }
 
     /// Parses a syntax string.
-    fn parse_string(input: &'bump [u8]) -> Result<Self, ()> {
+    pub fn parse_string(input: &'bump [u8]) -> Result<Self, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         let mut trimmed_input = strings::trim(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
@@ -94,7 +94,7 @@ impl<'bump> SyntaxString<'bump> {
     }
 
     /// Parses a value as the first component that matches all of it, else as tokens.
-    pub(crate) fn parse_value(
+    pub fn parse_value(
         &self,
         input: &mut css::Parser<'_, 'bump>,
     ) -> CssResult<'bump, ParsedComponent<'bump>> {
@@ -231,8 +231,8 @@ impl<'bump> SyntaxString<'bump> {
 /// may repeat during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxComponent<'bump> {
-    pub(crate) kind: SyntaxComponentKind<'bump>,
-    pub(crate) multiplier: Multiplier,
+    pub kind: SyntaxComponentKind<'bump>,
+    pub multiplier: Multiplier,
 }
 
 impl<'bump> SyntaxComponent<'bump> {
@@ -437,9 +437,9 @@ pub enum ParsedComponent<'bump> {
 /// A repeated component value.
 pub struct Repeated<'bump> {
     /// The components to repeat.
-    pub(crate) components: Vec<ParsedComponent<'bump>>,
+    pub components: Vec<ParsedComponent<'bump>>,
     /// A multiplier describing how the components repeat.
-    pub(crate) multiplier: Multiplier,
+    pub multiplier: Multiplier,
 }
 
 impl<'bump> Repeated<'bump> {
@@ -454,7 +454,7 @@ impl<'bump> Repeated<'bump> {
 }
 
 impl<'bump> ParsedComponent<'bump> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             ParsedComponent::Length(v) => v.to_css(dest),
             ParsedComponent::Number(v) => CSSNumberFns::to_css(*v, dest),
@@ -485,7 +485,7 @@ impl<'bump> ParsedComponent<'bump> {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
         // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
         // macro can't cover this enum until the signatures are unified.

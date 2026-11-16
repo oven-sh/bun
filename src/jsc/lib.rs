@@ -532,6 +532,15 @@ pub fn expect_vm_per_thread() {
     }
 }
 
+/// An executable made with `--desktop`. After [`initialize`], and before the first VM.
+pub fn expect_desktop_program() {
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForDesktopProgram(env.as_ptr().cast(), env.len());
+    }
+}
+
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
 /// `bun -p <code>` / `bun --print <code>` — i.e. an inline-eval one-shot that
 /// runs a trivial script and exits without entering a long-running event loop.
@@ -1457,6 +1466,7 @@ unsafe extern "C" {
         is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForDesktopProgram(env: *const *const c_char, count: usize);
 }
 
 #[path = "generated_bindgen.rs"]

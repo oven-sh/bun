@@ -40,6 +40,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn has_module_info(&self, _name: &[u8]) -> bool {
         false
     }
+    /// Mesa's and NVIDIA's drivers write machine code and run it, and crash where the kernel refuses that.
+    fn loads_graphics_drivers(&self) -> bool {
+        false
+    }
     /// The pre-resolved ES module graph (`JSC::PrelinkedModuleGraph` blob) and the module-info slot table its names index
     /// (`ModuleInfoSlotTable` bytes: `u32` count, then the slots); both empty when the executable has no graph.
     fn prelinked_module_graph(&self) -> (&'static [u8], &'static [u8]) {

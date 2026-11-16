@@ -902,3 +902,26 @@ describe("Structured Clone Fast Path", () => {
     port2.close();
   });
 });
+
+test("objects of one shape are cloned with their own values", () => {
+  const make = (i: number) => {
+    const wide: Record<string, unknown> = {};
+    for (let key = 0; key < 20; key++) wide["k" + key] = key === 7 ? { i } : key + i;
+    const withHole: Record<string, unknown> = { a: i, b: i + 1, c: i + 2 };
+    delete withHole.b;
+    withHole.d = [i];
+    const cyclic: Record<string, unknown> = { i };
+    cyclic.self = cyclic;
+    return { wide, withHole, cyclic, empty: {} };
+  };
+  for (let round = 0; round < 4; round++) {
+    const original = [make(round), make(round + 10), make(round + 20)];
+    const clone = structuredClone(original);
+    expect(clone).toEqual(original);
+    expect(Object.keys(clone[2].withHole)).toEqual(["a", "c", "d"]);
+    expect(clone[2].cyclic.self).toBe(clone[2].cyclic);
+    expect(clone[2].wide.k7).not.toBe(original[2].wide.k7);
+    Bun.gc(round % 2 === 0);
+  }
+  expect(() => structuredClone([{ a: 1 }, { a: () => {} }])).toThrow();
+});

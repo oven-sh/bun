@@ -7,11 +7,11 @@ pub struct UnknownAtRule<'bump> {
     /// The name of the at-rule (without the @).
     pub name: &'bump [u8],
     /// The prelude of the rule.
-    pub(crate) prelude: TokenList<'bump>,
+    pub prelude: TokenList<'bump>,
     /// The contents of the block, if any.
-    pub(crate) block: Option<TokenList<'bump>>,
+    pub block: Option<TokenList<'bump>>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<'bump> UnknownAtRule<'bump> {
@@ -37,7 +37,7 @@ impl<'bump> UnknownAtRule<'bump> {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         use crate::generics::DeepClone as _;
         // `name` is an arena-owned slice → identity copy; `TokenList`
         // carries `#[derive(DeepClone)]`.

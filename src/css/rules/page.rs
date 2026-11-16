@@ -12,7 +12,7 @@ pub struct PageSelector<'bump> {
     /// An optional named page type.
     pub name: Option<&'bump [u8]>,
     /// A list of page pseudo classes.
-    pub(crate) pseudo_classes: ArrayList<PagePseudoClass>,
+    pub pseudo_classes: ArrayList<PagePseudoClass>,
 }
 
 impl PageSelector<'_> {
@@ -30,7 +30,7 @@ impl PageSelector<'_> {
 }
 
 impl PageSelector<'_> {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `name` is an arena-owned slice → identity copy; `PagePseudoClass` is `Copy`.
         Self {
             name: self.name,
@@ -75,11 +75,11 @@ impl<'bump> PageSelector<'bump> {
 
 pub struct PageMarginRule<'bump> {
     /// The margin box identifier for this rule.
-    pub(crate) margin_box: PageMarginBox,
+    pub margin_box: PageMarginBox,
     /// The declarations within the rule.
-    pub(crate) declarations: DeclarationBlock<'bump>,
+    pub declarations: DeclarationBlock<'bump>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl PageMarginRule<'_> {
@@ -106,17 +106,17 @@ impl<'bump> PageMarginRule<'bump> {
 /// A [@page](https://www.w3.org/TR/css-page-3/#at-page-rule) rule.
 pub struct PageRule<'bump> {
     /// A list of page selectors.
-    pub(crate) selectors: ArrayList<PageSelector<'bump>>,
+    pub selectors: ArrayList<PageSelector<'bump>>,
     /// The declarations within the `@page` rule.
-    pub(crate) declarations: DeclarationBlock<'bump>,
+    pub declarations: DeclarationBlock<'bump>,
     /// The nested margin rules.
-    pub(crate) rules: ArrayList<PageMarginRule<'bump>>,
+    pub rules: ArrayList<PageMarginRule<'bump>>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl PageRule<'_> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@page")?;
@@ -177,7 +177,7 @@ impl PageRule<'_> {
 }
 
 impl<'bump> PageRule<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block(&self.declarations, bump),
@@ -189,7 +189,7 @@ impl<'bump> PageRule<'bump> {
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
 impl<'bump> PageRule<'bump> {
-    pub(crate) fn parse(
+    pub fn parse(
         selectors: ArrayList<PageSelector<'bump>>,
         input: &mut css::Parser<'_, 'bump>,
         loc: Location,
@@ -289,7 +289,7 @@ pub enum PageMarginBox {
     BottomRightCorner,
 }
 
-pub(crate) struct PageRuleParser<'a, 'bump> {
+pub struct PageRuleParser<'a, 'bump> {
     pub declarations: &'a mut DeclarationBlock<'bump>,
     pub rules: &'a mut ArrayList<PageMarginRule<'bump>>,
     pub options: &'a css::ParserOptions<'a>,

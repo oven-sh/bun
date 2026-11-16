@@ -9,13 +9,13 @@ pub struct CustomMediaRule<'bump> {
     /// The name of the declared media query.
     pub name: DashedIdent<'bump>,
     /// The media query to declare.
-    pub(crate) query: MediaList<'bump>,
+    pub query: MediaList<'bump>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<'bump> CustomMediaRule<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump Arena) -> Self {
         Self {
             name: self.name,
             query: self.query.deep_clone(bump),

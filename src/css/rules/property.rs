@@ -8,14 +8,14 @@ use crate::css_values::syntax::ParsedComponent;
 
 pub struct PropertyRule<'bump> {
     pub name: DashedIdent<'bump>,
-    pub(crate) syntax: SyntaxString<'bump>,
-    pub(crate) inherits: bool,
-    pub(crate) initial_value: Option<ParsedComponent<'bump>>,
-    pub(crate) loc: Location,
+    pub syntax: SyntaxString<'bump>,
+    pub inherits: bool,
+    pub initial_value: Option<ParsedComponent<'bump>>,
+    pub loc: Location,
 }
 
 impl PropertyRule<'_> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -64,7 +64,7 @@ impl PropertyRule<'_> {
 }
 
 impl<'bump> PropertyRule<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // `SyntaxString` and `ParsedComponent` provide inherent
         // `deep_clone(&self, &Arena)` impls.
         Self {
@@ -79,7 +79,7 @@ impl<'bump> PropertyRule<'bump> {
 
 // ─── PropertyRule parse ───────────────────────────────────────────────────
 impl<'bump> PropertyRule<'bump> {
-    pub(crate) fn parse(
+    pub fn parse(
         name: DashedIdent<'bump>,
         input: &mut css::Parser<'_, 'bump>,
         loc: Location,
@@ -135,7 +135,7 @@ impl<'bump> PropertyRule<'bump> {
     }
 }
 
-pub(crate) struct PropertyRuleDeclarationParser<'bump> {
+pub struct PropertyRuleDeclarationParser<'bump> {
     pub syntax: Option<SyntaxString<'bump>>,
     pub inherits: Option<bool>,
     /// Where the value starts. It is read once the whole body has given the `syntax`.

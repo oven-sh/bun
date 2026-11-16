@@ -610,6 +610,23 @@ let cachedInternalChildProcess;
 // in test/js/node/test/common/index.js). Static requires only — the builtin
 // bundler cannot rewrite variable-path requires. Extend the map as more
 // vendored tests need more internals.
+export const desktopInternals = {
+  get engine() {
+    return require("internal/desktop/dom/engine");
+  },
+  get native() {
+    return require("internal/desktop/native");
+  },
+  get createPage() {
+    return require("internal/desktop/dom/page").createPage;
+  },
+  get canvas() {
+    const canvas = require("internal/desktop/dom/canvas");
+    canvas.setNative(require("internal/desktop/native"));
+    return canvas;
+  },
+};
+
 export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/util/debuglog": require("internal/util/debuglog"),

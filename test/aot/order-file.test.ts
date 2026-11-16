@@ -125,6 +125,66 @@ test.skipIf(!isSupported)(
 );
 
 test.skipIf(!isSupported)(
+  "a regular expression that the recorded run made from a string is compiled by the next build",
+  async () => {
+    using dir = tempDir("aot-order-file-regexps", {
+      "program.ts": `import { readFileSync } from "node:fs";
+const [patterns, subject] = JSON.parse(readFileSync(process.execPath + ".json", "utf8"));
+console.log(JSON.stringify(patterns.map(([source, flags]) => new RegExp(source, flags).exec(subject))));
+`,
+    });
+    const input = JSON.stringify([
+      [
+        ["(?<=a) (b+)%\\d", "dg"],
+        ["[é\u{1f600}]+\n(?<x>z)", "iu"],
+        ["q|\ud83d", ""],
+      ],
+      "a bb%1 É\u{1f600}\nZ",
+    ]);
+    for (const name of ["recorder", "again"]) writeFileSync(join(String(dir), name + ".json"), input);
+    const patternsIn = (order: string) => order.split("\n").filter(line => line.startsWith("R "));
+    expect(patternsIn(await record(String(dir), "first")).map(line => line.split(" ").slice(2).join(" "))).toEqual([
+      "(?<=a) (b+)%0025\\d",
+      "[%00E9%D83D%DE00]+%000A(?<x>z)",
+      "q|%D83D",
+    ]);
+
+    writeFileSync(join(String(dir), "torn"), "aot-order v1\nR 0 (\nR 99999 a\nR 0 %12\nR x y\nR 65535 b+\nR\n");
+    const { executable } = await build(String(dir), "again", "first,torn");
+    expect(await run([executable], { BUN_JSC_aotCountsPath: join(String(dir), "counts") })).toEqual({
+      stdout: '[[" bb%1","bb"],["É\u{1f600}\\nZ","Z"],["\\ud83d"]]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(readFileSync(join(String(dir), "counts"), "utf8")).toMatch(/^0\tcounter:RegExpsCompiledToBytecode$/m);
+  },
+  240_000,
+);
+
+test.skipIf(!isSupported)(
+  "--aot-assume=complete-order leaves large regular expressions that were not recorded to the interpreter",
+  async () => {
+    const large = (word: string) => `/${Array.from({ length: 60 }, (_, i) => `(${word}${i}[a-z]+\\d*)`).join("|")}/`;
+    using dir = tempDir("aot-order-file-complete", {
+      "program.ts": `const text = process.argv[2] ?? "used7x";
+console.log(JSON.stringify(text.match(${large("used")}g)));
+if (process.argv[2]) console.log(JSON.stringify([text.match(${large("rare")}g), text.match(/r[a-z]+\\d/g)]));
+`,
+    });
+    expect((await record(String(dir), "first")).match(/^R \d+ .{7}/gm)).toEqual([expect.stringMatching(/ \(used0\[$/)]);
+    const { executable } = await build(String(dir), "complete", "first", ["--aot-assume=complete-order"]);
+    const env = { BUN_JSC_aotCountsPath: join(String(dir), "counts") };
+    expect(await run([executable, "rare59yy1"], env)).toEqual({
+      stdout: 'null\n[["rare59yy1"],["rare5"]]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(readFileSync(env.BUN_JSC_aotCountsPath, "utf8")).toMatch(/^1\tcounter:RegExpLiteralsCompiledToBytecode$/m);
+  },
+  240_000,
+);
+
+test.skipIf(!isSupported)(
   "a torn file, a file of another program and garbage place what they name and break nothing",
   async () => {
     using dir = tempDir("aot-order-file-garbage", { "program.ts": program, "helper.ts": helper });

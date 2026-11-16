@@ -1329,3 +1329,15 @@ describe("string constant pool entries survive GC during deserialization", () =>
     }
   });
 });
+
+test("the cause of an error is cloned", () => {
+  const error = new RangeError("outer", { cause: { inner: new Error("inner", { cause: 1 }) } });
+  (error.cause as any).outer = error;
+  for (const cloned of [structuredClone(error), structuredClone([error])[0], deserialize(serialize(error))]) {
+    expect(cloned).toBeInstanceOf(RangeError);
+    expect(Object.getOwnPropertyDescriptor(cloned, "cause")?.enumerable).toBe(false);
+    expect(cloned.cause.inner.cause).toBe(1);
+    expect(cloned.cause.outer).toBe(cloned);
+  }
+  expect("cause" in structuredClone(new Error("none"))).toBe(false);
+});

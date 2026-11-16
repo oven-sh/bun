@@ -13,7 +13,7 @@ use crate::prefixes::Feature as PrefixFeature;
 use crate::targets::Targets;
 
 use super::CSSWideKeyword;
-use super::custom::{CustomProperty, CustomPropertyName, UnparsedProperty};
+use super::custom::{CustomProperty, CustomPropertyName, SourceDeclaration, UnparsedProperty};
 use super::properties_impl;
 
 // Leaf property modules.
@@ -1247,7 +1247,7 @@ impl<'bump> PropertyId<'bump> {
     }
 
     /// Returns the vendor prefix for this property id.
-    pub(crate) fn prefix(&self) -> VendorPrefix {
+    pub fn prefix(&self) -> VendorPrefix {
         let mut id = *self;
         id.prefix_slot_mut().map_or(VendorPrefix::empty(), |p| *p)
     }
@@ -1880,6 +1880,7 @@ pub enum Property<'bump> {
     All(CSSWideKeyword),
     Unparsed(UnparsedProperty<'bump>),
     Custom(CustomProperty<'bump>),
+    Source(SourceDeclaration<'bump>),
 }
 
 /// A fully-consumed `T`, or `None` (falling back to `Property::Unparsed`).
@@ -2161,13 +2162,14 @@ impl<'bump> Property<'bump> {
             Property::All(..) => PropertyId::All,
             Property::Unparsed(u) => u.property_id,
             Property::Custom(c) => PropertyId::Custom(c.name),
+            Property::Source(s) => PropertyId::from_string(s.name),
         }
     }
 
     /// `(name, prefix)` pair for serialization. Panics on `Custom`.
     pub(crate) fn __to_css_helper(&self) -> (&[u8], VendorPrefix) {
         match self {
-            Property::Custom(..) => unreachable!(),
+            Property::Custom(..) | Property::Source(..) => unreachable!(),
             Property::Unparsed(u) => (u.property_id.name(), u.property_id.prefix().or_none()),
             _ => {
                 let id = self.property_id();
@@ -2433,6 +2435,7 @@ impl<'bump> Property<'bump> {
             Property::All(v) => css::generic::to_css(v, dest),
             Property::Unparsed(u) => u.value.to_css(dest),
             Property::Custom(c) => c.value.to_css(dest),
+            Property::Source(s) => dest.write_str(s.value),
         }
     }
 
@@ -4455,6 +4458,7 @@ impl<'bump> Property<'bump> {
             Property::All(a) => Property::All(*a),
             Property::Unparsed(u) => Property::Unparsed(u.deep_clone(arena)),
             Property::Custom(c) => Property::Custom(c.deep_clone(arena)),
+            Property::Source(s) => Property::Source(*s),
         }
     }
 
@@ -4988,6 +4992,7 @@ impl<'bump> Property<'bump> {
             (Property::All(_), Property::All(_)) => true,
             (Property::Unparsed(a), Property::Unparsed(b)) => a.eql(b),
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),
+            (Property::Source(a), Property::Source(b)) => a == b,
             _ => false,
         }
     }

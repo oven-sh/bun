@@ -33,6 +33,7 @@
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
 #include "JSStructuredSerializeOptions.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -56,6 +57,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    if (serializeOptions.transfer.isEmpty()) {
+        JSValue copy = SerializedScriptValue::tryCopyPlainData(*globalObject, value);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (copy)
+            return JSValue::encode(copy);
+    }
+
     Vector<RefPtr<MessagePort>> ports;
     // structuredClone never leaves this agent cluster, so SABs may share their backing store per
     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal —
@@ -68,6 +76,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
         RELEASE_AND_RETURN(throwScope, {});
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
+    if (disentangled.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, disentangled.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    ports = MessagePort::entanglePorts(*defaultGlobalObject(globalObject)->scriptExecutionContext(), disentangled.releaseReturnValue());
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});

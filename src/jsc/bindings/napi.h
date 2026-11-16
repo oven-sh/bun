@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "LentMainThread.h"
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>

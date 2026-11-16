@@ -21,27 +21,27 @@ use bun_alloc::Arena as Bump;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
-pub(crate) type BorderTop = GenericBorder<LineStyle, 0>;
+pub type BorderTop = GenericBorder<LineStyle, 0>;
 /// A value for the [border-right](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-right) shorthand property.
-pub(crate) type BorderRight = GenericBorder<LineStyle, 1>;
+pub type BorderRight = GenericBorder<LineStyle, 1>;
 /// A value for the [border-bottom](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-bottom) shorthand property.
-pub(crate) type BorderBottom = GenericBorder<LineStyle, 2>;
+pub type BorderBottom = GenericBorder<LineStyle, 2>;
 /// A value for the [border-left](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-left) shorthand property.
-pub(crate) type BorderLeft = GenericBorder<LineStyle, 3>;
+pub type BorderLeft = GenericBorder<LineStyle, 3>;
 /// A value for the [border-block-start](https://drafts.csswg.org/css-logical/#propdef-border-block-start) shorthand property.
-pub(crate) type BorderBlockStart = GenericBorder<LineStyle, 4>;
+pub type BorderBlockStart = GenericBorder<LineStyle, 4>;
 /// A value for the [border-block-end](https://drafts.csswg.org/css-logical/#propdef-border-block-end) shorthand property.
-pub(crate) type BorderBlockEnd = GenericBorder<LineStyle, 5>;
+pub type BorderBlockEnd = GenericBorder<LineStyle, 5>;
 /// A value for the [border-inline-start](https://drafts.csswg.org/css-logical/#propdef-border-inline-start) shorthand property.
-pub(crate) type BorderInlineStart = GenericBorder<LineStyle, 6>;
+pub type BorderInlineStart = GenericBorder<LineStyle, 6>;
 /// A value for the [border-inline-end](https://drafts.csswg.org/css-logical/#propdef-border-inline-end) shorthand property.
-pub(crate) type BorderInlineEnd = GenericBorder<LineStyle, 7>;
+pub type BorderInlineEnd = GenericBorder<LineStyle, 7>;
 /// A value for the [border-block](https://drafts.csswg.org/css-logical/#propdef-border-block) shorthand property.
-pub(crate) type BorderBlock = GenericBorder<LineStyle, 8>;
+pub type BorderBlock = GenericBorder<LineStyle, 8>;
 /// A value for the [border-inline](https://drafts.csswg.org/css-logical/#propdef-border-inline) shorthand property.
-pub(crate) type BorderInline = GenericBorder<LineStyle, 9>;
+pub type BorderInline = GenericBorder<LineStyle, 9>;
 /// A value for the [border](https://www.w3.org/TR/css-backgrounds-3/#propdef-border) shorthand property.
-pub(crate) type Border = GenericBorder<LineStyle, 10>;
+pub type Border = GenericBorder<LineStyle, 10>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // GenericBorder
@@ -51,11 +51,11 @@ pub(crate) type Border = GenericBorder<LineStyle, 10>;
 #[derive(Clone)]
 pub struct GenericBorder<S, const P: u8> {
     /// The width of the border.
-    pub(crate) width: BorderSideWidth,
+    pub width: BorderSideWidth,
     /// The border style.
-    pub(crate) style: S,
+    pub style: S,
     /// The border color.
-    pub(crate) color: CssColor,
+    pub color: CssColor,
 }
 
 impl<S, const P: u8> super::GenericBorderImpl for GenericBorder<S, P>
@@ -208,7 +208,7 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    pub(crate) fn is_compatible(self, _: &Browsers) -> bool {
+    pub fn is_compatible(self, _: &Browsers) -> bool {
         true
     }
 }
@@ -232,14 +232,14 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
-    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
             _ => true,
         }
     }
 
-    pub(crate) fn deep_clone(&self, _arena: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         // css.implementDeepClone — Length is value-type; Clone suffices.
         self.clone()
     }
@@ -1233,7 +1233,7 @@ mod border_handler_body {
 }
 
     impl<'bump> BorderHandler<'bump> {
-        pub(crate) fn handle_property(
+        pub fn handle_property(
             &mut self,
             property: &Property<'bump>,
             dest: &mut DeclarationList<'bump>,
@@ -1494,7 +1494,7 @@ mod border_handler_body {
             true
         }
 
-        pub(crate) fn finalize(
+        pub fn finalize(
             &mut self,
             dest: &mut DeclarationList<'bump>,
             context: &mut PropertyHandlerContext<'_, 'bump>,

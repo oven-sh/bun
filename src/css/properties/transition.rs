@@ -23,28 +23,28 @@ use crate::prefixes::Feature;
 #[derive(Clone, PartialEq)]
 pub struct Transition<'bump> {
     /// The property to transition.
-    pub(crate) property: PropertyId<'bump>,
+    pub property: PropertyId<'bump>,
     /// The duration of the transition.
-    pub(crate) duration: Time,
+    pub duration: Time,
     /// The delay before the transition starts.
-    pub(crate) delay: Time,
+    pub delay: Time,
     /// The easing function for the transition.
-    pub(crate) timing_function: EasingFunction,
+    pub timing_function: EasingFunction,
 }
 
 impl<'bump> Transition<'bump> {
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(&self, rhs: &Self) -> bool {
         self == rhs
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // All four fields deep-clone via `#[derive(Clone)]` with no
         // arena indirections (any heap-carrying variants of `PropertyId`/
         // `EasingFunction` clone deeply onto the global heap), so Clone is exact.
         self.clone()
     }
 
-    pub(crate) fn parse(parser: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse(parser: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let mut property: Option<PropertyId> = None;
         let mut duration: Option<Time> = None;
         let mut delay: Option<Time> = None;
@@ -90,7 +90,7 @@ impl<'bump> Transition<'bump> {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.property.to_css(dest)?;
         if !self.duration.is_zero() || !self.delay.is_zero() {
             dest.write_char(b' ')?;
@@ -142,13 +142,13 @@ pub enum ViewTransitionGroup<'bump> {
 
 #[derive(Default)]
 pub struct TransitionHandler<'bump> {
-    pub(crate) properties: Option<(SmallList<PropertyId<'bump>, 1>, VendorPrefix)>,
-    pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
+    pub properties: Option<(SmallList<PropertyId<'bump>, 1>, VendorPrefix)>,
+    pub durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
     /// `flush` writes `transition` only if the rule did: it also resets `transition-behavior`.
-    pub(crate) has_shorthand: bool,
-    pub(crate) has_any: bool,
+    pub has_shorthand: bool,
+    pub has_any: bool,
 }
 
 // Passing both `&mut self` and `&mut self.<field>` to a generic fn trips
@@ -190,7 +190,7 @@ mod transition_handler_body {
     use crate::generics::CssEql as _;
     use crate::generics::DeepClone;
     impl<'bump> TransitionHandler<'bump> {
-        pub(crate) fn handle_property(
+        pub fn handle_property(
             &mut self,
             prop: &Property<'bump>,
             dest: &mut DeclarationList<'bump>,
@@ -355,7 +355,7 @@ mod transition_handler_body {
             true
         }
 
-        pub(crate) fn finalize(
+        pub fn finalize(
             &mut self,
             dest: &mut DeclarationList<'bump>,
             context: &mut PropertyHandlerContext<'_, 'bump>,

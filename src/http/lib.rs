@@ -506,6 +506,8 @@ pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
     pub max_idle_sockets: u16,
+    /// Offer `h2` beside `http/1.1`.
+    pub offers_h2: bool,
 }
 
 impl<'a> HTTPClientResult<'a> {
@@ -1753,6 +1755,7 @@ impl<'a> HTTPClient<'a> {
 
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
+                            issuers: uws::verified_issuers(ssl),
                             hostname: Box::<[u8]>::from(hostname),
                         });
 
@@ -1972,10 +1975,9 @@ impl<'a> HTTPClient<'a> {
     /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
     /// `protocol: "http2"` on the fetch options.
     pub(crate) fn can_offer_h2(&self) -> bool {
-        // The h2 session transmits from `attach()` without consulting the
-        // `is_waiting_for_cert_check` park gate, so requests with a JS
-        // `checkServerIdentity` callback stay on HTTP/1.1.
-        if self.signals.get(signals::Field::CertErrors) {
+        // Requests share an h2 connection that one `checkServerIdentity`
+        // callback approved, which a session has to ask for.
+        if self.signals.get(signals::Field::CertErrors) && !self.pool.offers_h2 {
             return false;
         }
         if self.flags.forced_protocol == Some(Protocol::Http1_1) {
@@ -1997,6 +1999,7 @@ impl<'a> HTTPClient<'a> {
             return false;
         }
         self.flags.forced_protocol == Some(Protocol::Http2)
+            || self.pool.offers_h2
             || EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.load(Ordering::Relaxed)
             || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
                 .get()
@@ -2082,6 +2085,10 @@ impl<'a> HTTPClient<'a> {
                 bun_core::ffi::slice(proto, proto_len as usize)
             };
             if alpn == b"h2" {
+                if self.state.flags.is_waiting_for_cert_check {
+                    self.state.early_h2_frames = Some(Vec::new());
+                    return;
+                }
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));
                 // This arm needs HttpSocket<true>, but the const-generic isn't
                 // unified here, so rebuild from the InternalSocket.
@@ -2830,6 +2837,7 @@ impl<'a> HTTPClient<'a> {
         // then fail in `first_call` anyway. Fail up front instead.
         if self.flags.forced_protocol == Some(Protocol::Http2)
             && self.signals.get(signals::Field::CertErrors)
+            && !self.pool.offers_h2
         {
             self.fail(crate::Error::HTTP2Unsupported);
             self.complete_connecting_process();
@@ -3650,7 +3658,19 @@ impl<'a> HTTPClient<'a> {
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
         self.state.flags.is_waiting_for_cert_check = false;
-        self.on_writable::<true, IS_SSL>(socket);
+        let Some(frames) = self.state.early_h2_frames.take() else {
+            return self.on_writable::<true, IS_SSL>(socket);
+        };
+        let tls_socket = uws::SocketTLS::from_any(socket.socket);
+        // May free `self` and the session.
+        self.first_call::<IS_SSL>(socket);
+        if frames.is_empty() || tls_socket.is_closed() {
+            return;
+        }
+        let tagged = GenHttpContext::<true>::get_tagged_from_socket(tls_socket);
+        if let Some(session) = http_context::ActiveSocketExt::session(tagged) {
+            h2::ClientSession::on_data(session, &frames);
+        }
     }
 
     pub(crate) fn close_and_fail<const IS_SSL: bool>(
@@ -3937,7 +3957,13 @@ impl<'a> HTTPClient<'a> {
         // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
         // records must keep reaching the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
+            const MAX_EARLY_H2_BYTES: usize = 16 * 1024;
+            match &mut self.state.early_h2_frames {
+                Some(frames) if frames.len() + incoming_data.len() <= MAX_EARLY_H2_BYTES => {
+                    frames.extend_from_slice(incoming_data);
+                }
+                _ => self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket),
+            }
             return;
         }
 

@@ -48,7 +48,7 @@ fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
 }
 
 impl Position {
-    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Position> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Position> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
 
@@ -66,7 +66,7 @@ impl Position {
         })
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Position::Static => dest.write_str("static"),
             Position::Relative => dest.write_str("relative"),

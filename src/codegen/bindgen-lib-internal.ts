@@ -3318,6 +3318,8 @@ export interface ClassOptions extends ClassTableColumns {
   forBind?: boolean;
   /** The struct's method that calls every native function of `proto`. It receives a pointer to the function. */
   protoCaller?: string;
+  /** The struct's method that runs every method with `mutates`. It receives a closure that takes the struct. */
+  mutator?: string;
   /** Traits to bring into scope, for members that are trait methods. */
   rustTraits?: readonly string[];
   /** The prototype inherits from `Error.prototype` instead of `Object.prototype`, and its `name` is the class's. */
@@ -3632,6 +3634,7 @@ export class ClassType extends NamedType {
   readonly rustTraits: readonly string[];
   readonly forBind: boolean;
   readonly protoCaller: string | undefined;
+  readonly mutator: string | undefined;
   readonly illegalConstructor: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
@@ -3668,6 +3671,7 @@ export class ClassType extends NamedType {
       "overridesToJS",
       "forBind",
       "protoCaller",
+      "mutator",
       "rustTraits",
       "prototypeBase",
       "configurable",
@@ -3813,6 +3817,7 @@ export class ClassType extends NamedType {
     );
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.protoCaller = options.protoCaller === undefined ? undefined : memberRustName(options.protoCaller);
+    this.mutator = options.mutator === undefined ? undefined : memberRustName(options.mutator);
     assert(
       this.protoCaller === undefined ||
         this.functions.every(

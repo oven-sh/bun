@@ -1,0 +1,90 @@
+---
+title: Electron apps
+description: Run an app that was written for Electron on bun:desktop
+---
+
+<Warning>This is experimental. It has been run with a real app on Linux (X11) only.</Warning>
+
+`bun:desktop/electron` implements the API of Electron on [`bun:desktop`](/runtime/desktop). Once it is loaded, `electron`, `electron/main`, `electron/common`, `electron/renderer`, `electron/utility` and `original-fs` resolve to it.
+
+```sh terminal icon="terminal"
+bun --preload=bun:desktop/electron .
+```
+
+The types are those of the `electron` package, which can stay in `devDependencies`.
+
+## Packaging
+
+The main script goes in the executable. Pages and preload scripts go in a directory named `app` in the resources, which `app.getAppPath()` returns.
+
+```json package.json icon="file-json"
+{
+  "productName": "Notes",
+  "desktop": { "resources": [{ "from": "dist/renderer", "to": "app" }] }
+}
+```
+
+```sh terminal icon="terminal"
+bun build --compile --desktop --external electron --compile-exec-argv=--preload=bun:desktop/electron ./main.js
+```
+
+## One process
+
+There is no renderer process. Each page has a global object of its own in the JavaScript engine that runs the main script, on the same thread. So does each preload script, with `contextIsolation`.
+
+- A page sees the globals of a browser. It has no `process`, `require` or `Bun`.
+- `ipcRenderer`, `ipcMain` and `contextBridge` copy values by the rules of Electron. A message is a task on the event loop.
+- Work that blocks the main script blocks painting and input, and the other way around. Move it to a `Worker` or a `utilityProcess`.
+- An uncaught error in a page goes to `window.onerror` and the `console-message` event, not to `process.on("uncaughtException")`.
+- A page cannot crash or hang on its own. `render-process-gone` and `unresponsive` are not emitted for it.
+- Web workers are threads. `utilityProcess.fork()` starts a process.
+
+## Security
+
+<Warning>
+  The global object of a page is not a security boundary. `sandbox: true` and `contextIsolation: true` keep code from
+  meeting by accident. They do not stop code that is out to reach the rest of the process.
+</Warning>
+
+For that reason only these run in the process, in a window or a view:
+
+- `file:` URLs inside of `app.getAppPath()`
+- origins that the app has passed to `app.trustOrigins()`
+- `about:blank`
+
+```ts main.ts icon="/icons/typescript.svg"
+import electron from "bun:desktop/electron";
+
+electron.app.trustOrigins(["app://bundle"]);
+```
+
+Trust an origin only if you would `require()` each script that it can load. Prefer origins that the app serves itself with `protocol.handle()`, and send a strict `Content-Security-Policy`.
+
+Everything else, and every `<iframe>` that has a `src` or a `srcdoc`, is rendered by a browser in sandboxed processes of its own. See `app.setWebEngine()`. If there is none, the load fails with `ERR_BLOCKED_BY_CLIENT`.
+
+## Debugging
+
+`ELECTRON_ENABLE_LOGGING=1` prints the console of pages.
+
+`--remote-debugging-port=9222` serves enough of the DevTools protocol for `chromium.connectOverCDP()` of Playwright to evaluate scripts, click, type and take screenshots. `webContents.debugger` has the same commands. There is no DevTools window.
+
+`BUN_DESKTOP_HEADLESS=1` runs without a display server.
+
+## What is missing
+
+See also [what the DOM lacks](/runtime/desktop#what-is-missing).
+
+These throw or reject:
+
+| Module              | What                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------- |
+| `app`               | `enableSandbox`, `moveToApplicationsFolder`, `getApplicationInfoForProtocol`             |
+| `webContents`       | `openDevTools`, `print`, `printToPDF`, `savePage`, `startDrag`, `beginFrameSubscription` |
+| `session`           | Extensions, service workers, PAC scripts                                                 |
+| `systemPreferences` | `getColor`, `promptTouchID`                                                              |
+| Whole modules       | `autoUpdater`, `contentTracing`, `desktopCapturer`, `netLog`, `pushNotifications`        |
+| Classes             | `ImageView`, `ShareMenu`, `TouchBar`                                                     |
+
+These do nothing: `crashReporter`, the spell checker, network and device emulation, the settings of the HTTP cache and the host resolver, window tabs.
+
+`.asar` archives are not read. Ship directories. Native addons have to use Node-API.

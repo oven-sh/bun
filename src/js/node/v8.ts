@@ -203,8 +203,16 @@ function totalmem() {
   return totalmem_;
 }
 
+const { memoryUsage } = process;
+
+// jsc.heapStats() visits every object.
+function heapSizes() {
+  const { heapUsed, heapTotal, external } = memoryUsage();
+  return { heapSize: heapUsed, heapCapacity: heapTotal, extraMemorySize: external };
+}
+
 function getHeapStatistics() {
-  const stats = jsc.heapStats();
+  const stats = heapSizes();
   const memory = jsc.memoryUsage();
 
   // These numbers need to be plausible, even if incorrect
@@ -225,7 +233,9 @@ function getHeapStatistics() {
 
     // -- Copied from Node:
     does_zap_garbage: 0,
-    number_of_native_contexts: stats.globalObjectCount,
+    get number_of_native_contexts() {
+      return jsc.heapStats().globalObjectCount;
+    },
     number_of_detached_contexts: 0,
     total_global_handles_size: 8192,
     used_global_handles_size: 2208,
@@ -253,7 +263,7 @@ const kHeapSpaces = [
   "trusted_large_object_space",
 ];
 function getHeapSpaceStatistics() {
-  const stats = jsc.heapStats();
+  const stats = heapSizes();
   const spaces = [];
   for (let i = 0; i < kHeapSpaces.length; i++) {
     const space_name = kHeapSpaces[i];

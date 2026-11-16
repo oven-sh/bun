@@ -48,7 +48,7 @@ pub enum GeometryBox {
 }
 
 impl GeometryBox {
-    pub(crate) fn into_mask_clip(self) -> MaskClip {
+    pub fn into_mask_clip(self) -> MaskClip {
         MaskClip::GeometryBox(self)
     }
 }
@@ -114,21 +114,21 @@ pub enum MaskType {
 #[derive(DeepClone, CssEql)]
 pub struct Mask<'bump> {
     /// The mask image.
-    pub(crate) image: Image<'bump>,
+    pub image: Image<'bump>,
     /// The position of the mask.
-    pub(crate) position: Position,
+    pub position: Position,
     /// The size of the mask image.
-    pub(crate) size: BackgroundSize,
+    pub size: BackgroundSize,
     /// How the mask repeats.
-    pub(crate) repeat: BackgroundRepeat,
+    pub repeat: BackgroundRepeat,
     /// The box in which the mask is clipped.
-    pub(crate) clip: MaskClip,
+    pub clip: MaskClip,
     /// The origin of the mask.
-    pub(crate) origin: GeometryBox,
+    pub origin: GeometryBox,
     /// How the mask is composited with the element.
-    pub(crate) composite: MaskComposite,
+    pub composite: MaskComposite,
     /// How the mask image is interpreted.
-    pub(crate) mode: MaskMode,
+    pub mode: MaskMode,
 }
 
 impl<'bump> Mask<'bump> {
@@ -285,17 +285,17 @@ pub enum MaskBorderMode {
 #[derive(DeepClone, CssEql)]
 pub struct MaskBorder<'bump> {
     /// The mask image.
-    pub(crate) source: Image<'bump>,
+    pub source: Image<'bump>,
     /// The offsets that define where the image is sliced.
-    pub(crate) slice: BorderImageSlice,
+    pub slice: BorderImageSlice,
     /// The width of the mask image.
-    pub(crate) width: Rect<BorderImageSideWidth>,
+    pub width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub(crate) outset: Rect<LengthOrNumber>,
+    pub outset: Rect<LengthOrNumber>,
     /// How the mask image is scaled and tiled.
-    pub(crate) repeat: BorderImageRepeat,
+    pub repeat: BorderImageRepeat,
     /// How the mask image is interpreted.
-    pub(crate) mode: MaskBorderMode,
+    pub mode: MaskBorderMode,
 }
 
 impl<'bump> MaskBorder<'bump> {
@@ -408,9 +408,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
-pub(crate) fn get_webkit_mask_property<'bump>(
-    property_id: &PropertyId,
-) -> Option<PropertyId<'bump>> {
+pub fn get_webkit_mask_property<'bump>(property_id: &PropertyId) -> Option<PropertyId<'bump>> {
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),

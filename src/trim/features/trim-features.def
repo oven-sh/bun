@@ -145,6 +145,10 @@ trim-feature webview : WebView
   about "`Bun.WebView`. Included in `\"spawn\"`."
   saves 0.0 0.0
 
+trim-feature desktop : Desktop
+  about "`bun:desktop`."
+  saves 0.0 0.0
+
 trim-feature fetch : HttpClient Fetch
   about "Bun's HTTP client: `fetch()`, `Bun.fetch()` and `Bun.FetchSession`. `Request`, `Response` and `Headers` don't need it. Neither does `http.request()` in `node:http`, which needs `\"sockets\"`."
   saves 0.3 0.0

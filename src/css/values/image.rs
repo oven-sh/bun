@@ -26,7 +26,7 @@ pub enum Image<'bump> {
 impl<'bump> Image<'bump> {
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
@@ -60,7 +60,7 @@ impl<'bump> Image<'bump> {
         }
     }
 
-    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image<'bump> {
+    pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image<'bump> {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
@@ -68,10 +68,7 @@ impl<'bump> Image<'bump> {
         }
     }
 
-    pub(crate) fn get_necessary_prefixes(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         match self {
             Image::Gradient(grad) => grad.get_necessary_prefixes(targets),
             Image::ImageSet(image_set) => image_set.get_necessary_prefixes(targets),
@@ -79,13 +76,13 @@ impl<'bump> Image<'bump> {
         }
     }
 
-    pub(crate) fn has_vendor_prefix(&self) -> bool {
+    pub fn has_vendor_prefix(&self) -> bool {
         let prefix = self.get_vendor_prefix();
         !prefix.is_empty() && prefix != VendorPrefix::NONE
     }
 
     /// Returns the vendor prefix used in the image value.
-    pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
+    pub fn get_vendor_prefix(&self) -> VendorPrefix {
         match self {
             Image::Gradient(a) => a.get_vendor_prefix(),
             Image::ImageSet(a) => a.get_vendor_prefix(),
@@ -94,12 +91,12 @@ impl<'bump> Image<'bump> {
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub(crate) fn get_image(&self) -> &Image<'bump> {
+    pub fn get_image(&self) -> &Image<'bump> {
         self
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub(crate) fn with_image(&self, _arena: &Arena, image: Image<'bump>) -> Self {
+    pub fn with_image(&self, _arena: &Arena, image: Image<'bump>) -> Self {
         let _ = self;
         image
     }
@@ -115,7 +112,7 @@ impl<'bump> Image<'bump> {
         }
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
         match self {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(u.deep_clone(arena)),
@@ -127,7 +124,7 @@ impl<'bump> Image<'bump> {
     /// Returns a legacy `-webkit-gradient()` value for the image.
     ///
     /// May return an error in case the gradient cannot be converted.
-    pub(crate) fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image<'bump>> {
+    pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image<'bump>> {
         match self {
             Image::Gradient(gradient) => Some(Image::Gradient(Box::new(
                 gradient.get_legacy_webkit(arena)?,
@@ -136,7 +133,7 @@ impl<'bump> Image<'bump> {
         }
     }
 
-    pub(crate) fn get_fallbacks(
+    pub fn get_fallbacks(
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
@@ -209,17 +206,14 @@ impl<'bump> Image<'bump> {
         res
     }
 
-    pub(crate) fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image<'bump> {
+    pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image<'bump> {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
         }
     }
 
-    pub(crate) fn get_necessary_fallbacks(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
             Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
             _ => ColorFallbackKind::empty(),
@@ -278,10 +272,10 @@ impl<'bump> crate::small_list::ImageFallback<'bump> for Image<'bump> {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet<'bump> {
     /// The image options to choose from.
-    pub(crate) options: Vec<ImageSetOption<'bump>>,
+    pub options: Vec<ImageSetOption<'bump>>,
 
     /// The vendor prefix for the `image-set()` function.
-    pub(crate) vendor_prefix: VendorPrefix,
+    pub vendor_prefix: VendorPrefix,
 }
 
 impl<'bump> ImageSet<'bump> {
@@ -362,11 +356,11 @@ impl<'bump> ImageSet<'bump> {
 /// An image option within the `image-set()` function. See [ImageSet](ImageSet).
 pub struct ImageSetOption<'bump> {
     /// The image for this option.
-    pub(crate) image: Image<'bump>,
+    pub image: Image<'bump>,
     /// The resolution of the image.
-    pub(crate) resolution: Resolution,
+    pub resolution: Resolution,
     /// The mime type of the image.
-    pub(crate) file_type: Option<&'bump [u8]>,
+    pub file_type: Option<&'bump [u8]>,
 }
 
 impl<'bump> ImageSetOption<'bump> {

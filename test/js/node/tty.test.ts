@@ -551,3 +551,32 @@ describe("WriteStream.prototype.getColorDepth", () => {
     expect(WriteStream.prototype.getColorDepth.length).toBe(0);
   });
 });
+
+test.skipIf(isWindows)("ReadStream waits for input on a non-blocking descriptor", async () => {
+  let output = "";
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fs = require("fs");
+        const fd = fs.openSync("/dev/tty", fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+        const stream = new (require("tty").ReadStream)(fd);
+        stream.on("error", error => { console.log("error:" + error.code); process.exit(1); });
+        stream.on("data", data => { console.log("got:" + String(data).trim()); stream.destroy(); });
+        fs.stat(".", () => fs.stat(".", () => console.log("reading")));
+      `,
+    ],
+    env: bunEnv,
+    terminal: {
+      data(terminal, chunk) {
+        const wasReading = output.includes("reading");
+        output += Buffer.from(chunk).toString();
+        if (!wasReading && output.includes("reading")) terminal.write("hello\n");
+      },
+    },
+  });
+  const exitCode = await proc.exited;
+  expect(output).not.toContain("error:");
+  expect(exitCode).toBe(0);
+});

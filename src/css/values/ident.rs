@@ -50,31 +50,31 @@ macro_rules! arena_slice_newtype {
 #[derive(Debug, Clone, Copy)]
 pub struct DashedIdentReference<'bump> {
     /// The referenced identifier.
-    pub(crate) ident: DashedIdent<'bump>,
+    pub ident: DashedIdent<'bump>,
     /// CSS modules extension: the filename where the variable is defined.
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
-    pub(crate) from: Option<crate::properties::css_modules::Specifier>,
+    pub from: Option<crate::properties::css_modules::Specifier>,
 }
 
 impl<'bump> DashedIdentReference<'bump> {
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(&self, rhs: &Self) -> bool {
         // Field-wise over `ident` and `from`.
         use crate::generics::CssEql;
         self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
     }
 
-    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
+    pub fn hash(&self, hasher: &mut Wyhash) {
         self.ident.hash(hasher);
         if let Some(from) = &self.from {
             from.hash(hasher);
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         *self
     }
 
-    pub(crate) fn parse_with_options(
+    pub fn parse_with_options(
         input: &mut Parser<'_, 'bump>,
         options: &css::ParserOptions,
     ) -> CssResult<'bump, DashedIdentReference<'bump>> {
@@ -98,7 +98,7 @@ impl<'bump> DashedIdentReference<'bump> {
         Ok(DashedIdentReference { ident, from })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let dashed_idents = match &dest.css_module {
             Some(m) => m.config.dashed_idents,
             None => false,
@@ -144,7 +144,7 @@ arena_slice_newtype! {
 }
 
 impl<'bump> DashedIdent<'bump> {
-    pub(crate) fn new(v: &'bump [u8]) -> Option<Self> {
+    pub fn new(v: &'bump [u8]) -> Option<Self> {
         v.starts_with(b"--").then_some(Self { v })
     }
 
@@ -190,21 +190,21 @@ const _: () = assert!(size_of::<IdentOrRef<'static>>() == 16);
 
 impl<'bump> IdentOrRef<'bump> {
     #[inline]
-    pub(crate) fn as_ref(self) -> Option<Ref> {
+    pub fn as_ref(self) -> Option<Ref> {
         match self {
             Self::Ident(_) => None,
             Self::Ref(r) => Some(r),
         }
     }
 
-    pub(crate) fn as_original_string(self, symbols: &'bump [bun_ast::Symbol]) -> &'bump [u8] {
+    pub fn as_original_string(self, symbols: &'bump [bun_ast::Symbol]) -> &'bump [u8] {
         match self {
             Self::Ident(ident) => ident.v,
             Self::Ref(r) => symbols[r.inner_index() as usize].original_name.slice(),
         }
     }
 
-    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
+    pub fn hash(&self, hasher: &mut Wyhash) {
         match self {
             Self::Ident(ident) => hasher.update(ident.v),
             Self::Ref(r) => hasher.update(&r.to_raw_bits().to_ne_bytes()),
@@ -239,7 +239,7 @@ pub use CustomIdent as CustomIdentFns;
 /// reserved separately by css-values-4. `none` is *not* in this set —
 /// `<keyframes-name>` / `<single-animation-name>` callers check it themselves.
 #[inline]
-pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
+pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(
         s,
         &[
@@ -260,7 +260,7 @@ arena_slice_newtype! {
 }
 
 impl<'bump> CustomIdent<'bump> {
-    pub(crate) fn new(v: &'bump [u8]) -> Option<Self> {
+    pub fn new(v: &'bump [u8]) -> Option<Self> {
         (!is_reserved_custom_ident(v)).then_some(Self { v })
     }
 
@@ -275,7 +275,7 @@ impl<'bump> CustomIdent<'bump> {
     }
 
     /// Write the custom ident to CSS.
-    pub(crate) fn to_css_with_options(
+    pub fn to_css_with_options(
         &self,
         dest: &mut Printer,
         enabled_css_modules: bool,

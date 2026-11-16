@@ -1,0 +1,26 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -531,10 +531,10 @@ ztracing_macro = { path = "crates/ztracing_macro" }
+ # External crates
+ #
+ 
+-accesskit = { version = "0.24.0", features = ["enumn"] }
+-accesskit_macos = "0.26.0"
+-accesskit_unix = "0.22"
+-accesskit_windows = "0.34"
++accesskit = { version = "0.25.2", features = ["enumn"] }
++accesskit_macos = "0.27.2"
++accesskit_unix = "0.24.1"
++accesskit_windows = "0.35.2"
+ agent-client-protocol = { version = "=5.3.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
+ aho-corasick = "1.1"
+ alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
+@@ -593,7 +593,7 @@ bytemuck = "1"
+ bytes = "1.0"
+ cargo_metadata = "0.23"
+ cargo_toml = "0.21"
+-cbindgen = { version = "0.28.0", default-features = false }
++cbindgen = { version = "0.29.2", default-features = false }
+ chardetng = "0.1"
+ chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+ ciborium = "0.2"

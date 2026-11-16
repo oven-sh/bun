@@ -1,0 +1,112 @@
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
+
+pub struct Pipe([AtomicI32; 2]);
+
+/// Wakes the thread that runs JavaScript.
+pub static WAKE: Pipe = Pipe::new();
+
+impl Pipe {
+    pub const fn new() -> Pipe {
+        Pipe([AtomicI32::new(-1), AtomicI32::new(-1)])
+    }
+
+    pub fn open(&self) {
+        let mut ends = [-1; 2];
+        // SAFETY: room for two descriptors, which are then this function's.
+        unsafe {
+            assert_eq!(libc::pipe(ends.as_mut_ptr()), 0, "could not create a pipe");
+            for end in ends {
+                libc::fcntl(end, libc::F_SETFD, libc::FD_CLOEXEC);
+                libc::fcntl(end, libc::F_SETFL, libc::O_NONBLOCK);
+            }
+        }
+        self.0
+            .iter()
+            .zip(ends)
+            .for_each(|(stored, end)| stored.store(end, Ordering::Relaxed));
+    }
+
+    pub fn write(&self) {
+        // SAFETY: one readable byte. A full pipe wakes as well.
+        unsafe { libc::write(self.0[1].load(Ordering::Relaxed), [0u8].as_ptr().cast(), 1) };
+    }
+
+    pub fn fd(&self) -> i32 {
+        self.0[0].load(Ordering::Relaxed)
+    }
+
+    pub fn clear(&self) {
+        let mut buffer = [0u8; 64];
+        // SAFETY: the buffer and its length.
+        while unsafe { libc::read(self.fd(), buffer.as_mut_ptr().cast(), buffer.len()) }
+            == buffer.len() as isize
+        {}
+    }
+}
+
+pub fn wake() {
+    WAKE.write();
+}
+
+/// Returns whether `source` is readable.
+#[cfg(target_os = "macos")]
+pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bool {
+    let (source, wake) = (source.map(|source| source as i32), pipe.fd());
+    let timeout = timeout.map(|it| it + Duration::from_nanos(999));
+    let mut timeout = timeout.map(|it| libc::timeval {
+        tv_sec: it.as_secs() as _,
+        tv_usec: it.subsec_micros() as _,
+    });
+    let (timeout, none) = (
+        timeout
+            .as_mut()
+            .map_or(std::ptr::null_mut(), std::ptr::from_mut),
+        std::ptr::null_mut(),
+    );
+    assert!(source.unwrap_or(0).max(wake) < libc::FD_SETSIZE as i32);
+    // SAFETY: zero is the empty set, which has room for both.
+    unsafe {
+        let mut set: libc::fd_set = std::mem::zeroed();
+        source
+            .into_iter()
+            .chain([wake])
+            .for_each(|fd| libc::FD_SET(fd, &raw mut set));
+        let result = libc::select(
+            source.unwrap_or(0).max(wake) + 1,
+            &raw mut set,
+            none,
+            none,
+            timeout,
+        );
+        if result > 0 && libc::FD_ISSET(wake, &raw const set) {
+            pipe.clear();
+        }
+        // A signal is for the event loop to look at.
+        result < 0 || source.is_some_and(|source| libc::FD_ISSET(source, &raw const set))
+    }
+}
+
+/// Returns whether `source` is readable.
+#[cfg(not(target_os = "macos"))]
+pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bool {
+    let entry = |fd| libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let mut entries = [
+        entry(source.map_or(-1, |source| source as i32)),
+        entry(pipe.fd()),
+    ];
+    let timeout = timeout.map_or(-1, |timeout| {
+        timeout.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32
+    });
+    // SAFETY: the array and its length.
+    let result = unsafe { libc::poll(entries.as_mut_ptr(), 2, timeout) };
+    if entries[1].revents != 0 {
+        pipe.clear();
+    }
+    // A signal is for the event loop to look at.
+    result < 0 || entries[0].revents != 0
+}

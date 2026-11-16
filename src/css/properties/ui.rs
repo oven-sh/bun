@@ -22,9 +22,7 @@ bitflags::bitflags! {
 }
 
 impl ColorScheme {
-    pub(crate) fn parse<'bump>(
-        input: &mut css::Parser<'_, 'bump>,
-    ) -> css::Result<'bump, ColorScheme> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, ColorScheme> {
         let mut res = ColorScheme::empty();
         let ident = input.expect_ident()?;
 
@@ -70,7 +68,7 @@ impl ColorScheme {
         Ok(res)
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self == ColorScheme::empty() {
             return dest.write_str("normal");
         }
@@ -123,7 +121,7 @@ pub struct ColorSchemeHandler;
 
 // `define_var` needs no arena because `TokenList.v` is a std `Vec<TokenOrValue>`.
 impl ColorSchemeHandler {
-    pub(crate) fn handle_property(
+    pub fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
@@ -163,12 +161,7 @@ impl ColorSchemeHandler {
         }
     }
 
-    pub(crate) fn finalize(
-        &mut self,
-        _: &mut css::DeclarationList,
-        _: &mut PropertyHandlerContext,
-    ) {
-    }
+    pub fn finalize(&mut self, _: &mut css::DeclarationList, _: &mut PropertyHandlerContext) {}
 }
 
 fn define_var<'bump>(name: &'bump [u8], value: css::Token<'bump>) -> Property<'bump> {

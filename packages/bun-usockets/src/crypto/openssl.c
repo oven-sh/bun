@@ -28,6 +28,7 @@
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
 #include <openssl/dh.h>
+#include <openssl/bytestring.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/pkcs12.h>
@@ -1301,6 +1302,35 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
     sk_X509_pop_free(same_subject, X509_free);
   }
   return us_x509_verify_chain(ctx);
+}
+
+/* For a client: the certificates above the leaf on the path that verifies, each as a u32 length and DER, for OPENSSL_free. 0 if there are none. */
+size_t us_ssl_verified_issuers(SSL *ssl, uint8_t **out) {
+  SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+  STACK_OF(X509) *sent = SSL_get_peer_cert_chain(ssl);
+  X509_STORE *shared = us_ssl_ctx_has_user_ca(ctx) ? NULL : us_get_shared_default_ca_store();
+  X509_STORE_CTX *walk = X509_STORE_CTX_new();
+  size_t size = 0;
+  CBB cbb;
+  CBB_zero(&cbb);
+  if (walk && X509_STORE_CTX_init(walk, shared ? shared : SSL_CTX_get_cert_store(ctx), sk_X509_value(sent, 0), sent) &&
+      X509_STORE_CTX_set_default(walk, "ssl_server") && us_x509_verify_cert(walk, X509_PURPOSE_SSL_SERVER) > 0 &&
+      CBB_init(&cbb, 4096)) {
+    STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(walk);
+    int ok = 1;
+    for (size_t i = 1; ok && i < sk_X509_num(chain); i++) {
+      uint8_t *der;
+      int length = i2d_X509(sk_X509_value(chain, i), NULL);
+      ok = length > 0 && CBB_add_u32(&cbb, length) && CBB_add_space(&cbb, &der, length) &&
+           i2d_X509(sk_X509_value(chain, i), &der) == length;
+    }
+    if (!ok || CBB_len(&cbb) == 0 || !CBB_finish(&cbb, out, &size)) size = 0;
+  }
+  CBB_cleanup(&cbb);
+  ERR_clear_error();
+  X509_STORE_CTX_free(walk);
+  X509_STORE_free(shared);
+  return size;
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */

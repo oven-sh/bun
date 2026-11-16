@@ -607,6 +607,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_dom"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_alloc",
+ "bun_ast",
+ "bun_collections",
+ "bun_core",
+ "bun_css",
+ "bun_jsc",
+ "bun_md",
+ "bun_parsers",
+ "bun_url",
+ "bun_wyhash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_dotenv"
 version = "0.0.0"
 dependencies = [
@@ -669,6 +687,7 @@ version = "0.0.0"
 dependencies = [
  "bun_aot",
  "bun_aot_absent",
+ "bun_dom",
  "bun_runtime",
 ]
 

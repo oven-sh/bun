@@ -1,0 +1,136 @@
+[package]
+name = "bun_desktop"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not a member of Bun's workspace: it has its own lockfile, unwinds on panic, and is loaded with dlopen.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1"
+brotli-decompressor = "6"
+dirs = "6"
+flate2 = "1"
+global-hotkey = "0.9"
+gpui = { path = "../../vendor/zed/crates/gpui", default-features = false }
+harfrust = "0.12"
+icu_locale_core = { version = "2", default-features = false }
+icu_segmenter = { version = "2", default-features = false, features = ["compiled_data", "lstm"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
+log = "0.4"
+memmap2 = "0.9"
+parking_lot = "0.12"
+raw-window-handle = "0.6"
+resvg = { version = "0.46", default-features = false, features = ["raster-images", "text"] }
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+simplecss = "0.2"
+skrifa = "0.44"
+smallvec = "1"
+trash = { version = "5", default-features = false, features = ["coinit_apartmentthreaded"] }
+unicode-bidi = "0.3"
+unicode-linebreak = "0.1"
+unicode-properties = { version = "0.1", default-features = false, features = ["emoji", "general-category"] }
+unicode-script = "0.5"
+unicode-segmentation = "1"
+zeno = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+fontconfig_sys = { package = "yeslogic-fontconfig-sys", version = "6", features = ["dlopen"] }
+gpui_linux = { path = "../../vendor/zed/crates/gpui_linux" }
+x11rb = { version = "0.13", features = ["screensaver"] }
+xkeysym = "0.2"
+zbus = "5"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+rfd = "0.17"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_macos = { path = "../../vendor/zed/crates/gpui_macos", default-features = false, features = ["runtime_shaders"] }
+block2 = "0.6"
+core-foundation-sys = "0.8"
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSAccessibility", "NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSCursor", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScroller", "NSStatusBarButton", "NSStatusItem", "NSView", "NSVisualEffectView", "NSWindow", "NSWindowRestoration", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFCGTypes", "CFData", "CFDictionary", "CFNumber", "CFSet", "CFString", "CFURL"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGFont", "CGImage", "CGPath", "bitflags"] }
+objc2-core-text = { version = "0.3", default-features = false, features = ["std", "CTFont", "CTFontDescriptor", "CTFontManager", "CTFontTraits", "bitflags", "objc2-core-graphics"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSAttributedString", "NSData", "NSDistributedNotificationCenter", "NSFileManager", "NSNotification", "NSDate", "NSEnumerator", "NSURL", "NSDictionary", "NSError", "NSGeometry", "NSNull", "NSRunLoop", "NSString", "objc2-core-foundation"] }
+objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "bitflags", "libc", "objc2", "objc2-core-foundation"] }
+objc2-metal = { version = "0.3", default-features = false, features = ["std", "block2", "MTLAllocation", "MTLBuffer", "MTLCommandBuffer", "MTLCommandEncoder", "MTLCommandQueue", "MTLDevice", "MTLLibrary", "MTLPixelFormat", "MTLRenderCommandEncoder", "MTLRenderPass", "MTLRenderPipeline", "MTLResource", "MTLTexture", "objc2-io-surface"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+fontique = { version = "0.11", features = ["fontconfig-dlopen"] }
+gpui_windows = { path = "../../vendor/zed/crates/gpui_windows", default-features = false }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Power",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-registry = "0.6"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = { version = "0.24", default-features = false }
+
+# The revisions in `[patch.crates-io]` of vendor/zed/Cargo.toml, which cargo only reads for zed's own workspace.
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task", rev = "41fd3359c75e221bd8b187a8ee361aa309c1714c" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"
+
+# Less to load. What paints, shapes and decodes is listed below.
+[profile.release.package."*"]
+opt-level = "s"
+
+[profile.release.package]
+gpui.opt-level = 3
+gpui_wgpu.opt-level = 3
+harfrust.opt-level = 3
+read-fonts.opt-level = 3
+skrifa.opt-level = 3
+font-types.opt-level = 3
+zeno.opt-level = 3
+tiny-skia.opt-level = 3
+tiny-skia-path.opt-level = 3
+resvg.opt-level = 3
+image.opt-level = 3
+png.opt-level = 3
+fdeflate.opt-level = 3
+miniz_oxide.opt-level = 3
+zune-jpeg.opt-level = 3
+image-webp.opt-level = 3
+gif.opt-level = 3
+weezl.opt-level = 3
+brotli-decompressor.opt-level = 3
+icu_segmenter.opt-level = 3
+unicode-bidi.opt-level = 3

@@ -351,7 +351,7 @@ InternalModuleRegistry::InternalModuleRegistry(VM& vm, Structure* structure)
 {
     // Initialize all internal fields to jsUndefined() using setWithoutWriteBarrier
     // to avoid triggering write barriers during construction
-    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+    for (unsigned i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
         this->internalField(static_cast<Field>(i)).setWithoutWriteBarrier(jsUndefined());
     }
 }

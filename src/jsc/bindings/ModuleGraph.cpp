@@ -4,6 +4,7 @@
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "BunProcess.h"
+#include "DesktopRealm.h"
 #include "ErrorCode.h"
 #include "isBuiltinModule.h"
 #include "JSCommonJSModule.h"
@@ -248,6 +249,8 @@ static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject*, JSValue asyncContex
 // to call the script has left it). A value nobody threw is reported as it happens: the current one.
 extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError)
 {
+    if (desktopRealmHandlesUncaughtException(lexicalGlobalObject, JSValue::decode(encodedError)))
+        return true;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     if (!globalObject->hasModuleGraphs())
         return false;

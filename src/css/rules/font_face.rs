@@ -122,10 +122,10 @@ impl FontStyle {
 /// Cannot be empty. Can represent a single code point when start == end.
 pub struct UnicodeRange {
     /// Inclusive start of the range. In [0, end].
-    pub(crate) start: u32,
+    pub start: u32,
 
     /// Inclusive end of the range. In [0, 0x10FFFF].
-    pub(crate) end: u32,
+    pub end: u32,
 }
 
 impl UnicodeRange {
@@ -493,7 +493,7 @@ impl<'bump> Source<'bump> {
         }
     }
 
-    pub(crate) fn deep_clone(&self, arena: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &'bump bun_alloc::Arena) -> Self {
         // `css.implementDeepClone` variant-walk, hand-expanded.
         match self {
             Source::Url(u) => Source::Url(u.deep_clone(arena)),
@@ -547,11 +547,11 @@ pub enum FontTechnology {
 /// property in an `@font-face` rule.
 pub struct UrlSource<'bump> {
     /// The URL.
-    pub(crate) url: Url<'bump>,
+    pub url: Url<'bump>,
     /// Optional `format()` function.
-    pub(crate) format: Option<FontFormat<'bump>>,
+    pub format: Option<FontFormat<'bump>>,
     /// Optional `tech()` function.
-    pub(crate) tech: ArrayList<FontTechnology>,
+    pub tech: ArrayList<FontTechnology>,
 }
 
 impl<'bump> UrlSource<'bump> {
@@ -614,13 +614,13 @@ impl<'bump> UrlSource<'bump> {
 /// A [@font-face](https://drafts.csswg.org/css-fonts/#font-face-rule) rule.
 pub struct FontFaceRule<'bump> {
     /// Declarations in the `@font-face` rule.
-    pub(crate) properties: ArrayList<FontFaceProperty<'bump>>,
+    pub properties: ArrayList<FontFaceProperty<'bump>>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl FontFaceRule<'_> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -643,7 +643,7 @@ impl FontFaceRule<'_> {
 }
 
 impl<'bump> FontFaceRule<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
             loc: self.loc,
@@ -655,7 +655,7 @@ impl<'bump> FontFaceRule<'bump> {
 // FontFaceDeclarationParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct FontFaceDeclarationParser;
+pub struct FontFaceDeclarationParser;
 
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};

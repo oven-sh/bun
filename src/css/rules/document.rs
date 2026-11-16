@@ -7,13 +7,13 @@ use crate::{PrintErr, Printer};
 /// is allowed since Firefox was the only browser that ever implemented this rule.
 pub struct MozDocumentRule<'bump, R> {
     /// Nested rules within the `@-moz-document` rule.
-    pub(crate) rules: CssRuleList<'bump, R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<'bump, R> MozDocumentRule<'bump, R> {
-    pub(crate) fn to_css(
+    pub fn to_css(
         &self,
         dest: &mut Printer,
         ctx: Option<&StyleContext<'_, 'bump>>,
@@ -29,7 +29,7 @@ impl<'bump, R> MozDocumentRule<'bump, R> {
 }
 
 impl<'bump, R> MozDocumentRule<'bump, R> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

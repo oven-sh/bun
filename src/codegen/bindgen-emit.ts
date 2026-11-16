@@ -2216,8 +2216,11 @@ ${
   for (const method of type.methods) {
     const isStatic = method.receiver === "static";
     const throughCaller = type.functions.some(fn => fn.signatures.includes(method) && isCalledByProtoCaller(type, fn));
-    const call = `<${rustPath}>::${method.rustName}(${[
-      ...leading(method.receiver, method.passThis, method.capability),
+    const throughMutator = type.mutator !== undefined && method.receiver === "mut";
+    const direct = `<${rustPath}>::${method.rustName}(${[
+      ...leading(method.receiver, method.passThis, method.capability).map((it, i) =>
+        throughMutator && i === 0 ? "payload" : it,
+      ),
       ...(throughCaller
         ? method.args.map(({ type }, i) =>
             type instanceof VariadicType
@@ -2228,6 +2231,7 @@ ${
           )
         : rustArguments(method)),
     ].join(", ")})`;
+    const call = throughMutator ? `<${rustPath}>::${type.mutator}(this.payload_mut(), |payload| ${direct})` : direct;
     const args = throughCaller ? protoCallerArguments : method.args;
     thunks += rustThunk(
       methodSymbolName(type, method),

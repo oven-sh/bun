@@ -1399,6 +1399,10 @@ impl VirtualMachine {
         }
     }
 
+    pub fn hand_over_idle_collections(&self) -> bool {
+        self.gc_controller.hand_over()
+    }
+
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
     fn install_bytecode_string_table(
         &self,

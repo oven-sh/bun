@@ -43,7 +43,7 @@ pub enum FontWeight {
 impl FontWeight {
     // Tries the payload variant first, then matches the remaining keywords
     // against `expect_ident`.
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(v) = input.try_parse(AbsoluteFontWeight::parse) {
             return Ok(FontWeight::Absolute(v));
         }
@@ -56,7 +56,7 @@ impl FontWeight {
         }}
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontWeight::Absolute(a) => a.to_css(dest),
             FontWeight::Bolder => dest.write_str("bolder"),
@@ -69,7 +69,7 @@ impl FontWeight {
         FontWeight::Absolute(AbsoluteFontWeight::default())
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontWeight::Absolute(a) => a.is_compatible(browsers),
             FontWeight::Bolder | FontWeight::Lighter => true,
@@ -155,7 +155,7 @@ impl FontSize {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
     // is_compatible KEPT (custom Rem branch).
 
-    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontSize::Length(l) => match l {
                 DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
@@ -226,14 +226,14 @@ pub enum FontStretch {
 
 impl FontStretch {
     // Two payload variants tried in declaration order.
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
             return Ok(FontStretch::Keyword(kw));
         }
         Percentage::parse(input).map(FontStretch::Percentage)
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         if dest.minify {
             let percentage: Percentage = self.into_percentage();
             return percentage.to_css(dest);
@@ -252,7 +252,7 @@ impl FontStretch {
         }
     }
 
-    pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
             FontStretch::Keyword(_) => true,
@@ -326,7 +326,7 @@ pub enum FontFamily<'bump> {
 }
 
 impl<'bump> FontFamily<'bump> {
-    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(value) = input.try_parse(|p| p.expect_string()) {
             return Ok(FontFamily::FamilyName(value));
         }
@@ -363,7 +363,7 @@ impl<'bump> FontFamily<'bump> {
         Ok(FontFamily::FamilyName(final_value))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontFamily::Generic(val) => val.to_css(dest),
             FontFamily::FamilyName(val) => {
@@ -402,7 +402,7 @@ impl<'bump> FontFamily<'bump> {
         }
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontFamily::Generic(g) => g.is_compatible(browsers),
             FontFamily::FamilyName(_) => true,
@@ -463,7 +463,7 @@ impl FontStyle {
         FontStyle::Normal
     }
 
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, FontStyle> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, FontStyle> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
@@ -479,7 +479,7 @@ impl FontStyle {
         }}
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
             FontStyle::Italic => dest.write_str("italic"),
@@ -494,7 +494,7 @@ impl FontStyle {
         }
     }
 
-    pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStyle::Oblique(angle) => {
                 if angle != FontStyle::default_oblique_angle() {
@@ -507,7 +507,7 @@ impl FontStyle {
         }
     }
 
-    pub(crate) fn default_oblique_angle() -> Angle {
+    pub fn default_oblique_angle() -> Angle {
         Angle::Deg(14.0)
     }
 
@@ -551,7 +551,7 @@ impl FontVariantCaps {
         Ok(value)
     }
 
-    pub(crate) fn is_compatible(self, _: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, _: &crate::targets::Browsers) -> bool {
         true
     }
 }
@@ -569,7 +569,7 @@ pub enum LineHeight {
 
 impl LineHeight {
     // Keyword variant first (`normal`), then payload variants in declaration order.
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|p| p.expect_ident_matching(b"normal"))
             .is_ok()
@@ -582,7 +582,7 @@ impl LineHeight {
         LengthPercentage::parse(input).map(LineHeight::Length)
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             LineHeight::Normal => dest.write_str("normal"),
             LineHeight::Number(n) => CSSNumberFns::to_css(*n, dest),
@@ -590,7 +590,7 @@ impl LineHeight {
         }
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             LineHeight::Length(l) => l.is_compatible(browsers),
             LineHeight::Normal | LineHeight::Number(_) => true,
@@ -611,25 +611,25 @@ impl LineHeight {
 #[derive(DeepClone, CssEql)]
 pub struct Font<'bump> {
     /// The font family.
-    pub(crate) family: Vec<FontFamily<'bump>>,
+    pub family: Vec<FontFamily<'bump>>,
     /// The font size.
-    pub(crate) size: FontSize,
+    pub size: FontSize,
     /// The font style.
-    pub(crate) style: FontStyle,
+    pub style: FontStyle,
     /// The font weight.
-    pub(crate) weight: FontWeight,
+    pub weight: FontWeight,
     /// The font stretch.
-    pub(crate) stretch: FontStretch,
+    pub stretch: FontStretch,
     /// The line height.
-    pub(crate) line_height: LineHeight,
+    pub line_height: LineHeight,
     /// How the text should be capitalized. Only CSS 2.1 values are supported.
-    pub(crate) variant_caps: FontVariantCaps,
+    pub variant_caps: FontVariantCaps,
 }
 
 impl<'bump> Font<'bump> {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
-    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Font<'bump>> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Font<'bump>> {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
         let mut stretch: Option<FontStretch> = None;
@@ -706,7 +706,7 @@ impl<'bump> Font<'bump> {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if self.style != FontStyle::default() {
             self.style.to_css(dest)?;
             dest.write_char(b' ')?;
@@ -755,7 +755,7 @@ impl<'bump> Font<'bump> {
 
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct FontProperty: u8 {
+    pub struct FontProperty: u8 {
         const FONT_FAMILY       = 1 << 0;
         const FONT_SIZE         = 1 << 1;
         const FONT_STYLE        = 1 << 2;
@@ -803,7 +803,7 @@ pub struct FontHandler<'bump> {
 }
 
 impl<'bump> FontHandler<'bump> {
-    pub(crate) fn handle_property(
+    pub fn handle_property(
         &mut self,
         property: &crate::properties::Property<'bump>,
         dest: &mut crate::DeclarationList<'bump>,
@@ -895,7 +895,7 @@ impl<'bump> FontHandler<'bump> {
         true
     }
 
-    pub(crate) fn finalize(
+    pub fn finalize(
         &mut self,
         decls: &mut crate::DeclarationList<'bump>,
         context: &mut crate::PropertyHandlerContext,

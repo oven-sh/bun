@@ -1,4 +1,5 @@
 #include "config.h"
+#include "DesktopRealm.h"
 #include "MessagePort.h"
 #include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
@@ -19,7 +20,32 @@ TransferredMessagePort::~TransferredMessagePort()
         pipe->close(side, MessagePortPipe::CloseKind::Explicit);
 }
 
-void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
+static thread_local unsigned localDrains;
+
+class LocalDrain {
+public:
+    explicit LocalDrain(bool isLocal)
+        : m_isLocal(isLocal)
+    {
+        localDrains += isLocal;
+    }
+    LocalDrain(LocalDrain&& other)
+        : m_isLocal(std::exchange(other.m_isLocal, false))
+    {
+    }
+    ~LocalDrain() { begin(); }
+    void begin() { localDrains -= std::exchange(m_isLocal, false); }
+
+private:
+    bool m_isLocal;
+};
+
+bool MessagePortPipe::hasLocalDrain()
+{
+    return localDrains;
+}
+
+void MessagePortPipe::send(uint8_t fromSide, ScriptExecutionContextIdentifier from, MessageWithMessagePorts&& message)
 {
     ASSERT(fromSide < 2);
     auto& dst = m_sides[1 - fromSide];
@@ -44,16 +70,17 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
     }
 
     if (wakeCtx)
-        scheduleDrain(1 - fromSide, wakeCtx, wakeLoopKind);
+        scheduleDrain(1 - fromSide, wakeCtx, wakeLoopKind, wakeCtx == from);
 }
 
-void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier ctxId, BunLoopKind ctxLoopKind)
+void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier ctxId, BunLoopKind ctxLoopKind, bool isLocal)
 {
     // The posted task holds a strong ref to the pipe so it can't be destroyed
     // while a wakeup is in flight. The task captures the ctxId it was posted
     // to so drainAndDispatch can detect if the side moved to a different
     // context before the task ran.
-    bool posted = ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
+    bool posted = ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId, local = LocalDrain { isLocal }](ScriptExecutionContext&) mutable {
+        local.begin();
         pipe->drainAndDispatch(side, ctxId);
     });
     if (!posted) {
@@ -116,6 +143,9 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         return;
     }
     auto* globalObject = defaultGlobalObject(context->globalObject());
+    // Web pages send themselves messages to let input and frames through.
+    if (Bun::isDesktopRealm(globalObject))
+        limit = 1;
 
     static constexpr size_t takeAtOnce = 64;
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
@@ -177,7 +207,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // Budget spent with messages left. We are on `context`'s thread: continue on
     // its next loop iteration (after I/O and timers), not in this drain.
     if (rescheduleCtx) {
-        context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
+        context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx, local = LocalDrain { true }](ScriptExecutionContext&) mutable {
+            local.begin();
             pipe->drainAndDispatch(side, rescheduleCtx);
         });
     }

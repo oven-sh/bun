@@ -3577,16 +3577,14 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
         vm->heap.collectAsync();
 }
 
-// The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
-// optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
-void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+void JSC__VM__collectWhileParked(JSC::VM* vm, JSC::CollectionScope scope, bool isIdle)
 {
     JSC::JSLockHolder lock(*vm);
     if (!JSC::Options::useGC())
         return;
     auto* clientData = WebCore::clientData(*vm);
-    JSC::GCRequest request(JSC::CollectionScope::Full);
-    request.isIdle = true;
+    JSC::GCRequest request(scope);
+    request.isIdle = isIdle;
     // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
     // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
     // request with this hook is never coalesced into another, so the count always comes back down.
@@ -3600,6 +3598,13 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     request.didFinishEndPhase = clientData->idleCollectionDidFinish;
     clientData->idleCollectionsPending.fetch_add(1);
     vm->heap.collectAsync(request);
+}
+
+// The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
+// optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
+void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+{
+    JSC__VM__collectWhileParked(vm, JSC::CollectionScope::Full, true);
 }
 
 bool JSC__VM__shrinkFootprintNow(JSC::VM* vm)

@@ -201,7 +201,7 @@ pub use css_parser::CssResult as Result;
 /// PERF: nullable optimization
 #[derive(Default, CssEql, CssHash, DeepClone)]
 pub struct TokenList<'bump> {
-    pub(crate) v: Vec<TokenOrValue<'bump>>,
+    pub v: Vec<TokenOrValue<'bump>>,
 }
 
 impl<'bump> TokenList<'bump> {
@@ -286,7 +286,7 @@ impl<'bump> TokenList<'bump> {
         }
     }
 
-    pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
         for token_or_value in self.v.iter() {
             match token_or_value {
                 TokenOrValue::Token(token) => token.to_css(dest)?,
@@ -319,7 +319,7 @@ impl<'bump> TokenList<'bump> {
         Ok(TokenList { v: tokens })
     }
 
-    pub(crate) fn parse_raw(
+    pub fn parse_raw(
         input: &mut Parser<'_, 'bump>,
         tokens: &mut Vec<TokenOrValue<'bump>>,
         options: &ParserOptions,
@@ -377,7 +377,7 @@ impl<'bump> TokenList<'bump> {
         Ok(())
     }
 
-    pub(crate) fn parse_into(
+    pub fn parse_into(
         input: &mut Parser<'_, 'bump>,
         tokens: &mut Vec<TokenOrValue<'bump>>,
         options: &ParserOptions,
@@ -553,7 +553,7 @@ impl<'bump> TokenList<'bump> {
         Ok(())
     }
 
-    pub(crate) fn get_fallback(&self, bump: &'bump Arena, kind: ColorFallbackKind) -> Self {
+    pub fn get_fallback(&self, bump: &'bump Arena, kind: ColorFallbackKind) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
@@ -569,7 +569,7 @@ impl<'bump> TokenList<'bump> {
         tokens
     }
 
-    pub(crate) fn get_fallbacks(
+    pub fn get_fallbacks(
         &mut self,
         bump: &'bump Arena,
         targets: &css::targets::Targets,
@@ -622,10 +622,7 @@ impl<'bump> TokenList<'bump> {
         res
     }
 
-    pub(crate) fn get_necessary_fallbacks(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
@@ -657,7 +654,7 @@ impl<'bump> TokenList<'bump> {
 
 pub type TokenListFns<'bump> = TokenList<'bump>;
 
-pub(crate) type Fallbacks<'bump> = (SupportsCondition<'bump>, TokenList<'bump>);
+pub type Fallbacks<'bump> = (SupportsCondition<'bump>, TokenList<'bump>);
 
 /// A color value with an unresolved alpha value (e.g. a variable).
 /// These can be converted from the modern slash syntax to older comma syntax.
@@ -935,7 +932,7 @@ pub struct EnvironmentVariable<'bump> {
     pub name: EnvironmentVariableName<'bump>,
     /// Optional indices into the dimensions of the environment variable.
     /// TODO(zack): this could totally be a smallvec, why isn't it?
-    pub(crate) indices: Vec<CSSInteger>,
+    pub indices: Vec<CSSInteger>,
     /// A fallback value in case the variable is not defined.
     pub fallback: Option<TokenList<'bump>>,
 }
@@ -943,7 +940,7 @@ pub struct EnvironmentVariable<'bump> {
 impl<'bump> EnvironmentVariable<'bump> {
     // deinit(): body only freed owned `Vec`/`TokenList` fields — handled by `Drop`.
 
-    pub(crate) fn parse(
+    pub fn parse(
         input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
         depth: usize,
@@ -976,7 +973,7 @@ impl<'bump> EnvironmentVariable<'bump> {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
 
@@ -1084,7 +1081,7 @@ pub enum UAEnvironmentVariable {
 // hash — via `#[derive(CssHash)]` (the derive emits UFCS, so no inherent shim needed).
 impl UAEnvironmentVariable {
     #[inline]
-    pub(crate) fn eql(self, other: Self) -> bool {
+    pub fn eql(self, other: Self) -> bool {
         self == other
     }
 }
@@ -1121,7 +1118,7 @@ pub struct Function<'bump> {
     /// The function name.
     pub name: Ident<'bump>,
     /// The function arguments.
-    pub(crate) arguments: TokenList<'bump>,
+    pub arguments: TokenList<'bump>,
 }
 
 impl<'bump> Function<'bump> {
@@ -1315,13 +1312,13 @@ impl core::fmt::Debug for EnvironmentVariable<'_> {
 /// In this case, the raw tokens are stored instead.
 pub struct UnparsedProperty<'bump> {
     /// The id of the property.
-    pub(crate) property_id: css::properties::PropertyId<'bump>,
+    pub property_id: css::properties::PropertyId<'bump>,
     /// The property value, stored as a raw token list.
-    pub(crate) value: TokenList<'bump>,
+    pub value: TokenList<'bump>,
 }
 
 impl<'bump> UnparsedProperty<'bump> {
-    pub(crate) fn parse(
+    pub fn parse(
         property_id: css::properties::PropertyId<'bump>,
         input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
@@ -1333,7 +1330,7 @@ impl<'bump> UnparsedProperty<'bump> {
         Ok(UnparsedProperty { property_id, value })
     }
 
-    pub(crate) fn get_prefixed(
+    pub fn get_prefixed(
         &self,
         bump: &'bump Arena,
         targets: &css::targets::Targets,
@@ -1348,7 +1345,7 @@ impl<'bump> UnparsedProperty<'bump> {
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.
-    pub(crate) fn with_property_id(
+    pub fn with_property_id(
         &self,
         bump: &'bump Arena,
         property_id: css::properties::PropertyId<'bump>,
@@ -1359,16 +1356,24 @@ impl<'bump> UnparsedProperty<'bump> {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump Arena) -> Self {
         UnparsedProperty {
             property_id: self.property_id.deep_clone(bump),
             value: self.value.deep_clone(bump),
         }
     }
 
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(&self, rhs: &Self) -> bool {
         self.property_id == rhs.property_id && self.value.eql(&rhs.value)
     }
+}
+
+/// A declaration as it was written, see [`css_parser::ParserFlags::SOURCE_DECLARATIONS`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SourceDeclaration<'bump> {
+    pub name: &'bump [u8],
+    /// Without `!important` and the whitespace around it.
+    pub value: &'bump [u8],
 }
 
 /// A CSS custom property, representing any unknown property.
@@ -1376,11 +1381,11 @@ pub struct CustomProperty<'bump> {
     /// The name of the property.
     pub name: CustomPropertyName<'bump>,
     /// The property value, stored as a raw token list.
-    pub(crate) value: TokenList<'bump>,
+    pub value: TokenList<'bump>,
 }
 
 impl<'bump> CustomProperty<'bump> {
-    pub(crate) fn parse(
+    pub fn parse(
         name: CustomPropertyName<'bump>,
         input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
@@ -1393,14 +1398,14 @@ impl<'bump> CustomProperty<'bump> {
         Ok(CustomProperty { name, value })
     }
 
-    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump Arena) -> Self {
         CustomProperty {
             name: self.name.deep_clone(bump),
             value: self.value.deep_clone(bump),
         }
     }
 
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(&self, rhs: &Self) -> bool {
         self.name.eql(&rhs.name) && self.value.eql(&rhs.value)
     }
 }
@@ -1426,7 +1431,7 @@ impl<'bump> CustomPropertyName<'bump> {
         }
     }
 
-    pub(crate) fn from_str(name: &'bump [u8]) -> Self {
+    pub fn from_str(name: &'bump [u8]) -> Self {
         match DashedIdent::new(name) {
             Some(custom) => CustomPropertyName::Custom(custom),
             None => CustomPropertyName::Unknown(Ident { v: name }),
@@ -1434,7 +1439,7 @@ impl<'bump> CustomPropertyName<'bump> {
     }
 
     #[inline]
-    pub(crate) fn as_str(&self) -> &'bump [u8] {
+    pub fn as_str(&self) -> &'bump [u8] {
         match self {
             CustomPropertyName::Custom(custom) => custom.v,
             CustomPropertyName::Unknown(unknown) => unknown.v,

@@ -47,6 +47,7 @@
     "build:logs": "bun scripts/build.ts --profile=release --logs=on --build-dir=build/release-logs",
     "build:smol": "bun scripts/build.ts --profile=release --build-type=MinSizeRel --build-dir=build/release-smol",
     "build:local": "bun scripts/build.ts --profile=debug-local --build-dir=build/debug-local",
+    "build:desktop": "bun scripts/build-desktop.ts",
     "build:types": "bun scripts/build.ts --mode=codegen --target=generated-types",
     "build:release:local": "bun scripts/build.ts --profile=release-local --build-dir=build/release-local",
     "run:linux": "docker run --rm  -v \"$PWD:/root/bun/\" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image",

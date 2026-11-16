@@ -18,25 +18,25 @@ use bun_alloc::ArenaVecExt as _;
 #[cfg_attr(any(), derive(Clone))]
 pub struct Background<'bump> {
     /// The background image.
-    pub(crate) image: Image<'bump>,
+    pub image: Image<'bump>,
     /// The background color.
-    pub(crate) color: CssColor,
+    pub color: CssColor,
     /// The background position.
-    pub(crate) position: BackgroundPosition,
+    pub position: BackgroundPosition,
     /// How the background image should repeat.
-    pub(crate) repeat: BackgroundRepeat,
+    pub repeat: BackgroundRepeat,
     /// The size of the background image.
-    pub(crate) size: BackgroundSize,
+    pub size: BackgroundSize,
     /// The background attachment.
-    pub(crate) attachment: BackgroundAttachment,
+    pub attachment: BackgroundAttachment,
     /// The background origin.
-    pub(crate) origin: BackgroundOrigin,
+    pub origin: BackgroundOrigin,
     /// How the background should be clipped.
-    pub(crate) clip: BackgroundClip,
+    pub clip: BackgroundClip,
 }
 
 impl<'bump> Background<'bump> {
-    pub(crate) fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut color: Option<CssColor> = None;
         let mut position: Option<BackgroundPosition> = None;
         let mut size: Option<BackgroundSize> = None;
@@ -132,7 +132,7 @@ impl<'bump> Background<'bump> {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut has_output = false;
 
         if self.color != CssColor::default() {
@@ -238,7 +238,7 @@ impl<'bump> Background<'bump> {
     }
 
     #[inline]
-    pub(crate) fn deep_clone(&self, arena: &Bump) -> Self {
+    pub fn deep_clone(&self, arena: &Bump) -> Self {
         // `Image` is the only non-`Clone` field; it provides its own `deep_clone`.
         Self {
             image: self.image.deep_clone(arena),
@@ -252,7 +252,7 @@ impl<'bump> Background<'bump> {
         }
     }
 
-    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(&self, rhs: &Self) -> bool {
         self.image.eql(&rhs.image)
             && self.color == rhs.color
             && self.position == rhs.position
@@ -278,13 +278,13 @@ pub enum BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct ExplicitBackgroundSize {
     /// The width of the background.
-    pub(crate) width: LengthPercentageOrAuto,
+    pub width: LengthPercentageOrAuto,
     /// The height of the background.
-    pub(crate) height: LengthPercentageOrAuto,
+    pub height: LengthPercentageOrAuto,
 }
 
 impl BackgroundSize {
-    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {
             let height = input
                 .try_parse(LengthPercentageOrAuto::parse)
@@ -305,7 +305,7 @@ impl BackgroundSize {
         }}
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             BackgroundSize::Cover => dest.write_str("cover"),
             BackgroundSize::Contain => dest.write_str("contain"),
@@ -320,7 +320,7 @@ impl BackgroundSize {
         }
     }
 
-    pub(crate) fn default() -> Self {
+    pub fn default() -> Self {
         BackgroundSize::Explicit(ExplicitBackgroundSize {
             width: LengthPercentageOrAuto::Auto,
             height: LengthPercentageOrAuto::Auto,
@@ -328,7 +328,7 @@ impl BackgroundSize {
     }
 
     #[inline]
-    pub(crate) fn deep_clone(&self, _arena: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -337,18 +337,18 @@ impl BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct BackgroundPosition {
     /// The x-position.
-    pub(crate) x: HorizontalPosition,
+    pub x: HorizontalPosition,
     /// The y-position.
-    pub(crate) y: VerticalPosition,
+    pub y: VerticalPosition,
 }
 
 impl BackgroundPosition {
-    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let pos = Position::parse(input)?;
         Ok(BackgroundPosition::from_position(pos))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let pos = self.into_position();
         pos.to_css(dest)
     }
@@ -369,7 +369,7 @@ impl BackgroundPosition {
     }
 
     #[inline]
-    pub(crate) fn deep_clone(&self, _arena: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -378,20 +378,20 @@ impl BackgroundPosition {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BackgroundRepeat {
     /// A repeat style for the x direction.
-    pub(crate) x: BackgroundRepeatKeyword,
+    pub x: BackgroundRepeatKeyword,
     /// A repeat style for the y direction.
-    pub(crate) y: BackgroundRepeatKeyword,
+    pub y: BackgroundRepeatKeyword,
 }
 
 impl BackgroundRepeat {
-    pub(crate) fn default() -> Self {
+    pub fn default() -> Self {
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Repeat,
             y: BackgroundRepeatKeyword::Repeat,
         }
     }
 
-    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let state = input.state();
         let ident = input.expect_ident()?;
 
@@ -413,7 +413,7 @@ impl BackgroundRepeat {
         Ok(BackgroundRepeat { x, y })
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         use BackgroundRepeatKeyword::{NoRepeat, Repeat};
 
         if self.x == Repeat && self.y == NoRepeat {
@@ -581,20 +581,20 @@ impl BackgroundProperty {
 
 #[derive(Default)]
 pub struct BackgroundHandler<'bump> {
-    pub(crate) color: Option<CssColor>,
-    pub(crate) images: Option<SmallList<Image<'bump>, 1>>,
-    pub(crate) has_prefix: bool,
-    pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
-    pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
-    pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
-    pub(crate) sizes: Option<SmallList<BackgroundSize, 1>>,
-    pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
-    pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
-    pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
+    pub color: Option<CssColor>,
+    pub images: Option<SmallList<Image<'bump>, 1>>,
+    pub has_prefix: bool,
+    pub x_positions: Option<SmallList<HorizontalPosition, 1>>,
+    pub y_positions: Option<SmallList<VerticalPosition, 1>>,
+    pub repeats: Option<SmallList<BackgroundRepeat, 1>>,
+    pub sizes: Option<SmallList<BackgroundSize, 1>>,
+    pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
+    pub origins: Option<SmallList<BackgroundOrigin, 1>>,
+    pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
     // TODO(perf): `bun_alloc::ArenaVec<'bump, Property>` would avoid the heap alloc.
-    pub(crate) decls: Vec<Property<'bump>>,
-    pub(crate) flushed_properties: BackgroundProperty,
-    pub(crate) has_any: bool,
+    pub decls: Vec<Property<'bump>>,
+    pub flushed_properties: BackgroundProperty,
+    pub has_any: bool,
 }
 
 // Struct fields cannot be indexed by string at runtime; the `flushHelper` /
@@ -636,7 +636,7 @@ macro_rules! push_property {
 }
 
 impl<'bump> BackgroundHandler<'bump> {
-    pub(crate) fn handle_property(
+    pub fn handle_property(
         &mut self,
         property: &Property<'bump>,
         dest: &mut DeclarationList<'bump>,
@@ -1142,7 +1142,7 @@ impl<'bump> BackgroundHandler<'bump> {
         self.clips = None;
     }
 
-    pub(crate) fn finalize(
+    pub fn finalize(
         &mut self,
         dest: &mut DeclarationList<'bump>,
         context: &mut PropertyHandlerContext<'_, 'bump>,

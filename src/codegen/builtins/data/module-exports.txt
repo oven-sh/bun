@@ -1,4 +1,9 @@
 abort-controller=function AbortController AbortSignal __esModule=namespace default
+bun:desktop BaseWindow Children Component Fragment Menu MenuItem Notification PureComponent StrictMode Suspense Tray Window act app clipboard cloneElement createContext createElement createPortal createRef createRoot default dialog flushSync forwardRef globalShortcut isValidElement lazy memo nativeImage nativeTheme net powerMonitor powerSaveBlocker safeStorage screen shell startTransition systemPreferences use useCallback useColorScheme useContext useDebugValue useDeferredValue useEffect useEffectEvent useId useImperativeHandle useInsertionEffect useLayoutEffect useMemo useReducer useRef useState useSyncExternalStore useTransition useWindow
+bun:desktop/dom default document window
+bun:desktop/electron default
+bun:desktop/jsx-dev-runtime Fragment default jsxDEV
+bun:desktop/jsx-runtime Fragment default jsx jsxs
 bun:ffi CFunction CString FFIType JSCallback cc default dlopen linkSymbols native ptr read suffix toArrayBuffer toBuffer viewSource
 bun:jsc bytecodeOrderStats callerSourceOrigin codeCoverageForFile default describe describeArray deserialize drainMicrotasks edenGC estimateShallowMemoryUsageOf fullGC gcAndSweep generateHeapSnapshotForDebugging getProtectedObjects getRandomSeed heapSize heapStats isRope jscDescribe jscDescribeArray memoryUsage noFTL noInline noOSRExitFuzzing numberOfDFGCompiles optimizeNextInvocation percentAvailableMemoryInUse profile releaseWeakRefs reoptimizationRetryCount samplingProfilerStackTraces serialize setRandomSeed setTimeZone setTimezone startRemoteDebugger startSamplingProfiler totalCompileTime
 bun:sqlite Database SQLiteError Statement __esModule constants default=property

@@ -17,6 +17,7 @@ use super::{CompileCommand, CompileFailure, CompileOutcome, CompileProduct, Requ
 use crate::cli::build_command::{BuildCommand, has_only_html_entry_points};
 use crate::cli::command::{Context, ContextData};
 use crate::cli::compile_options;
+use crate::cli::desktop_bundle::DesktopBundle;
 
 impl CompileCommand {
     #[cold]
@@ -70,6 +71,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         crate::cli::fuzzilli_compile_loop::compile_programs(ctx);
     }
 
+    let desktop = DesktopBundle::plan_or_exit(ctx);
     let configuration = configuration::configure(&mut *ctx)?;
     let location = configuration::output_location(
         &ctx.bundler_options.compile_target,
@@ -87,6 +89,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
             outfile: &location.outfile,
         },
         location.root_dir.fd,
+        desktop.as_ref(),
         origin,
     );
     let result = compile_to_executable(&mut request).and_then(move |outcome| {
@@ -97,7 +100,11 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
     let log = unsafe { &mut *request.log };
     match result {
-        Ok(outcome) => print_outcome(log, outcome, &location.outfile, finished),
+        Ok(outcome) => {
+            let shown_path = desktop.as_ref().map(|bundle| &bundle.shown_path);
+            let shown_path = shown_path.unwrap_or(&location.outfile);
+            print_outcome(log, outcome, shown_path, finished)
+        }
         Err(failure) => exit_with_failure(log, request.origin, request.executable.target, &failure),
     }
 }
@@ -134,6 +141,7 @@ pub(crate) fn compile_from_context(
         &event_loop,
         product,
         Fd::cwd(),
+        None,
         RequestOrigin::BuildFlag,
     );
     Ok(compile_to_executable(&mut request))

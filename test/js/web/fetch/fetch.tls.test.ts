@@ -333,6 +333,27 @@ describe.concurrent("fetch-tls", () => {
     expect(mismatch).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
   });
 
+  it("checkServerIdentity gets the chain that verified", async () => {
+    const key = (name: string) => readFileSync(join(import.meta.dir, "../../node/test/fixtures/keys", name), "utf8");
+    using server = Bun.serve({
+      port: 0,
+      tls: { key: key("agent6-key.pem"), cert: key("agent6-cert.pem") + key("ca2-cert.pem") },
+      fetch: () => new Response("ok"),
+    });
+    const chain: string[] = [];
+    const response = await fetch(server.url, {
+      tls: {
+        ca: key("ca1-cert.pem"),
+        checkServerIdentity(_: string, cert: any) {
+          for (; cert; cert = cert.issuerCertificate) chain.push(cert.issuer.CN);
+          return undefined;
+        },
+      },
+    });
+    expect(await response.text()).toBe("ok");
+    expect(chain).toEqual(["ca3", "ca1", "ca1"]);
+  });
+
   it("can handle multiple requests with non native checkServerIdentity", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       async function request() {

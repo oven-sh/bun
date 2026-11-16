@@ -153,7 +153,7 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // ═══════════════════════════════════════════════════════════════════════════
 // ssl_wrapper (moved down from bun_runtime::socket::ssl_wrapper for http_jsc)
 // ═══════════════════════════════════════════════════════════════════════════
-pub use ssl_wrapper::check_server_identity;
+pub use ssl_wrapper::{check_server_identity, verified_issuers};
 
 pub mod ssl_wrapper {
     use core::cell::{Cell, RefCell};
@@ -172,8 +172,8 @@ pub mod ssl_wrapper {
             BIO, BIO_CTRL_FLUSH, BIO_METHOD, BIO_TYPE_SOURCE_SINK, BIO_clear_retry_flags,
             BIO_get_data, BIO_get_new_index, BIO_meth_new, BIO_meth_set_ctrl, BIO_meth_set_read,
             BIO_meth_set_write, BIO_new, BIO_set_data, BIO_set_init, BIO_set_retry_read,
-            ERR_clear_error, OwnedSslCtx, OwnedSslSession, SSL, SSL_CTX, SSL_ERROR_SSL,
-            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            ERR_clear_error, OPENSSL_free, OwnedSslCtx, OwnedSslSession, SSL, SSL_CTX,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
             SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished,
@@ -1463,6 +1463,27 @@ pub mod ssl_wrapper {
         c_int::from(unsafe { &*state }.identity_checked.get())
     }
 
+    /// The DER of each certificate above the server's own, up to the trust anchor.
+    pub fn verified_issuers(ssl: &mut boring_sys::SSL) -> Vec<Box<[u8]>> {
+        let mut data = core::ptr::null_mut();
+        // SAFETY: `ssl` is live, and `data` is a valid out pointer.
+        let size = unsafe { us_ssl_verified_issuers(ssl, &raw mut data) };
+        let mut issuers = Vec::new();
+        if size == 0 {
+            return issuers;
+        }
+        // SAFETY: openssl.c has written `size` bytes at `data`, which are freed below.
+        let mut rest = unsafe { core::slice::from_raw_parts(data, size) };
+        while let Some((length, after)) = rest.split_first_chunk::<4>() {
+            let (der, after) = after.split_at(u32::from_be_bytes(*length) as usize);
+            issuers.push(Box::from(der));
+            rest = after;
+        }
+        // SAFETY: `data` comes from `CBB_finish`, and nothing borrows it any more.
+        unsafe { boring_sys::OPENSSL_free(data.cast()) };
+        issuers
+    }
+
     /// The name check after the handshake. The verify step's verdict stands when it gave one.
     pub fn check_server_identity(ssl: &mut boring_sys::SSL, host: &[u8]) -> bool {
         // SAFETY: `ssl` is live.
@@ -1533,6 +1554,7 @@ pub mod ssl_wrapper {
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
         /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
+        fn us_ssl_verified_issuers(ssl: *mut boring_sys::SSL, out: *mut *mut u8) -> usize;
         /// openssl.c: formats the reason into `reason[..length]`, NUL-terminated. 0 when nothing is queued.
         fn us_ssl_take_error_reason(reason: *mut c_char, length: usize) -> c_int;
         /// openssl.c: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.

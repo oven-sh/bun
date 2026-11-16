@@ -104,7 +104,7 @@ pub enum Gradient {
 }
 
 impl Gradient {
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Gradient> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Gradient> {
         let location = input.current_source_location();
         let func = input.expect_function()?;
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
@@ -133,7 +133,7 @@ impl Gradient {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let (f, prefix): (&'static [u8], Option<VendorPrefix>) = match self {
             Gradient::Linear(g) => (b"linear-gradient(", Some(g.vendor_prefix)),
             Gradient::RepeatingLinear(g) => (b"repeating-linear-gradient(", Some(g.vendor_prefix)),
@@ -171,7 +171,7 @@ impl Gradient {
     /// Attempts to convert the gradient to the legacy `-webkit-gradient()` syntax.
     ///
     /// Returns an error in case the conversion is not possible.
-    pub(crate) fn get_legacy_webkit(&self, bump: &Arena) -> Option<Gradient> {
+    pub fn get_legacy_webkit(&self, bump: &Arena) -> Option<Gradient> {
         Some(Gradient::WebkitGradient(WebKitGradient::from_standard(
             self, bump,
         )?))
@@ -181,7 +181,7 @@ impl Gradient {
     // `use generics::DeepClone as _` already at top of this file).
 
     /// Returns the vendor prefix of the gradient.
-    pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
+    pub fn get_vendor_prefix(&self) -> VendorPrefix {
         match self {
             Gradient::Linear(linear) => linear.vendor_prefix,
             Gradient::RepeatingLinear(linear) => linear.vendor_prefix,
@@ -193,7 +193,7 @@ impl Gradient {
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub(crate) fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> VendorPrefix {
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> VendorPrefix {
         let get_prefixes = |tgts: &css::targets::Targets,
                             feature: css::prefixes::Feature,
                             prefix: VendorPrefix|
@@ -225,7 +225,7 @@ impl Gradient {
     }
 
     /// Returns a copy of the gradient with the given vendor prefix.
-    pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
+    pub fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
         match self {
             Gradient::Linear(linear) => Gradient::Linear(linear.get_prefixed(bump, prefix)),
             Gradient::RepeatingLinear(linear) => {
@@ -246,7 +246,7 @@ impl Gradient {
     }
 
     /// Returns a fallback gradient for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Gradient {
+    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Gradient {
         match self {
             Gradient::Linear(g) => Gradient::Linear(g.get_fallback(bump, kind)),
             Gradient::RepeatingLinear(g) => Gradient::RepeatingLinear(g.get_fallback(bump, kind)),
@@ -259,10 +259,7 @@ impl Gradient {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub(crate) fn get_necessary_fallbacks(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         match self {
             Gradient::Linear(linear) | Gradient::RepeatingLinear(linear) => {
@@ -290,11 +287,11 @@ impl Gradient {
 #[derive(PartialEq)]
 pub struct LinearGradient {
     /// The vendor prefixes for the gradient.
-    pub(crate) vendor_prefix: VendorPrefix,
+    pub vendor_prefix: VendorPrefix,
     /// The direction of the gradient.
-    pub(crate) direction: LineDirection,
+    pub direction: LineDirection,
     /// The color stops and transition hints for the gradient.
-    pub(crate) items: Vec<GradientItem<LengthPercentage>>,
+    pub items: Vec<GradientItem<LengthPercentage>>,
 }
 
 impl LinearGradient {
@@ -336,7 +333,7 @@ impl LinearGradient {
         serialize_items::<LengthPercentage>(&self.items, dest)
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -345,7 +342,7 @@ impl LinearGradient {
         true
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
         let mut items: Vec<GradientItem<LengthPercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.deep_clone(bump));
@@ -376,13 +373,13 @@ impl LinearGradient {
 #[derive(PartialEq)]
 pub struct RadialGradient {
     /// The vendor prefixes for the gradient.
-    pub(crate) vendor_prefix: VendorPrefix,
+    pub vendor_prefix: VendorPrefix,
     /// The shape of the gradient.
-    pub(crate) shape: EndingShape,
+    pub shape: EndingShape,
     /// The position of the gradient.
-    pub(crate) position: Position,
+    pub position: Position,
     /// The color stops and transition hints for the gradient.
-    pub(crate) items: Vec<GradientItem<LengthPercentage>>,
+    pub items: Vec<GradientItem<LengthPercentage>>,
 }
 
 impl RadialGradient {
@@ -433,7 +430,7 @@ impl RadialGradient {
         serialize_items::<LengthPercentage>(&self.items, dest)
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -457,7 +454,7 @@ impl RadialGradient {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
         let mut items: Vec<GradientItem<LengthPercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.deep_clone(bump));
@@ -475,11 +472,11 @@ impl RadialGradient {
 #[derive(PartialEq)]
 pub struct ConicGradient {
     /// The angle of the gradient.
-    pub(crate) angle: Angle,
+    pub angle: Angle,
     /// The position of the gradient.
-    pub(crate) position: Position,
+    pub position: Position,
     /// The color stops and transition hints for the gradient.
-    pub(crate) items: Vec<GradientItem<AnglePercentage>>,
+    pub items: Vec<GradientItem<AnglePercentage>>,
 }
 
 impl ConicGradient {
@@ -529,7 +526,7 @@ impl ConicGradient {
         serialize_items::<AnglePercentage>(&self.items, dest)
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -552,7 +549,7 @@ impl ConicGradient {
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
         let mut items: Vec<GradientItem<AnglePercentage>> = Vec::with_capacity(self.items.len());
         for in_ in self.items.iter() {
             items.push(in_.deep_clone(bump));
@@ -569,15 +566,15 @@ impl ConicGradient {
 #[derive(PartialEq)]
 pub struct WebKitGradientLinear {
     /// The starting point of the gradient.
-    pub(crate) from: WebKitGradientPoint,
+    pub from: WebKitGradientPoint,
     /// The ending point of the gradient.
-    pub(crate) to: WebKitGradientPoint,
+    pub to: WebKitGradientPoint,
     /// The color stops in the gradient.
-    pub(crate) stops: Vec<WebKitColorStop>,
+    pub stops: Vec<WebKitColorStop>,
 }
 
 impl WebKitGradientLinear {
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
         let mut stops: Vec<WebKitColorStop> = Vec::with_capacity(self.stops.len());
         for in_ in self.stops.iter() {
             stops.push(in_.deep_clone(bump));
@@ -594,19 +591,19 @@ impl WebKitGradientLinear {
 #[derive(PartialEq)]
 pub struct WebKitGradientRadial {
     /// The starting point of the gradient.
-    pub(crate) from: WebKitGradientPoint,
+    pub from: WebKitGradientPoint,
     /// The starting radius of the gradient.
-    pub(crate) r0: CSSNumber,
+    pub r0: CSSNumber,
     /// The ending point of the gradient.
-    pub(crate) to: WebKitGradientPoint,
+    pub to: WebKitGradientPoint,
     /// The ending radius of the gradient.
-    pub(crate) r1: CSSNumber,
+    pub r1: CSSNumber,
     /// The color stops in the gradient.
-    pub(crate) stops: Vec<WebKitColorStop>,
+    pub stops: Vec<WebKitColorStop>,
 }
 
 impl WebKitGradientRadial {
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
         let mut stops: Vec<WebKitColorStop> = Vec::with_capacity(self.stops.len());
         for in_ in self.stops.iter() {
             stops.push(in_.deep_clone(bump));
@@ -830,9 +827,9 @@ impl WebKitGradient {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
-    pub(crate) horizontal: HorizontalPositionKeyword,
+    pub horizontal: HorizontalPositionKeyword,
     /// A vertical position keyword, e.g. `top` or `bottom`.
-    pub(crate) vertical: VerticalPositionKeyword,
+    pub vertical: VerticalPositionKeyword,
 }
 
 /// The direction of a CSS `linear-gradient()`.
@@ -1044,9 +1041,9 @@ impl EndingShape {
 #[derive(Clone, PartialEq)]
 pub struct WebKitGradientPoint {
     /// The x-position.
-    pub(crate) x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
+    pub x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
     /// The y-position.
-    pub(crate) y: WebKitGradientPointComponent<VerticalPositionKeyword>,
+    pub y: WebKitGradientPointComponent<VerticalPositionKeyword>,
 }
 
 impl WebKitGradientPoint {
@@ -1148,9 +1145,9 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
 #[derive(Clone, PartialEq)]
 pub struct WebKitColorStop {
     /// The color of the color stop.
-    pub(crate) color: CssColor,
+    pub color: CssColor,
     /// The position of the color stop.
-    pub(crate) position: CSSNumber,
+    pub position: CSSNumber,
 }
 
 impl WebKitColorStop {
@@ -1208,9 +1205,9 @@ impl WebKitColorStop {
 #[derive(Clone, PartialEq)]
 pub struct ColorStop<D> {
     /// The color of the color stop.
-    pub(crate) color: CssColor,
+    pub color: CssColor,
     /// The position of the color stop.
-    pub(crate) position: Option<D>,
+    pub position: Option<D>,
 }
 
 impl<D: GradientPosition> ColorStop<D> {
@@ -1234,9 +1231,9 @@ impl<D: GradientPosition> ColorStop<D> {
 #[derive(Clone, PartialEq)]
 pub struct EllipseSize {
     /// The x-radius of the ellipse.
-    pub(crate) x: LengthPercentage,
+    pub x: LengthPercentage,
     /// The y-radius of the ellipse.
-    pub(crate) y: LengthPercentage,
+    pub y: LengthPercentage,
 }
 
 /// An ellipse ending shape for a `radial-gradient()`.
@@ -1396,7 +1393,7 @@ crate::css_eql_partialeq!(
     Circle,
 );
 
-pub(crate) fn parse_items<'bump, D: GradientPosition>(
+pub fn parse_items<'bump, D: GradientPosition>(
     input: &mut css::Parser<'_, 'bump>,
 ) -> Result<'bump, Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();

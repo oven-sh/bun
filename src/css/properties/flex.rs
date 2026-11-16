@@ -52,9 +52,9 @@ pub enum FlexWrap {
 #[derive(Clone, PartialEq, Eq)]
 pub struct FlexFlow {
     /// The direction that flex items flow.
-    pub(crate) direction: FlexDirection,
+    pub direction: FlexDirection,
     /// How the flex items wrap.
-    pub(crate) wrap: FlexWrap,
+    pub wrap: FlexWrap,
 }
 
 // Shorthand metadata recorded here for a future shorthand derive:
@@ -62,7 +62,7 @@ pub struct FlexFlow {
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
 impl FlexFlow {
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut direction: Option<FlexDirection> = None;
         let mut wrap: Option<FlexWrap> = None;
 
@@ -88,7 +88,7 @@ impl FlexFlow {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut needs_space = false;
         if self.direction != FlexDirection::default() || self.wrap == FlexWrap::default() {
             self.direction.to_css(dest)?;
@@ -111,11 +111,11 @@ impl FlexFlow {
 #[derive(Clone, PartialEq)]
 pub struct Flex {
     /// The flex grow factor.
-    pub(crate) grow: CSSNumber,
+    pub grow: CSSNumber,
     /// The flex shrink factor.
-    pub(crate) shrink: CSSNumber,
+    pub shrink: CSSNumber,
     /// The flex basis.
-    pub(crate) basis: LengthPercentageOrAuto,
+    pub basis: LengthPercentageOrAuto,
 }
 
 // Shorthand metadata recorded here for a future shorthand derive (see FlexFlow note):
@@ -123,7 +123,7 @@ pub struct Flex {
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
 impl Flex {
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -167,7 +167,7 @@ impl Flex {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.grow == 0.0
             && self.shrink == 0.0
             && matches!(self.basis, LengthPercentageOrAuto::Auto)
@@ -247,7 +247,7 @@ pub enum BoxDirection {
     Reverse,
 }
 
-pub(crate) type FlexAlign = BoxAlign;
+pub type FlexAlign = BoxAlign;
 
 /// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
 /// Equivalent to the `align-items` property in the standard syntax.
@@ -268,7 +268,7 @@ pub enum BoxAlign {
 }
 
 impl BoxAlign {
-    pub(crate) fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
+    pub fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
         use css::css_properties::align::SelfPosition;
         match align {
             AlignItems::SelfPosition(sp) => {
@@ -306,7 +306,7 @@ pub enum BoxPack {
 }
 
 impl BoxPack {
-    pub(crate) fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
+    pub fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             JustifyContent::ContentDistribution(cd) => match cd {
@@ -371,7 +371,7 @@ pub enum FlexPack {
 }
 
 impl FlexPack {
-    pub(crate) fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
+    pub fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             JustifyContent::ContentDistribution(cd) => match cd {
@@ -418,7 +418,7 @@ pub enum FlexItemAlign {
 }
 
 impl FlexItemAlign {
-    pub(crate) fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
+    pub fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
         use css::css_properties::align::SelfPosition;
         match justify {
             AlignSelf::Auto => Some(FlexItemAlign::Auto),
@@ -461,7 +461,7 @@ pub enum FlexLinePack {
 }
 
 impl FlexLinePack {
-    pub(crate) fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
+    pub fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             AlignContent::ContentDistribution(cd) => match cd {
@@ -488,47 +488,47 @@ impl FlexLinePack {
     }
 }
 
-pub(crate) type BoxOrdinalGroup = CSSInteger;
+pub type BoxOrdinalGroup = CSSInteger;
 
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 #[derive(Default)]
 pub struct FlexHandler {
     /// The flex-direction property value and vendor prefix
-    pub(crate) direction: Option<(FlexDirection, VendorPrefix)>,
+    pub direction: Option<(FlexDirection, VendorPrefix)>,
     /// The box-orient property value and vendor prefix (legacy)
-    pub(crate) box_orient: Option<(BoxOrient, VendorPrefix)>,
+    pub box_orient: Option<(BoxOrient, VendorPrefix)>,
     /// The box-direction property value and vendor prefix (legacy)
-    pub(crate) box_direction: Option<(BoxDirection, VendorPrefix)>,
+    pub box_direction: Option<(BoxDirection, VendorPrefix)>,
     /// The flex-wrap property value and vendor prefix
-    pub(crate) wrap: Option<(FlexWrap, VendorPrefix)>,
+    pub wrap: Option<(FlexWrap, VendorPrefix)>,
     /// The box-lines property value and vendor prefix (legacy)
-    pub(crate) box_lines: Option<(BoxLines, VendorPrefix)>,
+    pub box_lines: Option<(BoxLines, VendorPrefix)>,
     /// The flex-grow property value and vendor prefix
-    pub(crate) grow: Option<(CSSNumber, VendorPrefix)>,
+    pub grow: Option<(CSSNumber, VendorPrefix)>,
     /// The box-flex property value and vendor prefix (legacy)
-    pub(crate) box_flex: Option<(CSSNumber, VendorPrefix)>,
+    pub box_flex: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-positive property value and vendor prefix (legacy)
-    pub(crate) flex_positive: Option<(CSSNumber, VendorPrefix)>,
+    pub flex_positive: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-shrink property value and vendor prefix
-    pub(crate) shrink: Option<(CSSNumber, VendorPrefix)>,
+    pub shrink: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-negative property value and vendor prefix (legacy)
-    pub(crate) flex_negative: Option<(CSSNumber, VendorPrefix)>,
+    pub flex_negative: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-basis property value and vendor prefix
-    pub(crate) basis: Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    pub basis: Option<(LengthPercentageOrAuto, VendorPrefix)>,
     /// The preferred-size property value and vendor prefix (legacy)
-    pub(crate) preferred_size: Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    pub preferred_size: Option<(LengthPercentageOrAuto, VendorPrefix)>,
     /// The order property value and vendor prefix
-    pub(crate) order: Option<(CSSInteger, VendorPrefix)>,
+    pub order: Option<(CSSInteger, VendorPrefix)>,
     /// The box-ordinal-group property value and vendor prefix (legacy)
-    pub(crate) box_ordinal_group: Option<(BoxOrdinalGroup, VendorPrefix)>,
+    pub box_ordinal_group: Option<(BoxOrdinalGroup, VendorPrefix)>,
     /// The flex-order property value and vendor prefix (legacy)
-    pub(crate) flex_order: Option<(CSSInteger, VendorPrefix)>,
+    pub flex_order: Option<(CSSInteger, VendorPrefix)>,
     /// Whether any flex-related properties have been set
-    pub(crate) has_any: bool,
+    pub has_any: bool,
 }
 
 impl FlexHandler {
-    pub(crate) fn handle_property<'bump>(
+    pub fn handle_property<'bump>(
         &mut self,
         property: &Property<'bump>,
         dest: &mut css::DeclarationList<'bump>,
@@ -655,7 +655,7 @@ impl FlexHandler {
         true
     }
 
-    pub(crate) fn finalize(
+    pub fn finalize(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,

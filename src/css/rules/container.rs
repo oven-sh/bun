@@ -7,7 +7,7 @@ use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
 pub struct ContainerName<'bump> {
-    pub(crate) v: CustomIdent<'bump>,
+    pub v: CustomIdent<'bump>,
 }
 
 impl ContainerName<'_> {
@@ -19,7 +19,7 @@ impl ContainerName<'_> {
 
 impl ContainerName<'_> {
     #[inline]
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -42,7 +42,7 @@ impl<'bump> ContainerName<'bump> {
     }
 }
 
-pub(crate) type ContainerSizeFeature<'bump> = QueryFeature<'bump, ContainerSizeFeatureId>;
+pub type ContainerSizeFeature<'bump> = QueryFeature<'bump, ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum ContainerSizeFeatureId {
@@ -296,7 +296,7 @@ impl<'bump> QueryCondition<'bump> for ContainerCondition<'bump> {
 }
 
 impl<'bump> ContainerCondition<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
         // faithful — see note there); `Operator` is `Copy`.
         match self {
@@ -333,15 +333,15 @@ pub struct ContainerRule<'bump, R> {
     /// The name of the container.
     pub name: Option<ContainerName<'bump>>,
     /// The container condition. `None` when the rule has only a name.
-    pub(crate) condition: Option<ContainerCondition<'bump>>,
+    pub condition: Option<ContainerCondition<'bump>>,
     /// The rules within the `@container` rule.
-    pub(crate) rules: CssRuleList<'bump, R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<'bump, R> ContainerRule<'bump, R> {
-    pub(crate) fn to_css(
+    pub fn to_css(
         &self,
         dest: &mut Printer,
         ctx: Option<&StyleContext<'_, 'bump>>,
@@ -373,7 +373,7 @@ impl<'bump, R> ContainerRule<'bump, R> {
 }
 
 impl<'bump, R> ContainerRule<'bump, R> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

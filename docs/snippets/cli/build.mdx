@@ -325,6 +325,29 @@ bun build <entry points>
   <code>--asset ./static/public</code> embeds <code>public/...</code> (requires <code>--compile</code>)
 </ParamField>
 
+### Desktop apps
+
+<ParamField path="--desktop" type="boolean">
+  Build a <code>bun:desktop</code> app: a <code>.app</code> for macOS, an AppDir for Linux, a folder for Windows
+</ParamField>
+
+<ParamField path="--desktop-name" type="string">
+  The name people see. Defaults to <code>productName</code> or <code>name</code> in <code>package.json</code>
+</ParamField>
+
+<ParamField path="--desktop-identifier" type="string">
+  The bundle identifier, such as <code>com.example.notes</code>
+</ParamField>
+
+<ParamField path="--desktop-version" type="string">
+  The version. Defaults to <code>version</code> in <code>package.json</code>
+</ParamField>
+
+<ParamField path="--desktop-icon" type="string">
+  A square <code>.png</code>, or a <code>.icns</code> for macOS, a <code>.svg</code> for Linux, a <code>.ico</code> for
+  Windows
+</ParamField>
+
 ### Windows Executable Details
 
 <ParamField path="--windows-hide-console" type="boolean">

@@ -29,7 +29,15 @@ const moduleLoaders = [
   "process.getBuiltinModule",
 ];
 
-const textEvaluators = ["%NodeVMBinding%.Module", "%NodeVMBinding%.Script", "%NodeVMBinding%.compileFunction"];
+const textEvaluators = [
+  "%NodeVMBinding%.Module",
+  "%NodeVMBinding%.Script",
+  "%NodeVMBinding%.compileFunction",
+  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionCreateDesktopRealm",
+  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionDesktopRealmEvaluate",
+  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionDesktopRealmImport",
+  "native:NewCppFunction:DesktopRealm.cpp:jsFunctionDesktopRealmRunCompiled",
+];
 
 const heapEnumerators = ["bun:jsc.getProtectedObjects"];
 
@@ -92,6 +100,7 @@ const classesWithConstructor = [
   "%BlockList%",
   "%BuildMessage%",
   "%Crypto%",
+  "%DesktopEngine%",
   "%Dirent%",
   "%ELDHistogram%",
   "%Expect%",
@@ -259,6 +268,10 @@ const moduleNamespaces = [
 
 const nativeFiles = [
   "CallSite.cpp",
+  "DesktopLazy.cpp",
+  "DesktopRealm.cpp",
+  "DesktopWindow.cpp",
+  "EventDispatcher.cpp",
   "InternalForTesting.cpp",
   "InternalModuleRegistry.cpp",
   "IsolatedModuleCache.cpp",

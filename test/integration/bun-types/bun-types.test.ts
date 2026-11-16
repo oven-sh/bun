@@ -389,6 +389,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
   "css_internals.bind.ts": null,
   "declared_results_testing.bind.ts": null,
+  "desktop.bind.ts": null,
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
   "environment.bind.ts": null,
@@ -1381,7 +1382,11 @@ describe("@types/bun integration test", () => {
         jsx: ts.JsxEmit.None,
       },
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
-      diagnostics: [],
+      diagnostics: diagnostics => {
+        expect(new Set(diagnostics.map(it => `${it.code} ${it.line?.split(":")[0]}`))).toEqual(
+          new Set(["17004 desktop.tsx"]),
+        );
+      },
     });
 
     typeTest("checks with lib.dom.d.ts", {

@@ -670,6 +670,13 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
+static BEFORE_EXIT_CALLBACK: crate::Mutex<Option<ExitFn>> = crate::Mutex::new(None);
+
+/// For `bun:desktop`, whose state is thread-local: libc's `exit` destroys that before it runs the other callbacks.
+pub fn set_before_exit_callback(function: ExitFn) {
+    *BEFORE_EXIT_CALLBACK.lock() = Some(function);
+}
+
 fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
@@ -719,6 +726,11 @@ pub fn exit(code: u32) -> ! {
     // If we are crashing, allow the crash handler to finish it's work.
     // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
     crate::sleep_forever_if_another_thread_is_crashing();
+
+    let before_exit = BEFORE_EXIT_CALLBACK.lock().take();
+    if let Some(callback) = before_exit {
+        callback();
+    }
 
     // Flush output before exiting to ensure all messages are visible
     Output::flush();

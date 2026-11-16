@@ -1,0 +1,3367 @@
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -228,6 +228,11 @@
+         f(cx)
+     }
+ 
++    /// Whether `update` would panic.
++    pub fn is_borrowed(&self) -> bool {
++        self.app.try_borrow_mut().is_err()
++    }
++
+     /// An [`AsyncApp`] for use across await points. It holds the app weakly; keeping the
+     /// app alive remains this handle's job.
+     pub fn to_async(&self) -> AsyncApp {
+--- a/crates/gpui/src/embed.rs
++++ b/crates/gpui/src/embed.rs
+@@ -0,0 +1,159 @@
++//! Hooks for a host that owns the thread and its event loop.
++
++use crate::{Bounds, DevicePixels, DispatchEventResult, Modifiers, PlatformInput, Size, WindowId};
++use std::{cell::RefCell, rc::Rc};
++
++/// A key as the platform reported it, before input methods and key bindings.
++#[derive(Clone, Copy, Debug)]
++pub struct RawKey {
++    /// Pressed, as opposed to released.
++    pub down: bool,
++    /// The evdev code, the `kVK_` code, or the scan code with 0xE000 for an extended key.
++    pub scan_code: u32,
++    /// The keysym or the virtual key, and 0 on macOS.
++    pub symbol: u32,
++    /// The state before this key.
++    pub modifiers: Modifiers,
++}
++
++/// Premultiplied BGRA.
++pub struct Pixels<'a> {
++    /// What has the same id was not changed since the host painted it.
++    pub id: u64,
++    #[expect(missing_docs)]
++    pub data: &'a mut [[u8; 4]],
++    #[expect(missing_docs)]
++    pub width: usize,
++    /// The window shows this much, from the top left.
++    pub shown: Size<DevicePixels>,
++    /// The platform keeps what it shows. It only reads `Painted::areas` from `data`.
++    pub platform_moves: bool,
++}
++
++/// What differs from the last time that the window was painted.
++#[derive(Default)]
++pub struct Painted {
++    /// In this order, each shows what was `moved_by` pixels above it. Already done in the pixels
++    /// unless `platform_moves`.
++    pub moved: Vec<Bounds<DevicePixels>>,
++    #[expect(missing_docs)]
++    pub moved_by: i32,
++    #[expect(missing_docs)]
++    pub areas: Vec<Bounds<DevicePixels>>,
++}
++
++#[expect(missing_docs)]
++pub type Painter = Box<dyn FnOnce(Pixels) -> Painted + Send>;
++
++/// `input` and `before_frame` are called before GPUI borrows the `App` for the same event.
++pub trait Host {
++    /// Precedes whatever the key causes.
++    fn raw_key(&self, key: RawKey);
++    /// `Some` keeps the event from the window.
++    fn input(&self, window: WindowId, input: &PlatformInput) -> Option<DispatchEventResult>;
++    /// The window draws when this returns.
++    fn before_frame(&self, window: WindowId);
++    /// The platform's loop cannot be reentered, so the host calls `frame` after `Platform::pump`.
++    fn defer_frame(&self, window: WindowId, frame: Box<dyn FnOnce()>);
++    /// For a node of `Window::send_a11y_update`. The `App` is borrowed.
++    fn a11y_action(&self, request: &accesskit::ActionRequest);
++    /// Whether the next window does without a GPU, where the platform can.
++    fn paints_pixels(&self) -> bool;
++    /// Whether this thread has nothing else to do than the UI.
++    fn has_time_to_paint(&self) -> bool;
++    /// Instead of drawing the scene.
++    fn painter(&self, window: WindowId) -> Option<Painter>;
++    /// Instead of drawing the scene. `layer` is the `CALayer` of the window's view.
++    #[cfg(target_os = "macos")]
++    fn present(&self, window: WindowId, layer: *mut std::ffi::c_void);
++    /// The window has another size, and shows what is drawn next together with that.
++    #[cfg(target_os = "macos")]
++    fn before_resized_frame(&self, window: WindowId);
++    /// Whether the click that activates the window counts as a click.
++    #[cfg(target_os = "macos")]
++    fn accepts_first_mouse(&self, window: WindowId, position: crate::Point<crate::Pixels>) -> bool;
++}
++
++thread_local! {
++    static HOST: RefCell<Option<Rc<dyn Host>>> = const { RefCell::new(None) };
++}
++
++/// Installs the hooks for this thread.
++pub fn set_host(host: Rc<dyn Host>) {
++    HOST.set(Some(host));
++}
++
++fn host() -> Option<Rc<dyn Host>> {
++    HOST.with_borrow(Clone::clone)
++}
++
++#[expect(missing_docs)]
++pub fn has_host() -> bool {
++    HOST.with_borrow(Option::is_some)
++}
++
++pub(crate) fn a11y_action(request: &accesskit::ActionRequest) -> bool {
++    host().map(|host| host.a11y_action(request)).is_some()
++}
++
++#[expect(missing_docs)]
++pub fn raw_key(key: RawKey) {
++    if let Some(host) = host() {
++        host.raw_key(key);
++    }
++}
++
++pub(crate) fn input(window: WindowId, input: &PlatformInput) -> Option<DispatchEventResult> {
++    host()?.input(window, input)
++}
++
++pub(crate) fn before_frame(window: WindowId) {
++    if let Some(host) = host() {
++        host.before_frame(window);
++    }
++}
++
++#[expect(missing_docs)]
++pub fn defer_frame(window: WindowId, frame: Box<dyn FnOnce()>) {
++    match host() {
++        Some(host) => host.defer_frame(window, frame),
++        None => frame(),
++    }
++}
++
++#[expect(missing_docs)]
++pub fn paints_pixels() -> bool {
++    host().is_some_and(|host| host.paints_pixels())
++}
++
++#[expect(missing_docs)]
++pub fn has_time_to_paint() -> bool {
++    host().is_some_and(|host| host.has_time_to_paint())
++}
++
++#[expect(missing_docs)]
++pub fn painter(window: WindowId) -> Option<Painter> {
++    host()?.painter(window)
++}
++
++#[expect(missing_docs)]
++#[cfg(target_os = "macos")]
++pub fn present(window: WindowId, layer: *mut std::ffi::c_void) {
++    if let Some(host) = host() {
++        host.present(window, layer);
++    }
++}
++
++#[expect(missing_docs)]
++#[cfg(target_os = "macos")]
++pub fn before_resized_frame(window: WindowId) {
++    if let Some(host) = host() {
++        host.before_resized_frame(window);
++    }
++}
++
++#[expect(missing_docs)]
++#[cfg(target_os = "macos")]
++pub fn accepts_first_mouse(window: WindowId, position: crate::Point<crate::Pixels>) -> bool {
++    host().is_none_or(|host| host.accepts_first_mouse(window, position))
++}
+--- a/crates/gpui/src/gpui.rs
++++ b/crates/gpui/src/gpui.rs
+@@ -21,6 +21,7 @@
+ extern crate self as gpui;
+ 
+ pub mod colors;
++pub mod embed;
+ pub mod prelude;
+ pub mod profiler;
+ 
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -400,6 +400,16 @@
+     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
+ 
+     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
++    /// Handles what is pending, then waits for at most what `timeout` returns and handles what arrived.
++    fn pump(&self, _timeout: &mut dyn FnMut() -> Option<Duration>) {}
++    /// Makes `pump` call `ready` while `fd` is readable. The result turns that on and off.
++    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
++    fn watch_fd(&self, _fd: i32, _ready: Box<dyn FnMut()>) -> Box<dyn Fn(bool)> {
++        Box::new(|_| {})
++    }
++    /// Translates and dispatches a `MSG`.
++    #[cfg(target_os = "windows")]
++    fn dispatch_message(&self, _message: *const std::ffi::c_void) {}
+     fn quit(&self);
+     /// Switches a capable platform between headless and windowed modes. See
+     /// [`App::request_windowing`].
+@@ -1369,6 +1379,10 @@
+     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
+     fn draw(&self, scene: &Scene);
+     fn schedule_frame(&self) {}
++    /// Whether `draw` would not wait, and `None` if it has to follow a request for a frame.
++    fn can_draw_now(&self) -> Option<bool> {
++        None
++    }
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+     fn is_subpixel_rendering_supported(&self) -> bool;
+ 
+@@ -1797,6 +1811,7 @@
+     Glyph(RenderGlyphParams),
+     Svg(RenderSvgParams),
+     Image(RenderImageParams),
++    Custom(AtlasTextureKind, u128),
+ }
+ 
+ impl AtlasKey {
+@@ -1814,6 +1829,7 @@
+             }
+             AtlasKey::Svg(_) => AtlasTextureKind::Monochrome,
+             AtlasKey::Image(_) => AtlasTextureKind::Polychrome,
++            AtlasKey::Custom(kind, _) => *kind,
+         }
+     }
+ }
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -279,6 +279,13 @@
+         ),
+         allow(dead_code)
+     )]
++    /// What the host draws with, for a renderer on another thread.
++    pub fn copy_sprites_and_quads(&mut self, from: &Scene) {
++        self.quads.clone_from(&from.quads);
++        self.monochrome_sprites.clone_from(&from.monochrome_sprites);
++        self.polychrome_sprites.clone_from(&from.polychrome_sprites);
++    }
++
+     pub fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> + '_ {
+         BatchIterator {
+             shadows_start: 0,
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -1945,6 +1945,7 @@
+                     profiler::journal::record_reentrant_frame_skipped(window_id, Instant::now());
+                     return;
+                 }
++                crate::embed::before_frame(handle.window_id());
+                 // Take the deferred flag first: `||` short-circuits, and leaving
+                 // the flag set when this request already forces a render would
+                 // force a second, redundant render on the next frame.
+@@ -1963,7 +1964,8 @@
+ 
+                 // Keep presenting briefly after high-rate input to prevent display
+                 // underclocking, but subject to the same power limits as redraws.
+-                let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
++                let high_rate_input = !crate::embed::paints_pixels()
++                    && input_rate_tracker.borrow_mut().is_high_rate();
+                 let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
+                 let has_demand_besides_animation = invalidator.is_dirty()
+                     || force_render
+@@ -2282,6 +2284,9 @@
+         platform_window.on_input({
+             let mut cx = cx.to_async();
+             Box::new(move |event| {
++                if let Some(result) = crate::embed::input(handle.window_id(), &event) {
++                    return result;
++                }
+                 handle
+                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                     .with_context(|| {
+@@ -3960,6 +3965,20 @@
+         self.invalidator.replace_views(views);
+     }
+ 
++    /// Returns false if it is worth trying again in a moment.
++    pub fn draw_now(&mut self, cx: &mut App) -> bool {
++        if draw_in_progress() || !self.invalidator.is_dirty() {
++            return true;
++        }
++        let can_draw = self.platform_window.can_draw_now();
++        if can_draw == Some(true) {
++            let arena_clear_needed = self.draw(cx);
++            self.present();
++            arena_clear_needed.clear(cx);
++        }
++        can_draw != Some(false)
++    }
++
+     #[profiling::function]
+     fn present(&mut self) {
+         #[cfg(feature = "profiler")]
+@@ -4134,7 +4153,8 @@
+         self.a11y.sync_active_flag();
+         let a11y_active_end_of_frame = self.a11y.is_active();
+ 
+-        let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
++        let should_send_a11y_update =
++            a11y_active_start_of_frame && a11y_active_end_of_frame && !crate::embed::has_host();
+ 
+         if a11y_active_start_of_frame {
+             // Harvest frame metadata for the debug dump while the live window
+@@ -4917,6 +4937,38 @@
+         result
+     }
+ 
++    /// The scene that is being painted, in device pixels.
++    pub fn scene_mut(&mut self) -> &mut Scene {
++        self.invalidator.debug_assert_paint();
++        &mut self.next_frame.scene
++    }
++
++    /// The atlas that the tiles of this window's sprites are in.
++    pub fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
++        self.sprite_atlas.clone()
++    }
++
++    /// Instead of what the frame on screen asked for, without drawing another.
++    pub fn replace_cursor_style(&mut self, style: CursorStyle, cx: &mut App) {
++        self.rendered_frame.cursor_styles.clear();
++        self.rendered_frame.cursor_styles.push(CursorStyleRequest {
++            hitbox_id: None,
++            style,
++        });
++        self.reset_cursor_style(cx);
++    }
++
++    /// For a host, which builds the tree itself. The root is node 0.
++    pub fn send_a11y_update(&self, update: accesskit::TreeUpdate) {
++        self.platform_window.a11y_tree_update(update);
++    }
++
++    /// Asks the platform for a frame without invalidating the window.
++    pub fn wake_frame_source(&self) {
++        self.platform_window.schedule_frame();
++        self.invalidator.wake_platform();
++    }
++
+     /// Paint the drop (non-inset) shadows from `shadows` into the scene at the current
+     /// z-index. Inset shadows are skipped; paint those with [`Self::paint_inset_shadows`]
+     /// after the element's background so they layer on top of the fill.
+@@ -7514,6 +7566,9 @@
+ 
+     #[cfg(not(target_family = "wasm"))]
+     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
++        if crate::embed::a11y_action(&request) {
++            return;
++        }
+         // Take listeners out temporarily so the closures can borrow Window
+         // mutably, then restore them afterward.
+         if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
+--- a/crates/gpui_apple/src/metal_renderer.rs
++++ b/crates/gpui_apple/src/metal_renderer.rs
+@@ -193,6 +193,10 @@
+             } else {
+                 log::error!("unable to create the Display P3 color space");
+             }
++        } else {
++            // SAFETY: The constant is extern, from Core Graphics
++            let name = unsafe { objc2_core_graphics::kCGColorSpaceSRGB };
++            layer.setColorspace(CGColorSpace::with_name(Some(name)).as_deref());
+         }
+         // Support direct-to-display rendering if the window is not transparent
+         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
+--- a/crates/gpui_linux/Cargo.toml
++++ b/crates/gpui_linux/Cargo.toml
+@@ -115,6 +115,7 @@
+     "xinput",
+     "cursor",
+     "resource_manager",
++    "shm",
+     "sync",
+     "dri3",
+ ], optional = true }
+--- a/crates/gpui_linux/src/gpui_linux.rs
++++ b/crates/gpui_linux/src/gpui_linux.rs
+@@ -1,4 +1,5 @@
+ #![cfg(any(target_os = "linux", target_os = "freebsd"))]
+ mod linux;
+ 
++pub use gpui_wgpu::WgpuContext;
+ pub use linux::{current_platform, linux_platform};
+--- a/crates/gpui_linux/src/linux/dispatcher.rs
++++ b/crates/gpui_linux/src/linux/dispatcher.rs
+@@ -5,7 +5,7 @@
+ };
+ use gpui_util::ResultExt;
+ 
+-use std::{mem::MaybeUninit, thread, time::Duration};
++use std::{mem::MaybeUninit, sync::OnceLock, thread, time::Duration};
+ 
+ use gpui::{
+     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
+@@ -19,40 +19,33 @@
+ 
+ pub(crate) struct LinuxDispatcher {
+     main_sender: PriorityQueueCalloopSender<RunnableVariant>,
+-    timer_sender: Sender<TimerAfter>,
++    timer_sender: OnceLock<Sender<TimerAfter>>,
+     background_sender: PriorityQueueSender<RunnableVariant>,
+-    _background_threads: Vec<thread::JoinHandle<()>>,
++    _background_thread: thread::JoinHandle<()>,
+     main_thread_id: thread::ThreadId,
+ }
+ 
+-const MIN_THREADS: usize = 2;
+-
+ impl LinuxDispatcher {
+     pub fn new(main_sender: PriorityQueueCalloopSender<RunnableVariant>) -> Self {
+-        let (background_sender, background_receiver) = PriorityQueueReceiver::new();
+-        let thread_count =
+-            std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
+-
+-        let mut background_threads = (0..thread_count)
+-            .map(|i| {
+-                let receiver: PriorityQueueReceiver<RunnableVariant> = background_receiver.clone();
+-                std::thread::Builder::new()
+-                    .name(format!("Worker-{i}"))
+-                    .spawn(move || {
+-                        for runnable in receiver.iter() {
+-                            let location = runnable.metadata().location;
+-                            let spawned = runnable.metadata().spawned;
+-                            profiler::update_running_task(spawned, location);
+-                            runnable.run();
+-                            profiler::save_task_timing();
+-                        }
+-                    })
+-                    .unwrap()
+-            })
+-            .collect::<Vec<_>>();
++        let (background_sender, receiver) = PriorityQueueReceiver::<RunnableVariant>::new();
++        // The host only leaves the platform's own tasks to it, which mostly wait for D-Bus.
++        let background_thread = std::thread::Builder::new()
++            .name("Platform".to_owned())
++            .spawn(move || receiver.iter().for_each(|runnable| drop(runnable.run())))
++            .unwrap();
++
++        Self {
++            main_sender,
++            timer_sender: OnceLock::new(),
++            background_sender,
++            _background_thread: background_thread,
++            main_thread_id: thread::current().id(),
++        }
++    }
+ 
++    fn start_timer_thread() -> Sender<TimerAfter> {
+         let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
+-        let timer_thread = std::thread::Builder::new()
++        std::thread::Builder::new()
+             .name("Timer".to_owned())
+             .spawn(move || {
+                 let mut event_loop: EventLoop<()> =
+@@ -93,15 +86,7 @@
+             })
+             .unwrap();
+ 
+-        background_threads.push(timer_thread);
+-
+-        Self {
+-            main_sender,
+-            timer_sender,
+-            background_sender,
+-            _background_threads: background_threads,
+-            main_thread_id: thread::current().id(),
+-        }
++        timer_sender
+     }
+ }
+ 
+@@ -133,7 +118,8 @@
+     }
+ 
+     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
+-        if let Err(err) = self.timer_sender.send(TimerAfter { duration, runnable }) {
++        let timer_sender = self.timer_sender.get_or_init(Self::start_timer_thread);
++        if let Err(err) = timer_sender.send(TimerAfter { duration, runnable }) {
+             // The timer thread has shut down. Dropping a scheduled runnable cancels its task
+             // and makes the next poll of any awaiter panic. Leaking leaves the task pending,
+             // which is acceptable during shutdown.
+--- a/crates/gpui_linux/src/linux/offloaded.rs
++++ b/crates/gpui_linux/src/linux/offloaded.rs
+@@ -0,0 +1,113 @@
++use std::ops::{Deref, DerefMut};
++use std::sync::{Arc, mpsc};
++
++use calloop::ping::Ping;
++use parking_lot::{Condvar, Mutex};
++
++#[derive(Default)]
++struct Status {
++    is_busy: bool,
++    when_done: Option<Ping>,
++}
++
++type Job = Box<dyn FnOnce() + Send>;
++
++/// Draws on a thread of its own, so that the main thread does not wait for the display.
++/// Using the value waits until that thread is done with it.
++pub(crate) struct Offloaded<T> {
++    value: *mut T,
++    status: Arc<(Mutex<Status>, Condvar)>,
++    /// `None` draws on the main thread.
++    jobs: Option<mpsc::Sender<Job>>,
++}
++
++struct AssertSend<T>(T);
++
++// SAFETY: the contract of `Offloaded::run`.
++unsafe impl<T> Send for AssertSend<T> {}
++
++impl<T: 'static> Offloaded<T> {
++    pub(crate) fn new(value: T, stays: bool) -> std::io::Result<Self> {
++        let mut jobs = None;
++        if !stays {
++            let (sender, received) = mpsc::channel::<Job>();
++            let thread = std::thread::Builder::new().name("Render".into());
++            thread.spawn(move || received.into_iter().for_each(|job| job()))?;
++            jobs = Some(sender);
++        }
++        Ok(Self {
++            value: Box::into_raw(Box::new(value)),
++            status: Arc::default(),
++            jobs,
++        })
++    }
++
++    /// # Safety
++    /// `job` shares nothing with this thread that is not `Sync`, through the value or otherwise.
++    pub(crate) unsafe fn run(&mut self, job: impl FnOnce(&mut T) + 'static) {
++        let Some(jobs) = &self.jobs else {
++            return job(self);
++        };
++        self.wait();
++        self.status.0.lock().is_busy = true;
++        let (status, captured) = (self.status.clone(), AssertSend((self.value, job)));
++        let job = move || {
++            let captured = captured;
++            let (value, job) = captured.0;
++            // SAFETY: the other thread does not use the value while this one is busy.
++            let run = || job(unsafe { &mut *value });
++            std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).ok();
++            let mut locked = status.0.lock();
++            locked.is_busy = false;
++            status.1.notify_all();
++            if let Some(ping) = locked.when_done.take() {
++                ping.ping();
++            }
++        };
++        jobs.send(Box::new(job)).ok();
++    }
++}
++
++impl<T> Offloaded<T> {
++    fn wait(&self) {
++        let mut status = self.status.0.lock();
++        self.status.1.wait_while(&mut status, |it| it.is_busy);
++    }
++
++    pub(crate) fn is_busy(&self) -> bool {
++        self.status.0.lock().is_busy
++    }
++
++    /// Returns whether it is busy.
++    pub(crate) fn ping_when_done(&self, ping: &Ping) -> bool {
++        let mut status = self.status.0.lock();
++        status.when_done = status.is_busy.then(|| ping.clone());
++        status.is_busy
++    }
++}
++
++impl<T> Deref for Offloaded<T> {
++    type Target = T;
++
++    fn deref(&self) -> &T {
++        self.wait();
++        // SAFETY: only `run` makes the other thread use it, and that borrows `self` mutably.
++        unsafe { &*self.value }
++    }
++}
++
++impl<T> DerefMut for Offloaded<T> {
++    fn deref_mut(&mut self) -> &mut T {
++        self.wait();
++        // SAFETY: as in `deref`.
++        unsafe { &mut *self.value }
++    }
++}
++
++impl<T> Drop for Offloaded<T> {
++    fn drop(&mut self) {
++        self.wait();
++        // SAFETY: it is from `Box::into_raw`.
++        drop(unsafe { Box::from_raw(self.value) });
++    }
++}
+--- a/crates/gpui_linux/src/linux/platform.rs
++++ b/crates/gpui_linux/src/linux/platform.rs
+@@ -125,9 +125,6 @@
+         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
+         let (power_sender, power_receiver) = calloop::channel::channel();
+ 
+-        #[cfg(any(feature = "wayland", feature = "x11"))]
+-        let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
+-        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+         let text_system = Arc::new(gpui::NoopTextSystem::new());
+ 
+         let callbacks = PlatformHandlers::default();
+@@ -661,16 +658,54 @@
+     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
+         self.connect_initially();
+         on_finish_launching();
++    }
+ 
+-        let mut event_loop = self
+-            .event_loop
+-            .borrow_mut()
+-            .take()
+-            .expect("App is already running");
+-        event_loop
+-            .run(None, &mut (), |_| self.apply_pending_mode())
++    fn pump(&self, timeout: &mut dyn FnMut() -> Option<std::time::Duration>) {
++        let Some(mut event_loop) = self.event_loop.borrow_mut().take() else {
++            return;
++        };
++        #[cfg(feature = "x11")]
++        {
++            let client = match &*self.connection.borrow() {
++                DisplayConnection::X11(connection) => Some((**connection).clone()),
++                _ => None,
++            };
++            if let Some(client) = client {
++                client.process_queued_events();
++            }
++        }
++        if event_loop.dispatch(timeout(), &mut ()).log_err().is_none() {
++            self.quit();
++        }
++        self.apply_pending_mode();
++        *self.event_loop.borrow_mut() = Some(event_loop);
++    }
++
++    fn watch_fd(&self, fd: i32, mut ready: Box<dyn FnMut()>) -> Box<dyn Fn(bool)> {
++        // SAFETY: the host keeps it open.
++        let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
++        let source =
++            calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level);
++        let token = self
++            .loop_handle
++            .insert_source(source, move |_, _, _| {
++                ready();
++                Ok(calloop::PostAction::Continue)
++            })
++            .map_err(|error| error.error)
+             .log_err();
++        let handle = self.loop_handle.clone();
++        Box::new(move |on| {
++            if let Some(token) = &token {
++                match on {
++                    true => handle.enable(token).log_err(),
++                    false => handle.disable(token).log_err(),
++                };
++            }
++        })
++    }
+ 
++    fn quit(&self) {
+         let quit = self.with_common(|common| common.callbacks.quit.take());
+         if let Some(mut fun) = quit {
+             fun();
+@@ -679,10 +714,6 @@
+         crate::linux::wait_for_clipboard_handovers();
+     }
+ 
+-    fn quit(&self) {
+-        self.with_common(|common| common.signal.stop());
+-    }
+-
+     fn set_initial_windowing(&self, request: WindowingRequest) {
+         *self.initial_windowing.borrow_mut() = Some(request);
+     }
+--- a/crates/gpui_linux/src/linux/shared_pixels.rs
++++ b/crates/gpui_linux/src/linux/shared_pixels.rs
+@@ -0,0 +1,86 @@
++use std::os::fd::{AsFd, BorrowedFd, FromRawFd as _, OwnedFd};
++use std::sync::atomic::{AtomicU64, Ordering};
++
++use gpui::{DevicePixels, Size, embed};
++
++/// What the host paints a window into where there is no GPU, and the display server reads.
++pub(crate) struct SharedPixels {
++    id: u64,
++    fd: OwnedFd,
++    data: *mut [u8; 4],
++    pub(crate) size: Size<DevicePixels>,
++}
++
++impl SharedPixels {
++    pub(crate) fn new(size: Size<DevicePixels>) -> std::io::Result<Self> {
++        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
++        let bytes = size.width.0.max(1) as usize * size.height.0.max(1) as usize * 4;
++        // SAFETY: the descriptor is new, and the kernel chooses the address.
++        unsafe {
++            let fd = libc::memfd_create(c"pixels".as_ptr(), libc::MFD_CLOEXEC);
++            if fd < 0 {
++                return Err(std::io::Error::last_os_error());
++            }
++            let owned = OwnedFd::from_raw_fd(fd);
++            if libc::ftruncate(fd, bytes as libc::off_t) < 0 {
++                return Err(std::io::Error::last_os_error());
++            }
++            let protection = libc::PROT_READ | libc::PROT_WRITE;
++            let data = libc::mmap(
++                std::ptr::null_mut(),
++                bytes,
++                protection,
++                libc::MAP_SHARED,
++                fd,
++                0,
++            );
++            if data == libc::MAP_FAILED {
++                return Err(std::io::Error::last_os_error());
++            }
++            Ok(Self {
++                id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
++                fd: owned,
++                data: data.cast(),
++                size,
++            })
++        }
++    }
++
++    fn len(&self) -> usize {
++        self.size.width.0.max(1) as usize * self.size.height.0.max(1) as usize
++    }
++
++    pub(crate) fn fd(&self) -> BorrowedFd<'_> {
++        self.fd.as_fd()
++    }
++
++    pub(crate) fn data(&self) -> &[[u8; 4]] {
++        // SAFETY: the mapping has this length, and the server only reads it.
++        unsafe { std::slice::from_raw_parts(self.data, self.len()) }
++    }
++
++    pub(crate) fn paint(
++        &mut self,
++        painter: embed::Painter,
++        shown: Size<DevicePixels>,
++        platform_moves: bool,
++    ) -> embed::Painted {
++        // SAFETY: as in `data`.
++        let data = unsafe { std::slice::from_raw_parts_mut(self.data, self.len()) };
++        let (id, width) = (self.id, self.size.width.0.max(1) as usize);
++        painter(embed::Pixels {
++            id,
++            data,
++            width,
++            shown,
++            platform_moves,
++        })
++    }
++}
++
++impl Drop for SharedPixels {
++    fn drop(&mut self) {
++        // SAFETY: nothing borrows the mapping.
++        unsafe { libc::munmap(self.data.cast(), self.len() * 4) };
++    }
++}
+--- a/crates/gpui_linux/src/linux/wayland/client.rs
++++ b/crates/gpui_linux/src/linux/wayland/client.rs
+@@ -2145,6 +2145,13 @@
+                 let keymap_state = state.keymap_state.as_ref().unwrap();
+                 let keycode = Keycode::from(key + MIN_KEYCODE);
+                 let keysym = keymap_state.key_get_one_sym(keycode);
++                let raw_key = gpui::embed::RawKey {
++                    down: key_state == wl_keyboard::KeyState::Pressed,
++                    scan_code: key,
++                    symbol: keysym.raw(),
++                    modifiers: state.modifiers,
++                };
++                gpui::embed::raw_key(raw_key);
+ 
+                 match key_state {
+                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
+@@ -2228,6 +2235,7 @@
+                                         state.keyboard_focused_window.as_ref().unwrap().clone();
+ 
+                                     drop(state);
++                                    gpui::embed::raw_key(raw_key);
+                                     focused_window.handle_input(input.clone());
+ 
+                                     // If the new scheduled time is in the past the event will repeat as soon as possible
+--- a/crates/gpui_linux/src/linux/wayland/pixels.rs
++++ b/crates/gpui_linux/src/linux/wayland/pixels.rs
+@@ -0,0 +1,97 @@
++use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, Ordering};
++
++use gpui::{DevicePixels, Size, embed::Painter};
++use wayland_client::protocol::{wl_buffer, wl_shm, wl_surface};
++use wayland_client::{Connection, Dispatch, QueueHandle};
++
++use crate::linux::shared_pixels::SharedPixels;
++use crate::linux::WaylandClientStatePtr;
++
++struct Buffer {
++    pixels: SharedPixels,
++    buffer: wl_buffer::WlBuffer,
++    is_busy: Arc<AtomicBool>,
++}
++
++impl Drop for Buffer {
++    fn drop(&mut self) {
++        self.buffer.destroy();
++    }
++}
++
++#[derive(Default)]
++pub(crate) struct WaylandPixels {
++    buffers: Vec<Buffer>,
++}
++
++impl WaylandPixels {
++    pub(crate) fn has_room(&self) -> bool {
++        let busy = (self.buffers.iter()).filter(|it| it.is_busy.load(Ordering::Relaxed));
++        busy.count() < 2
++    }
++
++    pub(crate) fn draw(
++        &mut self,
++        painter: Painter,
++        size: Size<DevicePixels>,
++        surface: &wl_surface::WlSurface,
++        shm: &wl_shm::WlShm,
++        qh: &QueueHandle<WaylandClientStatePtr>,
++    ) -> std::io::Result<()> {
++        self.buffers.retain(|buffer| buffer.pixels.size == size);
++        let is_first = self.buffers.is_empty();
++        let is_free = |buffer: &Buffer| !buffer.is_busy.load(Ordering::Relaxed);
++        let index = match self.buffers.iter().position(is_free) {
++            Some(index) => index,
++            None => {
++                let pixels = SharedPixels::new(size)?;
++                let (width, height) = (size.width.0.max(1), size.height.0.max(1));
++                let pool = shm.create_pool(pixels.fd(), width * height * 4, qh, ());
++                let (format, is_busy) = (wl_shm::Format::Argb8888, Arc::<AtomicBool>::default());
++                let buffer = pool.create_buffer(
++                    0,
++                    width,
++                    height,
++                    width * 4,
++                    format,
++                    qh,
++                    is_busy.clone(),
++                );
++                pool.destroy();
++                self.buffers.push(Buffer {
++                    pixels,
++                    buffer,
++                    is_busy,
++                });
++                self.buffers.len() - 1
++            }
++        };
++        let buffer = &mut self.buffers[index];
++        let painted = buffer.pixels.paint(painter, size, false);
++        let damage = [painted.moved, painted.areas].concat();
++        if damage.is_empty() && !is_first {
++            return Ok(());
++        }
++        surface.attach(Some(&buffer.buffer), 0, 0);
++        for area in damage {
++            let (origin, size) = (area.origin, area.size);
++            surface.damage_buffer(origin.x.0, origin.y.0, size.width.0, size.height.0);
++        }
++        buffer.is_busy.store(true, Ordering::Relaxed);
++        Ok(())
++    }
++}
++
++impl Dispatch<wl_buffer::WlBuffer, Arc<AtomicBool>> for WaylandClientStatePtr {
++    fn event(
++        _: &mut Self,
++        _: &wl_buffer::WlBuffer,
++        _: wl_buffer::Event,
++        is_busy: &Arc<AtomicBool>,
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        is_busy.store(false, Ordering::Relaxed);
++    }
++}
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -45,6 +45,7 @@
+     popup::PopupOptions,
+     px, size,
+ };
++use crate::linux::offloaded::Offloaded;
+ use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+ 
+ #[derive(Default)]
+@@ -118,6 +119,7 @@
+     /// Taken when the window is dropped. Its GPU objects use the Wayland connection, so they
+     /// mustn't outlive the window, which a display mode switch relies on.
+     renderer: Option<WgpuRenderer>,
++    pixels: Option<Offloaded<super::pixels::WaylandPixels>>,
+     bounds: Bounds<Pixels>,
+     scale: f32,
+     input_handler: Option<PlatformInputHandler>,
+@@ -568,7 +570,11 @@
+         options: WindowParams,
+         parent: Option<WaylandWindowStatePtr>,
+     ) -> anyhow::Result<Self> {
+-        let renderer = {
++        let pixels = gpui::embed::paints_pixels().then(|| Offloaded::new(Default::default(), gpui::embed::has_time_to_paint()));
++        let pixels = pixels.transpose()?;
++        let renderer = if pixels.is_some() {
++            None
++        } else {
+             let raw_window = RawWindow {
+                 window: surface.id().as_ptr().cast::<c_void>(),
+                 display: surface
+@@ -587,7 +593,8 @@
+                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
+                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
+             };
+-            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
++            let renderer = WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu);
++            Some(renderer?)
+         };
+ 
+         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
+@@ -601,7 +608,8 @@
+ 
+             // Set max window size based on the GPU's maximum texture dimension.
+             // This prevents the window from being resized larger than what the GPU can render.
+-            let max_texture_size = renderer.max_texture_size() as i32;
++            let max_texture_size =
++                (renderer.as_ref()).map_or(16384, |it| it.max_texture_size()) as i32;
+             xdg_state
+                 .toplevel
+                 .set_max_size(max_texture_size, max_texture_size);
+@@ -619,7 +627,8 @@
+             globals,
+             outputs: HashMap::default(),
+             display: None,
+-            renderer: Some(renderer),
++            renderer,
++            pixels,
+             bounds: options.bounds,
+             scale: 1.0,
+             input_handler: None,
+@@ -786,6 +795,7 @@
+         let client = state.client.clone();
+ 
+         state.renderer.take();
++        state.pixels.take();
+ 
+         // Destroy blur first, this has no dependencies.
+         if let Some(blur) = &state.kde_blur {
+@@ -947,6 +957,14 @@
+ 
+     pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
+         self.frame_loop.set(FrameLoop::Ticking);
++        let (this, window) = (self.clone(), self.state.borrow().handle.window_id());
++        gpui::embed::defer_frame(
++            window,
++            Box::new(move || this.frame_now(signal_at, signal_source)),
++        );
++    }
++
++    fn frame_now(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
+         let mut state = self.state.borrow_mut();
+         state.resize_throttle = false;
+         // GPUI may throttle this tick without calling draw, so leave the request
+@@ -2050,6 +2068,32 @@
+     fn draw(&self, scene: &Scene) {
+         let mut state = self.borrow_mut();
+         let state = &mut *state;
++        if let Some(pixels) = &mut state.pixels {
++            state.redraw_requested = false;
++            let size = state.bounds.to_device_pixels(state.scale).size;
++            let Some(painter) = gpui::embed::painter(state.handle.window_id()) else {
++                return;
++            };
++            let surface = state.surface.clone();
++            let (shm, qh) = (state.globals.shm.clone(), state.globals.qh.clone());
++            if state.pending_frame_callback.is_none() {
++                state.pending_frame_callback = Some(surface.frame(&qh, surface.id()));
++            }
++            let draw = move |pixels: &mut super::pixels::WaylandPixels| {
++                if let Err(error) = pixels.draw(painter, size, &surface, &shm, &qh) {
++                    log::error!("Failed to allocate pixels: {error}");
++                }
++                surface.commit();
++                if let Some(backend) = surface.backend().upgrade() {
++                    backend.flush().ok();
++                }
++            };
++            // SAFETY: proxies are `Sync`.
++            unsafe { pixels.run(draw) };
++            state.presentation = PresentationState::Presented;
++            self.0.frame_loop.set(FrameLoop::AwaitingCallback);
++            return;
++        }
+         let Some(renderer) = &mut state.renderer else {
+             return;
+         };
+@@ -2099,13 +2143,18 @@
+         self.0.schedule_frame();
+     }
+ 
++    fn can_draw_now(&self) -> Option<bool> {
++        let state = self.borrow();
++        let has_presented = matches!(self.0.frame_loop.get(), FrameLoop::AwaitingCallback);
++        let pixels = state.pixels.as_ref().filter(|_| has_presented)?;
++        (!pixels.is_busy()).then(|| pixels.has_room()).map_or(Some(false), |it| it.then_some(true))
++    }
++
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+-        self.borrow()
+-            .renderer
+-            .as_ref()
+-            .expect("the renderer is only taken when the window is dropped")
+-            .sprite_atlas()
+-            .clone()
++        match &self.borrow().renderer {
++            Some(renderer) => renderer.sprite_atlas().clone(),
++            None => Arc::new(gpui::HeadlessAtlas::default()),
++        }
+     }
+ 
+     fn show_window_menu(&self, position: Point<Pixels>) {
+--- a/crates/gpui_linux/src/linux/wayland.rs
++++ b/crates/gpui_linux/src/linux/wayland.rs
+@@ -3,6 +3,7 @@
+ mod cursor;
+ mod display;
+ mod popup;
++mod pixels;
+ mod serial;
+ mod window;
+ 
+--- a/crates/gpui_linux/src/linux/x11/client.rs
++++ b/crates/gpui_linux/src/linux/x11/client.rs
+@@ -12,7 +12,7 @@
+ use log::Level;
+ use smallvec::SmallVec;
+ use std::{
+-    cell::{RefCell, RefMut},
++    cell::{Cell, LazyCell, RefCell, RefMut},
+     collections::{BTreeMap, HashSet},
+     ops::Deref,
+     path::PathBuf,
+@@ -118,6 +118,7 @@
+     PeriodicRefresh {
+         refresh_rate: Duration,
+         event_loop_token: RegistrationToken,
++        asleep: Rc<Cell<bool>>,
+     },
+ }
+ 
+@@ -186,6 +187,7 @@
+     /// Long-lived sources this client registered on the loop, removed when its
+     /// [`X11Connection`] drops.
+     registrations: Vec<RegistrationToken>,
++    frame_ping: calloop::ping::Ping,
+     /// The environment this connection was made in, without its activation token.
+     graphical_environment: GraphicalEnvironment,
+ 
+@@ -236,7 +238,7 @@
+     pub(crate) supports_xinput_gestures: bool,
+ 
+     pub(crate) common: Rc<RefCell<LinuxCommon>>,
+-    pub(crate) clipboard: Clipboard,
++    pub(crate) clipboard: LazyCell<Option<Clipboard>, Box<dyn FnOnce() -> Option<Clipboard>>>,
+     pub(crate) clipboard_item: Option<ClipboardItem>,
+     pub(crate) xdnd_state: Xdnd,
+ }
+@@ -381,6 +383,7 @@
+             std::ffi::CString::new(display).context("X display name contains a NUL byte")?;
+         let (xcb_connection, x_root_index) = XCBConnection::connect(Some(&display_name))
+             .with_context(|| format!("failed to connect to X server {display:?}"))?;
++        super::window::connect_for_gpu(&display_name)?;
+         xcb_connection.prefetch_extension_information(xkb::X11_EXTENSION_NAME)?;
+         xcb_connection.prefetch_extension_information(randr::X11_EXTENSION_NAME)?;
+         xcb_connection.prefetch_extension_information(render::X11_EXTENSION_NAME)?;
+@@ -415,16 +418,8 @@
+             .reply()
+             .context("Failed to get XCB atoms")?;
+ 
+-        let root = xcb_connection.setup().roots[0].root;
+-        let compositor_present = check_compositor_present(&xcb_connection, root);
+-        let gtk_frame_extents_supported =
+-            check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
+-        let client_side_decorations_supported = compositor_present && gtk_frame_extents_supported;
+-        log::info!(
+-            "x11: compositor present: {}, gtk_frame_extents_supported: {}",
+-            compositor_present,
+-            gtk_frame_extents_supported
+-        );
++        // What the host draws needs neither a compositor nor a margin for shadows.
++        let client_side_decorations_supported = true;
+ 
+         let xkb = get_reply(
+             || "Failed to initialize XKB extension",
+@@ -432,6 +427,17 @@
+                 .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION),
+         )?;
+         anyhow::ensure!(xkb.supported, "X server does not support XKB");
++        let no_release_between_repeats = xkb::PerClientFlag::DETECTABLE_AUTO_REPEAT;
++        xcb_connection
++            .xkb_per_client_flags(
++                xkb::ID::USE_CORE_KBD.into(),
++                no_release_between_repeats,
++                no_release_between_repeats,
++                0u32.into(),
++                0u32.into(),
++                0u32.into(),
++            )?
++            .discard_reply_and_errors();
+ 
+         let events = xkb::EventType::STATE_NOTIFY
+             | xkb::EventType::MAP_NOTIFY
+@@ -483,7 +489,11 @@
+             .reply()
+             .context("Failed to initialize cursor theme handler")?;
+ 
+-        let clipboard = Clipboard::new(display).context("Failed to initialize clipboard")?;
++        let clipboard = LazyCell::new({
++            let display = display.to_owned();
++            Box::new(move || Clipboard::new(&display).log_err()) as Box<_>
++        });
++        let (frame_ping, frame_ping_source) = calloop::ping::make_ping()?;
+ 
+         let screen = &xcb_connection.setup().roots[x_root_index];
+         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
+@@ -502,6 +512,7 @@
+             RefCell::new(X11ClientState {
+                 this: X11ClientStatePtr(this.clone()),
+                 registrations: Vec::new(),
++                frame_ping,
+                 graphical_environment: GraphicalEnvironment {
+                     activation_token: None,
+                     ..environment.clone()
+@@ -557,7 +568,7 @@
+             })
+         })));
+         // From here on, `Drop` removes whatever was registered if a later step fails.
+-        connection.register_sources(&handle, background_executor)?;
++        connection.register_sources(&handle, background_executor, frame_ping_source)?;
+         let xcb_connection = connection.0.0.borrow().xcb_connection.clone();
+         xcb_flush(&xcb_connection);
+         Ok(connection)
+@@ -572,8 +583,20 @@
+         &self,
+         handle: &LoopHandle<'static, ()>,
+         background_executor: gpui::BackgroundExecutor,
++        frame_ping_source: calloop::ping::PingSource,
+     ) -> anyhow::Result<()> {
+         let this = self.0.borrow().this.clone();
++        let token = handle
++            .insert_source(frame_ping_source, {
++                let this = this.clone();
++                move |(), (), _| {
++                    if let Some(client) = this.get_client() {
++                        client.restart_parked_refresh_loops();
++                    }
++                }
++            })
++            .map_err(|err| anyhow!("Failed to initialize the frame source: {err:?}"))?;
++        self.0.borrow_mut().registrations.push(token);
+         let xcb_connection = self.0.borrow().xcb_connection.clone();
+ 
+         // Safety: Safe if xcb::Connection always returns a valid fd
+@@ -649,6 +672,35 @@
+         self.0.borrow().graphical_environment.clone()
+     }
+ 
++    /// Events that arrive while a reply is awaited leave the socket without having been handled.
++    pub(crate) fn process_queued_events(&self) {
++        let xcb_connection = self.0.borrow().xcb_connection.clone();
++        self.process_x11_events(&xcb_connection).log_err();
++    }
++
++    fn restart_parked_refresh_loops(&self) {
++        let mut state = self.0.borrow_mut();
++        let x_windows = state.windows.keys().copied().collect::<Vec<_>>();
++        for x_window in x_windows {
++            let Some(window_ref) = state.windows.get_mut(&x_window) else {
++                continue;
++            };
++            if let Some(RefreshState::PeriodicRefresh {
++                refresh_rate,
++                event_loop_token,
++                asleep,
++            }) = &window_ref.refresh_state
++                && asleep.get()
++                && window_ref.frame_demand.wanted.get()
++            {
++                let (refresh_rate, token) = (*refresh_rate, *event_loop_token);
++                window_ref.refresh_state = Some(RefreshState::Hidden { refresh_rate });
++                state.loop_handle.remove(token);
++                state.update_refresh_loop(x_window);
++            }
++        }
++    }
++
+     pub fn process_x11_events(
+         &self,
+         xcb_connection: &XCBConnection,
+@@ -802,6 +854,9 @@
+                     .get(&x_window)
+                     .and_then(|window| window.is_mapped.then(|| window.window.clone()));
+                 if let Some(window) = window {
++                    if let Some(pixels) = &mut window.state.borrow_mut().pixels {
++                        pixels.is_exposed = true;
++                    }
+                     window.refresh(RequestFrameOptions {
+                         require_presentation: true,
+                         force_render: false,
+@@ -1033,7 +1088,15 @@
+                     self.0.borrow_mut().xdnd_state.retrieved = true;
+                 }
+             }
+-            Event::ConfigureNotify(event) => {
++            Event::ConfigureNotify(mut event) => {
++                // Unless the window manager sent it, the position is in the frame.
++                if event.response_type & 0x80 == 0 {
++                    let xcb = self.0.borrow().xcb_connection.clone();
++                    let root = xcb.setup().roots[0].root;
++                    let origin = xcb.translate_coordinates(event.window, root, 0, 0);
++                    let origin = origin.ok()?.reply().ok()?;
++                    (event.x, event.y) = (origin.dst_x, origin.dst_y);
++                }
+                 let bounds = Bounds {
+                     origin: Point {
+                         x: event.x.into(),
+@@ -1057,6 +1120,8 @@
+                     .context("X11: Failed to handle property notify")
+                     .log_err();
+             }
++            Event::FocusIn(event) | Event::FocusOut(event)
++                if event.detail == xproto::NotifyDetail::POINTER => {}
+             Event::FocusIn(event) => {
+                 let window = self.get_window(event.event)?;
+                 window.set_active(true);
+@@ -1155,6 +1220,12 @@
+                     let code = event.detail.into();
+                     let mut keystroke = keystroke_from_xkb(&key_event_state, modifiers, code);
+                     let keysym = key_event_state.key_get_one_sym(code);
++                    gpui::embed::raw_key(gpui::embed::RawKey {
++                        down: true,
++                        scan_code: u32::from(event.detail).saturating_sub(8),
++                        symbol: keysym.raw(),
++                        modifiers,
++                    });
+ 
+                     if keysym.is_modifier_key() {
+                         return Some(());
+@@ -1218,6 +1289,12 @@
+                     let code = event.detail.into();
+                     let keystroke = keystroke_from_xkb(&key_event_state, modifiers, code);
+                     let keysym = key_event_state.key_get_one_sym(code);
++                    gpui::embed::raw_key(gpui::embed::RawKey {
++                        down: false,
++                        scan_code: u32::from(event.detail).saturating_sub(8),
++                        symbol: keysym.raw(),
++                        modifiers,
++                    });
+ 
+                     if keysym.is_modifier_key() {
+                         return Some(());
+@@ -1236,8 +1313,8 @@
+                 state.modifiers = modifiers;
+ 
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+ 
+                 if state.composing && state.ximc.is_some() {
+@@ -1314,8 +1391,8 @@
+                 state.modifiers = modifiers;
+ 
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+                 match button_or_scroll_from_event_detail(event.detail) {
+                     Some(ButtonOrScroll::Button(button)) => {
+@@ -1365,8 +1442,8 @@
+                 }
+                 let pressed_button = pressed_button_from_mask(event.button_mask[0]);
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+                 let modifiers = modifiers_from_xinput_info(event.mods);
+                 state.modifiers = modifiers;
+@@ -1408,8 +1485,8 @@
+                 state.mouse_focused_window = None;
+                 let pressed_button = pressed_button_from_mask(event.buttons[0]);
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+                 let modifiers = modifiers_from_xinput_info(event.mods);
+                 state.modifiers = modifiers;
+@@ -1452,8 +1529,8 @@
+                 let modifiers = modifiers_from_xinput_info(event.mods);
+                 state.modifiers = modifiers;
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+                 drop(state);
+                 window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+@@ -1469,8 +1546,8 @@
+                 let modifiers = modifiers_from_xinput_info(event.mods);
+                 state.modifiers = modifiers;
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+                 // scale is in FP16.16 format: divide by 65536 to get the float value
+                 let new_absolute_scale = event.scale as f32 / 65536.0;
+@@ -1492,8 +1569,8 @@
+                 let modifiers = modifiers_from_xinput_info(event.mods);
+                 state.modifiers = modifiers;
+                 let position = point(
+-                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+-                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
++                    px(event.event_x as f32 / 65536. / state.scale_factor),
++                    px(event.event_y as f32 / 65536. / state.scale_factor),
+                 );
+                 drop(state);
+                 window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+@@ -1728,6 +1805,7 @@
+             parent_window,
+             supports_xinput_gestures,
+             is_bgr,
++            state.frame_ping.clone(),
+         )?;
+         check_reply(
+             || "Failed to set XdndAware property",
+@@ -1827,8 +1905,10 @@
+ 
+     pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
+         let state = self.0.borrow_mut();
+-        state
+-            .clipboard
++        let Some(clipboard) = &*state.clipboard else {
++            return;
++        };
++        clipboard
+             .set_text(
+                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
+                 clipboard::ClipboardKind::Primary,
+@@ -1840,8 +1920,10 @@
+ 
+     pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+         let mut state = self.0.borrow_mut();
+-        state
+-            .clipboard
++        let Some(clipboard) = &*state.clipboard else {
++            return;
++        };
++        clipboard
+             .set_text(
+                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
+                 clipboard::ClipboardKind::Clipboard,
+@@ -1856,6 +1938,7 @@
+         let state = self.0.borrow_mut();
+         state
+             .clipboard
++            .as_ref()?
+             .get_any(clipboard::ClipboardKind::Primary)
+             .context("X11: Failed to read from clipboard (primary)")
+             .log_with_level(log::Level::Debug)
+@@ -1867,12 +1950,14 @@
+         // which has metadata attached.
+         if state
+             .clipboard
++            .as_ref()?
+             .is_owner(clipboard::ClipboardKind::Clipboard)
+         {
+             return state.clipboard_item.clone();
+         }
+         state
+             .clipboard
++            .as_ref()?
+             .get_any(clipboard::ClipboardKind::Clipboard)
+             .context("X11: Failed to read from clipboard (clipboard)")
+             .log_with_level(log::Level::Debug)
+@@ -1982,19 +2067,21 @@
+                 Some(RefreshState::PeriodicRefresh {
+                     refresh_rate,
+                     event_loop_token,
++                    ..
+                 }),
+             ) => {
+                 self.loop_handle.remove(event_loop_token);
+                 window_ref.refresh_state = Some(RefreshState::Hidden { refresh_rate });
+             }
+             (true, Some(RefreshState::Hidden { refresh_rate })) => {
+-                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
++                let (event_loop_token, asleep) = self.start_refresh_loop(x_window, refresh_rate);
+                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
+                     return;
+                 };
+                 window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
+                     refresh_rate,
+                     event_loop_token,
++                    asleep,
+                 });
+             }
+             (true, None) => {
+@@ -2034,13 +2121,14 @@
+                     }
+                 };
+ 
+-                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
++                let (event_loop_token, asleep) = self.start_refresh_loop(x_window, refresh_rate);
+                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
+                     return;
+                 };
+                 window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
+                     refresh_rate,
+                     event_loop_token,
++                    asleep,
+                 });
+             }
+         }
+@@ -2051,10 +2139,14 @@
+         &self,
+         x_window: xproto::Window,
+         refresh_rate: Duration,
+-    ) -> RegistrationToken {
+-        self.loop_handle
++    ) -> (RegistrationToken, Rc<Cell<bool>>) {
++        const SLEEP: Duration = Duration::from_secs(24 * 60 * 60);
++        let asleep = Rc::new(Cell::new(false));
++        let token = self
++            .loop_handle
+             .insert_source(calloop::timer::Timer::immediate(), {
+                 let this = self.this.clone();
++                let asleep = asleep.clone();
+                 move |mut instant, (), _| {
+                     let Some(client) = this.get_client() else {
+                         return calloop::timer::TimeoutAction::Drop;
+@@ -2065,17 +2157,31 @@
+                         if let Some(window) = state.windows.get_mut(&x_window) {
+                             let window = window.window.clone();
+                             drop(state);
+-                            window.refresh(RequestFrameOptions {
+-                                require_presentation: false,
+-                                force_render: false,
+-                                signal_at: PlatformFrameSignal::capture(|| instant),
+-                                signal_source: FrameRequestSource::LocalSchedule,
+-                            });
++                            if window.is_drawing() {
++                                asleep.set(true);
++                                window.frame_demand.wanted.set(true);
++                            } else if window.frame_demand.wanted.replace(false) {
++                                asleep.set(false);
++                                window.frame_demand.parked.set(false);
++                                window.refresh(RequestFrameOptions {
++                                    require_presentation: false,
++                                    force_render: false,
++                                    signal_at: PlatformFrameSignal::capture(|| instant),
++                                    signal_source: FrameRequestSource::LocalSchedule,
++                                });
++                            } else {
++                                asleep.set(true);
++                                window.frame_demand.parked.set(true);
++                            }
+                         }
+                         xcb_connection
+                     };
+                     client.process_x11_events(&xcb_connection).log_err();
+ 
++                    if asleep.get() {
++                        return calloop::timer::TimeoutAction::ToDuration(SLEEP);
++                    }
++
+                     // Take into account that some frames have been skipped
+                     let now = Instant::now();
+                     while instant < now {
+@@ -2084,7 +2190,8 @@
+                     calloop::timer::TimeoutAction::ToInstant(instant)
+                 }
+             })
+-            .expect("Failed to initialize window refresh timer")
++            .expect("Failed to initialize window refresh timer");
++        (token, asleep)
+     }
+ 
+     fn get_cursor_icon(&mut self, style: CursorStyle) -> Option<xproto::Cursor> {
+@@ -2223,7 +2330,7 @@
+ // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
+ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
+     if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
+-        return Duration::from_millis(16);
++        return Duration::from_micros(16_667);
+     }
+ 
+     let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
+@@ -2273,6 +2380,7 @@
+     crate::linux::compositor_gpu_hint_from_dev_t(metadata.rdev())
+ }
+ 
++#[allow(dead_code)]
+ fn check_compositor_present(xcb_connection: &XCBConnection, root: xproto::Window) -> bool {
+     // Method 1: Check for _NET_WM_CM_S{root}
+     let atom_name = format!("_NET_WM_CM_S{}", root);
+@@ -2342,6 +2450,7 @@
+     method1 || method2 || method3
+ }
+ 
++#[allow(dead_code)]
+ fn check_gtk_frame_extents_supported(
+     xcb_connection: &XCBConnection,
+     atoms: &XcbAtoms,
+--- a/crates/gpui_linux/src/linux/x11/pixels.rs
++++ b/crates/gpui_linux/src/linux/x11/pixels.rs
+@@ -0,0 +1,206 @@
++use gpui::{Bounds, DevicePixels, Size, embed::Painter};
++use x11rb::{
++    connection::{Connection as _, RequestConnection as _},
++    cookie::Cookie,
++    protocol::shm::{self, ConnectionExt as _},
++    protocol::xproto::{self, ConnectionExt as _},
++    xcb_ffi::XCBConnection,
++};
++
++use crate::linux::shared_pixels::SharedPixels;
++
++struct Buffer {
++    pixels: SharedPixels,
++    /// Unless the server is on another machine.
++    segment: Option<shm::Seg>,
++    /// What the window shows, including where it is covered.
++    pixmap: xproto::Pixmap,
++}
++
++pub(crate) struct X11Pixels {
++    xcb: &'static XCBConnection,
++    window: xproto::Window,
++    depth: u8,
++    gc: xproto::Gcontext,
++    buffer: Option<Buffer>,
++    /// The server is done with the last frame when it replies.
++    fence: Option<Cookie<'static, XCBConnection, xproto::GetInputFocusReply>>,
++    pub(crate) size: Size<DevicePixels>,
++    pub(crate) is_exposed: bool,
++}
++
++impl X11Pixels {
++    pub(crate) fn new(
++        xcb: &'static XCBConnection,
++        window: xproto::Window,
++        depth: u8,
++        size: Size<DevicePixels>,
++    ) -> anyhow::Result<Self> {
++        let formats = &xcb.setup().pixmap_formats;
++        anyhow::ensure!(
++            (formats.iter()).any(|format| format.depth == depth && format.bits_per_pixel == 32),
++            "The display does not have 32 bits per pixel"
++        );
++        let gc = xcb.generate_id()?;
++        let values = xproto::CreateGCAux::new().graphics_exposures(0);
++        xcb.create_gc(gc, window, &values)?.check()?;
++        Ok(Self {
++            xcb,
++            window,
++            depth,
++            gc,
++            buffer: None,
++            fence: None,
++            size,
++            is_exposed: true,
++        })
++    }
++
++    fn attach(&self, pixels: &SharedPixels) -> anyhow::Result<shm::Seg> {
++        let segment = self.xcb.generate_id()?;
++        let fd = pixels.fd().try_clone_to_owned()?;
++        self.xcb.shm_attach_fd(segment, fd, true)?.check()?;
++        Ok(segment)
++    }
++
++    pub(crate) fn release(&mut self) -> anyhow::Result<()> {
++        if let Some(buffer) = self.buffer.take() {
++            self.xcb.free_pixmap(buffer.pixmap)?.ignore_error();
++            if let Some(segment) = buffer.segment {
++                self.xcb.shm_detach(segment)?.ignore_error();
++            }
++            self.xcb.flush()?;
++        }
++        Ok(())
++    }
++
++    fn copy(
++        &self,
++        from: xproto::Drawable,
++        to: xproto::Drawable,
++        area: Bounds<DevicePixels>,
++        down: i32,
++    ) -> anyhow::Result<()> {
++        let (x, y) = (area.origin.x.0 as i16, area.origin.y.0 as i16);
++        let (width, height) = (area.size.width.0 as u16, area.size.height.0 as u16);
++        let above = y - down as i16;
++        (self.xcb)
++            .copy_area(from, to, self.gc, x, above, x, y, width, height)?
++            .ignore_error();
++        Ok(())
++    }
++
++    pub(crate) fn draw(&mut self, painter: Painter) -> anyhow::Result<()> {
++        if let Some(fence) = self.fence.take() {
++            fence.reply()?;
++        }
++        let area = |size: Size<DevicePixels>| size.width.0 * size.height.0;
++        let fits = |buffer: &Buffer| {
++            let capacity = buffer.pixels.size;
++            capacity.max(&self.size) == capacity && area(capacity) / 3 <= area(self.size)
++        };
++        if !self.buffer.as_ref().is_some_and(fits) {
++            let spare = if self.buffer.is_some() { 256 } else { 0 };
++            self.release()?;
++            let pixels = SharedPixels::new(self.size.map(|it| DevicePixels(it.0 + spare)))?;
++            let (segment, pixmap) = (self.attach(&pixels).ok(), self.xcb.generate_id()?);
++            let (width, height) = (pixels.size.width.0 as u16, pixels.size.height.0 as u16);
++            (self.xcb)
++                .create_pixmap(self.depth, pixmap, self.window, width, height)?
++                .ignore_error();
++            self.buffer = Some(Buffer {
++                pixels,
++                segment,
++                pixmap,
++            });
++        }
++        let Some(buffer) = &mut self.buffer else {
++            return Ok(());
++        };
++        let painted = buffer.pixels.paint(painter, self.size, true);
++        let pixmap = buffer.pixmap;
++        for area in &painted.moved {
++            self.copy(pixmap, pixmap, *area, painted.moved_by)?;
++        }
++        self.put(&painted.areas)?;
++        let mut damage = [painted.moved, painted.areas].concat();
++        if std::mem::take(&mut self.is_exposed) {
++            damage = vec![Bounds::new(Default::default(), self.size)];
++        }
++        for area in damage {
++            self.copy(pixmap, self.window, area, 0)?;
++        }
++        self.fence = Some(self.xcb.get_input_focus()?);
++        self.xcb.flush()?;
++        Ok(())
++    }
++
++    fn put(&self, areas: &[Bounds<DevicePixels>]) -> anyhow::Result<()> {
++        let Some(Buffer {
++            pixels,
++            segment,
++            pixmap,
++        }) = &self.buffer
++        else {
++            return Ok(());
++        };
++        let format = xproto::ImageFormat::Z_PIXMAP;
++        for Bounds { origin, size } in areas {
++            let (x, y, width, height) = (origin.x.0, origin.y.0, size.width.0, size.height.0);
++            if let Some(segment) = *segment {
++                let cookie = self.xcb.shm_put_image(
++                    *pixmap,
++                    self.gc,
++                    pixels.size.width.0 as u16,
++                    pixels.size.height.0 as u16,
++                    x as u16,
++                    y as u16,
++                    width as u16,
++                    height as u16,
++                    x as i16,
++                    y as i16,
++                    self.depth,
++                    format.into(),
++                    false,
++                    segment,
++                    0,
++                );
++                cookie?.ignore_error();
++                continue;
++            }
++            let rows = (self.xcb.maximum_request_bytes() - 64) / (width as usize * 4);
++            for top in (y..y + height).step_by(rows.max(1)) {
++                let bottom = (top + rows.max(1) as i32).min(y + height);
++                let starts = (top..bottom).map(|row| (row * pixels.size.width.0 + x) as usize);
++                let data: Vec<_> = starts
++                    .flat_map(|start| &pixels.data()[start..start + width as usize])
++                    .copied()
++                    .collect();
++                let cookie = self.xcb.put_image(
++                    format,
++                    *pixmap,
++                    self.gc,
++                    width as u16,
++                    (bottom - top) as u16,
++                    x as i16,
++                    top as i16,
++                    0,
++                    self.depth,
++                    data.as_flattened(),
++                );
++                cookie?.ignore_error();
++            }
++        }
++        Ok(())
++    }
++}
++
++impl Drop for X11Pixels {
++    fn drop(&mut self) {
++        if let Ok(cookie) = self.xcb.free_gc(self.gc) {
++            cookie.ignore_error();
++        }
++        self.release().ok();
++        self.xcb.flush().ok();
++    }
++}
+--- a/crates/gpui_linux/src/linux/x11/window.rs
++++ b/crates/gpui_linux/src/linux/x11/window.rs
+@@ -10,6 +10,7 @@
+     WindowDecorations, WindowKind, WindowParams, WindowVisibility, popup::PopupNotSupportedError,
+     px,
+ };
++use crate::linux::offloaded::Offloaded;
+ use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
+ 
+ use collections::FxHashSet;
+@@ -30,7 +31,13 @@
+ };
+ 
+ use std::{
+-    cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
++    cell::{Cell, RefCell},
++    ffi::c_void,
++    fmt::Display,
++    num::NonZeroU32,
++    ptr::NonNull,
++    rc::Rc,
++    sync::Arc,
+ };
+ 
+ use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
+@@ -271,7 +278,10 @@
+     scale_factor: f32,
+     /// Taken when the window is dropped. Its GPU objects use the X connection, so they mustn't
+     /// outlive the window, which a display mode switch relies on.
+-    renderer: Option<WgpuRenderer>,
++    renderer: Option<Offloaded<WgpuRenderer>>,
++    /// The scene that the renderer drew last, and whether it has to be drawn again.
++    drawn: Arc<parking_lot::Mutex<(Scene, bool)>>,
++    pub(crate) pixels: Option<Offloaded<super::pixels::X11Pixels>>,
+     display: Rc<dyn PlatformDisplay>,
+     input_handler: Option<PlatformInputHandler>,
+     appearance: WindowAppearance,
+@@ -318,6 +328,39 @@
+     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
+     xcb: Rc<XCBConnection>,
+     pub(crate) x_window: xproto::Window,
++    pub(crate) frame_demand: Rc<FrameDemand>,
++}
++
++thread_local! {
++    /// The driver's threads read from it. On the connection of the windows, they would take events
++    /// off the socket without waking this thread.
++    static GPU_CONNECTION: Cell<Option<&'static XCBConnection>> = const { Cell::new(None) };
++}
++
++pub(crate) fn connect_for_gpu(display: &std::ffi::CStr) -> anyhow::Result<()> {
++    let connection = Box::leak(Box::new(XCBConnection::connect(Some(display))?.0));
++    GPU_CONNECTION.set(Some(connection));
++    Ok(())
++}
++
++fn raw_gpu_connection() -> *mut c_void {
++    (GPU_CONNECTION.get()).map_or(std::ptr::null_mut(), XCBConnection::get_raw_xcb_connection)
++}
++
++/// Lets the refresh timer of a window sleep while nothing is to be drawn.
++pub(crate) struct FrameDemand {
++    pub(crate) wanted: Cell<bool>,
++    pub(crate) parked: Cell<bool>,
++    ping: calloop::ping::Ping,
++}
++
++impl FrameDemand {
++    fn wake(&self) {
++        self.wanted.set(true);
++        if self.parked.replace(false) {
++            self.ping.ping();
++        }
++    }
+ }
+ 
+ impl rwh::HasWindowHandle for RawWindow {
+@@ -555,7 +598,7 @@
+                 visual.depth,
+                 x_window,
+                 visual_set.root,
+-                (bounds.origin.x.0 + 2) as i16,
++                bounds.origin.x.0 as i16,
+                 bounds.origin.y.0 as i16,
+                 bounds.size.width.0 as u16,
+                 bounds.size.height.0 as u16,
+@@ -580,19 +623,6 @@
+                 ),
+             )?;
+ 
+-            let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
+-            if reply.x == 0 && reply.y == 0 {
+-                bounds.origin.x.0 += 2;
+-                // Work around a bug where our rendered content appears
+-                // outside the window bounds when opened at the default position
+-                // (14px, 49px on X + Gnome + Ubuntu 22).
+-                let x = bounds.origin.x.0;
+-                let y = bounds.origin.y.0;
+-                check_reply(
+-                    || format!("X11 ConfigureWindow failed. x: {}, y: {}", x, y),
+-                    xcb.configure_window(x_window, &xproto::ConfigureWindowAux::new().x(x).y(y)),
+-                )?;
+-            }
+             if let Some(titlebar) = params.titlebar
+                 && let Some(title) = titlebar.title
+             {
+@@ -761,11 +791,20 @@
+ 
+             xcb_flush(xcb);
+ 
+-            let mut renderer = {
++            let pixels = match GPU_CONNECTION.get() {
++                Some(connection) if gpui::embed::paints_pixels() => {
++                    let size = query_render_extent(xcb, x_window)?;
++                    let pixels =
++                        super::pixels::X11Pixels::new(connection, x_window, visual.depth, size);
++                    Some(Offloaded::new(pixels?, gpui::embed::has_time_to_paint())?)
++                }
++                _ => None,
++            };
++            let renderer = if pixels.is_some() {
++                None
++            } else {
+                 let raw_window = RawWindow {
+-                    connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+-                        xcb,
+-                    ) as *mut _,
++                    connection: raw_gpu_connection(),
+                     screen_id: x_screen_index,
+                     window_id: x_window,
+                     visual_id: visual.id,
+@@ -781,20 +820,27 @@
+                     transparent: false,
+                     preferred_present_mode: None,
+                 };
+-                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
++                let mut renderer =
++                    WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?;
++                renderer.set_subpixel_layout(is_bgr);
++                Some(Offloaded::new(renderer, false)?)
+             };
+ 
+-            renderer.set_subpixel_layout(is_bgr);
+-
+             // Set max window size hints based on the GPU's maximum texture dimension.
+             // This prevents the window from being resized larger than what the GPU can render.
+-            let max_texture_size = renderer.max_texture_size();
++            let max_texture_size = (renderer.as_ref()).map_or(16384, |it| it.max_texture_size());
+             let mut size_hints = WmSizeHints::new();
+             if let Some(size) = params.window_min_size {
+                 size_hints.min_size =
+                     Some((f32::from(size.width) as i32, f32::from(size.height) as i32));
+             }
+             size_hints.max_size = Some((max_texture_size as i32, max_texture_size as i32));
++            size_hints.win_gravity = Some(xproto::Gravity::STATIC);
++            size_hints.position = Some((
++                x11rb::properties::WmSizeHintsSpecification::UserSpecified,
++                bounds.origin.x.0,
++                bounds.origin.y.0,
++            ));
+             check_reply(
+                 || {
+                     format!(
+@@ -841,7 +887,9 @@
+                 visual_id: visual.id,
+                 bounds: bounds.to_pixels(scale_factor),
+                 scale_factor,
+-                renderer: Some(renderer),
++                renderer,
++                drawn: Arc::default(),
++                pixels,
+                 atoms: *atoms,
+                 input_handler: None,
+                 active: false,
+@@ -895,6 +943,7 @@
+         // The renderer's GPU objects use the X connection, and a display mode switch closes the
+         // connection once no window is left in the client's window map, so both go now.
+         state.renderer.take();
++        state.pixels.take();
+ 
+         maybe!({
+             check_reply(
+@@ -940,8 +989,14 @@
+         parent_window: Option<X11WindowStatePtr>,
+         supports_xinput_gestures: bool,
+         is_bgr: bool,
++        frame_ping: calloop::ping::Ping,
+     ) -> anyhow::Result<Self> {
+         let ptr = X11WindowStatePtr {
++            frame_demand: Rc::new(FrameDemand {
++                wanted: Cell::new(true),
++                parked: Cell::new(false),
++                ping: frame_ping,
++            }),
+             state: Rc::new(RefCell::new(X11WindowState::new(
+                 handle,
+                 client,
+@@ -1204,7 +1259,27 @@
+         }
+     }
+ 
+-    pub fn refresh(&self, mut request_frame_options: RequestFrameOptions) {
++    /// If so, the refresh timer is started again when that is done.
++    pub(crate) fn is_drawing(&self) -> bool {
++        let (state, demand) = (&mut *self.state.borrow_mut(), &self.frame_demand);
++        let is_busy = (state.pixels.iter()).any(|it| it.ping_when_done(&demand.ping))
++            || (state.renderer.iter()).any(|it| it.ping_when_done(&demand.ping));
++        if !is_busy && std::mem::take(&mut state.drawn.lock().1) {
++            state.force_render_after_recovery = true;
++            demand.wanted.set(true);
++        }
++        is_busy
++    }
++
++    pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
++        let (this, window) = (self.clone(), self.state.borrow().handle.window_id());
++        gpui::embed::defer_frame(
++            window,
++            Box::new(move || this.refresh_now(request_frame_options)),
++        );
++    }
++
++    fn refresh_now(&self, mut request_frame_options: RequestFrameOptions) {
+         let callback = self.callbacks.borrow_mut().request_frame.take();
+         if let Some(mut fun) = callback {
+             // Expose events can present a frame before the refresh timer runs,
+@@ -1316,22 +1391,19 @@
+     pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
+         let (is_resize, content_size, scale_factor) = {
+             let mut state = self.state.borrow_mut();
++            let device_size = bounds.size.map(DevicePixels);
+             let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
+ 
+             let is_resize = bounds.size.width != state.bounds.size.width
+                 || bounds.size.height != state.bounds.size.height;
+ 
+-            // If it's a resize event (only width/height changed), we ignore `bounds.origin`
+-            // because it contains wrong values.
+-            if is_resize {
+-                state.bounds.size = bounds.size;
+-            } else {
+-                state.bounds = bounds;
+-            }
++            state.bounds = bounds;
+ 
+-            let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
+             if let Some(renderer) = &mut state.renderer {
+-                renderer.update_drawable_size(gpu_size);
++                renderer.update_drawable_size(query_render_extent(&self.xcb, self.x_window)?);
++            }
++            if let Some(pixels) = state.pixels.as_mut().filter(|_| is_resize) {
++                pixels.size = device_size;
+             }
+             let result = (is_resize, state.content_size(), state.scale_factor);
+             if let Some(value) = state.last_sync_counter.take() {
+@@ -1390,6 +1462,11 @@
+         if std::mem::replace(&mut self.state.borrow_mut().visibility, visibility) == visibility {
+             return;
+         }
++        if let Some(pixels) = &mut self.state.borrow_mut().pixels
++            && !visibility.is_visible()
++        {
++            pixels.release().log_err();
++        }
+         let callback = self.callbacks.borrow_mut().visibility_change.take();
+         if let Some(mut fun) = callback {
+             fun(visibility);
+@@ -1729,6 +1806,22 @@
+         self.0.state.borrow().fullscreen
+     }
+ 
++    fn schedule_frame(&self) {
++        self.0.frame_demand.wake();
++    }
++
++    fn can_draw_now(&self) -> Option<bool> {
++        let state = self.0.state.borrow();
++        let is_busy = state.pixels.iter().any(Offloaded::is_busy)
++            || state.renderer.iter().any(Offloaded::is_busy);
++        (!state.force_render_after_recovery).then_some(!is_busy)
++    }
++
++    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
++        let demand = self.0.frame_demand.clone();
++        Some(Rc::new(move || demand.wake()))
++    }
++
+     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+         self.0.callbacks.borrow_mut().request_frame = Some(callback);
+     }
+@@ -1783,15 +1876,22 @@
+     fn draw(&self, scene: &Scene) {
+         let mut inner = self.0.state.borrow_mut();
+         let inner = &mut *inner;
++        if let Some(pixels) = &mut inner.pixels
++            && let Some(painter) = gpui::embed::painter(inner.handle.window_id())
++        {
++            let draw = |pixels: &mut super::pixels::X11Pixels| {
++                pixels.draw(painter).log_err();
++            };
++            // SAFETY: the connection is `Sync`.
++            unsafe { pixels.run(draw) };
++        }
+         let Some(renderer) = &mut inner.renderer else {
+             return;
+         };
+ 
+         if renderer.device_lost() {
+             let raw_window = RawWindow {
+-                connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+-                    &*self.0.xcb,
+-                ) as *mut _,
++                connection: raw_gpu_connection(),
+                 screen_id: inner.x_screen_index,
+                 window_id: self.0.x_window,
+                 visual_id: inner.visual_id,
+@@ -1807,22 +1907,24 @@
+             return;
+         }
+ 
+-        renderer.draw(scene);
+-
+-        if renderer.needs_redraw() {
+-            inner.force_render_after_recovery = true;
++        let drawn = inner.drawn.clone();
++        drawn.lock().0.copy_sprites_and_quads(scene);
++        let draw = move |renderer: &mut WgpuRenderer| {
++            let drawn = &mut *drawn.lock();
++            drawn.1 = !renderer.draw(&drawn.0) | renderer.needs_redraw();
++        };
++        // SAFETY: drawing does not use the `GpuContext`, and the scene only has plain data.
++        unsafe { renderer.run(draw) };
++        if self.0.frame_demand.parked.get() {
++            self.0.frame_demand.wake();
+         }
+     }
+ 
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+-        self.0
+-            .state
+-            .borrow()
+-            .renderer
+-            .as_ref()
+-            .expect("the renderer is only taken when the window is dropped")
+-            .sprite_atlas()
+-            .clone()
++        match &self.0.state.borrow().renderer {
++            Some(renderer) => renderer.sprite_atlas().clone(),
++            None => Arc::new(gpui::HeadlessAtlas::default()),
++        }
+     }
+ 
+     fn show_window_menu(&self, position: Point<Pixels>) {
+--- a/crates/gpui_linux/src/linux/x11.rs
++++ b/crates/gpui_linux/src/linux/x11.rs
+@@ -2,6 +2,7 @@
+ mod clipboard;
+ mod display;
+ mod event;
++mod pixels;
+ mod window;
+ mod xim_handler;
+ 
+--- a/crates/gpui_linux/src/linux.rs
++++ b/crates/gpui_linux/src/linux.rs
+@@ -2,12 +2,14 @@
+ mod display_connection;
+ mod headless;
+ mod keyboard;
++#[cfg(any(feature = "wayland", feature = "x11"))]
++mod offloaded;
+ mod platform;
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+ mod power;
+-mod system_notifications;
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+-mod text_system;
++mod shared_pixels;
++mod system_notifications;
+ #[cfg(feature = "wayland")]
+ mod wayland;
+ #[cfg(feature = "x11")]
+@@ -21,8 +23,6 @@
+ pub(crate) use headless::*;
+ pub(crate) use keyboard::*;
+ pub(crate) use platform::*;
+-#[cfg(any(feature = "wayland", feature = "x11"))]
+-pub(crate) use text_system::*;
+ #[cfg(feature = "wayland")]
+ pub(crate) use wayland::*;
+ #[cfg(feature = "x11")]
+--- a/crates/gpui_macos/src/display.rs
++++ b/crates/gpui_macos/src/display.rs
+@@ -118,7 +118,7 @@
+             let bounds = CGDisplayBounds(self.0);
+ 
+             Bounds {
+-                origin: Default::default(),
++                origin: point(px(bounds.origin.x as f32), px(bounds.origin.y as f32)),
+                 size: size(px(bounds.size.width as f32), px(bounds.size.height as f32)),
+             }
+         }
+@@ -138,10 +138,11 @@
+                 + screen_frame.origin.y;
+ 
+         Bounds {
+-            origin: point(
+-                px(visible_frame.origin.x as f32 - screen_frame.origin.x as f32),
+-                px(origin_y as f32),
+-            ),
++            origin: self.bounds().origin
++                + point(
++                    px(visible_frame.origin.x as f32 - screen_frame.origin.x as f32),
++                    px(origin_y as f32),
++                ),
+             size: size(
+                 px(visible_frame.size.width as f32),
+                 px(visible_frame.size.height as f32),
+--- a/crates/gpui_macos/src/drawing.rs
++++ b/crates/gpui_macos/src/drawing.rs
+@@ -0,0 +1,98 @@
++//! Metal, or a layer that the host fills.
++
++use crate::renderer;
++use anyhow::Result;
++use gpui::{DevicePixels, HeadlessAtlas, PlatformAtlas, Scene, Size};
++use objc2::{rc::Retained, runtime::ProtocolObject};
++use objc2_quartz_core::{CALayer, CAMetalDrawable, CAMetalLayer};
++use std::sync::Arc;
++
++pub(crate) enum Drawing {
++    Metal(renderer::Renderer),
++    Host(Retained<CALayer>),
++}
++
++impl Drawing {
++    pub fn new(context: renderer::Context, use_display_p3: bool) -> Result<Self> {
++        if !gpui::embed::paints_pixels() {
++            return renderer::new_renderer(context, false, use_display_p3).map(Self::Metal);
++        }
++        let layer = CALayer::new();
++        layer.setMasksToBounds(true);
++        layer.setNeedsDisplayOnBoundsChange(true);
++        Ok(Self::Host(layer))
++    }
++
++    fn metal(&self) -> Option<&renderer::Renderer> {
++        match self {
++            Self::Metal(renderer) => Some(renderer),
++            Self::Host(_) => None,
++        }
++    }
++
++    fn with_metal(&mut self, f: impl FnOnce(&mut renderer::Renderer)) {
++        if let Self::Metal(renderer) = self {
++            f(renderer);
++        }
++    }
++
++    pub fn is_host(&self) -> bool {
++        self.metal().is_none()
++    }
++
++    pub fn layer(&self) -> Option<&CAMetalLayer> {
++        self.metal()?.layer()
++    }
++
++    pub fn layer_ptr(&self) -> *mut CALayer {
++        match self {
++            Self::Metal(renderer) => renderer.layer_ptr().cast(),
++            Self::Host(layer) => Retained::as_ptr(layer).cast_mut(),
++        }
++    }
++
++    pub fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
++        match self {
++            Self::Metal(renderer) => renderer.sprite_atlas().clone(),
++            Self::Host(_) => Arc::new(HeadlessAtlas::default()),
++        }
++    }
++
++    pub fn is_display_link_attached(&self) -> bool {
++        self.metal().is_some_and(|it| it.is_display_link_attached())
++    }
++
++    pub fn presents_with_transaction(&self) -> bool {
++        self.metal().is_some_and(|it| it.presents_with_transaction())
++    }
++
++    pub fn set_display_link_attached(&mut self, attached: bool) {
++        self.with_metal(|it| it.set_display_link_attached(attached));
++    }
++
++    pub fn set_presents_with_transaction(&mut self, on: bool) {
++        self.with_metal(|it| it.set_presents_with_transaction(on));
++    }
++
++    pub fn set_frame_drawable(
++        &mut self,
++        drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
++    ) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
++        match self {
++            Self::Metal(renderer) => renderer.set_frame_drawable(drawable),
++            Self::Host(_) => None,
++        }
++    }
++
++    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
++        self.with_metal(|it| it.update_drawable_size(size));
++    }
++
++    pub fn update_transparency(&mut self, transparent: bool) {
++        self.with_metal(|it| it.update_transparency(transparent));
++    }
++
++    pub fn draw(&mut self, scene: &Scene) {
++        self.with_metal(|it| it.draw(scene));
++    }
++}
+--- a/crates/gpui_macos/src/events.rs
++++ b/crates/gpui_macos/src/events.rs
+@@ -240,7 +240,7 @@
+                                 window_height - px(native_event.locationInWindow().y as f32),
+                             ),
+                             modifiers: read_modifiers(native_event),
+-                            click_count: 1,
++                            click_count: 0,
+                             first_mouse: false,
+                         })
+                     }),
+--- a/crates/gpui_macos/src/gpui_macos.rs
++++ b/crates/gpui_macos/src/gpui_macos.rs
+@@ -6,6 +6,7 @@
+ 
+ mod display;
+ mod display_link;
++mod drawing;
+ mod events;
+ mod keyboard;
+ mod pasteboard;
+--- a/crates/gpui_macos/src/platform.rs
++++ b/crates/gpui_macos/src/platform.rs
+@@ -6,7 +6,7 @@
+ };
+ use anyhow::{Context as _, anyhow};
+ use block2::RcBlock;
+-use core_foundation::{runloop::CFRunLoopRun, string::CFStringRef};
++use core_foundation::string::CFStringRef;
+ use ctor::ctor;
+ use dispatch2::DispatchQueue;
+ use futures::channel::oneshot;
+@@ -221,14 +221,7 @@
+         let text_system = Arc::new(gpui_apple::AppleTextSystem::new());
+ 
+         #[cfg(not(feature = "font-kit"))]
+-        let text_system = {
+-            if !headless {
+-                log::warn!(
+-                    "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
+-                );
+-            }
+-            Arc::new(gpui::NoopTextSystem::new())
+-        };
++        let text_system = Arc::new(gpui::NoopTextSystem::new());
+ 
+         let keyboard_layout = MacKeyboardLayout::new();
+         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
+@@ -529,7 +522,7 @@
+         if state.headless {
+             drop(state);
+             on_finish_launching();
+-            unsafe { CFRunLoopRun() };
++            return;
+         } else {
+             state.finish_launching = Some(on_finish_launching);
+             drop(state);
+@@ -563,16 +556,7 @@
+             autoreleasepool(|_| {
+                 let _: () = msg_send![app, run];
+             });
+-
+-            mac_platform_ivar(&*app)
+-                .load_ptr::<*mut c_void>(&*app)
+-                .write(ptr::null_mut());
+-            let app_delegate: *mut AnyObject = msg_send![app, delegate];
+-            mac_platform_ivar(&*app_delegate)
+-                .load_ptr::<*mut c_void>(&*app_delegate)
+-                .write(ptr::null_mut());
+         }
+-        self.0.lock().application_created = false;
+     }
+ 
+     fn quit(&self) {
+@@ -820,16 +804,19 @@
+             )));
+         }
+ 
+-        let Some(bundle_id) = NSBundle::mainBundle().bundleIdentifier() else {
++        #[link(name = "CoreServices", kind = "framework")]
++        unsafe extern "C" {
++            fn LSRegisterURL(url: &NSURL, update: u8) -> i32;
++        }
++
++        let bundle = NSBundle::mainBundle();
++        if bundle.bundleIdentifier().is_none() {
+             return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
+-        };
++        }
+ 
+         let workspace = NSWorkspace::sharedWorkspace();
+-        let Some(app) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id) else {
+-            return Task::ready(Err(anyhow!(
+-                "Cannot register URL scheme until app is installed"
+-            )));
+-        };
++        let app = bundle.bundleURL();
++        unsafe { LSRegisterURL(&app, 0) };
+ 
+         let scheme = NSString::from_str(scheme);
+ 
+@@ -1366,6 +1353,23 @@
+         if let Some(callback) = callback {
+             callback();
+         }
++
++        // `stop:` takes effect after an event.
++        let _: () = msg_send![app, stop: ptr::null_mut::<AnyObject>()];
++        let event = objc2_app_kit::NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
++            objc2_app_kit::NSEventType::ApplicationDefined,
++            objc2_foundation::NSPoint::ZERO,
++            objc2_app_kit::NSEventModifierFlags::empty(),
++            0.,
++            0,
++            None,
++            0,
++            0,
++            0,
++        );
++        if let Some(event) = event {
++            let _: () = msg_send![app, postEvent: &*event, atStart: Bool::YES];
++        }
+     }
+ }
+ 
+--- a/crates/gpui_macos/src/window.rs
++++ b/crates/gpui_macos/src/window.rs
+@@ -651,6 +651,47 @@
+     DisplayLink(Option<WindowFrameSource>),
+ }
+ 
++#[derive(Default)]
++struct FrameDemand {
++    is_wanted: Cell<bool>,
++    is_awake: Cell<bool>,
++    idle_ticks: Cell<u32>,
++    last_frame: Cell<Option<std::time::Instant>>,
++}
++
++fn wake_host_frames(
++    demand: &FrameDemand,
++    window_state: &Weak<Mutex<MacWindowState>>,
++    executor: &ForegroundExecutor,
++) {
++    demand.is_wanted.set(true);
++    if demand.is_awake.replace(true) {
++        return;
++    }
++    let window_state = window_state.clone();
++    let restart = async move {
++        if let Some(window_state) = window_state.upgrade() {
++            let mut lock = window_state.lock();
++            if lock.visibility_callback.is_none() {
++                return;
++            }
++            let demand = lock.is_frame_wanted.clone();
++            let needs_pacing = demand
++                .last_frame
++                .get()
++                .is_some_and(|it| it.elapsed() < Duration::from_millis(30));
++            if needs_pacing || !lock.needs_frames() {
++                return lock.start_display_link(&window_state);
++            }
++            demand.is_awake.set(false);
++            let view = lock.native_view.as_ptr();
++            drop(lock);
++            step(view.cast());
++        }
++    };
++    executor.spawn(restart).detach();
++}
++
+ struct MacWindowState {
+     handle: AnyWindowHandle,
+     foreground_executor: ForegroundExecutor,
+@@ -662,7 +703,13 @@
+     cursor_style: CursorStyle,
+     cursor_visible: Arc<AtomicBool>,
+     frame_source: FrameSource,
+-    renderer: renderer::Renderer,
++    renderer: crate::drawing::Drawing,
++    /// For a host's layer, whose display link stops when this is not being set.
++    is_frame_wanted: Rc<FrameDemand>,
++    last_drawn: Option<std::time::Instant>,
++    was_resized: bool,
++    /// Since it was ordered in.
++    was_seen: bool,
+     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
+     activate_callback: Option<Box<dyn FnMut(bool)>>,
+@@ -875,13 +922,20 @@
+ 
+     /// `window_state` is the handle this state lives in; a Metal link holds it
+     /// weakly to deliver frames.
+-    fn start_display_link(&mut self, window_state: &Rc<Mutex<MacWindowState>>) {
+-        self.stop_display_link();
+-        if !self
+-            .native_window()
++    /// AppKit takes its time to say that a window is seen, and one without opacity is about to be.
++    fn needs_frames(&self) -> bool {
++        let window = self.native_window();
++        window
+             .occlusionState()
+             .contains(NSWindowOcclusionState::Visible)
+-        {
++            || window.isVisible() && (!self.was_seen || window.alphaValue() == 0.)
++    }
++
++    fn start_display_link(&mut self, window_state: &Rc<Mutex<MacWindowState>>) {
++        self.stop_display_link();
++        self.is_frame_wanted.idle_ticks.set(0);
++        self.is_frame_wanted.is_awake.set(self.needs_frames());
++        if !self.needs_frames() {
+             return;
+         }
+         match &mut self.frame_source {
+@@ -906,13 +960,15 @@
+                 let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
+                 let Some(display_id) = display_id_for_screen(screen) else {
+                     // AppKit can temporarily report no screen while displays are being reconfigured.
++                    self.is_frame_wanted.is_awake.set(false);
+                     return;
+                 };
+                 let data = self.native_view.as_ptr() as *mut c_void;
+-                frame_source
++                let started = frame_source
+                     .get_or_insert_with(|| WindowFrameSource::new(data, step))
+                     .start(display_id)
+                     .log_err();
++                self.is_frame_wanted.is_awake.set(started.is_some());
+             }
+         }
+     }
+@@ -978,7 +1034,8 @@
+ 
+     fn bounds(&self) -> Bounds<Pixels> {
+         let mut window_frame = self.native_window().frame();
+-        let Some(screen) = self.native_window().screen() else {
++        let primary_screen = NSScreen::screens(objc2::MainThreadOnly::mtm(self.native_window())).firstObject();
++        let Some(screen) = primary_screen else {
+             return Bounds::new(point(px(0.), px(0.)), gpui::DEFAULT_WINDOW_SIZE);
+         };
+         let screen_frame = screen.frame();
+@@ -1056,7 +1113,7 @@
+         marker: MainThreadMarker,
+     ) -> Result<Self> {
+         autoreleasepool(|_| unsafe {
+-            let renderer = renderer::new_renderer(renderer_context, false, use_display_p3)?;
++            let renderer = crate::drawing::Drawing::new(renderer_context, use_display_p3)?;
+             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
+             if allows_automatic_window_tabbing {
+                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: Bool::YES];
+@@ -1157,7 +1214,8 @@
+             let native_view: *mut AnyObject = msg_send![native_view, initWithFrame: content_bounds];
+             assert!(!native_view.is_null());
+ 
+-            let metal_frames = MetalFrameSource::is_available().then(Rc::<MetalFrames>::default);
++            let metal_frames = (!renderer.is_host() && MetalFrameSource::is_available())
++                .then(Rc::<MetalFrames>::default);
+             let state = Rc::new(Mutex::new(MacWindowState {
+                 handle,
+                 foreground_executor,
+@@ -1173,6 +1231,10 @@
+                     None => FrameSource::DisplayLink(None),
+                 },
+                 renderer,
++                is_frame_wanted: Rc::default(),
++                last_drawn: None,
++                was_resized: false,
++                was_seen: false,
+                 request_frame_callback: None,
+                 event_callback: None,
+                 activate_callback: None,
+@@ -1459,7 +1521,6 @@
+         // the adapter here so the native view, its `CAMetalLayer` and the
+         // renderer's command queue are actually released with the window.
+         drop(this.accesskit_adapter.take());
+-        this.renderer.destroy();
+         let window = this.native_window;
+         let sheet_parent = this.sheet_parent.take();
+         match &mut this.frame_source {
+@@ -2201,7 +2262,20 @@
+ 
+     fn draw(&self, scene: &gpui::Scene) {
+         let mut this = self.0.lock();
+-        this.renderer.draw(scene);
++        if !this.renderer.is_host() {
++            return this.renderer.draw(scene);
++        }
++        this.last_drawn = Some(std::time::Instant::now());
++        let (window, layer) = (this.handle.window_id(), this.renderer.layer_ptr());
++        drop(this);
++        gpui::embed::present(window, layer.cast());
++    }
++
++    fn can_draw_now(&self) -> Option<bool> {
++        const MIN_INTERVAL: Duration = Duration::from_millis(3);
++        let this = self.0.lock();
++        let is_due = this.last_drawn.is_none_or(|it| it.elapsed() >= MIN_INTERVAL);
++        (this.renderer.is_host() && is_due && !this.was_resized).then_some(true)
+     }
+ 
+     // GPUI calls this without waking the frame waker when a window only needs
+@@ -2209,10 +2283,21 @@
+     fn schedule_frame(&self) {
+         if let Some(metal_frames) = &self.2 {
+             metal_frames.wake();
++        } else if let Some(wake) = self.frame_waker() {
++            wake();
+         }
+     }
+ 
+     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
++        let this = self.0.lock();
++        if this.renderer.is_host() {
++            let (demand, state) = (this.is_frame_wanted.clone(), Rc::downgrade(&self.0));
++            let executor = this.foreground_executor.clone();
++            return Some(Rc::new(move || {
++                wake_host_frames(&demand, &state, &executor)
++            }));
++        }
++        drop(this);
+         let metal_frames = Rc::downgrade(self.2.as_ref()?);
+         Some(Rc::new(move || {
+             if let Some(metal_frames) = metal_frames.upgrade() {
+@@ -2222,7 +2307,7 @@
+     }
+ 
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+-        self.0.lock().renderer.sprite_atlas().clone()
++        self.0.lock().renderer.sprite_atlas()
+     }
+ 
+     fn gpu_specs(&self) -> Option<gpui::GpuSpecs> {
+@@ -2827,6 +2912,32 @@
+         return Bool::NO;
+     };
+ 
++    let raw_key = match &event {
++        PlatformInput::KeyDown(event)
++            if key_equivalent || lock.last_key_equivalent.as_ref() != Some(event) =>
++        {
++            Some((true, event.keystroke.modifiers))
++        }
++        PlatformInput::KeyUp(event) => Some((false, event.keystroke.modifiers)),
++        _ => None,
++    };
++    if let Some((down, mut modifiers)) = raw_key {
++        let native = unsafe { &*native_event.cast::<objc2_app_kit::NSEvent>() };
++        modifiers.shift = native.modifierFlags().0 & (1 << 17) != 0;
++        let typed = native.characters().map(|it| it.to_string());
++        gpui::embed::raw_key(gpui::embed::RawKey {
++            down,
++            scan_code: native.keyCode().into(),
++            // What it types, or `u32::MAX` for a dead key.
++            symbol: match typed.and_then(|it| it.chars().next_back()) {
++                _ if modifiers.control || modifiers.platform => 0,
++                Some(typed) => typed.into(),
++                None => u32::MAX,
++            },
++            modifiers,
++        });
++    }
++
+     let run_callback = |event: PlatformInput| -> Bool {
+         let mut callback = window_state.as_ref().lock().event_callback.take();
+         let handled: Bool = if let Some(callback) = callback.as_mut() {
+@@ -2980,6 +3091,35 @@
+         NSEventType::LeftMouseUp => {
+             lock.last_left_mouse_down_event = None;
+         }
++        NSEventType::FlagsChanged => {
++            let key_code: u16 = unsafe { msg_send![native_event, keyCode] };
++            let flags = unsafe { &*native_event.cast::<objc2_app_kit::NSEvent>() }.modifierFlags();
++            // The `NX_DEVICE*KEYMASK` of the key, or its modifier flag.
++            let mask = match key_code {
++                0x36 => 0x10,
++                0x37 => 0x08,
++                0x38 => 0x02,
++                0x39 => 1 << 16,
++                0x3A => 0x20,
++                0x3B => 0x01,
++                0x3C => 0x04,
++                0x3D => 0x40,
++                0x3E => 0x2000,
++                _ => 1 << 23,
++            };
++            gpui::embed::raw_key(gpui::embed::RawKey {
++                down: flags.0 & mask != 0,
++                scan_code: key_code.into(),
++                symbol: 0,
++                modifiers: Modifiers {
++                    shift: flags.0 & (1 << 17) != 0,
++                    control: flags.0 & (1 << 18) != 0,
++                    alt: flags.0 & (1 << 19) != 0,
++                    platform: flags.0 & (1 << 20) != 0,
++                    function: flags.0 & (1 << 23) != 0,
++                },
++            });
++        }
+         _ => {}
+     }
+     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
+@@ -3006,7 +3146,7 @@
+                     modifiers: Modifiers { control: true, .. },
+                     ..
+                 },
+-            ) => {
++            ) if !gpui::embed::has_host() => {
+                 // On mac, a ctrl-left click should be handled as a right click.
+                 *event = MouseDownEvent {
+                     button: MouseButton::Right,
+@@ -3042,7 +3182,7 @@
+                     modifiers: Modifiers { control: true, .. },
+                     ..
+                 },
+-            ) => {
++            ) if !gpui::embed::has_host() => {
+                 *event = MouseUpEvent {
+                     button: MouseButton::Right,
+                     modifiers: Modifiers {
+@@ -3077,7 +3217,7 @@
+                 // Synthetic drag is used for selecting long buffer contents while buffer is being scrolled.
+                 // External file drag and drop is able to emit its own synthetic mouse events which will conflict
+                 // with these ones.
+-                if !lock.external_files_dragged {
++                if !lock.external_files_dragged && !gpui::embed::has_host() {
+                     lock.synthetic_drag_counter += 1;
+                     let executor = lock.foreground_executor.clone();
+                     executor
+@@ -3125,11 +3265,7 @@
+ }
+ 
+ fn visibility(state: &MacWindowState) -> WindowVisibility {
+-    let is_visible = state
+-        .native_window()
+-        .occlusionState()
+-        .contains(NSWindowOcclusionState::Visible);
+-    if is_visible {
++    if state.needs_frames() {
+         WindowVisibility::Visible
+     } else {
+         WindowVisibility::Hidden
+@@ -3171,11 +3307,8 @@
+ extern "C" fn window_did_change_occlusion_state(this: &AnyObject, _: Sel, _: *mut AnyObject) {
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.lock();
+-    if lock
+-        .native_window()
+-        .occlusionState()
+-        .contains(NSWindowOcclusionState::Visible)
+-    {
++    lock.was_seen = lock.native_window().isVisible();
++    if lock.needs_frames() {
+         lock.move_traffic_light();
+         lock.start_display_link(&window_state);
+     } else {
+@@ -3190,6 +3323,8 @@
+ extern "C" fn window_did_resize(this: &AnyObject, _: Sel, _: *mut AnyObject) {
+     let window_state = unsafe { get_window_state(this) };
+     window_state.as_ref().lock().move_traffic_light();
++    let window = window_state.lock().handle.window_id();
++    gpui::embed::before_resized_frame(window);
+ }
+ 
+ extern "C" fn window_will_enter_fullscreen(this: &AnyObject, _: Sel, _: *mut AnyObject) {
+@@ -3368,7 +3503,7 @@
+         let window_state = unsafe { get_window_state(this) };
+         let mut lock = window_state.lock();
+ 
+-        if lock.activated_least_once {
++        if lock.activated_least_once && !lock.renderer.is_host() {
+             if let Some(mut callback) = lock.request_frame_callback.take() {
+                 lock.renderer.set_presents_with_transaction(true);
+                 lock.stop_display_link();
+@@ -3481,6 +3616,7 @@
+     let scale_factor = lock.scale_factor();
+     let drawable_size = new_size.to_device_pixels(scale_factor);
+     lock.renderer.update_drawable_size(drawable_size);
++    lock.was_resized = true;
+ 
+     if let Some(mut callback) = lock.resize_callback.take() {
+         let content_size = lock.content_size();
+@@ -3495,6 +3631,11 @@
+     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.lock();
++    lock.was_resized = false;
++    if lock.renderer.is_host() {
++        drop(lock);
++        return request_host_frame(&window_state, true);
++    }
+     if let Some(mut callback) = lock.request_frame_callback.take() {
+         lock.renderer.set_presents_with_transaction(true);
+         lock.stop_display_link();
+@@ -3512,11 +3653,44 @@
+     }
+ }
+ 
++fn request_host_frame(window_state: &Rc<Mutex<MacWindowState>>, require_presentation: bool) {
++    let callback = window_state.lock().request_frame_callback.take();
++    if let Some(mut callback) = callback {
++        callback(RequestFrameOptions {
++            require_presentation,
++            ..Default::default()
++        });
++        window_state.lock().request_frame_callback = Some(callback);
++    }
++}
++
+ extern "C" fn step(view: *mut c_void) {
++    const IDLE_TICKS: u32 = 4;
+     let view = view as *mut AnyObject;
+     let window_state = unsafe { get_window_state(&*view) };
+     let mut lock = window_state.lock();
+ 
++    if lock.renderer.is_host() {
++        let demand = lock.is_frame_wanted.clone();
++        lock.was_resized = false;
++        if !demand.is_wanted.replace(false) {
++            if demand.idle_ticks.replace(demand.idle_ticks.get() + 1) >= IDLE_TICKS {
++                lock.stop_display_link();
++                demand.is_awake.set(false);
++            }
++            return;
++        }
++        demand.idle_ticks.set(0);
++        demand.last_frame.set(Some(std::time::Instant::now()));
++        let window = lock.handle.window_id();
++        drop(lock);
++        if gpui::embed::has_time_to_paint() {
++            let frame = move || request_host_frame(&window_state, false);
++            return gpui::embed::defer_frame(window, Box::new(frame));
++        }
++        return request_host_frame(&window_state, false);
++    }
++
+     if let Some(mut callback) = lock.request_frame_callback.take() {
+         let signal = match &lock.frame_source {
+             FrameSource::DisplayLink(Some(frame_source)) => frame_source.take_signal(),
+@@ -3754,9 +3928,16 @@
+     }
+ }
+ 
+-extern "C" fn accepts_first_mouse(this: &AnyObject, _: Sel, _: *mut AnyObject) -> Bool {
++extern "C" fn accepts_first_mouse(this: &AnyObject, _: Sel, event: *mut AnyObject) -> Bool {
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.as_ref().lock();
++    if let Some(event) = unsafe { event.cast::<objc2_app_kit::NSEvent>().as_ref() } {
++        let at = event.locationInWindow();
++        let at = point(px(at.x as f32), lock.content_size().height - px(at.y as f32));
++        if !gpui::embed::accepts_first_mouse(lock.handle.window_id(), at) {
++            return Bool::NO;
++        }
++    }
+     lock.first_mouse = true;
+     Bool::YES
+ }
+--- a/crates/gpui_wgpu/Cargo.toml
++++ b/crates/gpui_wgpu/Cargo.toml
+@@ -23,7 +23,6 @@
+ anyhow.workspace = true
+ bytemuck.workspace = true
+ collections.workspace = true
+-cosmic-text = "0.19.0"
+ etagere.workspace = true
+ itertools.workspace = true
+ image = { workspace = true, optional = true }
+@@ -32,9 +31,6 @@
+ profiling.workspace = true
+ raw-window-handle.workspace = true
+ smallvec.workspace = true
+-swash.workspace = true
+-unicode-bidi.workspace = true
+-unicode-segmentation.workspace = true
+ gpui_util.workspace = true
+ 
+ # Optional: only needed on platforms with multiple font sources (e.g. Linux)
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -1,9 +1,7 @@
+-mod cosmic_text_system;
+ mod wgpu_atlas;
+ mod wgpu_context;
+ mod wgpu_renderer;
+ 
+-pub use cosmic_text_system::*;
+ pub use wgpu;
+ pub use wgpu_atlas::*;
+ pub use wgpu_context::*;
+--- a/crates/gpui_wgpu/src/shaders.wgsl
++++ b/crates/gpui_wgpu/src/shaders.wgsl
+@@ -587,10 +587,8 @@
+     out.border_color = hsla_to_rgba(quad.border_color);
+     let simple = !is_shaped(quad) && quad.background.tag == 0u;
+     out.quad_id = instance_id | select(0u, SIMPLE_PRIMITIVE_FLAG, simple);
+-    let background = prepare_background(quad.background);
+-    out.background_color0 = background.color0;
+-    out.background_color1 = background.color1;
+-    out.background_tag = background.tag;
++    // The host's quads have solid colors and borders. The rest takes long to compile.
++    out.background_color0 = hsla_to_rgba(quad.background.solid);
+     return out;
+ }
+ 
+@@ -601,9 +599,7 @@
+     }
+ 
+     let quad = load_quad(input.quad_id);
+-    let prepared = PreparedBackground(input.background_color0, input.background_color1,
+-        input.background_tag);
+-    let background = background_color(prepared, quad.background, quad.bounds, input.position.xy);
++    let background = input.background_color0;
+     let unrounded = !has_rounded_corners(quad.corner_radii);
+ 
+     let size = quad.bounds.size;
+@@ -708,7 +704,7 @@
+         var border_color = input.border_color;
+ 
+         // Dashed border logic when border_style == 1
+-        if (quad.border_style == 1) {
++        if (false) {
+             // Position along the perimeter in "dash space", where each dash
+             // period has length 1
+             var t = 0.0;
+--- a/crates/gpui_wgpu/src/wgpu_context.rs
++++ b/crates/gpui_wgpu/src/wgpu_context.rs
+@@ -128,6 +128,18 @@
+     pub device_id: u32,
+ }
+ 
++struct Prewarmed {
++    instance: wgpu::Instance,
++    adapters: Vec<wgpu::Adapter>,
++    adapter: wgpu::Adapter,
++    device: wgpu::Device,
++    queue: wgpu::Queue,
++    format: TextureFormat,
++}
++
++static PREWARMING: parking_lot::Mutex<Option<std::thread::JoinHandle<Option<Prewarmed>>>> =
++    parking_lot::Mutex::new(None);
++
+ impl WgpuContext {
+     #[cfg(not(target_family = "wasm"))]
+     pub fn new(
+@@ -437,19 +449,7 @@
+     async fn create_device(
+         adapter: &wgpu::Adapter,
+     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
+-        let dual_source_blending = adapter
+-            .features()
+-            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+-
+-        let mut required_features = wgpu::Features::empty();
+-        if dual_source_blending {
+-            required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
+-        } else {
+-            log::warn!(
+-                "Dual-source blending not available on this GPU. \
+-                Subpixel text antialiasing will be disabled."
+-            );
+-        }
++        let (dual_source_blending, required_features) = (false, wgpu::Features::empty());
+ 
+         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
+         #[cfg(target_family = "wasm")]
+@@ -499,6 +499,73 @@
+         })
+     }
+ 
++    /// Starts creating the device that the first window is likely to get, on another thread.
++    pub fn prewarm() {
++        let thread = std::thread::Builder::new().name("GPU".into()).spawn(|| {
++            // OpenGL takes as long again to load, and needs the display.
++            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
++                backends: wgpu::Backends::VULKAN,
++                flags: wgpu::InstanceFlags::default(),
++                backend_options: wgpu::BackendOptions::default(),
++                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
++                display: None,
++            });
++            let mut adapters = gpui::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
++            Self::sort_adapters(&mut adapters, Self::device_id_filter(), None);
++            let has_gpu = ["/dev/dri", "/dev/nvidiactl", "/dev/dxg"]
++                .iter()
++                .any(|path| std::path::Path::new(path).exists());
++            let adapter = adapters.first()?.clone();
++            if has_gpu && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
++                return None;
++            }
++            let (device, queue, _, format) = gpui::block_on(Self::create_device(&adapter)).ok()?;
++            crate::wgpu_renderer::prewarm_pipelines(&device);
++            Some(Prewarmed {
++                instance,
++                adapters,
++                adapter,
++                device,
++                queue,
++                format,
++            })
++        });
++        *PREWARMING.lock() = thread.ok();
++    }
++
++    /// With the surface, which is configured.
++    pub(crate) fn from_prewarmed(
++        target: wgpu::SurfaceTargetUnsafe,
++        config: &WgpuSurfaceConfig,
++        compositor_gpu: Option<&CompositorGpuHint>,
++    ) -> Option<(Self, wgpu::Surface<'static>)> {
++        let thread = PREWARMING.lock().take()?;
++        let mut warm = thread.join().ok()??;
++        Self::sort_adapters(&mut warm.adapters, Self::device_id_filter(), compositor_gpu);
++        if warm.adapters.first()? != &warm.adapter {
++            return None;
++        }
++        // SAFETY: as in `WgpuRenderer::new`, the only caller.
++        let surface = unsafe { warm.instance.create_surface_unsafe(target) }.ok()?;
++        let (surface_config, ..) =
++            WgpuRenderer::surface_configuration(&surface, &warm.adapter, &warm.device, config)
++                .ok()?;
++        let error_scope = warm.device.push_error_scope(wgpu::ErrorFilter::Validation);
++        surface.configure(&warm.device, &surface_config);
++        if gpui::block_on(error_scope.pop()).is_some() {
++            return None;
++        }
++        let context = Self::from_native_adapter_and_device(
++            warm.instance,
++            warm.adapter,
++            warm.device,
++            warm.queue,
++            false,
++            warm.format,
++        );
++        Some((context, surface))
++    }
++
+     pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
+         let caps = surface.get_capabilities(&self.adapter);
+         if caps.formats.is_empty() {
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -119,6 +119,7 @@
+     pub preferred_present_mode: Option<wgpu::PresentMode>,
+ }
+ 
++#[derive(Clone)]
+ struct WgpuPipelines {
+     quads: wgpu::RenderPipeline,
+     opaque_quads: wgpu::RenderPipeline,
+@@ -133,6 +134,33 @@
+     premultiplied_alpha: bool,
+ }
+ 
++struct PrewarmedPipelines {
++    device: wgpu::Device,
++    layouts: WgpuBindGroupLayouts,
++    pipelines: WgpuPipelines,
++}
++
++static PREWARMED_PIPELINES: std::sync::OnceLock<PrewarmedPipelines> = std::sync::OnceLock::new();
++
++/// For the usual surface: opaque BGRA.
++pub(crate) fn prewarm_pipelines(device: &wgpu::Device) {
++    PREWARMED_PIPELINES.get_or_init(|| {
++        let layouts = WgpuRendererCore::create_bind_group_layouts(device, false);
++        PrewarmedPipelines {
++            device: device.clone(),
++            pipelines: WgpuRendererCore::create_pipelines(
++                device,
++                &layouts,
++                wgpu::TextureFormat::Bgra8Unorm,
++                wgpu::CompositeAlphaMode::Opaque,
++                false,
++                false,
++            ),
++            layouts,
++        }
++    });
++}
++
+ /// One frame allocation of instance data, ready to bind.
+ struct InstanceBinding {
+     bind_group: wgpu::BindGroup,
+@@ -167,6 +195,7 @@
+     polychrome_sprites: InstanceBinding,
+ }
+ 
++#[derive(Clone)]
+ struct WgpuBindGroupLayouts {
+     globals: wgpu::BindGroupLayout,
+     instances: wgpu::BindGroupLayout,
+@@ -306,12 +335,39 @@
+             .window_handle()
+             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+ 
++        let (raw_display_handle, raw_window_handle) = (
++            window.display_handle().ok().map(|handle| handle.as_raw()),
++            window_handle.as_raw(),
++        );
+         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+-            // Fall back to the display handle already provided via InstanceDescriptor::display.
+-            raw_display_handle: None,
+-            raw_window_handle: window_handle.as_raw(),
++            raw_display_handle,
++            raw_window_handle,
+         };
+ 
++        if gpu_context.borrow().is_none()
++            && let Some((context, surface)) = WgpuContext::from_prewarmed(
++                wgpu::SurfaceTargetUnsafe::RawHandle {
++                    raw_display_handle,
++                    raw_window_handle,
++                },
++                &config,
++                compositor_gpu.as_ref(),
++            )
++        {
++            let mut ctx_ref = gpu_context.borrow_mut();
++            let context = ctx_ref.insert(context);
++            let atlas = Arc::new(WgpuAtlas::from_context(context));
++            return Self::new_internal(
++                Some(Rc::clone(&gpu_context)),
++                context,
++                surface,
++                config,
++                true,
++                compositor_gpu,
++                atlas,
++            );
++        }
++
+         // Use the existing context's instance if available, otherwise create a new one.
+         // The surface must be created with the same instance that will be used for
+         // adapter selection, otherwise wgpu will panic.
+@@ -838,7 +894,7 @@
+             })
+         };
+ 
+-        let quads = create_pipeline(
++        let quads = || create_pipeline(
+             "quads",
+             "vs_quad",
+             "fs_quad",
+@@ -851,7 +907,7 @@
+             &shader_module,
+         );
+ 
+-        let opaque_quads = create_pipeline(
++        let opaque_quads = || create_pipeline(
+             "opaque_quads",
+             "vs_opaque_quad",
+             "fs_opaque_quad",
+@@ -868,46 +924,7 @@
+             &shader_module,
+         );
+ 
+-        let shadows = create_pipeline(
+-            "shadows",
+-            "vs_shadow",
+-            "fs_shadow",
+-            &layouts.globals,
+-            &layouts.instances,
+-            None,
+-            wgpu::PrimitiveTopology::TriangleStrip,
+-            &[Some(color_target.clone())],
+-            false,
+-            &shader_module,
+-        );
+-
+-        let path_tiles = create_pipeline(
+-            "path_tiles",
+-            "vs_path_tile",
+-            "fs_path_tile",
+-            &layouts.globals,
+-            &layouts.path_tiles,
+-            None,
+-            wgpu::PrimitiveTopology::TriangleStrip,
+-            &[Some(color_target.clone())],
+-            false,
+-            &shader_module,
+-        );
+-
+-        let underlines = create_pipeline(
+-            "underlines",
+-            "vs_underline",
+-            "fs_underline",
+-            &layouts.globals,
+-            &layouts.instances,
+-            None,
+-            wgpu::PrimitiveTopology::TriangleStrip,
+-            &[Some(color_target.clone())],
+-            false,
+-            &shader_module,
+-        );
+-
+-        let mono_sprites = create_pipeline(
++        let mono_sprites = || create_pipeline(
+             "mono_sprites",
+             "vs_mono_sprite",
+             "fs_mono_sprite",
+@@ -954,7 +971,7 @@
+             None
+         };
+ 
+-        let poly_sprites = create_pipeline(
++        let poly_sprites = || create_pipeline(
+             "poly_sprites",
+             "vs_poly_sprite",
+             "fs_poly_sprite",
+@@ -967,18 +984,24 @@
+             &shader_module,
+         );
+ 
+-        let surfaces = create_pipeline(
+-            "surfaces",
+-            "vs_surface",
+-            "fs_surface",
+-            &layouts.globals,
+-            &layouts.surfaces,
+-            None,
+-            wgpu::PrimitiveTopology::TriangleStrip,
+-            &[Some(color_target)],
+-            false,
+-            &shader_module,
+-        );
++        let [quads, opaque_quads, mono_sprites, poly_sprites] = std::thread::scope(|scope| {
++            [
++                scope.spawn(quads),
++                scope.spawn(opaque_quads),
++                scope.spawn(mono_sprites),
++                scope.spawn(poly_sprites),
++            ]
++            .map(|thread| match thread.join() {
++                Ok(pipeline) => pipeline,
++                Err(panic) => std::panic::resume_unwind(panic),
++            })
++        });
++
++        // The host only draws quads and sprites.
++        let shadows = quads.clone();
++        let path_tiles = quads.clone();
++        let underlines = quads.clone();
++        let surfaces = quads.clone();
+ 
+         WgpuPipelines {
+             quads,
+@@ -1180,15 +1203,26 @@
+         let uses_webgl_instance_data = context.uses_webgl_instance_data();
+         let dual_source_blending =
+             context.supports_dual_source_blending() && !uses_webgl_instance_data;
+-        let bind_group_layouts = Self::create_bind_group_layouts(&device, uses_webgl_instance_data);
+-        let pipelines = Self::create_pipelines(
+-            &device,
+-            &bind_group_layouts,
+-            target_format,
+-            alpha_mode,
+-            dual_source_blending,
+-            uses_webgl_instance_data,
+-        );
++        let prewarmed = PREWARMED_PIPELINES.get().filter(|prewarmed| {
++            prewarmed.device == *device
++                && target_format == wgpu::TextureFormat::Bgra8Unorm
++                && alpha_mode != wgpu::CompositeAlphaMode::PreMultiplied
++        });
++        let bind_group_layouts = match prewarmed {
++            Some(prewarmed) => prewarmed.layouts.clone(),
++            None => Self::create_bind_group_layouts(&device, uses_webgl_instance_data),
++        };
++        let pipelines = match prewarmed {
++            Some(prewarmed) => prewarmed.pipelines.clone(),
++            None => Self::create_pipelines(
++                &device,
++                &bind_group_layouts,
++                target_format,
++                alpha_mode,
++                dual_source_blending,
++                uses_webgl_instance_data,
++            ),
++        };
+         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+             label: Some("atlas_sampler"),
+             mag_filter: wgpu::FilterMode::Linear,
+@@ -1230,7 +1264,7 @@
+                 .max_buffer_size
+                 .min(device.limits().max_storage_buffer_binding_size)
+                 .min(MAX_INSTANCE_BUFFER_SIZE);
+-            let initial_capacity = (2 * 1024 * 1024).min(max_buffer_size);
++            let initial_capacity = (512 * 1024).min(max_buffer_size);
+             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                 label: Some("instance_buffer"),
+                 size: initial_capacity,
+@@ -2543,14 +2577,14 @@
+         let gamma = env::var("ZED_FONTS_GAMMA")
+             .ok()
+             .and_then(|v| v.parse().ok())
+-            .unwrap_or(1.8_f32)
++            .unwrap_or(1.0_f32)
+             .clamp(1.0, 2.2);
+         let gamma_ratios = get_gamma_correction_ratios(gamma);
+ 
+         let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
+             .ok()
+             .and_then(|v| v.parse().ok())
+-            .unwrap_or(1.0_f32)
++            .unwrap_or(0.0_f32)
+             .max(0.0);
+ 
+         let subpixel_enhanced_contrast = env::var("ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST")
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -212,9 +212,10 @@
+             device_context,
+             self.globals.global_params_buffer.as_ref().unwrap(),
+             &[GlobalParams {
+-                gamma_ratios: self.font_info.gamma_ratios,
++                // The host has corrected its glyphs.
++                gamma_ratios: [0.; 4],
+                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
+-                grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
++                grayscale_enhanced_contrast: 0.,
+                 subpixel_enhanced_contrast: self.font_info.subpixel_enhanced_contrast,
+                 is_bgr: self.font_info.is_bgr as u32,
+                 depth_scale,
+--- a/crates/gpui_windows/src/events.rs
++++ b/crates/gpui_windows/src/events.rs
+@@ -1538,6 +1538,13 @@
+ {
+     let virtual_key = VIRTUAL_KEY(wparam.loword());
+     let modifiers = current_modifiers();
++    let extended = if lparam.0 & (1 << 24) != 0 { 0xE000 } else { 0 };
++    gpui::embed::raw_key(gpui::embed::RawKey {
++        down: lparam.0 & (1 << 31) == 0,
++        scan_code: ((lparam.0 >> 16) & 0xFF) as u32 | extended,
++        symbol: virtual_key.0.into(),
++        modifiers,
++    });
+ 
+     match virtual_key {
+         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
+--- a/crates/gpui_windows/src/platform.rs
++++ b/crates/gpui_windows/src/platform.rs
+@@ -187,11 +187,7 @@
+         }
+         // A platform that can become windowed needs the real text system from the start: the app
+         // keeps the one it's created with.
+-        let text_system: Arc<dyn PlatformTextSystem> = if !headless {
+-            Arc::new(DirectWriteTextSystem::new().context("Error creating DirectWriteTextSystem")?)
+-        } else {
+-            Arc::new(gpui::NoopTextSystem::new())
+-        };
++        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(gpui::NoopTextSystem::new());
+ 
+         let (main_sender, main_receiver) = PriorityQueueReceiver::new();
+         let validation_number = if usize::BITS == 64 {
+@@ -577,23 +573,23 @@
+             self.connect_initially();
+         }
+         on_finish_launching();
++    }
+ 
+-        let mut msg = MSG::default();
++    fn dispatch_message(&self, message: *const std::ffi::c_void) {
+         unsafe {
+-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+-                if !self.inner.translate_accelerator(&msg) {
+-                    _ = TranslateMessage(&msg);
+-                    DispatchMessageW(&msg);
+-                }
++            let msg = &*message.cast::<MSG>();
++            if msg.message == WM_QUIT {
++                self.inner.with_callback(
++                    |callbacks| &callbacks.quit,
++                    |callback| {
++                        callback();
++                    },
++                );
++            } else if !self.inner.translate_accelerator(msg) {
++                _ = TranslateMessage(msg);
++                DispatchMessageW(msg);
+             }
+         }
+-
+-        self.inner.with_callback(
+-            |callbacks| &callbacks.quit,
+-            |callback| {
+-                callback();
+-            },
+-        );
+     }
+ 
+     fn quit(&self) {

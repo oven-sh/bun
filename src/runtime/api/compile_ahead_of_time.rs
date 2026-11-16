@@ -201,6 +201,7 @@ pub(super) fn compile(
             root_dir: destination.root_dir.fd,
             env,
             windows: &destination.windows,
+            desktop: compile_options.desktop.as_ref(),
             exec_argv: &compile_options.exec_argv.list,
             flags: destination.flags,
             runtime_options: RuntimeOptions {

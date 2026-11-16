@@ -55,6 +55,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_http_agent"_s,
     "_tls_common"_s,
     "async_hooks"_s,
+    "bun:desktop"_s,
     "fs/promises"_s,
     "node:sqlite"_s,
     "querystring"_s,
@@ -71,6 +72,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_stream_duplex"_s,
     "string_decoder"_s,
     "worker_threads"_s,
+    "bun:desktop/dom"_s,
     "stream/promises"_s,
     "timers/promises"_s,
     "_stream_readable"_s,
@@ -81,6 +83,9 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "inspector/promises"_s,
     "_stream_passthrough"_s,
     "diagnostics_channel"_s,
+    "bun:desktop/electron"_s,
+    "bun:desktop/jsx-runtime"_s,
+    "bun:desktop/jsx-dev-runtime"_s,
 };
 
 namespace Bun {

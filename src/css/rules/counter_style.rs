@@ -7,13 +7,13 @@ pub struct CounterStyleRule<'bump> {
     /// The name of the counter style to declare.
     pub name: CustomIdent<'bump>,
     /// Declarations in the `@counter-style` rule.
-    pub(crate) declarations: DeclarationBlock<'bump>,
+    pub declarations: DeclarationBlock<'bump>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl CounterStyleRule<'_> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -25,7 +25,7 @@ impl CounterStyleRule<'_> {
 }
 
 impl<'bump> CounterStyleRule<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             declarations: super::dc::decl_block(&self.declarations, bump),

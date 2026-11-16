@@ -8,20 +8,20 @@ use crate::{PrintErr, Printer, VendorPrefix};
 // `StyleRule` is generic over the custom at-rule type `R`.
 pub struct StyleRule<'bump, R> {
     /// The selectors for the style rule.
-    pub(crate) selectors: selector::parser::SelectorList<'bump>,
+    pub selectors: selector::parser::SelectorList<'bump>,
     /// A vendor prefix override, used during selector printing.
-    pub(crate) vendor_prefix: VendorPrefix,
+    pub vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
-    pub(crate) declarations: DeclarationBlock<'bump>,
+    pub declarations: DeclarationBlock<'bump>,
     /// Nested rules within the style rule.
-    pub(crate) rules: CssRuleList<'bump, R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<R> StyleRule<'_, R> {
     /// Returns whether the rule is empty.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
     }
 }
@@ -30,7 +30,7 @@ impl<R> StyleRule<'_, R> {
 impl<'bump, R> StyleRule<'bump, R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
-    pub(crate) fn hash_key(&self) -> u64 {
+    pub fn hash_key(&self) -> u64 {
         use core::hash::Hash;
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
@@ -49,7 +49,7 @@ impl<'bump, R> StyleRule<'bump, R> {
         self.rules.v.is_empty() && selector::is_list_with_vendor_prefix(self.selectors.v.slice())
     }
 
-    pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
+    pub fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
         if self.prints_selectors_as_written() {
             self.vendor_prefix = VendorPrefix::empty();
             return;
@@ -63,12 +63,12 @@ impl<'bump, R> StyleRule<'bump, R> {
         }
     }
 
-    pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
+    pub fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 
     /// How many rules this rule prints as: a selector that a target cannot parse gets its own copy.
-    pub(crate) fn split_rule_count(&self, targets: &css::targets::Targets) -> u32 {
+    pub fn split_rule_count(&self, targets: &css::targets::Targets) -> u32 {
         let selectors = self.selectors.v.slice();
         if selectors.len() <= 1
             || !targets.should_compile_selectors()
@@ -300,7 +300,7 @@ impl<'bump, R> StyleRule<'bump, R> {
 }
 
 impl<'bump, R> StyleRule<'bump, R> {
-    pub(crate) fn minify(
+    pub fn minify(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
@@ -371,7 +371,7 @@ impl<'bump, R> StyleRule<'bump, R> {
     /// otherwise a few hundred bytes of deeply nested multi-selector rules
     /// expand into gigabytes of cloned rules and output. See
     /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
-    pub(crate) fn charge_selector_expansion(
+    pub fn charge_selector_expansion(
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
@@ -381,7 +381,7 @@ impl<'bump, R> StyleRule<'bump, R> {
     /// Minify this rule's nested rules, bumping the selector-expansion
     /// multiplier by this rule's selector count first (and restoring it after)
     /// so the nested rules are charged for the combinations they expand into.
-    pub(crate) fn minify_nested_rules(
+    pub fn minify_nested_rules(
         &mut self,
         context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
@@ -422,7 +422,7 @@ impl<'bump, R> StyleRule<'bump, R> {
     /// Returns whether this rule is a duplicate of another rule.
     /// This means it has the same selectors, properties, and importance.
     #[inline]
-    pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
+    pub fn is_duplicate(&self, other: &Self) -> bool {
         let same_property_ids = |a: &DeclarationList, b: &DeclarationList| {
             a.len() == b.len()
                 && a.iter()
@@ -438,7 +438,7 @@ impl<'bump, R> StyleRule<'bump, R> {
 
 // ─── deep_clone ───────────────────────────────────────────────────────────
 impl<'bump, R> StyleRule<'bump, R> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

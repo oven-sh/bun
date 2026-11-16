@@ -54,6 +54,41 @@ Bun statically links these libraries:
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets)                                                                          | Apache 2.0 licensed                                                                          |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed                                                                          |
 
+## The UI library of `bun:desktop`
+
+It is not part of Bun's binary. Bun downloads it for `bun:desktop`, and `--desktop` copies it into the app. It statically links these libraries, and the other crates in `packages/bun-desktop/Cargo.lock` that the platform needs:
+
+| Library                                                                                           | License             |
+| ------------------------------------------------------------------------------------------------- | ------------------- |
+| [`GPUI`](https://github.com/zed-industries/zed/tree/main/crates/gpui), patched with `patches/zed` | Apache 2.0          |
+| [`wgpu`](https://github.com/gfx-rs/wgpu)                                                          | MIT or Apache 2.0   |
+| [`accesskit`](https://github.com/AccessKit/accesskit)                                             | MIT or Apache 2.0   |
+| [`taffy`](https://github.com/DioxusLabs/taffy)                                                    | MIT                 |
+| [`harfrust`](https://github.com/harfbuzz/harfrust)                                                | MIT                 |
+| [`skrifa`](https://github.com/googlefonts/fontations)                                             | MIT or Apache 2.0   |
+| [`fontique`](https://github.com/linebender/parley)                                                | MIT or Apache 2.0   |
+| [`zeno`](https://github.com/dfrg/zeno)                                                            | MIT or Apache 2.0   |
+| [`resvg`](https://github.com/linebender/resvg)                                                    | MIT or Apache 2.0   |
+| [`tiny-skia`](https://github.com/linebender/tiny-skia)                                            | BSD 3-Clause        |
+| [`image`](https://github.com/image-rs/image)                                                      | MIT or Apache 2.0   |
+| [`brotli-decompressor`](https://github.com/dropbox/rust-brotli-decompressor)                      | BSD 3-Clause or MIT |
+| [`unicode-bidi`](https://github.com/servo/unicode-bidi)                                           | MIT or Apache 2.0   |
+| [`unicode-linebreak`](https://github.com/axelf4/unicode-linebreak)                                | Apache 2.0          |
+| [`ICU4X`](https://github.com/unicode-org/icu4x)                                                   | Unicode 3.0         |
+| [`rfd`](https://github.com/PolyMeilex/rfd)                                                        | MIT                 |
+| [`trash`](https://github.com/Byron/trash-rs)                                                      | MIT                 |
+| [`global-hotkey`](https://github.com/tauri-apps/global-hotkey)                                    | MIT or Apache 2.0   |
+| [`tray-icon`](https://github.com/tauri-apps/tray-icon)                                            | MIT or Apache 2.0   |
+| [`calloop`](https://github.com/Smithay/calloop)                                                   | MIT                 |
+| [`wayland-rs`](https://github.com/Smithay/wayland-rs)                                             | MIT                 |
+| [`x11rb`](https://github.com/psychon/x11rb)                                                       | MIT or Apache 2.0   |
+| [`zbus`](https://github.com/z-galaxy/zbus)                                                        | MIT                 |
+| [`objc2`](https://github.com/madsmtm/objc2)                                                       | MIT                 |
+| [`windows-rs`](https://github.com/microsoft/windows-rs)                                           | MIT or Apache 2.0   |
+| [`option-ext`](https://github.com/soc/option-ext)                                                 | MPL 2.0             |
+
+`bun:desktop` embeds the [Public Suffix List](https://publicsuffix.org/list/) (MPL 2.0). Parts of its layout, painting and line breaking follow algorithms of [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) (BSD 3-Clause; parts of Blink are LGPL 2).
+
 ## Polyfills
 
 For compatibility, Bun embeds the following packages into its binary and injects them if imported.

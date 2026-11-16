@@ -12,13 +12,13 @@ pub struct FontPaletteValuesRule<'bump> {
     /// The name of the font palette.
     pub name: DashedIdent<'bump>,
     /// Declarations in the `@font-palette-values` rule.
-    pub(crate) properties: ArrayList<FontPaletteValuesProperty<'bump>>,
+    pub properties: ArrayList<FontPaletteValuesProperty<'bump>>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl FontPaletteValuesRule<'_> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -42,7 +42,7 @@ impl FontPaletteValuesRule<'_> {
 }
 
 impl<'bump> FontPaletteValuesRule<'bump> {
-    pub(crate) fn parse(
+    pub fn parse(
         name: DashedIdent<'bump>,
         input: &mut css::Parser<'_, 'bump>,
         loc: Location,
@@ -79,7 +79,7 @@ pub enum FontPaletteValuesProperty<'bump> {
 }
 
 impl<'bump> FontPaletteValuesRule<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
@@ -130,9 +130,9 @@ impl<'bump> FontPaletteValuesProperty<'bump> {
 /// property in an `@font-palette-values` rule.
 pub struct OverrideColors {
     /// The index of the color within the palette to override.
-    pub(crate) index: u16,
+    pub index: u16,
     /// The replacement color.
-    pub(crate) color: CssColor,
+    pub color: CssColor,
 }
 
 impl OverrideColors {
@@ -225,7 +225,7 @@ impl BasePalette {
     }
 }
 
-pub(crate) struct FontPaletteValuesDeclarationParser {}
+pub struct FontPaletteValuesDeclarationParser {}
 
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};

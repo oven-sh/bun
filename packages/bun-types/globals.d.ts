@@ -2060,7 +2060,7 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    * function on a {@link Bun.FetchSession}.
    *
    * @param hostname - The hostname of the server
-   * @param cert - The certificate of the server
+   * @param cert - The certificate of the server. `issuerCertificate` leads up the chain that verified.
    * @returns An error if the server is unauthorized, otherwise undefined. Any
    * other truthy value also fails the request, and a `Promise` is one: the
    * function cannot be `async`. Every falsy value approves the certificate, as

@@ -99,6 +99,12 @@ impl BuildCommand {
             ctx.bundler_options.aot = None;
         }
 
+        if ctx.bundler_options.desktop.is_some() && user_requested_browser_target {
+            Output::err_generic("cannot use --desktop with --target browser", ());
+            Global::exit(1);
+        }
+        let desktop = super::desktop_bundle::DesktopBundle::plan_or_exit(ctx);
+
         let compile_target = &ctx.bundler_options.compile_target;
 
         if ctx.bundler_options.compile {
@@ -282,7 +288,9 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.asset_naming);
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
-            if this_transpiler.options.target.is_server_side() {
+            if this_transpiler.options.target.is_server_side()
+                && ctx.bundler_options.desktop.is_none()
+            {
                 bun_ast::runtime::ReactCompilerMode::Ssr
             } else {
                 bun_ast::runtime::ReactCompilerMode::Client
@@ -1025,6 +1033,14 @@ impl BuildCommand {
                         ..Default::default()
                     };
 
+                if let Some(bundle) = &desktop
+                    // SAFETY: `env` is a process-lifetime singleton.
+                    && let Err(error) = bundle.write(compile_target, unsafe { &*env_ptr })
+                {
+                    Output::err_generic("{}", (bstr::BStr::new(error.slice()),));
+                    Global::exit(1);
+                }
+
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
@@ -1136,6 +1152,9 @@ impl BuildCommand {
                     }
                 }
 
+                let signing_warning =
+                    (desktop.as_ref()).and_then(|bundle| bundle.sign(compile_target));
+
                 let compiled_elapsed = ((bun_core::time::nano_timestamp() - bundled_end) as i64)
                     / (bun_core::time::NS_PER_MS as i64);
                 let compiled_elapsed_digit_count =
@@ -1150,7 +1169,7 @@ impl BuildCommand {
                 super::compile_command::write_trimmed_size(&additions.details, &mut trimmed_size);
                 bun_core::pretty!(
                     " <green>compile<r>  <b><blue>{}{}<r>{}",
-                    bstr::BStr::new(outfile),
+                    bstr::BStr::new(desktop.as_ref().map_or(outfile, |it| &it.shown_path)),
                     if compile_target.os == OperatingSystem::Windows
                         && !strings::has_suffix_comptime(outfile, b".exe")
                     {
@@ -1168,6 +1187,9 @@ impl BuildCommand {
                 }
 
                 Output::flush();
+                if let Some(warning) = signing_warning {
+                    bun_core::warn!("{}", warning);
+                }
                 for line in collect_trim_log_lines(&additions.details, &ctx.bundler_options.trim) {
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(&line)));
                 }

@@ -139,7 +139,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         return {};
     }
 
-    m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
+    m_pipe->send(m_side, scriptExecutionContext()->identifier(), MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
     return {};
 }
 

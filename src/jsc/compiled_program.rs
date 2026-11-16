@@ -1101,7 +1101,9 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         use_image_on_this_thread(program);
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
-        write_execute::deny();
+        if !graph.loads_graphics_drivers() {
+            write_execute::deny();
+        }
         #[cfg(bun_hardened)]
         {
             let code = Bun__AOT__imageCode();

@@ -8,11 +8,11 @@ use crate::{Parser, PrintErr, Printer, Result};
 /// Parses either a `<number>` or `<percentage>`, but is always stored and serialized as a number.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AlphaValue {
-    pub(crate) v: f32,
+    pub v: f32,
 }
 
 impl AlphaValue {
-    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, AlphaValue> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, AlphaValue> {
         let val: NumberOrPercentage = NumberOrPercentage::parse(input)?;
         let final_ = match val {
             NumberOrPercentage::Percentage(percent) => AlphaValue { v: percent.v },
@@ -21,7 +21,7 @@ impl AlphaValue {
         Result::Ok(final_)
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(self.v, dest)
     }
 }

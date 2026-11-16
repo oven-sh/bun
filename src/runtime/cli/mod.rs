@@ -127,6 +127,7 @@ pub(crate) mod compile_command;
 pub(crate) mod compile_options;
 #[path = "create_command.rs"]
 pub(crate) mod create_command;
+pub(crate) mod desktop_bundle;
 #[path = "exec_command.rs"]
 pub(crate) mod exec_command;
 #[path = "fuzzilli_command.rs"]

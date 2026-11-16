@@ -295,7 +295,7 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
     '$&"use strict";' +
       (usesDebug
         ? createLogClientJS(
-            file_path.replace(".js", ""),
+            file_path.slice(0, -3),
             idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
           )
         : "") +
@@ -309,7 +309,7 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
-  outputs.set(file_path.replace(".js", ""), captured);
+  outputs.set(file_path.slice(0, -3), captured);
 }
 
 mark("Postprocesss modules");

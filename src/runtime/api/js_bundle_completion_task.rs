@@ -529,6 +529,12 @@ impl JSBundleCompletionTask {
             ..Default::default()
         };
 
+        if let Some(bundle) = &compile_options.desktop
+            && let Err(error) = bundle.write(&compile_options.compile_target, env)
+        {
+            return CompileResult::Err(error);
+        }
+
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
@@ -662,6 +668,13 @@ impl JSBundleCompletionTask {
             // Trailing (dropped) entries are freed by `truncate` below.
         }
         output_files.truncate(kept);
+
+        if matches!(result, CompileResult::Success)
+            && let Some(bundle) = &compile_options.desktop
+            && let Some(warning) = bundle.sign(&compile_options.compile_target)
+        {
+            log.add_warning(None, bun_ast::Loc::EMPTY, warning.as_bytes());
+        }
 
         result
     }

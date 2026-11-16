@@ -23,7 +23,7 @@ impl Property<'_> {
     #[inline]
     pub(crate) fn variant_tag(&self) -> PropertyIdTag {
         match self {
-            Property::Unparsed(_) => PropertyIdTag::Unparsed,
+            Property::Unparsed(_) | Property::Source(_) => PropertyIdTag::Unparsed,
             Property::Custom(_) => PropertyIdTag::Custom,
             // Every other `Property` variant maps 1:1 onto its `PropertyId`
             // variant, so `property_id().tag()` is the discriminant.
@@ -95,8 +95,12 @@ pub(super) mod property_mixin {
         dest: &mut Printer,
         important: bool,
     ) -> Result<(), PrintErr> {
-        if let Property::Custom(custom) = this {
-            custom.name.to_css(dest)?;
+        if let Property::Custom(_) | Property::Source(_) = this {
+            match this {
+                Property::Custom(custom) => custom.name.to_css(dest)?,
+                Property::Source(source) => dest.serialize_identifier(source.name)?,
+                _ => unreachable!(),
+            }
             dest.delim(b':', false)?;
             this.value_to_css(dest)?;
             if important {

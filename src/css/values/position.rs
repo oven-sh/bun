@@ -9,13 +9,13 @@ use crate::values::protocol;
 #[derive(Clone, PartialEq)]
 pub struct Position {
     /// The x-position.
-    pub(crate) x: HorizontalPosition,
+    pub x: HorizontalPosition,
     /// The y-position.
-    pub(crate) y: VerticalPosition,
+    pub y: VerticalPosition,
 }
 
 impl Position {
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Position> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Position> {
         // Try parsing a horizontal position first
         if let Ok(horizontal_pos) = input.try_parse(HorizontalPosition::parse) {
             match horizontal_pos {
@@ -147,7 +147,7 @@ impl Position {
         Ok(Position { x, y })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+    pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         if let (PositionComponent::Side(xs), PositionComponent::Length(yl)) = (&self.x, &self.y) {
             if xs.offset.is_some() && xs.side != HorizontalPositionKeyword::Left {
                 self.x.to_css(dest)?;
@@ -294,18 +294,18 @@ impl Position {
     }
 
     /// Returns whether both the x and y positions are centered.
-    pub(crate) fn is_center(&self) -> bool {
+    pub fn is_center(&self) -> bool {
         self.x.is_center() && self.y.is_center()
     }
 
-    pub(crate) fn center() -> Position {
+    pub fn center() -> Position {
         Position {
             x: PositionComponent::Center,
             y: PositionComponent::Center,
         }
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.x.is_zero() && self.y.is_zero()
     }
 }
@@ -323,9 +323,9 @@ impl Default for Position {
 #[derive(Clone, PartialEq)]
 pub struct PositionComponentSide<S> {
     /// A side keyword.
-    pub(crate) side: S,
+    pub side: S,
     /// Offset from the side.
-    pub(crate) offset: Option<LengthPercentage>,
+    pub offset: Option<LengthPercentage>,
 }
 
 /// A component of a CSS `<position>` value (horizontal or vertical).
@@ -349,7 +349,7 @@ impl<S: protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
         false
     }
 
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
     where
         S: protocol::Parse<'bump>,
     {
@@ -372,7 +372,7 @@ impl<S: protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
         }))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+    pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         match self {
             PositionComponent::Center => {
                 if dest.minify {
@@ -416,7 +416,7 @@ pub enum HorizontalPositionKeyword {
 }
 
 impl HorizontalPositionKeyword {
-    pub(crate) fn into_length_percentage(self) -> LengthPercentage {
+    pub fn into_length_percentage(self) -> LengthPercentage {
         match self {
             HorizontalPositionKeyword::Left => LengthPercentage::zero(),
             HorizontalPositionKeyword::Right => {
@@ -435,7 +435,7 @@ pub enum VerticalPositionKeyword {
 }
 
 impl VerticalPositionKeyword {
-    pub(crate) fn into_length_percentage(self) -> LengthPercentage {
+    pub fn into_length_percentage(self) -> LengthPercentage {
         match self {
             VerticalPositionKeyword::Top => LengthPercentage::zero(),
             VerticalPositionKeyword::Bottom => {
@@ -445,5 +445,5 @@ impl VerticalPositionKeyword {
     }
 }
 
-pub(crate) type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
-pub(crate) type VerticalPosition = PositionComponent<VerticalPositionKeyword>;
+pub type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
+pub type VerticalPosition = PositionComponent<VerticalPositionKeyword>;

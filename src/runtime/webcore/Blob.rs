@@ -521,6 +521,15 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            safe fn Bun__isDesktopRealm(global: &JSGlobalObject) -> bool;
+        }
+        // `Bun.Image` reads and writes files.
+        if Bun__isDesktopRealm(cx.global()) {
+            return Err(cx
+                .global()
+                .throw_type_error(format_args!("image() is not available to web pages")));
+        }
         Image::from_blob_js(cx.global(), this_value.to_js(), options.to_js())
     }
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { minimalPE64Template } from "./executable-templates";
 
 // PE optional-header Subsystem values
 const IMAGE_SUBSYSTEM_WINDOWS_GUI = 2;
@@ -673,61 +674,6 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
     });
   });
 });
-
-// Build a minimal PE32+ image with one .text section and an optional Authenticode
-// overlay past it. Large enough that the correct CheckSum exceeds 0xffff.
-function minimalPE64Template(certSize = 0): Buffer {
-  const fileAlign = 512;
-  const sectAlign = 4096;
-  const peOff = 64;
-  const optOff = peOff + 24;
-  const optSize = 240;
-  const shOff = optOff + optSize;
-  const textRaw = 512;
-  const textRawSize = 128 * 1024;
-  const textVA = sectAlign;
-  const lastRawEnd = textRaw + textRawSize;
-
-  const tmpl = Buffer.alloc(lastRawEnd + certSize);
-  // DOS header
-  tmpl.writeUInt16LE(0x5a4d, 0); // "MZ"
-  tmpl.writeUInt32LE(peOff, 0x3c); // e_lfanew
-  // COFF header
-  tmpl.writeUInt32LE(0x00004550, peOff); // "PE\0\0"
-  tmpl.writeUInt16LE(0x8664, peOff + 4); // machine = AMD64
-  tmpl.writeUInt16LE(1, peOff + 6); // NumberOfSections
-  tmpl.writeUInt16LE(optSize, peOff + 20); // SizeOfOptionalHeader
-  tmpl.writeUInt16LE(0x0022, peOff + 22); // Characteristics
-  // Optional header (PE32+)
-  tmpl.writeUInt16LE(0x020b, optOff); // Magic
-  tmpl.writeUInt32LE(textVA, optOff + 16); // AddressOfEntryPoint
-  tmpl.writeUInt32LE(textVA, optOff + 20); // BaseOfCode
-  tmpl.writeBigUInt64LE(0x140000000n, optOff + 24); // ImageBase
-  tmpl.writeUInt32LE(sectAlign, optOff + 32); // SectionAlignment
-  tmpl.writeUInt32LE(fileAlign, optOff + 36); // FileAlignment
-  tmpl.writeUInt16LE(6, optOff + 40); // MajorOSVersion
-  tmpl.writeUInt16LE(6, optOff + 48); // MajorSubsystemVersion
-  tmpl.writeUInt32LE(textVA + sectAlign, optOff + 56); // SizeOfImage
-  tmpl.writeUInt32LE(512, optOff + 60); // SizeOfHeaders
-  tmpl.writeUInt16LE(3, optOff + 68); // Subsystem = CUI
-  tmpl.writeUInt32LE(16, optOff + 108); // NumberOfRvaAndSizes
-  if (certSize > 0) {
-    // Security directory (index 4): VirtualAddress is a file offset for this entry.
-    const secDir = optOff + 112 + 4 * 8;
-    tmpl.writeUInt32LE(lastRawEnd, secDir);
-    tmpl.writeUInt32LE(certSize, secDir + 4);
-  }
-  // Section header: .text
-  tmpl.write(".text\0\0\0", shOff, 8, "latin1");
-  tmpl.writeUInt32LE(textRawSize, shOff + 8); // VirtualSize
-  tmpl.writeUInt32LE(textVA, shOff + 12); // VirtualAddress
-  tmpl.writeUInt32LE(textRawSize, shOff + 16); // SizeOfRawData
-  tmpl.writeUInt32LE(textRaw, shOff + 20); // PointerToRawData
-  tmpl.writeUInt32LE(0x60000020, shOff + 36); // Characteristics
-  tmpl.fill(0xcc, textRaw, lastRawEnd); // .text body
-  if (certSize > 0) tmpl.fill(0xab, lastRawEnd); // cert overlay marker
-  return tmpl;
-}
 
 // Recompute the reference PE CheckSum over `bytes` with the CheckSum field zeroed.
 function peChecksum(bytes: Buffer): { stored: number; expected: number } {

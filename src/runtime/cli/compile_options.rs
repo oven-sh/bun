@@ -54,6 +54,15 @@ const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
     // Every access by position reads the length and tests the position where it stands, whatever an earlier test or the head of a loop has shown.
     (b"ignore-told-ranges", &[b"testing=CheckBoundsAtRunTime"]),
 ];
+/// What `--aot-assume` takes: promises about the program that the compiler cannot prove.
+const ASSUMPTIONS: &[&[u8]] = &[
+    // An object that a file of the program makes never reaches, in another realm, a file under the same top directory.
+    b"separate-realms",
+    // No write under a computed name replaces a function of the language. One that tries throws.
+    b"locked-builtins",
+    // What the files of `--aot-order` don't list is rarely run, and is better small than fast.
+    b"complete-order",
+];
 /// The words of `BUN_DEBUG_TEST_AOT_WORDS` that start with `TestRun`. With any of them the runner says what the build hands over.
 /// `TestRunLayers:0` asks for one program, which every run is.
 const TEST_RUN_WORDS: &[&[u8]] = &[
@@ -94,6 +103,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("references", Form::One),
     developer_flag!("cpu", Form::One),
     developer_flag!("threads", Form::One),
+    developer_flag!("assume", Form::Many),
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
     developer_flag!("out", Form::One),
@@ -231,6 +241,9 @@ fn allowed_values(option: OptionName) -> &'static str {
         OptionName::Explain => EXPLAIN_ALLOWED,
         OptionName::TrimLocales => LOCALES_ALLOWED,
         OptionName::Developer("harden") => HARDENING_ALLOWED,
+        OptionName::Developer("assume") => {
+            "a list of these names: separate-realms, locked-builtins, complete-order"
+        }
         OptionName::References => "one of narrow, wide",
         OptionName::Threads => "a whole number above zero",
         OptionName::CodeGenerationFromStrings => "\"strict\", or no value",
@@ -650,6 +663,17 @@ pub(crate) fn apply_developer_word<'a>(
                 value: text,
             };
             options.thread_count = Some(count.ok_or(invalid)?);
+        }
+        "assume" => {
+            for name in strings::split(text, b",") {
+                if !ASSUMPTIONS.contains(&name) {
+                    return Err(OptionError::InvalidValue {
+                        option: OptionName::Developer(key),
+                        value: name,
+                    });
+                }
+                add_engine_word(key, name.to_vec(), options)?;
+            }
         }
         "erase-types" => options.erases_types = true,
         "refuse-code-from-disk" => options.loads_code_from_disk = false,

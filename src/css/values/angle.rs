@@ -33,7 +33,7 @@ pub enum Angle {
 impl Angle {
     // ~toCssImpl
 
-    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Angle> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Angle> {
         Angle::parse_internal(input, false)
     }
 
@@ -73,13 +73,11 @@ impl Angle {
         Err(location.new_unexpected_token_error(token))
     }
 
-    pub(crate) fn parse_with_unitless_zero<'bump>(
-        input: &mut Parser<'_, 'bump>,
-    ) -> Result<'bump, Angle> {
+    pub fn parse_with_unitless_zero<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Angle> {
         Angle::parse_internal(input, true)
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let (value, unit): (f32, &'static str) = match self {
             Angle::Deg(val) => (val, "deg"),
             Angle::Grad(val) => (val, "grad"),
@@ -99,7 +97,7 @@ impl Angle {
         css::serializer::serialize_dimension(value, unit.as_bytes(), dest)
     }
 
-    pub(crate) fn to_css_with_unitless_zero(
+    pub fn to_css_with_unitless_zero(
         self,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
@@ -111,7 +109,7 @@ impl Angle {
         }
     }
 
-    pub(crate) fn try_from_token(token: &Token) -> Maybe<Angle, ()> {
+    pub fn try_from_token(token: &Token) -> Maybe<Angle, ()> {
         if let Token::Dimension(dimension) = token {
             let value = dimension.num.value;
             let unit = dimension.unit;
@@ -127,7 +125,7 @@ impl Angle {
     }
 
     /// Returns the angle in radians.
-    pub(crate) fn to_radians(self) -> CSSNumber {
+    pub fn to_radians(self) -> CSSNumber {
         const RAD_PER_DEG: f32 = core::f32::consts::PI / 180.0;
         match self {
             Angle::Deg(deg) => deg * RAD_PER_DEG,
@@ -138,7 +136,7 @@ impl Angle {
     }
 
     /// Returns the angle in degrees.
-    pub(crate) fn to_degrees(self) -> CSSNumber {
+    pub fn to_degrees(self) -> CSSNumber {
         const DEG_PER_RAD: f32 = 180.0 / core::f32::consts::PI;
         match self {
             Angle::Deg(deg) => deg,
@@ -148,11 +146,11 @@ impl Angle {
         }
     }
 
-    pub(crate) fn zero() -> Angle {
+    pub fn zero() -> Angle {
         Angle::Deg(0.0)
     }
 
-    pub(crate) fn is_zero(self) -> bool {
+    pub fn is_zero(self) -> bool {
         let v = match self {
             Angle::Deg(deg) => deg,
             Angle::Rad(rad) => rad,
@@ -162,7 +160,7 @@ impl Angle {
         v == 0.0
     }
 
-    pub(crate) fn map(self, opfn: impl Fn(f32) -> f32) -> Angle {
+    pub fn map(self, opfn: impl Fn(f32) -> f32) -> Angle {
         match self {
             Angle::Deg(deg) => Angle::Deg(opfn(deg)),
             Angle::Rad(rad) => Angle::Rad(opfn(rad)),
@@ -171,7 +169,7 @@ impl Angle {
         }
     }
 
-    pub(crate) fn add_internal(self, other: Angle) -> Angle {
+    pub fn add_internal(self, other: Angle) -> Angle {
         self.add(other)
     }
 
@@ -179,11 +177,11 @@ impl Angle {
         Angle::op(self, rhs, (), |_: (), a: f32, b: f32| a + b)
     }
 
-    pub(crate) fn try_add(self, rhs: Angle) -> Option<Angle> {
+    pub fn try_add(self, rhs: Angle) -> Option<Angle> {
         Some(Angle::Deg(self.to_degrees() + rhs.to_degrees()))
     }
 
-    pub(crate) fn mul_f32(self, other: f32) -> Angle {
+    pub fn mul_f32(self, other: f32) -> Angle {
         // return Angle.op(&this, &other, Angle.mulF32);
         match self {
             Angle::Deg(v) => Angle::Deg(v * other),
@@ -193,7 +191,7 @@ impl Angle {
         }
     }
 
-    pub(crate) fn partial_cmp(self, other: Angle) -> Option<Ordering> {
+    pub fn partial_cmp(self, other: Angle) -> Option<Ordering> {
         crate::generic::partial_cmp_f32(self.to_degrees(), other.to_degrees())
     }
 
@@ -208,7 +206,7 @@ impl Angle {
         }
     }
 
-    pub(crate) fn sign(self) -> f32 {
+    pub fn sign(self) -> f32 {
         match self {
             Angle::Deg(v) | Angle::Rad(v) | Angle::Grad(v) | Angle::Turn(v) => {
                 CSSNumberFns::sign(v)
@@ -230,4 +228,4 @@ impl crate::generics::CssEql for Angle {
 
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
 /// May be specified as either an angle or a percentage that resolves to an angle.
-pub(crate) type AnglePercentage = DimensionPercentage<Angle>;
+pub type AnglePercentage = DimensionPercentage<Angle>;

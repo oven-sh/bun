@@ -6,7 +6,7 @@ use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
 use crate::css_properties::box_shadow::BoxShadowHandler;
-use crate::css_properties::custom::CustomPropertyName;
+use crate::css_properties::custom::{CustomPropertyName, SourceDeclaration};
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
@@ -31,34 +31,34 @@ pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property<'bump
 /// instead of two.
 pub struct DeclarationBlock<'bump> {
     /// A list of `!important` declarations in the block.
-    pub(crate) important_declarations: DeclarationList<'bump>,
+    pub important_declarations: DeclarationList<'bump>,
     /// A list of normal declarations in the block.
-    pub(crate) declarations: DeclarationList<'bump>,
+    pub declarations: DeclarationList<'bump>,
 }
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.declarations.is_empty() && self.important_declarations.is_empty()
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.declarations.len() + self.important_declarations.len()
     }
 
-    pub(crate) fn append(&mut self, other: &mut Self) {
+    pub fn append(&mut self, other: &mut Self) {
         self.declarations.append(&mut other.declarations);
         self.important_declarations
             .append(&mut other.important_declarations);
     }
 
-    pub(crate) fn new_in(bump: &'bump Bump) -> Self {
+    pub fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),
             declarations: DeclarationList::new_in(bump),
         }
     }
 
-    pub(crate) fn minify(
+    pub fn minify(
         &mut self,
         handler: &mut DeclarationHandler<'bump>,
         important_handler: &mut DeclarationHandler<'bump>,
@@ -204,7 +204,7 @@ impl<'bump> DeclarationBlock<'bump> {
 
 // ─── PropertyDeclarationParser ────────────────────────────────────────────
 
-pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
+pub struct PropertyDeclarationParser<'a, 'bump> {
     pub important_declarations: &'a mut DeclarationList<'bump>,
     pub declarations: &'a mut DeclarationList<'bump>,
     pub options: &'a css::ParserOptions<'a>,
@@ -250,7 +250,7 @@ impl<'a, 'bump> css::RuleBodyItemParser<'bump> for PropertyDeclarationParser<'a,
 
 // ─── parse_declaration ────────────────────────────────────────────────────
 
-pub(crate) fn parse_declaration<'bump>(
+pub fn parse_declaration<'bump>(
     name: &'bump [u8],
     input: &mut css::Parser<'_, 'bump>,
     declarations: &mut DeclarationList<'bump>,
@@ -300,7 +300,7 @@ fn composing_class_or_warn(
     None
 }
 
-pub(crate) fn parse_declaration_impl<'bump, C>(
+pub fn parse_declaration_impl<'bump, C>(
     name: &'bump [u8],
     input: &mut css::Parser<'_, 'bump>,
     declarations: &mut DeclarationList<'bump>,
@@ -334,6 +334,16 @@ where
         }
     }
     let property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
+        if options
+            .flags
+            .contains(css::ParserFlags::SOURCE_DECLARATIONS)
+        {
+            input2.skip_whitespace();
+            let start = input2.position();
+            while input2.next_including_whitespace_and_comments().is_ok() {}
+            let value = input2.slice_from(start).trim_ascii_end();
+            return Ok(css::Property::Source(SourceDeclaration { name, value }));
+        }
         css::Property::parse(property_id, input2, options)
     })?;
     let important = input
@@ -358,27 +368,27 @@ where
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 pub struct DeclarationHandler<'bump> {
-    pub(crate) background: BackgroundHandler<'bump>,
-    pub(crate) border: BorderHandler<'bump>,
-    pub(crate) flex: FlexHandler,
-    pub(crate) align: AlignHandler,
-    pub(crate) size: SizeHandler,
-    pub(crate) margin: MarginHandler<'bump>,
-    pub(crate) padding: PaddingHandler<'bump>,
-    pub(crate) scroll_margin: ScrollMarginHandler<'bump>,
-    pub(crate) transition: TransitionHandler<'bump>,
-    pub(crate) font: FontHandler<'bump>,
-    pub(crate) inset: InsetHandler<'bump>,
-    pub(crate) transform: TransformHandler,
-    pub(crate) box_shadow: BoxShadowHandler,
-    pub(crate) color_scheme: ColorSchemeHandler,
+    pub background: BackgroundHandler<'bump>,
+    pub border: BorderHandler<'bump>,
+    pub flex: FlexHandler,
+    pub align: AlignHandler,
+    pub size: SizeHandler,
+    pub margin: MarginHandler<'bump>,
+    pub padding: PaddingHandler<'bump>,
+    pub scroll_margin: ScrollMarginHandler<'bump>,
+    pub transition: TransitionHandler<'bump>,
+    pub font: FontHandler<'bump>,
+    pub inset: InsetHandler<'bump>,
+    pub transform: TransformHandler,
+    pub box_shadow: BoxShadowHandler,
+    pub color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
-    pub(crate) direction: Option<Direction>,
-    pub(crate) decls: DeclarationList<'bump>,
+    pub direction: Option<Direction>,
+    pub decls: DeclarationList<'bump>,
 }
 
 impl<'bump> DeclarationHandler<'bump> {
-    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'_, 'bump>) {
+    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'_, 'bump>) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
@@ -400,7 +410,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.fallback.finalize(&mut self.decls, context);
     }
 
-    pub(crate) fn handle_property(
+    pub fn handle_property(
         &mut self,
         property: &css::Property<'bump>,
         context: &mut css::PropertyHandlerContext<'_, 'bump>,
@@ -452,7 +462,7 @@ impl<'bump> DeclarationHandler<'bump> {
                 .handle_property(property, &mut self.decls, context)
     }
 
-    pub(crate) fn new(bump: &'bump Bump) -> Self {
+    pub fn new(bump: &'bump Bump) -> Self {
         Self {
             background: Default::default(),
             border: Default::default(),

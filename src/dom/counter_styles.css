@@ -1,0 +1,55 @@
+@counter-style -internal-decimal { system: numeric; symbols: "0" "1" "2" "3" "4" "5" "6" "7" "8" "9" }
+@counter-style decimal-leading-zero { system: extends decimal; pad: 2 "0" }
+@counter-style arabic-indic { system: numeric; symbols: "٠" "١" "٢" "٣" "٤" "٥" "٦" "٧" "٨" "٩" }
+@counter-style bengali { system: numeric; symbols: "০" "১" "২" "৩" "৪" "৫" "৬" "৭" "৮" "৯" }
+@counter-style cambodian { system: numeric; symbols: "០" "១" "២" "៣" "៤" "៥" "៦" "៧" "៨" "៩" }
+@counter-style devanagari { system: numeric; symbols: "०" "१" "२" "३" "४" "५" "६" "७" "८" "९" }
+@counter-style gujarati { system: numeric; symbols: "૦" "૧" "૨" "૩" "૪" "૫" "૬" "૭" "૮" "૯" }
+@counter-style gurmukhi { system: numeric; symbols: "੦" "੧" "੨" "੩" "੪" "੫" "੬" "੭" "੮" "੯" }
+@counter-style kannada { system: numeric; symbols: "೦" "೧" "೨" "೩" "೪" "೫" "೬" "೭" "೮" "೯" }
+@counter-style lao { system: numeric; symbols: "໐" "໑" "໒" "໓" "໔" "໕" "໖" "໗" "໘" "໙" }
+@counter-style malayalam { system: numeric; symbols: "൦" "൧" "൨" "൩" "൪" "൫" "൬" "൭" "൮" "൯" }
+@counter-style mongolian { system: numeric; symbols: "᠐" "᠑" "᠒" "᠓" "᠔" "᠕" "᠖" "᠗" "᠘" "᠙" }
+@counter-style myanmar { system: numeric; symbols: "၀" "၁" "၂" "၃" "၄" "၅" "၆" "၇" "၈" "၉" }
+@counter-style oriya { system: numeric; symbols: "୦" "୧" "୨" "୩" "୪" "୫" "୬" "୭" "୮" "୯" }
+@counter-style persian { system: numeric; symbols: "۰" "۱" "۲" "۳" "۴" "۵" "۶" "۷" "۸" "۹" }
+@counter-style tamil { system: numeric; symbols: "௦" "௧" "௨" "௩" "௪" "௫" "௬" "௭" "௮" "௯" }
+@counter-style telugu { system: numeric; symbols: "౦" "౧" "౨" "౩" "౪" "౫" "౬" "౭" "౮" "౯" }
+@counter-style thai { system: numeric; symbols: "๐" "๑" "๒" "๓" "๔" "๕" "๖" "๗" "๘" "๙" }
+@counter-style tibetan { system: numeric; symbols: "༠" "༡" "༢" "༣" "༤" "༥" "༦" "༧" "༨" "༩" }
+@counter-style khmer { system: extends cambodian }
+@counter-style cjk-decimal { system: numeric; range: 0 infinite; symbols: "〇" "一" "二" "三" "四" "五" "六" "七" "八" "九"; suffix: "、" }
+@counter-style armenian { system: additive; range: 1 9999; additive-symbols: 9000 "Ք", 8000 "Փ", 7000 "Ւ", 6000 "Ց", 5000 "Ր", 4000 "Տ", 3000 "Վ", 2000 "Ս", 1000 "Ռ", 900 "Ջ", 800 "Պ", 700 "Չ", 600 "Ո", 500 "Շ", 400 "Ն", 300 "Յ", 200 "Մ", 100 "Ճ", 90 "Ղ", 80 "Ձ", 70 "Հ", 60 "Կ", 50 "Ծ", 40 "Խ", 30 "Լ", 20 "Ի", 10 "Ժ", 9 "Թ", 8 "Ը", 7 "Է", 6 "Զ", 5 "Ե", 4 "Դ", 3 "Գ", 2 "Բ", 1 "Ա" }
+@counter-style upper-armenian { system: extends armenian }
+@counter-style lower-armenian { system: additive; range: 1 9999; additive-symbols: 9000 "ք", 8000 "փ", 7000 "ւ", 6000 "ց", 5000 "ր", 4000 "տ", 3000 "վ", 2000 "ս", 1000 "ռ", 900 "ջ", 800 "պ", 700 "չ", 600 "ո", 500 "շ", 400 "ն", 300 "յ", 200 "մ", 100 "ճ", 90 "ղ", 80 "ձ", 70 "հ", 60 "կ", 50 "ծ", 40 "խ", 30 "լ", 20 "ի", 10 "ժ", 9 "թ", 8 "ը", 7 "է", 6 "զ", 5 "ե", 4 "դ", 3 "գ", 2 "բ", 1 "ա" }
+@counter-style georgian { system: additive; range: 1 19999; additive-symbols: 10000 "ჵ", 9000 "ჰ", 8000 "ჯ", 7000 "ჴ", 6000 "ხ", 5000 "ჭ", 4000 "წ", 3000 "ძ", 2000 "ც", 1000 "ჩ", 900 "შ", 800 "ყ", 700 "ღ", 600 "ქ", 500 "ფ", 400 "ჳ", 300 "ტ", 200 "ს", 100 "რ", 90 "ჟ", 80 "პ", 70 "ო", 60 "ჲ", 50 "ნ", 40 "მ", 30 "ლ", 20 "კ", 10 "ი", 9 "თ", 8 "ჱ", 7 "ზ", 6 "ვ", 5 "ე", 4 "დ", 3 "გ", 2 "ბ", 1 "ა" }
+@counter-style hebrew { system: additive; range: 1 10999; additive-symbols: 10000 "י׳", 9000 "ט׳", 8000 "ח׳", 7000 "ז׳", 6000 "ו׳", 5000 "ה׳", 4000 "ד׳", 3000 "ג׳", 2000 "ב׳", 1000 "א׳", 400 "ת", 300 "ש", 200 "ר", 100 "ק", 90 "צ", 80 "פ", 70 "ע", 60 "ס", 50 "נ", 40 "מ", 30 "ל", 20 "כ", 19 "יט", 18 "יח", 17 "יז", 16 "טז", 15 "טו", 10 "י", 9 "ט", 8 "ח", 7 "ז", 6 "ו", 5 "ה", 4 "ד", 3 "ג", 2 "ב", 1 "א" }
+@counter-style lower-roman { system: additive; range: 1 3999; additive-symbols: 1000 "m", 900 "cm", 500 "d", 400 "cd", 100 "c", 90 "xc", 50 "l", 40 "xl", 10 "x", 9 "ix", 5 "v", 4 "iv", 1 "i" }
+@counter-style upper-roman { system: additive; range: 1 3999; additive-symbols: 1000 "M", 900 "CM", 500 "D", 400 "CD", 100 "C", 90 "XC", 50 "L", 40 "XL", 10 "X", 9 "IX", 5 "V", 4 "IV", 1 "I" }
+@counter-style lower-alpha { system: alphabetic; symbols: "a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m" "n" "o" "p" "q" "r" "s" "t" "u" "v" "w" "x" "y" "z" }
+@counter-style lower-latin { system: extends lower-alpha }
+@counter-style upper-alpha { system: alphabetic; symbols: "A" "B" "C" "D" "E" "F" "G" "H" "I" "J" "K" "L" "M" "N" "O" "P" "Q" "R" "S" "T" "U" "V" "W" "X" "Y" "Z" }
+@counter-style upper-latin { system: extends upper-alpha }
+@counter-style lower-greek { system: alphabetic; symbols: "α" "β" "γ" "δ" "ε" "ζ" "η" "θ" "ι" "κ" "λ" "μ" "ν" "ξ" "ο" "π" "ρ" "σ" "τ" "υ" "φ" "χ" "ψ" "ω" }
+@counter-style hiragana { system: alphabetic; symbols: "あ" "い" "う" "え" "お" "か" "き" "く" "け" "こ" "さ" "し" "す" "せ" "そ" "た" "ち" "つ" "て" "と" "な" "に" "ぬ" "ね" "の" "は" "ひ" "ふ" "へ" "ほ" "ま" "み" "む" "め" "も" "や" "ゆ" "よ" "ら" "り" "る" "れ" "ろ" "わ" "ゐ" "ゑ" "を" "ん"; suffix: "、" }
+@counter-style hiragana-iroha { system: alphabetic; symbols: "い" "ろ" "は" "に" "ほ" "へ" "と" "ち" "り" "ぬ" "る" "を" "わ" "か" "よ" "た" "れ" "そ" "つ" "ね" "な" "ら" "む" "う" "ゐ" "の" "お" "く" "や" "ま" "け" "ふ" "こ" "え" "て" "あ" "さ" "き" "ゆ" "め" "み" "し" "ゑ" "ひ" "も" "せ" "す"; suffix: "、" }
+@counter-style katakana { system: alphabetic; symbols: "ア" "イ" "ウ" "エ" "オ" "カ" "キ" "ク" "ケ" "コ" "サ" "シ" "ス" "セ" "ソ" "タ" "チ" "ツ" "テ" "ト" "ナ" "ニ" "ヌ" "ネ" "ノ" "ハ" "ヒ" "フ" "ヘ" "ホ" "マ" "ミ" "ム" "メ" "モ" "ヤ" "ユ" "ヨ" "ラ" "リ" "ル" "レ" "ロ" "ワ" "ヰ" "ヱ" "ヲ" "ン"; suffix: "、" }
+@counter-style katakana-iroha { system: alphabetic; symbols: "イ" "ロ" "ハ" "ニ" "ホ" "ヘ" "ト" "チ" "リ" "ヌ" "ル" "ヲ" "ワ" "カ" "ヨ" "タ" "レ" "ソ" "ツ" "ネ" "ナ" "ラ" "ム" "ウ" "ヰ" "ノ" "オ" "ク" "ヤ" "マ" "ケ" "フ" "コ" "エ" "テ" "ア" "サ" "キ" "ユ" "メ" "ミ" "シ" "ヱ" "ヒ" "モ" "セ" "ス"; suffix: "、" }
+@counter-style -internal-disc { system: cyclic; symbols: "•"; suffix: " " }
+@counter-style -internal-circle { system: cyclic; symbols: "◦"; suffix: " " }
+@counter-style -internal-square { system: cyclic; symbols: "▪"; suffix: " " }
+@counter-style -internal-disclosure-open { system: cyclic; symbols: "▾"; suffix: " " }
+@counter-style -internal-disclosure-closed { system: cyclic; symbols: "▸"; suffix: " " }
+@counter-style cjk-earthly-branch { system: fixed; symbols: "子" "丑" "寅" "卯" "辰" "巳" "午" "未" "申" "酉" "戌" "亥"; suffix: "、"; fallback: cjk-decimal }
+@counter-style cjk-heavenly-stem { system: fixed; symbols: "甲" "乙" "丙" "丁" "戊" "己" "庚" "辛" "壬" "癸"; suffix: "、"; fallback: cjk-decimal }
+@counter-style japanese-informal { system: additive; range: -9999 9999; additive-symbols: 9000 "九千", 8000 "八千", 7000 "七千", 6000 "六千", 5000 "五千", 4000 "四千", 3000 "三千", 2000 "二千", 1000 "千", 900 "九百", 800 "八百", 700 "七百", 600 "六百", 500 "五百", 400 "四百", 300 "三百", 200 "二百", 100 "百", 90 "九十", 80 "八十", 70 "七十", 60 "六十", 50 "五十", 40 "四十", 30 "三十", 20 "二十", 10 "十", 9 "九", 8 "八", 7 "七", 6 "六", 5 "五", 4 "四", 3 "三", 2 "二", 1 "一", 0 "〇"; suffix: "、"; negative: "マイナス"; fallback: cjk-decimal }
+@counter-style japanese-formal { system: additive; range: -9999 9999; additive-symbols: 9000 "九阡", 8000 "八阡", 7000 "七阡", 6000 "六阡", 5000 "伍阡", 4000 "四阡", 3000 "参阡", 2000 "弐阡", 1000 "壱阡", 900 "九百", 800 "八百", 700 "七百", 600 "六百", 500 "伍百", 400 "四百", 300 "参百", 200 "弐百", 100 "壱百", 90 "九拾", 80 "八拾", 70 "七拾", 60 "六拾", 50 "伍拾", 40 "四拾", 30 "参拾", 20 "弐拾", 10 "壱拾", 9 "九", 8 "八", 7 "七", 6 "六", 5 "伍", 4 "四", 3 "参", 2 "弐", 1 "壱", 0 "零"; suffix: "、"; negative: "マイナス"; fallback: cjk-decimal }
+@counter-style korean-hangul-formal { system: additive; range: -9999 9999; additive-symbols: 9000 "구천", 8000 "팔천", 7000 "칠천", 6000 "육천", 5000 "오천", 4000 "사천", 3000 "삼천", 2000 "이천", 1000 "일천", 900 "구백", 800 "팔백", 700 "칠백", 600 "육백", 500 "오백", 400 "사백", 300 "삼백", 200 "이백", 100 "일백", 90 "구십", 80 "팔십", 70 "칠십", 60 "육십", 50 "오십", 40 "사십", 30 "삼십", 20 "이십", 10 "일십", 9 "구", 8 "팔", 7 "칠", 6 "육", 5 "오", 4 "사", 3 "삼", 2 "이", 1 "일", 0 "영"; suffix: ", "; negative: "마이너스 "; fallback: cjk-decimal }
+@counter-style korean-hanja-informal { system: additive; range: -9999 9999; additive-symbols: 9000 "九千", 8000 "八千", 7000 "七千", 6000 "六千", 5000 "五千", 4000 "四千", 3000 "三千", 2000 "二千", 1000 "千", 900 "九百", 800 "八百", 700 "七百", 600 "六百", 500 "五百", 400 "四百", 300 "三百", 200 "二百", 100 "百", 90 "九十", 80 "八十", 70 "七十", 60 "六十", 50 "五十", 40 "四十", 30 "三十", 20 "二十", 10 "十", 9 "九", 8 "八", 7 "七", 6 "六", 5 "五", 4 "四", 3 "三", 2 "二", 1 "一", 0 "零"; suffix: ", "; negative: "마이너스 "; fallback: cjk-decimal }
+@counter-style korean-hanja-formal { system: additive; range: -9999 9999; additive-symbols: 9000 "九仟", 8000 "八仟", 7000 "七仟", 6000 "六仟", 5000 "五仟", 4000 "四仟", 3000 "參仟", 2000 "貳仟", 1000 "壹仟", 900 "九百", 800 "八百", 700 "七百", 600 "六百", 500 "五百", 400 "四百", 300 "參百", 200 "貳百", 100 "壹百", 90 "九拾", 80 "八拾", 70 "七拾", 60 "六拾", 50 "五拾", 40 "四拾", 30 "參拾", 20 "貳拾", 10 "壹拾", 9 "九", 8 "八", 7 "七", 6 "六", 5 "五", 4 "四", 3 "參", 2 "貳", 1 "壹", 0 "零"; suffix: ", "; negative: "마이너스 "; fallback: cjk-decimal }
+@counter-style simp-chinese-informal { system: numeric; range: -9999 9999; symbols: "零" "一" "二" "三" "四" "五" "六" "七" "八" "九" "十" "百" "千"; suffix: "、"; negative: "负"; fallback: cjk-decimal }
+@counter-style simp-chinese-formal { system: numeric; range: -9999 9999; symbols: "零" "壹" "贰" "叁" "肆" "伍" "陆" "柒" "捌" "玖" "拾" "佰" "仟"; suffix: "、"; negative: "负"; fallback: cjk-decimal }
+@counter-style trad-chinese-informal { system: numeric; range: -9999 9999; symbols: "零" "一" "二" "三" "四" "五" "六" "七" "八" "九" "十" "百" "千"; suffix: "、"; negative: "負"; fallback: cjk-decimal }
+@counter-style trad-chinese-formal { system: numeric; range: -9999 9999; symbols: "零" "壹" "貳" "參" "肆" "伍" "陸" "柒" "捌" "玖" "拾" "佰" "仟"; suffix: "、"; negative: "負"; fallback: cjk-decimal }
+@counter-style cjk-ideographic { system: extends trad-chinese-informal }
+@counter-style ethiopic-numeric { system: alphabetic; symbols: "፩" "፪" "፫" "፬" "፭" "፮" "፯" "፰" "፱" "፲" "፳" "፴" "፵" "፶" "፷" "፸" "፹" "፺" "፻" "፼"; suffix: "/ " }

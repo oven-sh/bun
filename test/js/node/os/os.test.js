@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -117,8 +117,12 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
-    expect(info.shell).toBe(process.env.SHELL || "unknown");
+    expect(info.username).toBe(
+      Bun.spawnSync({ cmd: ["id", "-un"] })
+        .stdout.toString()
+        .trim(),
+    );
+    expect(info.shell).toStartWith("/");
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);
   } else {
@@ -127,6 +131,15 @@ it("userInfo", () => {
     expect(info.uid).toBe(-1);
     expect(info.gid).toBe(-1);
   }
+});
+
+it.skipIf(process.platform === "win32")("userInfo reads the passwd entry, not the environment", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", "JSON.stringify(os.userInfo())"],
+    env: { ...bunEnv, USER: "somebody-else", HOME: "/somewhere-else", SHELL: "/something-else" },
+  });
+  expect(await proc.stdout.json()).toEqual(os.userInfo());
+  expect(await proc.exited).toBe(0);
 });
 
 it("cpus", () => {

@@ -39,6 +39,7 @@
 #include "CryptoKeyRSA.h"
 #include "CryptoKeyRSAComponents.h"
 #include "CryptoKeyRaw.h"
+#include "DesktopRealm.h"
 #include "JSCryptoKey.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBufferSource.h"
@@ -70,6 +71,7 @@
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/AOTHost.h>
+#include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/JSWebAssemblyMemory.h>
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
@@ -203,6 +205,9 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    Bun__PlatformObjectTag = 249,
+    // <error:ErrorInstanceTag> <propertyName:"cause"> <value> TerminatorTag
+    Bun__ErrorWithCauseTag = 248,
 
     ErrorTag = 255
 };
@@ -1202,9 +1207,14 @@ private:
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
+                auto& vm = m_lexicalGlobalObject->vm();
+                if (!std::exchange(m_causeFollows, false)) {
+                    unsigned attributes = 0;
+                    if (errorInstance->getDirect(vm, vm.propertyNames->cause, attributes) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                        return false;
+                }
                 if (!startObjectInternal(errorInstance)) // handle duplicates
                     return true;
-                auto& vm = m_lexicalGlobalObject->vm();
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
@@ -1303,6 +1313,11 @@ private:
                 }
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
+
+                if (arrayBuffer->isShared() && m_isInDesktopRealm && m_forStorage == SerializationForStorage::Yes) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
 
                 if (arrayBuffer->isShared() && m_context == SerializationContext::WorkerPostMessage) {
                     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
@@ -1997,6 +2012,8 @@ private:
     }
 #endif
     ObjectPool m_objectPool;
+    bool m_causeFollows { false };
+    bool m_isInDesktopRealm { Bun::isDesktopRealm(m_lexicalGlobalObject) };
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
     typedef HashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> StringConstantPool;
@@ -2102,7 +2119,18 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (inputObjectStack.size() > maximumFilterRecursion)
                 return SerializationReturnCode::StackOverflowError;
             JSObject* inObject = asObject(inValue);
-            if (!startObject(inObject))
+            if (m_isInDesktopRealm && inObject->getPrototypeDirect() != m_lexicalGlobalObject->objectPrototype()) [[unlikely]] {
+                if (checkForDuplicate(inObject))
+                    break;
+                auto* serialized = Bun::desktopRealmSerialize(m_lexicalGlobalObject, inObject, m_forStorage == SerializationForStorage::Yes);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                recordObject(inObject);
+                write(serialized ? Bun__PlatformObjectTag : ObjectTag);
+                if (serialized) {
+                    m_gcBuffer.appendWithCrashOnOverflow(serialized);
+                    inObject = serialized;
+                }
+            } else if (!startObject(inObject))
                 break;
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
@@ -2291,6 +2319,21 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 break;
             }
 
+            if (inValue.inherits<ErrorInstance>()) [[unlikely]] {
+                if (inputObjectStack.size() > maximumFilterRecursion)
+                    return SerializationReturnCode::StackOverflowError;
+                if (checkForDuplicate(asObject(inValue)))
+                    break;
+                write(Bun__ErrorWithCauseTag);
+                m_causeFollows = true;
+                dumpIfTerminal(inValue, terminalCode);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                inputObjectStack.append(asObject(inValue));
+                indexStack.append(0);
+                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                propertyStack.last().add(vm.propertyNames->cause);
+                goto objectStartVisitMember;
+            }
             if (isArray(inValue))
                 goto arrayStartState;
             if (isMap(inValue))
@@ -2779,6 +2822,12 @@ private:
 
     void putProperty(JSObject* object, const Identifier& property, JSValue value)
     {
+        if (object->type() == ErrorInstanceType) [[unlikely]] {
+            if (parseIndex(property))
+                return fail();
+            object->putDirect(m_lexicalGlobalObject->vm(), property, value, static_cast<unsigned>(PropertyAttribute::DontEnum));
+            return;
+        }
         object->putDirectMayBeIndex(m_lexicalGlobalObject, property, value);
     }
 
@@ -4009,8 +4058,11 @@ private:
         case DOMExceptionTag:
             return readDOMException();
 
-        case Bun__BlobTag:
-            return readBunType(Blob__onStructuredCloneDeserialize);
+        case Bun__BlobTag: {
+            JSValue blob = readBunType(Blob__onStructuredCloneDeserialize);
+            Bun::desktopRealmAdoptFile(m_lexicalGlobalObject, blob);
+            return blob;
+        }
 
         case Bun__nodenet_BlockList:
             return readBunType(BlockList__onStructuredCloneDeserialize);
@@ -4073,6 +4125,7 @@ DeserializationResult CloneDeserializer::deserialize()
     Vector<uint32_t, 16> indexStack;
     Vector<Identifier, 16> propertyNameStack;
     MarkedVector<JSObject*, 32> outputObjectStack;
+    Vector<uint32_t> platformObjectStack;
     MarkedVector<JSValue, 4> mapKeyStack;
     MarkedVector<JSMap*, 4> mapStack;
     MarkedVector<JSSet*, 4> setStack;
@@ -4166,6 +4219,13 @@ DeserializationResult CloneDeserializer::deserialize()
                     outObject = m_objectFinisher->finish(m_globalObject, m_gcBuffer, outObject);
 #endif
                 outValue = outObject;
+                if (!platformObjectStack.isEmpty() && m_objectPool.at(platformObjectStack.last()) == outputObjectStack.last()) [[unlikely]] {
+                    outValue = Bun::desktopRealmDeserialize(m_globalObject, outObject);
+                    if (scope.exception()) [[unlikely]]
+                        goto error;
+                    m_gcBuffer.appendWithCrashOnOverflow(outputObjectStack.last());
+                    m_objectPool.at(platformObjectStack.takeLast()) = outValue;
+                }
                 outputObjectStack.removeLast();
                 break;
             }
@@ -4276,6 +4336,22 @@ DeserializationResult CloneDeserializer::deserialize()
                 goto arrayStartState;
             if (tag == ObjectTag)
                 goto objectStartState;
+            if (tag == Bun__PlatformObjectTag) {
+                platformObjectStack.append(m_objectPool.size());
+                goto objectStartState;
+            }
+            if (tag == Bun__ErrorWithCauseTag) {
+                if (outputObjectStack.size() > maximumFilterRecursion)
+                    return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+                if (m_ptr >= m_end || *m_ptr != ErrorInstanceTag)
+                    goto error;
+                outValue = readTerminal();
+                if (scope.exception() || m_failed) [[unlikely]]
+                    goto error;
+                m_gcBuffer.appendWithCrashOnOverflow(outValue);
+                outputObjectStack.append(asObject(outValue));
+                goto objectStartVisitMember;
+            }
             if (tag == MapObjectTag)
                 goto mapObjectStartState;
             if (tag == SetObjectTag)
@@ -4562,10 +4638,19 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     return Exception { TypeError };
 }
 
+static bool mayBePlatformObject(Structure* structure)
+{
+    auto* realm = structure->realm();
+    return realm && Bun::isDesktopRealm(realm) && (structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype());
+}
+
 // This is based on `checkStrucureForClone`
 static bool isObjectFastPathCandidate(Structure* structure)
 {
     static constexpr bool verbose = false;
+
+    if (mayBePlatformObject(structure)) [[unlikely]]
+        return false;
 
     if (structure->typeInfo().type() != FinalObjectType) {
         dataLogLnIf(verbose, "target is not final object");
@@ -4598,6 +4683,144 @@ static bool isObjectFastPathCandidate(Structure* structure)
     }
 
     return true;
+}
+
+// The structure that copies get. It is only known to be alive until the collector has stopped the mutator.
+struct KnownShape {
+    Structure* from;
+    Structure* to;
+    JSGlobalObject* realm;
+    uint64_t version;
+};
+static thread_local std::array<KnownShape, 128> knownShapes;
+
+class PlainDataCopier {
+public:
+    explicit PlainDataCopier(JSGlobalObject& globalObject)
+        : m_globalObject(globalObject)
+        , m_vm(globalObject.vm())
+        , m_deferGC(m_vm)
+    {
+    }
+
+    JSValue copy(JSValue value, unsigned depth = 0)
+    {
+        if (!value.isCell() || value.isString() || value.isHeapBigInt())
+            return value;
+        if (!value.isObject() || depth == maximumDepth)
+            return {};
+        auto* object = asObject(value);
+        if (auto* known = m_copies.get(object))
+            return known;
+        return isJSArray(object) ? copyArray(asArray(object), depth + 1) : copyObject(object, depth + 1);
+    }
+
+private:
+    static constexpr unsigned maximumDepth = 200;
+
+    JSValue copyArray(JSArray* array, unsigned depth)
+    {
+        unsigned length = array->length();
+        if (array->structure()->maxOffset() != invalidOffset || hasAnyArrayStorage(array->indexingType()))
+            return {};
+        auto* result = JSArray::tryCreate(m_vm, m_globalObject.arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), 0, length);
+        if (!result)
+            return {};
+        m_copies.add(array, result);
+        for (unsigned i = 0; i < length; i++) {
+            JSValue element = array->canGetIndexQuickly(i) ? copy(array->getIndexQuickly(i), depth) : JSValue();
+            if (!element)
+                return {};
+            result->putDirectIndex(&m_globalObject, i, element);
+        }
+        return result;
+    }
+
+    JSValue copyObject(JSObject* object, unsigned depth)
+    {
+        auto* structure = object->structure();
+        auto* realm = structure->realm();
+        if (!realm || structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype())
+            return {};
+        auto& known = knownShapes[(std::bit_cast<uintptr_t>(structure) >> 4) % knownShapes.size()];
+        if (known.from == structure && known.realm == &m_globalObject && known.version == m_vm.heap.mutatorExecutionVersion())
+            return copySlots(object, known.to, depth);
+
+        Vector<std::pair<UniquedStringImpl*, JSValue>, 16> properties;
+        bool isInOrder = false;
+        if (isObjectFastPathCandidate(structure)) {
+            bool hasSymbol = false;
+            isInOrder = !structure->isDictionary() && !structure->hasBeenDictionary();
+            structure->forEachProperty(m_vm, [&](const PropertyTableEntry& entry) {
+                hasSymbol = entry.key()->isSymbol();
+                isInOrder &= entry.offset() == offsetForPropertyNumber(properties.size(), structure->inlineCapacity());
+                properties.append({ entry.key(), object->getDirect(entry.offset()) });
+                return !hasSymbol;
+            });
+            if (hasSymbol)
+                return {};
+        } else if (!listCompiledProperties(object, properties))
+            return {};
+
+        auto* result = constructEmptyObject(&m_globalObject, m_globalObject.objectPrototype(), std::min<unsigned>(properties.size(), JSFinalObject::maxInlineCapacity));
+        m_copies.add(object, result);
+        for (auto [name, value] : properties) {
+            JSValue copied = copy(value, depth);
+            if (!copied)
+                return {};
+            result->putDirect(m_vm, name, copied);
+        }
+        if (isInOrder && !result->structure()->isDictionary() && !result->butterfly())
+            known = { structure, result->structure(), &m_globalObject, m_vm.heap.mutatorExecutionVersion() };
+        return result;
+    }
+
+    JSValue copySlots(JSObject* object, Structure* to, unsigned depth)
+    {
+        auto* result = constructEmptyObject(m_vm, to);
+        m_copies.add(object, result);
+        unsigned capacity = object->structure()->inlineCapacity();
+        for (unsigned i = 0, size = to->inlineSize(); i < size; i++) {
+            JSValue copied = copy(object->getDirect(offsetForPropertyNumber(i, capacity)), depth);
+            if (!copied)
+                return {};
+            result->putDirectOffset(m_vm, i, copied);
+        }
+        return result;
+    }
+
+    bool listCompiledProperties(JSObject* object, Vector<std::pair<UniquedStringImpl*, JSValue>, 16>& properties)
+    {
+#if ENABLE(AOT)
+        using namespace JSC::AOT::PropertyWalk;
+        if (object->type() != CompiledObjectType || object->getDirect(m_vm, builtinNames(m_vm).isUncloneablePrivateName()))
+            return false;
+        return Result::Completed == forEachOwnProperty(m_vm, object, Filter::EnumerableStrings, [&](const OwnProperty& property) {
+            properties.append({ property.name, property.value });
+            return parseIndex(*property.name) ? IterationStatus::Done : IterationStatus::Continue;
+        });
+#else
+        UNUSED_PARAM(object);
+        UNUSED_PARAM(properties);
+        return false;
+#endif
+    }
+
+    JSGlobalObject& m_globalObject;
+    VM& m_vm;
+    DeferGC m_deferGC;
+    UncheckedKeyHashMap<JSObject*, JSObject*> m_copies;
+};
+
+JSValue SerializedScriptValue::tryCopyPlainData(JSGlobalObject& globalObject, JSValue value)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject.vm());
+    JSValue result = PlainDataCopier(globalObject).copy(value);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return {};
+    }
+    return result;
 }
 
 #if ENABLE(AOT)
@@ -4674,7 +4897,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                     canUseObjectFastPath = true;
                 }
 #if ENABLE(AOT)
-                else if (isCompiledObject(object)) {
+                else if (isCompiledObject(object) && !mayBePlatformObject(structure)) {
                     WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
                     bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, object, fields);
                     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });

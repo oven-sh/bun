@@ -71,6 +71,8 @@ pub struct InternalState<'a> {
     pub(crate) request_stage: HTTPStage,
     pub(crate) response_stage: HTTPStage,
     pub(crate) certificate_info: Option<CertificateInfo>,
+    /// The connection preface of an h2 server, which does not wait for `is_waiting_for_cert_check`.
+    pub(crate) early_h2_frames: Option<Vec<u8>>,
 }
 
 // Struct-of-bools so the
@@ -149,6 +151,7 @@ impl Default for InternalState<'_> {
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,
+            early_h2_frames: None,
         }
     }
 }

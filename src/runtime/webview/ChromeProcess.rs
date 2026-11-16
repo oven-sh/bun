@@ -224,7 +224,7 @@ fn is_browser_binary(path: &bun_core::ZStr) -> bool {
 ///            chrome-headless-shell-linux64/chrome-headless-shell
 ///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
 ///   windows: %LOCALAPPDATA%\ms-playwright\chromium_headless_shell-<rev>\chrome-headless-shell-win64\chrome-headless-shell.exe
-fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
+pub(crate) fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
     // Precedence: backend.path > BUN_CHROME_PATH > $PATH > hardcoded > playwright.
     // backend.path is per-Bun.WebView call (first wins — later views reuse
     // the already-spawned Chrome); env var is per-process.

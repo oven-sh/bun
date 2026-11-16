@@ -1,0 +1,185 @@
+--- a/crates/gpui_apple/Cargo.toml
++++ b/crates/gpui_apple/Cargo.toml
+@@ -70,11 +70,9 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
+ ] }
+ objc2-foundation = { workspace = true, features = ["NSThread", "NSNotification", "NSOperation", "NSProcessInfo", "block2"] }
+ objc2-quartz-core = { workspace = true, features = ["objc2-core-foundation", "objc2-core-graphics", "objc2-metal"] }
+-objc2-security.workspace = true
+ parking_lot.workspace = true
+ pathfinder_geometry = { workspace = true, optional = true }
+ smallvec.workspace = true
+-thiserror.workspace = true
+ 
+ [target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
+ cbindgen.workspace = true
+--- a/crates/gpui_apple/src/gpui_apple.rs
++++ b/crates/gpui_apple/src/gpui_apple.rs
+@@ -7,7 +7,6 @@
+ 
+ mod dispatcher;
+ pub mod display_link;
+-pub mod keychain;
+ mod metal_atlas;
+ pub mod metal_renderer;
+ pub mod process_info;
+--- a/crates/gpui_linux/Cargo.toml
++++ b/crates/gpui_linux/Cargo.toml
+@@ -73,10 +73,6 @@ url.workspace = true
+ uuid.workspace = true
+ 
+ # Always used
+-oo7 = { workspace = true, features = [
+-    "async-std",
+-    "native_crypto",
+-] }
+ calloop = "0.14.3"
+ notify-rust.workspace = true
+ raw-window-handle.workspace = true
+--- a/crates/gpui_linux/src/linux/platform.rs
++++ b/crates/gpui_linux/src/linux/platform.rs
+@@ -54,7 +54,6 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
+ pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+ pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
+-pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+ 
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+ const FILE_PICKER_PORTAL_MISSING: &str =
+@@ -1080,70 +1079,16 @@ impl Platform for LinuxPlatform {
+         self.with_common(|common| common.auto_hide_scrollbars)
+     }
+ 
+-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+-        let url = url.to_string();
+-        let username = username.to_string();
+-        let password = password.to_vec();
+-        self.background_executor().spawn(async move {
+-            let keyring = oo7::Keyring::new().await?;
+-            keyring.unlock().await?;
+-            keyring
+-                .create_item(
+-                    KEYRING_LABEL,
+-                    &vec![("url", &url), ("username", &username)],
+-                    password,
+-                    true,
+-                )
+-                .await?;
+-            Ok(())
+-        })
++    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Task<Result<()>> {
++        Task::ready(Err(anyhow!("credentials are not supported")))
+     }
+ 
+-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+-        let url = url.to_string();
+-        self.background_executor().spawn(async move {
+-            let keyring = oo7::Keyring::new().await?;
+-            keyring.unlock().await?;
+-
+-            let items = keyring.search_items(&vec![("url", &url)]).await?;
+-
+-            for item in items.into_iter() {
+-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+-                    let attributes = item.attributes().await?;
+-                    let username = attributes
+-                        .get("username")
+-                        .context("Cannot find username in stored credentials")?;
+-                    item.unlock().await?;
+-                    let secret = item.secret().await?;
+-
+-                    // we lose the zeroizing capabilities at this boundary,
+-                    // a current limitation GPUI's credentials api
+-                    return Ok(Some((username.to_string(), secret.to_vec())));
+-                } else {
+-                    continue;
+-                }
+-            }
+-            Ok(None)
+-        })
++    fn read_credentials(&self, _: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
++        Task::ready(Err(anyhow!("credentials are not supported")))
+     }
+ 
+-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+-        let url = url.to_string();
+-        self.background_executor().spawn(async move {
+-            let keyring = oo7::Keyring::new().await?;
+-            keyring.unlock().await?;
+-
+-            let items = keyring.search_items(&vec![("url", &url)]).await?;
+-
+-            for item in items.into_iter() {
+-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+-                    item.delete().await?;
+-                    return Ok(());
+-                }
+-            }
+-
+-            Ok(())
+-        })
++    fn delete_credentials(&self, _: &str) -> Task<Result<()>> {
++        Task::ready(Err(anyhow!("credentials are not supported")))
+     }
+ 
+     fn window_appearance(&self) -> WindowAppearance {
+--- a/crates/gpui_macos/src/platform.rs
++++ b/crates/gpui_macos/src/platform.rs
+@@ -18,10 +18,7 @@ use gpui::{
+     Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+     popup::PopupNotSupportedError,
+ };
+-use gpui_apple::{
+-    keychain,
+-    process_info::{self, ProcessInfoObserver},
+-};
++use gpui_apple::process_info::{self, ProcessInfoObserver};
+ use gpui_util::{ResultExt, new_std_command};
+ use itertools::Itertools;
+ use objc2::{
+@@ -1271,40 +1268,16 @@ impl Platform for MacPlatform {
+         }
+     }
+ 
+-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+-        let url = url.to_string();
+-        let username = username.to_string();
+-        let password = password.to_vec();
+-        self.background_executor()
+-            .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
+-    }
+-
+-    fn write_credentials_if_not_exists(
+-        &self,
+-        url: &str,
+-        username: &str,
+-        password: &[u8],
+-    ) -> Task<Result<bool>> {
+-        let url = url.to_string();
+-        let username = username.to_string();
+-        let password = password.to_vec();
+-        self.background_executor().spawn(async move {
+-            Ok(keychain::write_credentials_if_not_exists(
+-                &url, &username, &password,
+-            )?)
+-        })
++    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Task<Result<()>> {
++        Task::ready(Err(anyhow::anyhow!("credentials are not supported")))
+     }
+ 
+-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+-        let url = url.to_string();
+-        self.background_executor()
+-            .spawn(async move { Ok(keychain::read_credentials(&url)?) })
++    fn read_credentials(&self, _: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
++        Task::ready(Err(anyhow::anyhow!("credentials are not supported")))
+     }
+ 
+-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+-        let url = url.to_string();
+-        self.background_executor()
+-            .spawn(async move { Ok(keychain::delete_credentials(&url)?) })
++    fn delete_credentials(&self, _: &str) -> Task<Result<()>> {
++        Task::ready(Err(anyhow::anyhow!("credentials are not supported")))
+     }
+ }
+ 

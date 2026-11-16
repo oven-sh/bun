@@ -1206,6 +1206,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             runs_compiled_code,
             ..Default::default()
         });
+        if graph.flags.contains(GraphFlags::LOADS_GRAPHICS_DRIVERS) {
+            bun_jsc::expect_desktop_program();
+        }
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);

@@ -65,7 +65,7 @@ impl<'bump> LayerName<'bump> {
         )
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &Arena) -> Self {
         // Segments are arena-owned (identity copy).
         LayerName { v: self.v.clone() }
     }
@@ -98,15 +98,15 @@ impl fmt::Display for LayerName<'_> {
 pub struct LayerBlockRule<'bump, R> {
     /// PERF: null pointer optimizaiton, nullable
     /// The name of the layer to declare, or `None` to declare an anonymous layer.
-    pub(crate) name: Option<LayerName<'bump>>,
+    pub name: Option<LayerName<'bump>>,
     /// The rules within the `@layer` rule.
-    pub(crate) rules: CssRuleList<'bump, R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl<'bump, R> LayerBlockRule<'bump, R> {
-    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self
+    pub fn deep_clone(&self, bump: &'bump Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
@@ -130,7 +130,7 @@ impl<'bump, R> LayerBlockRule<'bump, R> {
     }
 }
 
-pub(crate) fn block_to_css<'p>(
+pub fn block_to_css<'p>(
     name: Option<&LayerName>,
     dest: &mut Printer<'p>,
     body: impl FnOnce(&mut Printer<'p>) -> Result<(), PrintErr>,
@@ -152,13 +152,13 @@ pub(crate) fn block_to_css<'p>(
 /// See also [LayerBlockRule](LayerBlockRule).
 pub struct LayerStatementRule<'bump> {
     /// The layer names to declare.
-    pub(crate) names: SmallList<LayerName<'bump>, 1>,
+    pub names: SmallList<LayerName<'bump>, 1>,
     /// The location of the rule in the source file.
-    pub(crate) loc: Location,
+    pub loc: Location,
 }
 
 impl LayerStatementRule<'_> {
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
         // `css.implementDeepClone` field-walk.
         let mut names = SmallList::<LayerName, 1>::default();
         for n in self.names.slice() {

@@ -16,25 +16,25 @@ pub struct Animation<'bump> {
     /// The animation name.
     pub name: AnimationName<'bump>,
     /// The animation duration.
-    pub(crate) duration: Time,
+    pub duration: Time,
     /// The easing function for the animation.
-    pub(crate) timing_function: EasingFunction,
+    pub timing_function: EasingFunction,
     /// The number of times the animation will run.
-    pub(crate) iteration_count: AnimationIterationCount,
+    pub iteration_count: AnimationIterationCount,
     /// The direction of the animation.
-    pub(crate) direction: AnimationDirection,
+    pub direction: AnimationDirection,
     /// The current play state of the animation.
-    pub(crate) play_state: AnimationPlayState,
+    pub play_state: AnimationPlayState,
     /// The animation delay.
-    pub(crate) delay: Time,
+    pub delay: Time,
     /// The animation fill mode.
-    pub(crate) fill_mode: AnimationFillMode,
+    pub fill_mode: AnimationFillMode,
     /// The animation timeline.
-    pub(crate) timeline: AnimationTimeline<'bump>,
+    pub timeline: AnimationTimeline<'bump>,
 }
 
 impl<'bump> Animation<'bump> {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Animation {
             name: self.name,
             duration: self.duration,
@@ -305,7 +305,7 @@ impl<'bump> AnimationName<'bump> {
 
 /// The raw-token fallback of `animation` and `animation-name`. In a CSS module it tags the keyframes names.
 #[cold]
-pub(crate) fn parse_unparsed<'bump>(
+pub fn parse_unparsed<'bump>(
     property_id: PropertyId<'bump>,
     input: &mut Parser<'_, 'bump>,
     options: &css::ParserOptions,
@@ -361,7 +361,7 @@ impl AnimationIterationCount {
         }
     }
 
-    pub(crate) fn default() -> AnimationIterationCount {
+    pub fn default() -> AnimationIterationCount {
         AnimationIterationCount::Number(1.0)
     }
 }
@@ -380,7 +380,7 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub(crate) fn default() -> AnimationDirection {
+    pub fn default() -> AnimationDirection {
         AnimationDirection::Normal
     }
 }
@@ -395,7 +395,7 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub(crate) fn default() -> AnimationPlayState {
+    pub fn default() -> AnimationPlayState {
         AnimationPlayState::Running
     }
 }
@@ -414,7 +414,7 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub(crate) fn default() -> AnimationFillMode {
+    pub fn default() -> AnimationFillMode {
         AnimationFillMode::None
     }
 }
@@ -455,11 +455,11 @@ impl<'bump> AnimationTimeline<'bump> {
         }
     }
 
-    pub(crate) fn default() -> AnimationTimeline<'bump> {
+    pub fn default() -> AnimationTimeline<'bump> {
         AnimationTimeline::Auto
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             AnimationTimeline::Auto => AnimationTimeline::Auto,
             AnimationTimeline::None => AnimationTimeline::None,

@@ -25,7 +25,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    enum Field : uint8_t {
+    enum Field : uint16_t {
 #include "InternalModuleRegistry+enum.h"
     };
 

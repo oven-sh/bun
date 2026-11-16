@@ -258,6 +258,7 @@ impl FetchSession {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
                 idle_timeout_seconds: 0,
                 max_idle_sockets: 0,
+                offers_h2: false,
             },
             keep_alive: true,
             ssl_config: None,
@@ -323,6 +324,10 @@ impl FetchSession {
                 ProxyArg::Unusable => return Err(invalid_proxy(global, proxy)),
             }
         }
+
+        this.pool.offers_h2 = options
+            .get_boolean_strict(global, "http2")?
+            .unwrap_or(false);
 
         if let Some(unix) = options.get(global, "unix")? {
             if let Some(path) = super::parse_unix(vm, global, unix)? {

@@ -20,6 +20,8 @@ feature Test "bun:test and node:test"
 
 feature WebView "Bun.WebView"
 
+feature Desktop "bun:desktop"
+
 feature OpenInEditor "Bun.openInEditor"
 
 feature Unsafe "Bun.unsafe"

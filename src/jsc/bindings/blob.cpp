@@ -1,4 +1,5 @@
 #include "blob.h"
+#include "DesktopRealm.h"
 #include "GeneratedBlob.h"
 
 extern "C" void Blob__setAsFile(void* impl, const BunString* filename);
@@ -16,6 +17,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     Blob__setAsFile(impl.impl(), &filename);
 
     JSC::JSValue value = Bun::Bindgen::createWrapper<JSBlob>(lexicalGlobalObject, Blob__dupe(impl.impl()));
+    Bun::desktopRealmAdoptFile(lexicalGlobalObject, value);
     if (value && value.isObject())
         impl.setWrapper(asObject(value));
     return value;

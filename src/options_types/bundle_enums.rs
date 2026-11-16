@@ -79,6 +79,17 @@ pub struct WindowsOptions {
     pub copyright: Option<Box<[u8]>>,
 }
 
+/// `--desktop`. What is missing here comes from package.json.
+#[derive(Default)]
+pub struct DesktopOptions {
+    pub name: Option<Box<[u8]>>,
+    pub identifier: Option<Box<[u8]>>,
+    pub version: Option<Box<[u8]>>,
+    pub icon: Option<Box<[u8]>>,
+    /// `compile.desktop` of `Bun.build`, if it is an object.
+    pub json: Box<[u8]>,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BundlePackage {

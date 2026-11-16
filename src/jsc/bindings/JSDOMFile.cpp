@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include "DesktopRealm.h"
 #include "JSDOMFile.h"
 
 using Bun::Bindgen::Generated::JSBlob;
@@ -83,7 +84,10 @@ public:
             return {};
         }
 
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSBlob::create(vm, structure, ptr)));
+        auto* file = JSBlob::create(vm, structure, ptr);
+        if (callFrame->newTarget() == callFrame->jsCallee())
+            Bun::desktopRealmAdoptFile(lexicalGlobalObject, file);
+        RELEASE_AND_RETURN(scope, JSValue::encode(file));
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

@@ -654,6 +654,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
 | `protoCaller`    | the method that [calls every native function of `proto`](#protocaller)                         |
+| `mutator`        | the method that runs every method with `mutates`, which it receives as a closure               |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
 | `configurable`   | `true` makes the native properties configurable                                                |

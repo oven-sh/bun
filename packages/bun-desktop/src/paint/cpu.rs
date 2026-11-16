@@ -1,0 +1,1271 @@
+use std::cell::RefCell;
+use std::ops::Range;
+use std::rc::Rc;
+
+use resvg::tiny_skia::{self, FilterQuality, Pattern, Pixmap, SpreadMode, Transform};
+use rustc_hash::FxHashMap;
+
+use super::border::{self, Border};
+use super::gradient::{Geometry, Gradient, Spread};
+use super::raster::{
+    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, average_scale, blur_extent, has_radii,
+    inner_band, map_point, map_rect, premultiply, scale, transform,
+};
+use super::scene::{
+    Frame, Scene, erases, filtered_bounds, has_graph, intersect, tile_bounds, union,
+};
+use super::stretch::Stretch;
+use super::warp::{self, Projection};
+use super::{digest, filter, graph, svg};
+use crate::abi::{
+    self, BlendMode, Filter, GradientShape, GradientStop, Item, LineStyle, Rect, RoundedRect, Tile,
+};
+use crate::images::{self, Content};
+use crate::text::{self, GlyphImage, GlyphPixels};
+
+/// Identifies the image of a glyph that is neither rotated nor skewed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlyphKey {
+    pub face: u32,
+    pub glyph: u32,
+    /// In 64ths of a device pixel.
+    size: u32,
+    /// In quarters of a device pixel.
+    shift: u8,
+    hint: bool,
+    color: u32,
+}
+
+impl GlyphKey {
+    pub fn bits(self) -> u128 {
+        u128::from(self.face) << 96
+            | u128::from(self.glyph & 0xFF_FFFF) << 72
+            | u128::from(self.size & 0xFF_FFFF) << 48
+            | u128::from(self.shift) << 40
+            | u128::from(self.hint) << 32
+            | u128::from(self.color)
+    }
+
+    pub fn rasterize(self) -> Option<GlyphImage> {
+        let shift = Transform::from_translate(f32::from(self.shift) / 4., 0.);
+        text::rasterize(
+            text::face(self.face)?,
+            self.glyph,
+            self.size as f32 / 64.,
+            &shift,
+            self.hint,
+            self.color,
+        )
+    }
+}
+
+/// Places the glyphs of a run under a uniform scale.
+pub struct GlyphPlacer {
+    key: GlyphKey,
+    matrix: Transform,
+}
+
+impl GlyphPlacer {
+    pub fn new(
+        frame: &Frame,
+        matrix: &Transform,
+        origin: [f32; 2],
+        face: u32,
+        size: f32,
+        color: u32,
+    ) -> Option<GlyphPlacer> {
+        const LARGEST_HINTED: f32 = 48.;
+        let is_uniform = matrix.kx == 0.
+            && matrix.ky == 0.
+            && matrix.sx > 0.
+            && (matrix.sx - matrix.sy).abs() < 1e-4;
+        if !is_uniform {
+            return None;
+        }
+        let is_at_rest = !frame.snaps || frame.is_translation(matrix);
+        let size = size * matrix.sx;
+        let mut matrix = matrix.pre_translate(origin[0], origin[1]);
+        matrix.ty = (matrix.ty + 0.5).floor();
+        let key = GlyphKey {
+            face,
+            glyph: 0,
+            // While a scale animates, few sizes are rasterized.
+            size: if is_at_rest {
+                (size * 64.).round() as u32
+            } else {
+                (size * 4.).round() as u32 * 16
+            },
+            shift: 0,
+            hint: is_at_rest
+                && frame.scale < 1.5
+                && size <= LARGEST_HINTED
+                && !cfg!(target_os = "macos"),
+            color: if text::face(face)?.file.has_color {
+                color | 0xFF
+            } else {
+                text::shade_for(color)
+            },
+        };
+        Some(GlyphPlacer { key, matrix })
+    }
+
+    /// The image, and the pixel that its origin goes to.
+    pub fn place(&self, glyph: &crate::abi::Glyph) -> (GlyphKey, i32, i32) {
+        let (x, y) = map_point(&self.matrix, glyph.x, glyph.y);
+        let quarters = (x * 4. + 0.5).floor() as i32;
+        let key = GlyphKey {
+            glyph: glyph.id,
+            shift: (quarters & 3) as u8,
+            ..self.key
+        };
+        (key, quarters >> 2, (y + 0.5).floor() as i32)
+    }
+}
+
+thread_local! {
+    static STRETCHES: RefCell<FxHashMap<u128, Rc<Layer>>> = RefCell::default();
+    static GLYPHS: RefCell<FxHashMap<GlyphKey, Option<Rc<GlyphImage>>>> = RefCell::default();
+}
+
+pub fn release_memory() {
+    STRETCHES.take();
+    GLYPHS.take();
+}
+
+pub fn cached_glyph(key: GlyphKey) -> Option<Rc<GlyphImage>> {
+    GLYPHS.with_borrow_mut(|glyphs| {
+        if glyphs.len() > 4096 {
+            glyphs.clear();
+        }
+        glyphs
+            .entry(key)
+            .or_insert_with(|| key.rasterize().map(Rc::new))
+            .clone()
+    })
+}
+
+fn draw_glyph(layer: &mut Layer, image: &GlyphImage, x: i32, y: i32, clip: &Clip, color: u32) {
+    let rect = image.rect.offset(x, y);
+    match &image.pixels {
+        GlyphPixels::Mask(mask) => {
+            layer.fill(rect, Some(mask), clip, &Paint::Solid(premultiply(color)))
+        }
+        GlyphPixels::Color(source) => {
+            let alpha = color as u8;
+            let copy = |left: i32, top: i32, row: &mut [Pixel]| {
+                row.copy_from_slice(source.row(top - y, left - x, left - x + row.len() as i32));
+                if alpha != 255 {
+                    row.iter_mut()
+                        .for_each(|pixel| *pixel = scale(*pixel, alpha));
+                }
+            };
+            layer.fill(rect, None, clip, &Paint::Shader(&copy));
+        }
+    }
+}
+
+pub fn blend_mode(mode: BlendMode) -> tiny_skia::BlendMode {
+    use tiny_skia::BlendMode as To;
+    match mode {
+        BlendMode::Normal => To::SourceOver,
+        BlendMode::Multiply => To::Multiply,
+        BlendMode::Screen => To::Screen,
+        BlendMode::Overlay => To::Overlay,
+        BlendMode::Darken => To::Darken,
+        BlendMode::Lighten => To::Lighten,
+        BlendMode::ColorDodge => To::ColorDodge,
+        BlendMode::ColorBurn => To::ColorBurn,
+        BlendMode::HardLight => To::HardLight,
+        BlendMode::SoftLight => To::SoftLight,
+        BlendMode::Difference => To::Difference,
+        BlendMode::Exclusion => To::Exclusion,
+        BlendMode::Hue => To::Hue,
+        BlendMode::Saturation => To::Saturation,
+        BlendMode::Color => To::Color,
+        BlendMode::Luminosity => To::Luminosity,
+        BlendMode::PlusLighter => To::Plus,
+        BlendMode::DestinationOut => To::DestinationOut,
+        BlendMode::DestinationIn => To::DestinationIn,
+        BlendMode::SourceIn => To::SourceIn,
+        BlendMode::SourceOut => To::SourceOut,
+        BlendMode::Xor => To::Xor,
+    }
+}
+
+/// The gradient, and the transform from its space to the tile's.
+pub fn css_gradient(
+    shape: GradientShape,
+    stops: &[GradientStop],
+    repeating: bool,
+) -> (Gradient, Transform) {
+    let (geometry, matrix) = match shape {
+        GradientShape::Linear { from, to } => {
+            (Geometry::Linear { from, to }, Transform::identity())
+        }
+        GradientShape::Radial { center, radius } => {
+            let [x, y] = radius.map(|radius| radius.max(1e-4));
+            let geometry = Geometry::Radial {
+                from: [0.; 3],
+                to: [0., 0., 1.],
+            };
+            (
+                geometry,
+                Transform::from_row(x, 0., 0., y, center[0], center[1]),
+            )
+        }
+        GradientShape::Conic { center, angle } => {
+            let (start, span) = ((angle - 90.).to_radians(), std::f32::consts::TAU);
+            (
+                Geometry::Sweep {
+                    center,
+                    start,
+                    span,
+                },
+                Transform::identity(),
+            )
+        }
+    };
+    let spread = if repeating {
+        Spread::Repeat
+    } else {
+        Spread::Pad
+    };
+    (Gradient::new(geometry, stops, spread, true), matrix)
+}
+
+/// Draws all of `pixmap` into `rect`.
+pub fn draw_pixmap(
+    target: &mut Layer,
+    pixmap: &Pixmap,
+    rect: Rect,
+    matrix: &Transform,
+    smooth: bool,
+) {
+    let Some(destination) = tiny_skia::Rect::from_xywh(rect.x, rect.y, rect.width, rect.height)
+    else {
+        return;
+    };
+    let (width, height) = (pixmap.width() as f32, pixmap.height() as f32);
+    let placement = Transform::from_row(
+        rect.width / width,
+        0.,
+        0.,
+        rect.height / height,
+        rect.x,
+        rect.y,
+    );
+    let quality = if smooth {
+        FilterQuality::Bilinear
+    } else {
+        FilterQuality::Nearest
+    };
+    let paint = tiny_skia::Paint {
+        shader: Pattern::new(pixmap.as_ref(), SpreadMode::Pad, quality, 1., placement),
+        ..tiny_skia::Paint::default()
+    };
+    let matrix = matrix.post_translate(-target.rect.left as f32, -target.rect.top as f32);
+    target.pixmap.fill_rect(destination, &paint, matrix, None);
+}
+
+pub fn svg_matrix(tree: &resvg::usvg::Tree, rect: Rect, matrix: &Transform) -> Transform {
+    let size = tree.size();
+    (matrix.pre_translate(rect.x, rect.y))
+        .pre_scale(rect.width / size.width(), rect.height / size.height())
+}
+
+/// The origins of the tiles along an axis that touch `start..start + length`.
+pub fn tile_origins(
+    origin: f32,
+    size: f32,
+    step: f32,
+    start: f32,
+    length: f32,
+) -> impl Iterator<Item = f32> + Clone {
+    let (first, last) = match step > 0. {
+        true => (
+            ((start - size - origin) / step).floor() + 1.,
+            ((start + length - origin) / step).ceil() - 1.,
+        ),
+        false => (0., 0.),
+    };
+    (first as i64..=last as i64).map(move |index| origin + index as f32 * step)
+}
+
+#[derive(Clone, Copy)]
+pub struct Painter<'a> {
+    pub scene: &'a Scene,
+    pub frame: &'a Frame,
+    /// The items from this index on are left out.
+    pub limit: usize,
+}
+
+impl Painter<'_> {
+    /// The pixels of a rectangle whose edges are on pixels.
+    fn aligned(&self, shape: &RoundedRect, matrix: &Transform) -> Option<IntRect> {
+        if has_radii(shape) || matrix.kx != 0. || matrix.ky != 0. {
+            return None;
+        }
+        let mapped = map_rect(matrix, shape.rect);
+        let edges = [
+            mapped.x,
+            mapped.y,
+            mapped.x + mapped.width,
+            mapped.y + mapped.height,
+        ];
+        (edges.iter().all(|edge| (edge - edge.round()).abs() < 0.01))
+            .then(|| IntRect::nearest(mapped))
+    }
+
+    pub fn clip_to(&self, shape: &RoundedRect, matrix: &Transform, clip: &Clip) -> Clip {
+        match self.aligned(shape, matrix) {
+            Some(rect) => clip.within_rect(rect),
+            None => {
+                let area = IntRect::around(map_rect(matrix, shape.rect)).intersect(clip.rect);
+                let inside = inner_band(shape, matrix);
+                if inside.contains(area) {
+                    return clip.within_rect(area);
+                }
+                let open = inside.intersect(clip.open);
+                Clip {
+                    open,
+                    ..clip.within(Coverage::of_shape(shape, matrix, area))
+                }
+            }
+        }
+    }
+
+    /// `Stretch::render`, possibly from when it was somewhere else.
+    pub fn recall(&self, stretch: &Stretch, matrix: &Transform) -> Option<Rc<Layer>> {
+        const MAX_PIXELS: i64 = 1 << 20;
+        let key = digest::of_stretch(self, stretch, matrix);
+        if let Some(known) = STRETCHES.with_borrow(|known| known.get(&key).cloned()) {
+            return Some(known);
+        }
+        let layer = Rc::new(stretch.render(self, matrix)?);
+        STRETCHES.with_borrow_mut(|known| {
+            if known.values().map(|layer| layer.rect.area()).sum::<i64>() > MAX_PIXELS
+                || known.len() > 64
+            {
+                known.clear();
+            }
+            known.insert(key, layer.clone());
+        });
+        Some(layer)
+    }
+
+    fn fill_shape(
+        &self,
+        layer: &mut Layer,
+        shape: &RoundedRect,
+        matrix: &Transform,
+        clip: &Clip,
+        paint: &Paint,
+    ) {
+        let clip = self.clip_to(shape, matrix, clip);
+        layer.fill(clip.rect, None, &clip, paint);
+    }
+
+    pub fn paint(&self, range: Range<usize>, layer: &mut Layer, matrix: &Transform, clip: &Clip) {
+        for index in self
+            .scene
+            .children(range)
+            .take_while(|index| *index < self.limit)
+        {
+            let area =
+                IntRect::around(map_rect(matrix, self.scene.bounds(index))).intersect(clip.rect);
+            if !area.is_empty() || erases(&self.scene.items[index]) {
+                self.paint_item(index, layer, matrix, clip, area);
+            }
+        }
+    }
+
+    fn paint_item(
+        &self,
+        index: usize,
+        layer: &mut Layer,
+        matrix: &Transform,
+        clip: &Clip,
+        area: IntRect,
+    ) {
+        let (scene, frame) = (self.scene, self.frame);
+        match &scene.items[index] {
+            Item::PushClip(shape) => {
+                let clip = self.clip_to(&frame.snap_shape(shape), matrix, &clip.within_rect(area));
+                self.paint(scene.content(index), layer, matrix, &clip);
+            }
+            Item::PushClipPath { verbs, even_odd } => {
+                let rule = if *even_odd {
+                    zeno::Fill::EvenOdd
+                } else {
+                    zeno::Fill::NonZero
+                };
+                let clip = clip.within(Coverage::of_path(&scene.path(*verbs), rule, matrix, area));
+                self.paint(scene.content(index), layer, matrix, &clip);
+            }
+            Item::PushClipOutline(outline) => {
+                self.paint(
+                    scene.content(index),
+                    layer,
+                    matrix,
+                    &clip.within(self.cover(outline, matrix, area)),
+                );
+            }
+            Item::PushTransform(by) if !frame.snaps => self.snapping(true, |painter| {
+                painter.paint(
+                    scene.content(index),
+                    layer,
+                    &painter.frame.concat(matrix, *by),
+                    clip,
+                );
+            }),
+            Item::PushTransform(by) => self.paint(
+                scene.content(index),
+                layer,
+                &frame.concat(matrix, *by),
+                clip,
+            ),
+            Item::PushVector(by) => self.snapping(false, |painter| {
+                painter.paint(
+                    scene.content(index),
+                    layer,
+                    &matrix.pre_concat(transform(*by)),
+                    clip,
+                );
+            }),
+            Item::PushPattern {
+                bounds,
+                tile,
+                matrix: by,
+            } => {
+                let bounds = RoundedRect {
+                    rect: frame.snap(*bounds),
+                    ..RoundedRect::default()
+                };
+                let clip = self.clip_to(&bounds, matrix, &clip.within_rect(area));
+                warp::repeat(
+                    layer,
+                    &clip,
+                    tile,
+                    &matrix.pre_concat(transform(*by)),
+                    true,
+                    |cell, matrix| {
+                        self.snapping(false, |painter| {
+                            painter.paint(scene.content(index), cell, matrix, &Clip::new(cell.rect))
+                        });
+                    },
+                );
+            }
+            Item::PushProjection(by) => {
+                let projection = Projection::from(matrix).after(&Projection(*by));
+                warp::project(
+                    layer,
+                    &clip.within_rect(area),
+                    &projection,
+                    scene.content_bounds(index),
+                    |flat, matrix| {
+                        self.paint(scene.content(index), flat, matrix, &Clip::new(flat.rect));
+                    },
+                );
+            }
+            Item::PushLayer { opacity, blend, .. } => {
+                let group = self.render_layer(index, matrix, area).map(|mut group| {
+                    group.scale_alpha(*opacity);
+                    group
+                });
+                match (blend, group) {
+                    (BlendMode::Normal, Some(group)) => layer.draw(&group, None, clip),
+                    (_, group) if erases(&scene.items[index]) => {
+                        if let Some(group) = group.or_else(|| Layer::new(clip.rect)) {
+                            layer.draw_with_mode(&group, blend_mode(*blend), clip);
+                        }
+                    }
+                    (_, Some(group)) => {
+                        layer.draw_with_mode(&group, blend_mode(*blend), &clip.within_rect(area))
+                    }
+                    (_, None) => {}
+                }
+            }
+            Item::Shadow { .. } | Item::Border { .. } => match Stretch::of(self, index, matrix) {
+                Some(stretch) => stretch.paint(self, layer, matrix, &clip.within_rect(area)),
+                None => self.paint_leaf(&scene.items[index], layer, matrix, clip, area),
+            },
+            item => self.paint_leaf(item, layer, matrix, clip, area),
+        }
+    }
+
+    fn snapping(&self, snaps: bool, paint: impl FnOnce(&Painter)) {
+        let frame = Frame {
+            snaps,
+            ..self.frame.rescaled(1.)
+        };
+        paint(&Painter {
+            frame: &frame,
+            ..*self
+        });
+        frame
+            .next_change
+            .get()
+            .into_iter()
+            .for_each(|time| self.frame.changes_at(time));
+    }
+
+    fn cover_stroke(
+        &self,
+        path: &Path,
+        stroke: &abi::Stroke,
+        matrix: &Transform,
+        area: IntRect,
+    ) -> Coverage {
+        let dashes = self.scene.floats(stroke.dashes);
+        let mut style = zeno::Stroke::new(stroke.width);
+        style
+            .miter_limit(stroke.miter_limit)
+            .dash(&dashes, stroke.dash_offset);
+        style.cap(match stroke.cap {
+            abi::CAP_ROUND => zeno::Cap::Round,
+            abi::CAP_SQUARE => zeno::Cap::Square,
+            _ => zeno::Cap::Butt,
+        });
+        style.join(match stroke.join {
+            abi::JOIN_ROUND => zeno::Join::Round,
+            abi::JOIN_BEVEL => zeno::Join::Bevel,
+            _ => zeno::Join::Miter,
+        });
+        Coverage::of_path(path, style, matrix, area)
+    }
+
+    fn cover(&self, outline: &abi::Outline, matrix: &Transform, area: IntRect) -> Coverage {
+        let path = self.scene.path(outline.verbs);
+        let stroke = (outline.stroke.width > 0.)
+            .then(|| self.cover_stroke(&path, &outline.stroke, matrix, area));
+        let fill = || match (outline.how & abi::OUTLINE_POSITIVE != 0, outline.even_odd) {
+            (true, _) => Coverage::of_positive_path(&path, matrix, area),
+            (_, true) => Coverage::of_path(&path, zeno::Fill::EvenOdd, matrix, area),
+            (_, false) => Coverage::of_path(&path, zeno::Fill::NonZero, matrix, area),
+        };
+        let mut coverage = match stroke {
+            Some(stroke)
+                if outline.how & (abi::OUTLINE_WITH_STROKE | abi::OUTLINE_WITHOUT_STROKE) == 0 =>
+            {
+                stroke
+            }
+            Some(stroke) => {
+                let mut coverage = fill();
+                if outline.how & abi::OUTLINE_WITH_STROKE != 0 {
+                    coverage.add(&stroke)
+                } else {
+                    coverage.remove(&stroke)
+                }
+                coverage
+            }
+            None => fill(),
+        };
+        if outline.how & abi::OUTLINE_INVERSE != 0 {
+            coverage.invert();
+        }
+        if outline.crisp {
+            coverage.harden();
+        }
+        coverage
+    }
+
+    /// `area` is what the item may touch of `clip`.
+    pub fn paint_leaf(
+        &self,
+        item: &Item,
+        layer: &mut Layer,
+        matrix: &Transform,
+        clip: &Clip,
+        area: IntRect,
+    ) {
+        let (scene, frame) = (self.scene, self.frame);
+        match item {
+            Item::PushClip(_)
+            | Item::PushClipPath { .. }
+            | Item::PushTransform(_)
+            | Item::PushLayer { .. } => {}
+            Item::PushClipOutline(_)
+            | Item::PushVector(_)
+            | Item::PushPattern { .. }
+            | Item::PushProjection(_) => {}
+            Item::Mask { .. } | Item::Input | Item::Pop => {}
+            Item::Path { outline, color } => {
+                layer.fill_coverage(
+                    &self.cover(outline, matrix, area),
+                    clip,
+                    &Paint::Solid(premultiply(*color)),
+                );
+            }
+            Item::Shade {
+                from,
+                to,
+                matrix: by,
+                stops,
+                spread,
+                ..
+            } => {
+                let geometry = match from[2] < 0. && to[2] < 0. {
+                    true => Geometry::Linear {
+                        from: [from[0], from[1]],
+                        to: [to[0], to[1]],
+                    },
+                    false => Geometry::Radial {
+                        from: *from,
+                        to: *to,
+                    },
+                };
+                let spread =
+                    [Spread::Pad, Spread::Repeat, Spread::Reflect][usize::from(*spread).min(2)];
+                let gradient = Gradient::new(geometry, scene.stops(*stops), spread, false);
+                let Some(inverse) = matrix.pre_concat(transform(*by)).invert() else {
+                    return;
+                };
+                layer.fill(
+                    area,
+                    None,
+                    clip,
+                    &Paint::Shader(&|x, y, row| gradient.shade(&inverse, x, y, row)),
+                );
+            }
+            Item::TextStroke {
+                origin,
+                face,
+                size,
+                glyphs,
+                color,
+                stroke,
+                ..
+            } => {
+                let Some(face) = text::face(*face) else {
+                    return;
+                };
+                let paths = scene.glyphs(*glyphs).iter().flat_map(|glyph| {
+                    let place =
+                        zeno::Transform::translation(origin[0] + glyph.x, origin[1] + glyph.y);
+                    text::glyph_path(face, glyph.id, *size)
+                        .into_iter()
+                        .map(move |command| command.transform(&place))
+                });
+                let coverage = self.cover_stroke(&paths.collect(), stroke, matrix, area);
+                layer.fill_coverage(&coverage, clip, &Paint::Solid(premultiply(*color)));
+            }
+            Item::ImagePart {
+                clip: bounds,
+                tile,
+                image,
+                whole,
+                part,
+                pixelated,
+            } => {
+                let bounds = RoundedRect {
+                    rect: frame.snap(*bounds),
+                    ..RoundedRect::default()
+                };
+                let clip = self.clip_to(&bounds, matrix, &clip.within_rect(area));
+                images::with(*image, frame, |content, _| match content {
+                    Content::Pixels(pixmap) => warp::repeat_part(
+                        layer, &clip, tile, matrix, pixmap, *whole, *part, !pixelated,
+                    ),
+                    Content::Svg(image) => {
+                        warp::repeat(layer, &clip, tile, matrix, !pixelated, |cell, matrix| {
+                            let (x, y) =
+                                (tile.rect.width / part.width, tile.rect.height / part.height);
+                            let matrix = matrix
+                                .pre_translate(tile.rect.x, tile.rect.y)
+                                .pre_scale(x, y)
+                                .pre_translate(-part.x, -part.y);
+                            image.draw(
+                                cell,
+                                Rect {
+                                    x: 0.,
+                                    y: 0.,
+                                    width: whole[0],
+                                    height: whole[1],
+                                },
+                                &matrix,
+                            );
+                        })
+                    }
+                });
+            }
+            Item::Backdrop {
+                shape,
+                filters,
+                opacity,
+            } => {
+                let filters = scene.filters(*filters);
+                let reach = filter_reach(filters, matrix);
+                let behind = IntRect::nearest(map_rect(matrix, frame.snap_shape(shape).rect))
+                    .intersect(area.outset(reach));
+                if let Some(mut backdrop) = layer.copy(behind.intersect(layer.rect)) {
+                    if reach > 0 {
+                        backdrop = mirror_edges(&backdrop, reach).unwrap_or(backdrop);
+                    }
+                    self.filter(&mut backdrop, filters, matrix, usize::MAX);
+                    backdrop.scale_alpha(*opacity);
+                    layer.draw(
+                        &backdrop,
+                        None,
+                        &self.clip_to(&frame.snap_shape(shape), matrix, clip),
+                    );
+                }
+            }
+            Item::Fill { shape, color } => self.fill_shape(
+                layer,
+                &frame.snap_shape(shape),
+                matrix,
+                clip,
+                &Paint::Solid(premultiply(*color)),
+            ),
+            Item::Border {
+                shape,
+                widths,
+                colors,
+                styles,
+            } => {
+                let border = Border {
+                    shape: &frame.snap_shape(shape),
+                    widths: widths.map(|width| frame.snap_width(width)),
+                    colors: *colors,
+                    styles: *styles,
+                };
+                border.paint(layer, matrix, frame.scale, clip, area);
+            }
+            Item::Shadow {
+                shape,
+                shadow,
+                blur,
+                color,
+                inset,
+                covered,
+            } => {
+                let (shape, shadow) = snap_shadow(frame, shape, shadow);
+                let sigma = blur / 2. * average_scale(matrix);
+                let mut coverage =
+                    Coverage::of_shape(&shadow, matrix, area.outset(blur_extent(sigma)));
+                coverage.blur(sigma);
+                let paint = Paint::Solid(premultiply(*color));
+                if *inset {
+                    coverage.invert();
+                    layer.fill_coverage(&coverage, &self.clip_to(&shape, matrix, clip), &paint);
+                } else {
+                    if !covered {
+                        coverage.subtract(&Coverage::of_shape(&shape, matrix, area));
+                    }
+                    layer.fill_coverage(&coverage, &clip.within_rect(area), &paint);
+                }
+            }
+            Item::Gradient {
+                clip: shape,
+                tile,
+                shape: geometry,
+                stops,
+                repeating,
+            } => {
+                let (gradient, to_tile) = css_gradient(*geometry, scene.stops(*stops), *repeating);
+                let (Some(to_local), Some(from_tile)) = (matrix.invert(), to_tile.invert()) else {
+                    return;
+                };
+                let Tile { rect, step } = snap_tile(frame, tile);
+                let wrap = |at: f32, step: f32| if step > 0. { at.rem_euclid(step) } else { at };
+                let shade_all = |left: i32, top: i32, row: &mut [Pixel]| {
+                    for (column, pixel) in (left..).zip(row) {
+                        let (x, y) = map_point(&to_local, column as f32 + 0.5, top as f32 + 0.5);
+                        let (x, y) = (wrap(x - rect.x, step[0]), wrap(y - rect.y, step[1]));
+                        let is_inside =
+                            (0. ..=rect.width).contains(&x) && (0. ..=rect.height).contains(&y);
+                        let (x, y) = map_point(&from_tile, x, y);
+                        *pixel = if is_inside {
+                            gradient.pixel_at(x, y)
+                        } else {
+                            [0; 4]
+                        };
+                    }
+                };
+                let shape = frame.snap_shape(shape);
+                let (axis, first_row) = (
+                    gradient_axis(item).filter(|_| !matrix.has_skew()),
+                    RefCell::new(Vec::new()),
+                );
+                let shade = |left: i32, top: i32, row: &mut [Pixel]| match axis {
+                    Some(true) => {
+                        shade_all(left + row.len() as i32 / 2, top, &mut row[..1]);
+                        row.fill(row[0]);
+                    }
+                    Some(false) if !first_row.borrow().is_empty() => {
+                        row.copy_from_slice(&first_row.borrow())
+                    }
+                    _ => {
+                        shade_all(left, top, row);
+                        first_row
+                            .borrow_mut()
+                            .extend(row.iter().filter(|_| axis.is_some()));
+                    }
+                };
+                let mut clip = clip.within_rect(area);
+                if axis.is_some() {
+                    let painted = tile_bounds(&shape, &Tile { rect, step });
+                    clip = clip.within_rect(IntRect::nearest(map_rect(matrix, painted)));
+                }
+                self.fill_shape(layer, &shape, matrix, &clip, &Paint::Shader(&shade));
+            }
+            Item::Image {
+                clip: shape,
+                tile,
+                image,
+                pixelated,
+            } => {
+                let shape = frame.snap_shape(shape);
+                let clip = self.clip_to(&shape, matrix, &clip.within_rect(area));
+                let Some(mut drawn) = Layer::new(clip.rect) else {
+                    return;
+                };
+                let tile = snap_tile(frame, tile);
+                images::with(*image, frame, |content, version| {
+                    let (scale_x, scale_y) = matrix.get_scale();
+                    let (width, height) = (tile.rect.width * scale_x, tile.rect.height * scale_y);
+                    let reduced = match content {
+                        Content::Pixels(pixmap) if !pixelated => {
+                            images::reduced(*image, version, pixmap, width, height)
+                        }
+                        _ => None,
+                    };
+                    let content = reduced.as_deref().map_or(content, Content::Pixels);
+                    self.draw_tiles(&mut drawn, content, &tile, &shape, matrix, !pixelated)
+                });
+                layer.draw(&drawn, None, &clip);
+            }
+            Item::Svg {
+                clip: bounds,
+                rect,
+                source,
+                hash,
+            } => {
+                let Some(tree) = images::inline_svg(*hash, scene.bytes(*source)) else {
+                    return;
+                };
+                let bounds = RoundedRect {
+                    rect: frame.snap(*bounds),
+                    ..RoundedRect::default()
+                };
+                let svg_matrix = svg_matrix(&tree, snap_origin(frame, *rect), matrix);
+                let painted =
+                    IntRect::around(map_rect(&svg_matrix, images::svg_bounds(&tree))).outset(1);
+                let clip =
+                    self.clip_to(&bounds, matrix, &clip.within_rect(area.intersect(painted)));
+                let Some(mut drawn) = Layer::new(clip.rect) else {
+                    return;
+                };
+                svg::draw(&mut drawn, &tree, &svg_matrix);
+                layer.draw(&drawn, None, &clip);
+            }
+            Item::Text { blur, .. } if *blur > 0. => {
+                let sigma = blur / 2. * average_scale(matrix);
+                let Some(mut shadow) = Layer::new(area.outset(blur_extent(sigma))) else {
+                    return;
+                };
+                let everything = Clip::new(shadow.rect);
+                self.draw_text(item, &mut shadow, matrix, &everything);
+                shadow.blur(sigma);
+                layer.draw(&shadow, None, clip);
+            }
+            Item::Text { .. } => self.draw_text(item, layer, matrix, clip),
+            Item::Line { rect, color, style } => {
+                let paint = Paint::Solid(premultiply(*color));
+                let lines = decoration_rects(frame, *rect, *style);
+                match style {
+                    LineStyle::None => {}
+                    LineStyle::Dotted | LineStyle::Dashed | LineStyle::Wavy => {
+                        let coverage = border::decoration(*rect, *style, matrix, frame.scale, area);
+                        layer.fill_coverage(&coverage, clip, &paint);
+                    }
+                    _ => {
+                        for rect in lines {
+                            let shape = RoundedRect {
+                                rect,
+                                ..RoundedRect::default()
+                            };
+                            self.fill_shape(layer, &shape, matrix, clip, &paint);
+                        }
+                    }
+                }
+            }
+            Item::Caret { rect, color } => {
+                if frame.shows_caret {
+                    let shape = RoundedRect {
+                        rect: frame.snap(*rect),
+                        ..RoundedRect::default()
+                    };
+                    self.fill_shape(
+                        layer,
+                        &shape,
+                        matrix,
+                        clip,
+                        &Paint::Solid(premultiply(*color)),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Filtered and masked, without the opacity. It covers at least `area`.
+    pub fn render_layer(&self, index: usize, matrix: &Transform, area: IntRect) -> Option<Layer> {
+        let Item::PushLayer {
+            bounds, filters, ..
+        } = self.scene.items[index]
+        else {
+            return None;
+        };
+        let filters = self.scene.filters(filters);
+        let render = |group: &mut Layer, matrix: &Transform| {
+            let content = layer_clip(bounds, matrix).intersect(group.rect);
+            self.paint(
+                self.scene.content(index),
+                group,
+                matrix,
+                &Clip::new(content),
+            );
+            self.filter(group, filters, matrix, index);
+        };
+        let mut group;
+        if !has_graph(filters) {
+            group = Layer::new(
+                area.outset(filter_reach(filters, matrix) + self.reach_of_backdrops(index, matrix)),
+            )?;
+            render(&mut group, matrix);
+        } else if matrix.has_skew() {
+            group = Layer::new(area)?;
+            warp::project(
+                &mut group,
+                &Clip::new(area),
+                &Projection::from(matrix),
+                self.scene.bounds(index),
+                render,
+            );
+        } else {
+            let content = intersect(bounds, self.scene.content_bounds(index));
+            let regions =
+                (1..=filters.len()).map(|count| filtered_bounds(content, &filters[..count]));
+            let everything =
+                IntRect::around(map_rect(matrix, regions.fold(Rect::default(), union)));
+            group = Layer::new(everything.intersect(area.outset(GRAPH_REACH)).union(area))?;
+            render(&mut group, matrix);
+        }
+        if let Some((range, luminance)) = self
+            .scene
+            .mask(index)
+            .filter(|(range, _)| range.start <= self.limit)
+        {
+            let mut mask = Layer::new(area)?;
+            self.paint(range, &mut mask, matrix, &Clip::new(area));
+            group.keep(&mask, luminance);
+        }
+        Some(group)
+    }
+
+    pub fn reach_of_backdrops(&self, index: usize, matrix: &Transform) -> i32 {
+        let items = self.scene.items[index..self.scene.end(index)]
+            .iter()
+            .filter(|_| self.scene.has_backdrops);
+        let reach = |item: &Item| match item {
+            Item::Backdrop { filters, .. } => filter_reach(self.scene.filters(*filters), matrix),
+            _ => 0,
+        };
+        items.map(reach).max().unwrap_or(0)
+    }
+
+    /// `index` is that of the layer.
+    fn filter(&self, layer: &mut Layer, mut filters: &[Filter], matrix: &Transform, index: usize) {
+        while let Some((first, rest)) = filters.split_first() {
+            filters = rest;
+            let Filter::Graph(region) = first else {
+                filter::apply(layer, std::slice::from_ref(first), matrix);
+                continue;
+            };
+            let count = rest
+                .iter()
+                .take_while(|filter| matches!(filter, Filter::Primitive { .. }))
+                .count();
+            graph::apply(
+                layer,
+                *region,
+                &rest[..count],
+                self.scene,
+                matrix,
+                &|position, target| {
+                    let range = Some(index)
+                        .filter(|index| *index != usize::MAX)
+                        .and_then(|index| self.scene.input(index, position));
+                    range.into_iter().for_each(|range| {
+                        self.paint(range, target, matrix, &Clip::new(target.rect))
+                    });
+                },
+            );
+            filters = &rest[count..];
+        }
+    }
+
+    fn draw_tiles(
+        &self,
+        target: &mut Layer,
+        content: Content,
+        tile: &Tile,
+        shape: &RoundedRect,
+        matrix: &Transform,
+        smooth: bool,
+    ) {
+        const MAX_TILES: usize = 1 << 16;
+        let Tile { rect, step } = *tile;
+        let draw = |target: &mut Layer, rect: Rect, matrix: &Transform| match content {
+            Content::Pixels(pixmap) => draw_pixmap(target, pixmap, rect, matrix, smooth),
+            Content::Svg(image) => image.draw(target, rect, matrix),
+        };
+        if step == [0., 0.] {
+            if let Content::Svg(_) = content {
+                let bounds = RoundedRect {
+                    rect,
+                    ..RoundedRect::default()
+                };
+                let clip = self.clip_to(&bounds, matrix, &Clip::new(target.rect));
+                let Some(mut inside) = Layer::new(clip.rect) else {
+                    return;
+                };
+                draw(&mut inside, rect, matrix);
+                return target.draw(&inside, None, &clip);
+            }
+            return draw(target, rect, matrix);
+        }
+        let (scale_x, scale_y) = matrix.get_scale();
+        let (width, height) = (
+            (rect.width * scale_x).round().max(1.),
+            (rect.height * scale_y).round().max(1.),
+        );
+        let Some(mut cell) = Layer::new(IntRect::new(0, 0, width as i32, height as i32)) else {
+            return;
+        };
+        draw(
+            &mut cell,
+            Rect {
+                x: 0.,
+                y: 0.,
+                width,
+                height,
+            },
+            &Transform::identity(),
+        );
+        let visible = matrix.invert().map_or(shape.rect, |inverse| {
+            map_rect(&inverse, target.rect.to_rect())
+        });
+        let visible = super::scene::intersect(visible, tile_bounds(shape, tile));
+        let columns = tile_origins(rect.x, rect.width, step[0], visible.x, visible.width);
+        let rows = tile_origins(rect.y, rect.height, step[1], visible.y, visible.height);
+        let cells = rows.flat_map(|y| columns.clone().map(move |x| (x, y)));
+        for (x, y) in cells.take(MAX_TILES) {
+            draw_pixmap(
+                target,
+                &cell.pixmap,
+                self.frame.snap(Rect { x, y, ..rect }),
+                matrix,
+                smooth,
+            );
+        }
+    }
+
+    fn draw_text(&self, item: &Item, layer: &mut Layer, matrix: &Transform, clip: &Clip) {
+        let Item::Text {
+            origin,
+            face,
+            size,
+            glyphs,
+            color,
+            ..
+        } = *item
+        else {
+            return;
+        };
+        draw_glyphs(
+            layer,
+            self.frame,
+            self.scene.glyphs(glyphs),
+            origin,
+            face,
+            size,
+            color,
+            matrix,
+            clip,
+        );
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+pub fn draw_glyphs(
+    layer: &mut Layer,
+    frame: &Frame,
+    glyphs: &[crate::abi::Glyph],
+    origin: [f32; 2],
+    face: u32,
+    size: f32,
+    color: u32,
+    matrix: &Transform,
+    clip: &Clip,
+) {
+    if let Some(placer) = GlyphPlacer::new(frame, matrix, origin, face, size, color) {
+        let reach = (size * matrix.sx * 3.) as i32 + 2;
+        for (key, x, y) in glyphs.iter().map(|glyph| placer.place(glyph)) {
+            if IntRect::new(x, y, x + 1, y + 1)
+                .outset(reach)
+                .overlaps(clip.rect)
+                && let Some(image) = cached_glyph(key)
+            {
+                draw_glyph(layer, &image, x, y, clip, color);
+            }
+        }
+    } else if let Some(face) = text::face(face) {
+        for glyph in glyphs {
+            let matrix = matrix.pre_translate(origin[0] + glyph.x, origin[1] + glyph.y);
+            if let Some(image) = text::rasterize(face, glyph.id, size, &matrix, false, color | 0xFF)
+            {
+                draw_glyph(layer, &image, 0, 0, clip, color);
+            }
+        }
+    }
+}
+
+pub fn layer_clip(bounds: Rect, matrix: &Transform) -> IntRect {
+    IntRect::around(map_rect(matrix, bounds)).outset(1)
+}
+
+const GRAPH_REACH: i32 = 1024;
+
+pub fn filter_reach(filters: &[Filter], matrix: &Transform) -> i32 {
+    let scale = average_scale(matrix);
+    let reach = |filter: &Filter| match *filter {
+        Filter::Blur(sigma) => blur_extent(sigma * scale),
+        Filter::DropShadow {
+            offset: [x, y],
+            blur,
+            ..
+        } => blur_extent(blur * scale) + (x.abs().max(y.abs()) * scale).ceil().min(4096.) as i32,
+        Filter::Graph(_) => GRAPH_REACH,
+        _ => 0,
+    };
+    filters.iter().map(reach).sum()
+}
+
+/// `source` covers `rect`.
+pub fn mirror_edges(source: &Layer, by: i32) -> Option<Layer> {
+    let (rect, mut extended) = (source.rect, Layer::new(source.rect.outset(by))?);
+    let mirror = |at: i32, length: usize| {
+        let at = at.rem_euclid(length as i32 * 2) as usize;
+        at.min(length * 2 - 1 - at)
+    };
+    let columns: Vec<_> = (-by..rect.width() as i32 + by)
+        .map(|x| mirror(x, rect.width()))
+        .collect();
+    for (y, row) in (-by..).zip(extended.pixels_mut().chunks_mut(columns.len())) {
+        let from = source.row(
+            rect.top + mirror(y, rect.height()) as i32,
+            rect.left,
+            rect.right,
+        );
+        row.iter_mut()
+            .zip(&columns)
+            .for_each(|(pixel, column)| *pixel = from[*column]);
+    }
+    Some(extended)
+}
+
+pub fn extend_edges(rect: IntRect, source: &Pixmap, by: i32) -> Option<Layer> {
+    let mut extended = Layer::new(rect.outset(by))?;
+    let pixels: &[Pixel] = source.data().as_chunks().0;
+    for y in extended.rect.top..extended.rect.bottom {
+        let start = (y.clamp(rect.top, rect.bottom - 1) - rect.top) as usize * rect.width();
+        let from = &pixels[start..start + rect.width()];
+        let row = extended.row_mut(y, rect.left - by, rect.right + by);
+        let (before, rest) = row.split_at_mut(by as usize);
+        let (inside, after) = rest.split_at_mut(from.len());
+        before.fill(*from.first()?);
+        inside.copy_from_slice(from);
+        after.fill(*from.last()?);
+    }
+    Some(extended)
+}
+
+/// The shadow keeps its distance from the edges of the box.
+pub fn snap_shadow(
+    frame: &Frame,
+    shape: &RoundedRect,
+    shadow: &RoundedRect,
+) -> (RoundedRect, RoundedRect) {
+    let snapped = frame.snap_shape(shape);
+    let rect = Rect {
+        x: shadow.rect.x + snapped.rect.x - shape.rect.x,
+        y: shadow.rect.y + snapped.rect.y - shape.rect.y,
+        width: (shadow.rect.width + snapped.rect.width - shape.rect.width).max(0.),
+        height: (shadow.rect.height + snapped.rect.height - shape.rect.height).max(0.),
+    };
+    (
+        snapped,
+        RoundedRect {
+            rect,
+            radii: shadow.radii,
+        },
+    )
+}
+
+pub fn snap_tile(frame: &Frame, tile: &Tile) -> Tile {
+    Tile {
+        rect: frame.snap(tile.rect),
+        step: tile.step,
+    }
+}
+
+pub fn snap_origin(frame: &Frame, rect: Rect) -> Rect {
+    let snapped = frame.snap(rect);
+    Rect {
+        x: snapped.x,
+        y: snapped.y,
+        ..rect
+    }
+}
+
+/// The second one is empty unless the line is double.
+pub fn decoration_rects(frame: &Frame, rect: Rect, style: LineStyle) -> [Rect; 2] {
+    let first = Rect {
+        y: (rect.y * frame.scale + 0.5).floor() / frame.scale,
+        height: frame.snap_width(rect.height),
+        ..rect
+    };
+    let second = Rect {
+        y: ((rect.y + rect.height) * frame.scale + 1.5).floor() / frame.scale,
+        ..first
+    };
+    [
+        first,
+        if style == LineStyle::Double {
+            second
+        } else {
+            Rect::default()
+        },
+    ]
+}
+
+/// Whether the colors change from top to bottom or from left to right, if it is only one of them.
+pub fn gradient_axis(item: &Item) -> Option<bool> {
+    let Item::Gradient {
+        tile,
+        shape: GradientShape::Linear { from, to },
+        ..
+    } = item
+    else {
+        return None;
+    };
+    let has_no_gaps = |step: f32, length: f32| step == 0. || (step - length).abs() < 0.01;
+    if (from[0] - to[0]).abs() < 1e-3 && has_no_gaps(tile.step[0], tile.rect.width) {
+        Some(true)
+    } else if (from[1] - to[1]).abs() < 1e-3 && has_no_gaps(tile.step[1], tile.rect.height) {
+        Some(false)
+    } else {
+        None
+    }
+}

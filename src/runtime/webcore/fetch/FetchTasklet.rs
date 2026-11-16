@@ -1044,6 +1044,14 @@ impl FetchTasklet {
         let global_object = self.global_this;
         let js_cert = X509::to_js(&mut x509, &global_object)
             .map_err(|e| Some(global_object.take_exception(e)))?;
+        let mut subject = js_cert;
+        for der in &certificate_info.issuers {
+            let mut issuer = OwnedX509::from_der(der).ok_or(None)?;
+            let js_issuer = X509::to_js(&mut issuer, &global_object)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+            subject.put(&global_object, b"issuerCertificate", js_issuer);
+            subject = js_issuer;
+        }
         let js_hostname: JSValue =
             bun_string_jsc::create_utf8_for_js(&global_object, &certificate_info.hostname)
                 .map_err(|e| Some(global_object.take_exception(e)))?;

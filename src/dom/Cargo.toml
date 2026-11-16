@@ -1,0 +1,24 @@
+[package]
+name = "bun_dom"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+smallvec.workspace = true
+bun_alloc.workspace = true
+bun_ast.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_css.workspace = true
+bun_jsc.workspace = true
+bun_md.workspace = true
+bun_parsers.workspace = true
+bun_url.workspace = true
+bun_wyhash.workspace = true

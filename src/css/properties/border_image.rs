@@ -22,15 +22,15 @@ use bun_alloc::Arena;
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
 pub struct BorderImage<'bump> {
     /// The border image.
-    pub(crate) source: Image<'bump>,
+    pub source: Image<'bump>,
     /// The offsets that define where the image is sliced.
-    pub(crate) slice: BorderImageSlice,
+    pub slice: BorderImageSlice,
     /// The width of the border image.
-    pub(crate) width: Rect<BorderImageSideWidth>,
+    pub width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub(crate) outset: Rect<LengthOrNumber>,
+    pub outset: Rect<LengthOrNumber>,
     /// How the border image is scaled and tiled.
-    pub(crate) repeat: BorderImageRepeat,
+    pub repeat: BorderImageRepeat,
 }
 
 impl<'bump> BorderImage<'bump> {
@@ -43,11 +43,11 @@ impl<'bump> BorderImage<'bump> {
     //   repeat -> PropertyIdTag::BorderImageRepeat
     // VendorPrefixMap: all fields = true
 
-    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, BorderImage<'bump>> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, BorderImage<'bump>> {
         Self::parse_with_callback(input, |_: &mut css::Parser| false)
     }
 
-    pub(crate) fn parse_with_callback(
+    pub fn parse_with_callback(
         input: &mut css::Parser<'_, 'bump>,
         mut callback: impl FnMut(&mut css::Parser<'_, 'bump>) -> bool,
     ) -> Result<'bump, BorderImage<'bump>> {
@@ -138,7 +138,7 @@ impl<'bump> BorderImage<'bump> {
         Err(input.new_custom_error(css::ParserError::invalid_declaration))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         Self::to_css_internal(
             &self.source,
             &self.slice,
@@ -149,7 +149,7 @@ impl<'bump> BorderImage<'bump> {
         )
     }
 
-    pub(crate) fn to_css_internal(
+    pub fn to_css_internal(
         source: &Image,
         slice: &BorderImageSlice,
         width: &Rect<BorderImageSideWidth>,
@@ -211,7 +211,7 @@ impl<'bump> BorderImage<'bump> {
         res
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
         // Keep in sync with the BorderImage field list.
         BorderImage {
             source: self.source.deep_clone(arena),
@@ -222,7 +222,7 @@ impl<'bump> BorderImage<'bump> {
         }
     }
 
-    pub(crate) fn eql(&self, other: &BorderImage) -> bool {
+    pub fn eql(&self, other: &BorderImage) -> bool {
         self.source.eql(&other.source)
             && self.slice.eql(&other.slice)
             && self.width.eql(&other.width)
@@ -230,7 +230,7 @@ impl<'bump> BorderImage<'bump> {
             && self.repeat.eql(&other.repeat)
     }
 
-    pub(crate) fn default() -> BorderImage<'bump> {
+    pub fn default() -> BorderImage<'bump> {
         BorderImage {
             source: Image::default(),
             slice: BorderImageSlice::default(),
@@ -244,15 +244,13 @@ impl<'bump> BorderImage<'bump> {
 /// A value for the [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) property.
 pub struct BorderImageRepeat {
     /// The horizontal repeat value.
-    pub(crate) horizontal: BorderImageRepeatKeyword,
+    pub horizontal: BorderImageRepeatKeyword,
     /// The vertical repeat value.
-    pub(crate) vertical: BorderImageRepeatKeyword,
+    pub vertical: BorderImageRepeatKeyword,
 }
 
 impl BorderImageRepeat {
-    pub(crate) fn parse<'bump>(
-        input: &mut css::Parser<'_, 'bump>,
-    ) -> Result<'bump, BorderImageRepeat> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, BorderImageRepeat> {
         let horizontal = BorderImageRepeatKeyword::parse(input)?;
         let vertical = input.try_parse(BorderImageRepeatKeyword::parse).ok();
         Ok(BorderImageRepeat {
@@ -261,7 +259,7 @@ impl BorderImageRepeat {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.horizontal.to_css(dest)?;
         if self.horizontal != self.vertical {
             dest.write_str(" ")?;
@@ -281,11 +279,11 @@ impl BorderImageRepeat {
         }
     }
 
-    pub(crate) fn eql(&self, other: &BorderImageRepeat) -> bool {
+    pub fn eql(&self, other: &BorderImageRepeat) -> bool {
         self.horizontal == other.horizontal && self.vertical == other.vertical
     }
 
-    pub(crate) fn deep_clone(&self, _arena: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         BorderImageRepeat {
             horizontal: self.horizontal,
             vertical: self.vertical,
@@ -307,7 +305,7 @@ pub enum BorderImageSideWidth {
 impl BorderImageSideWidth {
     // Hand-expanded — tried in declaration order
     // (Number → LengthPercentage → keyword `auto`).
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(BorderImageSideWidth::Number(n));
         }
@@ -318,7 +316,7 @@ impl BorderImageSideWidth {
         Ok(BorderImageSideWidth::Auto)
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             BorderImageSideWidth::Number(n) => CSSNumberFns::to_css(*n, dest),
             BorderImageSideWidth::LengthPercentage(lp) => lp.to_css(dest),
@@ -330,7 +328,7 @@ impl BorderImageSideWidth {
         BorderImageSideWidth::Number(1.0)
     }
 
-    pub(crate) fn deep_clone(&self, _arena: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         self.clone()
     }
 
@@ -382,15 +380,13 @@ impl BorderImageRepeatKeyword {
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.
 pub struct BorderImageSlice {
     /// The offsets from the edges of the image.
-    pub(crate) offsets: Rect<NumberOrPercentage>,
+    pub offsets: Rect<NumberOrPercentage>,
     /// Whether the middle of the border image should be preserved.
-    pub(crate) fill: bool,
+    pub fill: bool,
 }
 
 impl BorderImageSlice {
-    pub(crate) fn parse<'bump>(
-        input: &mut css::Parser<'_, 'bump>,
-    ) -> Result<'bump, BorderImageSlice> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, BorderImageSlice> {
         let mut fill = input
             .try_parse(|i| i.expect_ident_matching(b"fill"))
             .is_ok();
@@ -403,7 +399,7 @@ impl BorderImageSlice {
         Ok(BorderImageSlice { offsets, fill })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.offsets.to_css(dest)?;
         if self.fill {
             dest.write_str(" fill")?;
@@ -415,7 +411,7 @@ impl BorderImageSlice {
         true
     }
 
-    pub(crate) fn eql(&self, other: &BorderImageSlice) -> bool {
+    pub fn eql(&self, other: &BorderImageSlice) -> bool {
         self.offsets.eql(&other.offsets) && self.fill == other.fill
     }
 
@@ -428,7 +424,7 @@ impl BorderImageSlice {
         }
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
         BorderImageSlice {
             offsets: self.offsets.deep_clone(arena),
             fill: self.fill,
@@ -438,7 +434,7 @@ impl BorderImageSlice {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub(crate) struct BorderImageProperty: u8 {
+    pub struct BorderImageProperty: u8 {
         const SOURCE = 1 << 0;
         const SLICE  = 1 << 1;
         const WIDTH  = 1 << 2;
@@ -470,7 +466,7 @@ impl BorderImageProperty {
 }
 
 #[derive(Default)]
-pub(crate) struct BorderImageHandler<'bump> {
+pub struct BorderImageHandler<'bump> {
     pub source: Option<Image<'bump>>,
     pub slice: Option<BorderImageSlice>,
     pub width: Option<Rect<BorderImageSideWidth>>,
@@ -482,7 +478,7 @@ pub(crate) struct BorderImageHandler<'bump> {
 }
 
 impl<'bump> BorderImageHandler<'bump> {
-    pub(crate) fn handle_property(
+    pub fn handle_property(
         &mut self,
         property: &Property<'bump>,
         dest: &mut css::DeclarationList<'bump>,
@@ -553,7 +549,7 @@ impl<'bump> BorderImageHandler<'bump> {
         true
     }
 
-    pub(crate) fn finalize(
+    pub fn finalize(
         &mut self,
         dest: &mut css::DeclarationList<'bump>,
         context: &mut css::PropertyHandlerContext<'_, 'bump>,
@@ -562,7 +558,7 @@ impl<'bump> BorderImageHandler<'bump> {
         self.flushed_properties = BorderImageProperty::empty();
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.source = None;
         self.slice = None;
         self.width = None;
@@ -571,7 +567,7 @@ impl<'bump> BorderImageHandler<'bump> {
     }
 
     /// Whether a complete `border-image` is held, with none of it written before.
-    pub(crate) fn will_flush_shorthand(&self) -> bool {
+    pub fn will_flush_shorthand(&self) -> bool {
         self.flushed_properties.is_empty()
             && self.vendor_prefix.contains(VendorPrefix::NONE)
             && self.source.is_some()
@@ -582,7 +578,7 @@ impl<'bump> BorderImageHandler<'bump> {
     }
 
     /// Whether `handle_property` writes what it holds before it takes `property`.
-    pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
+    pub fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
         // Not every browser reads a prefixed property or function.
         let prefixed = match property {
             Property::BorderImageSource(val) => val.has_vendor_prefix(),

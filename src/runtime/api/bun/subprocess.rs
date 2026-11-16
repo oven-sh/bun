@@ -600,7 +600,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn pid(&self) -> i32 {
-        self.process().pid
+        self.process().pid()
     }
 
     pub(crate) fn get_pid(&self) -> i32 {

@@ -16,7 +16,7 @@ use crate::pipes::{FileType, PipeHandle};
 #[cfg(windows)]
 use crate::posix_event_loop::__bun_run_io;
 #[cfg(windows)]
-use crate::source::{File, OpenFile, Source};
+use crate::source::{File, OpenFile, OwnedPipe, Source};
 use crate::{EventLoopHandle, IoEvent, Owner};
 #[cfg(unix)]
 use crate::{FilePoll, FilePollFlag, PipeReadScratchGuard};
@@ -1007,7 +1007,7 @@ impl WindowsBufferedReader {
         self.start_reading()
     }
 
-    pub fn start_with_pipe(&self, pipe: uv::Owned<uv::Pipe>) -> sys::Result<()> {
+    pub fn start_with_pipe(&self, pipe: OwnedPipe) -> sys::Result<()> {
         self.set_source(Source::Pipe(pipe));
         self.start_with_current_pipe()
     }
@@ -1052,7 +1052,7 @@ impl WindowsBufferedReader {
 
     /// For a tty this also runs from inside `uv_read_start` and `uv_tty_set_mode`.
     extern "C" fn on_stream_alloc(
-        handle: *mut uv::Handle,
+        handle: *mut uv::uv_handle_t,
         suggested_size: usize,
         buf: *mut uv::uv_buf_t,
     ) {

@@ -47,7 +47,7 @@ pub(crate) struct WindowsNamedPipe {
     pub(crate) wrapper: OnceCell<SSLWrapper>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Until [`start`](Self::start) hands it to `writer`.
-    pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
+    pipe: JsCell<Option<bun_io::OwnedPipe>>,
     /// The per-thread VM singleton outlives this struct (it is torn down only
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
@@ -363,7 +363,7 @@ impl WindowsNamedPipe {
     pub(crate) fn new(handlers: Handlers, vm: &'static VirtualMachine) -> WindowsNamedPipe {
         WindowsNamedPipe {
             vm,
-            pipe: JsCell::new(Some(uv::Owned::zeroed())),
+            pipe: JsCell::new(Some(bun_io::OwnedPipe::zeroed())),
             wrapper: OnceCell::new(),
             root: Cell::new(core::ptr::null_mut()),
             handlers,
@@ -417,9 +417,9 @@ impl WindowsNamedPipe {
         self.flush();
     }
 
-    pub(crate) fn get_accepted_by(
+    pub(crate) fn get_accepted_by<D>(
         &self,
-        server: &mut uv::Pipe,
+        server: &uv::Handle<uv::ListeningPipe, D>,
         ssl_ctx: Option<&boringssl::OwnedSslCtx>,
     ) -> bun_sys::Result<()> {
         debug_assert!(self.pipe.get().is_some());

@@ -209,7 +209,7 @@ pub struct VirtualMachine {
     #[cfg(not(windows))]
     pub event_loop_handle: Cell<Option<&'static uws::ThreadLoop>>,
     #[cfg(windows)]
-    pub event_loop_handle: Cell<Option<*mut PlatformEventLoop>>,
+    pub event_loop_handle: Cell<Option<&'static PlatformEventLoop>>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
     /// `KeepAlive::unref_on_next_tick` increments it from OTHER threads
     /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
@@ -1478,8 +1478,7 @@ impl VirtualMachine {
         }
         #[cfg(windows)]
         {
-            // SAFETY: set to this thread's libuv loop or spawnSync's, which last as long as the VM runs.
-            self.event_loop_handle.get().map(|h| unsafe { &*h })
+            self.event_loop_handle.get()
         }
     }
 
@@ -2358,7 +2357,7 @@ impl VirtualMachine {
             (hooks.stop_watches_for_vm_teardown)(vm);
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
-            // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
+            // (and its loop handles) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
             (hooks.cancel_timers)(vm, None);
@@ -2836,7 +2835,7 @@ pub struct RuntimeHooks {
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer and release the refs that the heap holds.
     pub disarm_all_timers_for_vm_teardown: fn(),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
-    /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
+    /// close the loop handles the timer heap owns (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.
     ///
     /// # Safety
@@ -3900,7 +3899,7 @@ impl VirtualMachine {
     }
 
     /// Returns this VM's libuv event loop handle (must already be initialized).
-    pub fn uv_loop(&self) -> Async::LoopRef {
+    pub fn uv_loop(&self) -> &'static Async::Loop {
         #[cfg(debug_assertions)]
         {
             return self

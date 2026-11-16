@@ -110,27 +110,27 @@ pub(crate) mod dns_sd;
 pub(crate) mod lib_uv_backend {
     use super::*;
 
-    /// libuv holds it until `on_raw_libuv_complete`, then the task queue.
-    #[repr(C)]
+    /// libuv holds it until `on_libuv_complete`, then the task queue.
     pub(crate) struct LibuvRequest {
-        uv: libuv::uv_getaddrinfo_t,
+        uv: libuv::GetAddrInfoRequest,
+        result: Option<Result<libuv::OwnedAddrInfo, libuv::ReturnCode>>,
         query: PendingQuery,
     }
+    bun_core::intrusive_field!(LibuvRequest, uv: libuv::GetAddrInfoRequest);
 
     impl LibuvRequest {
         pub(crate) fn run(self: Box<Self>) {
-            let (retcode, addrinfo) = (self.uv.retcode.int(), self.uv.addrinfo);
-            bun_output::scoped_log!(DNSLookup, "onLibUVComplete: status={}", retcode);
-            if addrinfo.is_null() {
-                return self.query.complete_native(Err(retcode));
-            }
-            // SAFETY: libuv left a list from `uv__malloc`, which only `uv_freeaddrinfo` may free.
-            let list = unsafe {
-                let list = GetAddrInfoResult::to_list(&*addrinfo);
-                libuv::uv_freeaddrinfo(addrinfo.cast());
-                list
+            let list = match self.result.expect("set by `on_libuv_complete`") {
+                // SAFETY: the head of a `getaddrinfo` result.
+                Ok(addrinfo) => Ok(unsafe { GetAddrInfoResult::to_list(&addrinfo) }),
+                Err(rc) => Err(rc.int()),
             };
-            self.query.complete_native(Ok(list));
+            bun_output::scoped_log!(
+                DNSLookup,
+                "onLibUVComplete: status={}",
+                list.as_ref().err().unwrap_or(&0)
+            );
+            self.query.complete_native(list);
         }
     }
     impl bun_event_loop::BoxedTask for LibuvRequest {
@@ -147,14 +147,12 @@ pub(crate) mod lib_uv_backend {
         }
     }
 
-    extern "C" fn on_raw_libuv_complete(
-        uv_info: *mut libuv::uv_getaddrinfo_t,
-        _status: c_int,
-        _res: *mut libuv::addrinfo,
+    fn on_libuv_complete(
+        mut request: Box<LibuvRequest>,
+        result: Result<libuv::OwnedAddrInfo, libuv::ReturnCode>,
     ) {
         // TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        // SAFETY: `uv_info` is the first field of the box that `start` left to libuv. The task keeps it in place for `pending_uv_requests`.
-        let request = unsafe { bun_core::heap::take(uv_info.cast::<LibuvRequest>()) };
+        request.result = Some(result);
         VirtualMachine::get().enqueue_task(jsc::Task::from_boxed(request));
     }
 
@@ -170,30 +168,19 @@ pub(crate) mod lib_uv_backend {
         let copied_len = strings::copy(&mut hostname[..cap], query.name.as_ref()).len();
         let host = ZStr::nul_terminate(&mut hostname, copied_len);
 
-        let slot = pending.slot();
-        let request = bun_core::heap::into_raw(Box::new(LibuvRequest {
-            uv: bun_core::ffi::zeroed(),
+        let request = Box::new(LibuvRequest {
+            uv: Default::default(),
+            result: None,
             query: pending,
-        }));
-        if let Some(slot) = slot {
-            this.pending_uv_requests[slot].set(request.cast());
-        }
-        // SAFETY: `uv` is the first field of `request`, which lives until its task runs; libuv copies the rest.
-        let rc = unsafe {
-            libuv::uv_getaddrinfo(
-                this.vm().uv_loop(),
-                request.cast(),
-                Some(on_raw_libuv_complete),
-                host.as_ptr().cast::<c_char>(),
-                port_z.as_ptr().cast::<c_char>(),
-                hints
-                    .as_ref()
-                    .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
-            )
-        };
-        if rc.int() < 0 {
-            // SAFETY: libuv refused it before it queued any work (UV_EINVAL for a long name, UV_ENOMEM).
-            let request = unsafe { bun_core::heap::take(request) };
+        });
+        if let Err((request, rc)) = libuv::getaddrinfo(
+            request,
+            this.vm().uv_loop(),
+            host,
+            port_z,
+            hints.as_ref(),
+            on_libuv_complete,
+        ) {
             request.query.complete_native(Err(rc.int()));
         }
     }
@@ -571,14 +558,6 @@ impl PendingQuery {
         (promise, Some(query))
     }
 
-    #[cfg(windows)]
-    fn slot(&self) -> Option<usize> {
-        match self.waiters {
-            QueryWaiters::Slot(slot) => Some(slot),
-            QueryWaiters::Owned(_) => None,
-        }
-    }
-
     /// Removes the query from the pending cache: later lookups start a new one.
     fn into_waiters(self) -> (Box<Waiters>, RefPtr<Resolver>) {
         let waiters = match self.waiters {
@@ -723,19 +702,7 @@ impl Resolver {
     /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
     /// `FilePoll` (to unregister it from the loop). Running this after either
     /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
-    /// Windows: `uv_getaddrinfo` requests are uv *requests* on this thread's
-    /// loop, which the teardown drains before closing the loop; cancel the ones
-    /// still in flight so that drain is prompt (each completes through its
-    /// callback with UV_ECANCELED against the still-live VM).
-    #[cfg(windows)]
-    pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
-        let mut used = self.pending[QueryKind::HostNative].used.get().iter_set();
-        while let Some(slot) = used.next() {
-            // SAFETY: the request lives until its task runs, which frees the slot.
-            let _ = unsafe { libuv::uv_cancel(self.pending_uv_requests[slot].get()) };
-        }
-    }
-
+    ///
     /// `Stopped` if a channel was open (its pending queries just failed with
     /// `ARES_EDESTRUCTION` into their callbacks).
     ///
@@ -1906,7 +1873,7 @@ hostent_ttls_record_type!(
 );
 
 #[cfg(windows)]
-type PollType = OpenUvDnsPoll;
+type PollType = libuv::Owned<libuv::uv_poll_t, UvDnsPoll>;
 #[cfg(not(windows))]
 type PollType = bun_io::OwnedFilePoll;
 
@@ -1935,9 +1902,6 @@ pub(crate) struct Resolver {
     event_loop_timer: RefCountedTimer<{ EventLoopTimerTag::DNSResolver }>,
 
     pending: enum_map::EnumMap<QueryKind, PendingCache>,
-    /// Indexed by the slot in `pending[QueryKind::HostNative]`.
-    #[cfg(windows)]
-    pending_uv_requests: [Cell<*mut libuv::uv_req_t>; PENDING_CACHE_SLOTS],
 
     /// Armed while a channel is open: a live channel has sockets, timers and
     /// queries in flight whose callbacks need the context that opened it, which
@@ -1962,95 +1926,9 @@ impl Drop for Resolver {
 
 #[cfg(windows)]
 pub(crate) struct UvDnsPoll {
-    // BACKREF — stored mut because the poll callback's guard may free `*this`.
-    pub parent: *mut Resolver,
-    pub socket: c_ares::ares_socket_t,
-    /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
-    /// reads `poll` again after each one returns.
-    poll_cb_depth: u32,
-    /// True if a nested `uv_run` called `on_close_uv` while `poll_cb_depth` was
-    /// non-zero. The outermost `on_dns_poll_uv` call then queues the free.
-    closed: bool,
-    pub poll: libuv::uv_poll_t,
-}
-
-#[cfg(windows)]
-impl UvDnsPoll {
-    fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self {
-            parent,
-            socket,
-            poll_cb_depth: 0,
-            closed: false,
-            poll: bun_core::ffi::zeroed(),
-        }))
-    }
-
-    pub(crate) fn destroy(this: *mut Self) {
-        // SAFETY: `this` came from `heap::into_raw` in `new`, and nothing uses it after this call.
-        unsafe { drop(bun_core::heap::take(this)) };
-    }
-
-    fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
-        // SAFETY: poll points to UvDnsPoll.poll
-        unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
-    }
-}
-
-/// Dropping it closes the handle, which `on_close_uv` frees.
-#[cfg(windows)]
-pub(crate) struct OpenUvDnsPoll(*mut UvDnsPoll);
-
-#[cfg(windows)]
-impl OpenUvDnsPoll {
-    fn open(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> Option<Self> {
-        let poll = UvDnsPoll::new(parent, socket);
-        // SAFETY: a fresh heap allocation with a zeroed `uv_poll_t`.
-        let rc = unsafe {
-            libuv::uv_poll_init_socket(Loop::get().uv_loop(), &raw mut (*poll).poll, socket as _)
-        };
-        if rc < 0 {
-            UvDnsPoll::destroy(poll);
-            return None;
-        }
-        Some(Self(poll))
-    }
-
-    fn start(&self, events: c_int) -> c_int {
-        // SAFETY: initialised by `open`, and not closed yet.
-        unsafe {
-            libuv::uv_poll_start(
-                &raw mut (*self.0).poll,
-                events,
-                Some(Resolver::on_dns_poll_uv),
-            )
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for OpenUvDnsPoll {
-    fn drop(&mut self) {
-        // SAFETY: initialised by `open`, and not closed yet.
-        unsafe {
-            libuv::uv_close(
-                (&raw mut (*self.0).poll).cast(),
-                Some(Resolver::on_close_uv),
-            )
-        };
-    }
-}
-
-#[cfg(windows)]
-impl bun_event_loop::Taskable for UvDnsPoll {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
-    unsafe fn release_unrun(this: *mut Self) {
-        Self::destroy(this);
-    }
-    /// The task doesn't run JS.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
+    /// Owns the poll, so it is live until the poll is closing.
+    parent: *mut Resolver,
+    socket: c_ares::ares_socket_t,
 }
 
 /// Keeps the channel open during a call into it, which can run script that stops the resolver.
@@ -2141,8 +2019,6 @@ impl Resolver {
             options: Cell::new(c_ares::ChannelOptions::default()),
             event_loop_timer: RefCountedTimer::init_paused(),
             pending: Default::default(),
-            #[cfg(windows)]
-            pending_uv_requests: [const { Cell::new(ptr::null_mut()) }; PENDING_CACHE_SLOTS],
             abort_handle: bun_jsc::AbortHandle::for_owner::<Resolver>(),
         }
     }
@@ -2306,70 +2182,36 @@ impl Resolver {
     // ───────────── poll callbacks ─────────────
 
     #[cfg(windows)]
-    pub(crate) extern "C" fn on_dns_poll_uv(
-        watcher: *mut libuv::uv_poll_t,
-        status: c_int,
+    fn on_dns_poll_uv(
+        poll: &libuv::Handle<libuv::uv_poll_t, UvDnsPoll>,
+        status: libuv::ReturnCode,
         events: c_int,
     ) {
-        let poll = UvDnsPoll::from_poll(watcher);
-        // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
-        // via `from_poll`. `on_close_uv` doesn't free it while `poll_cb_depth` is non-zero.
-        // `parent` is the heap-allocated Resolver back-ptr (set in
-        // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
-        // `_guard` below. `channel` is non-null because c-ares
-        // must have been initialized for this poll callback to fire.
-        unsafe {
-            (*poll).poll_cb_depth += 1;
-            let parent: *mut Resolver = (*poll).parent;
-            let vm = (*parent).vm.get();
-            {
-                // Dropping `_exit` drains microtasks. That JS can run a nested `uv_run`,
-                // which calls `on_close_uv` for a socket c-ares closed below.
-                let _exit = vm.enter_event_loop_scope();
-                // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
-                let _guard = RefPtr::init_ref(parent);
-                // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-                let channel = (*parent).channel().unwrap();
-                if status < 0 {
-                    // an error occurred. just pretend that the socket is both readable and writable.
-                    // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                    channel.process((*poll).socket, true, true);
-                } else {
-                    channel.process(
-                        (*poll).socket,
-                        events & libuv::UV_READABLE != 0,
-                        events & libuv::UV_WRITABLE != 0,
-                    );
-                }
-                drop(channel);
-
-                // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
-                if !(*parent).any_requests_pending() {
-                    (*parent).remove_timer();
-                }
-            }
-            (*poll).poll_cb_depth -= 1;
-            if (*poll).poll_cb_depth == 0 && (*poll).closed {
-                // The task queue isn't drained until this libuv callback returns.
-                vm.enqueue_task(jsc::Task::init(poll));
-            }
+        // SAFETY: the callback of a poll does not run once it is closing.
+        let this = unsafe { RefPtr::init_ref(poll.data.parent) };
+        let vm = this.vm;
+        let _exit = vm.enter_event_loop_scope();
+        // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
+        let channel = this.channel().unwrap();
+        if status.is_err() {
+            // an error occurred. just pretend that the socket is both readable and writable.
+            // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+            channel.process(poll.data.socket, true, true);
+        } else {
+            channel.process(
+                poll.data.socket,
+                events & libuv::UV_READABLE != 0,
+                events & libuv::UV_WRITABLE != 0,
+            );
         }
-    }
+        drop(channel);
 
-    #[cfg(windows)]
-    pub(crate) unsafe extern "C" fn on_close_uv(watcher: *mut libuv::uv_handle_t) {
-        // SAFETY: libuv invokes the close cb with the same handle pointer passed
-        // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
-        // header is `uv_handle_t`); `from_poll` recovers the containing struct.
-        let poll = UvDnsPoll::from_poll(watcher.cast());
-        // SAFETY: only the code below and the task `on_dns_poll_uv` queues free the struct.
-        unsafe {
-            if (*poll).poll_cb_depth > 0 {
-                (*poll).closed = true;
-                return;
-            }
+        // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
+        if !this.any_requests_pending() {
+            this.remove_timer();
         }
-        UvDnsPoll::destroy(poll);
+        // Before `_exit` drains microtasks, as in `on_dns_poll`.
+        drop(this);
     }
 
     /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
@@ -2419,15 +2261,21 @@ impl Resolver {
             use bun_collections::array_hash_map::MapEntry;
             let poll = match polls.entry(fd) {
                 MapEntry::Occupied(entry) => entry.into_mut(),
-                MapEntry::Vacant(entry) => match OpenUvDnsPoll::open(self.as_ctx_ptr(), fd) {
-                    Some(poll) => entry.insert(poll),
-                    None => return,
-                },
+                MapEntry::Vacant(entry) => {
+                    let data = UvDnsPoll {
+                        parent: self.as_ctx_ptr(),
+                        socket: fd,
+                    };
+                    match libuv::uv_poll_t::init_socket(libuv::Loop::get(), fd as _, data) {
+                        Ok(poll) => entry.insert(poll),
+                        Err(_) => return,
+                    }
+                }
             };
 
             let uv_events = (if readable { libuv::UV_READABLE } else { 0 })
                 | (if writable { libuv::UV_WRITABLE } else { 0 });
-            if poll.start(uv_events) < 0 {
+            if poll.start(uv_events, Self::on_dns_poll_uv).is_err() {
                 polls.swap_remove(&fd);
             }
         });

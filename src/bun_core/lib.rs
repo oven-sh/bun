@@ -863,7 +863,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     }
 }
 
-/// Stamp `unsafe impl IntrusiveField<$F> for $T { const OFFSET = offset_of!($T, $field); }`.
+/// Stamp `unsafe impl IntrusiveField<$F> for $T { const OFFSET = offset_of!($T, $field); }`, if `$field` is an aligned `$F`.
 ///
 /// ```ignore
 /// bun_core::intrusive_field!(ShellCpTask, task: ShellTask);
@@ -876,13 +876,18 @@ macro_rules! intrusive_field {
     // lifetime before backtracking to this arm.
     ([$($gen:tt)*] $T:ty, $field:ident : $F:ty) => {
         unsafe impl<$($gen)*> $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            const OFFSET: usize = {
+                // The reference rejects a misaligned field, and a raw pointer is not deref-coerced.
+                let _: fn(&mut $T) -> *mut $F = |this| {
+                    let field = &mut this.$field;
+                    &raw mut *field
+                };
+                ::core::mem::offset_of!($T, $field)
+            };
         }
     };
     ($T:ty, $field:ident : $F:ty) => {
-        unsafe impl $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
-        }
+        $crate::intrusive_field!([] $T, $field: $F);
     };
 }
 

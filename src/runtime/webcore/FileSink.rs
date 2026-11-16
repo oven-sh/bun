@@ -498,7 +498,7 @@ impl FileSink {
     #[cfg(windows)]
     pub(crate) fn create_with_pipe(
         event_loop_: impl Into<EventLoopHandle>,
-        pipe: uv::Owned<uv::Pipe>,
+        pipe: bun_io::OwnedPipe,
     ) -> RefPtr<FileSink> {
         // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
         // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is

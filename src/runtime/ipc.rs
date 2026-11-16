@@ -918,7 +918,7 @@ pub(crate) enum SendQueueOwnerKind {
 }
 
 #[cfg(windows)]
-pub(crate) type SocketType = uv::Owned<uv::Pipe>;
+pub(crate) type SocketType = bun_io::OwnedPipe;
 #[cfg(not(windows))]
 pub(crate) type SocketType = Socket;
 
@@ -1662,7 +1662,7 @@ impl SendQueue {
     #[cfg(windows)]
     pub(crate) unsafe fn windows_configure_server(
         this: *mut Self,
-        mut ipc_pipe: uv::Owned<uv::Pipe>,
+        mut ipc_pipe: bun_io::OwnedPipe,
     ) -> bun_sys::Result<()> {
         log!("configureServer");
         ipc_pipe.unref();
@@ -1684,7 +1684,7 @@ impl SendQueue {
         pipe_fd: Fd,
     ) -> bun_sys::Result<()> {
         log!("configureClient");
-        let mut ipc_pipe = uv::Owned::<uv::Pipe>::zeroed();
+        let mut ipc_pipe = bun_io::OwnedPipe::zeroed();
         ipc_pipe
             .init(uv::Loop::get(), true)
             .to_result(bun_sys::Tag::pipe)?;

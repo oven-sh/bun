@@ -63,9 +63,9 @@ pub(crate) struct ChromeProcess {
 #[cfg(windows)]
 struct WindowsPipes {
     /// Child writes the other end as fd 4.
-    reply: Option<uv::Owned<uv::Pipe>>,
+    reply: Option<bun_io::OwnedPipe>,
     /// Child reads the other end as fd 3.
-    cmd: Option<uv::Owned<uv::Pipe>>,
+    cmd: Option<bun_io::OwnedPipe>,
     read_buf: bun_jsc::JsCell<Box<[u8]>>,
 }
 
@@ -673,8 +673,8 @@ const READ_BUF_SIZE: usize = 64 * 1024;
 struct Endpoints {
     /// The child's fds 3 and 4; `None` once closed.
     child: Option<[File; 2]>,
-    cmd: uv::Owned<uv::Pipe>,
-    reply: uv::Owned<uv::Pipe>,
+    cmd: bun_io::OwnedPipe,
+    reply: bun_io::OwnedPipe,
 }
 
 #[cfg(windows)]
@@ -701,7 +701,7 @@ impl Endpoints {
         Ok(fds.map(|fd| File::from_fd(Fd::from_uv(fd))))
     }
 
-    fn wrap(event_loop: EventLoopHandle, file: File) -> bun_sys::Result<uv::Owned<uv::Pipe>> {
+    fn wrap(event_loop: EventLoopHandle, file: File) -> bun_sys::Result<bun_io::OwnedPipe> {
         let mut pipe = bun_io::Source::open_pipe(event_loop.uv_loop(), file.fd())?;
         let _ = file.into_raw(); // pipe owns it now
         // Pending commands keep the loop alive (Transport::updateKeepAlive), not

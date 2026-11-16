@@ -345,43 +345,30 @@ impl WindowsLoop {
 
     pub fn get() -> &'static ThreadLoop {
         // SAFETY: wraps this thread's libuv loop. Never null, and freed only by `free_thread_loop`.
-        unsafe { &*c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+        unsafe { &*c::uws_get_loop_with_native(uv::Loop::get().as_ptr().cast()) }
     }
 
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr.get()
     }
 
-    /// The backing libuv loop, for libuv's own functions.
+    /// The backing libuv loop.
     #[inline]
-    pub fn uv_loop(&self) -> *mut uv::Loop {
-        self.uv_loop.get()
-    }
-
-    /// Shared borrow of the backing libuv loop.
-    ///
-    /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
-    /// reassigned for the `WindowsLoop`'s lifetime, so projecting `&uv::Loop`
-    /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
-    /// pattern (one `unsafe`, N safe callers).
-    #[inline]
-    fn uv(&self) -> &uv::Loop {
-        // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
-        // valid for the entire lifetime of `*self`; `&self` bounds the
-        // returned borrow so it cannot outlive the wrapper.
+    pub fn uv_loop(&self) -> &uv::Loop {
+        // SAFETY: set once by `us_create_loop`, never null, and valid for as long as `*self`.
         unsafe { &*self.uv_loop.get() }
     }
 
     pub fn add_active(&self, val: u32) {
-        self.uv().add_active(val);
+        self.uv_loop().add_active(val);
     }
 
     pub fn sub_active(&self, val: u32) {
-        self.uv().sub_active(val);
+        self.uv_loop().sub_active(val);
     }
 
     pub fn is_active(&self) -> bool {
-        self.uv().is_active()
+        self.uv_loop().is_active()
     }
 
     /// The one method that other threads may call.
@@ -450,11 +437,11 @@ impl WindowsLoop {
     }
 
     pub fn inc(&self) {
-        self.uv().inc();
+        self.uv_loop().inc();
     }
 
     pub fn dec(&self) {
-        self.uv().dec();
+        self.uv_loop().dec();
     }
 
     #[inline]

@@ -285,8 +285,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
 
-    /// Where legacy octal syntax is, by the start of its literal or template part: the range of a
-    /// number (`010`, `08`) or of the first octal escape (`"\1"`). The visit pass reports it.
+    /// The range of each legacy octal number (`010`) or escape (`"\1"`), by its literal's start.
     pub(crate) legacy_octal_literals: HashMap<i32, bun_ast::Range>,
 
     /// Each function declaration that a later one in the same scope replaced, with that scope.
@@ -3452,8 +3451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.top_level_await_keyword.len > 0
     }
 
-    /// Duplicate function declarations are an error at the top level of a module and in a
-    /// strict block. Runs after hoisting: only then is the strict mode of every scope final.
+    /// Runs after hoisting: only then is the strict mode of every scope final.
     fn report_duplicate_function_declarations(&mut self) {
         for (scope, replaced) in core::mem::take(&mut self.replaced_functions) {
             let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
@@ -5258,8 +5256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The directive at `loc`. One with a legacy octal escape (`"\01"; "use strict"`) is an error
-    /// in strict code.
+    /// A directive with a legacy octal escape (`"\01"; "use strict"`) is an error in strict code.
     pub(crate) fn check_directive_for_legacy_octal_escape(&mut self, loc: bun_ast::Loc) {
         if !self.legacy_octal_literals.is_empty()
             && self.is_strict_mode()

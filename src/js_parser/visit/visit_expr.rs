@@ -99,8 +99,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    /// The legacy octal syntax of the literal or template part at `loc`. The substitution revisit
-    /// walks a literal that was already visited, and its errors are logged.
+    /// Nothing on the substitution revisit: the errors of that literal are already logged.
     #[inline]
     fn legacy_octal_at(p: &Self, loc: bun_ast::Loc) -> Option<bun_ast::Range> {
         if p.legacy_octal_literals.is_empty() || p.is_revisit_for_substitution {

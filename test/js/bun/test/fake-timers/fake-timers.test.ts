@@ -628,6 +628,164 @@ describe("a zero-delay timer armed by a timer callback", () => {
     },
   );
 });
+
+// Bun.sleep(date) waits from the current time until `date`, on the clock Bun.sleep(ms) is on.
+// It reads the time once, when it's called. That is the mocked time if there is one.
+describe("Bun.sleep(date)", () => {
+  const year2020 = Date.UTC(2020, 0, 1);
+  const year2100 = Date.UTC(2100, 0, 1);
+
+  /** `date` is `ms` after `Date.now()`. The sleep has to be pending 1 fake ms before that, and over on it. */
+  async function expectToWakeAfter(ms: number, date = new Date(Date.now() + ms)) {
+    const sleep = Bun.sleep(date);
+    vi.advanceTimersByTime(ms - 1);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await sleep;
+  }
+
+  const inOrder = ["Bun.sleep(20)", "Bun.sleep(date)", "Bun.sleep(20) again"];
+  /** Three sleeps of 20 ms on the real clock. With the same wait, they wake in the order they were called. */
+  async function wakeOrderOnTheRealClock() {
+    const order: string[] = [];
+    Bun.sleep(20).then(() => order.push("Bun.sleep(20)"));
+    Bun.sleep(new Date(Date.now() + 20)).then(() => order.push("Bun.sleep(date)"));
+    await Bun.sleep(20).then(() => order.push("Bun.sleep(20) again"));
+    return order;
+  }
+
+  describe.each([
+    ["vi.useFakeTimers()", bunVi],
+    ["jest.useFakeTimers()", jest],
+    ['vi.useFakeTimers() of "vitest"', vi],
+  ])("%s", (_, api) => {
+    test.each([
+      ["the real time", undefined],
+      ["2020", { now: year2020 }],
+      ["2100", { now: year2100 }],
+    ])("a fake clock that starts at %s", async (_, options) => {
+      api.useFakeTimers(options);
+      // A fake clock that started at the real time is now ahead of it.
+      vi.advanceTimersByTime(5000);
+      await expectToWakeAfter(1000);
+    });
+  });
+
+  test("setSystemTime() before the call moves the time it waits from", async () => {
+    vi.useFakeTimers({ now: year2020 });
+    vi.setSystemTime(year2100);
+    await expectToWakeAfter(1000);
+  });
+
+  test("setSystemTime() after the call leaves the wait as it is", async () => {
+    vi.useFakeTimers({ now: year2020 });
+    const sleep = Bun.sleep(new Date(year2020 + 1000));
+    vi.setSystemTime(year2100);
+    vi.advanceTimersByTime(999);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await sleep;
+  });
+
+  test("runAllTimers() stops the clock on the date", async () => {
+    vi.useFakeTimers({ now: year2100 });
+    const sleep = Bun.sleep(new Date(year2100 + 1000));
+    vi.runAllTimers();
+    expect(Date.now()).toBe(year2100 + 1000);
+    await sleep;
+  });
+
+  test("a date that isn't after Date.now() is due without moving the clock", async () => {
+    vi.useFakeTimers({ now: year2100 });
+    const sleeps = [new Date(year2100), new Date(year2020), new Date(NaN)].map(date => Bun.sleep(date));
+    vi.advanceTimersByTime(0);
+    expect({ pending: vi.getTimerCount(), now: Date.now() }).toEqual({ pending: 0, now: year2100 });
+    await Promise.all(sleeps);
+  });
+
+  test("a Date.now() with a fraction rounds the wait up", async () => {
+    vi.useFakeTimers({ now: 5000 });
+    vi.setSystemTime(7000.25);
+    await expectToWakeAfter(1000, new Date(8000));
+  });
+
+  test("an instance of a Date subclass", async () => {
+    class Deadline extends Date {}
+    vi.useFakeTimers({ now: year2100 });
+    await expectToWakeAfter(1000, new Deadline(year2100 + 1000));
+  });
+
+  test("the date Bun.cron.parse() returns, which starts from the same time", async () => {
+    vi.useFakeTimers({ now: year2100 + 30_000 });
+    await expectToWakeAfter(30_000, Bun.cron.parse("* * * * *")!);
+  });
+
+  test("a spy on Date.now doesn't set the wait", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const spy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3_600_000);
+    try {
+      const sleep = Bun.sleep(new Date(Date.now() + 1000));
+      vi.advanceTimersByTime(1000);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(3_600_000);
+      expect(vi.getTimerCount()).toBe(0);
+      await sleep;
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // The real clock moves between Date.now() and Bun.sleep(), so the wait is an hour at most.
+  test.each([
+    { toFake: ["setTimeout"] },
+    { toFake: ["setTimeout"], now: year2020 },
+    { toFake: ["setTimeout"], now: year2100 },
+    { doNotFake: ["Date"], now: year2100 },
+  ])("%j: from the real Date.now(), on the fake clock", async options => {
+    vi.useFakeTimers(options);
+    const sleep = Bun.sleep(new Date(Date.now() + 3_600_000));
+    vi.advanceTimersByTime(3_540_000);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    expect(vi.getTimerCount()).toBe(0);
+    await sleep;
+  });
+
+  test.each([
+    ["2020", year2020],
+    ["2100", year2100],
+  ])('toFake: ["Date"] at %s: from the fake Date.now(), on the real clock', async (_, now) => {
+    vi.useFakeTimers({ toFake: ["Date"], now });
+    expect(await wakeOrderOnTheRealClock()).toEqual(inOrder);
+  });
+
+  test.each([
+    ["2020", year2020],
+    ["2100", year2100],
+  ])("setSystemTime() to %s without fake timers: from the mocked Date.now(), on the real clock", async (_, now) => {
+    setSystemTime(now);
+    expect(await wakeOrderOnTheRealClock()).toEqual(inOrder);
+  });
+
+  test("on the fake clock of Bun.jest() in a script", async () => {
+    expect(
+      await run([
+        "-e",
+        `const { jest } = Bun.jest();
+         jest.useFakeTimers({ now: Date.UTC(2100, 0, 1) });
+         Bun.sleep(new Date(Date.now() + 1000));
+         jest.advanceTimersByTime(999);
+         console.log(jest.getTimerCount());
+         jest.advanceTimersByTime(1);
+         console.log(jest.getTimerCount());
+         jest.useRealTimers();`,
+      ]),
+    ).toEqual({ stdout: "1\n0\n", stderr: "", exitCode: 0, signalCode: null });
+  });
+});
+
 // Only the timers a test schedules itself are faked. Timeouts the runtime arms
 // for its own purposes keep running on the real clock: getTimerCount() does not
 // count them, they fire while fake timers are active, and useRealTimers(), which

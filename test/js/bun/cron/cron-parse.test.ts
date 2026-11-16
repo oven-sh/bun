@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, setSystemTime, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Bun.cron.parse() and the in-process Bun.cron(schedule, handler) interpret
@@ -137,6 +137,34 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Invalid date value", stderr: "", exitCode: 0 });
+  });
+});
+
+// With no `from`, the search starts at the current time. That is the mocked time if there is one.
+describe("Bun.cron.parse with no `from`", () => {
+  afterEach(() => void jest.useRealTimers());
+
+  describe.each([
+    ["2020", Date.UTC(2020, 0, 1, 0, 0, 30)],
+    ["2100", Date.UTC(2100, 0, 1, 0, 0, 30)],
+  ])("a time in %s, 30 seconds into a minute", (_, now) => {
+    test("jest.useFakeTimers({ now })", () => {
+      jest.useFakeTimers({ now });
+      expect(Bun.cron.parse("* * * * *")).toEqual(new Date(now + 30_000));
+    });
+
+    test("setSystemTime(now)", () => {
+      setSystemTime(now);
+      expect(Bun.cron.parse("* * * * *")).toEqual(new Date(now + 30_000));
+    });
+  });
+
+  // An out-of-range `from` is an invalid argument. The clock is no argument.
+  test("a fake clock past the Date range has no next occurrence", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(8.64e15 + 2 * 86_400_000);
+    expect(Bun.cron.parse("* * * * *")).toBeNull();
+    expect(() => Bun.cron.parse("* * * * *", Date.now())).toThrow("Invalid date value");
   });
 });
 

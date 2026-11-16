@@ -5,10 +5,11 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // sloppy code must parse, and the same code must be rejected once it is strict
 // because of a "use strict" directive, an ECMAScript module, or a class body.
 
-// Warnings (for example the legacy HTML comment warning) also make
-// `transformSync` throw, so only errors are recorded.
-const transpiler = new Bun.Transpiler({ loader: "js", logLevel: "error" });
-const tsTranspiler = new Bun.Transpiler({ loader: "ts", logLevel: "error" });
+// A warning also makes `transformSync` throw, so these fail a test whose input starts to warn.
+const transpiler = new Bun.Transpiler({ loader: "js" });
+const tsTranspiler = new Bun.Transpiler({ loader: "ts" });
+// The parser warns about each legacy HTML comment.
+const quietTranspiler = new Bun.Transpiler({ loader: "js", logLevel: "error" });
 
 type ParseMessage = { message: string; notes: { message: string; position: { line: number; column: number } }[] };
 
@@ -46,6 +47,8 @@ function expectNoTSParseError(code: string) {
 
 const useStrictNote = 'Strict mode is triggered by a "use strict" directive';
 const exportNote = 'This file is considered to be an ECMAScript module because of the "export" keyword here:';
+const importNote = 'This file is considered to be an ECMAScript module because of the "import" keyword here:';
+const awaitNote = 'This file is considered to be an ECMAScript module because of the top-level "await" keyword here:';
 const classNote = "All code inside a class is implicitly in strict mode";
 
 describe("strict mode early errors", () => {
@@ -105,12 +108,11 @@ describe("strict mode early errors", () => {
       "async function f() {} function f() {}",
       "{ function f() {} function f() {} }",
       "var x; var x",
-      "-->",
-      "x\n--> a comment",
-      "<!-- a comment\nx",
-      "x <!-- a comment\ny",
     ];
     test.each(sloppy)("%j", code => expectNoParseError(code));
+
+    const htmlComments = ["-->", "x\n--> a comment", "<!-- a comment\nx", "x <!-- a comment\ny"];
+    test.each(htmlComments)("%j", code => expect(parseErrors(code, quietTranspiler)).toEqual([]));
   });
 
   describe("legacy octal escapes decode leniently in sloppy mode", () => {
@@ -187,6 +189,14 @@ describe("strict mode early errors", () => {
       ["'use strict'; (class static {})", '"static" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; try {} catch (protected) {}", '"protected" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; var package = 1", '"package" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; const protected = 1", '"protected" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; function f(package) {}", '"package" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; (package) => 1", '"package" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; ({ m(implements) {} })", '"implements" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; let { a: interface } = x", '"interface" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; let [private] = x", '"private" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; for (let public of x) ;", '"public" is a reserved word and cannot be used in strict mode'],
+      ["'use strict'; for (var static in x) ;", '"static" is a reserved word and cannot be used in strict mode'],
       ["'use strict'; 0123", "Legacy octal literals cannot be used in strict mode"],
       ["'use strict'; ({0123: 4})", "Legacy octal literals cannot be used in strict mode"],
       ["'use strict'; let {0123: x} = y", "Legacy octal literals cannot be used in strict mode"],
@@ -481,6 +491,23 @@ describe("strict mode early errors", () => {
       expectParseError("import.meta; with (y) z; export {}", "With statements cannot be used in an ECMAScript module");
     });
 
+    // TypeScript erases a type-only import, and Bun runs a file with `module` or `exports` as CommonJS.
+    test("a type-only import alone does not make the file a module", () => {
+      expectNoTSParseError("import type { T } from 'x'; module.exports = 010");
+      expectNoTSParseError("import type T from 'x'; with (y) z");
+      expectNoTSParseError("import type * as T from 'x'; var s = '\\1'");
+      expectNoTSParseError("import { type T } from 'x'; delete y");
+      expectNoTSParseError("import type T = require('x'); function f(a, a) {}");
+      const inModule = "With statements cannot be used in an ECMAScript module";
+      expectTSParseError("import type { T } from 'x'; import 'y'; with (y) z", inModule);
+      expectTSParseError("import { type T, u } from 'x'; u; with (y) z", inModule);
+      expectTSParseError("import type { T } from 'x'; export {}; with (y) z", inModule);
+      expectTSParseError(
+        "import type { T } from 'x'; class A { m() { with (y) z } }",
+        "With statements cannot be used in strict mode",
+      );
+    });
+
     test("dynamic import does not make the file a module", () => {
       expectNoParseError("import(x); with (y) z");
       expectNoParseError("import('x'); with (y) z");
@@ -501,6 +528,24 @@ describe("strict mode early errors", () => {
         {
           message: "With statements cannot be used in an ECMAScript module",
           notes: [{ message: exportNote, position: { line: 2, column: 1 } }],
+        },
+      ]);
+    });
+
+    test("the note points at the import keyword, also when the file assigns to exports", () => {
+      expect(parseErrors("import { y } from './y.mjs';\nexports.x = 1;\nconsole.log(010, y)")).toEqual([
+        {
+          message: "Legacy octal literals cannot be used in an ECMAScript module",
+          notes: [{ message: importNote, position: { line: 1, column: 1 } }],
+        },
+      ]);
+    });
+
+    test("the note points at the top-level await keyword", () => {
+      expect(parseErrors("with (x) y;\nawait 0")).toEqual([
+        {
+          message: "With statements cannot be used in an ECMAScript module",
+          notes: [{ message: awaitNote, position: { line: 2, column: 1 } }],
         },
       ]);
     });
@@ -533,6 +578,43 @@ describe("strict mode early errors", () => {
     test("import equals", () => {
       expectNoTSParseError("import protected = require('x')");
       expectTSParseError("'use strict'; import protected = require('x')", reserved);
+    });
+    test("a legacy octal escape in an import-equals path and in an enum member name", () => {
+      const escape = "Legacy octal escape sequences cannot be used";
+      expectNoTSParseError("import x = require('\\1'); x");
+      expectTSParseError("'use strict'; import x = require('\\1'); x", `${escape} in strict mode`);
+      expectNoTSParseError("enum E { '\\1' = 1 }");
+      expectTSParseError("export {}; enum E { '\\1' = 1 }", `${escape} in an ECMAScript module`);
+    });
+  });
+
+  describe("TypeScript code that is erased", () => {
+    test("a legacy octal in a declare statement is not reported", () => {
+      expectNoTSParseError("export {}; declare const x = 010;");
+      expectNoTSParseError("'use strict'; declare const y = '\\033';");
+      expectNoTSParseError("export {}; declare global { const q = 010 }");
+      expectNoTSParseError("declare module 'm' { const x: number; export { x as '\\141' } }");
+    });
+    test("the statements around a declare statement are still checked", () => {
+      const inModule = "Legacy octal literals cannot be used in an ECMAScript module";
+      expectTSParseError("export {}; declare const y: number; const x = 010;", inModule);
+      expectTSParseError("export {}; const x = 010; declare const y = 011;", inModule);
+    });
+    // An import that only types use is not in the output, so its name is not a declaration of strict mode code.
+    test("an unused import can have a reserved word as its name", () => {
+      const trimming = new Bun.Transpiler({ loader: "ts", logLevel: "error", trimUnusedImports: true });
+      expect(trimming.transformSync("import * as public from './schema';\nexport let y: public.Y = 1;")).toBe(
+        "export let y = 1;\n",
+      );
+      expect(
+        trimming.transformSync("import eval, { a as static } from './schema';\nexport let y: eval | static = 1;"),
+      ).toBe("export let y = 1;\n");
+      expect(
+        parseErrors("import * as public from './schema';\nexport let y = public.z;", trimming).map(e => e.message),
+      ).toEqual(['"public" is a reserved word and cannot be used in an ECMAScript module']);
+      expect(parseErrors("import package from './schema';\nexport { package };", trimming).map(e => e.message)).toEqual(
+        ['"package" is a reserved word and cannot be used in an ECMAScript module'],
+      );
     });
   });
 
@@ -644,6 +726,8 @@ describe("strict mode early errors", () => {
         ],
         ["{ function f() {} function f() {} } export {}", exportNote],
         ["switch (0) { case 1: function f() {} default: function f() {} } export {}", exportNote],
+        ["class A { m() { { function f() {} function f() {} } } }", classNote],
+        ["class A { static { { function f() {} function f() {} } } }", classNote],
       ];
       test.each(strictCases)("%j", (code, note) => {
         const errors = parseErrors(code);
@@ -655,6 +739,12 @@ describe("strict mode early errors", () => {
       });
     });
 
+    test("a var between two functions does not hide the duplicate", () => {
+      expectParseError("function f() {} var f; function f() {} export {}", alreadyDeclared);
+      expectNoParseError("function f() {} var f; function f() {}");
+      expectNoParseError("function g() { 'use strict'; function f() {} var f; function f() {} }");
+    });
+
     test("var is never a duplicate", () => {
       expectNoParseError("var x; var x");
       expectNoParseError("'use strict'; var x; var x");
@@ -663,17 +753,30 @@ describe("strict mode early errors", () => {
     });
   });
 
+  // `scan` and `scanImports` only run the parse pass. Most early errors need the visit pass, which knows
+  // what is strict mode code.
+  test("scanImports reads the imports of a file that has a strict mode early error", () => {
+    expect(transpiler.scanImports('"use strict"; var static = 1; with (x) y; import "x"')).toEqual([
+      { kind: "import-statement", path: "x" },
+    ]);
+  });
+
   describe("legacy HTML comments", () => {
     const message = "Legacy HTML single-line comments are not allowed in ECMAScript modules";
+    const errors = (code: string) => parseErrors(code, quietTranspiler).map(e => e.message);
     test("are an error in a module", () => {
-      expectParseError("export {}\n--> commented out", message);
-      expectParseError("<!-- commented out\nexport {}", message);
-      expectParseError("import 'x'\n--> commented out", message);
+      expect(errors("export {}\n--> commented out")).toEqual([message]);
+      expect(errors("<!-- commented out\nexport {}")).toEqual([message]);
+      expect(errors("import 'x'\n--> commented out")).toEqual([message]);
     });
     test("are comments in a script", () => {
-      expect(transpiler.transformSync("x\n--> commented out\ny")).toBe("x;\ny;\n");
-      expect(transpiler.transformSync("<!-- commented out\nx")).toBe("x;\n");
-      expect(transpiler.transformSync("x <!-- commented out\ny")).toBe("x;\ny;\n");
+      expect(quietTranspiler.transformSync("x\n--> commented out\ny")).toBe("x;\ny;\n");
+      expect(quietTranspiler.transformSync("<!-- commented out\nx")).toBe("x;\n");
+      expect(quietTranspiler.transformSync("x <!-- commented out\ny")).toBe("x;\ny;\n");
+    });
+    test("are a warning in a script", () => {
+      expectParseError("x <!-- commented out\ny", 'Treating "<!--" as the start of a legacy HTML single-line comment');
+      expectParseError("x\n--> commented out\ny", 'Treating "-->" as the start of a legacy HTML single-line comment');
     });
     test("--> without a newline before it is a decrement", () => {
       expect(transpiler.transformSync("x-->y")).toBe("x-- > y;\n");
@@ -693,6 +796,8 @@ describe("sloppy CommonJS runs as written", () => {
         var w;
         with (obj) { w = foo(); }
         const c = 1;
+        <!-- a legacy HTML comment
+        --> and one more
         console.log(JSON.stringify([f(1, 2), eval, s1, s2, s3, s4, s5, s6, n, w, delete c, c]));
         module.exports = 1;
       `,
@@ -721,6 +826,8 @@ describe("sloppy CommonJS runs as written", () => {
         with (o) { w = a; }
         function f(a, a) { return a; }
         eval = 3;
+        <!-- a legacy HTML comment
+        --> and one more
         console.log(JSON.stringify([n, s, init(), delete x, w, f(1, 2), eval, typeof module.exports.dir]));
       `,
     });
@@ -734,6 +841,60 @@ describe("sloppy CommonJS runs as written", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(JSON.stringify([8, "\u0001", 2, false, 5, 2, 3, "string"]) + "\n");
     expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a TypeScript file with a type-only import and module.exports", async () => {
+    using dir = tempDir("strict-mode-type-only-import", {
+      "types.ts": `export type T = number;\n`,
+      "sloppy.cts": `import type { T } from "./types";\nvar n: T = 010;\nmodule.exports = n;\nconsole.log(n);\n`,
+      "sloppy.ts": `import type { T } from "./types";\nvar n: T = 010;\nmodule.exports = n;\nconsole.log(n);\n`,
+    });
+    const run = async (file: string) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    expect(await Promise.all([run("sloppy.cts"), run("sloppy.ts")])).toEqual([
+      { stdout: "8\n", stderr: "", exitCode: 0 },
+      { stdout: "8\n", stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // Such a file is a module in Node, with no `import` or `export` in it.
+  test.concurrent(
+    "a file that is a module by its extension or by its package rejects a legacy HTML comment",
+    async () => {
+      const code = `var a = 1, b = 0;\nconsole.log(a <!--b\n);\n`;
+      using dir = tempDir("strict-mode-module-by-type", {
+        "by-extension.mjs": code,
+        "package/package.json": JSON.stringify({ type: "module" }),
+        "package/by-package.js": code,
+      });
+      const run = async (file: string) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const [byExtension, byPackage] = await Promise.all([run("by-extension.mjs"), run("package/by-package.js")]);
+      const error = "error: Legacy HTML single-line comments are not allowed in ECMAScript modules";
+      const because = "note: This file is considered to be an ECMAScript module because";
+      expect(byExtension.stderr).toContain(error);
+      expect(byExtension.stderr).toContain(`${because} of its file extension.`);
+      expect(byPackage.stderr).toContain(error);
+      expect(byPackage.stderr).toContain(`${because} the "package.json" file of its package has "type": "module".`);
+      expect([byExtension.stdout, byExtension.exitCode, byPackage.stdout, byPackage.exitCode]).toEqual(["", 1, "", 1]);
+    },
+  );
+
+  // Node runs a `.js` file with no module syntax as CommonJS, which is sloppy mode code. Bun runs such
+  // a file as an ES module, so the engine rejects this code: https://github.com/oven-sh/bun/issues/44802
+  test.failing("a file with no module syntax runs as sloppy mode code", async () => {
+    using dir = tempDir("strict-mode-no-module-syntax", {
+      "script.js": `function f(a, a) { return a; }\nconsole.log(f(1, 2));\n`,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "script.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("the same code in an ES module is a syntax error", async () => {

@@ -399,6 +399,23 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scan parses like a bundle and writes no output, so the syntax of sloppy mode code is not its concern.
+  test("a sloppy CommonJS dependency does not hide the tests that reach a changed file through it", async () => {
+    using dir = tempDir("test-changed-sloppy", {
+      "package.json": JSON.stringify({ name: "sloppy" }),
+      "value.cjs": `module.exports = 1;\n`,
+      "helper.cjs": `var scope = { value: require("./value.cjs") };\nwith (scope) module.exports = value;\n`,
+      "helper.test.js": `const { test, expect } = require("bun:test");\nconst value = require("./helper.cjs");\ntest("helper", () => expect(value).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "value.cjs"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("helper.test.js:");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.
   test("tsconfig paths alias is followed when computing the module graph", async () => {

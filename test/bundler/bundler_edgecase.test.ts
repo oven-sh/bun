@@ -4398,7 +4398,7 @@ describe("bundler", () => {
     },
     format: "esm",
     bundleErrors: {
-      "/dep.cjs": ['"a" cannot be bound multiple times in the same parameter list'],
+      "/dep.cjs": ['Duplicate parameter "a" cannot be used with the ESM output format due to strict mode'],
     },
   });
   itBundled("edgecase/SloppyDuplicateParametersCJSOutput", {
@@ -4579,6 +4579,74 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("eval = 0;");
     },
   });
+  // The "use strict" of an entry point leads its "cjs" or "iife" output file,
+  // and then every file in it is strict mode code. The sloppy-only syntax of a
+  // dependency would make the whole output a SyntaxError when it loads.
+  const sloppyOnlyDependency = /* js */ `
+    function f(a, a) { return a }
+    eval = 0;
+    arguments = 1;
+    var o = { v: 5 }, w, x = 1;
+    with (o) { w = v }
+    module.exports = [f(1, 2), w, delete x].join();
+  `;
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`edgecase/SloppyOnlySyntaxUnderStrictEntry${format.toUpperCase()}OutputIsAnError`, {
+      files: {
+        "/entry.js": /* js */ `
+          "use strict";
+          console.log(require("./dep.cjs"));
+        `,
+        "/dep.cjs": sloppyOnlyDependency,
+      },
+      format,
+      bundleErrors: {
+        "/dep.cjs": [
+          'Duplicate parameter "a" cannot be used in strict mode',
+          'Assignments to "eval" cannot be used in strict mode',
+          'Assignments to "arguments" cannot be used in strict mode',
+          "With statements cannot be used in strict mode",
+          "Delete of a bare identifier cannot be used in strict mode",
+        ],
+      },
+    });
+  }
+  // The "use strict" of a dependency stays inside the wrapper of that
+  // dependency, so the other files of the output stay sloppy mode code.
+  itBundled("edgecase/SloppyOnlySyntaxBesideStrictDependencyCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"), require("./strict.cjs"));
+      `,
+      "/dep.cjs": sloppyOnlyDependency,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined })();
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "2,5,false true" },
+  });
+  // A class body is strict mode code, so a function in a block of a method is
+  // local to that block and does not replace the outer function.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`edgecase/BlockFunctionInClassBodyStaysInItsBlock${format.toUpperCase()}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function f() { return "outer" }
+          class A {
+            m() {
+              { function f() { return "inner" } }
+              return f();
+            }
+          }
+          console.log(new A().m());
+        `,
+      },
+      format,
+      run: { stdout: "outer" },
+    });
+  }
 
   // Without code splitting, each entry point gets its own output file, even when
   // entry points import each other. Each file runs its modules in the order that

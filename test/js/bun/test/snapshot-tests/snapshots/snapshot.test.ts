@@ -1295,6 +1295,26 @@ test("snapshot matchers treat undefined arguments as omitted", async () => {
   expect(exitCode).toBe(0);
 });
 
+// JavaScript does not allow `\8` in a template literal that has no tag. A snapshot file is data, not a
+// program: `bun test` reads the `\8` in it as the digit.
+test("reads a snapshot file that has a backslash before a digit", async () => {
+  using dir = tempDir("snapshot-backslash-digit", {
+    "a.test.js": `
+      import { test, expect } from "bun:test";
+      test("one", () => { expect("x8y").toMatchSnapshot(); });
+      test("two", () => { expect("plain").toMatchSnapshot(); });
+    `,
+    "__snapshots__/a.test.js.snap": headers.bun + '\nexports[`one 1`] = `"x\\8y"`;\n\nexports[`two 1`] = `"plain"`;\n',
+  });
+  const read = await runTests(String(dir), { CI: "true" });
+  expect({ fail: read.fail, pass: read.pass, stderr: read.fail ? read.stderr : "" }).toEqual({
+    fail: 0,
+    pass: 2,
+    stderr: "",
+  });
+  expect(read.exitCode).toBe(0);
+});
+
 async function runTests(cwd: string, env: Record<string, string>, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],

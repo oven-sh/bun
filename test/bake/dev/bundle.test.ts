@@ -1131,6 +1131,51 @@ devTest("importing bun on the client", {
     });
   },
 });
+// The browser loads the client bundle as a module script, so every file in it is strict mode code.
+devTest("sloppy-only syntax in a file for the browser is a build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./sloppy.cjs";
+      console.log(value);
+    `,
+    "sloppy.cjs": `
+      function f(a, a) { return a; }
+      with ({}) module.exports = f(1, 2);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        'sloppy.cjs:1:15: error: Duplicate parameter "a" cannot be used in strict mode',
+        "sloppy.cjs:2:1: error: With statements cannot be used in strict mode",
+      ],
+    });
+  },
+});
+// The server runs each module in a closure of sloppy mode code.
+devTest("sloppy-only syntax in a file for the server", {
+  framework: minimalFramework,
+  files: {
+    "sloppy.cjs": `
+      function f(a, a) { return a; }
+      eval = 5;
+      module.exports = f(1, 2) + eval;
+    `,
+    "routes/index.ts": `
+      import value from "../sloppy.cjs";
+      export default function (req, meta) {
+        return new Response("value: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 7");
+  },
+});
 devTest("import.meta.main", {
   files: {
     "index.html": emptyHtmlFile({

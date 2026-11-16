@@ -644,8 +644,8 @@ impl FetchTasklet {
                     bun_jsc::strong::Optional::create(js_err, &global_this),
                 )));
             }
-            // A failure result is terminal (`to_result` forces `has_more =
-            // false` once `fail` is set), so everything pending must settle
+            // A failure result is terminal (only `InFlightRequest::finish`
+            // reports `fail`), so everything pending must settle
             // here: a still-streaming request-body sink does not exempt the
             // response body. Returning right after `sink.cancel()` used to
             // leave a buffered `arrayBuffer()`/`text()` promise pending

@@ -78,41 +78,19 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     use core::ffi::c_void;
     let mut usage_info = Rusage::default();
     let process_pid: *mut c_void = process.process_handle;
-    type WinTime = bun_sys::windows::FILETIME;
-    let mut starttime: WinTime = bun_core::ffi::zeroed();
-    let mut exittime: WinTime = bun_core::ffi::zeroed();
-    let mut kerneltime: WinTime = bun_core::ffi::zeroed();
-    let mut usertime: WinTime = bun_core::ffi::zeroed();
     // We at least get process times
-    // SAFETY: FFI call with valid out-pointers
-    if unsafe {
-        bun_sys::windows::GetProcessTimes(
-            process_pid,
-            &mut starttime,
-            &mut exittime,
-            &mut kerneltime,
-            &mut usertime,
-        )
-    } != 0
-    {
+    if let Ok(times) = bun_sys::windows::GetProcessTimes(process_pid) {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. A `temp % 1_000_000` computation here would be
+        // 10 ticks. A `ticks % 1_000_000` computation here would be
         // unit-mismatched (a 100-ns tick count modulo a microsecond
         // denominator): a 178 125 µs run (1_781_250 ticks) would report as
         // 781_250 µs, which is what tips the "does not use 100% cpu >
         // install" test (`cpuTime.total < 750_000`) on Windows aarch64.
         // Convert correctly: `(ticks % 10_000_000) / 10`.
-        let mut temp: u64 =
-            ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.stime.sec = (temp / 10_000_000) as i64;
-            usage_info.stime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
-        temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.utime.sec = (temp / 10_000_000) as i64;
-            usage_info.utime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
+        usage_info.stime.sec = (times.kernel / 10_000_000) as i64;
+        usage_info.stime.usec = ((times.kernel % 10_000_000) / 10) as i64;
+        usage_info.utime.sec = (times.user / 10_000_000) as i64;
+        usage_info.utime.usec = ((times.user % 10_000_000) / 10) as i64;
     }
     let mut counters = IoCounters::default();
     // SAFETY: FFI call with valid out-pointer

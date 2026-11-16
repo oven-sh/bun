@@ -751,6 +751,26 @@ describe("strict mode early errors", () => {
       });
     });
 
+    test("each duplicate is an error where it is declared", () => {
+      const at = (code: string) => {
+        try {
+          transpiler.transformSync(code);
+        } catch (e: any) {
+          return (e instanceof AggregateError ? e.errors : [e]).map((error: any) => ({
+            line: error.position.line,
+            declared: error.notes[0].position.line,
+          }));
+        }
+        return [];
+      };
+      expect(at("function f() {}\nfunction f() {}\nfunction f() {}\nexport {}")).toEqual([
+        { line: 2, declared: 1 },
+        { line: 3, declared: 2 },
+      ]);
+      expect(at("function f() {}\nfunction f() {}\nvar f;\nexport {}")).toEqual([{ line: 2, declared: 1 }]);
+      expect(at("function f() {}\nvar f;\nfunction f() {}\nexport {}")).toEqual([{ line: 3, declared: 1 }]);
+    });
+
     test("a var between two functions does not hide the duplicate", () => {
       expectParseError("function f() {} var f; function f() {} export {}", alreadyDeclared);
       expectNoParseError("function f() {} var f; function f() {}");
@@ -881,13 +901,20 @@ describe("sloppy CommonJS runs as written", () => {
         "by-extension.mjs": code,
         "package/package.json": JSON.stringify({ type: "module" }),
         "package/by-package.js": code,
+        "commonjs.mjs": `module.exports = 1;\n--> a comment\nconsole.log(typeof module);\n`,
       });
       const run = async (file: string) => {
         await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: String(dir), stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { stdout, stderr, exitCode };
       };
-      const [byExtension, byPackage] = await Promise.all([run("by-extension.mjs"), run("package/by-package.js")]);
+      const [byExtension, byPackage, commonjs] = await Promise.all([
+        run("by-extension.mjs"),
+        run("package/by-package.js"),
+        run("commonjs.mjs"),
+      ]);
+      // `module` makes a file CommonJS in Bun, whatever its extension is.
+      expect(commonjs).toEqual({ stdout: "object\n", stderr: "", exitCode: 0 });
       const error = "error: Legacy HTML single-line comments are not allowed in ECMAScript modules";
       const because = "note: This file is considered to be an ECMAScript module because";
       expect(byExtension.stderr).toContain(error);

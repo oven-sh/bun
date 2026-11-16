@@ -644,17 +644,21 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         if chunk.flags.contains(crate::chunk::Flags::HAS_HTML_CHUNK) {
             return Some(StrictChunk::ModuleScript);
         }
-        self.directives_of_chunk(chunk)
+        let use_strict = self
+            .directives_of_chunk(chunk)
             .slice()
             .iter()
-            .find_map(|stmt| match stmt.data {
-                bun_ast::StmtData::SDirective(directive)
-                    if directive.value.slice() == b"use strict" =>
-                {
-                    Some(StrictChunk::EntryDirective(stmt.loc))
-                }
-                _ => None,
-            })
+            .find(|stmt| matches!(stmt.data, bun_ast::StmtData::SDirective(directive) if directive.value.slice() == b"use strict"))?;
+        // The banner is printed ahead of the directives. A statement in it ends the directive prologue.
+        let is_prologue = |parsed: &bun_js_parser::parse::parse_entry::ParsedOnly<'_, '_>| {
+            parsed
+                .stmts
+                .iter()
+                .all(|stmt| matches!(stmt.data, bun_ast::StmtData::SDirective(_)))
+        };
+        let banner = self.options.banner;
+        (banner.is_empty() || parse_only_text(banner, false, false, is_prologue) == Some(true))
+            .then_some(StrictChunk::EntryDirective(use_strict.loc))
     }
 
     /// A chunk that is strict code as a whole does not parse with the `Ast::sloppy_only_syntax` of a file in it. Only the linker knows the chunk.

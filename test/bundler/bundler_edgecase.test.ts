@@ -4611,6 +4611,36 @@ describe("bundler", () => {
       },
     });
   }
+  // The banner is printed ahead of the directives. A statement in it ends the
+  // directive prologue, and the "use strict" after it is a plain string.
+  itBundled("edgecase/SloppyOnlySyntaxUnderStrictEntryBehindCodeBannerCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": sloppyOnlyDependency,
+    },
+    format: "cjs",
+    banner: "console.log('banner');",
+    run: { stdout: "banner\n2,5,false" },
+  });
+  itBundled("edgecase/SloppyOnlySyntaxUnderStrictEntryBehindCommentBannerCJSOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        with ({}) module.exports = 1;
+      `,
+    },
+    format: "cjs",
+    banner: "/* a license */ 'use client';",
+    bundleErrors: {
+      "/dep.cjs": ["With statements cannot be used in strict mode"],
+    },
+  });
   // The "use strict" of a dependency stays inside the wrapper of that
   // dependency, so the other files of the output stay sloppy mode code.
   itBundled("edgecase/SloppyOnlySyntaxBesideStrictDependencyCJSOutput", {

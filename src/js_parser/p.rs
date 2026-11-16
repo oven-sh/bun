@@ -295,8 +295,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Each legacy octal number (`010`) or escape (`"\1"`), with the scope that the parser was in.
     pub(crate) legacy_octals: Vec<(js_ast::StoreRef<Scope>, bun_ast::Range, LegacyOctalKind)>,
 
-    /// Each function declaration that a later declaration in the same scope replaced, with that scope.
-    pub(crate) replaced_functions: Vec<(js_ast::StoreRef<Scope>, js_ast::scope::Member)>,
+    /// Each function declaration that a later declaration in the same scope replaced, with that scope and that later declaration.
+    pub(crate) replaced_functions: Vec<(
+        js_ast::StoreRef<Scope>,
+        js_ast::scope::Member,
+        js_ast::scope::Member,
+    )>,
 
     /// See `Ast::sloppy_only_syntax`.
     pub(crate) sloppy_only_syntax: Vec<js_ast::SloppyOnlySyntax>,
@@ -3393,20 +3397,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Legacy HTML comments are not allowed in ESM files
-        let is_module_by_type =
-            self.options.module_type == options::ModuleType::Esm && !self.options.repl_mode;
-        if self.lexer.legacy_html_comment_range.len > 0
-            && (self.is_file_considered_esm() || is_module_by_type)
-        {
-            let notes = self.why_es_module();
-            self.log().add_range_error_fmt_with_notes(
-                Some(self.source),
-                self.lexer.legacy_html_comment_range,
-                notes,
-                format_args!(
-                    "Legacy HTML single-line comments are not allowed in ECMAScript modules"
-                ),
-            );
+        if self.lexer.legacy_html_comment_range.len > 0 && self.is_file_considered_esm() {
+            self.report_legacy_html_comment();
         }
 
         self.hoist_symbols(self.module_scope_ref());
@@ -3491,10 +3483,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.es_module_keyword.len > 0
     }
 
+    #[cold]
+    pub(crate) fn report_legacy_html_comment(&mut self) {
+        let notes = self.why_es_module();
+        self.log().add_range_error_fmt_with_notes(
+            Some(self.source),
+            self.lexer.legacy_html_comment_range,
+            notes,
+            format_args!("Legacy HTML single-line comments are not allowed in ECMAScript modules"),
+        );
+    }
+
     /// Runs after hoisting: only then is the strict mode of every scope final.
     fn report_duplicate_function_declarations(&mut self) {
         let mut why_module: Option<bun_ast::Data> = None;
-        for (scope, replaced) in core::mem::take(&mut self.replaced_functions) {
+        for (scope, replaced, replacing) in core::mem::take(&mut self.replaced_functions) {
             let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
             let is_strict_block =
                 scope.strict_mode.has_early_errors() && scope.kind == js_ast::scope::Kind::Block;
@@ -3506,15 +3509,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name: &'a [u8] = self.symbols[replaced.ref_.inner_index() as usize]
                 .original_name
                 .slice();
-            let Some(member) = scope.members.get(name).copied() else {
-                continue;
+            let is_function = |p: &Self, member: js_ast::scope::Member| {
+                p.symbols[member.ref_.inner_index() as usize]
+                    .kind
+                    .is_function()
             };
-            if !self.symbols[member.ref_.inner_index() as usize]
-                .kind
-                .is_function()
-            {
-                continue;
-            }
+            // A `var` between two functions hides nothing: then the function that the scope ends up with is the duplicate.
+            let member = match scope.members.get(name).copied() {
+                _ if is_function(self, replacing) => replacing,
+                Some(last) if is_function(self, last) => last,
+                _ => continue,
+            };
 
             let why = if is_module_top_level {
                 why_module
@@ -5300,7 +5305,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let existing_kind = self.symbols[symbol_idx].kind;
                     if existing_kind.is_function() {
-                        self.replaced_functions.push((self.current_scope, existing));
+                        let replacing = js_ast::scope::Member { ref_, loc };
+                        self.replaced_functions
+                            .push((self.current_scope, existing, replacing));
                     }
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {

@@ -1981,6 +1981,15 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // A file that is a module by its extension or its package, and not CommonJS by its own syntax.
+        if exports_kind != js_ast::ExportsKind::Cjs
+            && p.options.module_type == options::ModuleType::Esm
+            && p.lexer.legacy_html_comment_range.len > 0
+            && !p.options.repl_mode
+        {
+            p.report_legacy_html_comment();
+        }
+
         if reject_import_statements {
             p.reject_eager_import_meta_globs();
         }

@@ -952,7 +952,8 @@ pub(crate) fn bun_resolve_sync_with_paths(
     })
 }
 
-/// Resolves `specifier` relative to `source` as an `import` does. `for_require`, unless `None`, gets the path that `require()` resolves it to when that is another file. A specifier the resolver cannot resolve (the
+/// Resolves `specifier` relative to `source` as an `import` does. `for_require`, unless `None`, gets the
+/// path that `require()` resolves it to when that is another file. A specifier the resolver cannot resolve (the
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
@@ -968,7 +969,7 @@ pub(crate) fn bun_resolve_for_import_and_require(
     };
     jsc::to_js_host_call(global, || {
         let mut query_string = BunString::EMPTY;
-        let (for_import, other) = match VirtualMachine::resolve_for_import_and_require(
+        let (for_import, path_for_require) = match VirtualMachine::resolve_for_import_and_require(
             global,
             &specifier_str,
             source,
@@ -980,7 +981,7 @@ pub(crate) fn bun_resolve_for_import_and_require(
             // e.g. an onResolve plugin returned an invalid result
             Err(err) => return Err(global.throw_value(err)),
         };
-        if let (Some(for_require), Some(path)) = (for_require, other) {
+        if let (Some(for_require), Some(path)) = (for_require, path_for_require) {
             *for_require = with_query(path, &query_string);
         }
         with_query(for_import, &query_string).into_js(global)

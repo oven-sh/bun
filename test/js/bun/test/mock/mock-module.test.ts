@@ -1902,7 +1902,7 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
   const esm = `export const which = "esm"; export const fn = () => "esm";`;
   const cjs = `module.exports = { which: "cjs", fn: () => "cjs" };`;
   // An import of each of these loads an ES module, and require() of it loads a CommonJS file.
-  const names = JSON.stringify(["dual", "dual/sub", "#dep", "./lib"]);
+  const names = JSON.stringify(["dual", "dual/sub", "#dep", "./lib", "./lib?v=1"]);
   const files = {
     "package.json": JSON.stringify({
       name: "project",
@@ -1992,7 +1992,7 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
             ${tests("esm", "cjs")}
           `,
         },
-        14,
+        16,
         args,
       );
     },
@@ -2039,7 +2039,7 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
           });
         `,
       },
-      11,
+      13,
     );
   });
 

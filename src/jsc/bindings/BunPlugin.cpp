@@ -4326,12 +4326,11 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
 
-// Whether the caller is code of a CommonJS module, which Bun runs as a program and not as a module. A module of Bun itself is a program without a file.
+// Whether the caller is code of a CommonJS module, which Bun runs as a program and not as a module.
 static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe)
 {
-    String path = callerPath(vm, callframe);
 #if ENABLE(AOT)
-    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(path) : std::nullopt)
+    if (auto module = vm.hasCompiledCode() ? Bun::compiledModuleForPath(callerPath(vm, callframe)) : std::nullopt)
         return !JSC::AOT::isESModule(*module);
 #endif
     bool isProgram = false;
@@ -4343,7 +4342,8 @@ static bool isCallerCommonJS(JSC::VM& vm, JSC::CallFrame* callframe)
         isProgram = !provider->isModuleType();
         return WTF::IterationStatus::Done;
     });
-    return isProgram && isAbsolutePath(path);
+    // A module of Bun itself is a program too, without a file.
+    return isProgram && isAbsolutePath(callerPath(vm, callframe));
 }
 
 #if ENABLE(AOT)
@@ -4369,7 +4369,7 @@ static std::optional<JSC::AOT::ModuleAliasKind> findFileAlias(StringView name, S
 
 // Returns true if importers can only reach the mock through resolveVirtualModule()'s relative lookup.
 // `requireKey`, unless null, is set if require() resolves the name to another file than an import does.
-__attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, bool& exists, JSC::JSString** requireKey = nullptr)
+__attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, bool& exists, WTF::String* requireKey = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4436,7 +4436,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
             specifier = specifierString->value(globalObject);
             exists = true;
             if (!forRequire.isDead())
-                *requireKey = jsString(vm, forRequire.transferToWTFString());
+                *requireKey = forRequire.transferToWTFString();
         }
         return false;
     }
@@ -4456,11 +4456,11 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
 struct ModuleMockSpecifier {
     JSC::JSString* keyString { nullptr };
     WTF::String key;
-    // The path that require() resolves the name to, where that is another file than the one an import of it resolves to.
-    JSC::JSString* requireKeyString { nullptr };
+    // The path that require() resolves the name to, if that is another file than `key`, the one an import of it resolves to.
+    WTF::String requireKey;
     WTF::String written;
 
-    WTF::String keyForRequire() const { return requireKeyString ? requireKeyString->tryGetValue().data : key; }
+    const WTF::String& keyForRequire() const { return requireKey.isNull() ? key : requireKey; }
 };
 
 // `forRequire`: the caller loads what require() loads, so the name is resolved that way too.
@@ -4489,7 +4489,7 @@ static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* global
     }
     specifier.key = specifier.written;
     bool exists = false;
-    resolveModuleMockSpecifier(globalObject, callframe, specifier.keyString, specifier.key, exists, forRequire ? &specifier.requireKeyString : nullptr);
+    resolveModuleMockSpecifier(globalObject, callframe, specifier.keyString, specifier.key, exists, forRequire ? &specifier.requireKey : nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     return specifier;
 }
@@ -7068,7 +7068,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * l
     RETURN_IF_EXCEPTION(scope, {});
 
     // With two files, a mock of the name is of the file that an import loads, so it is not looked up here.
-    String key = specifier.keyForRequire();
+    const String& key = specifier.keyForRequire();
     if (JSModuleMock* mock = moduleMockForTest(globalObject, key))
         RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock)));
     RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, callerPath(vm, callframe), key)));
@@ -7142,20 +7142,20 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
     String from = callerPath(vm, callframe);
 
-    String key = specifier.keyForRequire();
+    const String& key = specifier.keyForRequire();
     JSModuleMock* mock = moduleMockForTest(globalObject, key);
     if (!fromOriginal) {
         if (mock)
             RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
         // A mock of the name is registered under the path that an import resolves it to.
-        if (specifier.requireKeyString && moduleMockForTest(globalObject, specifier.key))
+        if (!specifier.requireKey.isNull() && moduleMockForTest(globalObject, specifier.key))
             RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, specifier.key)));
         JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, key, forRequire);
         RETURN_IF_EXCEPTION(scope, {});
         if (manualMock) {
-            String key = manualMock->value(globalObject);
+            String manualMockKey = manualMock->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, manualMockKey)));
         }
     }
 

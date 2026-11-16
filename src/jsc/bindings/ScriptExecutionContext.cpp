@@ -449,11 +449,6 @@ void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& 
 {
     Bun__VM__queueTask(m_bunVM, new EventLoopTask(WTF::move(lambda)));
 }
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTask(EventLoopTask* task)
-{
-    Bun__VM__queueTask(m_bunVM, task);
-}
 // Same thread; runs on the next loop iteration, after I/O and timers have had a turn.
 void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda)
 {

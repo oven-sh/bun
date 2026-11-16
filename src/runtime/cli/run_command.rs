@@ -23,7 +23,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -2940,49 +2940,30 @@ impl RunCommand {
         // `script_name_buf[..open_len]` is init.
         let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
 
-        // Open read-only.
-        let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
-            return false;
-        };
-
-        // fstat: directories cannot be run. if only there was a faster way to
-        // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
-            Err(_) => {
-                let _ = bun_sys::close(fd);
-                return false;
-            }
-        };
-        if is_dir {
-            let _ = bun_sys::close(fd);
-            return false;
-        }
-
-        Global::configure_allocator(core::Global::AllocatorConfiguration {
-            long_running: true,
-            ..Default::default()
-        });
-
-        // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
         let absolute_script_path: Box<[u8]> = {
-            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = bun_sys::close(fd);
-                    return false;
-                }
+            let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
+                .map(sys::CloseOnDrop::new)
+                .and_then(|file| file.make_lib_uv_owned_for_syscall(sys::Tag::open))
+            else {
+                return false;
             };
-            resolved.to_vec().into_boxed_slice()
+
+            match file.stat() {
+                Ok(stat) if !bun_sys::S::ISDIR(stat.st_mode as _) => {}
+                _ => return false,
+            }
+
+            Global::configure_allocator(core::Global::AllocatorConfiguration {
+                long_running: true,
+                ..Default::default()
+            });
+
+            // With symlinks resolved.
+            let Ok(resolved) = file.get_path(&mut script_name_buf) else {
+                return false;
+            };
+            resolved.into()
         };
-        let _ = bun_sys::close(fd);
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }

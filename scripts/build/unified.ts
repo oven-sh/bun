@@ -158,6 +158,8 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_png.cpp",
   // Eighth highway TU (byte sets) — same reason.
   "src/jsc/bindings/highway_byte_set.cpp",
+  // Ninth highway TU (JPEG transforms and color conversion) — same reason.
+  "src/jsc/bindings/highway_jpeg.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

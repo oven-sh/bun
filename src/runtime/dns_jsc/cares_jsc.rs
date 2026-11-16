@@ -70,8 +70,7 @@ pub(crate) fn hostent_with_ttls_to_js_response(
     lookup_name: &'static [u8], // PERF: could be monomorphized per lookup name — profile if hot
 ) -> JsResult<JSValue> {
     if lookup_name == b"a" || lookup_name == b"aaaa" {
-        // SAFETY: this.hostent is a c-ares-owned hostent pointer (non-null on success path).
-        let hostent = unsafe { &*this.hostent };
+        let hostent = &*this.hostent;
         if hostent.h_addr_list.is_null() {
             return JSValue::create_empty_array(global_this, 0);
         }
@@ -567,14 +566,14 @@ fn any_reply_to_js(
     // `c_ares::struct_any_reply`'s fields.
     let len: usize = this.a_reply.is_some() as usize
         + this.aaaa_reply.is_some() as usize
-        + (!this.mx_reply.is_null()) as usize
-        + (!this.ns_reply.is_null()) as usize
-        + (!this.txt_reply.is_null()) as usize
-        + (!this.srv_reply.is_null()) as usize
-        + (!this.ptr_reply.is_null()) as usize
-        + (!this.naptr_reply.is_null()) as usize
-        + (!this.soa_reply.is_null()) as usize
-        + (!this.caa_reply.is_null()) as usize;
+        + this.mx_reply.is_some() as usize
+        + this.ns_reply.is_some() as usize
+        + this.txt_reply.is_some() as usize
+        + this.srv_reply.is_some() as usize
+        + this.ptr_reply.is_some() as usize
+        + this.naptr_reply.is_some() as usize
+        + this.soa_reply.is_some() as usize
+        + this.caa_reply.is_some() as usize;
 
     let array = JSValue::create_empty_array(global_this, len)?;
     let mut i: u32 = 0;
@@ -587,52 +586,38 @@ fn any_reply_to_js(
         let response = hostent_with_ttls_to_js_response(reply, global_this, b"aaaa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"aaaa")?;
     }
-    if !this.mx_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response = mx_reply_to_js_response(unsafe { &mut *this.mx_reply }, global_this, b"mx")?;
+    if let Some(reply) = this.mx_reply.as_deref_mut() {
+        let response = mx_reply_to_js_response(reply, global_this, b"mx")?;
         any_reply_append_all(global_this, array, &mut i, response, b"mx")?;
     }
-    if !this.ns_reply.is_null() {
-        // SAFETY: non-null c-ares-owned hostent.
-        let response = hostent_to_js_response(unsafe { &mut *this.ns_reply }, global_this, b"ns")?;
+    if let Some(reply) = this.ns_reply.as_deref_mut() {
+        let response = hostent_to_js_response(reply, global_this, b"ns")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ns")?;
     }
-    if !this.txt_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
+    if let Some(reply) = this.txt_reply.as_deref_mut() {
         // txt is the only reply type with the `to_js_for_any` shape (an `entries`
         // wrapper object) instead of the plain `to_js_response` shape.
-        let response =
-            txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
+        let response = txt_reply_to_js_for_any(reply, global_this, b"txt")?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
     }
-    if !this.srv_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response =
-            srv_reply_to_js_response(unsafe { &mut *this.srv_reply }, global_this, b"srv")?;
+    if let Some(reply) = this.srv_reply.as_deref_mut() {
+        let response = srv_reply_to_js_response(reply, global_this, b"srv")?;
         any_reply_append_all(global_this, array, &mut i, response, b"srv")?;
     }
-    if !this.ptr_reply.is_null() {
-        // SAFETY: non-null c-ares-owned hostent.
-        let response =
-            hostent_to_js_response(unsafe { &mut *this.ptr_reply }, global_this, b"ptr")?;
+    if let Some(reply) = this.ptr_reply.as_deref_mut() {
+        let response = hostent_to_js_response(reply, global_this, b"ptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ptr")?;
     }
-    if !this.naptr_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response =
-            naptr_reply_to_js_response(unsafe { &mut *this.naptr_reply }, global_this, b"naptr")?;
+    if let Some(reply) = this.naptr_reply.as_deref_mut() {
+        let response = naptr_reply_to_js_response(reply, global_this, b"naptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"naptr")?;
     }
-    if !this.soa_reply.is_null() {
-        // SAFETY: non-null c-ares-owned soa reply.
-        let response =
-            soa_reply_to_js_response(unsafe { &mut *this.soa_reply }, global_this, b"soa")?;
+    if let Some(reply) = this.soa_reply.as_deref_mut() {
+        let response = soa_reply_to_js_response(reply, global_this, b"soa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"soa")?;
     }
-    if !this.caa_reply.is_null() {
-        // SAFETY: non-null c-ares-owned linked list head.
-        let response =
-            caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
+    if let Some(reply) = this.caa_reply.as_deref_mut() {
+        let response = caa_reply_to_js_response(reply, global_this, b"caa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"caa")?;
     }
 

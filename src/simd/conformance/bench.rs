@@ -47,7 +47,7 @@ fn compare(name: Arguments<'_>, both: &mut dyn Run) {
     }
     let (mut best, start) = ([f64::MAX; 2], Instant::now());
     for turn in 0..40 {
-        if turn >= 5 && start.elapsed().as_millis() > 200 {
+        if turn >= 5 && start.elapsed().as_millis() > 25 {
             break;
         }
         best = [

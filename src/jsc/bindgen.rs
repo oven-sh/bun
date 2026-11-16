@@ -1495,22 +1495,22 @@ pub fn hold_cached_to_declared_type(
     JSValue::ZERO
 }
 
-/// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.
+/// As [`host_fn_return`], for the constructor of a `refCounted` class: `None` if it failed.
 #[doc(hidden)]
 #[inline(always)]
-pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
+pub fn host_fn_construct_return<'a, T: bun_ptr::AnyRefCounted, E: IntoError<'a>>(
     cx: &mut JsScope<'a>,
-    result: core::result::Result<*mut T, E>,
-) -> *mut c_void {
-    let wrapped: *mut c_void = match result {
-        Ok(wrapped) => wrapped.cast(),
+    result: core::result::Result<bun_ptr::RefPtr<T>, E>,
+) -> Option<bun_ptr::RefPtr<T>> {
+    let wrapped = match result {
+        Ok(wrapped) => Some(wrapped),
         Err(error) => {
             error.into_error(&cx.heap).into_host_fn_return(cx);
-            core::ptr::null_mut()
+            None
         }
     };
     debug_assert!(
-        cx.heap.exception_presence_matches(wrapped.is_null()),
+        cx.heap.exception_presence_matches(wrapped.is_none()),
         "a constructor fails exactly when an exception is pending",
     );
     wrapped

@@ -436,13 +436,12 @@ impl Request {
 
     /// The wrapper takes over `this`.
     pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
-        let request = this.this_ptr();
-        request.calculate_estimated_byte_size();
-        let js_value = js::to_js(this.into_raw(), global_object);
-        request.js_ref.set(JsRef::init_weak(js_value));
+        this.calculate_estimated_byte_size();
+        let this = js::wrap(this, global_object);
+        this.js_ref.set(JsRef::init_weak(this.to_js()));
 
-        request.check_body_stream_ref(global_object);
-        js_value
+        this.check_body_stream_ref(global_object);
+        this.to_js()
     }
 }
 
@@ -450,23 +449,16 @@ impl Request {
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void*`.
     safe fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
     ) -> JSValue;
 }
 
 impl Request {
     /// The wrapper takes over `this`.
-    pub(crate) fn to_js_for_bake(
-        this: RefPtr<Self>,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        bun_jsc::from_js_host_call(global_object, || {
-            Bun__JSRequest__createForBake(global_object, this.into_raw())
-        })
+    pub(crate) fn to_js_for_bake(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        Bun__JSRequest__createForBake(global_object, this)
     }
 }
 

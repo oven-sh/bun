@@ -650,7 +650,7 @@ impl StatWatcher {
             this.poll_ref.ref_(this.ctx.loop_ctx());
         }
 
-        let js_this = js::to_js(this.clone().into_raw(), &args.global_this);
+        let js_this = js::to_js(this.clone(), &args.global_this);
         this.this_value
             .set(JsRef::init_strong(js_this, &args.global_this));
         js::listener_set_cached(js_this, &args.global_this, args.listener);

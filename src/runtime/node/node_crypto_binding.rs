@@ -1139,9 +1139,7 @@ impl JobContext for Argon2<Vec<u8>> {
             );
             return Ok(());
         }
-        let output = core::mem::take(&mut this.output);
-        // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
-        match JSValue::create_buffer(global, output.leak()) {
+        match JSValue::create_buffer(global, core::mem::take(&mut this.output)) {
             Ok(buf) => event_loop.run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,

@@ -579,16 +579,13 @@ impl<'a> Arguments<'a> {
 impl FSWatcher {
     /// The GC wrapper takes over `this`.
     fn init_js(this: RefPtr<Self>, listener: JSValue) {
-        let this_ref = this.into_this_ptr();
-        let this = this_ref.as_ptr();
+        let this_ref = this.this_ptr();
         if this_ref.persistent.get() {
             let vm_ctx = this_ref.ctx.loop_ctx();
             this_ref.poll_ref.ref_(vm_ctx);
         }
 
-        // SAFETY: the GC wrapper takes over the ref `this` was created with.
-        let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
-        js_this.ensure_still_alive();
+        let js_this = js::to_js(this, &this_ref.global_this);
         this_ref
             .js_this
             .set(JsRef::init_strong(js_this, &this_ref.global_this));
@@ -600,8 +597,8 @@ impl FSWatcher {
                 // safely abort next tick
                 Self::enqueue_abort(this_ref);
             } else {
-                // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
-                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
+                // SAFETY: this is the live boxed FSWatcher; `detach()` disarms the handle.
+                unsafe { bun_jsc::AbortHandle::follow_owner(this_ref.as_ptr(), s.clone()) };
             }
         }
     }

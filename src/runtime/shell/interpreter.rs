@@ -1537,11 +1537,7 @@ fn io_to_js_value(
     buf: *mut Vec<u8>,
 ) -> bun_jsc::JsResult<crate::jsc::JSValue> {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
-    let bytelist = core::mem::take(unsafe { &mut *buf });
-    // The moved-out `Vec<u8>` storage is handed to JSC directly; the
-    // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
-    let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
-    crate::jsc::JSValue::create_buffer(global_this, bytelist.slice_mut())
+    crate::jsc::JSValue::create_buffer(global_this, core::mem::take(unsafe { &mut *buf }))
 }
 
 /// On the mini event

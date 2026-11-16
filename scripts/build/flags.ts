@@ -19,7 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "zlib", "zstd"];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -2007,6 +2007,18 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_decoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_encoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

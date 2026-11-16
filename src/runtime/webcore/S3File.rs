@@ -498,9 +498,8 @@ pub(crate) fn construct_internal_js(
     Ok(construct_s3_file_internal_store(global, path, options)?.into_js(global))
 }
 
-pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
-    // The JS wrapper adopts `this`.
-    BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
+pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: bun_ptr::RefPtr<Blob>) -> JSValue {
+    BUN__createJSS3FileUnsafely(global, this)
 }
 
 // Symbols exported with C linkage and JSC calling convention.
@@ -539,9 +538,9 @@ pub(crate) mod exports {
 
 // C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
 bun_jsc::jsc_abi_extern! {
-    // `safe`: C++ stores `blob` and does not read through it.
+    #[allow(improper_ctypes)]
     safe fn BUN__createJSS3FileUnsafely(
         global: &JSGlobalObject,
-        blob: *mut core::ffi::c_void,
+        blob: bun_ptr::RefPtr<Blob>,
     ) -> JSValue;
 }

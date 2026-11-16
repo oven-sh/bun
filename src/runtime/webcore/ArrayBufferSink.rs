@@ -84,31 +84,6 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    pub(crate) fn end_from_js(
-        &mut self,
-        _cx: &bun_jsc::JsThread<'_>,
-    ) -> bun_sys::Result<ArrayBuffer> {
-        if self.done {
-            return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
-        }
-
-        self.done = true;
-        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
-        let bytes = core::mem::take(&mut self.bytes);
-        // Ownership transfers to JSC: the trait impl below converts the returned
-        // `ArrayBuffer` with `to_js_unchecked`, which installs
-        // `MarkedArrayBuffer_deallocator` (frees via `mi_free` on GC).
-        let owned = bytes.into_boxed_slice();
-        Ok(ArrayBuffer::from_owned_bytes(
-            owned,
-            if self.as_uint8array {
-                JSType::Uint8Array
-            } else {
-                JSType::ArrayBuffer
-            },
-        ))
-    }
-
     pub(crate) fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink)
         // which includes @sizeOf(ArrayBufferSink).
@@ -132,12 +107,19 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         this: &mut Self::Entered<'_>,
         cx: &bun_jsc::JsThread<'_>,
     ) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(this, cx) {
-            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(cx.global()) {
-                Ok(v) => v,
-                Err(_) => JSValue::ZERO,
-            }),
-            bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
-        }
+        let value = if this.done {
+            ArrayBuffer::create::<{ JSType::ArrayBuffer }>(cx.global(), b"")
+        } else {
+            this.done = true;
+            let mut bytes = core::mem::take(&mut this.bytes);
+            bytes.shrink_to_fit();
+            let kind = if this.as_uint8array {
+                JSType::Uint8Array
+            } else {
+                JSType::ArrayBuffer
+            };
+            ArrayBuffer::from_default_allocator(cx.global(), kind, bytes)
+        };
+        Ok(value.or_pending_exception())
     }
 }

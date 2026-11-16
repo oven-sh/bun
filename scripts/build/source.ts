@@ -457,7 +457,6 @@ export type DepName =
   | "highway"
   | "libdeflate"
   | "libuv"
-  | "libwebp"
   | "lolhtml"
   | "lsqpack"
   | "lsquic"

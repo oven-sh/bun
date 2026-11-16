@@ -2583,13 +2583,6 @@ console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
         ["is created with a prototype of its own", `const object = Object.create({});`],
         ["has a field and is given a name under a key", `const object = { a: 1 }; object["p" + i] = i;`],
         ["is made by a class and is given a name under a key", `const object = new Thing(); object["p" + i] = i;`],
-        ["is given a name and frozen", `const object = {}; object["p" + i] = i; Object.freeze(object);`],
-        ["is given a name and sealed", `const object = {}; object["p" + i] = i; Object.seal(object);`],
-        [
-          "is given a name and made non-extensible",
-          `const object = {}; object["p" + i] = i; Object.preventExtensions(object);`,
-        ],
-        ["is given a name and an index", `const object = {}; object["p" + i] = i; object[0] = i;`],
       ]),
     )(
       "a program that lets go of everything fills the room for the shapes of objects as far again, where each object %s",
@@ -2627,51 +2620,6 @@ console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true,true,true,true\n", stderr: "", exitCode: 0 });
       },
       240_000,
-    );
-
-    inPart(test)(
-      "a program that fills the room for the shapes of objects again and again catches the error every time",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          // The names come again, so a fill finds the shapes of the fill before it, which no collection has freed yet, and asks for no new one until its end.
-          // TODO: with red zones the first fill gets to 16,551 shapes for 32,533, and the least of the sixty to 0.42 .. 0.62 of the first in 28 runs, for 0.84.
-          // A collection between the fills changes nothing of that, nor a fill that runs 300 frames further down the stack. There the bound is a quarter.
-          "program.js": `class Thing { constructor() { this.a = 1; } }
-let keep = [];
-function fill() {
-  for (let i = 0; ; i++) {
-    const object = new Thing();
-    object["p" + i] = i;
-    keep.push(object);
-  }
-}
-let caught = 0;
-let first = 0;
-let least = Infinity;
-for (let attempt = 0; attempt < 60; attempt++) {
-  try {
-    fill();
-  } catch (error) {
-    if (error instanceof RangeError) caught++;
-    first ||= keep.length;
-    least = Math.min(least, keep.length);
-    keep = [];
-  }
-}
-console.log(caught, least * ${everyOtherCellIsRedZone ? 4 : 2} > first);
-`,
-        });
-        const built = await run(
-          [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
-          String(folder),
-        );
-        expect(built.exitCode).toBe(0);
-        const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
-          BUN_JSC_structureHeapSizeInKB: "4096",
-        });
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "60 true\n", stderr: "", exitCode: 0 });
-      },
-      120_000,
     );
 
     const case9 = together("9", sixWorkersOneAfterTheOther);

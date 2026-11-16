@@ -109,7 +109,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `encapsulate`/`decapsulate` (you can use ML-KEM keys through `crypto.subtle`). `argon2()` and `argon2Sync()` are implemented. Custom engines (`setEngine()`) throw, `setFips()` is a no-op and `secureHeapUsed()` returns `undefined`. Bun's crypto is backed by BoringSSL, which lacks the `ed448`, `x448`, `rsa-pss`, `dsa`, `dh` and `ml-kem-512` key types, EC curves other than P-224/256/384/521 (no `secp256k1`), and the CCM, OCB, XTS and `chacha20-poly1305` ciphers. The `DiffieHellman` class (`createDiffieHellman()`, `getDiffieHellman()`) works.
+🟡 Missing `encapsulate`/`decapsulate` (you can use ML-KEM keys through `crypto.subtle`). `argon2()` and `argon2Sync()` are implemented. Custom engines (`setEngine()`) throw, `setFips()` is a no-op and `secureHeapUsed()` returns `undefined`. Bun's crypto is backed by BoringSSL, which lacks the `ed448`, `x448`, `rsa-pss`, `dsa` and `ml-kem-512` key types, EC curves other than P-224/256/384/521 (no `secp256k1`), and the CCM, OCB, XTS and `chacha20-poly1305` ciphers. `dh` keys can be generated from a `group` or a `prime` and passed to `diffieHellman()`, but not imported, exported or cloned. The `DiffieHellman` class (`createDiffieHellman()`, `getDiffieHellman()`) works.
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 

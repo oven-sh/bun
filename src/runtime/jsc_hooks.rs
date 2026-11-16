@@ -4314,7 +4314,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
             .copied();
         opt.unwrap_or_else(|| {
             let main = jsc_vm.main();
-            if main.is_some_and(|main| bun_core::strings::eql_long(specifier, main, true)) {
+            if main.is_some_and(|main| bun_core::strings::eql_long(specifier, main)) {
                 Loader::Js
             } else {
                 Loader::File

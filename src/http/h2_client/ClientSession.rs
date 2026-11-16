@@ -404,7 +404,7 @@ impl ClientSession {
         self.port == port
             && self.pool.id == pool_id
             && mine == ssl_config
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
     /// Returns false if the session has no room for `client`, which `connect()` then places elsewhere.

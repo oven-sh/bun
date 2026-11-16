@@ -85,7 +85,7 @@ impl ClientSession {
             && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
             && SSLConfig::raw_ptr(self.tls_props.as_ref()) == tls_props
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
     /// Mutable access to the live lsquic connection handle.

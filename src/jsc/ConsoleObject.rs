@@ -78,11 +78,6 @@ macro_rules! pfmt {
 // ConsoleObject
 // ───────────────────────────────────────────────────────────────────────────
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for `Inspector::ScriptArguments`.
-    pub struct ScriptArguments;
-}
-
 /// Default depth for `console.log` object inspection.
 /// Only `--console-depth` CLI flag and `console.depth` bunfig option should modify this.
 const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
@@ -116,11 +111,6 @@ impl ConsoleObject {
                 counts: JsCell::default(),
             },
         )
-    }
-
-    /// What C++ keeps and hands back to `Bun__ConsoleObject__*`.
-    pub(crate) fn as_client_ptr(&self) -> *mut c_void {
-        core::ptr::from_ref(self).cast_mut().cast()
     }
 
     /// Returns the buffered stderr writer interface.
@@ -5623,7 +5613,6 @@ pub mod formatter {
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__count(
-    _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     label: &BunString,
 ) {
@@ -5664,7 +5653,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
-    _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     label: &BunString,
 ) {
@@ -5685,11 +5673,7 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__time(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    label: &BunString,
-) {
+pub(crate) extern "C" fn Bun__ConsoleObject__time(label: &BunString) {
     let id = bun_wyhash::hash(&label.to_utf8());
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
@@ -5706,11 +5690,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    label: &BunString,
-) {
+pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(label: &BunString) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
@@ -5739,7 +5719,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
-    _console: *mut ConsoleObject,
     global: &JSGlobalObject,
     label: &BunString,
     args: *const JSValue,
@@ -5792,10 +5771,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
-    _console: *mut ConsoleObject,
-    global_this: &JSGlobalObject,
-) {
+pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(global_this: &JSGlobalObject) {
     // TODO: this does an extra JSONStringify and we don't need it to!
     let Ok(result) = global_this.generate_heap_snapshot() else {
         return;
@@ -5806,15 +5782,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
         global_this,
         &[result],
     );
-}
-
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeStamp(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _args: *mut ScriptArguments,
-) {
 }
 
 #[unsafe(no_mangle)]
@@ -5835,7 +5802,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    _console: *mut ConsoleObject,
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an
     // out-of-range discriminant, so accept the raw `u32` (matching the C++

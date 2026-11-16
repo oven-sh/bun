@@ -811,7 +811,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if socket.target_port != target_port {
                     continue;
                 }
-                if !strings::eql_long(&socket.target_hostname, target_hostname, true) {
+                if !strings::eql_long(&socket.target_hostname, target_hostname) {
                     continue;
                 }
                 // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
@@ -819,7 +819,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
             } else if transport == Transport::Unix
-                && !strings::eql_long(&socket.target_hostname, target_hostname, true)
+                && !strings::eql_long(&socket.target_hostname, target_hostname)
             {
                 continue;
             }
@@ -830,7 +830,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if strings::eql_long(
                 &socket.hostname_buf[..socket.hostname_len as usize],
                 hostname,
-                true,
             ) {
                 let http_socket = socket.http_socket;
 

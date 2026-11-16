@@ -237,7 +237,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 
 // A lot of this function is taken from 'Zig__GlobalObject__create'
 // TODO: remove this entire method
-extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
+extern "C" GlobalObject* BakeCreateProdGlobal()
 {
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(JSC::HeapType::Large);
     if (!vmPtr) [[unlikely]] {
@@ -264,7 +264,6 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 
     JSC::gcProtect(global);
 
-    global->setConsole(console);
     global->isThreadLocalDefaultGlobalObject = true;
 
     vm.heap.disableStopIfNecessaryTimer();

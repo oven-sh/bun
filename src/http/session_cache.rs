@@ -58,7 +58,7 @@ impl SessionCache {
         let idx = entries.iter().position(|e| {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
-                && strings::eql_long(&e.hostname, hostname, true)
+                && strings::eql_long(&e.hostname, hostname)
                 && *e.unix_path == *unix_path
         })?;
         Some(entries.remove(idx).session)
@@ -79,7 +79,7 @@ impl SessionCache {
         if let Some(idx) = entries.iter().position(|e| {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
-                && strings::eql_long(&e.hostname, hostname, true)
+                && strings::eql_long(&e.hostname, hostname)
                 && *e.unix_path == *unix_path
         }) {
             let _ = entries.remove(idx);

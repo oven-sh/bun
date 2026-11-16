@@ -582,6 +582,16 @@ mod simd {
     }
 
     #[export]
+    pub fn stop_that_goes_once_it_is_seen() {
+        for len in 1..U8::LEN {
+            let (from, mut to, is_seen) = (vec![1; len], vec![0; len], Cell::new(false));
+            let stops = |v: U8| v.simd_eq(if is_seen.replace(true) { 2 } else { 1 });
+            let got = U8::map_to_shared_until(&from, shared_out(&mut to), |v| v, stops);
+            assert_eq!((got, to), (len, from));
+        }
+    }
+
+    #[export]
     pub fn firsts_lasts_and_count(slice: &[SharedU8], stays: usize) -> ([Option<usize>; 5], usize) {
         let (test, both) = (|v: U8| v.simd_eq(1), |a: U8, b: U8| (a & b).simd_eq(1));
         let found = [
@@ -654,6 +664,12 @@ fn each_loop_once() {
 }
 
 #[test]
+fn shared_pair() {
+    let pair = [1, 2].map(AtomicU8::new);
+    assert_eq!(SharedU8::from_slice(&pair).as_chunks().0[0].get(), 0x0201);
+}
+
+#[test]
 #[should_panic]
 #[cfg_attr(miri, ignore = "compares only lengths")]
 fn append_a_whole_vector() {
@@ -695,6 +711,45 @@ fn readers_see_only_old_and_new_values() {
 }
 
 #[test]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+fn order_of_accesses_with_one_last_lane() {
+    #[inline(never)]
+    #[target_feature(enable = "avx512bw")]
+    fn masked_load(stores: bool, keeps: bool, kept: &mut u8) {
+        let mut bytes = black_box([1u8; 16]);
+        let loaded = bun_simd_trusted::shared::load64_masked::<true>(&bytes[..1]);
+        if stores {
+            bytes[0] = 0;
+        }
+        if keeps {
+            *kept = loaded[63];
+        }
+        black_box(&mut bytes);
+    }
+    #[inline(never)]
+    #[target_feature(enable = "avx512bw")]
+    fn masked_store(stores: bool, keeps: bool, kept: &mut u8) {
+        let mut bytes = black_box([1u8; 16]);
+        let loaded = bytes[0];
+        if stores {
+            Out::from(&mut bytes[..1]).fill_from_last(Default::default());
+        }
+        if keeps {
+            *kept = loaded;
+        }
+        black_box(&mut bytes);
+    }
+    type Run = fn(bool, bool, &mut u8);
+    let load = bun_simd::if_supported!(["avx512bw"], Run, masked_load);
+    let store = bun_simd::if_supported!(["avx512bw"], Run, masked_store);
+    for run in load.into_iter().chain(store) {
+        let mut kept = 0;
+        black_box(run)(true, true, &mut kept);
+        assert_eq!(kept, 1);
+    }
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn blocks() {
     let text: Vec<u16> = (1..200).collect();
@@ -720,6 +775,12 @@ fn more_alignments() {
 #[cfg_attr(miri, ignore = "slow")]
 fn matches_that_go_once_they_are_seen() {
     on_each_target(simd::matches_that_go_once_they_are_seen);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn stop_that_goes_once_it_is_seen() {
+    on_each_target(simd::stop_that_goes_once_it_is_seen);
 }
 
 /// One match comes and goes, and one stays.

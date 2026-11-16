@@ -93,9 +93,11 @@ fn writer() {
         out.extend_with([8, 0, 9], |it| (it != 0).then_some([it]));
         assert_eq!((out.len(), out.remaining()), (9, 4));
         out.extend_with(3.., |it| Some([3 * it, 3 * it + 1, 3 * it + 2]));
+        assert_eq!(out.len(), 12);
+        out.push([12]);
         out.finish()
     });
-    assert_eq!(got, counting(12));
+    assert_eq!(got, counting(13));
 }
 
 #[test]
@@ -257,7 +259,7 @@ fn more_than_there_was_room_for() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "assertion failed")]
 fn more_than_the_spare_capacity() {
     let mut vec = vec![(); usize::MAX - 1];
     spare_capacity(&mut vec).1.append(&mut [(); 2]);

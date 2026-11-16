@@ -11,13 +11,21 @@ use core::simd::{u8x32, u8x64};
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("the instructions use 64-bit addresses");
 
-// AddressSanitizer does not look into `asm!`.
+// The sanitizers do not look into `asm!`.
 cfg_select! {
     sanitize = "address" => {
         unsafe extern "C" {
             #[link_name = "__asan_loadN"]
             safe fn will_load(start: *const u8, len: usize);
             #[link_name = "__asan_storeN"]
+            safe fn will_store(start: *const u8, len: usize);
+        }
+    }
+    sanitize = "memory" => {
+        unsafe extern "C" {
+            #[link_name = "__msan_check_mem_is_initialized"]
+            safe fn will_load(start: *const u8, len: usize);
+            #[link_name = "__msan_unpoison"]
             safe fn will_store(start: *const u8, len: usize);
         }
     }

@@ -307,6 +307,36 @@ fn f(words: &[std::sync::atomic::AtomicU64]) {
 }
 ```
 
+A masked load of bytes that are not initialized:
+
+```rust,compile_fail,E0277
+# use bun_simd_trusted::shared::*;
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[std::mem::MaybeUninit<u8>]) {
+    load64_masked::<true>(bytes);
+}
+```
+
+A masked store to plain bytes:
+
+```rust,compile_fail,E0308
+# use bun_simd_trusted::shared::*;
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[u8]) {
+    store64_masked::<true>(Default::default(), bytes);
+}
+```
+
+To what can only be read:
+
+```rust,compile_fail,E0308
+# use bun_simd_trusted::{SharedU8, shared::*};
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[SharedU8]) {
+    store64_masked::<true>(Default::default(), bytes);
+}
+```
+
 A store to a type that has invalid values:
 
 ```rust,compile_fail,E0277
@@ -371,6 +401,15 @@ The same, with another type of `Out`:
 ```rust,compile_fail,E0277
 let mut bytes = [0u8; 1];
 bun_simd::Out::<std::mem::MaybeUninit<u8>>::from(&mut bytes[..]);
+```
+
+Bytes that may be no value of the type:
+
+```rust,compile_fail,E0277
+#[target_feature(enable = "avx512bw")]
+fn f(out: bun_simd::Out<'_, bool>) {
+    out.fill_from_last(Default::default());
+}
 ```
 
 A reference that lives less long than the memory promises:

@@ -137,7 +137,6 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
- "allocator-api2",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -2048,7 +2047,6 @@ dependencies = [
  "enum-map",
  "libc",
  "rustix",
- "scopeguard",
  "strum",
  "thiserror",
 ]

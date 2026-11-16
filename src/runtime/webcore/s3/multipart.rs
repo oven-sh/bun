@@ -1005,7 +1005,7 @@ impl MultiPartUpload {
         let before = self.buffered.get().size();
         self.buffered.with_mut(|buffered| match chunk {
             EncodedChunk::Bytes(bytes) => buffered.write(bytes),
-            EncodedChunk::Latin1(text) => buffered.write_latin1::<true>(text),
+            EncodedChunk::Latin1(text) => buffered.write_latin1(text),
             EncodedChunk::Utf16(text) => buffered.write_utf16(text),
         })?;
         self.uploaded_bytes

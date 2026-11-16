@@ -79,6 +79,7 @@ enum Form {
     Flag,
     One,
     Many,
+    Lists,
 }
 
 macro_rules! developer_flag {
@@ -97,7 +98,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
     developer_flag!("out", Form::One),
-    developer_flag!("order", Form::Many),
+    developer_flag!("order", Form::Lists),
     developer_flag!("record-order", Form::Flag),
     developer_flag!("symbols", Form::Flag),
     ("no-builtin-modules", "--no-builtin-modules", Form::Flag),
@@ -611,15 +612,26 @@ impl CompileSettings {
 }
 
 fn read_order_file(path: &[u8], order_files: &mut Vec<u8>) -> bun_sys::Maybe<()> {
+    const HEAD: &[u8] = b"aot-order v1";
     let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), path)?;
-    if bytes.starts_with(b"aot-order v1\n") {
-        let end = strings::last_index_of_char(&bytes, b'\n').map_or(0, |at| at + 1);
-        order_files.extend_from_slice(&bytes[..end]);
-    } else {
+    let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let end = strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
+    let mut lines = text[..end]
+        .split_inclusive(|&byte| byte == b'\n')
+        .map(|line| line.strip_suffix(b"\n").unwrap_or(line))
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .skip_while(|line| line.trim_ascii().is_empty() || line.starts_with(b"#"))
+        .peekable();
+    if lines.peek().is_none_or(|&line| line != HEAD) {
         bun_core::warn!(
             "--aot-order: {} is not an order file. Nothing is placed by it",
             bstr::BStr::new(path),
         );
+        return Ok(());
+    }
+    for line in lines {
+        order_files.extend_from_slice(line);
+        order_files.push(b'\n');
     }
     Ok(())
 }
@@ -663,17 +675,16 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        "order" if text.is_empty() => {}
         "order" => {
-            for path in strings::split(text, b",").filter(|path| !path.is_empty()) {
-                read_order_file(path, &mut options.order_files).map_err(|error| {
-                    OptionError::DeveloperWord {
-                        key,
-                        word: key.as_bytes().to_vec(),
-                        sentence: format!("{} cannot be read: {}", bstr::BStr::new(path), error)
-                            .into_bytes(),
-                    }
-                })?;
-            }
+            read_order_file(text, &mut options.order_files).map_err(|error| {
+                OptionError::DeveloperWord {
+                    key,
+                    word: key.as_bytes().to_vec(),
+                    sentence: format!("{} cannot be read: {}", bstr::BStr::new(text), error)
+                        .into_bytes(),
+                }
+            })?;
         }
         "record-order" => options.records_order = true,
         // The other words of --aot-testing are the engine's.
@@ -893,6 +904,11 @@ fn read_developer_words(
                 }
             }
             Form::Many => words.extend(args.options(name).iter().map(|&value| (key, Some(value)))),
+            Form::Lists => words.extend(
+                split_at_commas(args.options(name))
+                    .filter(|value| !value.is_empty())
+                    .map(|value| (key, Some(value))),
+            ),
         }
     }
     words

@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-const fixture = join(import.meta.dir, "what-keeps-it-alive.fixture.js");
-
-// The program of a-failed-stream-is-collected.test.ts. Where the stream is still alive after ten turns, the run says what holds it:
-// what-keeps-it-alive.fixture.js. The stale word lies where the frames of one build on one platform put it, so only that build can say.
-// The run says it line by line on its own stderr, so a run that ends early has said what it knew.
+// main.js is the program of a-failed-stream-is-collected.test.ts, to the letter, and it runs as it does there. Whether its stream stays
+// alive is a race: the error comes while the entry point still loads, or in the loop. in-a-turn.js starts the stream in a turn of the
+// loop, which takes the race away. Where a stream is still alive after ten turns, the run says what holds it:
+// what-keeps-it-alive.preload.js. The stale word lies where the frames of one build on one platform put it, so only that build can say.
+// Not concurrent with the test below: eight processes run at once here, as in that file, and no more.
 test.skipIf(!isLinux && !isWindows)(
   "a stream that failed is collected, or the run says what holds it",
   async () => {
@@ -25,11 +25,7 @@ test.skipIf(!isLinux && !isWindows)(
             releaseWeakRefs();
             Bun.gc(true);
             if (!isAlive()) return console.log("collected");
-            if (++turn > 10) {
-              console.log("alive");
-              console.error(process.argv[3]);
-              return require(process.argv[2]).whatKeepsAlive("Inflate", line => console.error(line));
-            }
+            if (++turn > 10) return console.log("alive");
             (turn % 2 ? process.nextTick : setImmediate)(step);
           };
           setImmediate(step);
@@ -37,22 +33,52 @@ test.skipIf(!isLinux && !isWindows)(
         ref = new WeakRef(stream);
       }
     `,
+      "in-a-turn.js": `
+      const zlib = require("zlib");
+      const { releaseWeakRefs } = require("bun:jsc");
+      let ref;
+      function isAlive() { return ref.deref() !== undefined; }
+      setImmediate(() => {
+        const stream = zlib.createInflate();
+        stream.end(Buffer.from("foobar"));
+        stream.once("error", () => {
+          let turn = 0;
+          const step = () => {
+            releaseWeakRefs();
+            Bun.gc(true);
+            if (!isAlive()) return console.log("collected");
+            if (++turn > 10) return console.log("alive");
+            (turn % 2 ? process.nextTick : setImmediate)(step);
+          };
+          setImmediate(step);
+        });
+        ref = new WeakRef(stream);
+      });
+    `,
     });
-    for (const env of [{ BUN_JSC_useJIT: "0" }, {}]) {
-      for (let turn = 0; turn < 2; turn++) {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "main.js", fixture, `${JSON.stringify(env)}, run ${turn + 1}:`],
-          cwd: String(dir),
-          env: { ...bunEnv, ...env },
-          stdout: "pipe",
-          stderr: "inherit",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect({ stdout: stdout.trim(), exitCode }).toEqual({
-          stdout: expect.stringMatching(/^(collected|alive)$/),
-          exitCode: 0,
-        });
+    const run = async (program: string, env: Record<string, string>) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", join(import.meta.dir, "what-keeps-it-alive.preload.js"), program],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    };
+    const environments: Record<string, string>[] = [{ BUN_JSC_useJIT: "0" }, {}];
+    for (const program of ["main.js", "in-a-turn.js"]) {
+      const runs = await Promise.all(
+        environments.map(env => Promise.all(Array.from({ length: 4 }, () => run(program, env)))),
+      );
+      for (const [at, env] of environments.entries()) {
+        console.error(`${program} ${JSON.stringify(env)}: ${runs[at].map(({ stdout }) => stdout).join(", ")}`);
+        const report = runs[at].find(({ stderr }) => stderr)?.stderr;
+        if (report) console.error(report);
       }
+      for (const { stdout, exitCode } of runs.flat())
+        expect({ stdout, exitCode }).toEqual({ stdout: expect.stringMatching(/^(collected|alive)$/), exitCode: 0 });
     }
   },
   60_000,
@@ -68,11 +94,7 @@ test.skipIf(!isLinux && !(isWindows && !isArm64))(
       const { whatKeepsAlive } = require(process.argv[2]);
       class Held {
         toJSON() {
-          // On Windows each line also goes to stderr at once: the frames and their names are only checked by eye so far.
-          whatKeepsAlive("Held", line => {
-            console.log(line);
-            if (process.platform === "win32") console.error(line);
-          });
+          console.log(whatKeepsAlive("Held"));
           return 1;
         }
       }
@@ -80,7 +102,7 @@ test.skipIf(!isLinux && !(isWindows && !isArm64))(
     `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.js", fixture],
+      cmd: [bunExe(), "main.js", join(import.meta.dir, "what-keeps-it-alive.fixture.js")],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",

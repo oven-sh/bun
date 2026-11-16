@@ -43,8 +43,24 @@ function cellsThatReach(className) {
       listed.push(`root (${labels[roots[at + 1]]}) ${byId.get(roots[at]).address}: ${wayFrom(roots[at])}`);
   // The snapshot does not list what the scan of the stack found, so each cell that reaches the class is looked for on the stack.
   // A word that points into a cell counts as well: the size is an estimate, so the report says how far in the word points.
+  // That size counts memory outside the cell too, so a cell ends at the latest where the next cell of the snapshot starts.
+  const starts = [...byId.values()].map(({ address }) => BigInt(address)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const startBehind = start => {
+    let low = 0;
+    for (let high = starts.length; low < high;) {
+      const middle = (low + high) >> 1;
+      if (starts[middle] <= start) low = middle + 1;
+      else high = middle;
+    }
+    return starts[low];
+  };
   const cells = [...next.keys()]
-    .map(id => ({ start: BigInt(byId.get(id).address), size: BigInt(byId.get(id).size), way: wayFrom(id) }))
+    .map(id => {
+      const start = BigInt(byId.get(id).address);
+      const size = BigInt(byId.get(id).size);
+      const behind = startBehind(start);
+      return { start, end: behind !== undefined && behind < start + size ? behind : start + size, way: wayFrom(id) };
+    })
     .sort((a, b) => (a.start < b.start ? -1 : 1));
   const cellOf = word => {
     let low = 0;
@@ -54,7 +70,7 @@ function cellsThatReach(className) {
       else high = middle;
     }
     const cell = cells[low - 1];
-    if (!cell || word >= cell.start + (cell.size > 8n ? cell.size : 8n)) return;
+    if (!cell || (word !== cell.start && word >= cell.end)) return;
     return `0x${word.toString(16)} (${cell.way}${word > cell.start ? `, 0x${(word - cell.start).toString(16)} into the cell` : ""})`;
   };
   return { listed, count: cells.length, cellOf };
@@ -251,6 +267,8 @@ function wordsOfTheStackOnWindows(cellOf, say) {
           saved.push([slot, registers[value]]);
           if (value === 5) rbp = wordAt(slot);
           code += operation === 4 ? 1 : 2;
+        } else if (operation === 6 && version === 2) {
+          // Where an epilogue is: one code each, and the code that fills their number up to an even one is of this kind too.
         } else if (operation === 6 || operation === 8) code += 1;
         else if (operation === 7 || operation === 9) code += 2;
         else return;

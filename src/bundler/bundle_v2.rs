@@ -5074,9 +5074,10 @@ pub mod bv2_impl {
                                     continue;
                                 }
                                 if ast.parts[imported].len() == 0 {
-                                    // From here on the path is the only name of the stylesheet, and an html file can hold the specifier as written.
-                                    // A stylesheet that is not a file keeps that path: its build errors are filed under `path.text`.
-                                    if sources[imported].path.is_file() {
+                                    // The build errors of a stylesheet that is not a file are filed under `path.text`, which only the path as written can match.
+                                    let is_file = sources[imported].path.is_file();
+                                    // From here on the path is the only name of the stylesheet, and an html file can hold the specifier.
+                                    if is_file {
                                         record.path = sources[imported].path;
                                     }
                                     record.source_index = Index::INVALID;

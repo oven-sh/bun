@@ -264,13 +264,14 @@ mod simd {
         #[inline(always)]
         fn store_pieces_of<const IN_4: usize, const IN_16: usize>(
             self,
-            to: Out<'_, T>,
+            mut to: Out<'_, T>,
         ) -> &mut [T] {
             let (len, lanes) = (to.len(), self.to_array());
-            if len >= IN_16
-                && let [first, last] = *lanes.as_chunks::<IN_16>().0
-            {
-                return fill_ends(to, first, last).unwrap_or_default();
+            if let [first, last] = *lanes.as_chunks::<IN_16>().0 {
+                match fill_ends(to, first, last) {
+                    Ok(filled) => return filled,
+                    Err(shorter) => to = shorter,
+                }
             }
             if size_of::<T>() <= 4
                 && len >= IN_4

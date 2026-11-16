@@ -729,18 +729,6 @@ impl Stops<'_> {
     pub fn run(self, pos: usize) -> u32 {
         self.window(pos).trailing_zeros()
     }
-
-    /// The first stop at or after `pos`. The end of the text is one.
-    #[inline(always)]
-    pub fn next(self, mut pos: usize) -> usize {
-        loop {
-            let window = self.window(pos);
-            if window != 0 {
-                return pos + window.trailing_zeros() as usize;
-            }
-            pos += 56;
-        }
-    }
 }
 
 /// Fills `out` with one bit for every 64 bytes of `text`, the lowest bit of the first word first:

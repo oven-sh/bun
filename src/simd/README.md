@@ -42,7 +42,7 @@ In a module with `#[foreach_target]`:
 
 - `isa` has the types of the target: `U8`, `I16`, `F32` and so on fill a register. `Vector<T, N>` has up to 64 bytes.
 - `isa::x128` has the same types for 128 bits. A nested module with `#[foreach_width]` is compiled as `full` and as `x128`.
-- `#[export]` adds a function of the same name to the module itself, which dispatches. It can be generic only over lifetimes. It gets the attributes after `#[export]`, and `cfg` and comments before it.
+- `#[export]` adds a function of the same name to the module itself, which dispatches. It can be generic only over lifetimes. It gets the attributes after `#[export]`, and `cfg` and comments before it. With `#[inline]`, LLVM can inline a direct call unless debug assertions are on.
 - `this_target` is the name of the copy: `use other::simd::this_target::helper;`
 - Trait methods, `const fn` and functions from a macro outside the module do not get the features of the target. They can use only the ops that need no intrinsic, and run baseline code unless they are inlined.
 - `#[inline(always)]` becomes `#[rustc_force_inline]`. Use it only on functions that no other crate calls. If rustc reports a recursion limit, raise `#![recursion_limit]`. A closure with the attribute loses the features until it is inlined, and cannot call such a function.
@@ -177,6 +177,8 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 | `#[export(baseline)]`                   | The lowest of each family    |
 
 Before Ice Lake, a core can lower its clock for about 0.7 ms after any 512-bit instruction. On a busy Cascade Lake server, one short search every 0.5 ms takes the clock from 3.1 to 2.7 GHz for all the code around it. So a kernel has to ask for `avx512_skx`. Ask only if one call runs long enough to make up for that.
+
+With AVX-512, a slice that is shorter than a vector takes one masked access. That can fetch a cache line that the slice does not reach, and waits for stores to its neighbors. A branch on the length costs more, because lengths are hard to predict.
 
 ## Why it is safe
 

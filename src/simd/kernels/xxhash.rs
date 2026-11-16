@@ -191,17 +191,36 @@ pub(crate) mod simd {
         }
     }
 
-    /// In the low halves. On x86-64, the moves from a vector would compete with the rotations.
     #[inline(always)]
-    fn products32(stripe: &[impl Byte; 16]) -> [u64; 4] {
+    fn accumulate32(mut acc: [u32; 4], stripes: &[[impl Byte; 16]]) -> [u32; 4] {
+        use x128::{U8, U32};
         if isa::Isa::HAS_SINGLE_CYCLE_OPS {
-            let words = Vector::load4(stripe.as_chunks().0.as_array().unwrap());
-            let product = |word| u32::from_le_bytes(word).wrapping_mul(PRIME32_2);
-            return words.map(|word| product(word.to_array()).into());
+            for stripe in stripes {
+                let words = Vector::load4(stripe.as_chunks().0.as_array().unwrap());
+                for (acc, word) in acc.iter_mut().zip(words) {
+                    let product = u32::from_le_bytes(word.to_array()).wrapping_mul(PRIME32_2);
+                    let rotated = acc.wrapping_add(product).rotate_left(13);
+                    // x86-64 takes 10 cycles to multiply in a vector.
+                    *acc = opaque(rotated.wrapping_mul(PRIME32_1).into()) as u32;
+                }
+            }
+            return acc;
         }
-        let products = x128::U8::load(stripe).bitcast::<x128::U32>() * PRIME32_2;
-        let [low, high] = products.bitcast::<x128::U64>().to_array().map(opaque);
-        [low, low >> 32, high, high >> 32]
+        let splat = |it| U32::splat(it).opaque();
+        let (prime_1, shifted, prime_2) =
+            (splat(PRIME32_1), splat(PRIME32_1 << 13), splat(PRIME32_2));
+        let product = |stripe| (U8::load(stripe).bitcast::<U32>() * prime_2).opaque();
+        // The two parts of the rotation are multiplied side by side.
+        let round = |sum: U32, next: U32| (next + sum * shifted).opaque() + (sum >> 19) * prime_1;
+        let Some((first, rest)) = stripes.split_first() else {
+            return acc;
+        };
+        let mut sum = product(first) + Vector::from_array(acc);
+        #[rustc_unroll(2)]
+        for stripe in rest {
+            sum = round(sum, product(stripe));
+        }
+        round(sum, Vector::zero()).to_array()
     }
 
     #[inline(always)]
@@ -209,17 +228,8 @@ pub(crate) mod simd {
         let (stripes, rest) = input.as_chunks::<16>();
         let mut hash = seed.wrapping_add(PRIME32_5);
         if !stripes.is_empty() {
-            let round = |acc: u32, product: u64| {
-                let sum = acc.wrapping_add(product as u32);
-                sum.rotate_left(13).wrapping_mul(PRIME32_1)
-            };
-            let (mut b, mut c) = (seed.wrapping_add(PRIME32_2), seed);
-            let (mut a, mut d) = (b.wrapping_add(PRIME32_1), seed.wrapping_sub(PRIME32_1));
-            for stripe in stripes {
-                // What depends on the stripe before takes longer in a vector.
-                let [w, x, y, z] = products32(stripe).map(opaque);
-                (a, b, c, d) = (round(a, w), round(b, x), round(c, y), round(d, z));
-            }
+            let (b, d) = (seed.wrapping_add(PRIME32_2), seed.wrapping_sub(PRIME32_1));
+            let [a, b, c, d] = accumulate32([b.wrapping_add(PRIME32_1), b, seed, d], stripes);
             hash = (a.rotate_left(1).wrapping_add(b.rotate_left(7)))
                 .wrapping_add(c.rotate_left(12).wrapping_add(d.rotate_left(18)));
         }

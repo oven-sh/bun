@@ -44,12 +44,14 @@ pub(crate) mod simd {
 
     /// The values, and what is negative for a byte that is no digit.
     fn nibbles(digits: U8) -> (U8, I8) {
-        // Less one, the digits are in the rows 2 and 3, and each case of the letters starts a row.
-        const TO_VALUE: [i8; 16] = [0, 0, -47, -47, -54, 0, -86, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        const TO_SIGN: [i8; 16] = [-16, -32, -47, 71, 58, -96, 26, -128, 0, 0, 0, 0, 0, 0, 0, 0];
-        let less_one = digits - 1;
+        // Plus 15, the digits are in the rows 3 and 4, and each case of the letters starts a row.
+        const TO_VALUE: [i8; 16] = [0, 0, 0, -63, -63, -70, 0, -102, 0, 0, 0, 0, 0, 0, 0, 0];
+        const TO_SIGN: [i8; 16] = [
+            -16, -32, -48, -63, 55, 42, -112, 10, 112, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let moved = digits + 15;
         let add = |by_row: [i8; 16]| {
-            less_one + U8::repeat_16(by_row.map(i8::cast_unsigned)).lookup(less_one >> 4)
+            moved + U8::repeat_16(by_row.map(i8::cast_unsigned)).lookup(moved >> 4)
         };
         (add(TO_VALUE), add(TO_SIGN).bitcast())
     }

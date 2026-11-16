@@ -241,11 +241,11 @@ pub(crate) mod simd {
     /// The number of units at the start that need no look at their neighbours, and their width.
     #[export]
     pub fn visible_utf16_width(text: &[u16]) -> (usize, usize) {
-        if text.len() < 4 {
+        if text.len() < 8 {
             let (mut len, mut width) = (0, 0);
             #[rustc_unroll(never)]
             while let Some(&unit) = text.get(len)
-                && is_fixed(unit)
+                && ((STARTS[0]..=ENDS[0]).contains(&unit) || is_fixed(unit))
             {
                 (len, width) = (len + 1, width + 1 + usize::from(unit > 0x3000));
             }

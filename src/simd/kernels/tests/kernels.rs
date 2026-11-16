@@ -653,7 +653,7 @@ fn widths() {
         check(want, || kernels::visible_utf16_width(&rest[..len]));
         rest = &rest[rest.len().min(len + 1)..];
     }
-    for (ascii, unit) in [0, 1, 7, 8, 16, 33, 150]
+    for (ascii, unit) in [0, 1, 3, 6, 7, 8, 16, 33, 150]
         .into_iter()
         .flat_map(|ascii| all_units.iter().map(move |&unit| (ascii, unit)))
     {

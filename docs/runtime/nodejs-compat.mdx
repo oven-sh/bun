@@ -97,7 +97,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 `AsyncLocalStorage` and `AsyncResource` are implemented. `createHook`, `executionAsyncId`, `triggerAsyncId` and `executionAsyncResource` are stubs: Bun does not invoke hooks, apart from `init` for `process.nextTick`, and async ids are always `0`. Node.js [strongly discourages](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks) these APIs in favor of `AsyncLocalStorage`. Bun does not propagate `AsyncLocalStorage` context into `MessagePort`, `BroadcastChannel` or `Worker` events.
+🟡 `AsyncLocalStorage` and `AsyncResource` are implemented. `createHook` reports `init` for `process.nextTick` and `init`/`destroy` for Timeout and Immediate resources. Other hook events are not implemented. `executionAsyncId`, `triggerAsyncId` and `executionAsyncResource` remain stubs. Node.js [strongly discourages](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks) these APIs in favor of `AsyncLocalStorage`. Bun does not propagate `AsyncLocalStorage` context into `MessagePort`, `BroadcastChannel` or `Worker` events.
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 

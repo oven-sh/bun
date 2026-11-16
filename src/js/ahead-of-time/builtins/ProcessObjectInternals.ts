@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 d96e15f6b083ce2f2e901ac703b7201711a582d4ff7fe4cb7b959eee35244fa4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -453,20 +453,25 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
         // in-flight dispatch (node stages such mutations in tmp_array until
         // the emit completes).
         const hooks = tickInitHooks.slice();
-        for (let i = 0; i < hooks.length; i++) {
-          try {
-            hooks[i](asyncId, "TickObject", 0, tock);
-          } catch (err) {
-            // node: a throwing init hook is fatal (fatalError: print + exit 1),
-            // never surfaced to the process.nextTick() caller. console is a
-            // user-mutable global, so shield the print; exit regardless.
+        asyncHooksTick.beginHookDispatch();
+        try {
+          for (let i = 0; i < hooks.length; i++) {
             try {
-              console.error(
-                typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
-              );
-            } catch {}
-            process.exit(1);
+              hooks[i](asyncId, "TickObject", 0, tock);
+            } catch (err) {
+              // node: a throwing init hook is fatal (fatalError: print + exit 1),
+              // never surfaced to the process.nextTick() caller. console is a
+              // user-mutable global, so shield the print; exit regardless.
+              try {
+                console.error(
+                  typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
+                );
+              } catch {}
+              process.exit(1);
+            }
           }
+        } finally {
+          asyncHooksTick.endHookDispatch();
         }
       }
       require("internal/process/tick_ring").pushTickObject(tock);

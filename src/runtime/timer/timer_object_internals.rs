@@ -30,6 +30,7 @@ use super::{
 pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
     pub(crate) id: u64,
+    async_hooks_id: Cell<u64>,
     pub this_value: JsCell<JsRef>,
     pub(crate) interval: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
@@ -39,8 +40,8 @@ pub(crate) struct TimerObjectInternals {
     pub(crate) generation: u32,
 }
 
-// Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
-const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 40);
+// Keep `interval` after `this_value` to avoid alignment padding.
+const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 48);
 
 impl TimerObjectInternals {
     /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is
@@ -58,6 +59,7 @@ impl Default for TimerObjectInternals {
     fn default() -> Self {
         Self {
             id: 0,
+            async_hooks_id: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             interval: Cell::new(0),
             flags: Cell::new(Flags::default()),
@@ -87,6 +89,39 @@ unsafe extern "C" {
         arguments: JSValue,
         thrown: *mut JSValue,
     ) -> bool;
+    safe fn Bun__AsyncHooks__emitTimerLifecycle(
+        global_object: *mut JSGlobalObject,
+        timer: JSValue,
+        async_hooks_id: u64,
+        event: AsyncHooksTimerLifecycleEvent,
+    );
+}
+
+#[repr(u8)]
+enum AsyncHooksTimerLifecycleEvent {
+    TimeoutInit = 0,
+    ImmediateInit = 1,
+    Destroy = 2,
+}
+
+const ASYNC_HOOKS_DESTROYED: u64 = 1 << 63;
+
+pub(crate) fn emit_async_hooks_timer_init(
+    global: &JSGlobalObject,
+    timer: JSValue,
+    async_hooks_id: u64,
+    kind: Kind,
+) {
+    Bun__AsyncHooks__emitTimerLifecycle(
+        global.as_ptr(),
+        timer,
+        async_hooks_id,
+        if kind == Kind::SetImmediate {
+            AsyncHooksTimerLifecycleEvent::ImmediateInit
+        } else {
+            AsyncHooksTimerLifecycleEvent::TimeoutInit
+        },
+    );
 }
 
 /// Typed result of `@fieldParentPtr("internals", self)` discriminated by
@@ -140,6 +175,28 @@ impl core::ops::Deref for Popped {
 }
 
 impl TimerObjectInternals {
+    fn emit_async_hooks_destroy(&self, timer: JSValue, global: &JSGlobalObject) {
+        let async_hooks_id = self.async_hooks_id.get();
+        if async_hooks_id & ASYNC_HOOKS_DESTROYED != 0 {
+            return;
+        }
+        self.async_hooks_id
+            .set(async_hooks_id | ASYNC_HOOKS_DESTROYED);
+        let vm = global.bun_vm();
+        // Hooks are shared by graphs, but not by retired test realms or a stopped VM.
+        if self.generation != vm.test_isolation_generation.get()
+            || vm.script_execution_status() != ScriptExecutionStatus::Running
+        {
+            return;
+        }
+        Bun__AsyncHooks__emitTimerLifecycle(
+            global.as_ptr(),
+            timer,
+            async_hooks_id,
+            AsyncHooksTimerLifecycleEvent::Destroy,
+        );
+    }
+
     /// `@fieldParentPtr("internals", self)` — the single `container_of` site.
     /// Every other helper (`event_loop_timer`, `ref_`, `deref`, `init`,
     /// `node`) routes through this so the `from_field_ptr!`
@@ -286,6 +343,7 @@ impl TimerObjectInternals {
         timer: JSValue,
         cx: &bun_jsc::JsThread<'_>,
         id: u64,
+        async_hooks_id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,
@@ -298,6 +356,7 @@ impl TimerObjectInternals {
         // Only a graph's context keeps a list of its timers.
         let graph_context = vm.as_graph_context(cx.context());
         self.id = id;
+        self.async_hooks_id.set(async_hooks_id);
         self.update_flags(|f| {
             f.set_kind(kind);
             f.set_fake(clock == Clock::Fake);
@@ -411,6 +470,7 @@ impl TimerObjectInternals {
                 core::ptr::null_mut(),
             )
         };
+        s.emit_async_hooks_destroy(timer, global_this);
         drop(queued);
 
         let event_loop = vm.event_loop();
@@ -487,6 +547,7 @@ impl TimerObjectInternals {
                     async_id.async_id(),
                 );
             }
+            s.emit_async_hooks_destroy(this_object, global_this);
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
             s.this_value.with_mut(|r| r.downgrade());
@@ -564,6 +625,7 @@ impl TimerObjectInternals {
                 drop(popped);
             }
             _ => {
+                s.emit_async_hooks_destroy(this_object, global_this);
                 s.set_enable_keeping_event_loop_alive(vm, false);
                 drop(popped);
             }
@@ -824,9 +886,31 @@ impl TimerObjectInternals {
             return this_value;
         }
 
+        let previous_async_hooks_id = self.async_hooks_id.get();
+        let restarted_async_hooks_id = if previous_async_hooks_id & ASYNC_HOOKS_DESTROYED != 0 {
+            let id = timer_all().next_async_hooks_id();
+            self.async_hooks_id.set(id);
+            Some(id)
+        } else {
+            None
+        };
+
         self.this_value
             .with_mut(|r| r.set_strong(this_value, global_object));
         self.reschedule(this_value, VirtualMachine::get(), global_object);
+
+        if let Some(async_hooks_id) = restarted_async_hooks_id {
+            if self.node().state.get() == EventLoopTimerState::ACTIVE {
+                emit_async_hooks_timer_init(
+                    global_object,
+                    this_value,
+                    async_hooks_id,
+                    self.flags.get().kind(),
+                );
+            } else {
+                self.async_hooks_id.set(previous_async_hooks_id);
+            }
+        }
 
         this_value
     }
@@ -873,6 +957,9 @@ impl TimerObjectInternals {
     /// `clearTimeout`/`clearInterval`
     /// / `clearImmediate` / `Timeout#[Symbol.dispose]` body.
     pub(crate) fn cancel(&self, vm: &VirtualMachine) {
+        if let Some(timer) = self.this_value.get().try_get() {
+            self.emit_async_hooks_destroy(timer, vm.global());
+        }
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));
 

@@ -1258,7 +1258,10 @@ impl TestError {
     }
 
     pub(crate) fn call<'a>(heap: &JsHeap<'a>, codes: &[JsLocal<'a>]) -> JsWrapper<'a, Self> {
-        let code = codes.iter().map(|code| code.to_js().to_int32()).sum();
+        let code = codes
+            .iter()
+            .filter_map(|code| code.to_js().get_number())
+            .fold(0i32, |sum, code| sum.wrapping_add(code as i32));
         Self { code }.into_js(heap)
     }
 

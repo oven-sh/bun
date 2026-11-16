@@ -2725,6 +2725,9 @@ describe("classes", () => {
       expect(error).toBeInstanceOf(TestError);
       expect(error.code).toBe(6);
       expect(TestError().code).toBe(0);
+      // A value that is not a number adds nothing, and the sum wraps.
+      expect(TestError("1", {}, 2n, undefined, null, true, Symbol(), 4).code).toBe(4);
+      expect(TestError(2147483647, 1).code).toBe(-2147483648);
       expect(new TestError(4).code).toBe(4);
       expect(() => (bindgen as any).TestCounter()).toThrow("TestCounter constructor cannot be invoked without 'new'");
     });

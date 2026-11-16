@@ -551,7 +551,9 @@ pub(crate) mod js_bundler {
             self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
             self.out = read_names(global_this, compile, "aotOut")?;
-            self.order = read_names(global_this, compile, "aotOrder")?;
+            if compile.get(global_this, "aotOrder")? != Some(JSValue::FALSE) {
+                self.order = read_names(global_this, compile, "aotOrder")?;
+            }
             if compile.get_boolean_loose(global_this, "aotRecordOrder")? == Some(true) {
                 self.record_order.push(Vec::new());
             }

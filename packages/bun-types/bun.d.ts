@@ -4089,11 +4089,13 @@ declare module "bun" {
      * With several files, list the most important one first. A function lies where the first file that
      * lists it places it.
      *
+     * `false` and `null` mean no file, so `aotOrder: haveProfile && path` works.
+     *
      * Equivalent CLI flag: `--aot-order <file>[,<file>...]`
      *
      * @see https://bun.com/docs/compiler/aot#order-the-executable-by-a-recorded-start
      */
-    aotOrder?: string | string[];
+    aotOrder?: string | string[] | false | null;
     /**
      * Build an executable that writes what `aotOrder` takes when it runs with `BUN_AOT_ORDER_OUT=<path>`.
      * Other executables have no recorder. Requires `aot: true`.

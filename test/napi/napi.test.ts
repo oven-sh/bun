@@ -928,15 +928,26 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
-    it("survives a ref and an unref from an addon thread", async () => {
-      const result = await checkSameOutput("test_threadsafe_function_unref_and_ref_from_addon_thread", []);
-      expect(result.split(/\r?\n/)).toEqual(["unref: 0, ref: 0", "finalize: env live"]);
+    it.each([
+      [["unref on a thread"], false],
+      [["unref", "ref on a thread"], true],
+      [["unref on a thread", "ref on a thread"], true],
+      [["unref on a thread", "ref"], true],
+      [["unref", "ref on a thread", "unref"], false],
+    ])("%j keeps the process alive: %p", async (calls, keptAlive) => {
+      const result = await checkSameOutput("test_threadsafe_function_ref_and_unref", calls);
+      expect(result.split(/\r?\n/)).toEqual([...calls.map(call => `${call}: 0`), ...(keptAlive ? ["kept alive"] : [])]);
+    });
+
+    it("lets the process exit after an unref on a thread when nothing wakes the loop", async () => {
+      const env = { BUN_GC_TIMER_DISABLE: "1" };
+      expect(await checkSameOutput("test_threadsafe_function_unref_before_poll", [], env)).toBe("0");
     });
 
     // Node races with its main loop here.
-    it("survives an unref from another worker", async () => {
+    it("lets the process exit after an unref from another worker", async () => {
       const result = await runOn(bunExe(), "test_threadsafe_function_unref_from_worker", []);
-      expect(result.match(/^(finalize|resolved).+\w/gm)!.sort()).toEqual(["finalize: env live", "resolved to 0"]);
+      expect(result.match(/^resolved.+\w/gm)).toEqual(["resolved to 0"]);
     });
 
     // After napi_tsfn_abort nothing queued runs any more: each item goes back

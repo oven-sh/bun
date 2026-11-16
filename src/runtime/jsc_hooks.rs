@@ -754,7 +754,7 @@ fn auto_tick(vm: &VirtualMachine) {
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
         el.wakeup();
     }
 
@@ -872,7 +872,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
         el.wakeup();
     }
 

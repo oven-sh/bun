@@ -76,6 +76,14 @@ impl Taskable for ThreadSafeFunction {
         bun_event_loop::ContextId::NONE
     }
 }
+impl BoxedTask for TsfnRefRequest {
+    const TAG: TaskTag = task_tag::ThreadSafeFunctionRefRequest;
+    fn release_unrun(self: Box<Self>) {}
+    /// As `napi_async_work`.
+    fn context(&self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
 impl BoxedTask for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
     /// A finalizer queued before the loop stopped: Node runs an addon's
@@ -2620,7 +2628,7 @@ unsafe impl Send for AddonData {}
 // SAFETY: as above.
 unsafe impl Sync for AddonData {}
 
-/// Lives in an `Arc` with three owners: the env's registry, [`TsfnShared::dispatch_ref`] and [`TsfnShared::threads_ref`].
+/// Lives in an `Arc` owned by the env's registry, [`TsfnShared::dispatch_ref`], [`TsfnShared::threads_ref`] and any [`TsfnRefRequest`].
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     shared: Guarded<TsfnShared>,
@@ -2647,6 +2655,8 @@ struct TsfnShared {
     dispatch_ref: Option<Arc<ThreadSafeFunction>>,
     /// The reference that the addon's `thread_count` references stand for.
     threads_ref: Option<Arc<ThreadSafeFunction>>,
+    /// A ref (`true`) or an unref from another thread that the JS thread has yet to apply.
+    requested_ref: Option<bool>,
 }
 
 struct TsfnJsSide {
@@ -2669,6 +2679,31 @@ struct TsfnJsSide {
     target: Cell<Option<TsfnTarget>>,
     finalizer_fun: Cell<napi_finalize>,
     finalizer_data: *mut c_void,
+}
+
+impl TsfnJsSide {
+    fn set_referenced(&self, referenced: bool) {
+        if referenced {
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
+        } else {
+            self.poll_ref.unref(bun_io::js_vm_ctx());
+        }
+    }
+}
+
+/// Applies [`TsfnShared::requested_ref`].
+pub(crate) struct TsfnRefRequest(Arc<ThreadSafeFunction>);
+
+impl TsfnRefRequest {
+    pub(crate) fn run(&self) {
+        let js = self.0.js_side(VirtualMachine::get());
+        let requested = self.0.shared.lock().requested_ref.take();
+        match requested {
+            Some(true) if js.abort_handle.context_stopped() => {}
+            Some(referenced) => js.set_referenced(referenced),
+            None => {}
+        }
+    }
 }
 
 struct TsfnTarget {
@@ -3061,27 +3096,35 @@ impl ThreadSafeFunction {
         self.run_finalizer_and_release(js, env);
     }
 
-    /// `napi_ref_threadsafe_function`. Ignored on another thread, where Node applies it and races with its loop.
-    fn ref_(&self) {
-        let Some(vm) = VirtualMachine::get_or_null() else {
-            return;
+    /// Node's `Ref` and `Unref`, which take effect on any thread.
+    fn set_referenced(&self, referenced: bool) {
+        let vm = VirtualMachine::get_or_null();
+        let Some((vm, js)) = vm.and_then(|vm| Some((vm, self.js.get(vm)?))) else {
+            return self.request_ref(referenced);
         };
-        let caller = vm.context_of_caller();
         // Nothing of a context that has stopped holds the loop: not the function's own call_js
         // once its maker has stopped (that is where it runs), not a disposed graph's leftover
         // script. Accepted, and holds nothing.
-        if caller.is_stopped() {
+        if referenced && vm.context_of_caller().is_stopped() {
             return;
         }
-        if let Some(js) = self.js.get(vm) {
-            js.poll_ref.ref_(bun_io::js_vm_ctx());
-        }
+        self.shared.lock().requested_ref = None;
+        js.set_referenced(referenced);
     }
 
-    /// `napi_unref_threadsafe_function`. As [`Self::ref_`].
-    fn unref(&self) {
-        if let Some(js) = VirtualMachine::get_or_null().and_then(|vm| self.js.get(vm)) {
-            js.poll_ref.unref(bun_io::js_vm_ctx());
+    /// Does not wake the loop, like `uv_unref`, so that it does not exit before a call that follows.
+    fn request_ref(&self, referenced: bool) {
+        let mut shared = self.shared.lock();
+        if shared.is_closing() || shared.requested_ref.replace(referenced).is_some() {
+            return;
+        }
+        let this = shared.threads_ref.clone().expect("held until finalized");
+        let ct = ConcurrentTask::create_boxed(Box::new(TsfnRefRequest(this)));
+        if let bun_jsc::vm_handle::Posted::Refused(ct) =
+            self.js.handle().post_without_waking(self.loop_kind, ct)
+        {
+            // SAFETY: the task made above.
+            drop(unsafe { ct.task.into_boxed::<TsfnRefRequest>() });
         }
     }
 
@@ -3177,6 +3220,7 @@ unsafe extern "C" fn napi_create_threadsafe_function(
             closing: ClosingState::NotClosing,
             dispatch_ref: None,
             threads_ref: None,
+            requested_ref: None,
         }),
         blocking_condvar: Condvar::default(),
         js: VmBound::new(
@@ -3220,7 +3264,7 @@ unsafe extern "C" fn napi_create_threadsafe_function(
     drop(shared);
 
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    function.ref_();
+    js.set_referenced(!vm.context_of_caller().is_stopped());
     // (Unless the context whose script is creating it stops first.)
     // SAFETY: `threads_ref` keeps the allocation until `run_finalizer_and_release` has left the context.
     unsafe {
@@ -3290,7 +3334,7 @@ extern "C" fn napi_unref_threadsafe_function(
     let Some(func) = func else {
         return NapiStatus::invalid_arg as napi_status;
     };
-    func.unref();
+    func.set_referenced(false);
     NapiStatus::ok as napi_status
 }
 
@@ -3303,7 +3347,7 @@ extern "C" fn napi_ref_threadsafe_function(
     let Some(func) = func else {
         return NapiStatus::invalid_arg as napi_status;
     };
-    func.ref_();
+    func.set_referenced(true);
     NapiStatus::ok as napi_status
 }
 

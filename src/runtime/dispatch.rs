@@ -136,7 +136,7 @@ use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContex
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
-use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
+use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
@@ -574,6 +574,11 @@ pub(crate) fn run_task(
                 ThreadSafeFunction::on_dispatch(function, el, vm);
             }
         ),
+        task_tag::ThreadSafeFunctionRefRequest => {
+            boxed_arm!(task, [NativeAddons], |request: TsfnRefRequest| {
+                request.run()
+            })
+        }
         task_tag::NapiFinalizerTask => boxed_arm!(
             task,
             [NativeAddons],
@@ -813,7 +818,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1710,6 +1715,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunctionRefRequest => {
+            release_boxed_in!([NativeAddons], TsfnRefRequest)
+        }
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvLoop);

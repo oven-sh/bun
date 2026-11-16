@@ -1835,21 +1835,38 @@ nativeTests.test_threadsafe_function_abort_hands_queued_items_back = async () =>
   writeSync(1, `finalized: ${nativeTests.threadsafe_function_with_queued_items_finalized()}\n`);
 };
 
-nativeTests.test_threadsafe_function_unref_and_ref_from_addon_thread = () => {
-  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ true);
-  nativeTests.unref_and_ref_threadsafe_function_from_addon_thread();
-  nativeTests.abort_threadsafe_function_with_queued_items();
+nativeTests.test_threadsafe_function_ref_and_unref = (_, ...calls) => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ false);
+  // From a timer, so that nothing but the function is left to keep the loop alive.
+  setTimeout(() => {
+    for (const call of calls) {
+      const status = nativeTests.set_threadsafe_function_referenced(!call.includes("unref"), call.includes("thread"));
+      console.log(`${call}: ${status}`);
+    }
+    let turns = 0;
+    const interval = setInterval(() => {
+      // The loop can finish the turn that it is in.
+      if (++turns < 3) return;
+      console.log("kept alive");
+      clearInterval(interval);
+      nativeTests.abort_threadsafe_function_with_queued_items();
+    }, 1).unref();
+  });
+};
+
+nativeTests.test_threadsafe_function_unref_before_poll = () => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ false);
+  setImmediate(() => console.log(nativeTests.set_threadsafe_function_referenced(false, true)));
 };
 
 nativeTests.test_threadsafe_function_unref_from_worker = async () => {
   const { Worker } = require("node:worker_threads");
   const addon = JSON.stringify(require.resolve("./build/Debug/napitests.node"));
-  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ true);
-  const worker = new Worker(`process.exit(require(${addon}).unref_threadsafe_function_with_queued_items())`, {
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ false);
+  const worker = new Worker(`process.exit(require(${addon}).set_threadsafe_function_referenced(false, false))`, {
     eval: true,
   });
   const [status] = await require("node:events").once(worker, "exit");
-  nativeTests.abort_threadsafe_function_with_queued_items();
   return status;
 };
 

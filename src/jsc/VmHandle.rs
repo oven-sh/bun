@@ -359,6 +359,17 @@ impl VmHandle {
         })
     }
 
+    /// As [`post`](Self::post), but a loop that is asleep stays asleep until something else wakes it.
+    pub fn post_without_waking(&self, kind: LoopKind, task: Box<ConcurrentTaskItem>) -> Posted {
+        test_gate::weak_post(&self.0, task.task.tag(), || {
+            let Some(_a) = self.enter() else {
+                return Posted::Refused(task);
+            };
+            self.0.loop_of(kind).post(bun_core::heap::into_raw_nn(task));
+            Posted::Queued
+        })
+    }
+
     /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted<()> {
         // SAFETY: handed over by the caller and not yet queued anywhere.

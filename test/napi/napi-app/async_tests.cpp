@@ -916,24 +916,20 @@ napi_value threadsafe_function_with_queued_items_finalized(
   return Napi::Boolean::New(info.Env(), queued_items_tsfn_finalized);
 }
 
+// set_threadsafe_function_referenced(referenced, on_addon_thread)
 static napi_value
-unref_threadsafe_function_with_queued_items(const Napi::CallbackInfo &info) {
-  napi_status status =
-      napi_unref_threadsafe_function(info.Env(), queued_items_tsfn);
-  return Napi::Number::New(info.Env(), static_cast<double>(status));
-}
-
-static napi_value unref_and_ref_threadsafe_function_from_addon_thread(
-    const Napi::CallbackInfo &info) {
+set_threadsafe_function_referenced(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  std::thread([env] {
-    napi_status unref = napi_unref_threadsafe_function(env, queued_items_tsfn);
-    napi_status ref = napi_ref_threadsafe_function(env, queued_items_tsfn);
-    printf("unref: %d, ref: %d\n", static_cast<int>(unref),
-           static_cast<int>(ref));
-    fflush(stdout);
-  }).join();
-  return info.Env().Undefined();
+  auto set = info[0].As<Napi::Boolean>().Value()
+                 ? napi_ref_threadsafe_function
+                 : napi_unref_threadsafe_function;
+  napi_status status;
+  if (info[1].As<Napi::Boolean>().Value()) {
+    std::thread([&] { status = set(env, queued_items_tsfn); }).join();
+  } else {
+    status = set(env, queued_items_tsfn);
+  }
+  return Napi::Number::New(env, static_cast<double>(status));
 }
 
 static napi_async_work held_work = nullptr;
@@ -970,9 +966,7 @@ static napi_value release_held_async_work(const Napi::CallbackInfo &info) {
 }
 
 void register_async_tests(Napi::Env env, Napi::Object exports) {
-  REGISTER_FUNCTION(env, exports, unref_threadsafe_function_with_queued_items);
-  REGISTER_FUNCTION(env, exports,
-                    unref_and_ref_threadsafe_function_from_addon_thread);
+  REGISTER_FUNCTION(env, exports, set_threadsafe_function_referenced);
   REGISTER_FUNCTION(env, exports, queue_held_async_work);
   REGISTER_FUNCTION(env, exports, release_held_async_work);
   REGISTER_FUNCTION(env, exports, async_work_with_external_buffer);

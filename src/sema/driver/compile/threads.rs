@@ -281,9 +281,10 @@ mod tests {
         for _ in 1..THREADS {
             schedule_on(pool, || {
                 ALL_BUSY.wait();
-                while !HAS_BEGUN.load(Ordering::SeqCst) {
-                    std::thread::yield_now();
-                }
+                wait_until(
+                    || HAS_BEGUN.load(Ordering::SeqCst),
+                    "the region never began",
+                );
             });
         }
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -299,18 +300,18 @@ mod tests {
                     has_joined.store(true, Ordering::SeqCst);
                 } else if index == 0 {
                     HAS_BEGUN.store(true, Ordering::SeqCst);
-                    while pool.available_threads() == 0 {
-                        std::thread::yield_now();
-                    }
+                    wait_until(|| pool.available_threads() > 0, "no thread came to rest");
                 } else {
-                    while !has_joined.load(Ordering::SeqCst) {
-                        std::thread::yield_now();
-                    }
+                    wait_until(
+                        || has_joined.load(Ordering::SeqCst),
+                        "no thread joined the region",
+                    );
                 }
             });
             sender.send((available, has_joined.into_inner())).unwrap();
         });
-        assert_eq!(receiver.recv(), Ok((0, true)));
+        let result = receiver.recv_timeout(std::time::Duration::from_secs(60));
+        assert_eq!(result, Ok((0, true)));
     }
 
     fn pool_without_spare_threads() -> &'static bun_threading::ThreadPool {

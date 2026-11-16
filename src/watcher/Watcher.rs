@@ -505,7 +505,12 @@ impl Watcher {
                 &mut watchlist.items_mut::<"eventlist_index", platform::EventListIndex>()[index],
                 -1,
             );
-            let _ = bun_sys::linux::inotify_rm_watch(self.platform.fd.fd().native(), descriptor);
+            // Aliases can share one kernel registration. This entry has relinquished
+            // its descriptor, but another path may still own it.
+            if descriptor >= 0 && !watchlist.items_eventlist_index().contains(&descriptor) {
+                let _ =
+                    bun_sys::linux::inotify_rm_watch(self.platform.fd.fd().native(), descriptor);
+            }
         }
         drop(watchlist.items_file_mut()[index].take());
     }
@@ -1151,6 +1156,57 @@ mod tests {
         watcher.flush_evictions(&mut state);
         assert!(index_of(&state.watchlist, Watcher::get_hash(FILE)).is_some());
         assert!(state.file_evictions.is_empty());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn invalidating_directory_alias_keeps_shared_inotify_registration() {
+        const ALIAS: &[u8] = concat!(env!("CARGO_MANIFEST_DIR"), "/.").as_bytes();
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        let root_index = watcher
+            .add_directory(ROOT, Watcher::get_hash(ROOT))
+            .unwrap() as usize;
+        let alias_index = watcher
+            .add_directory(ALIAS, Watcher::get_hash(ALIAS))
+            .unwrap() as usize;
+        let mut state = watcher.state.lock();
+        let descriptor = state.watchlist.items_eventlist_index()[root_index];
+        assert!(descriptor >= 0);
+        assert_eq!(
+            descriptor,
+            state.watchlist.items_eventlist_index()[alias_index]
+        );
+
+        watcher.invalidate_directory_watch(&mut state.watchlist, alias_index);
+        assert!(state.watchlist.items_file()[alias_index].is_none());
+        assert_eq!(state.watchlist.items_eventlist_index()[alias_index], -1);
+        // The surviving path still names its original inode, so refresh returns early.
+        watcher
+            .refresh_directory_watch(&mut state.watchlist, root_index)
+            .unwrap();
+        assert!(
+            bun_sys::linux::inotify_rm_watch(watcher.platform.fd.fd().native(), descriptor) >= 0,
+            "invalidating one alias must preserve the surviving path's registration",
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn invalidating_last_directory_removes_inotify_registration() {
+        let watcher = Watcher::init(Box::new(Context), ROOT).unwrap();
+        let index = watcher
+            .add_directory(ROOT, Watcher::get_hash(ROOT))
+            .unwrap() as usize;
+        let mut state = watcher.state.lock();
+        let descriptor = state.watchlist.items_eventlist_index()[index];
+        assert!(descriptor >= 0);
+        watcher.invalidate_directory_watch(&mut state.watchlist, index);
+        assert!(state.watchlist.items_file()[index].is_none());
+        assert_eq!(state.watchlist.items_eventlist_index()[index], -1);
+        assert!(
+            bun_sys::linux::inotify_rm_watch(watcher.platform.fd.fd().native(), descriptor) < 0,
+            "invalidating the last owner must remove the inotify registration",
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]

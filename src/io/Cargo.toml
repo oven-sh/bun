@@ -20,10 +20,10 @@ bun_core.workspace = true
 bun_dispatch.workspace = true
 bun_ptr.workspace = true
 bun_collections.workspace = true
-bun_spawn_sys.workspace = true
 bun_sys.workspace = true
 bun_uws_sys.workspace = true
 bun_errno.workspace = true
 bun_threading.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(unix)'.dependencies]
+bun_spawn_sys.workspace = true

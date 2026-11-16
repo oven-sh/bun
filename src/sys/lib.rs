@@ -8520,6 +8520,11 @@ impl CloseOnDrop {
         core::mem::ManuallyDrop::new(self).0
     }
 }
+impl From<File> for CloseOnDrop {
+    fn from(file: File) -> Self {
+        Self(file.into_raw())
+    }
+}
 impl core::ops::Deref for CloseOnDrop {
     type Target = File;
     fn deref(&self) -> &File {

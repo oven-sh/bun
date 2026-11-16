@@ -834,12 +834,13 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     if chars.is_empty() {
         return None;
     }
-    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    assert!(chars.len() >= 2 && chars.len() <= 16);
     if scalar_only(haystack.len()) {
         return haystack.iter().rposition(|b| chars.contains(b));
     }
 
-    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    // SAFETY: haystack and chars ptr/len are valid readable ranges, and `chars` has the two bytes
+    // that the kernel always reads.
     let result = unsafe {
         highway_last_index_of_any_char(
             haystack.as_ptr(),
@@ -954,8 +955,8 @@ pub fn count_slashes(path: &[u8]) -> usize {
 // 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
-    // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
-    // (caller contract: output.len() >= input.len()).
+    let output = &mut output[..input.len()];
+    // SAFETY: input.ptr/len readable, output.ptr writable for input.len() bytes.
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
@@ -1041,6 +1042,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
     if input.is_empty() {
         return;
     }
+    let output = &mut output[..input.len()];
 
     // SAFETY: mask is 4 bytes; input.ptr/len readable; output.ptr writable for input.len() bytes.
     unsafe {

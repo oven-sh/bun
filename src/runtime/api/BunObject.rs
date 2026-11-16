@@ -1812,7 +1812,6 @@ pub(crate) mod JSZlib {
                         level,
                         mem_level: options.mem_level,
                         strategy: options.strategy,
-                        ..Default::default()
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;

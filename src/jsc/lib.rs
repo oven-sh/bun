@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed

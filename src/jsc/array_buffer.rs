@@ -157,6 +157,22 @@ impl ArrayBuffer {
         }
     }
 
+    /// Limits the view to at most `len` bytes at `offset`.
+    #[inline]
+    pub fn narrow(&mut self, offset: usize, len: usize) {
+        let offset = offset.min(self.byte_len);
+        self.ptr = self.ptr.wrapping_add(offset);
+        self.byte_len = len.min(self.byte_len - offset);
+        self.len = self.byte_len;
+    }
+
+    /// Whether a byte is in both views.
+    pub fn overlaps(&self, other: &ArrayBuffer) -> bool {
+        let start = self.ptr.addr().max(other.ptr.addr());
+        let end = (self.ptr.addr() + self.byte_len).min(other.ptr.addr() + other.byte_len);
+        start < end
+    }
+
     /// Returns true if another thread can write to the bytes (`SharedArrayBuffer`) or JS that runs
     /// during the call can unmap them with `resize()`.
     pub fn can_change_under_borrow(&self) -> bool {
@@ -646,10 +662,7 @@ impl PinnedArrayBuffer {
     #[inline]
     pub fn narrow(&mut self, offset: usize, len: usize) {
         debug_assert!(self.copy.is_none());
-        let offset = offset.min(self.buffer.byte_len);
-        self.buffer.ptr = self.buffer.ptr.wrapping_add(offset);
-        self.buffer.byte_len = len.min(self.buffer.byte_len - offset);
-        self.buffer.len = self.buffer.byte_len;
+        self.buffer.narrow(offset, len);
     }
 
     /// Copies the bytes if they [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned),

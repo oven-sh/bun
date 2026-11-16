@@ -43,12 +43,7 @@ impl DevServer {
         let store = &mut self.directory_watchers;
         let entry = store.watches.values()[entry_index];
 
-        bun_core::scoped_log!(
-            DevServer,
-            "DirectoryWatchStore.freeEntry({}, {:?})",
-            entry_index,
-            entry.dir
-        );
+        bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({})", entry_index);
 
         self.bun_watcher.remove_at_index::<true>(
             bun_watcher::WatchItemKind::File,
@@ -60,10 +55,6 @@ impl DevServer {
         // The Box key drops on swap_remove_at.
         let _ = store.watches.swap_remove_at(entry_index);
 
-        if entry.dir_fd_owned {
-            entry.dir.close();
-        }
-
         if store.watches.len() == 0 {
             // Every remaining dependency slot must be in the free list.
             debug_assert_eq!(store.dependencies.len(), store.dependencies_free_list.len());
@@ -73,25 +64,12 @@ impl DevServer {
     }
 }
 /// `DirectoryWatchStore.Entry` — per-watched-directory state.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub(crate) struct Entry {
-    /// The directory handle the watch is placed on.
-    pub(crate) dir: bun_sys::Fd,
-    pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
     /// To pass to `Watcher.remove`.
     pub(crate) watch_index: bun_watcher::WatchItemIndex,
-}
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            dir: bun_sys::Fd::INVALID,
-            dir_fd_owned: false,
-            first_dep: 0,
-            watch_index: 0,
-        }
-    }
 }
 /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
 pub(crate) struct Dep {
@@ -156,7 +134,7 @@ impl DevServer {
                 &[specifier],
             )
         else {
-            // There's nothing to watch, like in `watch_directory`'s NameTooLong case.
+            // There's nothing to watch: the name is too long.
             return Ok(());
         };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
@@ -248,9 +226,12 @@ impl DevServer {
             return Ok(());
         }
 
-        let watched = self.watch_directory(dir_name_to_watch);
-        let store = &mut self.directory_watchers;
-        let Some(entry) = watched else {
+        // `dir_name_to_watch` is in a pooled buffer, so the watcher copies it.
+        let Ok(watch_index) = self
+            .bun_watcher
+            .add_directory::<true>(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch))
+        else {
+            // TODO: watch the parent of a directory that does not exist yet (BUN-10968).
             let _ = store.watches.swap_remove_at(gop_index);
             return Ok(()); // ignoring watch errors.
         };
@@ -262,87 +243,9 @@ impl DevServer {
         });
         store.watches.values_mut()[gop_index] = Entry {
             first_dep: dep,
-            ..entry
+            watch_index,
         };
         Ok(())
-    }
-
-    /// The caller sets `first_dep`.
-    fn watch_directory(&mut self, dir_name_to_watch: &[u8]) -> Option<Entry> {
-        // Try to use an existing open directory handle
-        let cache_fd: Option<bun_sys::Fd> = match self
-            .server_transpiler
-            .resolver
-            .read_dir_info(dir_name_to_watch)
-        {
-            Ok(Some(cache)) => {
-                let fd = cache.get_file_descriptor();
-                if fd.is_valid() { Some(fd) } else { None }
-            }
-            Ok(None) | Err(_) => None,
-        };
-
-        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-            if let Some(fd) = cache_fd {
-                (fd, false)
-            } else {
-                // Build a NUL-terminated path buffer.
-                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
-                    return None; // NameTooLong
-                }
-                let mut zbuf = bun_paths::path_buffer_pool::get();
-                let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
-                match bun_sys::open(
-                    zpath,
-                    bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
-                    0,
-                ) {
-                    Ok(fd) => (fd, true),
-                    Err(err) => match err.get_errno() {
-                        // If this directory doesn't exist, a watcher should be placed
-                        // on the parent directory. Then, if this directory is later
-                        // created, the watcher can be properly initialized.
-                        bun_sys::E::ENOENT => {
-                            // TODO: implement that. for now it ignores (BUN-10968)
-                            return None;
-                        }
-                        // The resolver already reported the failed import.
-                        _ => return None,
-                    },
-                }
-            }
-        } else {
-            (bun_sys::Fd::INVALID, false)
-        };
-        let fd_guard = scopeguard::guard(fd, move |fd| {
-            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
-                fd.close();
-            }
-        });
-
-        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
-        // retains the path until eviction runs (deferred onto `evict_list` and
-        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
-        // transient `dirname()` view of a thread-local path buffer. A borrowed
-        // (`::<false>`) `Cow` would dangle once this returns — well before
-        // the watcher reads it on a file event. Owning the copy also lets the
-        // map keep its own boxed key independently, so no extra intermediate
-        // `Box` is needed here.
-        let watch_index = self
-            .bun_watcher
-            .add_directory::<true>(
-                fd,
-                dir_name_to_watch,
-                bun_watcher::Watcher::get_hash(dir_name_to_watch),
-            )
-            .ok()?;
-
-        Some(Entry {
-            dir: scopeguard::ScopeGuard::into_inner(fd_guard),
-            dir_fd_owned: owned_fd,
-            first_dep: 0,
-            watch_index,
-        })
     }
 }
 

@@ -361,7 +361,7 @@ impl<'a> InternalState<'a> {
 
                 let decompressor = deflater
                     .decompressor
-                    .as_deref()
+                    .as_ref()
                     .expect("set in HttpThread::deflater()");
                 let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
 

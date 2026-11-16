@@ -107,11 +107,7 @@
   },
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
-    "unsafe impl Send": [
-      "CoreFoundation"
-    ],
     "unsafe impl Sync": [
-      "CoreFoundation",
       "FSEventsLoop"
     ]
   },
@@ -132,11 +128,9 @@
       "ReaddirSubtask"
     ],
     "unsafe impl Send": [
-      "AsyncFSTask<R, A, F>",
       "AsyncMkdirp<T>",
       "CpSingleTask<IS_SHELL>",
-      "NewAsyncCpTask<IS_SHELL>",
-      "ResultListEntryValue"
+      "NewAsyncCpTask<IS_SHELL>"
     ]
   },
   "src/runtime/node/node_fs_stat_watcher.rs": {
@@ -146,11 +140,6 @@
     ],
     "unsafe impl Send": [
       "InitialStatTask"
-    ]
-  },
-  "src/runtime/node/node_process.rs": {
-    "unsafe impl Sync": [
-      "CStrPtr"
     ]
   },
   "src/runtime/node/path_watcher.rs": {
@@ -175,11 +164,6 @@
     "WorkPool::schedule*": 2,
     "intrusive_work_task!": [
       "DirTask"
-    ]
-  },
-  "src/runtime/shell/dispatch_tasks.rs": {
-    "unsafe impl Send": [
-      "ShellGlobTask"
     ]
   },
   "src/runtime/shell/interpreter.rs": {

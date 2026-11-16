@@ -66,17 +66,6 @@ enum WorkerPool {
     Lent(BackRef<ThreadPoolLib::ThreadPool>),
 }
 
-// SAFETY: `ThreadPool` is shared across worker threads; the only mutated
-// field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
-// the pointer fields are set during init, before the pool is shared with
-// worker threads, and only read thereafter.
-unsafe impl Send for ThreadPool {}
-// SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
-// `get_worker(&self)`; the only field mutated under `&self` is
-// `workers_assignments` (through its `bun_threading::Guarded` lock), and the
-// pointers' target (`ThreadPoolLib::ThreadPool`) is `Sync`.
-unsafe impl Sync for ThreadPool {}
-
 impl ThreadPool {
     /// Inherent associated type so call sites that wrote
     /// `ThreadPool::Worker::get(ctx)`

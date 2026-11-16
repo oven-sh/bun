@@ -1596,7 +1596,6 @@ extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObjec
 extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
-extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
@@ -1649,7 +1648,6 @@ static void uninstallForwardSignalHandler(int signalNumber)
 
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 {
-    Bun__ensureSignalHandler();
     watchModeStickySignal = signalNumber;
     installForwardSignalHandler(signalNumber);
 }
@@ -1747,7 +1745,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
                         };
 #if !OS(WINDOWS)
-                        Bun__ensureSignalHandler();
                         installForwardSignalHandler(signalNumber);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(

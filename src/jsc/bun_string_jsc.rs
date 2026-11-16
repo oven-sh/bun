@@ -1,9 +1,8 @@
-//! JSC bridges for `bun_core::String` and `Utf8WithString`: the
-//! `StringJsc`/`Utf8WithStringJsc` extension traits and the free functions
+//! JSC bridges for `bun_core::String`: the `StringJsc` extension trait and the free functions
 //! for bytes → JS string. Keeps `bun_core::string` free of
 //! `JSValue`/`JSGlobalObject` types.
 
-use bun_core::{EncodedSlice, String, Tag, Utf8WithString, strings};
+use bun_core::{EncodedSlice, String, Tag, strings};
 
 use crate::bindgen::{self, JsHeap};
 use crate::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
@@ -108,22 +107,6 @@ impl StringJsc for String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::TypeError)
-    }
-}
-
-/// JSC conversions for `bun_core::Utf8WithString`.
-pub trait Utf8WithStringJsc {
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-}
-impl Utf8WithStringJsc for Utf8WithString {
-    fn into_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let (utf8, string) = self.into_parts();
-        if string.is_empty() {
-            if let Some(utf8) = utf8.filter(|v| !v.is_empty()) {
-                return owned_utf8_into_js(global_object, utf8);
-            }
-        }
-        string.into_js(global_object)
     }
 }
 

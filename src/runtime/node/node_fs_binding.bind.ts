@@ -101,7 +101,7 @@ const operations: Record<string, readonly [number, number]> = {
   writev: [4, 3],
 };
 
-/** `StringOrBuffer::into_js` of bytes that the operation owns. */
+/** `StringOrBytes::into_js`. */
 const textOrBytes = table.union(table.string, table.instance("Buffer")).fresh;
 const stats = table.union(table.instance("Stats"), table.instance("BigIntStats")).fresh;
 const statsIfFound = table.union(table.instance("Stats"), table.instance("BigIntStats"), table.undefined).fresh;

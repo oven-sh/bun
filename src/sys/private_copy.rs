@@ -1,6 +1,7 @@
 //! Maps a writable, copy-on-write copy of read-only bytes of this process's executable.
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::Mmap;
 
@@ -17,10 +18,11 @@ pub struct PrivateCopy {
 
 impl PrivateCopy {
     /// The bytes stay mapped until [`unmap`].
-    pub fn into_raw(self) -> *mut [u8] {
+    pub fn into_non_null(self) -> NonNull<[u8]> {
         let pages = self.pages.into_raw();
         let bytes = pages.cast::<u8>().wrapping_add(self.delta);
-        core::ptr::slice_from_raw_parts_mut(bytes, pages.len() - self.delta)
+        let bytes = core::ptr::slice_from_raw_parts_mut(bytes, pages.len() - self.delta);
+        NonNull::new(bytes).expect("a mapping is not at address 0")
     }
 }
 
@@ -103,7 +105,7 @@ fn parse_hex(digits: &[u8]) -> Option<usize> {
 }
 
 /// # Safety
-/// `bytes` and `len` are what [`PrivateCopy::into_raw`] returned, and nothing refers to the bytes.
+/// `bytes` and `len` are what [`PrivateCopy::into_non_null`] returned, and nothing refers to the bytes.
 pub unsafe extern "C" fn unmap(bytes: *mut c_void, len: *mut c_void) {
     let delta = bytes.addr() % bun_alloc::page_size();
     let pages = bytes.cast::<u8>().wrapping_sub(delta);

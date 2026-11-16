@@ -245,6 +245,77 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::throwException(globalObject, scope, error);
 }
 
+// The key that require() loads once a name is resolved to the path `key`. A module mock may give the file that asks, `from`, another key for that path, and so may a
+// factory that runs: see Bun::packageImportKey() and Bun::keyOfImportWhileModuleMocksRun(). The path that require() resolves a mocked name to, where an import resolves
+// the name to another file, becomes the key of that mock last: a factory's own require() of its name has to reach the running factories as that path, whose original it gets.
+static String keyOfRequireUnderModuleMocks(Zig::GlobalObject* globalObject, const String& key, const String& from)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    String given = plugins.hasVirtualModules() ? Bun::packageImportKey(globalObject, key, from, false) : key;
+    if (!plugins.runningModuleMocks.isEmpty())
+        given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, from, false);
+    if (!plugins.moduleMockKeysByRequirePath.isEmpty())
+        given = Bun::keyOfModuleMockAtRequirePath(globalObject, given, from, false);
+    return given;
+}
+
+// The same for a path that is still a JSString: `resolved` itself where no mock gives it another key.
+static JSC::EncodedJSValue keyOfRequireUnderModuleMocks(Zig::GlobalObject* globalObject, JSC::JSValue resolved, JSC::JSValue from)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (!plugins.hasVirtualModules() && plugins.runningModuleMocks.isEmpty())
+        return JSC::JSValue::encode(resolved);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String key = asString(resolved)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto fromString = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String given = keyOfRequireUnderModuleMocks(globalObject, key, fromString);
+    return JSC::JSValue::encode(given == key ? resolved : JSC::JSValue(jsString(vm, given)));
+}
+
+// Whether a mock that OnLoad::moduleMockKeysByRequirePath names is being made: one of the running mocks stands under a key that the map leads to.
+static bool isModuleMockAtRequirePathRunning(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (!plugins.virtualModules)
+        return false;
+    for (auto& key : plugins.moduleMockKeysByRequirePath.values()) {
+        auto standing = plugins.virtualModules->find(key);
+        if (standing == plugins.virtualModules->end())
+            continue;
+        JSC::JSObject* mock = standing->value.get();
+        if (plugins.runningModuleMocks.containsIf([&](auto& running) { return running.mock.get() == mock; }))
+            return true;
+    }
+    return false;
+}
+
+// Where require() has its path from a replaced Module._resolveFilename or with options.paths, module mocks are not asked about it. Only a mock that
+// OnLoad::moduleMockKeysByRequirePath names gives the path another key there (Bun::keyOfModuleMockAtRequirePath()). The running factories are asked about a path that
+// the map has as a key, so that a factory's own require() of its name gets the original, and about every path while such a mock is being made: what its load requires
+// joins its import chain then, as at the other exits, so a module of that load which requires the name gets the original too and is loaded again once the mock is made.
+// A mock of a name with one file has no say there while no such mock is being made, nor has `bun test --aot`, which leaves the map empty.
+static JSC::EncodedJSValue keyOfRequireUnderModuleMocksAtRequirePaths(Zig::GlobalObject* globalObject, JSC::JSValue resolved, JSC::JSValue from)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.moduleMockKeysByRequirePath.isEmpty()) [[likely]]
+        return JSC::JSValue::encode(resolved);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String key = asString(resolved)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto fromString = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String given = key;
+    if (!plugins.runningModuleMocks.isEmpty() && (plugins.moduleMockKeysByRequirePath.contains(key) || isModuleMockAtRequirePathRunning(globalObject)))
+        given = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false);
+    if (!plugins.moduleMockKeysByRequirePath.isEmpty())
+        given = Bun::keyOfModuleMockAtRequirePath(globalObject, given, fromString, false);
+    return JSC::JSValue::encode(given == key ? resolved : JSC::JSValue(jsString(vm, given)));
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -286,9 +357,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
                 if (!isRequireDotResolve)
-                    resolvedString = Bun::packageImportKey(globalObject, resolvedString.value(), fromString, false);
-                if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
-                    return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
+                    resolvedString = keyOfRequireUnderModuleMocks(globalObject, resolvedString.value(), fromString);
                 if (moduleString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
@@ -326,7 +395,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                     WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                     if (!prefixed.isNull()) {
-                        return JSValue::encode(jsString(vm, prefixed));
+                        // A builtin is no key of OnLoad::moduleMockKeysByRequirePath. It is a value of it where "imports" of a package.json give an import the builtin for a name
+                        // that require() resolves to a file: the key of the mock of that name. What the original of that file has loaded gets the builtin itself.
+                        RELEASE_AND_RETURN(scope, keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, jsString(vm, prefixed), from));
                     }
                     // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
                     if (Bun::hasCompiledModules()) [[unlikely]] {
@@ -335,7 +406,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
                     RETURN_IF_EXCEPTION(scope, {});
-                    return JSC::JSValue::encode(string);
+                    RELEASE_AND_RETURN(scope, keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, string, from));
                 }
                 return JSC::JSValue::encode(result);
             }
@@ -394,6 +465,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
                     if (scope.exception()) [[unlikely]]
                         result = {};
+                    else
+                        result = keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, JSC::JSValue::decode(result), from);
                 }
 
             cleanup:
@@ -428,23 +501,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {
-        String key = asString(JSC::JSValue::decode(result))->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto fromString = from.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        String given = Bun::packageImportKey(globalObject, key, fromString, false);
-        if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
-            given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
-        if (given != key)
-            return JSC::JSValue::encode(jsString(vm, given));
-    } else if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
-        auto key = asString(JSC::JSValue::decode(result))->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto fromString = from.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false)));
-    }
+    if (!isRequireDotResolve && (globalObject->onLoadPlugins.hasVirtualModules() || !globalObject->onLoadPlugins.runningModuleMocks.isEmpty())) [[unlikely]]
+        RELEASE_AND_RETURN(scope, keyOfRequireUnderModuleMocks(globalObject, JSC::JSValue::decode(result), from));
 
     scope.release();
     return result;

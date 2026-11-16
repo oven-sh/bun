@@ -4268,6 +4268,17 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
+        // The running factories were asked about the path first, as in keyOfRequireUnderModuleMocks(): a factory's own import of the path that require() resolves its name to gets the original of that file.
+        // They are asked again about the key that the call below gives instead, which is what loads: what loads under it must not wait for them.
+        if (!globalObject->onLoadPlugins.moduleMockKeysByRequirePath.isEmpty()) {
+            WTF::String turned = Bun::keyOfModuleMockAtRequirePath(globalObject, resolved, referrerString, true);
+            if (turned != resolved) {
+                if (moduleMocksRun)
+                    turned = Bun::keyOfImportWhileModuleMocksRun(globalObject, turned, referrerString, true);
+                resolved = WTF::move(turned);
+                resolvedKey = Identifier::fromString(vm, resolved);
+            }
+        }
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);
         RETURN_IF_EXCEPTION(scope, {});
     }

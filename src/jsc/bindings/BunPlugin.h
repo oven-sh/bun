@@ -91,6 +91,8 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        // By the path that require() resolves a mocked name to, where an import resolves it to another file: the key of the mock, which require() loads instead.
+        WTF::UncheckedKeyHashMap<String, String> moduleMockKeysByRequirePath = {};
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -192,6 +194,7 @@ public:
             Base::clear();
             delete virtualModules;
             virtualModules = nullptr;
+            moduleMockKeysByRequirePath.clear();
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
             runningModuleMocks.clear();
@@ -371,6 +374,11 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+// The key of a mock where `key` is the path that require() resolves its name to and an import resolves the name to another file. `key` itself for the mock's two files,
+// for what the original of the mock's own file has loaded, and while require() cannot have the mock. Where `key` is such a mock's own key, what the original of the other file has loaded gets the key of the original.
+// Only a mock that OnLoad::moduleMockKeysByRequirePath names is such a mock. Callers skip the call while that map is empty, which is all that a resolve pays while none
+// stands: a mock that ends takes its entry with it.
+String keyOfModuleMockAtRequirePath(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)

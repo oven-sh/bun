@@ -33,7 +33,6 @@ struct us_cert_file_bio {
   us_unique_ptr<BIO, BIO_free> bio;
 };
 
-static void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
 static void us_x509_crl_stack_free(STACK_OF(X509_CRL) *crls) { sk_X509_CRL_pop_free(crls, X509_CRL_free); }
 
 static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
@@ -76,7 +75,7 @@ extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u)
 
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
   BIO *in = NULL;
-  us_unique_ptr<STACK_OF(X509), us_x509_stack_free> certs;
+  us_x509_stack_ptr certs;
   unsigned long last_err;
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
@@ -226,7 +225,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     }
 
     us_crypto_buffers certs;
-    us_unique_ptr<STACK_OF(X509), us_x509_stack_free> trusted{sk_X509_new_null()};
+    us_x509_stack_ptr trusted{sk_X509_new_null()};
     us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free> crls{sk_X509_CRL_new_null()};
     bool ok = trusted != nullptr && crls != nullptr;
     while (ok) {

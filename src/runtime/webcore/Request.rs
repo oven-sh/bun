@@ -33,19 +33,19 @@ use bun_ptr::weak_ptr::WeakPtrData;
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
 impl bun_jsc::JsClass for Request {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js::from_js(value).map(|p| p.as_ptr())
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         Request::to_js(RefPtr::new(self), global)
@@ -56,8 +56,7 @@ impl bun_jsc::JsClass for Request {
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
-/// field layout is unchanged. `method`/`flags`/`body`/
-/// `weak_ptr_data` are only written during construction or via raw-ptr
+/// field layout is unchanged. `method`/`flags`/`body` are only written during construction or via raw-ptr
 /// `destroy`, so stay plain.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -936,7 +935,7 @@ impl Request {
             // fastest path:
             url_or_object_type.is_string_like() ||
             // slower path:
-            bun_jsc::DOMURL::cast_(url_or_object, cx.global().vm()).is_some();
+            bun_jsc::DOMURL::cast_(&url_or_object, cx.global().vm()).is_some();
 
         if is_first_argument_a_url {
             let str = BunString::from_js(url_or_object, cx.global())?;
@@ -978,8 +977,6 @@ impl Request {
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns the wrapper's live *mut Request
-                    let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
                         let url = fields.contains(Fields::Url).then(|| req.url.take());
                         return request.clone_with_url(cx, url);
@@ -1025,8 +1022,6 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
-                    // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &*response };
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);

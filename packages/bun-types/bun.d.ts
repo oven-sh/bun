@@ -4081,14 +4081,24 @@ declare module "bun" {
      */
     aotHarden?: string | string[];
     /**
+     * Lay the executable out by the order in which a run of it entered its functions. Requires `aot: true`.
      *
+     * Run an executable built with `aotRecordOrder: true` with `BUN_AOT_ORDER_OUT=<path>` to record a
+     * start, then build again with that file. A file from an older build of the app still applies.
      *
+     * With several files, list the most important one first. A function lies where the first file that
+     * lists it places it.
      *
+     * Equivalent CLI flag: `--aot-order <file>[,<file>...]`
      *
+     * @see https://bun.com/docs/compiler/aot#order-the-executable-by-a-recorded-start
      */
     aotOrder?: string | string[];
     /**
+     * Build an executable that writes what `aotOrder` takes when it runs with `BUN_AOT_ORDER_OUT=<path>`.
+     * Other executables have no recorder. Requires `aot: true`.
      *
+     * Equivalent CLI flag: `--aot-record-order`
      */
     aotRecordOrder?: boolean;
     /**

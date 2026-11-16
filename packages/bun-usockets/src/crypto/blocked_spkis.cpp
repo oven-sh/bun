@@ -1,4 +1,4 @@
-// The public keys no peer's chain may hold. us_x509_verify_chain (openssl.c) asks after every chain it verifies.
+// The public keys no peer's chain may hold. us_x509_verify_chain (openssl.cpp) asks after every chain it verifies.
 #include "./root_certs_header.h"
 #include <array>
 #include <string.h>

@@ -17,7 +17,7 @@ pub mod MiniEventLoop;
 // Module renamed `any_event_loop` so the *type* `AnyEventLoop` can be re-exported
 // at crate root without colliding (modules and types share the type namespace).
 // Downstream callers use `bun_event_loop::AnyEventLoop` as a type / for
-// associated fns (`::init()`, `::js_current()`, `::as_handle()`), never as a
+// associated fns (`::init()`, `::js()`), never as a
 // module path, so the snake_case module name is internal.
 #[path = "AnyEventLoop.rs"]
 pub mod any_event_loop;

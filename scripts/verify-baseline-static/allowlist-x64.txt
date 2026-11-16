@@ -824,6 +824,26 @@ _ZN3bun6N_AVX227LongByteSetPrefixLengthImplEPKhmS2_                            [
 
 
 # ----------------------------------------------------------------------------
+# Bun WebP kernels (src/jsc/bindings/highway_webp_decoder.cpp, highway_webp_encoder.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (14 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX211WebpAnalyzeEPKNS_4webp10MacroblockEPKNS1_5EdgesES7_PA2_NS1_10HistogramsE  [AVX, AVX2]
+_ZN3bun6N_AVX211WebpConvertEPKPKhPKNS_4webp12LinearColorsEPKNS5_10GammaTableEPNS5_10MacroblockE  [AVX, AVX2]
+_ZN3bun6N_AVX212WebpUpsampleEPKhS2_PhS3_m                                      [AVX, AVX2]
+_ZN3bun6N_AVX213WebpYuvToRgbaEPKhS2_S2_S2_Phm                                  [AVX, AVX2]
+_ZN3bun6N_AVX214WebpInverseDctEPsj                                             [AVX, AVX2]
+_ZN3bun6N_AVX216WebpFilterSimplyEPhmPKNS_18WebpFilterStrengthEmb               [AVX, AVX2]
+_ZN3bun6N_AVX216WebpTryLumaModesEPKNS_4webp10MacroblockEPKNS1_5EdgesEmhPKNS1_9QuantizerESA_PNS1_10LumaSourceEPNS1_14LumaCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX218WebpFilterNormallyEPhmS1_S1_mPKNS_18WebpFilterStrengthEmb      [AVX, AVX2]
+_ZN3bun6N_AVX218WebpTryChromaModesEPKNS_4webp10MacroblockEPKNS1_5EdgesEmPKNS1_9QuantizerEPA8_KsPNS1_16ChromaCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX218WebpUndoCrossColorEPhmPKhj                                     [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX218WebpUndoPredictionEPhPKhmS3_j                                  [AVX, AVX2, BMI2]
+_ZN3bun6N_AVX220WebpTryDiagonalModesEmmhmPKNS_4webp10LumaSourceEPKNS1_9QuantizerEiPNS1_18SubblockCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX220WebpTryStraightModesEmmhmPKNS_4webp10LumaSourceEPKNS1_9QuantizerEiPNS1_18SubblockCandidatesE  [AVX, AVX2]
+_ZN3bun6N_AVX224WebpReconstructSubblocksEPKhS2_S2_S2_PKsPh                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun4xxh36N_AVX28HashLongEPKhmS3_                                          [AVX, AVX2, BMI2]

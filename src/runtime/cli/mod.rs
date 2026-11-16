@@ -1236,7 +1236,7 @@ pub(crate) mod command {
                 }
 
                 // Store the full argv including user arguments
-                let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
+                let full_argv: &'static [&'static bun_core::ZStr] = argv_list.leak();
                 let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
                 // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
@@ -1250,17 +1250,18 @@ pub(crate) mod command {
                 // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                 // This prevents user arguments like --version/--help from being intercepted
                 // by Bun's argument parser (they should be passed through to user code).
-                // SAFETY: single-threaded startup; `full_argv` is process-static.
-                unsafe {
-                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                }
+                static VIEWS: bun_core::Once<[&[&bun_core::ZStr]; 2]> = bun_core::Once::new();
+                let [options_argv, full_argv] = VIEWS.get_or_init(|| {
+                    let options_len = (1 + num_parsed_options).min(full_argv.len());
+                    [&full_argv[..options_len], full_argv]
+                });
+                bun::set_argv(options_argv);
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
 
                 // Restore full argv so passthrough calculation works correctly
-                // SAFETY: single-threaded startup.
-                unsafe { bun::set_argv(full_argv) };
+                bun::set_argv(full_argv);
 
                 break 'brk result;
             }

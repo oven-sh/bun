@@ -1342,7 +1342,7 @@ impl QuicEndpoint {
             on_drain,
             on_close,
             on_recv_error,
-            cfg.host.as_ptr().cast(),
+            bun_core::ZStr::from_slice_with_nul(&cfg.host),
             cfg.port,
             0,
             Some(&mut err),

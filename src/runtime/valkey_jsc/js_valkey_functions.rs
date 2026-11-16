@@ -1819,16 +1819,12 @@ impl JSValkeyClient {
         let cx = cx.js_thread();
         let global = cx.global();
         // The duplicate is the calling script's, whoever made the original.
-        let new_client_ptr = self.clone_without_connecting(&cx)?;
-        // SAFETY: clone_without_connecting returns a freshly allocated, leaked
-        // JSValkeyClient (heap::alloc); valid for the rest of this scope.
-        let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
-
-        let new_client_js = js::to_js(new_client_ptr, global);
+        let new_client = js::wrap(self.clone_without_connecting(&cx)?, global);
+        let new_client_js = new_client.to_js();
         new_client.this_value.set(JsRef::init_weak(new_client_js));
         new_client
             ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client)?);
+            .set(SubscriptionCtx::init(&new_client)?);
         // If the original client is already connected and not manually closed, start connecting the new client.
         if self.client.get().status == valkey::Status::Connected
             && !self.client.get().flags.is_manually_closed

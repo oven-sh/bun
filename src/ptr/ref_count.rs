@@ -261,7 +261,7 @@ pub struct ThreadSafeRefCount<T: ThreadSafeRefCounted> {
     raw_count: AtomicU32,
     #[cfg(debug_assertions)]
     debug: DebugData,
-    _phantom: PhantomData<*const T>,
+    _phantom: PhantomData<fn() -> T>,
 }
 
 impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
@@ -507,10 +507,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// starts at 1).
     #[inline]
     pub fn new(value: T) -> Self {
-        let ptr = bun_core::heap::into_raw_nn(Box::new(value));
-        // SAFETY: freshly boxed, so live.
-        debug_assert!(unsafe { T::rc_has_one_ref(ptr.as_ptr()) });
-        Self(ptr)
+        Box::new(value).into()
     }
 
     /// Take a new ref on `*raw_ptr`.
@@ -597,6 +594,25 @@ impl<T: AnyRefCounted> RefPtr<T> {
     #[inline]
     pub fn as_non_null(&self) -> NonNull<T> {
         self.0
+    }
+}
+
+/// As [`RefPtr::new`], for a value that is on the heap already.
+impl<T: AnyRefCounted> From<Box<T>> for RefPtr<T> {
+    #[inline]
+    fn from(value: Box<T>) -> Self {
+        crate::AliasableBox::from(value).into()
+    }
+}
+
+/// Pointers into the value stay valid.
+impl<T: AnyRefCounted> From<crate::AliasableBox<T>> for RefPtr<T> {
+    #[inline]
+    fn from(value: crate::AliasableBox<T>) -> Self {
+        let ptr = value.into_non_null();
+        // SAFETY: it was owned up to here, so it is live.
+        debug_assert!(unsafe { T::rc_has_one_ref(ptr.as_ptr()) });
+        Self(ptr)
     }
 }
 

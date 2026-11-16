@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createUpdateQueue } from "../../../src/runtime/bake/update-queue";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -1008,7 +1008,14 @@ devTest("CSS-only completion waits for an asynchronous JavaScript update", {
       await client.expectMessage("holding JS");
       writeFileSync(dev.join("style.css"), "body { color: blue; }");
       // The style proves the CSS-only payload arrived while the JS body was still waiting.
-      await client.style("body").color.expect.toBe("#00f");
+      const deadline = Date.now() + 2_000 * WAIT_MULTIPLIER;
+      let color: string | undefined;
+      do {
+        color = await client.style("body").color;
+        if (color === "#00f") break;
+        await new Promise(setImmediate);
+      } while (Date.now() < deadline);
+      expect(color).toBe("#00f");
       held =
         await client.js`({ value: globalThis.value, lifecycle: globalThis.lifecycle, completed: document.querySelector('h1').textContent })`;
     } finally {
@@ -1017,6 +1024,83 @@ devTest("CSS-only completion waits for an asynchronous JavaScript update", {
     }
     await client.expectElemText("h1", "2");
     expect(held).toEqual({ value: "before", lifecycle: ["before"], completed: "0" });
+    expect(await client.js`globalThis.lifecycle`).toEqual(["before", "after:after", "after:after"]);
+    await client.style("body").color.expect.toBe("#00f");
+  },
+});
+
+devTest("CSS-only completion waits for an earlier script to execute", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], styles: ["style.css"], body: "<h1>0</h1>" }),
+    "index.ts": `
+      import './value.ts';
+      globalThis.lifecycle = [];
+      let completed = 0;
+      import.meta.hot.on('bun:beforeUpdate', () => { globalThis.lifecycle.push('before'); });
+      import.meta.hot.on('bun:afterUpdate', () => {
+        globalThis.lifecycle.push('after:' + globalThis.value);
+        document.querySelector('h1').textContent = String(++completed);
+      });
+      console.log('ready');
+    `,
+    "value.ts": `globalThis.value = 'before'; import.meta.hot.accept();`,
+    "style.css": "body { color: red; }",
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("ready");
+    await client.style("body").color.expect.toBe("red");
+    await client.js`
+      const appendChild = document.head.appendChild;
+      const descriptor = Object.getOwnPropertyDescriptor(document.head, 'appendChild');
+      let heldScript;
+      Object.defineProperty(document.head, 'appendChild', {
+        configurable: true,
+        writable: true,
+        value: function (node) {
+          if (!heldScript && typeof node.src === 'string' && node.src.startsWith('blob:')) {
+            heldScript = node;
+            console.log('holding script');
+            return node;
+          }
+          return appendChild.call(this, node);
+        },
+      });
+      globalThis.releaseScript = () => {
+        if (descriptor) Object.defineProperty(document.head, 'appendChild', descriptor);
+        else delete document.head.appendChild;
+        if (heldScript) {
+          const script = heldScript;
+          heldScript = null;
+          appendChild.call(document.head, script);
+        }
+      };
+    `;
+    const batch = await dev.batchChanges({ errors: null });
+    await dev.write("value.ts", `globalThis.value = 'after'; import.meta.hot.accept();`);
+    const applied = batch![Symbol.asyncDispose]();
+    void applied.catch(() => {});
+    let held;
+    try {
+      await client.expectMessage("holding script");
+      writeFileSync(dev.join("style.css"), "body { color: blue; }");
+      // The style proves the later CSS payload arrived before the earlier script executed.
+      const deadline = Date.now() + 2_000 * WAIT_MULTIPLIER;
+      let color: string | undefined;
+      do {
+        color = await client.style("body").color;
+        if (color === "#00f") break;
+        await new Promise(setImmediate);
+      } while (Date.now() < deadline);
+      expect(color).toBe("#00f");
+      held =
+        await client.js`({ value: globalThis.value, lifecycle: globalThis.lifecycle, completed: document.querySelector('h1').textContent })`;
+    } finally {
+      await client.js`globalThis.releaseScript()`;
+      await applied;
+    }
+    await client.expectElemText("h1", "2");
+    expect(held).toEqual({ value: "before", lifecycle: [], completed: "0" });
     expect(await client.js`globalThis.lifecycle`).toEqual(["before", "after:after", "after:after"]);
     await client.style("body").color.expect.toBe("#00f");
   },

@@ -18,8 +18,10 @@ use crate::vec;
 const MAX_COPY_LEN: usize = 4096;
 /// Short copies are made this many pixels at a time, whether or not that is too many.
 const COPY_STEP: usize = 8;
-/// What is short. A call of `memcpy()` takes longer, above all musl's.
+/// What is short. Up to `MAX_CHUNKED_LEN` copies are made this many pixels at a time.
 const MAX_STEPPED_LEN: usize = 4 * COPY_STEP;
+/// For so few a call of `memcpy()` does not pay, least of all musl's.
+const MAX_CHUNKED_LEN: usize = 4 * MAX_STEPPED_LEN;
 /// Among so few it does not pay to look for steps that are all like the pixel before.
 const FEW_STEPS: usize = 8;
 /// How many pixels are read before the image grows again.
@@ -334,15 +336,17 @@ fn copy<P: Pixel>(
         let reach = reach.and_then(<[_]>::split_first_mut);
         return reach.map(|(first, rest)| rest.as_chunks_mut().0.fill([*first; COPY_STEP]));
     }
-    let copied = if distance == 2 {
+    if distance == 2 {
         cold_path();
-        let reach = pixels.get_mut(at - 2..at + count.next_multiple_of(COPY_STEP));
-        let reach = reach.and_then(<[_]>::split_first_chunk_mut);
-        reach.map(|(&mut [a, b], rest)| {
-            let steps = rest.as_chunks_mut::<COPY_STEP>().0;
-            steps.fill([a, b, a, b, a, b, a, b]);
-        })
-    } else if count <= MAX_STEPPED_LEN {
+        let reach = pixels.get_mut(at - 2..at + count.next_multiple_of(COPY_STEP))?;
+        let (&mut [a, b], rest) = reach.split_first_chunk_mut()?;
+        let steps = rest.as_chunks_mut::<COPY_STEP>().0;
+        steps.fill([a, b, a, b, a, b, a, b]);
+        // The same pair again leaves the cache as it is.
+        let done = pixels.get(..at + count);
+        return done.map(|done| cache.remember_last(done, count % 2));
+    }
+    let copied = if count <= MAX_STEPPED_LEN {
         let (mut to, mut back) = (at, distance);
         loop {
             let copied = copy_step(pixels, to - back, to);
@@ -359,9 +363,10 @@ fn copy<P: Pixel>(
         let reach = pixels.get_mut(at - distance..at + count + COPY_STEP);
         reach.map(|reach| repeat(reach, distance))
     };
-    // What repeats counts the last time.
+    // The last `distance` pixels again leave the cache as it is, and what repeats counts the last time.
+    let fresh = count.checked_sub(distance).unwrap_or(count).min(distance);
     let done = copied.and_then(|()| pixels.get(..at + count));
-    done.map(|done| cache.remember_last(done, count.min(distance)))
+    done.map(|done| cache.remember_last(done, fresh))
 }
 
 #[inline(always)]
@@ -387,6 +392,11 @@ fn repeat<P: Pixel>(pixels: &mut [P], period: usize) {
             for from in (0..len).step_by(COPY_STEP) {
                 known(copy_step(pixels, from, done + from));
             }
+        } else if len <= MAX_CHUNKED_LEN {
+            for start in (0..len).step_by(MAX_STEPPED_LEN) {
+                let start = start.min(len - MAX_STEPPED_LEN);
+                to.set_chunk::<MAX_STEPPED_LEN>(start, from.chunk(start));
+            }
         } else {
             let pieces = from.part(..len).chunks(piece).zip(to.chunks_mut(piece));
             pieces.for_each(|(from, to)| slice::copy(from, to));
@@ -398,6 +408,7 @@ fn repeat<P: Pixel>(pixels: &mut [P], period: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slice::checked;
 
     /// No cache, tiles of 4x4, and one symbol in each code.
     const ZEROS: [u8; 6] = [0x42, 0x44, 0x44, 0x44, 0x44, 0x04];
@@ -432,21 +443,48 @@ mod tests {
             let mut pixels = Vec::new();
             pixels.extend((0..at).map(pixel));
             pixels.resize(at + count + 2 * COPY_STEP, spare);
-            let copied = copy(&mut pixels, at, distance, count, &mut NoCache);
+            let copied = checked(|| Ok(copy(&mut pixels, at, distance, count, &mut NoCache)));
             let (copies, rest) = pixels.part(at..).split_at(count);
             let expected = (0..count).map(|i| pixel(START + i % distance));
             assert!(
-                copied.is_some()
+                copied == Ok(Some(()))
                     && expected.eq(copies.iter().copied())
                     && rest.ends_with(&[spare; COPY_STEP]),
                 "{count} from {distance} back"
             );
         }
-        let lens = || (1..70).chain([511, 513, 2047, 2049, MAX_COPY_LEN]);
+        let lens = || (1..70).chain([96, 97, 128, 129, 511, 513, 2047, 2049, MAX_COPY_LEN]);
         for (distance, count) in lens().flat_map(|it| lens().map(move |other| (it, other))) {
             check::<u8>(distance, count);
             check::<Rgba>(distance, count);
         }
+    }
+
+    #[test]
+    fn a_copy_leaves_the_cache_as_its_pixels_one_by_one_do() -> Result<()> {
+        const AT: usize = 200;
+        let lens = || (1..40).chain([63, 64, 65, 71, 72, 73, 100, 199, AT]);
+        for (bits, run) in [(1, 1), (1, 9), (3, 1), (3, 20), (MAX_CACHE_BITS, 1)] {
+            let cache = |pixels: &[Rgba]| -> Result<_> {
+                let (colors, spare_bits) = (vec::array([0; 4])?, MAX_CACHE_BITS - bits);
+                let mut cache = ColorCache { colors, spare_bits };
+                pixels.iter().for_each(|&it| cache.remember(it));
+                Ok(cache)
+            };
+            for (distance, count) in lens().flat_map(|it| lens().map(move |other| (it, other))) {
+                let mut pixels = Vec::new();
+                pixels.extend((0..AT).map(|i| [1, ((i / run).pow(2) % 61) as u8, 2, 3]));
+                pixels.resize(AT + count + COPY_STEP, [0; 4]);
+                let mut actual = cache(pixels.part(..AT))?;
+                let copied = checked(|| Ok(copy(&mut pixels, AT, distance, count, &mut actual)));
+                let expected = cache(pixels.part(..AT + count))?;
+                assert!(
+                    copied == Ok(Some(())) && actual.colors == expected.colors,
+                    "{count} from {distance} back"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]

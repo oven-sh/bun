@@ -263,6 +263,53 @@ fn f(bytes: &[[AtomicU64; 1]; 1]) {
 }
 ```
 
+A masked load of bytes that are not initialized:
+
+```rust,compile_fail,E0277
+# use bun_simd_trusted::shared::*;
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[std::mem::MaybeUninit<u8>]) {
+    load64_masked::<true>(bytes);
+}
+```
+
+A masked store to plain bytes:
+
+```rust,compile_fail,E0277
+# use bun_simd_trusted::shared::*;
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[u8]) {
+    store64_masked::<true>(Default::default(), bytes);
+}
+```
+
+To what can only be read:
+
+```rust,compile_fail,E0277
+# use bun_simd_trusted::{SharedU8, shared::*};
+#[target_feature(enable = "avx512bw")]
+fn f(bytes: &[SharedU8]) {
+    store64_masked::<true>(Default::default(), bytes);
+}
+```
+
+To what does not take any byte:
+
+```rust,compile_fail,E0277
+# use bun_simd_trusted::shared::*;
+#[target_feature(enable = "avx512bw")]
+fn f(cells: &[std::cell::Cell<bool>]) {
+    store64_masked::<true>(Default::default(), cells);
+}
+```
+
+To a type of one's own:
+
+```rust,compile_fail,E0603
+struct Flag(bool);
+impl bun_simd_trusted::shared::sealed::Writable for Flag {}
+```
+
 ## `Out`
 
 A vector that moves while its spare capacity is lent:
@@ -321,6 +368,15 @@ The same, with another type of `Out`:
 ```rust,compile_fail,E0277
 let mut bytes = [0u8; 1];
 bun_simd::Out::<std::mem::MaybeUninit<u8>>::from(&mut bytes[..]);
+```
+
+Bytes that may be no value of the type:
+
+```rust,compile_fail,E0277
+#[target_feature(enable = "avx512bw")]
+fn f(out: bun_simd::Out<'_, bool>) {
+    out.fill_from_last(Default::default());
+}
 ```
 
 A reference that lives less long than the memory promises:

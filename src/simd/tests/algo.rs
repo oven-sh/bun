@@ -651,6 +651,12 @@ fn each_loop_once() {
 }
 
 #[test]
+fn shared_pair() {
+    let pair = [1, 2].map(AtomicU8::new);
+    assert_eq!(SharedU8::from_slice(&pair).as_chunks().0[0].get(), 0x0201);
+}
+
+#[test]
 #[should_panic]
 #[cfg_attr(miri, ignore = "compares only lengths")]
 fn append_a_whole_vector() {
@@ -689,6 +695,45 @@ fn readers_see_only_old_and_new_values() {
             });
         }
     });
+}
+
+#[test]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+fn order_of_accesses_with_one_last_lane() {
+    #[inline(never)]
+    #[target_feature(enable = "avx512bw")]
+    fn masked_load(stores: bool, keeps: bool, kept: &mut u8) {
+        let mut bytes = black_box([1u8; 16]);
+        let loaded = bun_simd_trusted::shared::load64_masked::<true>(&bytes[..1]);
+        if stores {
+            bytes[0] = 0;
+        }
+        if keeps {
+            *kept = loaded[63];
+        }
+        black_box(&mut bytes);
+    }
+    #[inline(never)]
+    #[target_feature(enable = "avx512bw")]
+    fn masked_store(stores: bool, keeps: bool, kept: &mut u8) {
+        let mut bytes = black_box([1u8; 16]);
+        let loaded = bytes[0];
+        if stores {
+            Out::from(&mut bytes[..1]).fill_from_last(Default::default());
+        }
+        if keeps {
+            *kept = loaded;
+        }
+        black_box(&mut bytes);
+    }
+    type Run = fn(bool, bool, &mut u8);
+    let load = bun_simd::if_supported!(["avx512bw"], Run, masked_load);
+    let store = bun_simd::if_supported!(["avx512bw"], Run, masked_store);
+    for run in load.into_iter().chain(store) {
+        let mut kept = 0;
+        black_box(run)(true, true, &mut kept);
+        assert_eq!(kept, 1);
+    }
 }
 
 #[test]

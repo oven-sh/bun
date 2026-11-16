@@ -3,14 +3,14 @@ use core::mem::MaybeUninit;
 
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::Loc;
-use bun_collections::{HashMap, VecExt};
+use bun_collections::HashMap;
 use bun_core::strings;
 
 use crate::bundled_ast::{Flags as AstFlags, NamedImports};
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{
-    AstArena, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
-    PartSymbolUseMap, Ref, S, Stmt,
+    AstArena, AstVec, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
+    PartSymbolUseMap, Ref, S, Stmt, StoreStr,
 };
 
 use crate::options::Format;
@@ -156,10 +156,9 @@ impl LinkerContext<'_, '_> {
             strings::sort_asc(aliases.as_mut_slice());
         }
         let export_aliases = aliases.into_bump_slice();
-        *sorted_aliases = bun_alloc::AstAlloc::vec_from_iter(
-            export_aliases
-                .iter()
-                .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
+        *sorted_aliases = AstVec::from_iter_in(
+            export_aliases.iter().map(|alias| StoreStr::new(alias)),
+            arena,
         );
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
@@ -220,8 +219,7 @@ impl LinkerContext<'_, '_> {
                     .unwrap();
                 // The parser drops the entry if a replaced macro call was the last plain use.
                 let use_: &mut SymbolUse = symbol_uses
-                    .get_or_put_value(*ref_, SymbolUse::default())
-                    .expect("OOM")
+                    .get_or_put_value(arena, *ref_, SymbolUse::default())
                     .value_ptr;
 
                 // Rare path: this import is a TypeScript enum
@@ -233,7 +231,7 @@ impl LinkerContext<'_, '_> {
                                 let mut found_non_inlined_enum = false;
 
                                 for (name, prop_use) in properties.iter() {
-                                    if enum_data.get(name).is_none() {
+                                    if enum_data.get().get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
                                     }
@@ -285,9 +283,9 @@ impl LinkerContext<'_, '_> {
                 // hoisted per-file maps so the column pointer math (and the
                 // `&LinkerContext` deref) is out of the inner loop.
                 let other_parts: &[u32] = if let Some(overlay) = tlsp_overlay.get(&ref_) {
-                    overlay.as_slice()
+                    overlay.slice()
                 } else if let Some(list) = tlsp_ast.get(&ref_) {
-                    list.as_slice()
+                    list.slice()
                 } else {
                     &[]
                 };
@@ -298,18 +296,20 @@ impl LinkerContext<'_, '_> {
                         .expect("unreachable");
                     if !local.found_existing || *local.value_ptr != part_index_u32 {
                         *local.value_ptr = part_index_u32;
-                        // note: if we crash on append, it is due to threadlocal heaps in mimalloc
-                        dependencies.push(Dependency {
-                            source_index: bun_ast::Index::source(source_index as usize),
-                            part_index: other_part_index,
-                        });
+                        dependencies.push(
+                            arena,
+                            Dependency {
+                                source_index: bun_ast::Index::source(source_index as usize),
+                                part_index: other_part_index,
+                            },
+                        );
                     }
                 }
 
                 // Also map from imports to parts that use them
                 if !named_imports_is_empty {
-                    if let Some(existing) = named_imports.get_ptr_mut(&ref_) {
-                        existing.local_parts_with_uses.push(part_index_u32);
+                    if let Some(existing) = named_imports.get_mut(&ref_) {
+                        existing.local_parts_with_uses.push(arena, part_index_u32);
                     }
                 }
             }
@@ -336,20 +336,6 @@ impl LinkerContext<'_, '_> {
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
     ) {
-        // `Stmt.Disabler`/`Expr.Disabler` are debug-only guards
-        // around the global thread-local block store. `Disabler::scope()`
-        // calls `disable()` and re-`enable()`s on drop. In debug builds the
-        // disabler only fires when `Store::append` falls through to that
-        // global slab — i.e. when no `ASTMemoryAllocator` scope is installed.
-        // Bundler workers always install one (`Worker::get` pushes
-        // `ast_memory_store`), so appends in this step — including
-        // `Stmt::assign` below — route to the worker allocator and bypass the
-        // check entirely. The guard
-        // exists to catch accidental global-slab use if this code ever runs
-        // without that allocator installed.
-        let _stmt_guard = bun_ast::stmt::Disabler::scope();
-        let _expr_guard = bun_ast::expr::Disabler::scope();
-
         // 1 property per export
         let mut properties =
             bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
@@ -366,9 +352,7 @@ impl LinkerContext<'_, '_> {
         );
 
         let mut ns_export_symbol_uses = PartSymbolUseMap::default();
-        ns_export_symbol_uses
-            .ensure_total_capacity(export_aliases.len())
-            .expect("OOM");
+        ns_export_symbol_uses.ensure_total_capacity(arena, export_aliases.len());
 
         let initial_flags = *meta_flags;
         let needs_exports_variable = initial_flags.needs_exports_variable;
@@ -406,7 +390,8 @@ impl LinkerContext<'_, '_> {
         }
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
-        let mut ns_export_dependencies = bun_ast::DependencyList::init_capacity(re_exports_count);
+        let mut ns_export_dependencies =
+            bun_ast::DependencyList::with_capacity_in(re_exports_count, arena);
         for &alias in export_aliases {
             let exp = resolved_exports.get(alias).unwrap();
             let mut exp_data = exp.data;
@@ -420,7 +405,7 @@ impl LinkerContext<'_, '_> {
             {
                 exp_data.import_ref = import_data.data.import_ref;
                 exp_data.source_index = import_data.data.source_index;
-                ns_export_dependencies.append_slice(import_data.re_exports.slice());
+                ns_export_dependencies.extend_from_slice(arena, import_data.re_exports.slice());
             }
 
             // Exports of imports need EImportIdentifier in case they need to be re-
@@ -483,6 +468,7 @@ impl LinkerContext<'_, '_> {
                         arena,
                         S::Return {
                             value: Some(Expr::assign(
+                                arena,
                                 Expr::init_identifier(exp_data.import_ref, loc),
                                 Expr::init_identifier(lifted_setter_param, loc),
                             )),
@@ -518,20 +504,19 @@ impl LinkerContext<'_, '_> {
                     ..Default::default()
                 });
             }
-            ns_export_symbol_uses.put_assume_capacity(exp_data.import_ref, SymbolUse::unscoped(1));
+            ns_export_symbol_uses.put(arena, exp_data.import_ref, SymbolUse::unscoped(1));
 
             // Make sure the part that declares the export is included
             let parts =
                 self.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
-            ns_export_dependencies.ensure_unused_capacity(parts.len());
-            for &part_id in parts {
-                // Use a non-local dependency since this is likely from a different
-                // file if it came in through an export star
-                ns_export_dependencies.append_assume_capacity(Dependency {
+            // Non-local: what came in through an export star is likely from another file.
+            ns_export_dependencies.extend(
+                arena,
+                parts.iter().map(|&part_id| Dependency {
                     source_index: bun_ast::Index::source(exp_data.source_index.get() as usize),
                     part_index: part_id,
-                });
-            }
+                }),
+            );
         }
 
         let mut declared_symbols = DeclaredSymbolList::default();
@@ -555,24 +540,28 @@ impl LinkerContext<'_, '_> {
             emit_export_stmt!(Stmt::allocate(
                 arena,
                 S::Local {
-                    decls: G::DeclList::from_slice(&[G::Decl {
-                        binding: Binding::alloc(
-                            arena,
-                            bun_ast::b::Identifier { r#ref: exports_ref },
-                            loc,
-                        ),
-                        value: Some(Expr::allocate(arena, E::Object::default(), loc)),
-                    }]),
+                    decls: G::DeclList::from_slice_in(
+                        &[G::Decl {
+                            binding: Binding::alloc(
+                                arena,
+                                bun_ast::b::Identifier { r#ref: exports_ref },
+                                loc,
+                            ),
+                            value: Some(Expr::allocate(arena, E::Object::default(), loc)),
+                        }],
+                        arena,
+                    ),
                     ..Default::default()
                 },
                 loc,
             ));
-            declared_symbols
-                .append(DeclaredSymbol {
+            declared_symbols.append(
+                arena,
+                DeclaredSymbol {
                     ref_: exports_ref,
                     is_top_level: true,
-                })
-                .expect("unreachable");
+                },
+            );
         }
 
         // "__export(exports, { foo: () => foo })", or for a lifted CommonJS module
@@ -585,31 +574,39 @@ impl LinkerContext<'_, '_> {
             } else {
                 self.export_runtime_function()
             });
-            let mut args = bun_ast::ExprNodeList::init_capacity(2 + usize::from(is_lifted));
-            args.push(Expr::init_identifier(exports_ref, loc));
-            args.push(Expr::allocate(
+            let mut args =
+                bun_ast::ExprNodeList::with_capacity_in(2 + usize::from(is_lifted), arena);
+            args.push(arena, Expr::init_identifier(exports_ref, loc));
+            args.push(
                 arena,
-                E::Object {
-                    properties: G::PropertyList::from_bump_vec(properties),
-                    ..Default::default()
-                },
-                loc,
-            ));
-            if is_lifted {
-                args.push(Expr::allocate(
+                Expr::allocate(
                     arena,
                     E::Object {
-                        properties: G::PropertyList::from_bump_vec(setter_properties),
+                        properties: G::PropertyList::from_slice_in(&properties, arena),
                         ..Default::default()
                     },
                     loc,
-                ));
-                declared_symbols
-                    .append(DeclaredSymbol {
+                ),
+            );
+            if is_lifted {
+                args.push(
+                    arena,
+                    Expr::allocate(
+                        arena,
+                        E::Object {
+                            properties: G::PropertyList::from_slice_in(&setter_properties, arena),
+                            ..Default::default()
+                        },
+                        loc,
+                    ),
+                );
+                declared_symbols.append(
+                    arena,
+                    DeclaredSymbol {
                         ref_: lifted_setter_param,
                         is_top_level: true,
-                    })
-                    .expect("unreachable");
+                    },
+                );
             }
             emit_export_stmt!(Stmt::allocate(
                 arena,
@@ -629,13 +626,13 @@ impl LinkerContext<'_, '_> {
             ));
             // Make sure this file depends on the "__export" symbol
             let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
-            ns_export_dependencies.ensure_unused_capacity(parts.len());
-            for &part_index in parts {
-                ns_export_dependencies.append_assume_capacity(Dependency {
+            ns_export_dependencies.extend(
+                arena,
+                parts.iter().map(|&part_index| Dependency {
                     source_index: bun_ast::Index::RUNTIME,
                     part_index,
-                });
-            }
+                }),
+            );
 
             // Make sure the CommonJS closure, if there is one, includes "exports"
             ast_flags.insert(AstFlags::USES_EXPORTS_REF);
@@ -651,6 +648,7 @@ impl LinkerContext<'_, '_> {
         if force_include_exports_for_entry_point {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(
+                arena,
                 Expr::allocate(
                     arena,
                     E::Dot {
@@ -665,10 +663,10 @@ impl LinkerContext<'_, '_> {
                     arena,
                     E::Call {
                         target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
-                        args: bun_ast::ExprNodeList::from_slice(&[Expr::init_identifier(
-                            exports_ref,
-                            Loc::EMPTY,
-                        )]),
+                        args: bun_ast::ExprNodeList::from_slice_in(
+                            &[Expr::init_identifier(exports_ref, Loc::EMPTY)],
+                            arena,
+                        ),
                         ..Default::default()
                     },
                     Loc::EMPTY,

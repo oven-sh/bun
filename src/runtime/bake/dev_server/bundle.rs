@@ -352,11 +352,6 @@ impl DevServer {
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
         let ast_arena: Box<bun_ast::AstArena> = Box::default();
-        // Borrows `ast_arena`, so AST nodes built during bundle setup
-        // live exactly as long as the bundle. The `AstAllocState` is taken
-        // into `CurrentBundle` on success and recycled on error paths.
-        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(&ast_arena);
-        let ast_scope = ast_memory_store.enter();
 
         // The bundler stores
         // `Option<NonNull<AnyEventLoop>>`. Park the value in `ast_arena`
@@ -425,14 +420,9 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
-        // End the AST scope and move its state into the bundle so the small
-        // `AstVec`s built during setup stay alive until the bundle completes.
-        drop(ast_scope);
-        let ast_alloc_state = ast_memory_store.take_ast_state();
         self.current_bundle = Some(CurrentBundle {
             _bv2: bv2,
             _ast_arena: ast_arena,
-            _ast_alloc_state: ast_alloc_state,
             timer,
             start_data,
             had_reload_event,

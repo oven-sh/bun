@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use bun_alloc::Arena;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_ast::expr::Data;
-use bun_ast::{E, Expr, G, Loc, Log, StoreRef};
+use bun_ast::{AstArena, E, Expr, G, Loc, Log, StoreRef};
 use bun_core::strings::{is_valid_utf8, wtf8_to_utf16, wtf16_to_wtf8};
 use bun_sema::atom::{Atom, Interner, number_to_string};
 use bun_sema::hir_from_data::DataValue;
@@ -63,7 +63,7 @@ impl Step<'_> {
 struct ExprWriter<'e, 'a, S> {
     stack: Vec<Step<'e>>,
     open_nodes: ArenaHashSet<'a, *const ()>,
-    scratch: &'a Arena,
+    scratch: &'a AstArena,
     sink: &'a mut S,
 }
 
@@ -73,7 +73,7 @@ fn max_data_nodes() -> usize {
 
 pub(crate) fn write_expr(
     root: &Expr,
-    scratch: &Arena,
+    scratch: &AstArena,
     sink: &mut impl ValueSink,
 ) -> Result<(), NotData> {
     let mut writer = ExprWriter {
@@ -253,7 +253,7 @@ fn property_key(key: &Expr) -> Result<PropertyKey<'_>, NotData> {
 
 fn property_key_text<'t>(
     key: PropertyKey<'t>,
-    scratch: &'t Arena,
+    scratch: &'t AstArena,
 ) -> Result<Cow<'t, [u8]>, NotData> {
     let keyword: &[u8] = match key {
         PropertyKey::String(text) => return string_text(text, scratch),
@@ -265,7 +265,10 @@ fn property_key_text<'t>(
     Ok(Cow::Borrowed(keyword))
 }
 
-fn string_text<'t>(string: &'t E::EString, scratch: &'t Arena) -> Result<Cow<'t, [u8]>, NotData> {
+fn string_text<'t>(
+    string: &'t E::EString,
+    scratch: &'t AstArena,
+) -> Result<Cow<'t, [u8]>, NotData> {
     if string.is_utf16 {
         return Ok(Cow::Owned(wtf16_to_wtf8(string.slice16())));
     }
@@ -416,7 +419,7 @@ impl ValueSink for DataValueBuilder<'_, '_> {
 
 pub(crate) fn data_value_from_expr<'s>(
     root: &Expr,
-    scratch: &Arena,
+    scratch: &AstArena,
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> Result<&'s DataValue<'s>, NotData> {

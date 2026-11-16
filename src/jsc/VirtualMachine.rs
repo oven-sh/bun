@@ -3024,10 +3024,7 @@ impl VirtualMachine {
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
         let env_loader = opts.env_loader.map(NonNull::as_ptr);
-        let transpiler = Transpiler::init(arena, log, args, env_loader).inspect_err(|_| {
-            bun_ast::expr::data::Store::deinit();
-            bun_ast::stmt::data::Store::deinit();
-        })?;
+        let transpiler = Transpiler::init(arena, log, args, env_loader)?;
 
         let this = bun_core::heap::into_raw_nn(Box::<VirtualMachine>::new_uninit())
             .cast::<VirtualMachine>();

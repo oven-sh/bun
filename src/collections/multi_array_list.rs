@@ -539,16 +539,15 @@ impl<'a, F> ColMut<'a, F> {
 }
 
 /// Struct-of-arrays list. See module docs.
-pub struct MultiArrayList<T, A: Allocator = Global> {
+pub struct MultiArrayList<T> {
     bytes: NonNull<u8>,
     len: usize,
     capacity: usize,
-    alloc: A,
     _marker: PhantomData<T>,
 }
 
-// SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
-unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
+// SAFETY: `bytes` is uniquely owned.
+unsafe impl<T: Send> Send for MultiArrayList<T> {}
 
 /// The start of each column, for the operations on whole rows. It does not borrow its list.
 struct Columns<T> {
@@ -710,25 +709,18 @@ impl<T> Columns<T> {
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
 
-impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
+impl<T> Default for MultiArrayList<T> {
     fn default() -> Self {
-        Self::new_in(A::default())
-    }
-}
-
-impl<T, A: Allocator> MultiArrayList<T, A> {
-    /// Construct an empty list backed by `alloc`.
-    #[inline]
-    pub const fn new_in(alloc: A) -> Self {
         Self {
             bytes: Reflected::<T>::DANGLING,
             len: 0,
             capacity: 0,
-            alloc,
             _marker: PhantomData,
         }
     }
+}
 
+impl<T> MultiArrayList<T> {
     /// Number of elements.
     #[inline]
     pub fn len(&self) -> usize {
@@ -887,7 +879,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         debug_assert!(new_len <= self.capacity);
         debug_assert!(new_len <= self.len);
 
-        let new_bytes = match aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_len)) {
+        let new_bytes = match aligned_alloc::<T>(layout_for::<T>(new_len)) {
             Ok(p) => p,
             Err(_) => {
                 self.len = new_len;
@@ -953,7 +945,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// `new_capacity` must be greater or equal to `len`.
     pub fn set_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
         debug_assert!(new_capacity >= self.len);
-        let new_bytes = aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_capacity))?;
+        let new_bytes = aligned_alloc::<T>(layout_for::<T>(new_capacity))?;
         if self.len != 0 {
             let mut dst = Columns::<T>::from_raw(new_bytes, self.len, new_capacity);
             dst.copy_rows_from(0, &self.columns(), self.len);
@@ -965,11 +957,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Create a copy of this list with a new backing store.
-    pub fn clone(&self) -> Result<Self, AllocError>
-    where
-        A: Clone,
-    {
-        let mut result = Self::new_in(self.alloc.clone());
+    pub fn clone(&self) -> Result<Self, AllocError> {
+        let mut result = Self::default();
         result.ensure_total_capacity(self.len)?;
         result.len = self.len;
         let mut dst = result.columns();
@@ -1024,13 +1013,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// repeat call is a no-op. Safe: `bytes`/`capacity` are private and every
     /// constructor/mutator upholds the invariant that when
     /// `layout_for::<T>(self.capacity)` is `Some(layout)`, `self.bytes` is a
-    /// live allocation from `self.alloc` with exactly `layout` (see
+    /// live allocation from `Global` with exactly `layout` (see
     /// [`aligned_alloc`] / [`set_capacity`]).
     fn free_allocated_bytes(&mut self) {
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: type invariant above — `self.bytes` was allocated by
-            // `self.alloc` with exactly `layout`.
-            unsafe { self.alloc.deallocate(self.bytes, layout) };
+            // `Global` with exactly `layout`.
+            unsafe { Global.deallocate(self.bytes, layout) };
             // Re-establish the invariant immediately so an (accidental) second
             // call before the caller installs a new buffer is a no-op rather
             // than a double-free. Callers overwrite both fields right after.
@@ -1048,7 +1037,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 }
 
-impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
+impl<T> Drop for MultiArrayList<T> {
     fn drop(&mut self) {
         // Frees the slab only — no per-element destructors. This is
         // **intentionally preserved**:
@@ -1108,14 +1097,11 @@ fn layout_for<T>(capacity: usize) -> Option<Layout> {
     Some(Layout::from_size_align(n, Reflected::<T>::ALIGN).expect("MultiArrayList layout overflow"))
 }
 
-fn aligned_alloc<T, A: Allocator>(
-    alloc: &A,
-    layout: Option<Layout>,
-) -> Result<NonNull<u8>, AllocError> {
+fn aligned_alloc<T>(layout: Option<Layout>) -> Result<NonNull<u8>, AllocError> {
     let Some(layout) = layout else {
         return Ok(Reflected::<T>::DANGLING);
     };
-    alloc
+    Global
         .allocate(layout)
         .map(|p| p.cast::<u8>())
         .map_err(|_| AllocError)

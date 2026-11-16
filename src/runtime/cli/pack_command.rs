@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -2015,6 +2014,7 @@ pub(crate) fn pack(
             package_name,
             package_version,
             &mut root,
+            bump,
             &json.source,
             shasum,
             integrity,

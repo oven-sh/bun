@@ -3,7 +3,6 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData, Loc, StoreRef, StoreStr};
-use bun_collections::VecExt as _;
 use bun_core::fmt::for_terminal;
 use bun_core::{Global, Output, strings};
 use bun_semver::{self as Semver, SlicedString};
@@ -192,7 +191,7 @@ fn set_property(mut object: Expr, arena: &bun_ast::AstArena, key: &[u8], value: 
         .expect("infallible: caller checked object");
     match obj.as_property(key) {
         Some(q) => obj.properties.slice_mut()[q.i as usize].value = Some(value),
-        None => obj.append_property(estring(arena, key), value),
+        None => obj.append_property(arena, estring(arena, key), value),
     }
 }
 
@@ -212,7 +211,7 @@ fn object_property(
     let created = Expr::allocate(arena, E::Object::default(), Loc::EMPTY);
     match existing {
         Some(q) => obj.properties.slice_mut()[q.i as usize].value = Some(created),
-        None => obj.append_property(estring(arena, key), created),
+        None => obj.append_property(arena, estring(arena, key), created),
     }
     Some(created)
 }

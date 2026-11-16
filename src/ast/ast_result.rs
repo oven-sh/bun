@@ -4,10 +4,6 @@
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
 //! in `bun_options_types`) is gone now that those are canonical in `bun_ast`.
 
-use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::array_hash_map::{AutoContext, StringContext};
-use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
-
 use crate::runtime;
 use crate::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
@@ -16,9 +12,10 @@ use crate::{
 
 use crate::part::List as PartList;
 use crate::symbol::List as SymbolList;
+use crate::{AstArrayHashMap, AstBox, AstStringArrayHashMap, AstStringHashMap, AstVec, StoreRef};
 type ImportRecordList<'a> = crate::import_record::List<'a>;
 
-pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
+pub type TopLevelSymbolToParts = AstArrayHashMap<Ref, AstVec<u32>>;
 
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
@@ -63,7 +60,7 @@ pub struct Ast<'a> {
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList<'a>,
     pub module_scope: Scope,
-    pub char_freq: Option<bun_alloc::AstBox<CharFreq>>,
+    pub char_freq: Option<AstBox<CharFreq>>,
     pub scope_uses: ScopeUseList,
     pub exports_ref: Ref,
     pub module_ref: Ref,
@@ -138,7 +135,7 @@ impl<'a> Ast<'a> {
             require_ref: Ref::NONE,
             named_imports: Default::default(),
             named_exports: Default::default(),
-            export_star_import_records: AstAlloc::vec(),
+            export_star_import_records: AstVec::new(),
             dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
@@ -172,16 +169,9 @@ pub enum CommonJSExportValue {
     Identifier(Ref),
 }
 
-// `Ast` is held in arena-allocated structures whose `Drop` never runs (the
-// `BabyList` pattern — bulk-freed on `ASTMemoryAllocator` / `store_ast_alloc_heap`
-// reset). Any `Vec`/`Box` field that defaults to the global allocator therefore
-// leaks. The `AstAlloc` parameter routes the column vecs and per-key boxes
-// into the same thread-local AST `mi_heap` so they're reclaimed by
-// `mi_heap_destroy` alongside the AST nodes (same motivation as
-// `G::DeclList`/`PropertyList` and `Scope::members`).
-pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
+pub type CommonJSNamedExports = AstStringArrayHashMap<CommonJSNamedExport>;
 
-pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
+pub type NamedImports = AstArrayHashMap<Ref, NamedImport>;
 /// This file's symbol `symbol` (inner index) is referenced directly in the
 /// scope whose `Scope::visit_span` starts at `scope`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -213,6 +203,7 @@ impl ScopeUseSpan {
 /// enclosing one is never referenced beneath it. Filled only when bundling
 /// without identifier minification. References to unbound globals are left
 /// out (every scope avoids their names anyway).
+#[derive(Default)]
 pub struct ScopeUseList {
     /// `false`: nothing was recorded; every symbol must count as referenced
     /// everywhere.
@@ -224,16 +215,6 @@ pub struct ScopeUseList {
     /// temporaries and helpers (may be printed deeper than recorded) and
     /// `module`/`exports` (printed for one another): the span is the file.
     pub spans: AstVec<ScopeUseSpan>,
-}
-
-impl Default for ScopeUseList {
-    fn default() -> Self {
-        ScopeUseList {
-            tracked: false,
-            points: AstAlloc::vec(),
-            spans: AstAlloc::vec(),
-        }
-    }
 }
 
 /// One `import()` / `require()` whose every use the parser accounted for.
@@ -255,16 +236,14 @@ pub struct DynamicImportItem {
     pub alias: crate::StoreStr,
     pub namespace_ref: Ref,
 }
-pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
-pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
-pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
-pub type TsEnumsMap =
-    ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
+pub type DynamicImportAliases = AstArrayHashMap<u32, DynamicImportUse>;
+pub type NamedExports = AstStringArrayHashMap<NamedExport>;
+pub type ConstValuesMap = AstArrayHashMap<Ref, Expr>;
+pub type TsEnumsMap = AstArrayHashMap<Ref, StoreRef<AstStringHashMap<InlinedEnumValue>>>;
 /// `import X ...; X.name` where `X` resolved to a module namespace while
 /// linking: `X` -> `name` -> the generated import symbol bound to that export.
 /// The printer emits that symbol in place of the property access.
-pub type ImportMemberBindings =
-    ArrayHashMap<Ref, StringHashMap<Ref, AstAlloc>, AutoContext, AstAlloc>;
+pub type ImportMemberBindings = AstArrayHashMap<Ref, AstStringHashMap<Ref>>;
 
 impl<'a> Ast<'a> {
     pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {

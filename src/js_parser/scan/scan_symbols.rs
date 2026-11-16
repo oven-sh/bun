@@ -2,7 +2,7 @@ use crate::js_lexer;
 use crate::p::P;
 use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
-use bun_ast::{Ref, Scope};
+use bun_ast::{AstBox, Ref, Scope};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn find_symbol(
@@ -86,13 +86,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
                                 // Re-borrow ts_namespace mutably after &mut self.
                                 let ts_mut = &mut *ts_namespace;
-                                ts_mut.property_accesses.insert(name, new_ref);
+                                ts_mut.property_accesses.put(self.ast_arena, name, new_ref);
                                 self.symbols[new_ref.inner_index() as usize].namespace_alias =
-                                    Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
-                                        namespace_ref: arg_ref,
-                                        alias: js_ast::StoreStr::new(name),
-                                        ..Default::default()
-                                    }));
+                                    Some(AstBox::new_in(
+                                        js_ast::NamespaceAlias {
+                                            namespace_ref: arg_ref,
+                                            alias: js_ast::StoreStr::new(name),
+                                            ..Default::default()
+                                        },
+                                        self.ast_arena,
+                                    ));
                                 break 'brk new_ref;
                             }
                         }
@@ -114,8 +117,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
             // SAFETY: `name` is a slice of the source or the lexer's string table.
             let gpe = unsafe {
-                self.module_scope_mut()
-                    .get_or_put_member_with_hash(name, hash)
+                self.module_scope
+                    .get_or_put_member_with_hash(self.ast_arena, name, hash)
             };
 
             // I don't think this happens?
@@ -134,8 +137,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
             // SAFETY: as above.
             *unsafe {
-                self.module_scope_mut()
-                    .get_or_put_member_with_hash(name, hash)
+                self.module_scope
+                    .get_or_put_member_with_hash(self.ast_arena, name, hash)
             }
             .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
 

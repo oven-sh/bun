@@ -1,6 +1,4 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
-
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
@@ -11,7 +9,9 @@ use bun_ast::e::UnaryFlags;
 use bun_ast::expr::EFlags;
 use bun_ast::g::{Arg, PropertyKind};
 use bun_ast::op::Level;
-use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
+use bun_ast::{
+    self as js_ast, AstVec, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol,
+};
 
 type PResult<T> = crate::CrateResult<T>;
 
@@ -692,7 +692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let call_args = p.parse_call_args()?;
             (call_args.list, call_args.loc)
         } else {
-            (bun_alloc::AstAlloc::vec(), bun_ast::Loc::EMPTY)
+            (AstVec::new(), bun_ast::Loc::EMPTY)
         };
 
         Ok(p.new_expr(
@@ -779,7 +779,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // In this case, we can't distinguish between the two yet
             self_errors.merge_into(errors.unwrap());
         }
-        let items_list = ExprNodeList::from_arena_slice(&items);
+        let items_list = ExprNodeList::from_slice_in(&items, p.ast_arena);
         Ok(p.new_expr(
             E::Array {
                 items: items_list,
@@ -867,7 +867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
 
         // BumpVec → Vec via arena slice; see pfx_t_open_bracket.
-        let properties_list = G::PropertyList::from_bump_vec(properties);
+        let properties_list = G::PropertyList::from_slice_in(&properties, p.ast_arena);
         Ok(p.new_expr(
             E::Object {
                 properties: properties_list,

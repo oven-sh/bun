@@ -20,7 +20,6 @@ thiserror.workspace = true
 bun_alloc.workspace = true
 bun_bundler.workspace = true
 bun_clap.workspace = true
-bun_collections.workspace = true
 bun_core.workspace = true
 bun_analytics.workspace = true
 bun_install_types.workspace = true

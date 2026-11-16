@@ -12,7 +12,6 @@ use bun_ast::ast_result::CommonJSExportValue;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
-use bun_collections::VecExt;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -163,7 +162,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
         p.visit_expr(&mut data.value);
-        stmts.push(Stmt::assign(lhs, data.value));
+        stmts.push(Stmt::assign(p.ast_arena, lhs, data.value));
         p.record_usage(p.module_ref);
         Ok(())
     }
@@ -318,7 +317,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         let name = p.load_name_from_ref(data.namespace_ref);
 
         data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
-        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
+        p.current_scope
+            .generated
+            .push(p.ast_arena, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
         let items = data.items.slice_mut();
@@ -338,7 +339,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
                 let _name = p.load_name_from_ref(old_ref);
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name);
-                VecExt::append(&mut p.cur_scope().generated, ref_);
+                p.current_scope.generated.push(p.ast_arena, ref_);
                 p.record_declared_symbol(ref_);
                 // Compaction: items[..j] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `j` below.
@@ -354,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             for item in items.iter_mut() {
                 let _name = p.load_name_from_ref(item.name.ref_);
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name);
-                VecExt::append(&mut p.cur_scope().generated, ref_);
+                p.current_scope.generated.push(p.ast_arena, ref_);
                 p.record_declared_symbol(ref_);
                 item.name.ref_ = ref_;
             }
@@ -373,7 +374,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
         data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
-        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
+        p.current_scope
+            .generated
+            .push(p.ast_arena, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
         // "export * as ns from 'path'"
@@ -546,20 +549,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 if should_emit_temp_var {
                     // declare a temporary ref for this
                     let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                    VecExt::append(&mut p.cur_scope().generated, temp_id);
+                    p.current_scope.generated.push(p.ast_arena, temp_id);
 
                     let value_expr = *expr;
-                    stmts.push(Stmt::alloc(
+                    stmts.push(p.s(
                         S::Local {
                             kind: S::Kind::KConst,
-                            decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(
-                                    p.arena,
-                                    B::Identifier { r#ref: temp_id },
-                                    stmt.loc,
-                                ),
-                                value: Some(value_expr),
-                            }]),
+                            decls: G::DeclList::from_slice_in(
+                                &[G::Decl {
+                                    binding: Binding::alloc(
+                                        p.ast_arena,
+                                        B::Identifier { r#ref: temp_id },
+                                        stmt.loc,
+                                    ),
+                                    value: Some(value_expr),
+                                }],
+                                p.ast_arena,
+                            ),
                             ..Default::default()
                         },
                         stmt.loc,
@@ -583,10 +589,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 if p.current_scope().parent.is_none() && p.will_wrap_module_in_try_catch_for_using {
                     stmts.reserve(2);
 
-                    let mut decls = G::DeclList::init_capacity(1);
-                    VecExt::append(
-                        &mut decls,
-                        G::Decl {
+                    let decls = G::DeclList::from_slice_in(
+                        &[G::Decl {
                             binding: p.b(
                                 B::Identifier {
                                     r#ref: data.default_name.ref_,
@@ -594,7 +598,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 data.default_name.loc,
                             ),
                             value: Some(*expr),
-                        },
+                        }],
+                        p.ast_arena,
                     );
                     stmts.push(p.s(
                         S::Local {
@@ -766,21 +771,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         }
 
                                         let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                                        VecExt::append(&mut p.cur_scope().generated, temp_id);
+                                        p.current_scope.generated.push(p.ast_arena, temp_id);
                                         break 'brk temp_id;
                                     };
 
-                                    stmts.push(Stmt::alloc(
+                                    stmts.push(p.s(
                                         S::Local {
                                             kind: S::Kind::KConst,
-                                            decls: G::DeclList::from_slice(&[G::Decl {
-                                                binding: Binding::alloc(
-                                                    p.arena,
-                                                    B::Identifier { r#ref: ref_to_use },
-                                                    stmt.loc,
-                                                ),
-                                                value: Some(e),
-                                            }]),
+                                            decls: G::DeclList::from_slice_in(
+                                                &[G::Decl {
+                                                    binding: Binding::alloc(
+                                                        p.ast_arena,
+                                                        B::Identifier { r#ref: ref_to_use },
+                                                        stmt.loc,
+                                                    ),
+                                                    value: Some(e),
+                                                }],
+                                                p.ast_arena,
+                                            ),
                                             ..Default::default()
                                         },
                                         stmt.loc,
@@ -1008,6 +1016,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             stmts.push(*stmt);
             let func_name = data.func.name.expect("infallible: name checked");
             stmts.push(Stmt::assign(
+                p.ast_arena,
                 p.new_expr(
                     E::Dot {
                         target: Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
@@ -1048,10 +1057,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     S::Local {
                         kind: S::Kind::KVar,
                         is_export: true,
-                        decls: G::DeclList::from_slice(&[G::Decl {
-                            binding,
-                            value: Some(wrapped),
-                        }]),
+                        decls: G::DeclList::from_slice_in(
+                            &[G::Decl {
+                                binding,
+                                value: Some(wrapped),
+                            }],
+                            p.ast_arena,
+                        ),
                         ..Default::default()
                     },
                     stmt.loc,
@@ -1179,6 +1191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 .original_name
                 .slice();
             stmts.push(Stmt::assign(
+                p.ast_arena,
                 p.new_expr(
                     E::Dot {
                         target: Expr::init_identifier(
@@ -1253,11 +1266,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             .expect("infallible: in namespace"),
                     );
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    let lhs =
-                        Binding::to_expr(&d.binding, p.arena, p, Self::wrap_identifier_namespace);
+                    let lhs = Binding::to_expr(
+                        &d.binding,
+                        p.ast_arena,
+                        p,
+                        Self::wrap_identifier_namespace,
+                    );
                     stmts.push(p.s(
                         S::SExpr {
-                            value: Expr::assign(lhs, val),
+                            value: Expr::assign(p.ast_arena, lhs, val),
                             ..Default::default()
                         },
                         stmt.loc,
@@ -1563,25 +1580,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 last.decl_value = decl_value;
                                 let last_loc = last.loc_ref.loc;
 
-                                let mut decls = G::DeclList::init_capacity(1);
+                                let mut decls = G::DeclList::with_capacity_in(1, p.ast_arena);
                                 let ref_ = match bin.left.data {
                                     js_ast::ExprData::ECommonjsExportIdentifier(id) => id.ref_,
                                     _ => unreachable!(),
                                 };
-                                VecExt::append(
-                                    &mut decls,
+                                decls.push(
+                                    p.ast_arena,
                                     G::Decl {
                                         binding: p.b(B::Identifier { r#ref: ref_ }, bin.left.loc),
                                         value: Some(bin.right),
                                     },
                                 );
                                 // we have to ensure these are known to be top-level
-                                p.declared_symbols
-                                    .append(js_ast::DeclaredSymbol {
+                                p.declared_symbols.append(
+                                    p.ast_arena,
+                                    js_ast::DeclaredSymbol {
                                         ref_,
                                         is_top_level: true,
-                                    })
-                                    .expect("oom");
+                                    },
+                                );
                                 p.esm_export_keyword.loc = stmt.loc;
                                 p.esm_export_keyword.len = 5;
                                 p.had_commonjs_named_exports_this_visit = true;
@@ -1891,7 +1909,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     if data.no.is_none()
                         || !SideEffects::should_keep_stmt_in_dead_control_flow(
                             data.no.unwrap(),
-                            p.arena,
+                            p.ast_arena,
                         )
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1913,7 +1931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     }
                 } else {
                     // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.ast_arena) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
@@ -2053,6 +2071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             if let Some(val) = decl.value {
                                 let id_ref = b_id.r#ref;
                                 stmts.push(Stmt::assign(
+                                    p.ast_arena,
                                     Expr::init_identifier(id_ref, decl.binding.loc),
                                     val,
                                 ));
@@ -2121,13 +2140,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         .slice();
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
-                    let mut first_decls = G::DeclList::init_capacity(1);
-                    VecExt::append(
-                        &mut first_decls,
-                        G::Decl {
+                    let first_decls = G::DeclList::from_slice_in(
+                        &[G::Decl {
                             binding: p.b(B::Identifier { r#ref: id.r#ref }, loc),
                             value: Some(Expr::init_identifier(temp_ref, loc)),
-                        },
+                        }],
+                        p.ast_arena,
                     );
                     let first = p.s(
                         S::Local {
@@ -2369,7 +2387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
                 match underlying_value.data {
                     js_ast::ExprData::ENumber(num) => {
-                        exported_members.get_ptr_mut(name).unwrap().data =
+                        exported_members.get_mut(name).unwrap().data =
                             js_ast::ts::Data::EnumNumber(num.value());
 
                         p.ref_to_ts_namespace_member
@@ -2383,7 +2401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         // Inlined uses share this node's rope and folds append to ropes in place: store it flat.
                         str_.resolve_rope_if_needed(p.arena);
 
-                        exported_members.get_ptr_mut(name).unwrap().data =
+                        exported_members.get_mut(name).unwrap().data =
                             js_ast::ts::Data::EnumString(str_);
 
                         p.ref_to_ts_namespace_member
@@ -2404,8 +2422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
                 next_numeric_value = Some(num + 1.0);
 
-                exported_members.get_ptr_mut(name).unwrap().data =
-                    js_ast::ts::Data::EnumNumber(num);
+                exported_members.get_mut(name).unwrap().data = js_ast::ts::Data::EnumNumber(num);
 
                 p.ref_to_ts_namespace_member
                     .insert(value.ref_, js_ast::ts::Data::EnumNumber(num));
@@ -2425,6 +2442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let assign_target = if is_assign_target {
                 // "Enum.Name = value"
                 Expr::assign(
+                    p.ast_arena,
                     p.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(data.arg, value.loc),
@@ -2439,6 +2457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             } else {
                 // "Enum['Name'] = value"
                 Expr::assign(
+                    p.ast_arena,
                     p.new_expr(
                         E::Index {
                             target: Expr::init_identifier(data.arg, value.loc),
@@ -2460,6 +2479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             } else {
                 // "Enum[assignTarget] = 'Name'"
                 value_exprs.push(Expr::assign(
+                    p.ast_arena,
                     p.new_expr(
                         E::Index {
                             target: Expr::init_identifier(data.arg, value.loc),

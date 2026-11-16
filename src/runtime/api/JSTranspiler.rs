@@ -32,7 +32,6 @@ use bun_jsc::{
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
-use bun_collections::ArrayHashMapExt;
 use bun_core::{EncodedSlice, String as BunString, StringView};
 use bun_options_types::schema::api;
 
@@ -681,9 +680,6 @@ impl TransformTask {
         transpiler.set_log(&self.log);
         let macro_load_states = MacroLoadStates::default();
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         let source: &bun_ast::Source = arena.alloc(bun_ast::Source::init_path_string(
             name,
             self.input_code.slice(),
@@ -1060,10 +1056,7 @@ impl JSTranspiler {
         let arena = AstArena::new();
         let mut log = bun_ast::Log::init();
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
-        let Some(mut parse_result) =
+        let Some(parse_result) =
             self.get_parse_result(global, &arena, code, loader, MacroJSCtx::ZERO, &mut log)?
         else {
             return Err(global.throw(format_args!("Failed to parse")));
@@ -1077,7 +1070,7 @@ impl JSTranspiler {
             self.config.trim_unused_imports.unwrap_or(false),
         )?;
 
-        let named_exports_value = named_exports_to_js(global, &mut parse_result.ast.named_exports)?;
+        let named_exports_value = named_exports_to_js(global, &parse_result.ast.named_exports)?;
 
         JSValue::create_object2(
             global,
@@ -1169,9 +1162,6 @@ impl JSTranspiler {
             None
         };
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         let mut log = bun_ast::Log::with_level(self.log_level);
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
@@ -1214,19 +1204,15 @@ impl JSTranspiler {
 
 fn named_exports_to_js(
     global: &JSGlobalObject,
-    named_exports: &mut bun_ast::ast_result::NamedExports,
+    named_exports: &bun_ast::ast_result::NamedExports,
 ) -> JsResult<JSValue> {
     if named_exports.count() == 0 {
         return JSValue::create_empty_array(global, 0);
     }
 
-    // NOTE: `StringArrayHashMap` has no in-place sort, so collect the keys, sort them
+    // NOTE: `NamedExports` has no in-place sort, so collect the keys, sort them
     // lexicographically, then emit `BunString`s in that order.
-    let mut keys: Vec<&[u8]> = Vec::with_capacity(named_exports.count());
-    let mut named_exports_iter = named_exports.iterator();
-    while let Some(entry) = named_exports_iter.next() {
-        keys.push(&**entry.key_ptr);
-    }
+    let mut keys: Vec<&[u8]> = named_exports.keys().iter().map(|key| &**key).collect();
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
     let names: Vec<StringView<'_>> = keys.into_iter().map(StringView::from_bytes).collect();
@@ -1299,9 +1285,6 @@ impl JSTranspiler {
 
         let arena = AstArena::new();
         let log = bun_ast::Log::init();
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let options = &self.transpiler.get().options;

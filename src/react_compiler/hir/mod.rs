@@ -39,6 +39,7 @@ pub mod dominator;
 pub mod environment;
 pub mod environment_config;
 pub mod globals;
+pub(crate) mod hir_alloc;
 pub mod id_map;
 pub mod object_shape;
 pub mod reactive;
@@ -61,32 +62,27 @@ pub use reactive::*;
 // Arena-backed Vec for HIR data
 // =============================================================================
 
-/// `Vec` whose backing buffer lives in the parser's thread-local AST arena
-/// (see [`bun_alloc::AstAlloc`]). Same layout as `Vec<T>` (the allocator is a
-/// ZST), so HIR types are unchanged in size. The arena is installed for the
-/// duration of `js_parser`'s visit pass — the hook point that calls into this
-/// compiler — so every `HirVec` allocated during a `compile_fn` lands in the
-/// per-file arena and is bulk-freed with the rest of the AST.
+/// `Vec` whose backing buffer lives in the arena of the AST (see [`HirAlloc`]).
 ///
 /// `Drop` on a `HirVec<T>` still runs each element's `Drop`; only the backing
 /// buffer's `deallocate` is a no-op. Nonetheless, HIR types must NOT own
 /// global-heap allocations (`String`, `Box<T>`, `Vec<T>`): the arena bulk-
 /// frees on reset without walking elements, so any nested global allocation
 /// leaks per parse. Use [`StoreStr`] / [`HirVec`] instead.
-pub type HirVec<T> = bun_alloc::AstVec<T>;
-pub use bun_alloc::AstAlloc;
+pub type HirVec<T> = Vec<T, HirAlloc>;
 /// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
 pub use bun_ast::StoreStr;
+pub use hir_alloc::HirAlloc;
 
 /// `vec![..]` for [`HirVec`]. `Vec<T, A>` has no `Default`/`From<[T; N]>` for
 /// non-`Global` `A`, so the std macro doesn't apply.
 #[macro_export]
 macro_rules! hir_vec {
     () => {
-        ::bun_alloc::AstAlloc::vec()
+        $crate::hir::HirAlloc::vec()
     };
     ($($x:expr),+ $(,)?) => {{
-        let mut v = ::bun_alloc::AstAlloc::vec();
+        let mut v = $crate::hir::HirAlloc::vec();
         $(v.push($x);)+
         v
     }};
@@ -1120,9 +1116,7 @@ impl IdentifierName {
         buf[0] = b'#';
         buf[1] = kind;
         buf[2..2 + digits.len()].copy_from_slice(digits);
-        IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
-            &buf[..2 + digits.len()],
-        )))
+        IdentifierName::Promoted(HirAlloc::dupe_str(&buf[..2 + digits.len()]))
     }
 }
 
@@ -1486,7 +1480,7 @@ impl NonLocalBinding {
 /// allocator, NOT the AST arena: `Type` values are constructed and held by the
 /// process-lifetime [`ShapeRegistry`](crate::hir::object_shape::ShapeRegistry),
 /// which outlives the per-file AST arena, so an arena-backed box would dangle
-/// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
+/// after its reset. The leak hazard described on [`HirVec`] does not
 /// apply because `Type` is stored in `Drop`-running containers (registry
 /// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
 /// slabs.

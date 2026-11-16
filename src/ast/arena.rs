@@ -8,7 +8,7 @@ use std::alloc::Global;
 
 use bun_alloc::Arena;
 
-use crate::StoreRef;
+use crate::{AstVec, StoreRef, StoreStr};
 
 /// Allocation sizes are rounded up to this, so `cursor` is always aligned to it.
 const MIN_ALIGN: usize = 8;
@@ -170,8 +170,12 @@ impl AstArena {
         StoreRef::from_non_null(node)
     }
 
+    pub fn dupe_str(&self, bytes: &[u8]) -> StoreStr {
+        StoreStr::new(&AstVec::from_slice_in(bytes, self))
+    }
+
     #[inline]
-    fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
+    pub fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
         #[cfg(debug_assertions)]
         self.thread_lock.lock_or_assert();
         let cursor = self.cursor.get();
@@ -232,6 +236,31 @@ impl AstArena {
         self.cursor.set(start);
         self.end.set(end);
         self.alloc_layout(layout)
+    }
+
+    /// # Safety
+    /// `ptr` starts a live allocation of any `AstArena` (or `size` is 0) that fits `size <= layout.size()` bytes at `layout.align()`.
+    pub unsafe fn grow(&self, ptr: NonNull<u8>, size: usize, layout: Layout) -> NonNull<u8> {
+        #[cfg(debug_assertions)]
+        self.thread_lock.lock_or_assert();
+        let cursor = self.cursor.get();
+        let padded = size.next_multiple_of(MIN_ALIGN);
+        let additional = layout.size().next_multiple_of(MIN_ALIGN) - padded;
+        if ptr.addr().get() + padded == cursor.addr().get()
+            && additional <= self.end.get().addr().get() - cursor.addr().get()
+            && size > 0
+        {
+            // SAFETY: a non-empty allocation that ends at `cursor` is the last one in `current`, because the bytes
+            // before the first one are the header. `cursor..end` has `additional` bytes.
+            return unsafe {
+                self.cursor.set(cursor.add(additional));
+                cursor.sub(padded)
+            };
+        }
+        let new_ptr = self.alloc_layout(layout);
+        // SAFETY: both allocations have `size` bytes, and `new_ptr` is new.
+        unsafe { new_ptr.copy_from_nonoverlapping(ptr, size) };
+        new_ptr
     }
 
     fn reset_chunks(&mut self, limit: usize) {

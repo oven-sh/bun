@@ -8,7 +8,6 @@ use core::sync::SyncView;
 use bun_alloc::Arena;
 use bun_ast::AstArena;
 use bun_collections::HashMap;
-use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
 use bun_resolver::fs as Fs;
@@ -156,33 +155,6 @@ impl<'a> Transpiler<'a> {
         &mut self,
     ) -> crate::Result<*mut dyn bun_resolver::install_types::AutoInstaller> {
         self.resolver.get_package_manager().map_err(Into::into)
-    }
-
-    /// Reset the thread-local AST block stores (`Expr`/`Stmt`) and the side
-    /// `AstAlloc` arena.
-    pub(crate) fn reset_store(&self) {
-        bun_ast::Expr::data_store_reset();
-        bun_ast::Stmt::data_store_reset();
-        // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
-        // `E::Object`) — same lifetime as the block-store. Only the bundler
-        // resets it; install/`--define` (which also use the block-store) hold
-        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
-        // evaluation pins the store via `DisableStoreReset`, and
-        // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
-        // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and the active `AstAlloc` state belongs to that scope, NOT the
-        // side module). If we ran `store_ast_alloc_heap::reset()` there it
-        // would bulk-free whatever side-state buffers earlier main-thread
-        // transpiles left while `--define`/install still hold `StoreRef`s
-        // into them (and the side module's debug assert that *its* state is
-        // the installed one would fire).
-        if !bun_ast::stmt::data::Store::disable_reset()
-            && bun_ast::stmt::data::Store::memory_allocator().is_null()
-        {
-            bun_ast::store_ast_alloc_heap::reset();
-        }
     }
 
     fn _resolve_entry_point<'e>(
@@ -886,9 +858,6 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
-
         // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the
         // `None`/getcwd case — fs.rs:222) so the cwd lives in the
@@ -1688,22 +1657,25 @@ fn parse_data_loader<'a>(
 
                 // `print_decls` aborts on a `var` with no declarations (`{"default": 1}`).
                 if count > 0 {
-                    let stmt0 = bun_ast::Stmt::alloc(
+                    let stmt0 = bun_ast::Stmt::allocate(
+                        arena,
                         bun_ast::S::Local {
-                            decls: bun_alloc::AstAlloc::vec_from_iter(decls),
+                            decls: bun_ast::G::DeclList::from_slice_in(&decls, arena),
                             kind: bun_ast::S::Kind::KVar,
                             ..Default::default()
                         },
                         bun_ast::Loc { start: 0 },
                     );
-                    let stmt1 = bun_ast::Stmt::alloc(
+                    let stmt1 = bun_ast::Stmt::allocate(
+                        arena,
                         bun_ast::S::ExportClause {
                             items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
                             is_single_line: false,
                         },
                         bun_ast::Loc { start: 0 },
                     );
-                    let stmt2 = bun_ast::Stmt::alloc(
+                    let stmt2 = bun_ast::Stmt::allocate(
+                        arena,
                         bun_ast::S::ExportDefault {
                             value: bun_ast::StmtOrExpr::Expr(expr),
                             default_name: bun_ast::LocRef {
@@ -1726,7 +1698,8 @@ fn parse_data_loader<'a>(
         }
 
         {
-            let stmt = bun_ast::Stmt::alloc(
+            let stmt = bun_ast::Stmt::allocate(
+                arena,
                 bun_ast::S::ExportDefault {
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
@@ -1763,13 +1736,15 @@ fn parse_text_loader<'a>(
     source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
-    arena: &'a Arena,
+    arena: &'a AstArena,
 ) -> Option<ParseResult<'a>> {
-    let expr = bun_ast::Expr::init(
+    let expr = bun_ast::Expr::allocate(
+        arena,
         bun_ast::E::EString::init(&source.contents),
         bun_ast::Loc::EMPTY,
     );
-    let stmt = bun_ast::Stmt::alloc(
+    let stmt = bun_ast::Stmt::allocate(
+        arena,
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
@@ -1801,7 +1776,7 @@ fn parse_md_loader<'a>(
     source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
-    arena: &'a Arena,
+    arena: &'a AstArena,
     log: &bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
     let html: &[u8] = match bun_md::root::render_to_html(&source.contents) {
@@ -1819,8 +1794,9 @@ fn parse_md_loader<'a>(
             return None;
         }
     };
-    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
-    let stmt = bun_ast::Stmt::alloc(
+    let expr = bun_ast::Expr::allocate(arena, bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
+    let stmt = bun_ast::Stmt::allocate(
+        arena,
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
@@ -1948,7 +1924,7 @@ pub use js_printer::Format as PrintFormat;
 impl<'a> Transpiler<'a> {
     fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
         &self,
-        print_arena: &Arena,
+        print_arena: &AstArena,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
         writer: &mut js_printer::BufferPrinter,
@@ -2054,7 +2030,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
         &self,
-        print_arena: &Arena,
+        print_arena: &AstArena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2096,7 +2072,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
         &self,
-        print_arena: &Arena,
+        print_arena: &AstArena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2124,7 +2100,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &self,
-        print_arena: &Arena,
+        print_arena: &AstArena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2188,7 +2164,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     pub fn print(
         &self,
-        print_arena: &Arena,
+        print_arena: &AstArena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
@@ -2213,7 +2189,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     pub fn print_with_source_map(
         &self,
-        print_arena: &Arena,
+        print_arena: &AstArena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
@@ -2295,8 +2271,6 @@ impl<'a> Transpiler<'a> {
 
         for _entry in entries.iter() {
             let entry = Self::normalize_entry_point_path(_entry);
-
-            let _reset = bun_ast::StoreResetGuard::new();
 
             let result = match self.resolver.resolve(
                 top_level_dir,
@@ -2389,9 +2363,6 @@ impl<'a> Transpiler<'a> {
         let mut arena = AstArena::new();
         while let Some(item) = self.resolve_queue.pop_front() {
             arena.reset_retain_with_limit(8 * 1024 * 1024);
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-            bun_ast::store_ast_alloc_heap::reset();
 
             let errors_before = self.log().errors.get();
             let output_file = match self.build_with_resolve_result_eager(

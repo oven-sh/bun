@@ -1149,6 +1149,64 @@ function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc
   ]);
 }
 
+// Restate's HTTP/2 peer rejects >100 empty DATA frames on a stream. Awaiting
+// zero-length writes must not create one DATA frame per callback, and batching
+// them must not leave an extra frame either.
+for (const mode of ["awaited", "batched"] as const) {
+  test(`node:http2 ${mode} empty response writes do not emit DATA frames`, async () => {
+    let allEmptyWritevBatches = 0;
+    const testServer = http2.createServer(async (_req, res) => {
+      if (mode === "batched") {
+        const stream = res.stream;
+        const originalWritev = stream._writev;
+        stream._writev = function (chunks: any[], callback: (error?: Error) => void) {
+          if (chunks.length > 1 && chunks.every(({ chunk }) => chunk.length === 0)) allEmptyWritevBatches++;
+          return originalWritev.call(this, chunks, callback);
+        };
+      }
+      res.writeHead(200, { "content-type": "text/plain" });
+      if (mode === "awaited") {
+        for (let i = 0; i < 150; i++) {
+          await new Promise<void>(resolve => res.write(new Uint8Array(0), resolve));
+        }
+      } else {
+        // Flush an all-empty batch before the nonempty final write. Otherwise
+        // end("ok") can join the batch and bypass the zero-length _writev path.
+        res.cork();
+        const writes: Promise<void>[] = [];
+        for (let i = 0; i < 150; i++) {
+          writes.push(
+            new Promise<void>((resolve, reject) =>
+              res.write(new Uint8Array(0), err => (err ? reject(err) : resolve())),
+            ),
+          );
+        }
+        res.uncork();
+        await Promise.all(writes);
+      }
+      res.end("ok");
+    });
+    testServer.listen(0, "127.0.0.1");
+    await once(testServer, "listening");
+    const c = await RawH2.connect((testServer.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      const data = c.frames.filter(f => f.type === FrameType.DATA && f.streamId === 1);
+      expect(Buffer.concat(data.map(f => f.payload)).toString()).toBe("ok");
+      // Any empty DATA frame must terminate the stream; non-final empty
+      // frames are what breaks peers that cap redundant HTTP/2 frames.
+      expect(data.every(f => f.length !== 0 || (f.flags & 0x1) !== 0)).toBe(true);
+      if (mode === "batched") expect(allEmptyWritevBatches).toBeGreaterThan(0);
+    } finally {
+      c.destroy();
+      await new Promise<void>(resolve => testServer.close(() => resolve()));
+    }
+  });
+}
+
 const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
 
 describe("request header and body framing (RFC 9113 §8.1)", () => {

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 77bad1c37fbaade523ae0927321e5309992d5e7fcd6147cc97a79835ea39c5de.
+// Written against that file with the SHA-256 4209f73f6de9199d164f45b03557762e4771647a3b3af7e93eff1c5ef5061dbb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -3013,6 +3013,12 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
+        // Empty writes acknowledge the Writable callback without consuming an HTTP/2
+        // DATA frame. Keep the final write: it must still carry END_STREAM.
+        if (batchLength === 0 && !endStream) {
+          session[kDeferWriteCallback](callback);
+          return;
+        }
         const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true) as number;
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -3060,6 +3066,10 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
+        if (wireChunk.length === 0 && !endStream) {
+          session[kDeferWriteCallback](callback);
+          return;
+        }
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true) as number;
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {

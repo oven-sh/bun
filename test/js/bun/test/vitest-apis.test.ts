@@ -824,6 +824,7 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
       "RECEIVED_COLOR",
       "diff",
       "matcherHint",
+      "printDiffOrStringify",
       "printExpected",
       "printReceived",
       "printWithType",

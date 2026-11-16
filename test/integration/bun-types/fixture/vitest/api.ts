@@ -52,6 +52,14 @@ interface ElementMatchers<E, R> {
   toHaveLabel(label: string | E): R;
 }
 
+/** Like Vitest's `DiffOptions`: an interface with more keys than Bun applies. */
+interface DiffOptionsOfVitest {
+  aAnnotation?: string;
+  bAnnotation?: string;
+  expand?: boolean;
+  contextLines?: number;
+}
+
 declare module "vitest" {
   interface Matchers<R, T> {
     toBeWithin(floor: number, ceiling: number): R;
@@ -236,6 +244,16 @@ test("expect", async () => {
       const state: MatcherState = this;
       expectTypeOf(state.isNot).toBeBoolean();
       expectTypeOf(this.equals(1, 1)).toBeBoolean();
+      expectTypeOf(this.utils.printDiffOrStringify(received, floor)).toBeString();
+      expectTypeOf(this.utils.printDiffOrStringify(received, floor, { aAnnotation: "Floor" })).toBeString();
+      // A value with other keys of Vitest's `DiffOptions` is accepted. A key that does nothing is an error where it is written.
+      const diffOptions: DiffOptionsOfVitest = { aAnnotation: "Floor", contextLines: 2 };
+      expectTypeOf(this.utils.printDiffOrStringify(received, floor, diffOptions)).toBeString();
+      // @ts-expect-error
+      this.utils.printDiffOrStringify(received, floor, { aAnnotation: "Floor", contextLines: 2 });
+      // @ts-expect-error
+      this.utils.printDiffOrStringify(received, floor, { aAnnotaton: "Floor" });
+      expectTypeOf(this.utils.printDiffOrStringify(floor, received, "Floor", "Received", true)).toBeString();
       return { pass: received >= floor && received <= ceiling, message: () => this.utils.printReceived(received) };
     },
   });

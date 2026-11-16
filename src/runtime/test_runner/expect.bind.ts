@@ -289,6 +289,11 @@ export const printWithType = b.fn({
   args: { name: b.any, value: b.any, print: b.any },
 });
 export const diff = b.fn({ ...utility("diff", "diff"), args: { expected: b.any, received: b.any } });
+/** `(expected, received, expectedLabel, receivedLabel, expand)` as in Jest, or `(received, expected, options)` as in Vitest. */
+export const printDiffOrStringify = b.fn({
+  ...utility("printDiffOrStringify", "print_diff_or_stringify"),
+  args: { values: b.any.variadic },
+});
 
 const typeAssertion = { length: 1, rustName: "type_assertion" } as const;
 /** A matcher can follow it, as it can follow a `typeProperty`. */

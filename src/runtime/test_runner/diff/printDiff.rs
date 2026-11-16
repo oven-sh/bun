@@ -8,32 +8,38 @@ use bun_core::output::ansi as colors;
 use bun_core::strings::{self, str_utf8};
 use bun_text_diff::{self as diff, Hunk};
 
-pub(crate) struct DiffConfig {
+pub(crate) struct DiffConfig<'a> {
     pub(crate) min_bytes_before_chunking: usize,
     pub(crate) chunk_context_lines: usize,
     pub(crate) enable_ansi_colors: bool,
     pub(crate) truncate_threshold: usize,
     pub(crate) truncate_context: usize,
+    /// What the count lines after a line diff call the two sides. Pad the shorter one, so that the counts line up.
+    pub(crate) expected_label: &'a [u8],
+    pub(crate) received_label: &'a [u8],
 }
 
-impl DiffConfig {
-    pub(crate) fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
+impl DiffConfig<'static> {
+    pub(crate) fn default(is_agent: bool, enable_ansi_colors: bool) -> Self {
         DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
             enable_ansi_colors,
             truncate_threshold: if is_agent { 1024 } else { 2 * 1024 }, // 2kb
             truncate_context: if is_agent { 50 } else { 100 },
+            expected_label: b"Expected",
+            received_label: b"Received",
         }
     }
 }
 
+#[optimize(size)]
 pub(crate) fn print_diff_main(
     not: bool,
     received_slice: &[u8],
     expected_slice: &[u8],
     writer: &mut impl Write,
-    config: &DiffConfig,
+    config: &DiffConfig<'_>,
 ) -> std::fmt::Result {
     if not {
         match config.enable_ansi_colors {
@@ -131,7 +137,7 @@ struct Printer<'c, W: Write> {
     colors: bool,
     /// Lines longer than this have their middle elided.
     limit: usize,
-    config: &'c DiffConfig,
+    config: &'c DiffConfig<'c>,
     chars: diff::CharDiff,
 }
 
@@ -408,12 +414,16 @@ impl<'c, W: Write> Printer<'c, W> {
 
         // Footer.
         self.color(styles::REMOVED.prefix_color);
-        self.s("- Expected  - ");
+        self.s("- ");
+        self.b(self.config.expected_label);
+        self.s("  - ");
         self.num(removed_diff_lines);
         self.color(colors::RESET);
         self.s("\n");
         self.color(styles::INSERTED.prefix_color);
-        self.s("+ Received  + ");
+        self.s("+ ");
+        self.b(self.config.received_label);
+        self.s("  + ");
         self.num(inserted_diff_lines);
         self.color(colors::RESET);
     }

@@ -826,7 +826,7 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 - Absolute paths (`'/path/to/module'`)
 - Package names (`'lodash'`)
 
-In a CommonJS file, `jest.requireActual()`, `jest.requireMock()` and `jest.createMockFromModule()` load the file that `require()` loads. If a package has one file for `import` and another for `require()`, a mock of its name replaces the file for `import` only. To replace the other file too, mock its path: `mock.module(require.resolve("pkg"), factory)`.
+`jest.requireActual()`, `jest.requireMock()` and `jest.createMockFromModule()` resolve a name that isn't mocked the way the calling file loads it: like `require()` in a file that Bun runs as [CommonJS](/runtime/module-resolution#module-systems), like `import` in an ES module. Jest resolves them like `require()` in every file. Bun doesn't in an ES module, so that what they return is the same copy of a package that the file's imports get. A `.js` or `.ts` file is an ES module if it has an `import` statement, or if its `package.json` has `"type": "module"` and the file doesn't use `module.exports`, even when it loads the name with `require()`. For a mocked name, all three use the module that the mock replaced.
 
 ### Import Timing Effects
 

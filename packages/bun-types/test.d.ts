@@ -235,8 +235,9 @@ declare module "bun:test" {
     /**
      * `require()` the real module `id`, even if it's mocked.
      *
-     * `id` resolves the way the calling file loads it: like `require(id)` in a CommonJS file, like an `import` in an
-     * ES module.
+     * If `id` isn't mocked, it resolves the way the calling file loads it: like `require(id)` in a file that Bun runs
+     * as CommonJS, like an `import` in an ES module. Jest resolves it like `require(id)` in every file. If `id` is
+     * mocked, the result is the module that the mock replaced.
      */
     function requireActual<T = any>(id: string): T;
     /**

@@ -1015,7 +1015,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         ),
         #[cfg(target_os = "macos")]
         PollTag::GetAddrInfoRequest => {
-            crate::dns_jsc::dns_sd::SharedConnection::on_readable(owner.ptr().cast());
+            crate::dns_jsc::dns_sd::SharedConnection::on_readable();
         }
         #[cfg(not(windows))]
         PollTag::TerminalPoll => feature_poll_arm!([Terminal], TerminalPoll),
@@ -1373,11 +1373,9 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
-                timer_arm!(
-                    crate::dns_jsc::dns_sd::SharedConnection,
-                    early_out_timer,
-                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
-                )
+                // SAFETY: per fn contract, and the thread has one timer with this tag.
+                unsafe { crate::dns_jsc::dns_sd::SharedConnection::on_early_out() };
+                Ok(())
             }
             #[cfg(not(target_os = "macos"))]
             {

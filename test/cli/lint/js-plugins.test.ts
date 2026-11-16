@@ -5894,6 +5894,15 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       "a",
     ],
     [
+      "a getter with a default that calls a method",
+      {
+        "index.js": `const queue = ["./a"]; let a; exports.f = () => exports.a;
+          Object.defineProperty(exports, "a", { enumerable: true, get: (it = a ?? queue.shift()) => (a ??= require(it)) });`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
       "an extension that's added just before a require",
       {
         "index.js": `require.extensions[".foo"] = module => { module.exports = "foo"; };

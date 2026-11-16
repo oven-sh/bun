@@ -470,6 +470,8 @@ struct Scratches {
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
+    /// Of the last file that was read before the search had ended.
+    hash_of_text: u64,
     /// For code blocks in Markdown.
     blocks: Option<Box<Scratches>>,
     /// Warnings about the last formatted file. They don't stop it from being formatted.
@@ -1149,7 +1151,6 @@ enum Done {
 }
 
 struct Unwritten {
-    source: Vec<u8>,
     formatted: Vec<u8>,
     took: Duration,
 }
@@ -1802,8 +1803,12 @@ impl Run<'_> {
                 tailwind::only_where_sorted(&mut options.options, kind);
                 let text = match git::read(only.as_ref(), &target.path) {
                     Ok(text) => text,
+                    Err(_) if !may_write => return None,
                     Err(error) => return failure(b"Unable to read file \"", &fs::describe(&error)),
                 };
+                if !may_write {
+                    scratch.hash_of_text = bun_wyhash::hash(&text);
+                }
                 let formatted = format(
                     &target.path,
                     &text,
@@ -1833,7 +1838,7 @@ impl Run<'_> {
                     if may_write {
                         return Some(write(target, &formatted, began, Duration::ZERO));
                     }
-                    let size = text.len() + formatted.len();
+                    let size = formatted.len();
                     let kept = unwritten_bytes.fetch_add(size, Ordering::Relaxed);
                     if kept + size > MAX_UNWRITTEN_BYTES {
                         unwritten_bytes.fetch_sub(size, Ordering::Relaxed);
@@ -1841,7 +1846,6 @@ impl Run<'_> {
                         return None;
                     }
                     return Some(Done::Unwritten(Unwritten {
-                        source: text,
                         formatted,
                         took: began.elapsed(),
                     }));
@@ -1857,7 +1861,7 @@ impl Run<'_> {
             true => false,
             false => !(configs.missing_plugins(&target.scope, Some(&target.path))).is_empty(),
         };
-        let (unchanged_meanwhile, size_meanwhile) = (AtomicUsize::new(0), AtomicU64::new(0));
+        let size_meanwhile = AtomicU64::new(0);
         let meanwhile = files::Meanwhile {
             when: &|target| {
                 if files::is_generated(&target.path) && configs.is_native_in(&target.scope) {
@@ -1888,18 +1892,19 @@ impl Run<'_> {
                     used: &scratches,
                 };
                 let format_target = &format_target;
-                let (unchanged, size) = (&unchanged_meanwhile, &size_meanwhile);
+                let size = &size_meanwhile;
                 Box::new(move |target, has_search_succeeded| {
                     let options = configs.sound_options_for(&target.scope, &target.path);
                     let (Some(options), Some(scratch)) = (options, &mut borrowed.scratch) else {
                         return true;
                     };
                     size.fetch_add(target.size, Ordering::Relaxed);
-                    match format_target(target, options, scratch, has_search_succeeded) {
-                        Some(Done::Unchanged) if scratch.warnings.is_empty() => {
-                            unchanged.fetch_add(1, Ordering::Relaxed);
-                            false
-                        }
+                    let done = format_target(target, options, scratch, has_search_succeeded);
+                    if done.is_some() && !has_search_succeeded {
+                        target.hash_of_text = Some(scratch.hash_of_text);
+                    }
+                    match done {
+                        Some(Done::Unchanged) if scratch.warnings.is_empty() => false,
                         done => {
                             let warnings = std::mem::take(&mut scratch.warnings);
                             target.done = done.map(|it| Box::new((it, warnings)));
@@ -1909,6 +1914,7 @@ impl Run<'_> {
                 })
             },
             has_left_out_files: AtomicBool::new(false),
+            unchanged: AtomicUsize::new(0),
         };
         let needs_all_files =
             only.is_some() || self.modules.is_some() || options.list_files || options.debug_check;
@@ -2078,7 +2084,7 @@ impl Run<'_> {
             let before = results.lock()[index].take();
             if let Some(Done::Unwritten(it)) = before {
                 let now = git::read(only.as_ref(), &target.path);
-                if now.is_ok_and(|now| now == it.source) {
+                if now.is_ok_and(|now| Some(bun_wyhash::hash(&now)) == target.hash_of_text) {
                     let done = write(target, &it.formatted, Instant::now(), it.took);
                     results.lock()[index] = Some(done);
                     return;
@@ -2168,7 +2174,7 @@ impl Run<'_> {
         pool.free_before_exit(size + size_meanwhile.load(Ordering::Relaxed), scratches);
 
         let (mut different, mut failed) = (0usize, 0usize);
-        let mut unchanged = unchanged_meanwhile.load(Ordering::Relaxed);
+        let mut unchanged = meanwhile.unchanged.load(Ordering::Relaxed);
         let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));

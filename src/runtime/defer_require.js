@@ -234,7 +234,9 @@ let $Bun_defer, $Bun_lazy;
   const onlyRemembers = /^(?!.*(?:\.\s*[\w$]+\s*\(|\+\+|--|\bdelete\b|\(.*[(\0]))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
   function canBeLeft(getter) {
     const source = sourceOf.call(getter);
-    return onlyRemembers.test(source.slice(source.indexOf(")")).replace(/\([\w$]+\?\.\(\)\)/g, "\0"));
+    const parameters = source.indexOf("(");
+    if (source[parameters + 1] !== ")") return false;
+    return onlyRemembers.test(source.slice(parameters + 1).replace(/\([\w$]+\?\.\(\)\)/g, "\0"));
   }
   // For Bun's own scripts, which go through all that is loaded: the property, or `otherwise` if to read it loads a module.
   $Bun_lazy.ifLoaded = (object, key, otherwise) => {

@@ -16,7 +16,7 @@ use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::cell::LazyCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// A file to format.
 pub(crate) struct Target {
@@ -33,6 +33,8 @@ pub(crate) struct Target {
     pub(crate) linked: Option<fs::Identity>,
     /// The result, if it was formatted [`Meanwhile`].
     pub(crate) done: Option<Box<Finished>>,
+    /// Of what was read [`Meanwhile`], before the search had ended.
+    pub(crate) hash_of_text: Option<u64>,
 }
 
 /// When to look at a file that a search has found.
@@ -50,6 +52,8 @@ pub(crate) struct Meanwhile<'a> {
     pub(crate) start: &'a (dyn Fn() -> Box<dyn FnMut(&mut Target, bool) -> bool + 'a> + Sync),
     /// True if a file was found that isn't among the results of the search.
     pub(crate) has_left_out_files: AtomicBool,
+    /// The number of files for which that has returned false.
+    pub(crate) unchanged: AtomicUsize,
 }
 
 impl Meanwhile<'_> {
@@ -672,14 +676,21 @@ fn search(
         ),
         above,
     };
+    let scripts_run = configs.scripts_run.load(Ordering::Relaxed);
+    let mut unchanged = Guarded::new(Vec::new());
     let start_worker = || -> Worker<'_, Target> {
         let mut format = meanwhile.map(|it| (it, (it.start)()));
-        let found = &found;
+        let (found, unchanged) = (&found, &unchanged);
         Box::new(move |mut target, has_succeeded| {
             if let Some((meanwhile, format)) = &mut format
                 && !format(&mut target, has_succeeded)
             {
-                return meanwhile.has_left_out_files.store(true, Ordering::Relaxed);
+                meanwhile.has_left_out_files.store(true, Ordering::Relaxed);
+                meanwhile.unchanged.fetch_add(1, Ordering::Relaxed);
+                if !has_succeeded {
+                    unchanged.lock().push(target);
+                }
+                return;
             }
             found.lock().push(target);
         })
@@ -752,6 +763,7 @@ fn search(
                     is_named: false,
                     linked,
                     done: None,
+                    hash_of_text: None,
                 };
                 match meanwhile.map(|it| (it, (it.when)(&target))) {
                     Some((_, When::Now)) => now.push((target, size)),
@@ -767,6 +779,25 @@ fn search(
     };
     let mut left = walk_and_work(pool, first, &visit, &start_worker)?;
     left.append(found.get_mut());
+    // A configuration file can write files, and what counts is what they have once all have run.
+    if let Some(meanwhile) = meanwhile
+        && configs.scripts_run.load(Ordering::Relaxed) != scripts_run
+    {
+        let has_changed = |it: &Target| {
+            it.hash_of_text.is_some_and(|hash| {
+                !fs::read(&it.path).is_ok_and(|now| bun_wyhash::hash(&now) == hash)
+            })
+        };
+        let changed = pool.map(&left, &has_changed);
+        for (target, _) in left.iter_mut().zip(changed).filter(|it| it.1) {
+            target.done = None;
+        }
+        let changed = pool.map(unchanged.get_mut(), &has_changed);
+        for (target, _) in unchanged.get_mut().drain(..).zip(changed).filter(|it| it.1) {
+            meanwhile.unchanged.fetch_sub(1, Ordering::Relaxed);
+            left.push(target);
+        }
+    }
     Ok(left)
 }
 
@@ -847,6 +878,7 @@ pub(crate) fn expand(
                         is_named: true,
                         linked,
                         done: None,
+                        hash_of_text: None,
                     }],
                 };
                 (
@@ -1055,6 +1087,7 @@ pub(crate) fn expand_as_oxfmt(
                 ignores_unknown: true,
                 is_named: false,
                 done: None,
+                hash_of_text: None,
             });
         }
     }

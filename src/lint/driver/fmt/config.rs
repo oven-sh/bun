@@ -32,6 +32,7 @@ use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// Configuration file names, in priority order: oxfmt's, then Prettier's `CONFIG_FILES`.
@@ -1013,6 +1014,8 @@ pub(crate) struct Configs<'c> {
     overrides: Vec<Override>,
     /// [`Options::bunfig_base_directory`]
     bunfig_base_directory: Vec<u8>,
+    /// The number of configuration files that were run.
+    pub(crate) scripts_run: AtomicUsize,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     /// [`Configs::name`]
@@ -1093,6 +1096,7 @@ impl<'c> Configs<'c> {
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
             arguments: Default::default(),
+            scripts_run: AtomicUsize::new(0),
             lacks_file: OnceLock::new(),
             note: OnceLock::new(),
             applies_everywhere,
@@ -1248,7 +1252,10 @@ impl<'c> Configs<'c> {
                 )
             })
         };
-        let run = || evaluate::evaluate(self.environment, evaluate::PRETTIER, path);
+        let run = || {
+            self.scripts_run.fetch_add(1, Ordering::Relaxed);
+            evaluate::evaluate(self.environment, evaluate::PRETTIER, path)
+        };
         let fail = |why: &[u8]| {
             Fatal([b"Cannot load the configuration file ", path, b":\n", why].concat())
         };

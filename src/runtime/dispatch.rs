@@ -116,10 +116,9 @@ use crate::shell::builtins::{
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
 use crate::shell::interpreter::{PoolTask, ShellTask};
 use crate::shell::io_reader::IOReader as ShellIoReader;
-#[cfg(not(windows))]
-use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
+use crate::shell::io_writer::IOWriter as ShellIoWriter;
 use crate::shell::states::r#async::Async as ShellAsync;
-use crate::shell::subproc::PipeReader as ShellPipeReader;
+use crate::shell::subproc::{PipeReader as ShellPipeReader, ShellSubprocess};
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
@@ -135,8 +134,6 @@ use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
-#[cfg(not(windows))]
-use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
 
@@ -904,23 +901,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             })
         };
     }
-    /// The plain `on_poll(event)` call of the buffered writers, through [`in_features!`].
-    #[cfg(not(windows))]
-    macro_rules! feature_poll_arm {
-        ($features:tt, $Ty:ty) => {
-            in_features!(
-                $features,
-                (
-                    h: *mut $Ty = owner.ptr().cast::<$Ty>(),
-                    event: IoEvent = event,
-                ) {
-                    // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
-                    // `OwnedFilePoll::new` and the owner outlives this dispatch (caller contract).
-                    unsafe { (*h).on_poll(event) };
-                }
-            )
-        };
-    }
 
     match owner.tag() {
         #[cfg(not(windows))]
@@ -937,34 +917,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         #[cfg(target_os = "macos")]
         PollTag::ParentDeathWatchdog => bun_io::parent_death_watchdog::on_parent_exit(),
 
-        #[cfg(not(windows))]
-        PollTag::StaticPipeWriter => {
-            feature_poll_arm!([Spawn], StaticPipeWriterPoll<Subprocess<'_>>)
-        }
-        #[cfg(not(windows))]
-        PollTag::ShellStaticPipeWriter => {
-            feature_poll_arm!(
-                [Shell],
-                StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>
-            )
-        }
-        #[cfg(not(windows))]
-        PollTag::SecurityScanStaticPipeWriter => {
-            feature_poll_arm!([Install], StaticPipeWriterPoll<SecurityScanSubprocess<'_>>)
-        }
-        // `bun.shell.Interpreter.IOWriter.Poll`
-        #[cfg(not(windows))]
-        PollTag::ShellBufferedWriter => in_features!(
-            [Shell],
-            (
-                h: *mut ShellBufferedWriterPoll = owner.ptr().cast::<ShellBufferedWriterPoll>(),
-                event: IoEvent = event,
-            ) {
-                // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
-                // set at `OwnedFilePoll::new`; exclusive for this dispatch.
-                unsafe { crate::shell::io_writer::on_poll(&mut *h, event) };
-            }
-        ),
         #[cfg(not(windows))]
         PollTag::DnsResolver => in_features!(
             [Dns],
@@ -985,11 +937,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::GetAddrInfoRequest => {
             crate::dns_jsc::dns_sd::SharedConnection::on_readable();
         }
-        #[cfg(windows)]
-        PollTag::StaticPipeWriter
-        | PollTag::ShellStaticPipeWriter
-        | PollTag::SecurityScanStaticPipeWriter
-        | PollTag::ShellBufferedWriter => unreachable!("libuv calls these writers directly"),
 
         // A ref is held across the handler, which may release every other one.
         PollTag::FileReader => {
@@ -1046,6 +993,19 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 this.read(Some(event))
             })
         }
+        #[cfg(not(windows))]
+        PollTag::ShellIoWriter => {
+            io_arm!([Shell], clone_rc, ShellIoWriter, |this, _, event| {
+                this.on_io(event)
+            })
+        }
+        // Every write completes here, also those of `bun run` and `bun exec`.
+        #[cfg(windows)]
+        PollTag::ShellIoWriter => {
+            io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
+                this.on_io(event)
+            })
+        }
 
         // Neither JS nor a nested tick runs under these.
         PollTag::FilterRunHandle => io_arm!(
@@ -1071,6 +1031,28 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             <*mut _>::as_mut_unchecked,
             SecurityScanSubprocess<'_>,
             |this, _, event| this.on_io(event)
+        ),
+        PollTag::SecurityScanWriter => io_arm!(
+            [Install],
+            <*mut _>::as_mut_unchecked,
+            SecurityScanSubprocess<'_>,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        PollTag::SubprocessStdinWriter => io_arm!(
+            [Spawn],
+            <*mut _>::as_ref_unchecked,
+            Subprocess<'_>,
+            |this, _, event| this.on_stdin_io(event)
+        ),
+
+        // Only `Bun.$` redirects stdin from a buffer. `this` is not used once `on_stdin_writer_close` runs, which may free it.
+        PollTag::ShellStdinWriter => io_arm!(
+            [Shell],
+            <*mut _>::as_mut_unchecked,
+            ShellSubprocess,
+            |this, _, event| if let Some(cmd) = this.on_stdin_io(event) {
+                cmd.on_stdin_writer_close();
+            }
         ),
 
         // These free themselves once they have read to the end.

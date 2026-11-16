@@ -296,7 +296,7 @@ fn has_many_function_sources(
 
 fn text_of<'p>(projects: &PerProject<ProgramView<'p, '_>>, file: ProgramFile) -> &'p [u8] {
     let files = projects.get(file.project).files();
-    &files.module(file.file).hir.text[..]
+    &files.hir(file.file).text[..]
 }
 
 fn hold_function_sources(
@@ -354,7 +354,7 @@ fn create_module_source(
     if !files.is_compiled(file) {
         return None;
     }
-    let text = &files.module(file).hir.text[..];
+    let text = &files.hir(file).text[..];
     let types = erased_ranges_by_file.get(&program_file).cloned();
     let origin = find_module_origin(view, program_file);
     let path = view.sources.diagnostic_path(file);

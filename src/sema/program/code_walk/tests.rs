@@ -792,8 +792,9 @@ fn deferred_read_omitted_by_host_is_empty_module() {
         let ghost = find_entry(files, "/ghost.ts");
         assert_eq!(ghost.role, FileRole::Checked);
         assert!(ghost.targets.is_empty());
-        let loaded = ghost.loaded.lock();
-        let hir = &loaded.as_ref().expect("the file is loaded").module.hir;
+        let mut loaded = ghost.loaded.lock();
+        let module = &mut loaded.as_mut().expect("the file is loaded").module;
+        let hir = &module.trees.get_mut().hir;
         assert!(hir.body.is_empty());
         assert_eq!(hir.source_len, 0);
         assert!(!hir.has_errors);
@@ -1119,8 +1120,9 @@ fn unreadable_file_is_empty_module() {
         let ghost = find_entry(files, "/ghost.ts");
         assert_eq!(ghost.role, FileRole::Checked);
         assert!(ghost.targets.is_empty());
-        let loaded = ghost.loaded.lock();
-        let hir = &loaded.as_ref().expect("the file is loaded").module.hir;
+        let mut loaded = ghost.loaded.lock();
+        let module = &mut loaded.as_mut().expect("the file is loaded").module;
+        let hir = &module.trees.get_mut().hir;
         assert!(hir.body.is_empty());
         assert!(!hir.has_errors);
     });

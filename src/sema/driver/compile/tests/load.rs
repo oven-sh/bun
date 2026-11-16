@@ -217,8 +217,8 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let has_tree = |name: &str| !files.module(program.file(name)).hir.stmts.is_empty();
-        let has_text = |name: &str| !files.module(program.file(name)).hir.text.is_empty();
+        let has_tree = |name: &str| !files.hir(program.file(name)).stmts.is_empty();
+        let has_text = |name: &str| !files.hir(program.file(name)).text.is_empty();
         for name in ["unread.test.ts", "helper.ts", "each-other.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert!(!has_tree(name), "{name}");
@@ -259,8 +259,8 @@ fn tree_of_file_with_export_star_that_no_task_reads_is_freed() {
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let has_tree = |name: &str| !files.module(program.file(name)).hir.stmts.is_empty();
-        let has_text = |name: &str| !files.module(program.file(name)).hir.text.is_empty();
+        let has_tree = |name: &str| !files.hir(program.file(name)).stmts.is_empty();
+        let has_text = |name: &str| !files.hir(program.file(name)).text.is_empty();
         for name in ["unread-barrel.ts", "only-behind-barrel.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert!(!has_tree(name), "{name}");
@@ -367,8 +367,8 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
     ];
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
-        let is_unbound = |name: &str| files.module(program.file(name)).bound.is_unbound;
-        let symbol_count = |name: &str| files.module(program.file(name)).bound.symbols.len();
+        let is_unbound = |name: &str| files.bound(program.file(name)).is_unbound;
+        let symbol_count = |name: &str| files.bound(program.file(name)).symbols.len();
         for name in ["unread.test.ts", "helper.ts", "hands-on.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert_eq!(symbol_count(name), 0, "{name}");
@@ -377,7 +377,7 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
             assert!(!is_unbound(name), "{name}");
             assert!(symbol_count(name) > 0, "{name}");
         }
-        let inner = &files.module(program.file("inner.ts")).hir;
+        let inner = files.hir(program.file("inner.ts"));
         let is_spelled_for_class = |member: &bun_sema::hir::Member| match member.key {
             bun_sema::hir::PropKey::Private(name) => files.atoms.bytes(name).starts_with(b"\xFE"),
             _ => true,
@@ -405,7 +405,7 @@ fn module_that_is_reached_has_the_bodies_of_its_functions() {
     with_program(&files, &["./main.ts"], 1, |program| {
         let files = program.files();
         let returns = |name: &str| {
-            let statements = files.module(program.file(name)).hir.stmts.iter();
+            let statements = files.hir(program.file(name)).stmts.iter();
             statements
                 .filter(|it| matches!(it.kind, bun_sema::hir::StmtKind::Return(_)))
                 .count()

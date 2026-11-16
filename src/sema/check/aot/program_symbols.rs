@@ -1,5 +1,5 @@
 use crate::bind::{Decl, SymFlags};
-use crate::check::{Checker, Program};
+use crate::check::Checker;
 use crate::hir::{TypeNodeId, TypeNodeKind};
 use crate::program::{FileId, Files, Sym};
 use crate::types::{SigData, SigId};
@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 
 pub const COMPILER_DECLARATIONS_PATH: &[u8] = b"/$bun/types/compiler.d.ts";
 
+#[derive(Copy, Clone)]
 pub(in crate::check) struct ProgramSymbols {
     compiler_declarations: Option<FileId>,
     bun_module_without_values: Option<Sym>,
@@ -16,7 +17,8 @@ pub(in crate::check) struct ProgramSymbols {
 }
 
 impl ProgramSymbols {
-    fn resolve(files: &Files<'_>) -> ProgramSymbols {
+    /// Call before the first task: it reads the trees of every file.
+    pub(in crate::check) fn resolve(files: &Files<'_>) -> ProgramSymbols {
         let declared_in = files.by_path.get(COMPILER_DECLARATIONS_PATH);
         let mut symbols = ProgramSymbols {
             compiler_declarations: declared_in,
@@ -97,7 +99,7 @@ fn find_type_alias(
 fn is_spelled_by_some_file(files: &Files<'_>, alias: Sym) -> bool {
     let name = files.symbol(alias).name;
     files.modules.iter().any(|module| {
-        let hir = &module.hir;
+        let hir = &module.trees().hir;
         hir.names.iter().any(|it| it.text == name)
             || hir.import_specs.iter().any(|it| it.imported == name)
             || (hir.export_specs.iter()).any(|it| it.local == name || it.exported == name)
@@ -126,7 +128,7 @@ impl Checker<'_, '_> {
         &self,
         signatures: &mut SmallVec<[SigId; 4]>,
     ) {
-        let Some(compiler_declarations) = self.p.aot_symbols().compiler_declarations else {
+        let Some(compiler_declarations) = self.p.aot_symbols.compiler_declarations else {
             return;
         };
         let is_of_program = |&signature: &SigId| {
@@ -136,16 +138,5 @@ impl Checker<'_, '_> {
         if signatures.iter().any(is_of_program) {
             signatures.retain(|signature| is_of_program(signature));
         }
-    }
-}
-
-impl<'s> Program<'s> {
-    pub fn find_symbols_of_compiler(&self) {
-        self.aot_symbols();
-    }
-
-    pub(in crate::check) fn aot_symbols(&self) -> &ProgramSymbols {
-        self.aot_symbols
-            .get_or_init(|| ProgramSymbols::resolve(self.files))
     }
 }

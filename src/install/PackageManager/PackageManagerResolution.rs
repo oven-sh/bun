@@ -161,12 +161,14 @@ impl PackageManager {
                         Output::flush();
                     }
                     // A row whose entry exists failed on the entry's version, not on the catalog.
-                    let missing_entry = failed_dep.version.tag == dependency::Tag::Catalog
-                        && lockfile
-                            .catalogs
-                            .get_ref(string_buf, *failed_dep.version.catalog(), failed_dep.name)
-                            .is_none();
-                    if missing_entry && root_has_workspaces.is_none() {
+                    let missing_from = match &failed_dep.version.value {
+                        dependency::Value::Catalog(catalog) => (lockfile.catalogs)
+                            .get_ref(string_buf, *catalog, failed_dep.name)
+                            .is_none()
+                            .then_some(catalog),
+                        _ => None,
+                    };
+                    if missing_from.is_some() && root_has_workspaces.is_none() {
                         let log = self.log_mut();
                         root_has_workspaces = Some(
                             match self.workspace_package_json_cache.get_with_path(
@@ -181,7 +183,9 @@ impl PackageManager {
                             },
                         );
                     }
-                    if missing_entry && root_has_workspaces == Some(true) {
+                    if let Some(catalog) = missing_from
+                        && root_has_workspaces == Some(true)
+                    {
                         // `bun add --catalog` refuses the name of the root and of a workspace.
                         let can_add = failed_dep.name_hash
                             != lockfile.packages.items_name_hash()[0]
@@ -189,7 +193,7 @@ impl PackageManager {
                         let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
                         let literal =
                             bun_core::fmt::for_terminal(failed_dep.version.literal.fmt(string_buf));
-                        let catalog_name = failed_dep.version.catalog().slice(string_buf);
+                        let catalog_name = catalog.slice(string_buf);
                         let is_default = catalog_name.is_empty() || catalog_name == b"default";
                         let catalog_exists = is_default
                             || lockfile
@@ -229,7 +233,6 @@ impl PackageManager {
                         || strings::eql_long(
                             failed_dep.name.slice(string_buf),
                             failed_dep.version.literal.slice(string_buf),
-                            true,
                         )
                     {
                         Output::err_generic(

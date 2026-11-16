@@ -1,4 +1,5 @@
 //! Ports of highway_strings.cpp, for `Bun.stringWidth`.
+use bun_simd::Isa;
 
 const BEL: u8 = 0x07;
 const CAN: u8 = 0x18;
@@ -6,12 +7,50 @@ const SUB: u8 = 0x1A;
 const ESC: u8 = 0x1B;
 const ST: u8 = 0x9C;
 
-// Where a block starts: a bit each.
-const AFTER_ESC: u32 = 0;
-const IN_CSI: u32 = 1;
-const AFTER_INTERMEDIATE: u32 = 2;
-const IN_OSC: u32 = 3;
-const IN_STRING: u32 = 4;
+const IN_TEXT: u64 = 0;
+const AFTER_ESC: u64 = 1;
+const IN_CSI: u64 = 2;
+const AFTER_INTERMEDIATE: u64 = 4;
+const IN_OSC: u64 = 8;
+const IN_STRING: u64 = 16;
+/// `IN_TEXT`, after a byte that counts.
+const VISIBLE: u64 = 128;
+
+const fn state_after(state: u64, byte: u8) -> u64 {
+    match (state, byte) {
+        (_, ESC) => AFTER_ESC,
+        (AFTER_INTERMEDIATE, _) | (_, CAN | SUB | ST) => IN_TEXT,
+        (IN_CSI, 0x40..=0x7E) | (IN_OSC, BEL) => IN_TEXT,
+        (IN_CSI | IN_OSC | IN_STRING, _) => state,
+        (AFTER_ESC, b'[') | (_, 0x9B) => IN_CSI,
+        (AFTER_ESC, b']') | (_, 0x9D) => IN_OSC,
+        (AFTER_ESC, b'P' | b'X' | b'^' | b'_') | (_, 0x90 | 0x98 | 0x9E | 0x9F) => IN_STRING,
+        (AFTER_ESC, 0x20..=0x2F) => AFTER_INTERMEDIATE,
+        (AFTER_ESC, ..0x7F) | (_, ..0x20 | 0x7F..0xA0 | 0xAD) => IN_TEXT,
+        _ => VISIBLE,
+    }
+}
+
+/// The width, and the state at the end.
+#[inline(always)]
+fn byte_by_byte(text: &[u8], state: u64) -> (usize, u64) {
+    /// Each state has its byte in a row, which tells where the next state has its byte.
+    static ROWS: [u64; 256] = {
+        let (mut rows, mut i) = ([0; 256], 0);
+        while i < 256 * 8 {
+            let next = state_after(1 << (i % 8) >> 1, (i / 8) as u8);
+            rows[i / 8] |= (8 * next.bit_width() as u64) << (8 * (i % 8));
+            i += 1;
+        }
+        rows
+    };
+    let (mut width, mut shift) = (0, u64::from(8 * state.bit_width()));
+    for &byte in text {
+        shift = ROWS[usize::from(byte)].wrapping_shr(shift as u32);
+        width += (shift >> 6 & 1) as usize;
+    }
+    (width, 1 << (shift / 8 % 8) >> 1)
+}
 
 /// The bits from each of `starts` up to the next of `ends`, and whether that is in a later block.
 #[inline(always)]
@@ -60,11 +99,24 @@ pub(crate) mod simd {
         U8::repeat_16(by_row).lookup(v >> 4) | is_exception.to_vector() & 63
     }
 
+    /// Below that, `byte_by_byte` is faster than a block.
+    const SHORT: usize = if isa::Isa::HAS_SINGLE_CYCLE_OPS {
+        16
+    } else {
+        32
+    };
+
     #[export]
     pub fn visible_latin1_width_exclude_ansi(text: &[u8]) -> usize {
-        if text.len() < 64 {
-            return match U8::sum_of_bytes::<_, 63>(text, |v| weight(v)) {
-                width @ ..63 => width,
+        if text.len() < 63 {
+            // Text that starts with ESC or a C1 byte has sequences.
+            if text.first().is_none_or(|first| first & 0x70 != 0x10)
+                && let width @ ..63 = U8::sum_of_bytes::<_, 63>(text, |v| weight(v))
+            {
+                return width;
+            }
+            return match text.len() {
+                ..SHORT => byte_by_byte(text, IN_TEXT).0,
                 _ => width_with_escapes(0, text),
             };
         }
@@ -74,44 +126,49 @@ pub(crate) mod simd {
         }
     }
 
-    /// The bytes that are not visible, and some of them, among which all that start a sequence.
-    fn invisible_and_suspects(block: &[u8; 64]) -> [u64; 2] {
+    /// The second are not visible. All that start a sequence are among them.
+    fn visible_and_suspects(block: &[u8; 64]) -> [u64; 2] {
         U8::bitmasks(block, |v| {
-            let del_or_c1 = v.in_range(0x7F..=0x9F);
-            let invisible = del_or_c1 | v.in_range(0..=0x1F) | v.simd_eq(0xAD);
-            [invisible, del_or_c1 | v.simd_eq(ESC)]
+            [is_visible(v), v.in_range(0x90..=0x9F) | v.simd_eq(ESC)]
         })
     }
 
     #[inline(never)]
     fn width_with_escapes(mut width: usize, text: &[u8]) -> usize {
-        let (mut rest, mut state) = (Some(text), 0);
+        let (mut rest, mut state) = (Some(text), IN_TEXT);
         while let Some(text) = rest {
             let block;
             (block, rest) = match text.split_first_chunk() {
                 Some((block, rest)) => (*block, Some(rest)),
+                None if text.len() < SHORT => return width + byte_by_byte(text, state).0,
                 None => (U8::pad_block(text), None),
             };
-            let [invisible, suspects] = invisible_and_suspects(&block);
+            let [visible, suspects] = visible_and_suspects(&block);
             if suspects | state != 0 {
-                let hidden = invisible | escapes_in(&block, invisible, suspects, &mut state);
-                width += 64 - hidden.count_ones() as usize;
+                let was = state;
+                if let Some(hidden) = escapes_in(&block, !visible, suspects, &mut state) {
+                    width += (visible & !hidden).count_ones() as usize;
+                } else {
+                    let (more, is) = byte_by_byte(&text[..text.len().min(64)], was);
+                    (width, state) = (width + more, is);
+                }
                 continue;
             }
-            width += 64 - invisible.count_ones() as usize;
+            width += visible.count_ones() as usize;
             // A loop of its own has the registers for itself.
             while let Some((block, after)) = rest.and_then(<[_]>::split_first_chunk)
-                && let [invisible, 0] = invisible_and_suspects(block)
+                && let [visible, 0] = visible_and_suspects(block)
             {
-                (width, rest) = (width + 64 - invisible.count_ones() as usize, Some(after));
+                (width, rest) = (width + visible.count_ones() as usize, Some(after));
             }
         }
         width
     }
 
     /// ESC ends any sequence. A C1 byte stands for ESC and the letter with the same low six bits.
+    /// `None` if one starts a sequence.
     #[inline(always)]
-    fn escapes_in(block: &[u8; 64], invisible: u64, suspects: u64, state: &mut u64) -> u64 {
+    fn escapes_in(block: &[u8; 64], invisible: u64, suspects: u64, state: &mut u64) -> Option<u64> {
         let [csi, csi_ends] = U8::bitmasks(block, |v| {
             let aborts = [1, 0, 0, 0, 0, 0, 0, 0, CAN, 0, SUB, ESC, ST, 0, 0, 0];
             let aborts = U8::repeat_16(aborts).lookup(v & 0x0F).simd_eq(v);
@@ -121,13 +178,13 @@ pub(crate) mod simd {
             ]
         });
         let (was, esc) = (*state, csi & suspects & csi_ends);
-        let after_esc = esc << 1 | was >> AFTER_ESC & 1;
+        let after_esc = esc << 1 | was & AFTER_ESC;
         let letters = after_esc & csi_ends & !invisible;
         let csi_ends = csi_ends & !letters;
-        let (mut hidden, carry) = runs(letters & csi | was >> IN_CSI & 1, csi_ends);
-        *state = esc >> 63 << AFTER_ESC | carry << IN_CSI;
-        if after_esc & !hidden | suspects & !esc | was >> AFTER_INTERMEDIATE == 0 {
-            return hidden;
+        let (mut hidden, carry) = runs(letters & csi | (was / IN_CSI) & 1, csi_ends);
+        *state = ((esc >> 63) * AFTER_ESC) | (carry * IN_CSI);
+        if after_esc & !hidden | suspects & !esc | (was / AFTER_INTERMEDIATE) == 0 {
+            return Some(hidden);
         }
 
         let [osc, string, intermediates, bel, not_ascii] = U8::bitmasks(block, |v| {
@@ -141,24 +198,13 @@ pub(crate) mod simd {
             ]
         });
         let (aborts, intermediates) = (csi_ends & invisible, intermediates & after_esc);
-        hidden |= after_esc & !not_ascii | intermediates << 1 | was >> AFTER_INTERMEDIATE & 1;
-        *state |= intermediates >> 63 << AFTER_INTERMEDIATE;
+        hidden |= after_esc & !not_ascii | intermediates << 1 | (was / AFTER_INTERMEDIATE) & 1;
+        *state |= (intermediates >> 63) * AFTER_INTERMEDIATE;
         for (kind, starts, ends) in [(IN_OSC, osc, aborts | bel), (IN_STRING, string, aborts)] {
-            let (run, carry) = runs(letters & starts | was >> kind & 1, ends);
-            (hidden, *state) = (hidden | run, *state | carry << kind);
+            let (run, carry) = runs(letters & starts | (was / kind) & 1, ends);
+            (hidden, *state) = (hidden | run, *state | (carry * kind));
         }
-        let mut c1 = (csi | osc | string) & suspects & not_ascii & !hidden;
-        while c1 != 0 {
-            let start = c1.isolate_lowest_one();
-            let (kind, ends) = match (start & csi, start & osc) {
-                (0, 0) => (IN_STRING, aborts),
-                (0, _) => (IN_OSC, aborts | bel),
-                _ => (IN_CSI, csi_ends),
-            };
-            let (run, carry) = runs(start, ends);
-            (hidden, *state, c1) = (hidden | run, *state | carry << kind, c1 & !run);
-        }
-        hidden
+        ((csi | osc | string) & suspects & not_ascii & !hidden == 0).then_some(hidden)
     }
 
     /// Always a cluster of its own, with a width of 1 up to U+3000 and of 2 above.

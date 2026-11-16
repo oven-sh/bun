@@ -1,10 +1,23 @@
 //! Ports of highway_strings.cpp, for `node:path`.
 
-/// Whether the part at `at`, which starts with `/` or `.`, is empty, `.` or `..`
+use bun_simd::Isa;
+
+/// The lowest bit of `all` that is not in `others`.
 #[inline(always)]
-fn is_untidy_part(path: &[u8], at: usize) -> bool {
-    let ends_at = |at: usize| path.get(at).is_none_or(|&byte| byte == b'/');
-    ends_at(at) || ends_at(at + 1) || path[at + 1] == b'.' && ends_at(at + 2)
+fn first_but(all: u64, others: u64) -> Option<u32> {
+    let first = all.lowest_one()?;
+    // With a branch, the result need not wait for `others`.
+    if all.isolate_lowest_one() & others == 0 {
+        return Some(first);
+    }
+    core::hint::cold_path();
+    (all & !others).lowest_one()
+}
+
+/// Where a part that is not empty, `.` or `..` starts. `goes_on` has the lanes before the end that are not `/`.
+#[inline(always)]
+fn names(goes_on: u64, dots: u64, lane: usize) -> u64 {
+    goes_on & goes_on >> lane & !(dots >> lane & !(goes_on >> (2 * lane)))
 }
 
 #[bun_simd::foreach_target]
@@ -13,39 +26,45 @@ pub(crate) mod simd {
 
     #[inline(always)]
     fn index_of_untidy<const OR_NON_ASCII: bool>(path: &[u8]) -> Option<usize> {
-        let test = |[v, next]: [U8; 2]| {
-            let or_non_ascii = |is_suspect| match OR_NON_ASCII {
-                true => is_suspect | v.bitcast::<I8>().simd_lt(0).cast(),
-                false => is_suspect,
-            };
+        let bits = |mask| isa::Isa::movemask(mask).0;
+        let is_high = |v: U8| match OR_NON_ASCII {
+            true => v.bitcast::<I8>().simd_lt(0).cast(),
+            false => v.simd_ne(v),
+        };
+        // The lanes after `both` count as the end of the path.
+        let first_in = |both: &[u8; U8::LEN + 1]| {
+            let [v, next] = [U8::from_slice(both), U8::from_slice(&both[1..])];
             let is_suspect = v.simd_eq(b'/') & (next | 1).simd_eq(b'/');
-            if or_non_ascii(is_suspect).none() {
-                return U8::zero().simd_eq(1);
+            let (suspects, lane) = isa::Isa::movemask(is_suspect | is_high(v));
+            if suspects == 0 {
+                return None;
             }
-            let may_end = |v: U8| v.simd_eq(b'/') | v.simd_eq(0);
-            let second = U8::zero().shift_in::<{ U8::LEN - 1 }>(next);
-            let third = U8::zero().shift_in::<{ U8::LEN - 2 }>(next);
-            let is_short = may_end(second) | second.simd_eq(b'.') & may_end(third);
-            or_non_ascii(is_suspect & (next.simd_eq(b'/') | is_short))
+            let names = names(bits(next.simd_ne(b'/')), bits(next.simd_eq(b'.')), lane);
+            Some(first_but(suspects, names & !bits(is_high(v)))? as usize / lane)
         };
         let mut rest = path;
-        loop {
-            let suspect = if rest.len() > U8::LEN {
-                U8::position_near::<_, 2, true>([rest, &rest[1..]], test)
-            } else {
-                let [next] = U8::load_or_zero(rest);
-                let lane = test([next.shift_elements_right::<1>(0), next]).first_set();
-                lane.map(|lane| lane - 1)
+        while let Some((both, [_, ..])) = rest.split_first_chunk() {
+            rest = match first_in(both) {
+                Some(at) if at + 2 < U8::LEN => return Some(path.len() - rest.len() + at),
+                Some(_) => &rest[U8::LEN - 2..],
+                None => &rest[U8::LEN..],
             };
-            let Some(at) = suspect else {
-                let is_last = OR_NON_ASCII && matches!(rest, [.., 0x80..=0xFF]);
-                return is_last.then(|| path.len() - 1);
-            };
-            if OR_NON_ASCII && *rest.get(at)? != b'/' || is_untidy_part(rest, at + 1) {
-                return Some(path.len() - rest.len() + at);
-            }
-            rest = rest.get(at + 1..)?;
         }
+        if let Some((before, both)) = path.split_last_chunk() {
+            let found = first_in(both).map(|at| before.len() + at);
+            let is_last = OR_NON_ASCII && !both[U8::LEN].is_ascii();
+            return found.or_else(|| is_last.then_some(before.len() + U8::LEN));
+        }
+        let [v] = U8::load_or_zero(path);
+        let before = v.shift_elements_right::<1>(0);
+        if (before.simd_eq(b'/') & (v | 1).simd_eq(b'/') | is_high(v)).none() {
+            return None;
+        }
+        let ((slashes, lane), dots) = (isa::Isa::movemask(v.simd_eq(b'/')), bits(v.simd_eq(b'.')));
+        let (suspects, high) = (slashes & (slashes | dots) >> lane, bits(is_high(v)));
+        let goes_on = !slashes & u64::MAX >> (64 - path.len() * lane);
+        let names = names(goes_on, dots, lane) >> lane;
+        Some(first_but(suspects | high, names & !high)? as usize / lane)
     }
 
     /// The first `/` before a part that is empty, `.` or `..`

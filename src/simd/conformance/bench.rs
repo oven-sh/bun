@@ -192,6 +192,7 @@ fn escapes() {
         ("control bytes", b"\x11"),
         ("lines", b"a line of text\n"),
         ("accented words", b"caf\xE9 au lait "),
+        ("euro signs", b"10 \x80 each, "),
         (
             "curly quotes",
             b"it\x92s a sentence with a single such byte. ",
@@ -439,22 +440,24 @@ fn shapes_of_calls(js: &[u8], lockfile: &[u8]) {
             .collect()
     };
     let all = [
-        paths_to(["/package.json", "/lib/index.js", "/./a.mjs", "", "/dist/"]),
-        paths_to([
-            "/.bin/tsc",
-            "/.cache/.x/a.json",
-            "/..data/key",
-            "/a.js",
-            "/.git",
-        ]),
-    ];
+        ["/package.json", "/lib/index.js", "/./a.mjs", "", "/dist/"],
+        ["/.bin/x", "/.cache/.x/a", "/..data/key", "/a.js", "/.git"],
+        ["/../a.js", "/./b/../c", "//d", "/e/../../f/./g", "/.."],
+    ]
+    .map(paths_to);
     let random = &mut Random(5);
-    let [paths, hidden] = &all.each_ref().map(|all| -> Vec<_> {
+    let [paths, hidden, untidy] = &all.each_ref().map(|all| -> Vec<_> {
         let path = |_| &all[random.below(all.len())][..];
         (0..20_000).map(path).collect()
     });
     pairs::of_paths(&mut ("paths", &paths[..]));
     pairs::of_paths(&mut ("paths with dots", &hidden[..]));
+    let dense = &vec![&b"/home//me/./app/../app/src/./a/../index.ts"[..]; 20_000];
+    for (name, paths) in [("untidy paths", untidy), ("times the same path", dense)] {
+        compare!("index_of_untidy_slash hops through 20000 {name}", |k| {
+            each(paths, |t| hop(t, k::index_of_untidy_slash).len())
+        });
+    }
     compare!("last_index_of_char of 20000 paths", |k| {
         each(paths, |t| branch_on(k::last_index_of_char(t, b'.')))
     });

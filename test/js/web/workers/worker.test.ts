@@ -782,7 +782,7 @@ describe("web worker", () => {
           thrown(() => WorkerGlobalScope()), thrown(() => DedicatedWorkerGlobalScope()), thrown(() => WorkerLocation()),
         ],
         constructorChain: Object.getPrototypeOf(DedicatedWorkerGlobalScope) === WorkerGlobalScope
-          && Object.getPrototypeOf(WorkerGlobalScope) === Function.prototype
+          && Object.getPrototypeOf(WorkerGlobalScope) === EventTarget
           && Object.getPrototypeOf(WorkerLocation) === Function.prototype,
         exposed: ["WorkerGlobalScope", "DedicatedWorkerGlobalScope", "WorkerLocation", "location"].map(name => {
           const d = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -801,6 +801,9 @@ describe("web worker", () => {
       try {
         return await new Promise<any>((resolve, reject) => {
           worker.onerror = e => reject(e.error ?? new Error(e.message));
+          worker.addEventListener("close", e =>
+            reject(new Error(`worker closed with code ${e.code} before it reported`)),
+          );
           worker.onmessage = e => resolve(e.data);
         });
       } finally {

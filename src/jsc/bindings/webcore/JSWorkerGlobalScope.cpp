@@ -76,9 +76,10 @@ template<> void JSWorkerGlobalScopeConstructor::initializeProperties(JSC::VM&, J
 
 template<> const ClassInfo JSWorkerGlobalScopeConstructor::s_info = { "WorkerGlobalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerGlobalScopeConstructor) };
 
-template<> JSValue JSWorkerGlobalScopeConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject& globalObject)
+template<> JSValue JSWorkerGlobalScopeConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
 {
-    return globalObject.functionPrototype();
+    // class WorkerGlobalScope extends EventTarget
+    return JSEventTarget::getConstructor(vm, &globalObject);
 }
 
 template<> void JSWorkerGlobalScopeConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)

@@ -26,7 +26,7 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct JSMySQLQuery {
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     ref_count: Cell<u32>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
@@ -44,11 +44,6 @@ impl JSMySQLQuery {
     // The generator counts the struct itself.
     pub(crate) fn estimated_size(&self) -> usize {
         0
-    }
-
-    pub fn finalize(&self) {
-        debug!("MySQLQuery finalize");
-        self.this_value.with_mut(|v| v.finalize());
     }
 
     pub(crate) fn create_query<'a>(
@@ -72,7 +67,7 @@ impl JSMySQLQuery {
         });
         let this = js::wrap(this, global_this);
         let this_value = this.to_js();
-        this.this_value.with_mut(|v| v.set_weak(this_value));
+        this.set_js_ref_weak();
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);

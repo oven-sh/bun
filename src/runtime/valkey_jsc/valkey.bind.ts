@@ -223,6 +223,7 @@ export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
   refCounted: true,
   finalize: true,
+  thisValue: "this_value",
   memoryCost: true,
   construct: {
     passStructure: true,

@@ -1226,7 +1226,7 @@ pub(crate) struct CronJob {
     // Read-only after construction.
     tz: CronTz,
     poll_ref: KeepAlive,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     stopped: Cell<bool>,
     /// Last computed wall-clock fire target (ms epoch); floors the next search
     /// so monotonic-vs-wall skew can't recompute the same minute.
@@ -1269,10 +1269,7 @@ impl CronJob {
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
     pub(crate) fn maybe_downgrade(&self) {
-        if self.stopped.get()
-            && self.tick_cell.get().is_empty()
-            && !matches!(self.this_value.get(), JsRef::Finalized)
-        {
+        if self.stopped.get() && self.tick_cell.get().is_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
     }
@@ -1280,9 +1277,7 @@ impl CronJob {
     /// The job's script is gone (its context stopped): nothing reads the wrapper again, so the
     /// callback and what it closes over are not kept for a tick whose promise may never settle.
     fn let_go_of_wrapper(&self) {
-        if !matches!(self.this_value.get(), JsRef::Finalized) {
-            self.this_value.with_mut(|v| v.downgrade());
-        }
+        self.this_value.with_mut(|v| v.downgrade());
     }
 
     /// Takes one ref as the cell's claim on the job and remembers the cell.
@@ -1410,10 +1405,6 @@ impl CronJob {
                 Self::reclaim_tick_claim(this);
             }
         }
-    }
-
-    pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -1637,7 +1628,7 @@ impl CronJob {
 
         let job = js::wrap(job, global);
         let js_value = job.to_js();
-        job.this_value.with_mut(|v| v.set_strong(js_value, global));
+        job.set_js_ref_strong(global);
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         js::callback_set_cached(
             js_value,

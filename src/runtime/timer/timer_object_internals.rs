@@ -353,9 +353,6 @@ impl TimerObjectInternals {
             // this increments the refcount and sets _idleStart
             self.reschedule(timer, vm, cx.global());
         }
-
-        self.this_value
-            .with_mut(|r| r.set_strong(timer, cx.global()));
     }
 
     /// Returns `true` if an
@@ -623,7 +620,7 @@ impl TimerObjectInternals {
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L613
         JSTimeout::idle_timeout_set_cached(timer, global, repeat);
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.this_value.with_mut(|r| r.upgrade(global));
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         self.node().is_due_when_idle.set(false);
@@ -748,7 +745,7 @@ impl Drop for TimerObjectInternals {
 
 // ──────────────────────────────────────────────────────────────────────────
 // JS-host-method facade — `do_ref`/`do_unref`/`do_refresh`/`has_ref`/
-// `to_primitive`/`get_destroyed`/`finalize`/`cancel`, called from
+// `to_primitive`/`get_destroyed`/`cancel`, called from
 // `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {
@@ -807,8 +804,9 @@ impl TimerObjectInternals {
     pub(crate) fn do_refresh(
         &self,
         global_object: &JSGlobalObject,
-        this_value: JSValue,
+        timeout: bun_jsc::bindgen::JsWrapper<'_, TimeoutObject>,
     ) -> JSValue {
+        let this_value = timeout.to_js();
         // Immediates do not have a refresh function, and our binding generator should not let this
         // function be reached even if you override the `this` value calling a Timeout object's
         // `refresh` method
@@ -824,8 +822,7 @@ impl TimerObjectInternals {
             return this_value;
         }
 
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global_object));
+        timeout.set_js_ref_strong(global_object);
         self.reschedule(this_value, VirtualMachine::get(), global_object);
 
         this_value
@@ -862,12 +859,6 @@ impl TimerObjectInternals {
             EventLoopTimerState::ACTIVE | EventLoopTimerState::PENDING => false,
             EventLoopTimerState::FIRED | EventLoopTimerState::CANCELLED => true,
         }
-    }
-
-    /// Runs on the mutator thread during lazy sweep; do not touch any
-    /// `JSValue`/`Strong` content here.
-    pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|r| r.finalize());
     }
 
     /// `clearTimeout`/`clearInterval`

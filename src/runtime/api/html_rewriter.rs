@@ -17,7 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RefPtr};
+use bun_ptr::{AsCtxPtr as _, Attached, BackRef, Detach, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
@@ -490,15 +490,6 @@ enum RewritePhase {
     Done,
 }
 
-/// A wrapper that points at a lol-html unit until this is dropped.
-struct Attached<Z: WrapperLike>(RefPtr<Z>);
-
-impl<Z: WrapperLike> Drop for Attached<Z> {
-    fn drop(&mut self) {
-        self.0.detach();
-    }
-}
-
 /// The JS wrapper a suspended handler is still using.
 enum SuspendedWrapper {
     Element(Attached<Element>),
@@ -513,12 +504,12 @@ impl SuspendedWrapper {
     /// Point the wrapper at the heap copy lol-html parked on suspend.
     fn retarget(&self, rewriter: &mut LolRewriter) {
         match self {
-            Self::Element(p) => p.0.retarget(Element::suspended_raw(rewriter)),
-            Self::Comment(p) => p.0.retarget(Comment::suspended_raw(rewriter)),
-            Self::TextChunk(p) => p.0.retarget(TextChunk::suspended_raw(rewriter)),
-            Self::EndTag(p) => p.0.retarget(EndTag::suspended_raw(rewriter)),
-            Self::DocType(p) => p.0.retarget(DocType::suspended_raw(rewriter)),
-            Self::DocEnd(p) => p.0.retarget(DocEnd::suspended_raw(rewriter)),
+            Self::Element(p) => p.retarget(Element::suspended_raw(rewriter)),
+            Self::Comment(p) => p.retarget(Comment::suspended_raw(rewriter)),
+            Self::TextChunk(p) => p.retarget(TextChunk::suspended_raw(rewriter)),
+            Self::EndTag(p) => p.retarget(EndTag::suspended_raw(rewriter)),
+            Self::DocType(p) => p.retarget(DocType::suspended_raw(rewriter)),
+            Self::DocEnd(p) => p.retarget(DocEnd::suspended_raw(rewriter)),
         }
     }
 }
@@ -595,7 +586,7 @@ pub struct RewriterPipe {
     /// The owning `JSHTMLRewriterTransform` wrapper cell (which holds a ref on this
     /// pipe). Its WriteBarrier slots root the response, input/output streams,
     /// pending promise, and handler error. Weak: the pipe's other owners outlive the cell.
-    cell: JsCell<JsRef>,
+    pub(crate) cell: JsCell<JsRef>,
     /// Boxed (never held by value): lol-html's `write/end/resume` re-enter
     /// the output sink which reads fields off `*self`. `JsCell`
     /// because those calls (and `suspended_*`) need `&mut LolRewriter` from
@@ -670,7 +661,7 @@ pub struct RewriterPipe {
 
     // ── allocation lifetime ──────────────────────────────────────────────
     /// Owners that may still dispatch into this allocation: the Transform
-    /// cell (releases in [`Self::finalize`]), the JS-pump controller's raw
+    /// cell, the JS-pump controller's raw
     /// `sink` (`pump_ref`), and a parked
     /// suspension's reaction/abandon task. GC sweeps cells in unspecified
     /// order within a cycle, so whichever owner releases last frees the Box.
@@ -684,13 +675,6 @@ impl RewriterPipe {
     /// held (or, unobserved, before the turn is yielded). The same distance
     /// `fetch()` lets a request-body stream run ahead of the socket.
     const HIGH_WATER_MARK: BlobSizeType = 16384;
-
-    /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
-    /// here may touch other GC cells, and the other ref holders may still
-    /// dispatch into the pipe after this cell is swept.
-    pub fn finalize(&self) {
-        self.cell.with_mut(|r| r.finalize());
-    }
 
     fn ref_guard(&self) -> RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
@@ -988,8 +972,9 @@ impl RewriterPipe {
         // The cell's WriteBarrier slots root the Response and (later) the
         // input/output streams; the Response's `transform` slot roots the cell
         // so it survives as long as user code can reach the output.
-        let cell = js_HTMLRewriterTransform::to_js(pipe, cx.global());
-        this.cell.set(JsRef::init_weak(cell));
+        let transform = js_HTMLRewriterTransform::wrap(pipe, cx.global());
+        transform.set_js_ref_weak();
+        let cell = transform.to_js();
         js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
         js_Response::transform_set_cached(response_js_value, cx.global(), cell);
         // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
@@ -2093,15 +2078,12 @@ impl HandlerLike for EndTagHandler {
 
 /// Trait abstracting the wrapper-type bits [`handler_callback`] and the
 /// suspension plumbing need.
-trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
+/// Every host-fn on a detached wrapper is a harmless no-op.
+trait WrapperLike: Detach {
     type Raw;
     /// `pipe` is the one whose lol-html call lends `value`.
     fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self>;
     fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue;
-    /// Null out the wrapper's lol-html pointer and detach any sub-objects it
-    /// handed to JS (Element's AttributeIterators). Every host-fn on the
-    /// wrapper is a harmless no-op afterwards.
-    fn detach(&self);
     /// Re-point the wrapper at a different lol-html unit: the heap copy
     /// lol-html parks when one of the unit's handlers suspends on it.
     fn retarget(&self, raw: *mut Self::Raw);
@@ -2121,6 +2103,12 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
 /// invalidate the `AttributeIterator`s it handed out.
 macro_rules! impl_wrapper_like {
     ($ty:ident, $js:ident, $raw:ty, $field:ident, $suspended:ident) => {
+        impl Detach for $ty {
+            fn detach(&self) {
+                self.$field.detach();
+            }
+        }
+
         impl WrapperLike for $ty {
             type Raw = $raw;
             fn init(v: *mut Self::Raw, _pipe: BackRef<RewriterPipe>) -> RefPtr<Self> {
@@ -2128,9 +2116,6 @@ macro_rules! impl_wrapper_like {
             }
             fn to_js(this: RefPtr<Self>, g: &JSGlobalObject) -> JSValue {
                 $js::to_js(this, g)
-            }
-            fn detach(&self) {
-                self.$field.detach();
             }
             fn retarget(&self, raw: *mut Self::Raw) {
                 self.$field.set(raw);
@@ -2223,7 +2208,7 @@ where
         }
     };
 
-    let wrapper = Attached(Z::init(value, sink));
+    let wrapper = Attached::from(Z::init(value, sink));
 
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
     // callback. A post-hoc `try_take_exception()`
@@ -2236,7 +2221,7 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    let result = match cb.call(global, this_object, &[Z::to_js(wrapper.0.clone(), global)]) {
+    let result = match cb.call(global, this_object, &[Z::to_js(wrapper.clone(), global)]) {
         Ok(v) => v,
         Err(_) => {
             // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
@@ -2310,7 +2295,7 @@ where
             }
 
             // lol-html moves the unit as it returns, so null the wrapper until `park_suspension` retargets it.
-            wrapper.0.retarget(core::ptr::null_mut());
+            wrapper.retarget(core::ptr::null_mut());
             // The callback came out of the cell, and `drive_rewriter` keeps it alive.
             let cell = sink
                 .cell
@@ -2790,24 +2775,19 @@ pub(crate) struct AttributeIterator {
     /// out. Reading the attributes through it (rather than caching a
     /// `slice::Iter` into the attribute buffer) means a suspension, which
     /// re-points the element at lol-html's heap-parked copy, re-points this
-    /// iterator too. The element keeps a `+1` on us and nulls this in
-    /// `detach()`, so it never dangles. R-2: `Cell` so host-fns take `&self`.
+    /// iterator too. R-2: `Cell` so host-fns take `&self`.
     element: Cell<Option<BackRef<Element>>>,
     /// Index of the next attribute to yield.
     index: Cell<usize>,
 }
 
-impl AttributeIterator {
-    /// Drop the backref. The element owns our `+1` and clears it here, so the
-    /// raw pointer is never read after the element stops tracking us.
+impl Detach for AttributeIterator {
     fn detach(&self) {
         self.element.set(None);
     }
+}
 
-    pub(crate) fn finalize(&self) {
-        self.detach();
-    }
-
+impl AttributeIterator {
     pub(crate) fn next<'a>(
         &self,
         heap: &JsHeap<'a>,
@@ -2851,21 +2831,21 @@ pub(crate) struct Element {
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) element: DetachablePtr<RawElement>,
-    /// AttributeIterator instances handed out by `getAttributes()`. Each holds
-    /// a non-owning backref to this `Element` plus a `+1` we own; `invalidate()`
-    /// nulls those backrefs when the handler returns, so none can outlive us.
+    /// AttributeIterator instances handed out by `getAttributes()`.
     /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
     /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
-    pub(crate) attribute_iterators: JsCell<Vec<RefPtr<AttributeIterator>>>,
+    pub(crate) attribute_iterators: JsCell<Vec<Attached<AttributeIterator>>>,
     /// Lends `element`. Not `active_sink`: none after an `await`, another in a nested rewrite.
     pipe: Cell<Option<BackRef<RewriterPipe>>>,
 }
 
-impl Drop for Element {
-    fn drop(&mut self) {
-        self.invalidate();
+impl Detach for Element {
+    fn detach(&self) {
+        self.element.detach();
+        self.pipe.set(None);
+        self.detach_attribute_iterators();
     }
 }
 
@@ -2886,22 +2866,7 @@ impl Element {
     /// to stop being a valid target) or when `setAttribute` / `removeAttribute`
     /// is about to renumber the attributes their index refers into.
     fn detach_attribute_iterators(&self) {
-        // R-2: take the Vec out of the cell, drain on the stack — no `&mut`
-        // projection of `self` is held across `detach()`/`deref()` (which do
-        // not re-enter JS, but defence-in-depth keeps the JsCell borrow zero-len).
-        let iters = self.attribute_iterators.replace(Vec::new());
-        for iter in iters {
-            iter.detach();
-        }
-    }
-
-    /// Called by `handler_callback` when the handler returns. The underlying
-    /// `*LOLHTML.Element` is only valid during handler execution, so null it
-    /// out here, and end the iterators that read through it.
-    pub(crate) fn invalidate(&self) {
-        self.element.detach();
-        self.pipe.set(None);
-        self.detach_attribute_iterators();
+        self.attribute_iterators.set(Vec::new());
     }
 
     pub(crate) fn on_end_tag<'a>(
@@ -2931,7 +2896,7 @@ impl Element {
             return Err(global_object.throw_value(err).into());
         };
 
-        // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
+        // Only `detach()` clears `pipe`, and it detaches `element` in the same call.
         let pipe = self.pipe.get().expect("attached Element without its pipe");
         let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
         let (Some(slot), None) = (slot, replaced) else {
@@ -3115,7 +3080,7 @@ impl Element {
         // an attribute mutation invalidates it.
         // R-2: `with_mut` — closure does not call into JS (push only).
         self.attribute_iterators
-            .with_mut(|v| v.push(attr_iter.clone()));
+            .with_mut(|v| v.push(attr_iter.clone().into()));
         Some(js_AttributeIterator::to_js(attr_iter, global_object))
     }
 }
@@ -3130,9 +3095,6 @@ impl WrapperLike for Element {
     }
     fn to_js(this: RefPtr<Self>, g: &JSGlobalObject) -> JSValue {
         js_Element::to_js(this, g)
-    }
-    fn detach(&self) {
-        self.invalidate();
     }
     fn retarget(&self, raw: *mut Self::Raw) {
         // The element's lol-html backing (including the attribute buffer) was

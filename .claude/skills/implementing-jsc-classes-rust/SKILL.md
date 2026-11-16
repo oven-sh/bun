@@ -67,7 +67,7 @@ Every member takes `&self`; state that changes is in `Cell` or `JsCell`.
 
 Never store a raw `JSValue` in a struct field. Declare an internal field (`internalFields: ["callback"]` or a `cache: true`
 getter) and use `js_Matcher::callback_set_cached(this_value, global, value)` / `callback_get_cached(this_value)` from
-`crate::generated_bindgen::<file>`. To reach its own object the struct stores a `JsRef`.
+`crate::generated_bindgen::<file>`. To reach its own object the struct stores a `JsRef` in the field that `thisValue` names.
 
 ## Reference implementations
 

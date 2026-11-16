@@ -7,7 +7,7 @@ const chainable = { returns: b.self, passThis: true } as const;
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
   refCounted: true,
-  finalize: true,
+  thisValue: "this_value",
   internalFields: ["callback", "pendingPromise", "cron"],
   proto: {
     cron: { internalField: "cron" },

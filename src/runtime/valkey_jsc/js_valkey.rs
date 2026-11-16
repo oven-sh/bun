@@ -429,7 +429,7 @@ impl JSValkeyClient {
         let this_value = structure.create(&cx.heap, new_client);
 
         // Initially, we only need to hold a weak reference to the JS object.
-        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        this_value.set_js_ref_weak();
 
         // Need to associate the subscription context, after the JS ref has been populated.
         this._subscription_ctx.set(SubscriptionCtx::init(&this)?);
@@ -1360,8 +1360,6 @@ impl JSValkeyClient {
     pub(crate) fn finalize(&self) {
         self.timer.disarm();
         self.reconnect_timer.disarm();
-        self.this_value.with_mut(|t| t.finalize());
-        self.client_mut().flags.finalized = true;
         self.close_socket_next_tick();
         // `_subscription_ctx` is three inline bools (no allocation, no GC
         // ref); `is_subscriber` can legitimately still be set here if the

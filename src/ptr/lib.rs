@@ -38,8 +38,8 @@ pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
-    ThreadSafeRefCounted,
+    AnyRefCounted, Attached, CellRefCounted, Detach, RefCount, RefCounted, RefPtr,
+    ThreadSafeRefCount, ThreadSafeRefCounted,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export

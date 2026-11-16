@@ -114,6 +114,7 @@ macro_rules! impl_timer_object {
                         js_value, cx, id, kind, interval, callback, arguments, clock,
                     );
                 }
+                timer.set_js_ref_strong(cx.global());
                 if cx.vm().is_inspector_enabled() {
                     ::bun_jsc::Debugger::did_schedule_async_call(
                         cx.global(),
@@ -145,10 +146,6 @@ macro_rules! impl_timer_object {
 
             pub(crate) fn has_ref(this: &Self) -> bool {
                 this.internals.has_ref()
-            }
-
-            pub(crate) fn finalize(&self) {
-                self.internals.finalize()
             }
 
             pub(crate) fn get_destroyed(this: &Self) -> bool {

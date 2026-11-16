@@ -2,7 +2,7 @@ use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer}
 use bun_collections::VecExt as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef, JsResult,
+    self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsResult,
 };
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx, js};
@@ -1821,7 +1821,7 @@ impl JSValkeyClient {
         // The duplicate is the calling script's, whoever made the original.
         let new_client = js::wrap(self.clone_without_connecting(&cx)?, global);
         let new_client_js = new_client.to_js();
-        new_client.this_value.set(JsRef::init_weak(new_client_js));
+        new_client.set_js_ref_weak();
         new_client
             ._subscription_ctx
             .set(SubscriptionCtx::init(&new_client)?);

@@ -34,7 +34,6 @@ pub(crate) struct ConnectionFlags {
     /// `Disconnected`.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
-    pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
     // modes through which a client may connect:
@@ -57,7 +56,6 @@ impl Default for ConnectionFlags {
             is_reconnecting: false,
             failed: false,
             enable_auto_pipelining: true,
-            finalized: false,
             connection_promise_returns_client: false,
         }
     }
@@ -512,7 +510,7 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        if self.flags.finalized {
+        if self.parent().this_value.get().is_finalized() {
             let vm = self.vm;
             let deferred_failure = Box::new(DeferredFailure {
                 message: Box::<[u8]>::from(message),
@@ -568,7 +566,7 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        if self.flags.finalized {
+        if self.parent().this_value.get().is_finalized() {
             // We can't run promises inside finalizers.
             if !self.queue.is_empty() || !self.in_flight.is_empty() {
                 let vm = self.vm;

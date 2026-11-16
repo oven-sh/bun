@@ -185,11 +185,6 @@ impl PostgresSQLQuery {
         Some(target)
     }
 
-    pub fn finalize(&self) {
-        bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        self.this_value.with_mut(|r| r.finalize());
-    }
-
     /// For a request that is owed no `ReadyForQuery`: its caller takes it out of the queue.
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         let err = self.kept_error().unwrap_or(err);
@@ -403,7 +398,7 @@ impl PostgresSQLQuery {
         });
         let this = js::wrap(this, global_this);
         let this_value = this.to_js();
-        this.this_value.set(JsRef::init_weak(this_value));
+        this.set_js_ref_weak();
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);

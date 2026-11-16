@@ -1119,9 +1119,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref
-                .js_value
-                .with_mut(|js_value| js_value.set_strong(obj, global_object));
+            server.set_js_ref_strong(global_object);
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
@@ -1397,7 +1395,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 
     let valkey = js_RedisClient::wrap(valkey, global_this);
     let as_js = valkey.to_js();
-    valkey.this_value.set(jsc::JsRef::init_weak(as_js));
+    valkey.set_js_ref_weak();
     match SubscriptionCtx::init(&valkey) {
         Ok(ctx) => valkey._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,

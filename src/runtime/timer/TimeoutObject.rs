@@ -26,7 +26,7 @@ impl TimeoutObject {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
     ) -> JSValue {
-        this.internals.do_refresh(cx.global(), this_value.to_js())
+        this.internals.do_refresh(cx.global(), this_value)
     }
 
     pub(crate) fn close<'a>(

@@ -30,7 +30,7 @@ const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", na
 export const Timeout = b.class({
   rustPath: "crate::timer::TimeoutObject",
   refCounted: true,
-  finalize: true,
+  thisValue: "internals.this_value",
   types: [table.exactType("$Node.Timeout"), table.exactType("$Bindgen.Timeout")],
   construct: "illegal",
   internalFields: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
@@ -53,7 +53,7 @@ export const Timeout = b.class({
 export const Immediate = b.class({
   rustPath: "crate::timer::ImmediateObject",
   refCounted: true,
-  finalize: true,
+  thisValue: "internals.this_value",
   construct: "illegal",
   internalFields: ["arguments", "callback"],
   proto: {

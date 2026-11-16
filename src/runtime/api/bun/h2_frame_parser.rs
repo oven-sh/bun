@@ -950,7 +950,7 @@ pub(crate) struct H2FrameParser {
     /// A session is closed from script (`detach_from_js`, when its socket closes). The script of a
     /// `Bun.ModuleGraph` that was disposed is told nothing, so the graph's context closes it.
     abort_handle: bun_jsc::AbortHandle,
-    strong_this: JsCell<JsRef>,
+    pub(crate) strong_this: JsCell<JsRef>,
     global_this: GlobalRef, // JSC_BORROW — read-only after construction
     // allocator field dropped — global mimalloc
     handlers: Handlers,
@@ -6988,9 +6988,7 @@ impl H2FrameParser {
         this_ref.is_server.set(is_server);
         js::context_set_cached(js_value, global_object, context_obj);
 
-        this_ref
-            .strong_this
-            .with_mut(|s| s.set_strong(js_value, global_object));
+        this_value.set_js_ref_strong(global_object);
         let vm = global_object.bun_vm();
         if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
             // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
@@ -7032,7 +7030,7 @@ impl H2FrameParser {
         if let Some(this_value) = this.strong_this.get().try_get() {
             // `global_this` is `GlobalRef` (JSC_BORROW) — Deref gives `&JSGlobalObject`.
             js::context_set_cached(this_value, &this.global_this, JSValue::ZERO);
-            this.strong_this.with_mut(|s| s.set_weak(this_value));
+            this.strong_this.with_mut(JsRef::downgrade);
         }
     }
 
@@ -7093,7 +7091,6 @@ impl Drop for H2FrameParser {
 impl H2FrameParser {
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        self.strong_this.set(JsRef::empty());
         if VirtualMachine::get().is_shutting_down() {
             self.release_refs_stranded_by_exit();
         }

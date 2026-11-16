@@ -345,7 +345,7 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
-pub use self::js_ref::{JsCellRefExt, JsRef};
+pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 
@@ -933,7 +933,7 @@ impl Drop for EnsureStillAlive {
 }
 
 /// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
-pub struct WrapperGuard<'a, T> {
+pub struct WrapperGuard<'a, T, const MAPPED: bool = false> {
     native: core::ptr::NonNull<T>,
     wrapper: EnsureStillAlive,
     /// Borrows the value that was cast.
@@ -941,7 +941,7 @@ pub struct WrapperGuard<'a, T> {
 }
 impl<'a, T> WrapperGuard<'a, T> {
     /// # Safety
-    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
+    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it that is not `HasJsRef`, valid and only shared until `wrapper` is collected.
     #[doc(hidden)]
     pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
         // SAFETY: forwarded.
@@ -957,9 +957,10 @@ impl<'a, T> WrapperGuard<'a, T> {
             _value: core::marker::PhantomData,
         }
     }
-
+}
+impl<'a, T, const MAPPED: bool> WrapperGuard<'a, T, MAPPED> {
     /// As [`core::cell::Ref::map`].
-    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U>
+    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U, true>
     where
         T: 'a,
     {
@@ -984,7 +985,7 @@ impl<'a, T> WrapperGuard<'a, T> {
         self.as_ptr()
     }
 }
-impl<T> core::ops::Deref for WrapperGuard<'_, T> {
+impl<T, const MAPPED: bool> core::ops::Deref for WrapperGuard<'_, T, MAPPED> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: the contract of `new`. `map` keeps a borrow of such a struct.

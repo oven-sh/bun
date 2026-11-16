@@ -2255,7 +2255,6 @@ where
 
     pub(crate) fn finalize(&self) {
         httplog!("finalize");
-        self.js_value.with_mut(|js_value| js_value.finalize());
         // HTTP/3 connections are not counted, so a drained server can have a request pending.
         self.hold_open_ref();
         self.deinit_if_we_can();

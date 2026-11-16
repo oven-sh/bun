@@ -8175,7 +8175,7 @@ pub mod net {
     /// Tagged union over sockaddr_in/in6/un.
     #[derive(Clone, Copy)]
     pub struct Address {
-        /// Generic storage; `family()` discriminates.
+        /// Generic storage; `family()` discriminates. Every byte is initialized.
         pub(crate) any: sockaddr_storage,
     }
     impl Address {
@@ -8201,6 +8201,14 @@ pub mod net {
                 );
             }
             Self { any: storage }
+        }
+        /// Truncates or zero-pads `bytes` to the size of a `sockaddr_storage`.
+        pub fn from_bytes(bytes: &[u8]) -> Self {
+            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
+            let len = bytes.len().min(size_of::<sockaddr_storage>());
+            // SAFETY: `len` bytes fit in `any`, for which any bytes are valid.
+            unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), (&raw mut any).cast(), len) };
+            Self { any }
         }
         #[inline]
         pub fn family(&self) -> i32 {
@@ -8251,10 +8259,19 @@ pub mod net {
             Self { any }
         }
 
+        /// Ignored unless the family is `AF_INET` or `AF_INET6`.
+        #[cfg(unix)]
+        pub fn set_port(&mut self, port: u16) {
+            if let AF_INET | AF_INET6 = self.family() {
+                // SAFETY: a `sockaddr_in` fits in the storage. `port` has the same offset in a `sockaddr_in6`.
+                unsafe { (*(&raw mut self.any).cast::<sockaddr_in>()).port = port.to_be() };
+            }
+        }
+
         /// The IPv6 zone index (`fe80::1%en0`); ignored for IPv4.
         pub fn set_scope_id(&mut self, scope_id: u32) {
             if self.family() == AF_INET6 {
-                // SAFETY: `family() == AF_INET6` ⇒ the storage holds a `sockaddr_in6`.
+                // SAFETY: a `sockaddr_in6` fits in the storage.
                 unsafe { (*(&raw mut self.any).cast::<sockaddr_in6>()).scope_id = scope_id };
             }
         }
@@ -8268,6 +8285,14 @@ pub mod net {
             }) as u32
         }
 
+        /// The bytes of the `sockaddr_in` or `sockaddr_in6`; empty for any other family.
+        pub fn as_bytes(&self) -> &[u8] {
+            if let Some(v4) = self.as_in4() {
+                return bun_core::bytes_of(v4);
+            }
+            self.as_in6().map_or(&[], bun_core::bytes_of)
+        }
+
         /// The raw storage, for FFI that takes `sockaddr_storage` by value.
         pub fn into_storage(self) -> sockaddr_storage {
             self.any
@@ -8277,11 +8302,9 @@ pub mod net {
         #[inline]
         pub fn as_in4(&self) -> Option<&sock::sockaddr_in> {
             if self.family() == AF_INET {
-                // SAFETY: `ss_family == AF_INET` ⇒ `any` was written as a
-                // `sockaddr_in`; `sockaddr_storage` is guaranteed by POSIX/
-                // ws2def.h to have size and alignment >= `sockaddr_in`, and
-                // the family field overlays at offset 0. Reborrowing the
-                // storage at the narrower type is the canonical sockaddr view.
+                // SAFETY: the bytes of `any` are initialized, any bytes are a valid
+                // `sockaddr_in`, and `sockaddr_storage` is guaranteed by POSIX/ws2def.h
+                // to have size and alignment >= `sockaddr_in`.
                 Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in>() })
             } else {
                 None
@@ -8292,9 +8315,7 @@ pub mod net {
         #[inline]
         pub fn as_in6(&self) -> Option<&sock::sockaddr_in6> {
             if self.family() == AF_INET6 {
-                // SAFETY: `ss_family == AF_INET6` ⇒ `any` was written as a
-                // `sockaddr_in6`; `sockaddr_storage` has size/alignment >=
-                // `sockaddr_in6` on every supported target. See `as_in4`.
+                // SAFETY: as in `as_in4`, for `sockaddr_in6`.
                 Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in6>() })
             } else {
                 None

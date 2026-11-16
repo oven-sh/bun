@@ -44,7 +44,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
-            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
@@ -69,7 +68,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
-            watcher_atomics: _,
+            pending_reload_event: _,
+            spare_reload_event: _,
             testing_batch_events: _,
             generation: _,
             bundles_since_last_error: _,
@@ -109,7 +109,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
-    //   .watcher_atomics
+    //   .pending_reload_event, .spare_reload_event
 
     // pointers that are not considered a part of DevServer
     //   .vm

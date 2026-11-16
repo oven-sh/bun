@@ -31,7 +31,6 @@ not_called_by_tests! {
     __bun_jsc_encoder_string_table_take
     __bun_jsc_encoder_string_table_slot
     __bun_jsc_encoder_string_table_new
-    __bun_jsc_enable_hot_module_reloading_for_bundler
     __bun_jsc_bytecode_link_encoder_new
     __bun_jsc_bytecode_link_encoder_finish
     __bun_jsc_bytecode_link_encoder_destroy

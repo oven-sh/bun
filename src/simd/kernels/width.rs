@@ -1,5 +1,4 @@
 //! Ports of highway_strings.cpp, for `Bun.stringWidth`.
-use bun_simd::Isa;
 
 const BEL: u8 = 0x07;
 const CAN: u8 = 0x18;
@@ -108,11 +107,7 @@ pub(crate) mod simd {
     }
 
     /// Below that, `byte_by_byte` is faster than a block.
-    const SHORT: usize = if isa::Isa::HAS_SINGLE_CYCLE_OPS {
-        16
-    } else {
-        32
-    };
+    const SHORT: usize = if U8::LEN > 16 { 16 } else { 32 };
 
     #[export]
     pub fn visible_latin1_width_exclude_ansi(text: &[u8]) -> usize {
@@ -173,7 +168,7 @@ pub(crate) mod simd {
         width
     }
 
-    /// ESC ends any sequence. `None` if a C1 byte starts one.
+    /// ESC ends any sequence. `None` if one holds a C1 byte that starts another kind.
     #[inline(always)]
     fn escapes_in(block: &[u8; 64], invisible: u64, suspects: u64, state: &mut u64) -> Option<u64> {
         let [csi, csi_ends] = U8::bitmasks(block, |v| {
@@ -207,11 +202,26 @@ pub(crate) mod simd {
         let (aborts, intermediates) = (csi_ends & invisible, intermediates & after_esc);
         hidden |= after_esc & !not_ascii | intermediates << 1 | (was / AFTER_INTERMEDIATE) & 1;
         *state |= (intermediates >> 63) * AFTER_INTERMEDIATE;
-        for (kind, starts, ends) in [(IN_OSC, osc, aborts | bel), (IN_STRING, string, aborts)] {
+        let kinds = [
+            (IN_CSI, csi, csi_ends),
+            (IN_OSC, osc, aborts | bel),
+            (IN_STRING, string, aborts),
+        ];
+        for &(kind, starts, ends) in &kinds[1..] {
             let (run, carry) = runs(letters & starts | (was / kind) & 1, ends);
             (hidden, *state) = (hidden | run, *state | (carry * kind));
         }
-        ((csi | osc | string) & suspects & not_ascii & !hidden == 0).then_some(hidden)
+        // A C1 byte that no sequence holds starts one. Here those that one holds start their own too,
+        // which for one of the same kind only leaves a hole where nothing is visible.
+        let (c1, mut nested) = ((csi | osc | string) & suspects & not_ascii & !hidden, 0);
+        for (kind, starts, ends) in kinds {
+            if c1 & starts != 0 {
+                let (run, carry) = runs(c1 & starts, ends);
+                (hidden, *state) = (hidden | run, *state | (carry * kind));
+                nested |= run & c1 & !starts;
+            }
+        }
+        (nested == 0).then_some(hidden)
     }
 
     fn has_fixed_width(v: U16) -> Mask<u16, { U16::LEN }> {

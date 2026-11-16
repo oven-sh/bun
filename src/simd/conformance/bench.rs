@@ -188,6 +188,7 @@ fn escapes() {
         ("saved cursors", b"\x1B7"),
         ("8-bit colors", b"\x9B1mbold\x9Bm "),
         ("8-bit titles and colors", b"\x9D\x07\x9Bm"),
+        ("8-bit titles", b"\x9D2;the title of a window\x9C"),
         ("C1 bytes", b"\x92"),
         ("control bytes", b"\x11"),
         ("lines", b"a line of text\n"),

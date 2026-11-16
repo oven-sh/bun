@@ -1265,15 +1265,10 @@ impl Thread {
                     Err(_) => 0,
                 }
             };
-            // SAFETY: `counter_buf[len] == 0` (set just below for len>0; the literal
-            // for the fallback is NUL-terminated), and the buffer outlives the call.
-            let named: &bun_core::ZStr = unsafe {
-                if len > 0 {
-                    counter_buf[len] = 0;
-                    bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
-                } else {
-                    bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
-                }
+            let named = if len > 0 {
+                bun_core::ZStr::nul_terminate(&mut counter_buf, len)
+            } else {
+                bun_core::zstr!("Bun Pool")
             };
             // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
             // out via `needs_stack_bounds = false` so we don't pull in

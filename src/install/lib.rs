@@ -469,10 +469,7 @@ impl RunCommand {
     ) -> Option<&'a ZStr> {
         for shell in Self::SHELLS_TO_SEARCH {
             if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                // `which()` writes a NUL-terminated path into `buf` and
-                // returns a borrow of it; reborrow as `&ZStr`.
-                let len = found.len();
-                return Some(ZStr::from_buf(buf, len));
+                return Some(found);
             }
         }
 
@@ -490,8 +487,7 @@ impl RunCommand {
             if bun_sys::is_executable_file_path(shell) {
                 let body = shell.as_bytes();
                 buf[..body.len()].copy_from_slice(body);
-                buf[body.len()] = 0;
-                return Some(ZStr::from_buf(buf, body.len()));
+                return Some(ZStr::nul_terminate(buf, body.len()));
             }
         }
 

@@ -356,6 +356,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs.exports = {};
       throw e;
     }
+    mod.exports = null; // the ES view of the `module.exports` of an earlier run
     mod.state = State.Loaded;
   } else {
     // ESM
@@ -433,6 +434,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs.exports = {};
       throw e;
     }
+    mod.exports = null; // the ES view of the `module.exports` of an earlier run
     mod.state = State.Loaded;
     return mod;
   } else {
@@ -575,7 +577,7 @@ type HMREvent =
 interface HotUpdate {
   toReload: Set<HMRModule>;
   toAccept: { cb: HotAccept; key: Id }[];
-  toDispose: HMRModule[];
+  toDispose: Set<HMRModule>;
   /** Updated modules with a path to a root that nothing on it accepts. */
   failures: Set<Id> | null;
 }
@@ -585,7 +587,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
   const toReload = new Set<HMRModule>();
   const toAccept: HotUpdate["toAccept"] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
+  const toDispose = new Set<HMRModule>();
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
@@ -617,7 +619,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
@@ -627,7 +629,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
 
@@ -712,14 +714,19 @@ function reportFailures(failures: Set<Id>) {
 }
 
 /** Returns the promises that the dispose callbacks returned. */
-function disposeModules(toDispose: HMRModule[]): Promise<void>[] {
+function disposeModules(toDispose: Set<HMRModule>): Promise<void>[] {
   const disposePromises: Promise<void>[] = [];
   for (const mod of toDispose) {
     mod.state = State.Stale;
     for (const fn of mod.onDispose!) {
-      const p = fn(mod.data);
-      if (p && p instanceof Promise) {
-        disposePromises.push(p);
+      try {
+        const p = fn(mod.data);
+        if (p && p instanceof Promise) {
+          disposePromises.push(p);
+        }
+      } catch (e) {
+        if (side === "client") throw e;
+        disposePromises.push(Promise.reject(e));
       }
     }
     mod.onDispose = null;
@@ -776,7 +783,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   const disposePromises = disposeModules(toDispose);
   if (disposePromises.length > 0) {
-    await Promise.all(disposePromises);
+    if (side === "client") {
+      await Promise.all(disposePromises); // the page reloads if one rejects
+    } else {
+      for (const result of await Promise.allSettled(disposePromises)) {
+        if (result.status === "rejected") console.error(result.reason);
+      }
+    }
   }
 
   const promises = reloadModules(toReload);

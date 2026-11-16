@@ -383,10 +383,8 @@ impl JSMySQLConnection {
         }
         this.reset_connection_timeout();
         this.poll_ref.r#ref(vm.vm_ctx());
-        // The wrapper takes the ref.
-        let this = this.into_this_ptr();
-        let js_value = js::to_js(ptr, global_object);
-        js_value.ensure_still_alive();
+        let this = js::wrap(this, global_object);
+        let js_value = this.to_js();
         this.js_value
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connected.to_js());

@@ -1048,9 +1048,8 @@ describe("lossless roundtrip", () => {
   function lcg(n: number) {
     return (Math.imul(n, 1664525) + 1013904223) >>> 0;
   }
-  // Alpha is forced to ≥1: WebPEncodeLosslessRGBA calls
-  // WebPCleanupTransparentArea which zeroes RGB under α=0 (a documented
-  // libwebp size optimisation, not a Bun bug). PNG preserves RGB under α=0;
+  // Alpha is forced to ≥1: the lossless WebP encoder is free to change RGB
+  // under α=0 (a size optimisation, as in libwebp). PNG preserves RGB under α=0;
   // WebP-lossless does not. The α=0 case is asserted separately below.
   let s = seed;
   const noise = makePng(w, h, () => {
@@ -1081,7 +1080,7 @@ describe("lossless roundtrip", () => {
     expect(Buffer.compare(await rgbaOf(back), ref)).toBe(0);
   });
 
-  test("WebP-lossless zeroes RGB under α=0 (documented libwebp behaviour)", async () => {
+  test("WebP-lossless zeroes RGB under α=0 (as libwebp does)", async () => {
     const one = makePng(1, 1, () => [123, 45, 200, 0]);
     const wp = await new Bun.Image(one).webp({ lossless: true }).bytes();
     const back = await rgbaOf(wp);
@@ -1348,7 +1347,7 @@ describe("concurrent terminals on one Image", () => {
   `;
   test.concurrent.each([
     [
-      // libwebp parses the header more than once, so its output size can differ from the size it reported.
+      // The size of the output has to be the size that was reported.
       "dimensions",
       `
       const input = new Uint8Array(2048);
@@ -1360,7 +1359,7 @@ describe("concurrent terminals on one Image", () => {
       `,
     ],
     [
-      // libwebp's demuxer counts the chunks with a tag, then looks one up.
+      // The chunks are walked once for the image and once for the profile.
       // The filler chunks widen the gap between the two walks.
       "ICCP tag",
       `

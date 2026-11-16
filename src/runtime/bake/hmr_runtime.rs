@@ -42,7 +42,6 @@ pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
             v.push(0);
             v.into_boxed_slice()
         });
-        // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
         ZStr::from_slice_with_nul(&buf[..])
     }
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();

@@ -4,7 +4,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, limitWithASAN, slot, spawned } from "./harness/commands";
+import { built, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -17,30 +17,37 @@ const withoutPlaces = (shown: string) =>
     .filter(line => line !== "" && !/^\s*\d+ \| |^\s*\^+$|^\s+at |^Bun v/.test(line))
     .join("\n");
 
-async function shownInTerminal(cmd: string[], cwd: string) {
+// A test has five minutes. Its runs are ended a little earlier: a program that hangs then fails its test by the signal, with what it has
+// shown. A test that only timed out would show nothing, and would leave the program running.
+const limitOfATest = 300_000;
+const limitOfItsRuns = limitOfATest - 20_000;
+// What a program may take to answer a resize. The two that wait for one have no limit of their own.
+const limitOfAnAnswer = 30_000;
+
+/** `endsBy`: when the run is ended, on the clock of `performance.now()`. */
+async function shownInTerminal(cmd: string[], cwd: string, endsBy: number) {
   let shown = "";
-  let isResized = false;
+  let answersBy: ReturnType<typeof setTimeout> | undefined;
   const child = Bun.spawn({
     cmd,
     cwd,
     env,
-    // A program that waits for a resize has no limit of its own: it waits for this process, which has the other programs to serve.
-    // A run that outlasts the longer limit of a command is ended, and its signal fails the test. A test that only timed out would
-    // leave the program running.
-    timeout: limitWithASAN,
+    timeout: Math.max(1, Math.round(endsBy - performance.now())),
     killSignal: "SIGKILL",
     terminal: {
       cols: 80,
       rows: 24,
       data: (terminal: { resize(cols: number, rows: number): void }, data: Uint8Array) => {
         shown += new TextDecoder().decode(data);
-        if (isResized || !shown.includes("ready")) return;
-        isResized = true;
+        if (answersBy !== undefined || !shown.includes("ready")) return;
         terminal.resize(90, 20);
+        // Counted from the resize. How soon this process comes to resize, beside the other programs, is not held against the program.
+        answersBy = setTimeout(() => child.kill("SIGKILL"), limitOfAnAnswer);
       },
     },
   } as never);
   const exitCode = await child.exited;
+  clearTimeout(answersBy);
   return { shown: withoutPlaces(shown), exitCode, signal: child.signalCode };
 }
 
@@ -162,20 +169,27 @@ describe.skipIf(isWindows)("the listener that a standard stream over a terminal 
     // Each program has its own folder, build and terminals, so the programs run beside one another on every lane.
     test.concurrent(
       name,
-      () =>
-        slot(async () => {
+      () => {
+        // Taken before the slot: the time of a test runs while it waits for one.
+        const endsBy = performance.now() + limitOfItsRuns;
+        return slot(async () => {
           using dir = tempDir("aot-listener-for-size", { "app.ts": source });
           const folder = String(dir);
           // `bun run` asks nothing of the build, so it runs beside it.
           const [build, plain] = await Promise.all([
             spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env),
-            shownInTerminal([bunExe(), "app.ts"], folder),
+            shownInTerminal([bunExe(), "app.ts"], folder, endsBy),
           ]);
           expect(plain).toEqual({ exitCode: 0, ...underBunRun, signal: null });
           built(build);
-          expect(await shownInTerminal([join(folder, "app")], folder)).toEqual({ shown, exitCode, signal: null });
-        }),
-      300_000,
+          expect(await shownInTerminal([join(folder, "app")], folder, endsBy)).toEqual({
+            shown,
+            exitCode,
+            signal: null,
+          });
+        });
+      },
+      limitOfATest,
     );
   }
 });

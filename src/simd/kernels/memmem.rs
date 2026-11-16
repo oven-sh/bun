@@ -559,12 +559,24 @@ mod tests {
     /// Does not end unless the time is linear.
     #[test]
     fn long_needle_that_has_changed() {
-        let (text, mut needle) = (b"ab".repeat(1 << 22), b"ab".repeat(1 << 21));
-        needle[0] = b'c';
-        assert_eq!(find::<16, true>(&text, &needle), None);
-        for (split, period) in [(needle.len() - 1, 1), (1, 2)] {
-            let halves = split_at(split, needle.len(), Some(period));
+        let (text, len) = (b"ab".repeat(1 << 22), 1 << 22);
+        for (changed, split, period) in [(0, 1, 2), (len - 4, len - 1, 1)] {
+            let mut needle = text[..len].to_vec();
+            needle[changed] = b'c';
+            assert_eq!(find::<16, true>(&text, &needle), None);
+            let halves = split_at(split, len, Some(period));
             black_box(two_way::<_, 16, 16, true>(&text, &needle, 0, halves));
         }
+    }
+
+    /// Does not end unless the time is linear.
+    #[test]
+    fn long_runs() {
+        let run = b"ab".repeat(1 << 21);
+        let (almost, len) = ([&run[1..], b"c"].concat(), run.len());
+        let needle = [b"c", &run[..]].concat();
+        assert_eq!(find::<16, true>(&almost.repeat(3), &needle), None);
+        let needle = [b"a", &almost[..], &almost].concat();
+        assert_eq!(halves::<_, true>(&needle), [len, len + 2, 0]);
     }
 }

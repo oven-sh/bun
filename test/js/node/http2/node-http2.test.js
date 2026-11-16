@@ -1813,6 +1813,41 @@ it("sensitive headers should work", async () => {
   }
 });
 
+it("http2 client.request() gives a Proxy its own copy of a lowercased header name", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http2 = require("node:http2");
+      const server = http2.createServer((req, res) => res.end());
+      server.listen(0, "127.0.0.1", () => {
+        const session = http2.connect("http://127.0.0.1:" + server.address().port);
+        session.on("connect", () => {
+          const keys = [];
+          Object.defineProperty(Object.prototype, "s", {
+            configurable: true,
+            set() {
+              Object.setPrototypeOf(this, new Proxy({}, { get: (_, key) => void keys.push(key) }));
+            },
+          });
+          const req = session.request({ "X-First": "1", "X-Other": "2", [http2.sensitiveHeaders]: ["s"] });
+          delete Object.prototype.s;
+          req.on("close", () => {
+            console.log(keys.filter(key => key.startsWith("x-")).join());
+            session.close();
+            server.close();
+          });
+          req.resume().end();
+        });
+      });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "x-first,x-other\n", stderr: "", exitCode: 0 });
+});
+
 // The never-index list lives under a Symbol key of the headers object. The
 // native header walk must skip Symbol keys. It used to send them as headers
 // named by the symbol description ("nodejs.http2.sensitiveheaders: cookie").

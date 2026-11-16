@@ -198,8 +198,7 @@ describe("ipc mode json", () => {
   it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {
     // An internal JSON message is "\\x02" + json + "\\n". A line of just the tag
     // byte strips to an empty payload. The receiver must treat it like an empty
-    // line (invalid, close the channel) instead of building an external string
-    // over a zero-length slice.
+    // line (invalid, close the channel).
     //
     // The receiver runs in its own subprocess so a crash shows up as a failing
     // assertion here rather than taking out the test runner.
@@ -234,6 +233,14 @@ describe("ipc mode json", () => {
     // The complete lines are delivered. The bytes after them are never terminated by a newline.
     expect(await runReceiver("json", `write(Buffer.from('{"n":1}\\n{"n":2}\\n'));` + flood)).toEqual({
       stdout: ['MESSAGE {"n":1}', 'MESSAGE {"n":2}', "SENDER_EXIT 42"],
+      stderr: "IPC message is too long.\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)("closes the channel when a complete line exceeds the length limit", async () => {
+    expect(await runReceiver("json", `send(Buffer.alloc(${maxStringLength}, "a").toString());`)).toEqual({
+      stdout: ["SENDER_EXIT 42"],
       stderr: "IPC message is too long.\n",
       exitCode: 0,
     });

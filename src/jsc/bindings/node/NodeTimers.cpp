@@ -451,7 +451,7 @@ extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue o
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__getDirect(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name)
 {
     auto& vm = JSC::getVM(globalObject);
-    return JSValue::encode(asObject(JSValue::decode(owner))->getDirect(vm, Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy))));
+    return JSValue::encode(asObject(JSValue::decode(owner))->getDirect(vm, Bun::toIdentifier(vm, *name)));
 }
 
 // Keeps the property's attributes: `Date.now` isn't enumerable.
@@ -459,7 +459,7 @@ extern "C" void Bun__FakeTimers__putDirect(Zig::GlobalObject* globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto* object = asObject(JSValue::decode(owner));
-    auto property = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
+    auto property = Bun::toIdentifier(vm, *name);
     unsigned attributes = 0;
     object->getDirect(vm, property, attributes);
     object->putDirect(vm, property, JSValue::decode(value), attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));

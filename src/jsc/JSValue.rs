@@ -1021,7 +1021,7 @@ impl JSValue {
     }
 
     /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
-    /// per-call `StringImpl` and atom-table probe.
+    /// atom-table probe.
     pub fn get_common_string(
         self,
         global: &JSGlobalObject,
@@ -1097,7 +1097,7 @@ impl JSValue {
             .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
     }
     /// `fast_get` (precached `JSC::Identifier`,
-    /// no StringImpl alloc / atom-table probe) followed by the same `truthyPropertyValue`
+    /// no atom-table probe) followed by the same `truthyPropertyValue`
     /// filter as `get_truthy`. Use this when the property name is a `BuiltinName`.
     pub fn fast_get_truthy(
         self,

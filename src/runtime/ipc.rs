@@ -6,8 +6,8 @@ use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
+use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_core::{Output, handle_oom};
-use bun_core::{String as BunString, StringView, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
@@ -16,8 +16,8 @@ use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Strong,
-    Task,
+    EncodedSliceJsc as _, JSGlobalObject, JSObject, JSValue, JsError, JsResult, SerializedFlags,
+    StringJsc as _, Strong, Task,
 };
 use bun_sys::Fd;
 use bun_sys::FdExt;
@@ -419,10 +419,6 @@ mod advanced {
 mod json {
     use super::*;
 
-    extern "C" fn json_ipc_data_string_free_cb(context: &Cell<bool>, _: *mut c_void, _: usize) {
-        context.set(true);
-    }
-
     pub(super) fn get_version_packet() -> &'static [u8] {
         &[]
     }
@@ -483,38 +479,15 @@ mod json {
             return Err(IPCDecodeError::InvalidFormat);
         }
 
-        let is_ascii = strings::is_all_ascii(json_data);
-        let was_ascii_string_freed = Cell::new(false);
-
-        // Use ExternalString to avoid copying data if possible.
-        // This is only possible for ascii data, as that fits into latin1
-        // otherwise we have to convert it utf-8 into utf16-le.
-        let parsed = if is_ascii {
-            // SAFETY: `json_data` and the flag outlive `s`, and the check below panics if anything kept a ref past `s`.
-            // .dead if `json_data` exceeds max length
-            let s = unsafe {
-                BunString::create_external::<&Cell<bool>>(
-                    json_data,
-                    &was_ascii_string_freed,
-                    json_ipc_data_string_free_cb,
-                )
-            };
-            if s.tag() == bun_core::Tag::Dead {
+        let parsed = if strings::is_all_ascii(json_data) {
+            if json_data.len() > BunString::max_length() {
                 bun_core::hint::cold();
                 return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
-            s.to_js_by_parse_json(global_this)
+            EncodedSlice::latin1(json_data).to_json_object(global_this)
         } else {
             StringView::borrow_utf8(json_data).to_js_by_parse_json(global_this)
         };
-        // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
-        // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
-        // drop of `s` — so the freed-flag check must follow it.
-        if is_ascii && !was_ascii_string_freed.get() {
-            panic!(
-                "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
-            );
-        }
         let deserialized = match parsed {
             Ok(v) => v,
             Err(JsError::Terminated) => return Err(IPCDecodeError::Js(JsError::Terminated)),

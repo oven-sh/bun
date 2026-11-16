@@ -638,7 +638,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     } else {
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-            Bun::IsolatedModuleCache::insertIfAbsent(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+            Bun::IsolatedModuleCache::insertIfAbsent(vm, specifier->toWTFString(), provider.get());
         }
         promise->fulfill(vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
         scope.assertNoExceptionExceptTermination();

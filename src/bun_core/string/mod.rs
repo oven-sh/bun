@@ -122,26 +122,9 @@ unsafe extern "C" {
         len: usize,
         hash: u32,
     ) -> String;
-    fn BunString__createExternal(
-        bytes: *const u8,
-        len: usize,
-        is_latin1: bool,
-        ctx: *mut core::ffi::c_void,
-        callback: Option<extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize)>,
-    ) -> String;
     fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> String;
     fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> String;
 }
-
-/// `ctx` is the pointer passed into `create_external`; `buffer` is the
-/// `[*]u8`/`[*]u16` storage; `len` is the character count.
-///
-/// C++ signature (`BunString.cpp` `BunString__createExternal`):
-/// `void (*)(void*, void*, size_t)` — the third arg is `size_t`, **not**
-/// `unsigned`. A `u32` here would truncate on 64-bit and (worse) shift the
-/// stack/register layout for the callee on Win64 where `size_t` ≠ `unsigned`.
-pub(crate) type ExternalStringImplFreeFunction<Ctx> =
-    extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: usize);
 
 impl String {
     pub const EMPTY: Self = Self {
@@ -292,66 +275,6 @@ impl String {
             }
         }
         Self::clone_utf8(bytes)
-    }
-    /// Wraps Latin-1 `bytes` in a `WTF::ExternalStringImpl` that calls
-    /// `callback(ctx, buffer, len)` when the impl is destroyed.
-    ///
-    /// External strings are WTF strings whose bytes live elsewhere; `bytes` is
-    /// borrowed (not copied). If `bytes.len() > max_length()`, `callback` is
-    /// invoked immediately and a `dead` string is returned.
-    ///
-    /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
-    /// the const-assert below to keep the C-ABI cast sound.
-    ///
-    /// SAFETY: the caller keeps `bytes` valid and unchanged until `callback` runs.
-    pub unsafe fn create_external<Ctx>(
-        bytes: &[u8],
-        ctx: Ctx,
-        callback: ExternalStringImplFreeFunction<Ctx>,
-    ) -> Self {
-        use core::ffi::c_void;
-        // `Ctx` must be a pointer-sized, pointer-aligned handle.
-        struct AssertPtrSized<C>(core::marker::PhantomData<C>);
-        impl<C> AssertPtrSized<C> {
-            const OK: () = {
-                assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
-                // The bit-reinterpret below reads `*mut c_void` out of a stack
-                // slot aligned for `Ctx`; rule out a `Ctx` like `[u8; 8]`
-                // (align 1) which would make that read under-aligned.
-                assert!(core::mem::align_of::<C>() >= core::mem::align_of::<*mut c_void>());
-            };
-        }
-        let () = AssertPtrSized::<Ctx>::OK;
-        debug_assert!(!bytes.is_empty());
-        if bytes.len() > Self::max_length() {
-            callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
-            return Self::DEAD;
-        }
-        // The const-assert above only checks size/alignment, so an owning
-        // pointer-sized `Ctx` (e.g.
-        // `Box<T>`) would otherwise be dropped here and later double-freed by
-        // the WTF finalizer. Ownership transfers to the external string;
-        // suppress the local drop.
-        let ctx = core::mem::ManuallyDrop::new(ctx);
-        // SAFETY: Ctx is pointer-sized and pointer-aligned (const-asserted
-        // above); read the bits as `*mut c_void`.
-        let ctx_erased: *mut c_void = unsafe {
-            core::ptr::from_ref::<Ctx>(&*ctx)
-                .cast::<*mut c_void>()
-                .read()
-        };
-        let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, usize)> =
-            // SAFETY: same ABI; first param erased per the const-assert above.
-            Some(unsafe { crate::cast_fn_ptr::<
-                ExternalStringImplFreeFunction<Ctx>,
-                extern "C" fn(*mut c_void, *mut c_void, usize),
-            >(callback) });
-        // SAFETY: bytes describes a valid slice; len <= max_length checked.
-        let s = unsafe {
-            BunString__createExternal(bytes.as_ptr(), bytes.len(), true, ctx_erased, cb_erased)
-        };
-        debug_assert!(s.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
-        s
     }
 
     /// Max `WTF::StringImpl` length (in characters, not bytes):

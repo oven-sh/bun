@@ -2885,10 +2885,8 @@ impl Resolver {
             let mut buf = [0u8; INET6_ADDRSTRLEN + 2 + 6 + 1];
             let family = current.family;
 
-            let addr_ptr: *const c_void = current.addr_ptr();
-            // SAFETY: `addr_ptr` type-erases the in_addr/in6_addr union arm (read-only);
-            // `dst` is the stack buffer slice starting at [1].
-            let Some(ip) = (unsafe { bun_cares_sys::ntop(family, addr_ptr, &mut buf[1..]) }) else {
+            let octets = &current.addr[..if family == netc::AF_INET { 4 } else { 16 }];
+            let Some(ip) = bun_cares_sys::ntop(octets, &mut buf[1..]) else {
                 return Err(global_this.throw_value(global_this.create_error_instance(
                     format_args!(
                         "ares_inet_ntop error: no more space to convert a network format address"
@@ -3005,27 +3003,12 @@ impl Resolver {
     ) -> JsResult<c_int> {
         let address = value.to_owned_slice_z();
 
-        let mut addr = [0u8; 16];
-
-        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
-        if unsafe {
-            c_ares::ares_inet_pton(c_ares::AF::INET, address.as_ptr(), addr.as_mut_ptr().cast())
-        } == 1
-        {
-            let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
-            c_ares::ares_set_local_ip4(channel, ip);
+        if let Some(addr) = bun_cares_sys::pton(&address) {
+            c_ares::ares_set_local_ip4(channel, u32::from_be_bytes(addr));
             return Ok(c_ares::AF::INET);
         }
 
-        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
-        if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET6,
-                address.as_ptr(),
-                addr.as_mut_ptr().cast(),
-            )
-        } == 1
-        {
+        if let Some(addr) = bun_cares_sys::pton(&address) {
             c_ares::ares_set_local_ip6(channel, &addr);
             return Ok(c_ares::AF::INET6);
         }
@@ -3090,11 +3073,7 @@ impl Resolver {
             let address_string = triple
                 .get_index(global_this, 1)?
                 .to_bun_string(global_this)?;
-            let address_slice = address_string.to_owned_slice();
-
-            let mut address_buffer = vec![0u8; address_slice.len() + 1];
-            let _ = strings::copy(&mut address_buffer, &address_slice);
-            address_buffer[address_slice.len()] = 0;
+            let address = bun::ZBox::from_bytes(address_string.to_utf8().slice());
 
             let af: c_int = if family == 4 {
                 netc::AF_INET
@@ -3107,18 +3086,17 @@ impl Resolver {
             node.udp_port = port;
             node.tcp_port = port;
 
-            let addr_dst: *mut c_void = node.addr_mut_ptr();
-            // SAFETY: FFI; `address_buffer` is NUL-terminated above; `addr_dst` points at the
-            // in_addr/in6_addr union (16 bytes — enough for in6_addr) with write provenance.
-            if unsafe {
-                c_ares::ares_inet_pton(af, address_buffer.as_ptr().cast::<c_char>(), addr_dst)
-            } != 1
-            {
+            let parsed = if family == 4 {
+                bun_cares_sys::pton::<4>(&address).map(|addr| node.addr[..4].copy_from_slice(&addr))
+            } else {
+                bun_cares_sys::pton(&address).map(|addr| node.addr = addr)
+            };
+            if parsed.is_none() {
                 return Err(jsc::Error::INVALID_IP_ADDRESS.throw(
                     global_this,
                     format_args!(
                         "Invalid IP address: \"{}\"",
-                        bstr::BStr::new(&address_slice)
+                        bstr::BStr::new(address.as_bytes())
                     ),
                 ));
             }
@@ -3198,13 +3176,19 @@ impl Resolver {
 
         let port: u16 = to_port_number(port_value, global_this)?;
 
-        let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
-        if c_ares::get_sockaddr(addr_s, port, &mut sa) != 0 {
+        let mut buf = [0u8; 128];
+        let ip = strings::copy_z(&mut buf, addr_s).and_then(|text| {
+            let v4 = bun_cares_sys::pton::<4>(text).map(IpAddr::from);
+            v4.or_else(|| bun_cares_sys::pton::<16>(text).map(IpAddr::from))
+        });
+        let Some(ip) = ip else {
             return Err(global_this.throw_invalid_argument_value(
                 b"address",
                 bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,
             ));
-        }
+        };
+        // `ares_getnameinfo` would send an ip6.arpa query, which never resolves, for an IPv4-mapped address.
+        let sa = bun_dns::Address::from_ip(ip.to_canonical(), port).into_storage();
 
         let resolver = global_resolver(global_this);
         let channel = resolver.get_channel_or_error(global_this)?;

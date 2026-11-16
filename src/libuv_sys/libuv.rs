@@ -1900,24 +1900,13 @@ pub struct uv_cpu_info_t {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union addr_union {
-    pub address4: sockaddr_in,
-    pub address6: sockaddr_in6,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union netmask_union {
-    pub netmask4: sockaddr_in,
-    pub netmask6: sockaddr_in6,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub struct uv_interface_address_t {
     pub name: *mut c_char,
     pub phys_addr: [u8; 6],
     pub is_internal: c_int,
-    pub address: addr_union,
-    pub netmask: netmask_union,
+    /// A union of `sockaddr_in` and `sockaddr_in6` in C, which zeroes the record before it fills it.
+    pub address: [u8; size_of::<sockaddr_in6>()],
+    pub netmask: [u8; size_of::<sockaddr_in6>()],
 }
 #[repr(C)]
 pub struct uv_utsname_t {

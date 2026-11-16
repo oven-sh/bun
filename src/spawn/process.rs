@@ -1200,8 +1200,7 @@ pub mod waiter_thread_posix {
                     continue;
                 }
 
-                // SAFETY: valid pollfd array.
-                let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
+                let _ = bun_core::poll_once(&mut polls, i32::MAX);
             }
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
@@ -2243,6 +2242,8 @@ mod spawn_process_body {
             Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
             Bun__noOrphans_releaseKq,
         };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        use bun_sys::linux::{PrctlOp, prctl};
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
@@ -2426,8 +2427,7 @@ mod spawn_process_body {
                 // the defer immediately below — registered here (not in the
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
+                let _ = prctl(PrctlOp::SET_CHILD_SUBREAPER, 1);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             scopeguard::defer! {
@@ -2438,8 +2438,7 @@ mod spawn_process_body {
                     // between disarm and `onProcessExit`→`killDescendants()` escapes
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
+                    let _ = prctl(PrctlOp::SET_CHILD_SUBREAPER, 0);
                 }
             }
 
@@ -2651,8 +2650,7 @@ mod spawn_process_body {
                         break;
                     }
 
-                    // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = bun_core::poll_once(&mut poll_fds_buf[..poll_len], -1);
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
@@ -3023,13 +3021,11 @@ mod spawn_process_body {
             // restore on return so the next caller — or `bun run`'s own
             // post-script lifetime — keeps the backstop.
             if ppid > 1 {
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                let _ = prctl(PrctlOp::SET_PDEATHSIG, 0);
             }
             scopeguard::defer! {
                 if ppid > 1 {
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+                    let _ = prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _);
                 }
             }
             if ppid > 1 && getppid() != ppid {
@@ -3126,8 +3122,7 @@ mod spawn_process_body {
                     push(&mut buf, &mut pfds_len, file.fd());
                 }
 
-                // SAFETY: valid pollfd array
-                let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
+                let rc = bun_core::poll_once(&mut buf[..pfds_len], timeout_ms);
                 match bun_sys::get_errno(rc as isize) {
                     bun_sys::E::SUCCESS => {}
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}

@@ -2015,6 +2015,14 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
             expect(lookups("one")).toEqual(["mock", "one", "one"]);
           });
         `,
+        "partial.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          jest.mock("dual", () => ({ ...jest.requireActual("dual"), extra: 1 }));
+          test("a factory that spreads the original", async () => {
+            const mocked = await import("dual");
+            expect([mocked.which, mocked.fn(), mocked.extra]).toEqual(["cjs", "cjs", 1]);
+          });
+        `,
         "by-path.test.cjs": `
           const { expect, jest, mock, test } = require("bun:test");
           const lookups = ${lookups};
@@ -2031,7 +2039,7 @@ describe.concurrent("jest's lookups of a name that import and require() resolve 
           });
         `,
       },
-      10,
+      11,
     );
   });
 

@@ -4153,6 +4153,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     bool hadActiveCompiledMock = false;
 #if ENABLE(AOT)
     hadActiveCompiledMock = loaded.compiledModule && JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule) && !JSC::AOT::wasActiveMockEntryRemoved(globalObject, *loaded.compiledModule);
+    if (hadActiveCompiledMock && mock->isOfVitest() && !mock->isFromPreload && mock->state == JSModuleMock::State::NotCalled && pendingMockModules.contains(*loaded.compiledModule))
+        hadActiveCompiledMock = false;
     // A mock of a file with several variants is active over one of them.
     if (globalObject->vm().hasCompiledCode() && !loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule) {
         auto variants = JSC::AOT::importAttributeVariants(globalObject, specifier);

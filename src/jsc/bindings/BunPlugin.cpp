@@ -4463,7 +4463,6 @@ struct ModuleMockSpecifier {
     const WTF::String& keyForRequire() const { return requireKey.isNull() ? key : requireKey; }
 };
 
-// `forRequire`: the caller loads what require() loads, so the name is resolved that way too.
 static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, ASCIILiteral signature, bool forRequire = false)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4496,7 +4495,7 @@ static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* global
 
 extern "C" JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject*);
 
-// `specifier` is the path that the mocked name resolves to, for an import or for require(). `forRequire` says which, and the file of `__mocks__` is looked up the same way.
+// With `forRequire`, `specifier` is the path that require() resolves the mocked name to, and the file of `__mocks__` is resolved that way too.
 __attribute__((minsize)) static JSC::JSString* findManualModuleMock(Zig::GlobalObject* globalObject, const String& from, const String& written, const String& specifier, bool forRequire = false)
 {
     auto& vm = JSC::getVM(globalObject);

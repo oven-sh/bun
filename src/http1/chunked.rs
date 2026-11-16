@@ -1,4 +1,4 @@
-use crate::scan::{content_len, is_control, len_before, token_len};
+use crate::byte_sets::{CONTENT, QUOTED_TEXT, TOKEN};
 use crate::{Error, Result};
 
 const MAX_SIZE_DIGITS: usize = 16;
@@ -163,8 +163,7 @@ impl ChunkedDecoder {
         loop {
             let plain = match self.state {
                 State::EscapedExtension => 0,
-                // With `||` this is not vectorized.
-                _ => len_before(input, |b| is_control(b) | (b == b'"') | (b == b'\\')),
+                _ => QUOTED_TEXT.prefix_len(input),
             };
             self.line_len += plain;
             if self.line_len > MAX_SIZE_LINE_LEN {
@@ -179,7 +178,7 @@ impl ChunkedDecoder {
                     self.state = State::SizeLf;
                     return Ok(input);
                 }
-                _ if is_control(*byte) => return Err(Stop::Invalid),
+                _ if !CONTENT.contains(*byte) => return Err(Stop::Invalid),
                 (State::Extension, b'"') | (State::EscapedExtension, _) => State::QuotedExtension,
                 (State::QuotedExtension, b'\\') => State::EscapedExtension,
                 _ => State::Extension,
@@ -203,8 +202,8 @@ impl ChunkedDecoder {
                 (State::TrailerLf | State::LastLf, _) => (State::Done, input),
                 (state, _) => {
                     let (len, state) = match state {
-                        State::TrailerValue => (content_len(input), state),
-                        _ => (token_len(input), State::TrailerName),
+                        State::TrailerValue => (CONTENT.prefix_len(input), state),
+                        _ => (TOKEN.prefix_len(input), State::TrailerName),
                     };
                     let len = self.remaining.min(len as u64);
                     self.remaining -= len;

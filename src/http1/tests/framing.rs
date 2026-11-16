@@ -5,6 +5,20 @@ extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
     panic!("out of memory");
 }
 
+/// Stands in for highway_byte_set.cpp, which test/js/bun/util/highway-strings.test.ts covers.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_byte_set_prefix_length(
+    text: *const u8,
+    len: usize,
+    [rows, columns]: &[[u8; 16]; 2],
+) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { core::slice::from_raw_parts(text, len) };
+    text.iter()
+        .take_while(|&&byte| rows[usize::from(byte >> 4)] & columns[usize::from(byte & 15)] != 0)
+        .count()
+}
+
 /// One read, every pair of reads, and one read per byte.
 fn ways_to_read(bytes: &[u8]) -> Vec<Vec<&[u8]>> {
     let mut ways = vec![vec![bytes], bytes.chunks(1).collect()];
@@ -19,7 +33,7 @@ fn show(bytes: &[u8]) -> String {
     bytes.escape_ascii().to_string()
 }
 
-/// Puts a byte at each position of a 16-byte block, and into the bytes after the last block.
+/// Too short for the kernel, and long enough.
 fn paddings() -> impl Iterator<Item = Vec<u8>> {
     (0..=34).map(|len| vec![b'a'; len])
 }
@@ -274,7 +288,7 @@ mod head {
     }
 
     #[test]
-    fn lengths_around_a_block() {
+    fn lengths_around_a_vector() {
         for name in paddings().skip(1) {
             for value in paddings() {
                 let bytes = [b"HTTP/1.1 200 OK\r\n", &name[..], b":", &value, b"\n\n"].concat();

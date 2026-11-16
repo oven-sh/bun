@@ -177,6 +177,13 @@ describe("HTTP parsing — llhttp SSE4.2 PCMPESTRI", () => {
   });
 });
 
+describe("HTTP response head — Highway byte sets", () => {
+  test("long header name and value", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { [ascii256]: ascii1k } }) });
+    expect((await fetch(server.url)).headers.get(ascii256)).toBe(ascii1k);
+  });
+});
+
 describe("Latin-1 to UTF-8 — @Vector(16, u8) ungated", () => {
   test("full byte range", () => {
     const latin1Bytes = Buffer.alloc(256);

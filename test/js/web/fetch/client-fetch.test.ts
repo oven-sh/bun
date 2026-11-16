@@ -765,6 +765,23 @@ describe.concurrent("response head", () => {
     });
   });
 
+  test.each([63, 64, 65, 79, 80, 81, 95, 96, 97, 300])("parts of %d bytes", async length => {
+    const part = Buffer.alloc(length, "a").toString();
+    expect(
+      await Promise.all([
+        fetchFrom([`HTTP/1.1 204 ${part}\r\n${part}: ${part}\xe9\t"\r\n\r\n`]),
+        fetchFrom([`HTTP/1.1 204 ${part}\x7f\r\n\r\n`]),
+        fetchFrom([`HTTP/1.1 204 OK\r\n${part}(: b\r\n\r\n`]),
+        fetchFrom([`HTTP/1.1 204 OK\r\na: ${part}\x01${part}\r\n\r\n`]),
+      ]),
+    ).toEqual([
+      [204, part, { [part]: `${part}\xe9\t"` }, ""],
+      "Malformed_HTTP_Response",
+      "Malformed_HTTP_Response",
+      "Malformed_HTTP_Response",
+    ]);
+  });
+
   test("up to 256 header lines", async () => {
     const head = (lines: number) => `HTTP/1.1 204 OK\r\n${Buffer.alloc(lines * 4, "A:\r\n")}\r\n`;
     expect((await fetchFrom([head(256)]))[0]).toBe(204);

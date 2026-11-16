@@ -517,7 +517,7 @@ bun_which = { path = "src/which" }
 [profile.dev.package.bun_png]
 opt-level = 3
 
-# Loops over every byte of a response head and every chunk of a body.
+# Runs for every line of a response head and every chunk of a body.
 [profile.dev.package.bun_http1]
 opt-level = 3
 

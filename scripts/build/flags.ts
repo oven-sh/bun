@@ -1991,6 +1991,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_byte_set.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
+  },
+  {
     file: "src/jsc/bindings/highway_png.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

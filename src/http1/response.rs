@@ -1,7 +1,7 @@
 use bun_core::StringPointer;
 use bun_http_types::ETag::{HeaderEntry, Headers};
 
-use crate::scan::{content_len, token_len};
+use crate::byte_sets::{CONTENT, TOKEN};
 use crate::{Error, Result};
 
 /// The status and header fields of a response.
@@ -137,8 +137,8 @@ impl Run {
     fn covers(self, bytes: &[u8]) -> bool {
         match self {
             Self::Spaces => skip_spaces(bytes).is_empty(),
-            Self::Token => token_len(bytes) == bytes.len(),
-            Self::Content => content_len(bytes) == bytes.len(),
+            Self::Token => TOKEN.prefix_len(bytes) == bytes.len(),
+            Self::Content => CONTENT.prefix_len(bytes) == bytes.len(),
         }
     }
 }
@@ -199,8 +199,8 @@ impl Lines {
         let [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9'] = code else {
             return Err(Stop::Malformed);
         };
-        // From the start of the line, which leaves a short head enough bytes for a block.
-        let line_len = content_len(head);
+        // From the start of the line, which leaves a short head enough bytes for a vector.
+        let line_len = CONTENT.prefix_len(head);
         let next = skip_line_end(head.get(line_len..).unwrap_or_default())?;
         let text_offset = head.len() - skip_spaces(rest).len();
         let text = head.get(text_offset..line_len).unwrap_or_default();
@@ -217,9 +217,9 @@ impl Lines {
     #[inline(always)]
     fn parse_field_line<'a>(&mut self, rest: &'a [u8]) -> Result<&'a [u8], Stop> {
         let (line, end) = rest
-            .split_at_checked(content_len(rest))
+            .split_at_checked(CONTENT.prefix_len(rest))
             .unwrap_or((rest, &[]));
-        let (name, value) = match line.split_at_checked(token_len(rest)) {
+        let (name, value) = match line.split_at_checked(TOKEN.prefix_len(rest)) {
             Some((name @ [_, ..], [b':', value @ ..])) => (name, value),
             Some((_, [])) if end.is_empty() => return Err(Stop::Short(Some(Run::Token))),
             _ => return Err(Stop::Malformed),

@@ -10,10 +10,10 @@
 )]
 #![warn(unused_must_use)]
 
+mod byte_sets;
 mod chunked;
 mod error;
 mod response;
-mod scan;
 
 pub use chunked::ChunkedDecoder;
 pub use error::{Error, Result};

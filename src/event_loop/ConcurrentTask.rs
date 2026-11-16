@@ -92,9 +92,6 @@ pub mod task_tag {
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
-        NativeBrotli,
-        NativeZlib,
-        NativeZstd,
         Open,
         PosixSignalTask,
         MemoryPressureTask,
@@ -134,9 +131,11 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
+        ThreadSafeFunctionRefRequest,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
+        UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
         WindowsNamedPipeContext,

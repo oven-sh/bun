@@ -52,7 +52,6 @@ fn create_page_outputs(
     with_ast_scope(|heap| {
         let mut page_log = Log::init();
         let mut transpiler = create_page_transpiler(context, heap, &raw mut page_log);
-        transpiler.wire_after_move();
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
@@ -160,7 +159,7 @@ fn run<'h>(
 
     bundle.scan_for_secondary_paths();
     bundle.process_server_component_manifest_files()?;
-    let mut linker_graph = bundle.clone_ast()?;
+    let mut linker_graph = bundle.create_linker_graph()?;
 
     let reachable_files = bundle.find_reachable_files()?;
     linker_graph.additional_output_files = bundle.process_files_to_copy(&reachable_files)?;

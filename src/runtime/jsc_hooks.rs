@@ -74,20 +74,12 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
-    /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
-    /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
-    /// `deinit_runtime_state` reclaims it on Worker teardown — previously
-    /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
-    /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
-    pub(crate) transpiler_arena: Box<bun_alloc::Arena>,
-    /// Moved from `InitOptions::owned_env_loader`. `vm.transpiler` points to it.
-    pub(crate) owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     /// `ManuallyDrop` inside the `Box`: `deinit_runtime_state` runs after
-    /// `event_loop.deinit()`, so `HiveArray::Drop` on a leaked body would run
+    /// `teardown`, so `HiveArray::Drop` on a leaked body would run
     /// `Value`'s drop (which touches `Blob`/`readable` state) at a point that
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
@@ -125,9 +117,9 @@ static RUNTIME_STATE: Cell<*mut RuntimeState> = Cell::new(ptr::null_mut());
 pub(crate) fn runtime_state() -> &'static RuntimeState {
     let state = RUNTIME_STATE.get();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: the box is freed with the VM (at the top of the thread, on a path that never returns,
-    // or when `init` fails). Only `init_runtime_state` and `take_lint_vm` borrow fields exclusively
-    // before that. It is not `Sync`: the reference stays here.
+    // SAFETY: the box is freed with the VM (at the top of the thread, or on a path that never
+    // returns). Only `take_lint_vm` borrows a field exclusively before that. It is not `Sync`:
+    // the reference stays here.
     unsafe { &*state }
 }
 
@@ -139,7 +131,7 @@ pub(crate) fn try_runtime_state() -> Option<&'static RuntimeState> {
 
 /// [`runtime_state`] without the thread-local.
 #[inline]
-pub(crate) fn state_of(vm: &VirtualMachine) -> &RuntimeState {
+pub(crate) fn runtime_state_of(vm: &VirtualMachine) -> &RuntimeState {
     let state = vm.runtime_state.get().cast::<RuntimeState>();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
     // SAFETY: as `runtime_state`.
@@ -155,7 +147,7 @@ pub(crate) fn timer_all() -> &'static timer::All {
 /// [`timer_all`] without the thread-local.
 #[inline]
 pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &timer::All {
-    &state_of(vm).timer
+    &runtime_state_of(vm).timer
 }
 
 /// [`timer_all`] for hooks that also run without a `RuntimeState`.
@@ -176,7 +168,7 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 pub(crate) fn stat_watcher_scheduler(
     vm: &VirtualMachine,
 ) -> &JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
-    &state_of(vm).stat_watcher_scheduler
+    &runtime_state_of(vm).stat_watcher_scheduler
 }
 
 /// [`RuntimeState::ssl_ctx_cache`] of this thread's VM.
@@ -187,7 +179,7 @@ pub(crate) fn ssl_ctx_cache() -> &'static crate::api::SSLContextCache::SSLContex
 
 /// [`RuntimeState::sql_rare`] of `vm`.
 pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
-    &state_of(vm).sql_rare
+    &runtime_state_of(vm).sql_rare
 }
 
 /// [`RuntimeState::path_watchers`] of this thread's VM.
@@ -198,10 +190,7 @@ pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers
 
 /// [`RuntimeState::request_pools`] of `vm`.
 pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools {
-    let state = vm.runtime_state.get().cast::<RuntimeState>();
-    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
-    // SAFETY: as `timer_all`.
-    unsafe { &(*state).request_pools }
+    &runtime_state_of(vm).request_pools
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -227,7 +216,7 @@ pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
 /// `init_runtime_state`.
 #[inline]
-pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
+pub(crate) unsafe fn runtime_state_ptr_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
     // One field is read: this may run off the VM's JS thread.
     // SAFETY: per fn contract — `vm` is live and `runtime_state` was set by
     // `init_runtime_state` to a `*mut RuntimeState`.
@@ -298,42 +287,12 @@ fn ssl_ctx_cache_get_or_create(
 
 /// Timer state + body hive-allocator + debugger configuration — everything
 /// VM init does that names a `bun_runtime` type.
-///
-/// Returns `Err` when `Transpiler::init` fails — most notably when the process
-/// cwd was deleted, so `getcwd` yields `ENOENT` (spec `VirtualMachine.init`
-/// bubbles the same error via `try Transpiler.init(...)`). The caller
-/// propagates it out of `VirtualMachine::init`, and the CLI turns it into a
-/// user-facing message + non-zero exit rather than reading a zeroed
-/// `vm.transpiler`.
-///
-/// # Safety
-/// `vm` is the freshly-boxed unique VM on this thread, with `vm.global` /
-/// `vm.jsc_vm` already populated by `bun_jsc::VirtualMachine::init`.
-#[allow(
-    clippy::large_stack_frames,
-    reason = "`Transpiler::init` returns a Transpiler by value (~216 KB: its Resolver embeds \
-              BSSMapInner<DirInfo, 2048>) and it is `ptr::write`n straight into `(*vm).transpiler`. \
-              The copy is elided in optimized builds, and this runs once per VM init."
-)]
-unsafe fn init_runtime_state(
-    vm: *mut VirtualMachine,
-    opts: &mut InitOptions,
-) -> bun_jsc::CrateResult<OpaqueRuntimeState> {
-    // Note: `uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm` is already
-    // done by
-    // the low tier (`VirtualMachine::init` writes it immediately before calling
-    // this hook), so no uws wiring is repeated here.
-
-    let owned = bun_ptr::AliasableBox::new(RuntimeState {
+fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeState {
+    let state = bun_core::heap::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
-        // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
-        // allocations use the same heap as the global allocator and skip the
-        // `mi_heap_new`/`mi_heap_destroy` pair.
-        transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        owned_env_loader: opts.owned_env_loader.take(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -362,126 +321,24 @@ unsafe fn init_runtime_state(
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),
         lint: core::cell::OnceCell::new(),
-        // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
-        // wrote `handle` before calling this hook.
         #[cfg(unix)]
-        uv_loop: unsafe {
-            crate::napi::uv_posix::UvLoop::new(ptr::NonNull::new_unchecked(vm), (*vm).handle())
-        },
-    });
-    let state = owned.as_ptr();
+        uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),
+    }));
     RUNTIME_STATE.set(state);
 
-    // `Timespec::now_allow_mocked_time` reads `bun_core::mock_time` directly;
-    // `FakeTimers::{set_now,clear_now}` write that storage so timers
-    // scheduled under `jest.useFakeTimers()` use the mocked epoch.
-
-    // ── vm.transpiler ────────────────────────────────────────────────────
-    // The low-tier `VirtualMachine::init` left this field as zeroed bytes
-    // (see the `alloc_zeroed` note); reading it before this write is
-    // validity-invariant UB, so write via `ptr::write` (NOT assignment — the
-    // zeroed bytes are not a valid `Transpiler` to drop).
-    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-    // `VirtualMachine::init` immediately before this hook fires.
-    let log: *mut bun_ast::Log = unsafe { (*vm).log.get() }
-        .map(|p| p.as_ptr())
-        .unwrap_or(ptr::null_mut());
-    // `bun_bundler::Transpiler::init` (transpiler.rs) returns `Ok` on the
-    // happy path; the `Err` arm below handles genuine failures (e.g. a deleted
-    // cwd → `getcwd` ENOENT). The `ptr::write` shape is load-bearing: do not
-    // replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
-    {
-        use bun_options_types::schema::api;
-        // Move (not clone) the caller's `TransformOptions` into the
-        // `Transpiler::init` call. `InitOptions` is consumed once per VM and
-        // the only post-hook reader of `transform_options` is the
-        // `preserve_symlinks` line below, which reads from the moved-out
-        // value before the move. Avoids deep-cloning `loaders`/
-        // `entry_points`/`define` (Vec<Box<[u8]>>) on every VM init —
-        // measurable on `bun -e ''` startup.
-        let mut args = core::mem::take(&mut opts.transform_options);
-        let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
-        args.write = Some(false);
-        args.target = Some(api::Target::Bun);
-        // The arena lives on
-        // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
-        // alongside `timer` on Worker teardown. The `Box`
-        // payload address is stable, so a `'static` borrow is sound for the
-        // `Transpiler<'static>` field — both die in VM teardown
-        // (`vm.transpiler` is never dropped; see `ptr::write` note below).
-        // SAFETY: `state` is the unique freshly-boxed `RuntimeState`; the
-        // inner `Box<Arena>` payload is heap-stable and outlives the
-        // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
-        // and hence `vm.transpiler` — is done).
-        let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
-        // Forward `opts.env_loader` so the VM
-        // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
-        // `NODE_ENV=test` into it after init).
-        // SAFETY: same as the arena above.
-        let env_loader: Option<*mut bun_dotenv::Loader> = unsafe {
-            match (*state).owned_env_loader.as_deref_mut() {
-                Some(owned) => Some(ptr::from_mut(owned)),
-                None => opts.env_loader.map(|p| p.as_ptr()),
-            }
-        };
-        match bun_bundler::Transpiler::init(arena, log, args, env_loader) {
-            Ok(transpiler) => {
-                // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
-                // field is zero-init'd uninhabited memory (never dropped), in a transparent cell.
-                unsafe { ptr::write((&raw mut (*vm).transpiler).cast(), transpiler) };
-                // Post-`Transpiler.init` wiring that must run BEFORE
-                // `JSGlobalObject.create`.
-                // SAFETY: `vm` unique on this thread; `transpiler` just written.
-                unsafe {
-                    let t = (*vm).transpiler.get_mut();
-                    t.options.emit_dce_annotations = false;
-                    t.options.global_cache = opts.global_cache;
-                    t.resolver.opts.global_cache = opts.global_cache;
-                    t.resolver.prefer_module_field = false;
-                    // Propagate `--preserve-symlinks`
-                    // from CLI args to the resolver so symlinked node_modules
-                    // entries resolve via their link path (peer deps stay reachable).
-                    t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    // Branch on `opts.graph` here — with a module graph,
-                    // auto_jsx=true would
-                    // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
-                    // `apply_standalone_runtime_flags` can set
-                    // `resolver.opts.load_tsconfig_json = false`, defeating
-                    // `compile.autoloadTsconfig: false`.
-                    // Code from disk is transpiled by the tsconfig.json that lies there, as under `bun run`.
-                    let reads_tsconfig = opts.graph.is_none_or(|graph| {
-                        graph
-                            .compiled_program()
-                            .is_some_and(|program| program.allows_code_from_disk)
-                    });
-                    if !reads_tsconfig {
-                        t.configure_linker_with_auto_jsx(false);
-                    } else {
-                        t.configure_linker();
-                    }
-                }
-            }
-            Err(e) => {
-                // The most common trigger is a deleted cwd → `getcwd` ENOENT
-                // (resolver/lib.rs). `vm.transpiler` was never written, so
-                // returning `Err` here leaves it as the zeroed bytes the low
-                // tier allocated — and the caller aborts `init` before anything
-                // reads the field, instead of surfacing it as a segfault.
-                //
-                // Unwind the per-VM state this hook set up before the
-                // `Transpiler::init` attempt: the `RuntimeState` box + its TLS
-                // slot (set above) and the thread-local AST stores that
-                // `Transpiler::init` `create()`d before it failed.
-                // Mirrors `deinit_runtime_state`, which is the teardown the
-                // `Ok` path would otherwise reach.
-                RUNTIME_STATE.set(ptr::null_mut());
-                drop(owned);
-                bun_ast::expr::data::Store::deinit();
-                bun_ast::stmt::data::Store::deinit();
-                return Err(e.into());
-            }
+    vm.transpiler.with_mut(|t| {
+        // With a module graph, `apply_standalone_runtime_flags` has yet to apply `compile.autoloadTsconfig: false`.
+        let reads_tsconfig = opts.graph.is_none_or(|graph| {
+            graph
+                .compiled_program()
+                .is_some_and(|program| program.allows_code_from_disk)
+        });
+        if !reads_tsconfig {
+            t.configure_linker_with_auto_jsx(false);
+        } else {
+            t.configure_linker();
         }
-    }
+    });
 
     // Note: the main-thread `ParentDeathWatchdog.installOnEventLoop` call
     // does NOT live in this hook — `init_runtime_state` fires BEFORE
@@ -496,11 +353,10 @@ unsafe fn init_runtime_state(
     // debugger, so gate on `worker_ptr` to keep `vm.debugger == None` for
     // workers.
     if opts.worker_ptr.is_null() {
-        // SAFETY: `transpiler` was the last field of `vm` to be written.
-        configure_debugger(unsafe { &*vm }, &opts.debugger);
+        configure_debugger(vm, &opts.debugger);
     }
 
-    Ok(owned.into_raw().cast())
+    state.cast()
 }
 
 /// Translate the CLI flag /
@@ -646,7 +502,7 @@ fn configure_debugger(vm: &VirtualMachine, cli_flag: &bun_options_types::context
 }
 
 /// Reclaim the per-VM [`RuntimeState`] boxed in [`init_runtime_state`]. Called
-/// from `VirtualMachine::deinit` / worker `destroy()` with the opaque pointer
+/// when the `VirtualMachine` is dropped, with the opaque pointer
 /// returned by `init_runtime_state`. Clears the thread-local and drops the
 /// `Box`.
 ///
@@ -658,7 +514,7 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
     // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
     // copy in `Bun__transpileFile` / `Bun__transpileVirtualModule`; without this
     // each worker thread strands a `Box<BufferPrinter>` (mirrors the
-    // `SOURCE_CODE_PRINTER.take()` in `VirtualMachine::destroy`).
+    // `drop_source_code_printer()` in `VirtualMachine::drop`).
     let printer = TRANSPILE_PRINTER.with(|c| c.replace(ptr::null_mut()));
     if !printer.is_null() {
         // SAFETY: `printer` was produced by `heap::into_raw` in
@@ -714,11 +570,6 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
         .map_err(|_| bun_jsc::CrateError::JSError)?;
     }
     let transpiler = vm.transpiler.as_ptr();
-    // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
-    // `init_runtime_state` returns `Err` on `Transpiler::init`
-    // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
-    // failed to build its transpiler never reaches `load_preloads` (this hook
-    // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
     let top_level_dir = Fs::FileSystem::get().top_level_dir();
     let global_cache = if vm.standalone_module_graph.is_none() {
         GlobalCache::read_only
@@ -751,7 +602,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
                 ResolveResultUnion::Success(r) => r,
                 ResolveResultUnion::Failure(e) => {
                     if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        // SAFETY: `log` outlives what the VM runs.
                         let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -766,7 +617,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
                 }
                 ResolveResultUnion::NotFound => {
                     if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        // SAFETY: `log` outlives what the VM runs.
                         let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -903,7 +754,7 @@ fn auto_tick(vm: &VirtualMachine) {
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
         el.wakeup();
     }
 
@@ -946,7 +797,7 @@ fn auto_tick(vm: &VirtualMachine) {
     // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
     // Run them before reading `has_pending_immediate` because their callbacks can queue work.
     #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll();
+    let uv_idle_started = state.uv_loop.before_poll(vm);
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -991,7 +842,7 @@ fn auto_tick(vm: &VirtualMachine) {
     #[cfg(unix)]
     {
         // ── addons' uv_check_t (libuv runs them right after its poll) ────
-        state.uv_loop.after_poll();
+        state.uv_loop.after_poll(vm);
         state.timer.drain_timers(vm);
     }
 
@@ -1021,7 +872,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
         el.wakeup();
     }
 
@@ -1047,7 +898,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     state.timer.update_date_header_timer_if_necessary(loop_, vm);
 
     #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll();
+    let uv_idle_started = state.uv_loop.before_poll(vm);
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -1081,7 +932,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
 
     #[cfg(unix)]
     {
-        state.uv_loop.after_poll();
+        state.uv_loop.after_poll(vm);
         state.timer.drain_timers(vm);
     }
 
@@ -1178,10 +1029,10 @@ pub(crate) fn with_node_fs<R>(
     vm: &'static VirtualMachine,
     f: impl FnOnce(&mut crate::node::fs::NodeFS) -> R,
 ) -> R {
-    state_of(vm).node_fs.with_mut(|node_fs| {
+    runtime_state_of(vm).node_fs.with_mut(|node_fs| {
         f(node_fs.get_or_insert_with(|| crate::node::fs::NodeFS {
             sync_error_buf: bun_paths::path_buffer_pool::get(),
-            // It gates the embedded-file lookups inside `node:fs`.
+            // `vm` gates the embedded-file lookups inside `node:fs`.
             vm: vm.standalone_module_graph.is_some().then_some(vm),
         }))
     })
@@ -1569,7 +1420,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
-pub(crate) fn stop_dns_for_vm_teardown() -> SweepResult {
+fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
     };
@@ -1623,8 +1474,8 @@ fn retroactively_report_discovered_tests(
     next_test_id: i32,
 ) -> i32 {
     use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry, clone_active_strong};
-    use crate::test_runner::cells::CellExt as _;
     use bun_jsc::debugger::TestType;
+    use bun_ptr::CellExt as _;
 
     let Some(active_file) = clone_active_strong() else {
         return next_test_id;
@@ -2281,7 +2132,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     remove_cjs_module_wrapper: is_main
                         && jsc_vm.module_loader.eval_source.get().is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-                    macro_context: None,
+                    macro_load_states: &jsc_vm.module_loader.macro_load_states,
                     replace_exports: Default::default(),
                 };
                 let own = (jsc_vm.transpiler)
@@ -2712,7 +2563,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             // Same per-call arena that `parse_options.arena`
                             // built `parse_result.ast` from — the printer's
                             // rope-flattening scratch belongs in it, not in
-                            // the per-VM `transpiler_arena`.
+                            // the arena of the VM's transpiler.
                             &arena_guard.1,
                             parse_result,
                             &mut *extra.source_code_printer,
@@ -3080,7 +2931,7 @@ fn maybe_watch_file(
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_owned_file(input_file.take(), path.text, hash, package_json);
+    let _ = watcher.add_file(input_file.take(), path.text, hash, package_json);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
@@ -3110,7 +2961,7 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_owned_file(file, path_text, hash, None);
+    let _ = watcher.add_file(file, path_text, hash, None);
 }
 
 struct CssModuleHost<'a>(&'a VirtualMachine);
@@ -3352,7 +3203,7 @@ fn __bun_fetch_builtin_module(
     if spec.starts_with(b"macro:") {
         use bun_bundler::entry_points::MacroEntryPoint;
         let id = MacroEntryPoint::generate_id_from_specifier(spec);
-        if let Some(&entry) = jsc_vm.macro_entry_points.get().get(&id) {
+        if let Some(entry) = jsc_vm.macro_entry_points.get().get(&id) {
             return Some(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(entry.code()),
                 source_url: specifier.clone(),
@@ -4472,7 +4323,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
             .copied();
         opt.unwrap_or_else(|| {
             let main = jsc_vm.main();
-            if main.is_some_and(|main| bun_core::strings::eql_long(specifier, main, true)) {
+            if main.is_some_and(|main| bun_core::strings::eql_long(specifier, main)) {
                 Loader::Js
             } else {
                 Loader::File

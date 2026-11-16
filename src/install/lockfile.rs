@@ -730,28 +730,29 @@ impl Lockfile {
                 _ => continue,
             };
             for dep in pkg_dependencies.mut_(self.buffers.dependencies.as_mut_slice()) {
-                let is_link = dep.version.tag == dependency::Tag::Symlink;
-                if dep.version.tag != dependency::Tag::Folder && !is_link {
+                let is_link = dep.version.tag() == dependency::Tag::Symlink;
+                if dep.version.tag() != dependency::Tag::Folder && !is_link {
                     continue;
                 }
                 let buf = self.buffers.string_bytes.as_slice();
                 let literal = dep.version.literal.sliced(buf);
-                let Some(declared) = dependency::parse_with_tag(
+                let Some(DependencyVersion {
+                    value:
+                        dependency::Value::Symlink(declared) | dependency::Value::Folder(declared),
+                    ..
+                }) = dependency::parse_with_tag(
                     dep.name,
                     Some(dep.name_hash),
                     literal.slice,
-                    dep.version.tag,
+                    dep.version.tag(),
                     &literal,
                     None,
                     None,
-                ) else {
+                )
+                else {
                     continue;
                 };
-                let declared_path = if is_link {
-                    declared.symlink().slice(buf)
-                } else {
-                    declared.folder().slice(buf)
-                };
+                let declared_path = declared.slice(buf);
                 if is_link && !dependency::is_link_path(declared_path) {
                     continue;
                 }
@@ -766,12 +767,12 @@ impl Lockfile {
                     bytes: &mut self.buffers.string_bytes,
                     pool: &mut self.string_pool,
                 };
-                if is_link {
-                    dep.version.value.symlink =
-                        string_buf.append(&dependency::link_path_for_lockfile(relative))?;
+                dep.version.value = if is_link {
+                    let path = dependency::link_path_for_lockfile(relative);
+                    dependency::Value::Symlink(string_buf.append(&path)?)
                 } else {
-                    dep.version.value.folder = string_buf.append(relative)?;
-                }
+                    dependency::Value::Folder(string_buf.append(relative)?)
+                };
             }
         }
         Ok(())
@@ -793,11 +794,9 @@ impl Lockfile {
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
-        if dep.version.tag != dependency::Tag::Catalog {
+        let dependency::Value::Catalog(catalog_name) = dep.version.value else {
             return Some(dep.version.clone());
-        }
-
-        let catalog_name = *dep.version.catalog();
+        };
         let catalog_dep = self.catalogs.get(self, catalog_name, dep.name)?;
 
         Some(catalog_dep.version)
@@ -1014,9 +1013,12 @@ impl Lockfile {
             let dependency = &self.buffers.dependencies[row];
             target == id
                 && crate::dedupe::applied_override(self, row as DependencyID, dependency)
-                    .map(|rule| rule.version())
-                    .filter(|version| version.tag == dependency::version::Tag::Folder)
-                    .and_then(|version| join_top_level_dir(&[version.folder().slice(buf)]))
+                    .and_then(|rule| match &rule.version().value {
+                        dependency::Value::Folder(folder) => {
+                            join_top_level_dir(&[folder.slice(buf)])
+                        }
+                        _ => None,
+                    })
                     .is_some_and(|named| strings::without_trailing_slash(named.slice()) == selected)
         })
     }
@@ -1035,11 +1037,13 @@ impl Lockfile {
         let dependencies = self.buffers.dependencies.as_slice();
         let packages = &self.packages;
         let names_url = |declared: &Dependency| {
-            declared.version.tag == dependency::version::Tag::Tarball
-                && matches!(
-                    &declared.version.tarball().uri,
-                    dependency::tarball::Uri::Remote(remote) if remote.slice(buf) == url
-                )
+            matches!(
+                &declared.version.value,
+                dependency::Value::Tarball(dependency::TarballInfo {
+                    uri: dependency::tarball::Uri::Remote(remote),
+                    ..
+                }) if remote.slice(buf) == url
+            )
         };
         (self.overrides.values().chain(self.catalogs.values())).any(names_url)
             || self.package_extensions.has_specifier(url)
@@ -2081,26 +2085,6 @@ impl Lockfile {
         slicable.slice(self.buffers.string_bytes.as_slice())
     }
 
-    /// [`str`](Self::str) with the borrow detached from `self`.
-    ///
-    /// The install pipeline frequently needs to read a string out of
-    /// `buffers.string_bytes` and then call back into `&mut PackageManager`
-    /// (which owns the `Lockfile`). The caller would otherwise have to write
-    /// `unsafe { detach_lifetime(self.str(x)) }` at
-    /// every site. Consolidating that here keeps the SAFETY argument in one
-    /// place.
-    ///
-    /// SAFETY (internal): `string_bytes` is append-only for the lifetime of a
-    /// resolve/enqueue pass and is never reallocated while a detached slice is
-    /// live. The returned slice must not outlive the
-    /// `Lockfile`.
-    #[inline]
-    pub(crate) fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
-        // SAFETY: see doc comment — same invariant every prior call site
-        // already relied on via `bun_ptr::detach_lifetime`.
-        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
-    }
-
     /// Construct an empty Lockfile value in place.
     #[inline(never)]
     pub fn init_empty(&mut self) {
@@ -2308,8 +2292,8 @@ impl Lockfile {
             }
             let res = &pkg_resolutions[pkg_id as usize];
             // The root package's path.
-            if res.tag == ResolutionTag::Root && dep.version.tag == dependency::Tag::Workspace {
-                dep.version.value.workspace = SemverString::from(b".");
+            if res.tag == ResolutionTag::Root && dep.version.tag() == dependency::Tag::Workspace {
+                dep.version.value = dependency::Value::Workspace(SemverString::from(b"."));
             }
             if res.tag != ResolutionTag::Workspace {
                 continue;
@@ -2317,7 +2301,7 @@ impl Lockfile {
             // This peer was tagged as a workspace link when the lockfile was loaded. A published
             // version that its range accepts may have been added since, so the range is parsed
             // again.
-            if dep.version.tag == dependency::Tag::Workspace
+            if dep.version.tag() == dependency::Tag::Workspace
                 && dep.behavior.is_peer()
                 && !dep.behavior.is_optional_peer()
                 && !is_local_row(dep_id)
@@ -2325,15 +2309,14 @@ impl Lockfile {
                 let literal = dep.version.literal.sliced(buf);
                 if let Some(range) =
                     dependency::parse(dep.name, dep.name_hash, literal.slice, &literal, None, None)
-                    && range.tag == dependency::Tag::Npm
+                    && range.tag() == dependency::Tag::Npm
                 {
                     dep.version = range;
                 }
             }
-            let linked = match dep.version.tag {
-                dependency::Tag::Workspace => true,
-                dependency::Tag::Npm => {
-                    let npm = dep.version.npm();
+            let linked = match &dep.version.value {
+                dependency::Value::Workspace(_) => true,
+                dependency::Value::Npm(npm) => {
                     linked_workspace_path(
                         link_workspace_packages,
                         &self.workspace_paths,
@@ -2361,30 +2344,22 @@ impl Lockfile {
                                 .is_none()))
                 }
                 // For the root, the workspace of that name wins over a `file:` folder.
-                dependency::Tag::Folder => {
+                dependency::Value::Folder(_) => {
                     root_rows.is_some_and(|root| root.contains(dep_id as DependencyID))
                 }
                 // It also wins over a dist-tag of a package with the workspace's name. An `npm:`
                 // alias stays a dist-tag, as it does when package.json is parsed.
-                dependency::Tag::DistTag => {
+                dependency::Value::DistTag(dist_tag) => {
                     root_rows.is_some_and(|root| root.contains(dep_id as DependencyID))
                         && self.workspace_paths.contains(&dep.name_hash)
-                        && (dep.version.dist_tag().name).eql(dep.name, buf, buf)
+                        && (dist_tag.name).eql(dep.name, buf, buf)
                 }
                 _ => false,
             };
             if !linked {
                 continue;
             }
-            // Whole-struct move so `Drop` frees the old npm chain; keep the existing `literal`.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: dependency::Tag::Workspace,
-                literal,
-                value: dependency::Value {
-                    workspace: *res.workspace(),
-                },
-            };
+            dep.version.value = dependency::Value::Workspace(*res.workspace());
         }
     }
 
@@ -2392,7 +2367,7 @@ impl Lockfile {
     /// which that pass didn't tag.
     pub(crate) fn untag_workspace_link(&mut self, dep_id: DependencyID) -> bool {
         let dep = &self.buffers.dependencies[dep_id as usize];
-        if dep.version.tag != dependency::Tag::Workspace {
+        if dep.version.tag() != dependency::Tag::Workspace {
             return true;
         }
         let sliced = dep
@@ -2400,7 +2375,7 @@ impl Lockfile {
             .literal
             .sliced(self.buffers.string_bytes.as_slice());
         match dependency::parse(dep.name, dep.name_hash, sliced.slice, &sliced, None, None) {
-            Some(version) if version.tag == dependency::Tag::Npm => {
+            Some(version) if version.tag() == dependency::Tag::Npm => {
                 self.buffers.dependencies[dep_id as usize].version = version;
                 true
             }
@@ -2417,16 +2392,15 @@ impl Lockfile {
     ) -> bool {
         let dependency = &self.buffers.dependencies[dep_id as usize];
         let version = &dependency.version;
-        if version.tag != dependency::Tag::Workspace {
+        let dependency::Value::Workspace(path) = &version.value else {
             return false;
-        }
+        };
         let buf = self.buffers.string_bytes.as_slice();
-        let path = version.workspace().slice(buf);
+        let path = path.slice(buf);
         // The resolver asks for the version of an override, and that links this workspace or not.
         if self.is_overridden_dependency(dep_id) {
             let links = (crate::dedupe::effective_npm_range(self, dep_id, dependency)).is_some_and(
-                |asked| {
-                    let npm = asked.npm();
+                |crate::dedupe::NpmRange { npm, .. }| {
                     linked_workspace_path(
                         link_workspace_packages,
                         &self.workspace_paths,
@@ -3421,11 +3395,7 @@ impl Lockfile {
     ) -> Result<bool, BunError> {
         let previous_meta_hash = self.meta_hash;
         self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
-        Ok(!strings::eql_long(
-            &previous_meta_hash,
-            &self.meta_hash,
-            false,
-        ))
+        Ok(!strings::eql_long(&previous_meta_hash, &self.meta_hash))
     }
 
     pub(crate) fn generate_meta_hash(
@@ -3740,6 +3710,7 @@ impl Lockfile {
 
     pub fn has_trusted_dependency(
         &self,
+        options: &PackageManagerOptions,
         alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
@@ -3768,10 +3739,7 @@ impl Lockfile {
         if url.is_empty() {
             return true;
         }
-        let registry = PackageManager::get()
-            .scope_for_package_name(pkg_name)
-            .url
-            .href();
+        let registry = options.scope_for_package_name(pkg_name).url.href();
         url == registry_tarball_url(registry, pkg_name, npm.version, buf).as_slice()
     }
 

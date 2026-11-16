@@ -15,10 +15,10 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
+use crate::Headers;
 use crate::h2_client::dispatch::{
     is_malformed_response_field, is_malformed_response_value, trim_response_value,
 };
-use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
 
@@ -215,8 +215,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     }
     let n = s.header_count();
 
-    stream.decoded_headers.clear();
-    stream.decoded_headers.reserve(n as usize);
+    let mut headers = Headers::default();
+    let field_len = |h: &quic::Header| h.name_bytes().len() + h.value_bytes().len();
+    headers
+        .buf
+        .reserve((0..n).filter_map(|i| s.header(i).map(field_len)).sum());
+    bun_core::handle_oom(headers.entries.ensure_total_capacity(n as usize));
     let mut status: u16 = 0;
     let mut i: c_uint = 0;
     while i < n {
@@ -239,9 +243,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             session.fail(stream, crate::Error::HTTP3ProtocolError);
             return;
         }
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, trim_response_value(value)));
+        headers.append(name, trim_response_value(value));
         i += 1;
     }
     if status == 0 {
@@ -258,6 +260,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         return;
     }
     stream.status_code = status;
+    stream.decoded_headers = headers;
     session.deliver(stream, false);
 }
 

@@ -163,8 +163,10 @@ impl DeferredLinks {
         let resolutions = lockfile.packages.items_resolution();
         // The package whose `node_modules` a tree is, if its folder can be a link to it.
         let local_package = |tree: &Tree| -> Option<usize> {
-            let package_id =
-                *(lockfile.buffers.resolutions.as_slice()).get(tree.dependency_id as usize)?;
+            let package_id = *lockfile
+                .buffers
+                .resolutions
+                .get(tree.dependency_id as usize)?;
             let resolution = resolutions.get(package_id as usize)?;
             (!resolution.tag.can_enqueue_install_task()).then_some(package_id as usize)
         };
@@ -745,7 +747,7 @@ impl<'a> PackageInstaller<'a> {
         }
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
-            debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
+            debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.len());
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
             debug_assert!(package_id != invalid_package_id);
             let bin = self.bins[package_id as usize];
@@ -1269,7 +1271,7 @@ impl<'a> PackageInstaller<'a> {
             // Placing a trusted package and listing its scripts is one step, because a failed
             // install removes the listed packages.
             && !(self.trusted_dependencies_from_update_requests).contains(&package_id)
-            && !(self.lockfile()).has_trusted_dependency(alias, pkg_name, resolution)
+            && !(self.lockfile()).has_trusted_dependency(&self.manager().options, alias, pkg_name, resolution)
     }
 
     fn defer_link(&mut self, job: package_install::LinkJob) {
@@ -1838,7 +1840,7 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::RemoteTarball => {
                 let (manager, buf) = (self.manager(), self.folder_path_buf.as_mut_slice());
                 let len = match resolution.tag {
-                    resolution::Tag::Npm => package_manager::cached_npm_package_folder_name_print(
+                    resolution::Tag::Npm => package_manager::cached_npm_package_folder_name(
                         manager,
                         buf,
                         pkg_name.slice(string_buf!()),
@@ -1869,7 +1871,7 @@ impl<'a> PackageInstaller<'a> {
                 if len > 0 {
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
                 }
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir = self.manager_mut().get_cache_directory().handle.fd();
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {
                 let is_workspace = resolution.tag == resolution::Tag::Workspace;
@@ -2045,60 +2047,13 @@ impl<'a> PackageInstaller<'a> {
                         path: self.node_modules.path.clone(),
                         dependency_id,
                     });
-                let queued = match resolution.tag {
-                    resolution::Tag::Git => package_manager::enqueue_git_for_checkout(
-                        self.manager_mut(),
-                        dependency_id,
-                        package_id,
-                        alias.slice(string_buf!()),
-                        context,
-                        patch_name_and_version_hash,
-                    ),
-                    resolution::Tag::Github => {
-                        let url = self.manager_mut().alloc_github_url(resolution.github());
-                        package_manager::enqueue_tarball_for_download(
-                            self.manager_mut(),
-                            dependency_id,
-                            package_id,
-                            &url,
-                            context,
-                        )
-                    }
-                    resolution::Tag::LocalTarball => package_manager::enqueue_tarball_for_reading(
-                        self.manager_mut(),
-                        dependency_id,
-                        package_id,
-                        alias.slice(string_buf!()),
-                        resolution,
-                        context,
-                    ),
-                    resolution::Tag::RemoteTarball => {
-                        package_manager::enqueue_tarball_for_download(
-                            self.manager_mut(),
-                            dependency_id,
-                            package_id,
-                            resolution.remote_tarball().slice(string_buf!()),
-                            context,
-                        )
-                    }
-                    resolution::Tag::Npm => {
-                        let npm = *resolution.npm();
-                        package_manager::enqueue_package_for_download(
-                            self.manager_mut(),
-                            pkg_name.slice(string_buf!()),
-                            dependency_id,
-                            package_id,
-                            npm.version,
-                            npm.url.slice(string_buf!()),
-                            context,
-                        )
-                    }
-                    _ => {
-                        debug_assert!(false, "unreachable, handled above");
-                        Err(ForTarballError::InvalidURL)
-                    }
-                };
-                match queued {
+                match package_manager::enqueue_install_task(
+                    self.manager_mut(),
+                    dependency_id,
+                    package_id,
+                    context,
+                    patch_name_and_version_hash,
+                ) {
                     Ok(()) => {}
                     Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(ForTarballError::InvalidURL) => {
@@ -2194,9 +2149,8 @@ impl<'a> PackageInstaller<'a> {
             let skip_delete = self.skip_delete && !outlived_root;
 
             let install_result: package_install::InstallResult = match resolution.tag {
-                resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(skip_delete, destination_dir)
-                }
+                resolution::Tag::Symlink | resolution::Tag::Workspace => installer
+                    .install_from_link(skip_delete, destination_dir, &self.manager().total_tasks),
                 _ => 'result: {
                     let staging = self
                         .staging_lock
@@ -2223,6 +2177,7 @@ impl<'a> PackageInstaller<'a> {
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
+                                &self.manager().total_tasks,
                             );
                         }
 
@@ -2256,7 +2211,11 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(skip_delete, destination_dir)
+                            installer.install_from_link(
+                                skip_delete,
+                                destination_dir,
+                                &self.manager().total_tasks,
+                            )
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // A folder that a package ships inside itself is linked from where it
                             // is.
@@ -2271,7 +2230,11 @@ impl<'a> PackageInstaller<'a> {
                                     cache_dir_subpath: shipped,
                                     ..installer
                                 }
-                                .install_from_link(false, destination_dir),
+                                .install_from_link(
+                                    false,
+                                    destination_dir,
+                                    &self.manager().total_tasks,
+                                ),
                                 None => package_install::InstallResult::fail(
                                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
                                     package_install::Step::OpeningCacheDir,
@@ -2284,6 +2247,7 @@ impl<'a> PackageInstaller<'a> {
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
+                                &self.manager().total_tasks,
                             )
                         };
 
@@ -2340,6 +2304,7 @@ impl<'a> PackageInstaller<'a> {
                         destination_dir,
                         method,
                         resolution.tag,
+                        &self.manager().total_tasks,
                     );
                 }
             };
@@ -2398,6 +2363,7 @@ impl<'a> PackageInstaller<'a> {
                     .is_some_and(|added| {
                         **added == *trusted_name.slice(string_buf!())
                             && self.lockfile().has_trusted_dependency(
+                                &self.manager().options,
                                 alias.slice(string_buf!()),
                                 pkg_name.slice(string_buf!()),
                                 resolution,
@@ -2465,6 +2431,7 @@ impl<'a> PackageInstaller<'a> {
                     (self.trusted_dependencies_from_update_requests).contains(&package_id);
                 let is_trusted = is_trusted_through_update_request
                     || self.lockfile().has_trusted_dependency(
+                        &self.manager().options,
                         alias.slice(string_buf!()),
                         pkg_name.slice(string_buf!()),
                         resolution,
@@ -2719,9 +2686,12 @@ impl<'a> PackageInstaller<'a> {
             self.lockfile().packages.items_scripts()[package_id as usize];
         // Only a workspace gets here without being trusted.
         let trusted = resolution.tag != resolution::Tag::Workspace
-            || self
-                .lockfile()
-                .has_trusted_dependency(folder_name, folder_name, resolution);
+            || (self.lockfile()).has_trusted_dependency(
+                &self.manager().options,
+                folder_name,
+                folder_name,
+                resolution,
+            );
         let log = self.manager().log_mut();
         let scripts_list =
             match scripts.get_list(log, package_path, folder_name, resolution, trusted) {

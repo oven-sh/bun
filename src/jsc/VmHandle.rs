@@ -199,7 +199,7 @@ impl Shared {
 
 /// One unit of "something of this VM's is on another thread". See the module
 /// doc. `Send + Sync`; obtain on the JS thread with [`VirtualMachine::ticket`]
-/// (or by cloning one you hold, on any thread), keep it in the in-flight
+/// (or on any thread by cloning one, or with [`VmHandle::try_ticket`]), keep it in the in-flight
 /// operation — never in a JS-owned or VM-owned object — and drop it when the
 /// operation's last touch of the VM's memory from another thread is done
 /// (normally: right after posting the completion).
@@ -240,7 +240,7 @@ impl Ticket {
         self.post_intrusive(bun_core::heap::into_raw_nn(task));
     }
 
-    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
         test_gate::before_ticket_post(self);
         debug_assert!(
@@ -359,7 +359,18 @@ impl VmHandle {
         })
     }
 
-    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    /// As [`post`](Self::post), but a loop that is asleep stays asleep until something else wakes it.
+    pub fn post_without_waking(&self, kind: LoopKind, task: Box<ConcurrentTaskItem>) -> Posted {
+        test_gate::weak_post(&self.0, task.task.tag(), || {
+            let Some(_a) = self.enter() else {
+                return Posted::Refused(task);
+            };
+            self.0.loop_of(kind).post(bun_core::heap::into_raw_nn(task));
+            Posted::Queued
+        })
+    }
+
+    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted<()> {
         // SAFETY: handed over by the caller and not yet queued anywhere.
         let tag = unsafe { task.as_ref() }.task.tag();
@@ -387,6 +398,14 @@ impl VmHandle {
             // SAFETY: refused ⇒ `task` is still ours (fn contract).
             unsafe { Bun__deleteEventLoopTask(task) };
         }
+    }
+
+    /// A ticket for work that another thread starts, or `None` once the VM has begun its final wait.
+    #[track_caller]
+    pub fn try_ticket(&self, kind: LoopKind) -> Option<Ticket> {
+        // Counted first: `close_and_wait` stores the state before it reads the count.
+        let ticket = Ticket::issue(&self.0, kind);
+        (!ticket.cancelled()).then_some(ticket)
     }
 
     /// Adjust the VM's keep-alive from another thread (no-op once closed).
@@ -564,6 +583,38 @@ impl VirtualMachine {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
     vm.current_loop_kind()
+}
+
+// ── VmBound ───────────────────────────────────────────────────────────────
+
+/// A value that only its VM's thread can reach, inside a struct that threads share. `T` is never dropped, so empty it on the JS thread.
+pub struct VmBound<T> {
+    handle: VmHandle,
+    value: core::mem::ManuallyDrop<T>,
+}
+
+// SAFETY: `value` is only reached through `get`, which asks for the VM it was made on, and a
+// `&VirtualMachine` does not leave its thread. `handle` keeps `Shared` allocated, so no later VM gets its address.
+unsafe impl<T> Send for VmBound<T> {}
+// SAFETY: as above.
+unsafe impl<T> Sync for VmBound<T> {}
+
+impl<T> VmBound<T> {
+    pub fn new(vm: &VirtualMachine, value: T) -> Self {
+        VmBound {
+            handle: vm.handle(),
+            value: core::mem::ManuallyDrop::new(value),
+        }
+    }
+
+    pub fn handle(&self) -> &VmHandle {
+        &self.handle
+    }
+
+    /// `None` if `vm` is another VM.
+    pub fn get<'a>(&'a self, vm: &'a VirtualMachine) -> Option<&'a T> {
+        Arc::ptr_eq(&self.handle.0, &vm.handle_ref().0).then(|| &*self.value)
+    }
 }
 
 // ── Test suite only: deterministic late completions ───────────────────────
@@ -889,12 +940,12 @@ impl ConcurrentPoster {
 
 // ── Erased form for crates below bun_jsc (spawn, bundler) ─────────────────
 
-struct PosterData {
+struct VmPoster {
     handle: VmHandle,
     kind: LoopKind,
 }
 
-impl bun_event_loop::PostToJs for PosterData {
+impl bun_event_loop::PostToJs for VmPoster {
     fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
         self.handle.post(self.kind, task)
     }
@@ -903,7 +954,7 @@ impl bun_event_loop::PostToJs for PosterData {
 impl VmHandle {
     /// An erased weak poster for `kind`, for code that cannot name `VmHandle`.
     fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
-        Arc::new(PosterData {
+        Arc::new(VmPoster {
             handle: self.clone(),
             kind,
         })
@@ -925,18 +976,18 @@ impl VirtualMachine {
 // weak poster with the same gate discipline, closed before the loop is freed.
 // The VM cannot tear down under it: its creator drives it synchronously.
 
-/// Opaque outside this crate: the poster of a spawnSync isolated loop.
-pub struct IsolatedPosterInner {
+/// The poster of a spawnSync isolated loop.
+pub(crate) struct IsolatedPoster {
     open: core::sync::atomic::AtomicBool,
     active: AtomicU32,
     event_loop: *const EventLoop,
 }
 // SAFETY: `event_loop` is dereferenced only under the gate (open && counted).
-unsafe impl Send for IsolatedPosterInner {}
+unsafe impl Send for IsolatedPoster {}
 // SAFETY: as above.
-unsafe impl Sync for IsolatedPosterInner {}
+unsafe impl Sync for IsolatedPoster {}
 
-impl IsolatedPosterInner {
+impl IsolatedPoster {
     pub(crate) fn new(event_loop: *const EventLoop) -> Arc<Self> {
         Arc::new(Self {
             open: core::sync::atomic::AtomicBool::new(true),
@@ -955,7 +1006,7 @@ impl IsolatedPosterInner {
     }
 }
 
-impl bun_event_loop::PostToJs for IsolatedPosterInner {
+impl bun_event_loop::PostToJs for IsolatedPoster {
     fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
         self.active.fetch_add(1, Ordering::SeqCst);
         let posted = if self.open.load(Ordering::SeqCst) {

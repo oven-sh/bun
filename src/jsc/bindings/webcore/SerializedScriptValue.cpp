@@ -1498,37 +1498,26 @@ private:
                     write(handle.symmetricKey());
                     return true;
                 }
-                case CryptoKeyType::Public: {
-                    auto* pkey = handle.asymmetricKey().get();
-
-                    BIO* bio = BIO_new(BIO_s_mem());
-
-                    PEM_write_bio_PUBKEY(bio, pkey);
-
-                    const uint8_t* pemData = nullptr;
-                    uint64_t pemSize = 0;
-                    BIO_mem_contents(bio, &pemData, reinterpret_cast<size_t*>(&pemSize));
-
-                    write(pemSize);
-                    write(pemData, pemSize);
-                    BIO_free(bio);
-
-                    return true;
-                }
+                case CryptoKeyType::Public:
                 case CryptoKeyType::Private: {
                     auto* pkey = handle.asymmetricKey().get();
+                    auto bio = ncrypto::BIOPointer::NewMem();
 
-                    BIO* bio = BIO_new(BIO_s_mem());
-
-                    PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+                    bool isEncoded = handle.type() == CryptoKeyType::Public
+                        ? PEM_write_bio_PUBKEY(bio.get(), pkey)
+                        : PEM_write_bio_PrivateKey(bio.get(), pkey, nullptr, nullptr, 0, nullptr, nullptr);
+                    if (!isEncoded) {
+                        ERR_clear_error();
+                        code = SerializationReturnCode::DataCloneError;
+                        return true;
+                    }
 
                     const uint8_t* pemData = nullptr;
                     uint64_t pemSize = 0;
-                    BIO_mem_contents(bio, &pemData, reinterpret_cast<size_t*>(&pemSize));
+                    BIO_mem_contents(bio.get(), &pemData, reinterpret_cast<size_t*>(&pemSize));
 
                     write(pemSize);
                     write(pemData, pemSize);
-                    BIO_free(bio);
 
                     return true;
                 }

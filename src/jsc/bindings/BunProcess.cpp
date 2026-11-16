@@ -297,7 +297,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
         { "llhttp", "9.4.2" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
-        { "picohttpparser", BUN_VERSION_PICOHTTPPARSER },
         { "uwebsockets", BUN_VERSION_UWS },
         { "webkit", BUN_VERSION_WEBKIT },
         { "zig", BUN_VERSION_ZIG },
@@ -4118,19 +4117,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
 
-    // A thread has one table of names and one VM, so the three names are looked up once a thread and kept for as long as it lives.
-    static thread_local UniquedStringImpl* keptNames[3];
-    if (!keptNames[0]) [[unlikely]] {
-        unsigned index = 1;
-        for (ASCIILiteral streamName : { "stdout"_s, "stderr"_s }) {
-            Identifier name = Identifier::fromString(vm, streamName);
-            name.impl()->ref();
-            keptNames[index++] = name.impl();
-        }
-        Identifier nameOfHolder = Identifier::fromString(vm, "process"_s);
-        nameOfHolder.impl()->ref();
-        keptNames[0] = nameOfHolder.impl();
-    }
+    auto& keptNames = WebCore::clientData(vm)->standardOutputStreamNames;
+    if (keptNames[0].isNull()) [[unlikely]]
+        keptNames = { Identifier::fromString(vm, "process"_s), Identifier::fromString(vm, "stdout"_s), Identifier::fromString(vm, "stderr"_s) };
     PropertyName processName(keptNames[0]);
     auto isPlainValue = [](JSValue own) {
         return own && !own.isGetterSetter() && !own.isCustomGetterSetter();
@@ -4153,7 +4142,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
                 bool isDeclared = lexicalGlobalObject->getPropertySlot(lexicalGlobalObject, processName, slot);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!isDeclared)
-                    return throwVMError(lexicalGlobalObject, scope, createUndefinedVariableError(lexicalGlobalObject, Identifier::fromUid(vm, keptNames[0])));
+                    return throwVMError(lexicalGlobalObject, scope, createUndefinedVariableError(lexicalGlobalObject, keptNames[0]));
                 holder = slot.getValue(lexicalGlobalObject, processName);
                 RETURN_IF_EXCEPTION(scope, {});
             }

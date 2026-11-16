@@ -3,7 +3,7 @@ use bun_aot::load::source_provider::{
 };
 use bun_ast::{Kind, Loader, Log, Msg, Range};
 use bun_core::strings;
-use bun_ptr::{ParentRef, detach_lifetime};
+use bun_ptr::detach_lifetime;
 use bun_sema::util::{FxHashMap, ShardedMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use core::ptr::NonNull;
@@ -11,10 +11,9 @@ use std::borrow::Cow;
 
 use super::options::in_memory_files_by_path;
 use crate::BundleV2;
-use crate::ParseTask;
 use crate::bun_fs as Fs;
 use crate::bundle_v2::api::JSBundler::{
-    Load, LoadValue, MiniImportRecord, Plugin, RequestOwner, Resolve, ResolveValue,
+    Load, LoadOwner, LoadValue, MiniImportRecord, Plugin, Resolve, ResolveOwner, ResolveValue,
 };
 use crate::options::Target;
 
@@ -126,10 +125,7 @@ impl WaiterPool {
 }
 
 struct PendingLoad {
-    load: Box<Load>,
-    task: Box<ParseTask<'static>>,
     path: Box<[u8]>,
-    told_path: Box<[u8]>,
     namespace: Box<[u8]>,
     waiter: NonNull<PluginWaiter>,
 }
@@ -204,11 +200,19 @@ impl PluginRequests {
             return Ok(Resolution::NotHandled);
         }
 
+        let told_path = self.told_path(request.importer);
+        // SAFETY: this thread waits below for the answer, after which nothing reads the record.
+        let (source_file, specifier) = unsafe {
+            (
+                detach_lifetime(&told_path),
+                detach_lifetime(request.specifier),
+            )
+        };
         let record = MiniImportRecord {
             kind: request.kind,
-            source_file: (&*self.told_path(request.importer)).into(),
-            namespace: FILE_NAMESPACE.into(),
-            specifier: request.specifier.into(),
+            source_file,
+            namespace: FILE_NAMESPACE,
+            specifier,
             importer_source_index: u32::MAX,
             import_record_index: 0,
             range: Range::NONE,
@@ -216,15 +220,13 @@ impl PluginRequests {
             loader: None,
         };
         let waiter = self.waiters.lock().acquire();
-        let resolve = self.with_bundle(|bundle| {
+        self.with_bundle(|bundle| {
             let mut resolve = Box::new(Resolve::init(bundle, record));
-            resolve.owner = RequestOwner::Waiter(waiter);
-            resolve.dispatch();
-            resolve
+            resolve.owner = ResolveOwner::Waiter(waiter);
+            resolve.dispatch(bundle);
         });
         // SAFETY: the pool owns every waiter until `self` drops.
         let answer = unsafe { waiter.as_ref() }.wait_for_answer();
-        drop(resolve);
         self.waiters.lock().release(waiter);
 
         match answer {
@@ -341,51 +343,23 @@ impl PluginRequests {
     }
 
     fn post_load(&self, request: &LoadRequest<'_>) -> PendingLoad {
-        let path: Box<[u8]> = request.module.path.into();
-        let told_path: Box<[u8]> = (&*self.told_path(request.module)).into();
-        let namespace: Box<[u8]> = request.module.namespace.into();
-        // SAFETY: both boxes go into the `PendingLoad` that owns the task and are freed after it.
-        // Moving a box does not move its bytes.
-        let task_path = unsafe {
-            Fs::Path::init_with_namespace(detach_lifetime(&told_path), detach_lifetime(&namespace))
-        };
         let waiter = self.waiters.lock().acquire();
-        self.with_bundle(|bundle| {
-            let mut task = Box::new(ParseTask {
-                path: task_path,
-                ctx: Some(ParentRef::from_ref_mut(bundle)),
-                known_target: Target::Bun,
-                loader: Some(request.default_loader),
-                ..Default::default()
-            });
-            let mut load = Box::new(Load::init(bundle, &mut task));
-            load.owner = RequestOwner::Waiter(waiter);
-            load.dispatch();
-            PendingLoad {
-                load,
-                task,
-                path,
-                told_path,
-                namespace,
-                waiter,
-            }
-        })
+        let owner = LoadOwner::Waiter {
+            waiter,
+            path: self.told_path(request.module).into(),
+            namespace: request.module.namespace.into(),
+        };
+        self.with_bundle(|bundle| Box::new(Load::init(bundle, owner)).dispatch(bundle));
+        PendingLoad {
+            path: request.module.path.into(),
+            namespace: request.module.namespace.into(),
+            waiter,
+        }
     }
 
     fn release_load(&self, pending: PendingLoad) -> (Vec<u8>, Vec<u8>) {
-        let PendingLoad {
-            load,
-            task,
-            path,
-            told_path,
-            namespace,
-            waiter,
-        } = pending;
-        drop(load);
-        drop(task);
-        drop(told_path);
-        self.waiters.lock().release(waiter);
-        (namespace.into_vec(), path.into_vec())
+        self.waiters.lock().release(pending.waiter);
+        (pending.namespace.into_vec(), pending.path.into_vec())
     }
 
     fn drain_defer_promises(&self) {
@@ -456,7 +430,7 @@ fn resolution_from_value(value: ResolveValue, log: &mut Log) -> Result<Resolutio
             record_message(message, log)?;
             Ok(Resolution::NotHandled)
         }
-        ResolveValue::Pending | ResolveValue::Consumed => {
+        ResolveValue::Pending => {
             unreachable!("a resolve request is answered with a value")
         }
     }
@@ -479,7 +453,7 @@ fn loaded_from_value(
             record_message(message, log)?;
             Ok(Loaded::from_file(read_file(), default_loader))
         }
-        LoadValue::Pending | LoadValue::Consumed => {
+        LoadValue::Pending => {
             unreachable!("a load request is answered with a value")
         }
     }

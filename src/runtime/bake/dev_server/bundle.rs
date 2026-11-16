@@ -1,6 +1,7 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -270,7 +271,7 @@ impl DevServer {
         &mut self,
         plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.plugins = Some(plugins);
+        self.plugins = Some(Plugins::Borrowed(plugins));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -374,22 +375,24 @@ impl DevServer {
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
         // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
         // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
-        // server one on this thread (`watch_directory`, `finalize_bundle`).
+        // server one on this thread (`finalize_bundle`).
         let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
-            use bun_ptr::detach_lifetime_mut as detach;
             (
-                self.ssr_transpiler_mut().map(|ssr| detach(ssr)),
-                detach(&mut *self.server_transpiler),
-                detach(&mut *self.client_transpiler),
+                self.ssr_transpiler
+                    .as_mut()
+                    .map(|ssr| detach_lifetime_mut(ssr)),
+                detach_lifetime_mut(&mut self.server_transpiler),
+                detach_lifetime_mut(&mut self.client_transpiler),
             )
         };
+        let framework = server_transpiler.options.framework.clone();
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
+                framework: framework.expect("set by DevServer::init"),
                 client_transpiler,
                 ssr_transpiler,
-                plugins: self.plugins,
+                plugins: self.plugins.as_ref().map(Plugins::as_non_null),
             }),
             heap_ref,
             event_loop,

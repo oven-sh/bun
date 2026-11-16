@@ -111,8 +111,11 @@
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
-      "GlobalCache",
-      "SendPtr<T>"
+      "DNSRequestOwner",
+      "ResultEntry"
+    ],
+    "unsafe impl Sync": [
+      "ResultEntry"
     ]
   },
   "src/runtime/image/Image.rs": {
@@ -121,9 +124,24 @@
     ]
   },
   "src/runtime/napi/napi_body.rs": {
+    "VmBound<": [
+      "TsfnJsSide"
+    ],
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
-      "napi_async_work"
+      "AsyncWorkOffThread"
+    ],
+    "unsafe impl Send": [
+      "AddonData"
+    ],
+    "unsafe impl Sync": [
+      "AddonData"
+    ]
+  },
+  "src/runtime/napi/uv_posix.rs": {
+    "WorkPool::schedule*": 1,
+    "unsafe impl Send": [
+      "WorkRef"
     ]
   },
   "src/runtime/node/fs_events.rs": {
@@ -167,9 +185,6 @@
       "CStrPtr"
     ]
   },
-  "src/runtime/node/node_zlib_binding.rs": {
-    "WorkPool::schedule*": 1
-  },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
     "unsafe impl Sync": [
@@ -192,11 +207,6 @@
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
-  },
-  "src/runtime/webcore/CompressionStreamCoder.rs": {
-    "unsafe impl Send": [
-      "CompressionAsyncCtx"
-    ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {
     "unsafe impl Send": [

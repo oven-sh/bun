@@ -191,7 +191,8 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
-    pub(crate) store: TranspilerJobStore,
+    /// Boxed: 22 KB that `VirtualMachine::init` would otherwise copy.
+    pub(crate) store: Box<TranspilerJobStore>,
     pub enabled: Cell<bool>,
     pub(crate) queue: Queue,
     /// JS thread only.
@@ -205,7 +206,7 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: TranspilerJobStore::init(),
+            store: TranspilerJobStore::new_boxed(),
             enabled: Cell::new(true),
             queue: Queue::new(),
             jobs_scheduled: Cell::new(0),
@@ -624,7 +625,7 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The slot lives inside the VM, which waits for this ticket, so it is
+        // The slot belongs to the VM, which waits for this ticket, so it is
         // alive throughout. Transpile only while the VM still runs script;
         // either way hand the job back to the JS thread, which completes or
         // releases it.
@@ -709,7 +710,7 @@ impl TranspilerJob {
         });
 
         // The whole Transpiler is copied by value here.
-        // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
+        // `Transpiler<'static>` is not `Clone`; we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // a raw pointer; every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
@@ -728,8 +729,7 @@ impl TranspilerJob {
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // The one in the copy is the VM's.
-        let mut macro_context = None;
+        let macro_load_states = transpiler::MacroLoadStates::default();
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -774,11 +774,8 @@ impl TranspilerJob {
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
-        let is_main = vm_main.is_some_and(|vm_main| {
-            vm_main.len() == path.text.len()
-                && vm_main_hash == hash
-                && strings::eql_long(vm_main, path.text, false)
-        });
+        let is_main = vm_main
+            .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
@@ -795,7 +792,7 @@ impl TranspilerJob {
             opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
-            macro_context: Some(&mut macro_context),
+            macro_load_states: &macro_load_states,
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
@@ -851,7 +848,7 @@ impl TranspilerJob {
             // `&ImportWatcher` is live here, and `add_file` is
             // thread-safe via watcher mutex.
             let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+            let _ = iw.add_file(input_file, path.text, hash, package_json);
         }
 
         let Some(mut parse_result) = parse_result else {

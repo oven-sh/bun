@@ -617,14 +617,14 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
 
     struct addrinfo_request *ai_req;
     if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
-        struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
+        struct addrinfo_result result = Bun__addrinfo_getRequestResult(ai_req);
         /* A cached resolver failure falls through to the connecting-socket path
          * below (same as a multi-address result) so it is reported through the
          * same connect-error callback, tagged `error_is_dns`, as an uncached
          * one. Bun__addrinfo_set on an already-resolved request defers to the
          * loop's dns_ready_head, never re-enters. */
-        if (!result->error) {
-            struct addrinfo_result_entry *entries = result->entries;
+        if (!result.error) {
+            struct addrinfo_result_entry *entries = result.entries;
             if (entries && entries->info.ai_next == NULL) {
                 struct sockaddr_storage a;
                 init_addr_with_port(&entries->info, port, &a);
@@ -748,20 +748,20 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 #else
     group->loop->num_polls--;
 #endif
-    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
-    if (result->error) {
+    struct addrinfo_result result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
+    if (result.error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
          * report the resolver error (ENOTFOUND, ...) instead of the fabricated
          * ECANCELED that us_connecting_socket_close fills in when `error`
          * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
          * codes and errnos overlap numerically. */
-        c->error = result->error;
+        c->error = result.error;
         c->error_is_dns = 1;
         us_connecting_socket_close(c);
         return;
     }
 
-    c->addrinfo_head = &result->entries->info;
+    c->addrinfo_head = &result.entries->info;
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {

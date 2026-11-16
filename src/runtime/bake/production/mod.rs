@@ -4,7 +4,6 @@
 
 use bun_paths::strings;
 use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -109,19 +108,13 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
-    let vm = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        log: NonNull::new(ctx.log),
+    let vm_options = jsc::virtual_machine::Options {
         args: ctx.args.clone(),
         argv: ctx.passthrough.clone().leak(),
         smol: ctx.runtime_options.smol,
         ..Default::default()
-    })?;
-    scopeguard::defer! {
-        // Its loop is alive, so queued work is released here rather than by a thread teardown.
-        vm.release_queued_work();
-        // SAFETY: what borrows from the VM is declared below, so it has been dropped.
-        unsafe { VirtualMachine::destroy(VirtualMachine::get_mut_ptr()) };
-    }
+    };
+    let vm = VirtualMachine::init_bake(ctx.log, vm_options)?;
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());
@@ -143,7 +136,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
         // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
         // which would alias a live `&Loader` here. The Loader outlives the
-        // resolver (process-lifetime singleton or VM-owned).
+        // resolver (process-lifetime singleton).
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
@@ -192,11 +185,10 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Note: `PerThread` owns its data. Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
-    // LIFO order — under the API lock, before the VM is destroyed.
+    // LIFO order — under the API lock.
     let mut pt = PerThread::placeholder(vm);
 
     match build_with_vm(ctx, &cwd, &mut pt) {
-        Ok(()) => {}
         Err(crate::Error::JSError) => {
             let err_value = vm.global().take_exception(jsc::JsError::Thrown);
             vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
@@ -206,14 +198,8 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             vm.on_exit();
             vm.global_exit();
         }
-        Err(e) => {
-            // Lookups can still be in flight, and `destroy` frees what their channel closes into.
-            vm.forbid_script();
-            let _ = crate::jsc_hooks::stop_dns_for_vm_teardown();
-            return Err(e);
-        }
+        result => result,
     }
-    Ok(())
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
@@ -397,48 +383,32 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler`
-    // keeps the out-param shape shared with the dev-server path).
-    let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    let (server_transpiler, _) = framework.init_transpiler(
-        &options.arena,
-        vm_log,
-        crate::bake::Mode::ProductionStatic,
-        crate::bake::Graph::Server,
-        &mut server_transpiler,
-        &options.bundler_options.server,
-    )?;
-    let (client_transpiler, _) = framework.init_transpiler(
-        &options.arena,
-        vm_log,
-        crate::bake::Mode::ProductionStatic,
-        crate::bake::Graph::Client,
-        &mut client_transpiler,
-        &options.bundler_options.client,
-    )?;
-    let mut ssr_transpiler = if separate_ssr_graph {
-        let (ssr_transpiler, _) = framework.init_transpiler(
+    let unresolved_view = framework.as_bundler_view();
+    let mut init_transpiler = |renderer, bundler_options| {
+        framework.init_transpiler(
             &options.arena,
             vm_log,
-            crate::bake::Mode::ProductionStatic,
-            crate::bake::Graph::Ssr,
-            &mut ssr_transpiler,
-            &options.bundler_options.ssr,
-        )?;
-        Some(ssr_transpiler)
-    } else {
-        None
+            bake::Mode::ProductionStatic,
+            renderer,
+            &unresolved_view,
+            bundler_options,
+        )
     };
+    let mut server_transpiler =
+        init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
+    let mut client_transpiler =
+        init_transpiler(bake::Graph::Client, &options.bundler_options.client)?;
+    let mut ssr_transpiler = separate_ssr_graph
+        .then(|| init_transpiler(bake::Graph::Ssr, &options.bundler_options.ssr))
+        .transpose()?;
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
-            vec![&mut *client_transpiler, &mut *server_transpiler];
-        if let Some(ssr_transpiler) = ssr_transpiler.as_deref_mut() {
+            vec![&mut client_transpiler, &mut server_transpiler];
+        if let Some(ssr_transpiler) = ssr_transpiler.as_mut() {
             targets.push(ssr_transpiler);
         }
         for transpiler in targets {
@@ -586,11 +556,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
-            server_transpiler,
+            &mut server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                client_transpiler,
-                ssr_transpiler,
+                client_transpiler: &mut client_transpiler,
+                ssr_transpiler: ssr_transpiler.as_mut(),
                 plugins: (options.bundler_options.plugin.as_ref())
                     .map(|plugin| plugin.as_non_null()),
             },

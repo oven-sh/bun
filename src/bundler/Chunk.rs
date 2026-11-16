@@ -1,5 +1,6 @@
 use crate::mal_prelude::*;
 use core::fmt;
+use core::num::NonZeroU32;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -23,7 +24,6 @@ use crate::bun_fs;
 use crate::BundleV2;
 #[cfg(debug_assertions)]
 use crate::LinkerContext;
-use crate::bundled_ast::CssAstRef;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
@@ -111,7 +111,7 @@ impl Default for Content<'_> {
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
 // fields (`CssAstRef`, `ChunkRenamer` arena)
-// point into bundler-arena storage that outlives the
+// point into the bundle's storage, which outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
 unsafe impl Send for Chunk<'_> {}
@@ -1186,37 +1186,40 @@ pub struct CssChunk<'a> {
     pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
 }
 
+/// Borrows from `Graph::css_asts`.
+pub(crate) type CssAstRef<'a> = bun_ptr::BackRef<bun_css::BundlerStyleSheet<'a>>;
+
 /// The conditions of an `@import` rule, found through the stylesheet that owns them.
 #[derive(Copy, Clone)]
-pub(crate) struct CssImportCondition<'a> {
+pub(crate) struct ImportConditionsRef<'a> {
     pub(crate) sheet: CssAstRef<'a>,
     /// Index into the top-level rules of `sheet`.
-    pub(crate) rule: u32,
-    /// Each visit of a bare `layer` import is a layer of its own. Zero for the others.
-    pub(crate) anonymous_layer: u32,
+    pub(crate) rule_index: u32,
+    /// Each visit of a bare `layer` import is a layer of its own.
+    pub(crate) anonymous_layer_id: Option<NonZeroU32>,
 }
 
-impl<'a> core::ops::Deref for CssImportCondition<'a> {
+impl<'a> core::ops::Deref for ImportConditionsRef<'a> {
     type Target = bun_css::ImportConditions<'a>;
 
     fn deref(&self) -> &Self::Target {
-        match &self.sheet.rules.v[self.rule as usize] {
+        match &self.sheet.rules.v[self.rule_index as usize] {
             bun_css::css_parser::BundlerCssRule::Import(rule) => &rule.conditions,
             _ => unreachable!(),
         }
     }
 }
 
-impl CssImportCondition<'_> {
-    pub(crate) fn layers_eql(&self, other: &Self) -> bool {
-        self.anonymous_layer == other.anonymous_layer
+impl ImportConditionsRef<'_> {
+    pub(crate) fn is_same_layer(&self, other: &Self) -> bool {
+        self.anonymous_layer_id == other.anonymous_layer_id
             && bun_css::ImportConditions::layers_eql(self, other)
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct CssImportOrder<'a> {
-    pub(crate) conditions: &'a [CssImportCondition<'a>],
+    pub(crate) conditions: &'a [ImportConditionsRef<'a>],
 
     pub(crate) kind: CssImportOrderKind<'a>,
 }
@@ -1244,7 +1247,7 @@ pub enum Layers<'a> {
 
 impl<'a> Layers<'a> {
     #[inline]
-    pub(crate) fn inner(&self) -> &[bun_css::LayerName<'a>] {
+    pub(crate) fn names(&self) -> &[bun_css::LayerName<'a>] {
         match self {
             Layers::None => &[],
             Layers::PreImport(sheet) => &sheet.layers_pre_import,
@@ -1266,9 +1269,9 @@ impl<'a> CssImportOrder<'a> {
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
-                for layer in layers.inner() {
+                for layer in layers.names() {
                     for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() - 1;
+                        let is_last = i == layers.names().len() - 1;
                         if is_last {
                             hasher.update(layer_name);
                         } else {
@@ -1305,7 +1308,7 @@ impl fmt::Display for CssImportOrderDebug<'_, '_> {
         match &self.inner.kind {
             CssImportOrderKind::Layers(layers) => {
                 write!(writer, "[")?;
-                let l = layers.inner();
+                let l = layers.names();
                 for (i, layer) in l.iter().enumerate() {
                     if i > 0 {
                         write!(writer, ", ")?;
@@ -1348,7 +1351,7 @@ impl Chunk<'_> {
     /// reach it). ESM hoists every `import` above the chunk's own code, so
     /// this order is the only part of the source evaluation order the
     /// statements can keep.
-    pub(crate) fn sorted_cross_chunk_imports(
+    pub(crate) fn sort_cross_chunk_imports(
         order: &mut Vec<u32>,
         chunks: &[Self],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
@@ -1405,7 +1408,6 @@ impl<'a> Content<'a> {
         matches!(self, Content::Javascript(_))
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
-    bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk<'a>);
 
     pub(crate) fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {

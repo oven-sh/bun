@@ -367,8 +367,9 @@ impl ThreadPool {
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        self.shutdown();
-        self.join();
+        if self.shutdown().spawned() > 0 {
+            self.join();
+        }
     }
 }
 
@@ -437,7 +438,7 @@ unsafe impl Send for Task {}
 
 impl Default for Task {
     /// Placeholder for fields where the callback is installed later
-    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
+    /// (e.g. by [`Batch::from_owned`]). The
     /// `unreachable` callback panics if scheduled un-initialized.
     #[inline]
     fn default() -> Self {
@@ -473,7 +474,7 @@ impl Task {
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 pub struct Batch {
     pub len: usize,
     pub(crate) head: Option<NonNull<Task>>,
@@ -526,7 +527,7 @@ impl ThreadPool {
     /// `&mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check.
-    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &[V])
     where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
@@ -541,7 +542,7 @@ impl ThreadPool {
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        values: &[V],
         on_calling_thread: impl FnOnce(),
     ) where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
@@ -585,7 +586,7 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_owned(
+        self.each_iter(
             ctx,
             move |ctx, (i, value)| run_fn(ctx, value, *i),
             values.len(),
@@ -593,26 +594,26 @@ impl ThreadPool {
         );
     }
 
-    /// Like `each_ptr`, for values that exist only for the call. `len` is how many to make room for.
-    pub fn each_owned<Ctx, V, F>(
+    /// Like `each_ptr`, for values that exist only for the call. `capacity` is how many to make room for.
+    pub fn each_iter<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        len: usize,
+        capacity: usize,
         values: impl Iterator<Item = V>,
     ) where
         F: Fn(&Ctx, &mut V) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: core::marker::Send,
     {
-        self.each_impl(ctx, run_fn, len, values, || {});
+        self.each_impl(ctx, run_fn, capacity, values, || {});
     }
 
     fn each_impl<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        len: usize,
+        capacity: usize,
         values: impl Iterator<Item = V>,
         on_calling_thread: impl FnOnce(),
     ) where
@@ -637,7 +638,7 @@ impl ThreadPool {
 
         let shared = (ctx, run_fn);
         let group = WaitGroup::init();
-        let mut tasks = Vec::with_capacity(len);
+        let mut tasks = Vec::with_capacity(capacity);
         tasks.extend(values.map(|value| RunnerTask {
             task: CountedTask::new(call::<Ctx, V, F>, &group),
             shared: &shared,
@@ -658,8 +659,7 @@ impl ThreadPool {
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, batch: &Batch, try_current: bool) {
-        let Batch { len, head, tail } = *batch;
+    fn schedule_impl(&self, Batch { len, head, tail }: Batch, try_current: bool) {
         // Sanity check
         if len == 0 {
             return;
@@ -706,12 +706,12 @@ impl ThreadPool {
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(&batch, false);
+        self.schedule_impl(batch, false);
     }
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(&batch, true);
+        self.schedule_impl(batch, true);
     }
 
     /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
@@ -1021,11 +1021,11 @@ impl ThreadPool {
         }
     }
 
-    /// Marks the thread pool as shutdown
+    /// Marks the thread pool as shutdown, and returns the previous `Sync`.
     #[inline(never)]
-    pub(crate) fn shutdown(&self) {
+    fn shutdown(&self) -> Sync {
         let mut sync = self.sync.load(Ordering::Relaxed);
-        while sync.state() != SyncState::Shutdown {
+        loop {
             let mut new_sync = sync;
             new_sync.set_notified(true);
             new_sync.set_state(SyncState::Shutdown);
@@ -1043,7 +1043,7 @@ impl ThreadPool {
                     if sync.idle() > 0 {
                         self.idle_event.shutdown();
                     }
-                    return;
+                    return sync;
                 }
             };
         }
@@ -1093,23 +1093,19 @@ impl ThreadPool {
         bun_ptr::BackRef::from(next_thread).join_event.notify();
     }
 
+    /// For a pool that had threads at `shutdown()`.
     fn join(&self) {
-        // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
-        let mut sync = self.sync.load(Ordering::Relaxed);
-        if !(sync.state() == SyncState::Shutdown && sync.spawned() == 0) {
-            self.join_event.wait(None);
-            sync = self.sync.load(Ordering::Relaxed);
-        }
+        // Also if `spawned` is 0 by now: the last thread uses `join_event` after its decrement.
+        self.join_event.wait(None);
 
+        // Acquire: what each thread did to the pool before its decrement happens before the drop.
+        let sync = self.sync.load(Ordering::Acquire);
         debug_assert!(sync.state() == SyncState::Shutdown);
         debug_assert!(sync.spawned() == 0);
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call sees null and
-        // returns instead of touching freed worker stack memory.
-        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
-        else {
+        let Some(thread) = NonNull::new(self.threads.load(Ordering::Acquire)) else {
             return;
         };
         // `thread` is a registered worker blocked in `join_event.wait()`;
@@ -1316,11 +1312,11 @@ impl Thread {
                 Ok(w) => w,
                 Err(_) => {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
-                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // pushes per-worker `drop_task`s into `idle_queue`, wakes
                     // us, then immediately drops the (CLI-owned) pool — and
                     // `wait()` observes `Shutdown` before it gets to
                     // `drain_idle_events`. Run them once on the way out so the
-                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // worker thread tears down its own `Worker`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
                     // must be freed here, not from the bundler thread).
                     self_.drain_idle_events();
@@ -1573,6 +1569,8 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
+        // The waiter of a `join_event` frees it once it has the notification.
+        let state_ptr = &raw const self.state;
         let mut word = self.state.load(Ordering::Relaxed);
         loop {
             if word & Self::STATE_MASK == Self::SHUTDOWN {
@@ -1593,7 +1591,7 @@ impl Event {
         // EMPTY or NOTIFIED (a consumer that never parked took a notification and put EMPTY
         // back); the next notify() re-arms and wakes it.
         if word & Self::STATE_MASK == Self::WAITING {
-            Futex::wake(&self.state, 1);
+            Futex::wake_raw(state_ptr, 1);
         }
     }
 

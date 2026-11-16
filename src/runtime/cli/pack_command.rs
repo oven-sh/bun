@@ -1275,12 +1275,12 @@ pub(crate) fn bin_kind_without_following_symlinks(
 /// `published_files` has already queued the bins, so the walks skip them.
 fn is_listed_bin(bins: &[BinInfo], ty: BinType, subpath: &ZStr) -> bool {
     bins.iter()
-        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes(), true))
+        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes()))
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     bins.iter().any(|bin| match bin.ty {
-        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path, true),
+        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path),
         BinType::Dir => (maybe_bin_path.strip_prefix(bin.path.as_bytes()))
             .and_then(|remain| remain.strip_prefix(b"/"))
             .is_some_and(|name| !name.is_empty() && !strings::contains_char(name, b'/')),
@@ -1659,43 +1659,28 @@ pub(crate) fn pack(
         apply_publish_config(ctx.manager, &json.root, package_name)?;
     }
 
-    let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
-        core::mem::MaybeUninit::uninit();
-
-    let (this_transpiler, _) = match RunCommand::configure_env_for_run(
+    if let Err(err) = RunCommand::configure_env_for_run(
         &mut *ctx.command_ctx,
-        &mut this_transpiler,
+        &mut None,
         Some(std::ptr::from_mut(ctx.manager.env_mut())),
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,
             store_root_fd: false,
         },
     ) {
-        Ok(configured) => configured,
-        Err(err) => {
-            if matches!(err, crate::Error::Alloc(_)) {
-                return Err(PackError::OutOfMemory);
-            }
-            Output::err_generic(
-                "failed to run pack scripts due to error: {}\n",
-                format_args!("{}", err.name()),
-            );
-            Global::crash();
+        if matches!(err, crate::Error::Alloc(_)) {
+            return Err(PackError::OutOfMemory);
         }
-    };
+        Output::err_generic(
+            "failed to run pack scripts due to error: {}\n",
+            format_args!("{}", err.name()),
+        );
+        Global::crash();
+    }
 
     let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
         strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
-    /// `MaybeUninit` does not drop its contents.
-    struct DeinitTranspiler(*mut bun_bundler::Transpiler<'static>);
-    impl Drop for DeinitTranspiler {
-        fn drop(&mut self) {
-            // SAFETY: points at the initialized `this_transpiler` stack slot, which outlives the guard.
-            unsafe { (*self.0).deinit() };
-        }
-    }
-    let _deinit_transpiler = DeinitTranspiler(this_transpiler);
     let script_env = &mut ctx.manager.env_mut().map;
     script_env.put(b"npm_command", b"pack")?;
     // `configure_env_for_run` described the workspace root's package.json, not the one packed.

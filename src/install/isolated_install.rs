@@ -361,7 +361,7 @@ fn dependency_is_contained_folder(
     declarer: &Resolution,
     dep: &install::Dependency,
 ) -> bool {
-    if declarer.tag.is_local_package() || dep.version.tag != VersionTag::Folder {
+    if declarer.tag.is_local_package() || dep.version.tag() != VersionTag::Folder {
         return false;
     }
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -755,7 +755,7 @@ fn build_store(
             // dependencies when root also declares that workspace; the
             // root-declared entry does. (If root does not declare it, the
             // protocol reference is the only one and must keep them.)
-            if entry_dep.version.tag == VersionTag::Workspace
+            if entry_dep.version.tag() == VersionTag::Workspace
                 && !entry_dep.behavior.is_workspace()
                 && root_declares_workspace.is_set(entry.pkg_id as usize)
             {
@@ -774,7 +774,7 @@ fn build_store(
                 } = nodes.split_mut();
 
                 let ctx_hash: u64 =
-                    if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
+                    if entry_dep.version.tag() == VersionTag::Workspace || peer_name_count == 0 {
                         0
                     } else {
                         'ctx: {
@@ -845,14 +845,14 @@ fn build_store(
                         break 'dont_dedupe;
                     }
 
-                    if (dedupe_dep.version.tag == VersionTag::Workspace)
-                        != (entry_dep.version.tag == VersionTag::Workspace)
+                    if (dedupe_dep.version.tag() == VersionTag::Workspace)
+                        != (entry_dep.version.tag() == VersionTag::Workspace)
                     {
                         break 'dont_dedupe;
                     }
 
-                    if dedupe_dep.version.tag == VersionTag::Workspace
-                        && entry_dep.version.tag == VersionTag::Workspace
+                    if dedupe_dep.version.tag() == VersionTag::Workspace
+                        && entry_dep.version.tag() == VersionTag::Workspace
                     {
                         if dedupe_dep.behavior.is_workspace() != entry_dep.behavior.is_workspace() {
                             break 'dont_dedupe;
@@ -1253,8 +1253,8 @@ fn build_store(
                     let curr_dep = &dependencies[curr_dep_id as usize];
                     let existing_dep = &dependencies[info.dep_id as usize];
 
-                    if existing_dep.version.tag == VersionTag::Workspace
-                        && curr_dep.version.tag == VersionTag::Workspace
+                    if existing_dep.version.tag() == VersionTag::Workspace
+                        && curr_dep.version.tag() == VersionTag::Workspace
                     {
                         if existing_dep.behavior.is_workspace() != curr_dep.behavior.is_workspace()
                         {
@@ -1346,7 +1346,7 @@ fn build_store(
 
         let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
         let new_entry_is_workspace = !new_entry_is_root
-            && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
+            && dependencies[new_entry_dep_id as usize].version.tag() == VersionTag::Workspace;
 
         let new_entry_dependencies: store::entry::Dependencies =
             if dedupe_entry.found_existing && new_entry_is_workspace {
@@ -1785,6 +1785,7 @@ pub(crate) fn install_isolated_packages(
                         pkg_names[pkg_id as usize].slice(string_buf)
                     };
                     lockfile.has_trusted_dependency(
+                        &manager.options,
                         dep_name,
                         pkg_names[pkg_id as usize].slice(string_buf),
                         pkg_res,
@@ -2008,12 +2009,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // <cache_dir>/links — created lazily by the first task that misses.
-            // getCacheDirectory() populates `cache_directory_path` as a side-effect.
-            let _ = manager.get_cache_directory();
-            let cache_dir_path = &manager.cache_directory_path;
-            if cache_dir_path.is_empty() {
-                break 'global_store_path None;
-            }
+            let cache_dir_path = &manager.get_cache_directory().path;
             // Own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
@@ -2110,7 +2106,7 @@ pub(crate) fn install_isolated_packages(
 
     {
         if manager.options.log_level.show_progress() {
-            manager.start_link_progress(store.entries.len());
+            manager.start_install_progress_bar(store.entries.len());
         }
 
         let node_pkg_ids = store.nodes.items_pkg_id();
@@ -2237,7 +2233,7 @@ pub(crate) fn install_isolated_packages(
 
         // add the pending task count upfront
         installer
-            .manager_mut()
+            .manager()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         // `link:` entries go first, because `Installer::start_link_task` must run before the tasks
         // of their dependents start.
@@ -2472,7 +2468,7 @@ pub(crate) fn install_isolated_packages(
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     let cache_subpath_z =
                         installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory();
+                    let cache_dir = installer.manager_mut().get_cache_directory().handle.fd();
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
@@ -2505,55 +2501,13 @@ pub(crate) fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
-
-                    let enqueued = match pkg_res.tag {
-                        ResolutionTag::Npm => package_manager::enqueue_package_for_download(
-                            installer.manager_mut(),
-                            pkg_name.slice(string_buf),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.npm().version,
-                            pkg_res.npm().url.slice(string_buf),
-                            ctx,
-                        ),
-                        ResolutionTag::Git => package_manager::enqueue_git_for_checkout(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            dep.name.slice(string_buf),
-                            ctx,
-                            patch_info.name_and_version_hash(),
-                        ),
-                        ResolutionTag::Github => {
-                            let url = installer.manager().alloc_github_url(pkg_res.github());
-                            package_manager::enqueue_tarball_for_download(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                &url,
-                                ctx,
-                            )
-                        }
-                        ResolutionTag::LocalTarball => {
-                            package_manager::enqueue_tarball_for_reading(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                dep.name.slice(string_buf),
-                                &pkg_res,
-                                ctx,
-                            )
-                        }
-                        _ => package_manager::enqueue_tarball_for_download(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.remote_tarball().slice(string_buf),
-                            ctx,
-                        ),
-                    };
-                    match enqueued {
+                    match package_manager::enqueue_install_task(
+                        installer.manager_mut(),
+                        dep_id,
+                        pkg_id,
+                        ctx,
+                        patch_info.name_and_version_hash(),
+                    ) {
                         Ok(()) => {}
                         Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {

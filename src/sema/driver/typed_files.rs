@@ -4440,7 +4440,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             };
             if let ModuleName::String(_) = hir[declared].name
                 && let [_, specifier @ .., _] = syntax.word(hir[declared].name_pos)
-                && let Some(path) = services.resolve_module_name(specifier).and_then(&is_source)
+                && let Some(path) = services.resolve_module_name(specifier).and_then(is_source)
             {
                 augmented_modules.push((statement.start, path));
             }

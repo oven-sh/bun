@@ -3,7 +3,7 @@
 //!
 //! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
 //! `()` placeholder, so this module resolves the timer heap through
-//! [`crate::jsc_hooks::runtime_state_of`] instead.
+//! [`crate::jsc_hooks::runtime_state_ptr_of`] instead.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -145,7 +145,7 @@ impl WTFTimer {
 
         // SAFETY: `t.vm` owns this timer's heap; `wtf_arm` is safe from any thread.
         unsafe {
-            let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+            let state = crate::jsc_hooks::runtime_state_ptr_of(t.vm.as_ptr());
             (*state)
                 .timer
                 .wtf_arm(ptr::addr_of_mut!((*this).event_loop_timer), &interval);
@@ -175,7 +175,7 @@ impl WTFTimer {
             // SAFETY: `t.vm` owns this timer's heap; `wtf_disarm` is safe from
             // any thread and is a no-op for a node that is no longer linked.
             unsafe {
-                let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+                let state = crate::jsc_hooks::runtime_state_ptr_of(t.vm.as_ptr());
                 (*state).timer.wtf_disarm(&t.event_loop_timer);
             }
         }

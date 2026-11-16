@@ -190,10 +190,10 @@ void *sni_find(void *sni, const char *hostname);
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
 extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
-extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
+extern void Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+extern struct addrinfo_result Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
 
 /* Loop related */
@@ -241,6 +241,11 @@ void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
 void us_nq_loop_drain(struct us_loop_t *loop);
 void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
 void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
+
+/* lsquic_engine_new after the one lsquic_global_init of the process: a second one breaks handshakes in flight. */
+struct lsquic_engine;
+struct lsquic_engine_api;
+struct lsquic_engine *us_quic_engine_new(unsigned flags, const struct lsquic_engine_api *api);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,

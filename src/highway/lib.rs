@@ -193,6 +193,8 @@ unsafe extern "C" {
         inout_state: *mut u64,
     ) -> usize;
 
+    fn highway_byte_set_prefix_length(text: *const u8, len: usize, set: &ByteSet) -> usize;
+
     fn highway_png_unfilter(
         filter_type: u8,
         bpp: usize,
@@ -578,6 +580,79 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
     Some(result)
 }
 
+/// A set of bytes, to be built at compile time.
+#[repr(C)]
+pub struct ByteSet {
+    /// For the kernel: byte `b` is a member if `rows[b >> 4] & columns[b & 15]` isn't zero.
+    rows: [u8; 16],
+    columns: [u8; 16],
+    /// For texts that are too short for the kernel: one load instead of two.
+    is_member: [bool; 256],
+}
+
+impl ByteSet {
+    /// Panics if the 16 rows of 16 bytes have more than 8 patterns of members.
+    pub const fn new(ranges: &[core::ops::RangeInclusive<u8>]) -> Self {
+        let (mut members, mut is_member) = ([0u16; 16], [false; 256]);
+        let mut rest = ranges;
+        while let [range, tail @ ..] = rest {
+            let mut byte = *range.start() as usize;
+            while byte <= *range.end() as usize {
+                members[byte >> 4] |= 1 << (byte & 15);
+                is_member[byte] = true;
+                byte += 1;
+            }
+            rest = tail;
+        }
+
+        let (mut rows, mut columns) = ([0; 16], [0; 16]);
+        let (mut row, mut bits) = (0, 0);
+        while row < 16 {
+            let mut same = 0;
+            while members[same] != members[row] {
+                same += 1;
+            }
+            if same < row {
+                rows[row] = rows[same];
+            } else if members[row] != 0 {
+                assert!(bits < 8);
+                rows[row] = 1 << bits;
+                let mut column = 0;
+                while column < 16 {
+                    columns[column] |= (((members[row] >> column) & 1) as u8) << bits;
+                    column += 1;
+                }
+                bits += 1;
+            }
+            row += 1;
+        }
+        Self {
+            rows,
+            columns,
+            is_member,
+        }
+    }
+
+    #[inline(always)]
+    pub fn contains(&self, byte: u8) -> bool {
+        self.is_member[usize::from(byte)]
+    }
+
+    /// How many members `text` starts with.
+    #[inline(always)]
+    pub fn prefix_len(&self, text: &[u8]) -> usize {
+        let scalar = || text.iter().take_while(|&&byte| self.contains(byte)).count();
+        if scalar_only(text.len()) {
+            return scalar();
+        }
+        const { assert!(SCALAR_CUTOFF >= 16) };
+        // SAFETY: text.ptr/len are a valid readable range of at least 16 bytes.
+        let len = unsafe { highway_byte_set_prefix_length(text.as_ptr(), text.len(), self) };
+        debug_assert_eq!(len, scalar());
+        len
+    }
+}
+
 /// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.
 #[derive(Default)]
 pub struct ScannerStopsBuffer {
@@ -834,12 +909,13 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     if chars.is_empty() {
         return None;
     }
-    debug_assert!(chars.len() >= 2 && chars.len() <= 16);
+    assert!(chars.len() >= 2 && chars.len() <= 16);
     if scalar_only(haystack.len()) {
         return haystack.iter().rposition(|b| chars.contains(b));
     }
 
-    // SAFETY: haystack and chars ptr/len are valid readable ranges.
+    // SAFETY: haystack and chars ptr/len are valid readable ranges, and `chars` has the two bytes
+    // that the kernel always reads.
     let result = unsafe {
         highway_last_index_of_any_char(
             haystack.as_ptr(),
@@ -954,8 +1030,8 @@ pub fn count_slashes(path: &[u8]) -> usize {
 // 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
-    // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
-    // (caller contract: output.len() >= input.len()).
+    let output = &mut output[..input.len()];
+    // SAFETY: input.ptr/len readable, output.ptr writable for input.len() bytes.
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
@@ -1041,6 +1117,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
     if input.is_empty() {
         return;
     }
+    let output = &mut output[..input.len()];
 
     // SAFETY: mask is 4 bytes; input.ptr/len readable; output.ptr writable for input.len() bytes.
     unsafe {

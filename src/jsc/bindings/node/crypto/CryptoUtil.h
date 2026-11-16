@@ -109,7 +109,7 @@ public:
 
     inline bool empty() const { return size_ == 0; }
 
-    inline operator bool() const { return data_ != nullptr; }
+    inline explicit operator bool() const { return data_ != nullptr; }
 
     static ByteSource allocated(void* data, size_t size);
 

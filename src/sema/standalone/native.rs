@@ -1343,13 +1343,6 @@ extern "C" fn compress2(
 ) -> c_int {
     -2
 }
-#[unsafe(no_mangle)]
-fn __bun_macro_context_get_remap(
-    _data: *mut c_void,
-    _path: &[u8],
-) -> Option<&'static bun_js_parser::Macro::MacroRemapEntry> {
-    None
-}
 
 /// Returns the mantissa digits of `text`, starting at the first nonzero digit.
 fn mantissa_digits(text: &[u8]) -> impl Iterator<Item = u8> {

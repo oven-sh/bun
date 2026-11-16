@@ -1,25 +1,20 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
-use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
-use bun_collections::{ArrayHashMap, HashMap};
+use bun_collections::HashMap;
 use bun_core::Output;
 use bun_core::strings;
 use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
-use bun_js_parser as js_parser;
-use bun_resolver::Resolver;
-use bun_resolver::package_json::{
-    MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
-};
+use bun_js_parser::Macro::{MacroContext, MacroLoadState};
+use bun_ptr::AliasableBox;
 
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
@@ -38,250 +33,166 @@ fn is_macro_path(str: &[u8]) -> bool {
     strings::has_prefix(str, NAMESPACE_WITH_COLON)
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MacroContext
-// ══════════════════════════════════════════════════════════════════════════
-
-// All three are modelled as raw pointers because the referents live
-// inside the owning `Transpiler` and are also reachable through other aliases
-// (`Transpiler.resolver`, `Transpiler.env`, `Transpiler.options`); a `&'a mut`
-// here would forbid that aliasing under stacked-borrows. The `'static`
-// erasure on `Resolver`/`DotEnvLoader` matches the `Transpiler<'static>`
-// stored in `VirtualMachine` (the only producer of `MacroContext`).
-pub(crate) struct MacroContext {
-    pub(crate) resolver: *mut Resolver<'static>,
-    pub(crate) env: *mut DotEnvLoader,
-    pub(crate) transform_options: Arc<TransformOptions>,
-    pub(crate) macros: MacroMap,
-    pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
-    pub(crate) javascript_object: JSValue,
-    /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
-    /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
-    /// — `MacroContext` belongs to the `Transpiler` or the job and outlives
-    /// every `Expr` it produces (the parser splices the result into the AST and
-    /// prints it before the context is freed).
-    ///
-    /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
-    /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
-    /// (each job has its own). `call()` is only reached when
-    /// a file actually invokes a macro, so deferring the heap until then
-    /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
-    /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
-    /// heap churn fragments mimalloc's segment cache).
-    pub(crate) bump: Option<bun_alloc::Arena>,
-}
-
-pub(crate) type MacroMap = ArrayHashMap<i32, Macro>;
-
-impl MacroContext {
-    pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&MacroRemapEntry> {
-        // `remap` is a `BackRef` into `Transpiler.options`, which outlives
-        // every `MacroContext` (see struct comment).
-        let remap = self.remap.get();
-        if remap.is_empty() {
-            return None;
-        }
-        remap.get(path)
-    }
-}
-
-impl MacroContext {
-    pub(crate) fn init(transpiler: &mut Transpiler<'static>) -> MacroContext {
-        MacroContext {
-            macros: MacroMap::new(),
-            resolver: &raw mut transpiler.resolver,
-            env: transpiler.env,
-            transform_options: Arc::clone(&transpiler.options.transform_options),
-            remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
-            javascript_object: JSValue::ZERO,
-            // Deferred until `call()` — see field doc.
-            bump: None,
-        }
-    }
-
-    pub(crate) fn call(
-        &mut self,
-        import_record_path: &[u8],
-        source_dir: &[u8],
-        log: &mut Log,
-        source: &Source,
-        import_range: Range,
-        caller: Expr,
-        function_name: &[u8],
-    ) -> crate::Result<Expr> {
-        if bun_jsc::compiled_program::compiled_program()
-            .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
-        {
-            log.add_range_error(
-                Some(source),
-                import_range,
-                b"Macros cannot be used in this executable, which only runs code that was compiled into it",
-            );
-            return Err(crate::Error::MacroFailed);
-        }
-        // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
-        // string. The engine would refuse it, but nothing catches that rejection.
-        if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
-            log.add_range_error(
-                Some(source),
-                import_range,
-                b"Macros cannot be used with --disallow-code-generation-from-strings=strict",
-            );
-            return Err(crate::Error::MacroFailed);
-        }
-        let _store_guard = DisableStoreReset::new();
-        // const is_package_path = isPackagePath(specifier);
-        let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
-            &import_record_path[NAMESPACE_WITH_COLON.len()..]
-        } else {
-            import_record_path
-        };
-
-        debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
-
-        // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
-        // accessed for the duration of this resolve call.
-        let resolver = unsafe { &mut *self.resolver };
-
-        let input_specifier: &[u8] = 'brk: {
-            if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
-                import_record_path,
-                bun_ast::Target::Bun,
-                Default::default(),
-            ) {
-                break 'brk replacement.path.as_bytes();
-            }
-
-            let resolve_result = match resolver.resolve(
-                source_dir,
-                import_record_path_without_macro_prefix,
-                bun_ast::ImportKind::Stmt,
-            ) {
-                Ok(r) => r,
-                Err(bun_resolver::Error::ModuleNotFound) => {
-                    log.add_resolve_error(
-                        Some(source),
-                        import_range,
-                        format_args!(
-                            "Macro \"{}\" not found",
-                            bstr::BStr::new(import_record_path)
-                        ),
-                        import_record_path,
-                        bun_ast::ImportKind::Stmt,
-                        bun_ast::Error::ModuleNotFound,
-                    );
-                    return Err(crate::Error::MacroNotFound);
-                }
-                Err(e) => {
-                    log.add_range_error_fmt(
-                        Some(source),
-                        import_range,
-                        format_args!(
-                            "{} resolving macro \"{}\"",
-                            e.name(),
-                            bstr::BStr::new(import_record_path)
-                        ),
-                    );
-                    return Err(e.into());
-                }
-            };
-            break 'brk resolve_result.path_pair.primary.text;
-        };
-
-        let mut specifier_buf = [0u8; 64];
-        let mut specifier_buf_len: u32 = 0;
-        let hash = MacroEntryPoint::generate_id(
-            input_specifier,
-            function_name,
-            &mut specifier_buf,
-            &mut specifier_buf_len,
+fn call_macro(
+    ctx: MacroContext<'_>,
+    bump: &bun_alloc::Arena,
+    import_record_path: &[u8],
+    source_dir: &[u8],
+    log: &mut Log,
+    source: &Source,
+    import_range: Range,
+    caller: Expr,
+    function_name: &[u8],
+) -> crate::Result<Expr> {
+    if bun_jsc::compiled_program::compiled_program()
+        .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
+    {
+        log.add_range_error(
+            Some(source),
+            import_range,
+            b"Macros cannot be used in this executable, which only runs code that was compiled into it",
         );
+        return Err(crate::Error::MacroFailed);
+    }
+    // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
+    // string. The engine would refuse it, but nothing catches that rejection.
+    if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
+        log.add_range_error(
+            Some(source),
+            import_range,
+            b"Macros cannot be used with --disallow-code-generation-from-strings=strict",
+        );
+        return Err(crate::Error::MacroFailed);
+    }
+    let _store_guard = DisableStoreReset::new();
+    let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
+        &import_record_path[NAMESPACE_WITH_COLON.len()..]
+    } else {
+        import_record_path
+    };
 
-        let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
-        if !macro_entry.found_existing {
-            *macro_entry.value_ptr = match Macro::init(
+    debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
+
+    let transpiler = ctx.transpiler().cast::<Transpiler<'_>>();
+
+    let input_specifier: &[u8] = 'brk: {
+        if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
+            import_record_path,
+            bun_ast::Target::Bun,
+            Default::default(),
+        ) {
+            break 'brk replacement.path.as_bytes();
+        }
+
+        // SAFETY: the contract of `MacroContext::new`. Resolving runs no script.
+        let resolver = unsafe { &mut (*transpiler).resolver };
+        let resolve_result = match resolver.resolve(
+            source_dir,
+            import_record_path_without_macro_prefix,
+            bun_ast::ImportKind::Stmt,
+        ) {
+            Ok(r) => r,
+            Err(bun_resolver::Error::ModuleNotFound) => {
+                log.add_resolve_error(
+                    Some(source),
+                    import_range,
+                    format_args!(
+                        "Macro \"{}\" not found",
+                        bstr::BStr::new(import_record_path)
+                    ),
+                    import_record_path,
+                    bun_ast::ImportKind::Stmt,
+                    bun_ast::Error::ModuleNotFound,
+                );
+                return Err(crate::Error::MacroNotFound);
+            }
+            Err(e) => {
+                log.add_range_error_fmt(
+                    Some(source),
+                    import_range,
+                    format_args!(
+                        "{} resolving macro \"{}\"",
+                        e.name(),
+                        bstr::BStr::new(import_record_path)
+                    ),
+                );
+                return Err(e.into());
+            }
+        };
+        break 'brk resolve_result.path_pair.primary.text;
+    };
+
+    let mut specifier_buf = [0u8; 64];
+    let mut specifier_buf_len: u32 = 0;
+    let hash = MacroEntryPoint::generate_id(
+        input_specifier,
+        function_name,
+        &mut specifier_buf,
+        &mut specifier_buf_len,
+    );
+
+    let vm = match ctx.macro_load_states.get(hash) {
+        Some(MacroLoadState::Loaded) => VirtualMachine::get(),
+        Some(MacroLoadState::Disabled) => return Ok(caller),
+        None => {
+            ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
+            let is_new_vm = !VirtualMachine::is_loaded();
+            let vm = if is_new_vm {
+                // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
+                // outlives the build and nothing writes to it while parse tasks run.
+                let (options, env) = unsafe {
+                    (
+                        &*(*transpiler).options.transform_options,
+                        (*transpiler).env.as_ref(),
+                    )
+                };
+                init_macro_vm(log, env, options)?
+            } else {
+                VirtualMachine::get()
+            };
+            load_macro(
+                vm,
+                is_new_vm,
                 input_specifier,
-                log,
-                self.env,
-                &self.transform_options,
                 function_name,
                 &specifier_buf[0..specifier_buf_len as usize],
                 hash,
-            ) {
-                Ok(m) => m,
-                Err(e) => {
-                    *macro_entry.value_ptr = Macro::disabled_sentinel();
-                    return Err(e);
-                }
-            };
+            )?;
+            ctx.macro_load_states.set(hash, MacroLoadState::Loaded);
             Output::flush();
+            vm
         }
-        let _flush_guard = Output::flush_guard();
+    };
+    let _flush_guard = Output::flush_guard();
 
-        let macro_: &Macro = macro_entry.value_ptr;
-        let Some(vm) = macro_.vm else {
-            return Ok(caller);
-        };
-        // Enables macro mode now; disables on scope exit.
-        let _mode_guard = MacroModeGuard::new(vm);
-        vm.event_loop().ensure_waker();
+    // Enables macro mode now; disables on scope exit.
+    let _mode_guard = MacroModeGuard::new(vm);
+    vm.event_loop().ensure_waker();
 
-        let javascript_object = self.javascript_object;
-        // Lazy-init the backing arena now that a macro is actually being
-        // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: &bun_alloc::Arena = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        let ret = VirtualMachine::get().run_with_api_lock(|| {
-            Runner::run(
-                macro_,
-                log,
-                bump,
-                function_name,
-                caller,
-                source,
-                hash,
-                javascript_object,
-            )
-        });
-        Ok(ret?)
-        // this.macros.getOrPut(key: K)
-    }
+    let ret = vm.run_with_api_lock(|| {
+        Runner::run(
+            vm,
+            log,
+            bump,
+            function_name,
+            caller,
+            source,
+            hash,
+            JSValue::from_encoded(ctx.javascript_object.0 as usize),
+        )
+    });
+    Ok(ret?)
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// Lower-tier bridge (`bun_ast::Macro::MacroContext` ⇆ this crate)
-//
-// `bun_js_parser` / `bun_bundler` cannot name `Resolver`/`DotEnv`/JSC types,
-// so the parser-visible `MacroContext` carries an opaque `data` pointer to a
-// boxed instance of this crate's `MacroContext` and dispatches `init`/`call`/
-// `get_remap` through `extern "Rust"` fns resolved at link time. All type
-// erasure is confined to these three bodies.
-// ══════════════════════════════════════════════════════════════════════════
+// `bun_js_parser` cannot name `Transpiler` or JSC types, so it calls these, which are resolved at link time.
 
 #[unsafe(no_mangle)]
-fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
-    // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
-    // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
-    // runtime so reading it as `'static` is layout-identical.
-    let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
-    bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler))).cast()
-}
-
-#[unsafe(no_mangle)]
-fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
-    if data.is_null() {
-        return;
-    }
-    // SAFETY: `data` is exactly the `Box<MacroContext>` allocated in
-    // `__bun_macro_context_init` above; sole owner. Dropping the Box frees the
-    // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
-    // (→ `mi_heap_destroy`) on the lazily-created `bump`.
-    drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
+fn __bun_macro_drop_source_code_printer() {
     bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
 
-/// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
-/// `bun_jsc` dependency) to sweep the per-worker macro VM after the worker's
-/// `MacroContext` boxes are freed. See [`collect_macro_vm_garbage`].
+/// Exposed for `bun_bundler::ThreadPool::Worker::drop` (which has no
+/// `bun_jsc` dependency) to sweep the per-worker macro VM. See [`collect_macro_vm_garbage`].
 ///
 /// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
 #[unsafe(no_mangle)]
@@ -291,7 +202,8 @@ fn __bun_macro_collect_vm_garbage() {
 
 #[unsafe(no_mangle)]
 fn __bun_macro_context_call(
-    ctx: &mut js_parser::Macro::MacroContext,
+    ctx: MacroContext<'_>,
+    bump: &bun_alloc::Arena,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &mut Log,
@@ -302,157 +214,105 @@ fn __bun_macro_context_call(
 ) -> Result<Expr, bun_js_parser::Error> {
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
-    debug_assert!(
-        !ctx.data().is_null(),
-        "MacroContext.call reached without init"
-    );
-    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
-    // lower-tier handle is uniquely borrowed for this call so no alias exists.
-    let inner = unsafe { &mut *ctx.data().cast::<MacroContext>() };
-    inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
     let caller_loc = caller.loc;
-    inner
-        .call(
-            import_record_path,
-            source_dir,
-            log,
-            source,
-            import_range,
-            caller,
-            function_name,
-        )
-        .map_err(|e| {
-            // visit_expr only prints a fallback "macro threw exception" when
-            // nothing was added to the log; record the specific cause here so
-            // errors like ToJSError's "Cannot convert argument type to JS"
-            // reach the user (03830.test.ts snapshot asserts on this).
-            if e.name() != "MacroFailed" {
-                log.add_error_fmt(
-                    Some(source),
-                    caller_loc,
-                    format_args!("\"{}\" error in macro", e.name()),
-                );
-            }
-            bun_js_parser::Error::MacroFailed
-        })
-}
-
-#[unsafe(no_mangle)]
-fn __bun_macro_context_get_remap(
-    data: *mut core::ffi::c_void,
-    path: &[u8],
-) -> Option<&'static js_parser::Macro::MacroRemapEntry> {
-    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
-    // remap table lives in `Transpiler.options` which outlives every parse, so
-    // the `'static` borrow is sound for callers that drop it before the
-    // `Transpiler` does.
-    let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner.get_remap(path)
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// MacroResult
-// ══════════════════════════════════════════════════════════════════════════
-
-// ══════════════════════════════════════════════════════════════════════════
-// Macro
-// ══════════════════════════════════════════════════════════════════════════
-
-pub struct Macro {
-    /// `None` if the macro failed to load.
-    pub(crate) vm: Option<&'static VirtualMachine>,
-}
-
-impl Default for Macro {
-    fn default() -> Self {
-        Self::disabled_sentinel()
-    }
-}
-
-impl Macro {
-    /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
-    /// calls with the same hash short-circuit instead of retrying the load.
-    fn disabled_sentinel() -> Self {
-        Macro { vm: None }
-    }
-
-    /// `MacroContext::call` returns early if there is none.
-    #[inline]
-    pub(crate) fn vm(&self) -> &'static VirtualMachine {
-        self.vm.expect("Macro.vm accessed on disabled sentinel")
-    }
-
-    pub(crate) fn init(
-        input_specifier: &[u8],
-        log: &mut Log,
-        env: *mut DotEnvLoader,
-        transform_options: &TransformOptions,
-        function_name: &[u8],
-        specifier: &[u8],
-        hash: i32,
-    ) -> crate::Result<Macro> {
-        let (vm, is_new_vm) = if VirtualMachine::is_loaded() {
-            (VirtualMachine::get(), false)
-        } else {
-            let mut transform_options = transform_options.clone();
-            // Build-only flags about the output bundle. The macro module's own
-            // imports must still resolve.
-            transform_options.external = Vec::new();
-            transform_options.packages = None;
-
-            // JSC needs to be initialized if building from CLI
-            jsc::initialize(jsc::InitializeOptions::default());
-
-            // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
-            // into its loader, so give the VM its own copy.
-            // SAFETY: `env` is the build's loader. It outlives the build and nothing writes to
-            // it while parse tasks run.
-            let owned_env_loader = match unsafe { env.as_ref() } {
-                Some(env) => Some(Box::new(env.clone_loaded()?)),
-                None => None,
-            };
-
-            let vm = VirtualMachine::init(VirtualMachineInitOptions {
-                transform_options,
-                log: Some(NonNull::from(&mut *log)),
-                owned_env_loader,
-                is_main_thread: false,
-                ..Default::default()
-            })?;
-            (vm, true)
-        };
-
-        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
-        // (which runs the macro module's top-level JS via `wait_for_promise`) so
-        // a top-level `Bun.Transpiler#transformSync` doesn't see
-        // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
-        // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
-        // own `MacroModeGuard` re-enables for the actual macro call.
-        let _init_guard = MacroModeGuard::new(vm);
-        vm.event_loop().ensure_waker();
-        if is_new_vm {
-            vm.transpiler.with_mut(|t| t.configure_defines())?;
+    call_macro(
+        ctx,
+        bump,
+        import_record_path,
+        source_dir,
+        log,
+        source,
+        import_range,
+        caller,
+        function_name,
+    )
+    .map_err(|e| {
+        // visit_expr only prints a fallback "macro threw exception" when
+        // nothing was added to the log; record the specific cause here so
+        // errors like ToJSError's "Cannot convert argument type to JS"
+        // reach the user (03830.test.ts snapshot asserts on this).
+        if e.name() != "MacroFailed" {
+            log.add_error_fmt(
+                Some(source),
+                caller_loc,
+                format_args!("\"{}\" error in macro", e.name()),
+            );
         }
+        bun_js_parser::Error::MacroFailed
+    })
+}
 
-        let loaded_result =
-            vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+fn init_macro_vm(
+    log: &mut Log,
+    env: Option<&DotEnvLoader>,
+    transform_options: &TransformOptions,
+) -> crate::Result<&'static VirtualMachine> {
+    let mut transform_options = transform_options.clone();
+    // Build-only flags about the output bundle. The macro module's own
+    // imports must still resolve.
+    transform_options.external = Vec::new();
+    transform_options.packages = None;
 
-        // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
-        // returned by `loadAndEvaluateModule`.
-        let unwrapped =
-            unsafe { (*loaded_result).unwrap(vm.jsc_vm(), jsc::PromiseUnwrapMode::LeaveUnhandled) };
-        if let jsc::PromiseResult::Rejected(result) = unwrapped {
-            vm.run_with_api_lock(|| {
-                // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
-                // is a live promise cell.
-                let (global, promise) = unsafe { (&*vm.global.get(), (*loaded_result).to_js()) };
-                vm.unhandled_rejection(global, result, promise);
-            });
-            return Err(crate::Error::MacroLoadError);
-        }
+    // JSC needs to be initialized if building from CLI
+    jsc::initialize(jsc::InitializeOptions::default());
 
-        Ok(Macro { vm: Some(vm) })
+    // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
+    // into its loader, so give the VM its own copy.
+    let env_loader = match env {
+        Some(env) => Some(AliasableBox::new(env.clone_loaded()?)),
+        None => None,
+    };
+
+    let options = VirtualMachineInitOptions {
+        transform_options,
+        env_loader: env_loader.as_ref().map(AliasableBox::as_non_null),
+        is_main_thread: false,
+        ..Default::default()
+    };
+    let vm = VirtualMachine::init(log, options)?;
+    // This VM stays until the process exits.
+    let _ = env_loader.map(AliasableBox::into_raw);
+    Ok(vm)
+}
+
+fn load_macro(
+    vm: &VirtualMachine,
+    is_new_vm: bool,
+    input_specifier: &[u8],
+    function_name: &[u8],
+    specifier: &[u8],
+    hash: i32,
+) -> crate::Result<()> {
+    // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
+    // (which runs the macro module's top-level JS via `wait_for_promise`) so
+    // a top-level `Bun.Transpiler#transformSync` doesn't see
+    // `macro_guard_depth == 0` and free the printer mid-load. Drops on every
+    // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
+    // own `MacroModeGuard` re-enables for the actual macro call.
+    let _mode_guard = MacroModeGuard::new(vm);
+    vm.event_loop().ensure_waker();
+    if is_new_vm {
+        vm.transpiler.with_mut(|t| t.configure_defines())?;
     }
+
+    let loaded_result =
+        vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+
+    // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
+    // returned by `loadAndEvaluateModule`.
+    let unwrapped =
+        unsafe { (*loaded_result).unwrap(vm.jsc_vm(), jsc::PromiseUnwrapMode::LeaveUnhandled) };
+    if let jsc::PromiseResult::Rejected(result) = unwrapped {
+        vm.run_with_api_lock(|| {
+            // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
+            // is a live promise cell.
+            let (global, promise) = unsafe { (&*vm.global.get(), (*loaded_result).to_js()) };
+            vm.unhandled_rejection(global, result, promise);
+        });
+        return Err(crate::Error::MacroLoadError);
+    }
+
+    Ok(())
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -544,14 +404,9 @@ impl From<MacroError> for Error {
 
 pub(crate) struct Run<'a> {
     pub(crate) caller: Expr,
-    pub(crate) macro_: &'a Macro,
+    pub(crate) vm: &'a VirtualMachine,
     pub(crate) global: &'a JSGlobalObject,
-    // The AST uses arena-owned slices (`EString::init` lifetime-erases its borrow), so
-    // `coerce` needs a bump arena to back property keys / UTF-16 string data /
-    // `from_blob` JSON sub-parsing. The arena is *borrowed* from
-    // `MacroContext` (owned by the `Transpiler` or the job) so the slices
-    // outlive `run_async` — the returned `Expr` is spliced into the AST and
-    // printed long after this frame returns.
+    /// The parser's arena: the returned `Expr` joins its AST.
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
     pub(crate) source: &'a Source<'a>,
@@ -562,7 +417,7 @@ pub(crate) struct Run<'a> {
 
 impl<'a> Run<'a> {
     pub(crate) fn run_async(
-        macro_: &Macro,
+        vm: &VirtualMachine,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         caller: Expr,
@@ -570,8 +425,6 @@ impl<'a> Run<'a> {
         source: &Source,
         id: i32,
     ) -> Result<Expr, MacroError> {
-        let _ = macro_.vm();
-        let vm = VirtualMachine::get();
         let Some(macro_callback) = vm.macros.get().get(&id).map(jsc::Strong::get) else {
             return Ok(caller);
         };
@@ -586,8 +439,8 @@ impl<'a> Run<'a> {
         MarkedArgumentBuffer::new(|roots| {
             let mut runner = Run {
                 caller,
-                macro_,
-                global: VirtualMachine::get().global(),
+                vm,
+                global,
                 bump,
                 log,
                 source,
@@ -652,10 +505,7 @@ impl<'a> Run<'a> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
-                let _ = self
-                    .macro_
-                    .vm()
-                    .uncaught_exception(self.global, value, false);
+                let _ = self.vm.uncaught_exception(self.global, value, false);
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -686,17 +536,14 @@ impl<'a> Run<'a> {
                     } else if value.as_::<ResolveMessage>().is_some()
                         || value.as_::<BuildMessage>().is_some()
                     {
-                        let _ = self
-                            .macro_
-                            .vm()
-                            .uncaught_exception(self.global, value, false);
+                        let _ = self.vm.uncaught_exception(self.global, value, false);
                         return Err(MacroError::MacroFailed);
                     }
                 }
 
                 if let Some(blob) = blob_ {
-                    // SAFETY: `blob` (a JS cell) is pinned for the call; the
-                    // shared-view/content-type slices borrow its store.
+                    // SAFETY: `value` owns `blob` and is live. `expr_from_blob` runs no script
+                    // and copies what it keeps.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
                     return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
@@ -795,8 +642,7 @@ impl<'a> Run<'a> {
 
                     // `EString::init` lifetime-erases its borrow
                     // (arena-owned per the parser's `Str` convention). Copy the
-                    // key into the `MacroContext` bump arena so it outlives the
-                    // temporary `to_owned_slice()` Vec and the returned `Expr`.
+                    // key into the arena so it outlives the temporary `to_owned_slice()` Vec.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
                     let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
@@ -845,8 +691,7 @@ impl<'a> Run<'a> {
                     bun_str.latin1().iter().map(|&b| b as u16).collect()
                 };
                 // `E::EString::init_utf16` lifetime-erases the slice
-                // (arena-owned per the parser's `Str` convention). Copy into
-                // the `MacroContext` bump arena.
+                // (arena-owned per the parser's `Str` convention).
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
                 return Ok(Expr::init(
                     E::EString::init_utf16(arena_slice),
@@ -860,8 +705,7 @@ impl<'a> Run<'a> {
 
                 let promise = value.as_any_promise().expect("Unexpected promise type");
 
-                let _ = self.macro_.vm();
-                let vm = VirtualMachine::get();
+                let vm = self.vm;
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
                 vm.wait_for_promise(promise)
                     .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
@@ -910,7 +754,7 @@ impl<'a> Run<'a> {
 
 impl Runner {
     fn run(
-        macro_: &Macro,
+        vm: &VirtualMachine,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
@@ -957,9 +801,7 @@ impl Runner {
             has_js_object: javascript_object != JSValue::ZERO,
         };
 
-        // SAFETY: `Runner::run` is only reached via `MacroContext::call` after
-        // `VirtualMachine::is_loaded()` / `Macro::init` guarantee a live VM.
-        let global_object = VirtualMachine::get().global();
+        let global_object = vm.global();
 
         match &caller.data {
             ExprData::ECall(call) => {
@@ -1014,7 +856,7 @@ impl Runner {
         }
 
         struct CallData<'c> {
-            macro_: &'c Macro,
+            vm: &'c VirtualMachine,
             log: &'c mut Log,
             bump: &'c bun_alloc::Arena,
             caller: Expr,
@@ -1029,7 +871,7 @@ impl Runner {
                 // SAFETY: set immediately before Bun__startMacro below; cleared after.
                 let state = unsafe { &mut *s.get().cast::<CallData<'_>>() };
                 state.result = Run::run_async(
-                    state.macro_,
+                    state.vm,
                     state.log,
                     state.bump,
                     state.caller,
@@ -1041,7 +883,7 @@ impl Runner {
         }
 
         let mut data = CallData {
-            macro_,
+            vm,
             log,
             bump,
             caller,
@@ -1058,10 +900,7 @@ impl Runner {
         // (NOT the `&`-returning `.global()` accessor) so the `*mut` provenance
         // is preserved across FFI.
         unsafe {
-            Bun__startMacro(
-                call as *const c_void,
-                VirtualMachine::get().global.get().cast::<c_void>(),
-            );
+            Bun__startMacro(call as *const c_void, vm.global.get().cast::<c_void>());
         }
         CALL_STATE.with(|s| s.set(core::ptr::null_mut()));
         data.result
@@ -1095,8 +934,7 @@ fn expr_from_blob(
     let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
 
     if is_json {
-        let source = &Source::init_path_string(b"fetch.json", bytes);
-        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
+        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(bytes, log, bump) {
             Ok(e) => e,
             Err(_) => return Err(crate::Error::MacroFailed),
         };

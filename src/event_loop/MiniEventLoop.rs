@@ -54,9 +54,7 @@ pub struct MiniEventLoop {
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
     file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
-    /// Stored as `NonNull`
-    /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance.
+    /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
@@ -228,8 +226,10 @@ impl MiniEventLoop {
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+        // Read first: the push lets a bundle finish and drop `self`. The main and bundle threads never call `free_thread_loop`.
+        let loop_ = self.loop_;
         self.concurrent_tasks.push(task);
-        self.loop_.wakeup();
+        loop_.wakeup();
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -251,10 +251,7 @@ impl MiniEventLoop {
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
         // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.concurrent_tasks
-            .push(unsafe { NonNull::new_unchecked(task) });
-
-        self.loop_.wakeup();
+        self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
     }
 }
 

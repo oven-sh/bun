@@ -1,5 +1,5 @@
 [package]
-name = "bun_picohttp"
+name = "bun_http1"
 version.workspace = true
 edition.workspace = true
 
@@ -10,6 +10,10 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-strum.workspace = true
-bstr.workspace = true
 bun_core.workspace = true
+bun_http_types.workspace = true
+thiserror.workspace = true
+
+[[test]]
+name = "framing"
+path = "tests/framing.rs"

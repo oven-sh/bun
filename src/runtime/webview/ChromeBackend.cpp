@@ -8,6 +8,7 @@
 #include "ScriptExecutionContext.h"
 #include "BunString.h"
 #include "GeneratedBlob.h"
+#include "OwnedFd.h"
 #include "../bindings/webcore/WebSocket.h"
 #include "../bindings/webcore/MessageEvent.h"
 #include <JavaScriptCore/ConsoleClient.h>
@@ -36,6 +37,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <wtf/MmapSpan.h>
 #endif
 
 #if OS(LINUX)
@@ -321,7 +323,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
     // bsd_recv calls recv() which needs a real socket (pipe fds broke here
     // with ENOTSOCK silently misread as EOF).
-    int fd = rc;
+    OwnedFd fd { rc };
 
     if (!s_cdpGroup.loop) {
         us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
@@ -331,12 +333,12 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // care about READABLE — writable events on a read-end pipe fire
     // constantly, but onWritable is a no-op when m_txQueue is empty so
     // they're harmless. kind=1 (.dynamic) → dispatch via s_cdpVTable.
-    m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
+    m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd.get(), 0, 0);
     if (!m_readSock) {
-        ::close(fd);
         m_dead = true;
         return false;
     }
+    fd.leak();
     return true;
 #endif
 }
@@ -985,32 +987,29 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             static uint32_t shmSeq = 0;
             char name[48];
             snprintf(name, sizeof(name), "/bun-chrome-%d-%u", getpid(), ++shmSeq);
-            int fd = BUN_SHM_OPEN(name, O_CREAT | O_RDWR | O_EXCL, 0600);
-            if (fd < 0) {
+            OwnedFd fd { BUN_SHM_OPEN(name, O_CREAT | O_RDWR | O_EXCL, 0600) };
+            if (!fd) {
                 settle(g, view, entry.slot, false,
                     createError(g, makeString("shm_open: "_s, WTF::String::fromUTF8(strerror(errno)))));
                 return;
             }
             size_t sz = decoded->size();
-            if (ftruncate(fd, static_cast<off_t>(sz)) != 0) {
-                int err = errno; // close/unlink can clobber errno
-                ::close(fd);
+            if (ftruncate(fd.get(), static_cast<off_t>(sz)) != 0) {
+                int err = errno; // unlink can clobber errno
                 BUN_SHM_UNLINK(name);
                 settle(g, view, entry.slot, false,
                     createError(g, makeString("ftruncate: "_s, WTF::String::fromUTF8(strerror(err)))));
                 return;
             }
-            void* map = mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-            int mmap_err = (map == MAP_FAILED) ? errno : 0;
-            ::close(fd);
-            if (map == MAP_FAILED) {
+            auto map = MmapSpan<uint8_t>::mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get());
+            if (!map) {
+                int mmap_err = errno;
                 BUN_SHM_UNLINK(name);
                 settle(g, view, entry.slot, false,
                     createError(g, makeString("mmap: "_s, WTF::String::fromUTF8(strerror(mmap_err)))));
                 return;
             }
-            memcpy(map, decoded->span().data(), sz);
-            munmap(map, sz);
+            memcpySpan(map.mutableSpan(), decoded->span());
             // Don't unlink — the name IS the return value. User (Kitty)
             // unlinks after shm_open'ing.
             auto* obj = constructEmptyObject(g);

@@ -1566,7 +1566,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
     // are skipped. S3 destinations replace the header set with a signed one,
     // so compression is skipped there too. The actual compression runs on the
-    // HTTP thread (HTTPClient::start) so it can reuse LibdeflateState's shared
+    // HTTP thread (HTTPClient::compress_body_for_send) so it can reuse LibdeflateState's shared
     // scratch buffer; here we only commit to it by appending Content-Encoding
     // and forwarding the option.
     if let Some(compress_opt) = &compress

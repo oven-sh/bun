@@ -15,13 +15,13 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or a `bun_io::PollTag`);
-//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, otherwise `Taskable`;
+//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, `RefTask` as an `Arc` or `RefPtr`, otherwise `Taskable`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 use std::rc::Rc;
 
-use bun_event_loop::{BoxedTask, Task, task_tag};
+use bun_event_loop::{BoxedTask, RefTask, Task, task_tag};
 use bun_ptr::RefPtr;
 
 #[cfg(not(windows))]
@@ -101,6 +101,26 @@ macro_rules! boxed_arm {
     };
 }
 
+/// The reference of a [`RefTask`], in the arm of its tag.
+macro_rules! counted {
+    ($task:ident, $Name:ty) => {
+        // SAFETY: as `boxed!`.
+        unsafe { $task.into_ref::<$Name>() }
+    };
+}
+
+/// [`in_features!`] for an arm that needs only that reference, as `$payload`.
+macro_rules! counted_arm {
+    ($task:ident, $features:tt, |$payload:ident: $Name:ty| $(-> $Result:ty)? $body:block) => {
+        in_features!(
+            $features,
+            ($payload: <$Name as RefTask>::Ref = counted!($task, $Name))
+            $(-> $Result)?
+            $body
+        )
+    };
+}
+
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
@@ -116,31 +136,24 @@ use crate::shell::builtins::{
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
 use crate::shell::interpreter::{PoolTask, ShellTask};
 use crate::shell::io_reader::IOReader as ShellIoReader;
-#[cfg(not(windows))]
-use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
+use crate::shell::io_writer::IOWriter as ShellIoWriter;
 use crate::shell::states::r#async::Async as ShellAsync;
-use crate::shell::subproc::PipeReader as ShellPipeReader;
+use crate::shell::subproc::{PipeReader as ShellPipeReader, ShellSubprocess};
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
 use crate::webcore::file_sink::FileSink;
-#[cfg(not(windows))]
-use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3HttpSimpleTask};
-use crate::webcore::streams::Pending as StreamPending;
+use crate::webcore::streams::{PendingRead as StreamPending, StreamResult};
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as SubprocessPipeReader;
-#[cfg(not(windows))]
-use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
-#[cfg(not(windows))]
-use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
 
@@ -189,9 +202,6 @@ use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 use bun_jsc::web_worker::WebWorker;
-
-#[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch
@@ -258,9 +268,8 @@ pub(crate) fn run_task(
             // its `Completion`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
-        task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
-            // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-            unsafe { bun_ptr::RefPtr::from_raw(queue) }.run_deferred();
+        task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
+            queue.run_deferred();
         }),
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
@@ -352,11 +361,11 @@ pub(crate) fn run_task(
             [Shell],
             |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
         )?,
-        task_tag::StatWatcherHop => feature_arm!(
+        task_tag::StatWatcherHop => counted_arm!(
+            task,
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-                unsafe { crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher) }?;
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
                 Ok(())
             }
         )?,
@@ -389,11 +398,11 @@ pub(crate) fn run_task(
                 }
             )
         }
-        task_tag::HTMLRewriterBackgroundPull => feature_arm!(
+        task_tag::HTMLRewriterBackgroundPull => counted_arm!(
+            task,
             [HtmlRewriter],
-            |pipe: crate::api::html_rewriter::RewriterPipe| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                unsafe { bun_ptr::RefPtr::from_raw(pipe) }.run_background_pull();
+            |pipe: crate::api::html_rewriter::RewriterPipeBackgroundPull| {
+                pipe.run_background_pull();
             }
         ),
         task_tag::RunTestsTask => boxed_arm!(
@@ -554,10 +563,11 @@ pub(crate) fn run_task(
             [S3Client],
             |refused: S3RefusedRequest| -> JsResult<()> { refused.run() }
         )?,
-        task_tag::S3UploadWriterCollected => feature_arm!(
+        task_tag::S3UploadWriterCollected => counted_arm!(
+            task,
             [S3Client],
-            |collected: S3UploadWriterCollected| -> JsResult<()> {
-                S3UploadWriterCollected::run(collected)?;
+            |upload: S3UploadWriterCollected| -> JsResult<()> {
+                S3UploadWriterCollected::run(&upload)?;
                 Ok(())
             }
         )?,
@@ -576,12 +586,10 @@ pub(crate) fn run_task(
         task_tag::ThreadSafeFunction => in_features!(
             [NativeAddons],
             (
-                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                function: std::sync::Arc<ThreadSafeFunction> = counted!(task, ThreadSafeFunction),
                 el: &EventLoop = el,
                 vm: &VirtualMachine = vm,
             ) {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                let function = unsafe { std::sync::Arc::from_raw(function) };
                 ThreadSafeFunction::on_dispatch(function, el, vm);
             }
         ),
@@ -666,8 +674,10 @@ pub(crate) fn run_task(
         }
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakePendingReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            unsafe { BakePendingReloadEvent::run(cast_ptr!(BakePendingReloadEvent)) };
+            counted_arm!(task, [Bundler], |event: BakePendingReloadEvent| {
+                // SAFETY: this is the dev server's thread, and no borrow of it outlasts a tick.
+                unsafe { event.run() };
+            })
         }
         task_tag::FSWatchTask => {
             boxed_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
@@ -748,13 +758,12 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                FileSink::run_pending_if_armed(&unsafe { bun_ptr::RefPtr::from_raw(sink) });
+            counted_arm!(task, [FileSink, Spawn, Shell], |sink: FileSink| {
+                sink.run_pending_if_armed();
             })
         }
-        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |mut pending: StreamPending| {
-            pending.run();
+        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |pending: StreamPending| {
+            (*pending).run(StreamResult::Done);
         }),
 
         _ => {
@@ -900,9 +909,6 @@ pub(crate) fn tick_queue_with_count(
 /// `owner.ptr()` is the live value that the arm of `owner.tag()` casts it to.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
-    #[cfg(not(windows))]
-    let (size_or_offset, hup) = (event.size_or_offset, event.is_hup());
-
     /// Runs `$body` through [`in_features!`] with `$this = $cast(owner.ptr().cast::<$Ty>())`.
     macro_rules! io_arm {
         ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $kind:pat, $event:ident| $body:expr) => {
@@ -912,24 +918,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 let $kind = owner.kind();
                 $body
             })
-        };
-    }
-    /// The plain `on_poll(size_or_offset, hup)` call of the writers, through [`in_features!`].
-    #[cfg(not(windows))]
-    macro_rules! feature_poll_arm {
-        ($features:tt, $Ty:ty) => {
-            in_features!(
-                $features,
-                (
-                    h: *mut $Ty = owner.ptr().cast::<$Ty>(),
-                    size: isize = size_or_offset as isize,
-                    hup: bool = hup,
-                ) {
-                    // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
-                    // `OwnedFilePoll::new` and the owner outlives this dispatch (caller contract).
-                    unsafe { (*h).on_poll(size, hup) };
-                }
-            )
         };
     }
 
@@ -943,43 +931,11 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         }
         #[cfg(not(windows))]
         PollTag::MemoryPressure => {
-            crate::node::memory_pressure::on_poll(event.flags, size_or_offset);
+            crate::node::memory_pressure::on_poll(event.flags, event.size_or_offset);
         }
         #[cfg(target_os = "macos")]
         PollTag::ParentDeathWatchdog => bun_io::parent_death_watchdog::on_parent_exit(),
 
-        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
-        #[cfg(not(windows))]
-        PollTag::FileSink => feature_poll_arm!([FileSink, Spawn, Shell], FileSinkPoll),
-        #[cfg(not(windows))]
-        PollTag::StaticPipeWriter => {
-            feature_poll_arm!([Spawn], StaticPipeWriterPoll<Subprocess<'_>>)
-        }
-        #[cfg(not(windows))]
-        PollTag::ShellStaticPipeWriter => {
-            feature_poll_arm!(
-                [Shell],
-                StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>
-            )
-        }
-        #[cfg(not(windows))]
-        PollTag::SecurityScanStaticPipeWriter => {
-            feature_poll_arm!([Install], StaticPipeWriterPoll<SecurityScanSubprocess<'_>>)
-        }
-        // `bun.shell.Interpreter.IOWriter.Poll`
-        #[cfg(not(windows))]
-        PollTag::ShellBufferedWriter => in_features!(
-            [Shell],
-            (
-                h: *mut ShellBufferedWriterPoll = owner.ptr().cast::<ShellBufferedWriterPoll>(),
-                size: isize = size_or_offset as isize,
-                hup: bool = hup,
-            ) {
-                // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
-                // set at `OwnedFilePoll::new`; exclusive for this dispatch.
-                unsafe { crate::shell::io_writer::on_poll(&mut *h, size, hup) };
-            }
-        ),
         #[cfg(not(windows))]
         PollTag::DnsResolver => in_features!(
             [Dns],
@@ -1000,14 +956,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::GetAddrInfoRequest => {
             crate::dns_jsc::dns_sd::SharedConnection::on_readable();
         }
-        #[cfg(not(windows))]
-        PollTag::TerminalPoll => feature_poll_arm!([Terminal], TerminalPoll),
-        #[cfg(windows)]
-        PollTag::FileSink
-        | PollTag::StaticPipeWriter
-        | PollTag::ShellStaticPipeWriter
-        | PollTag::SecurityScanStaticPipeWriter
-        | PollTag::ShellBufferedWriter => unreachable!("libuv calls these writers directly"),
 
         // A ref is held across the handler, which may release every other one.
         PollTag::FileReader => {
@@ -1026,6 +974,34 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 this.read(Some(event))
             })
         }
+        PollTag::TerminalWriter => {
+            io_arm!([Terminal], RefPtr::init_ref, Terminal, |this, _, event| {
+                this.on_writer_io(event)
+            })
+        }
+        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
+        #[cfg(not(windows))]
+        PollTag::FileSink => io_arm!(
+            [FileSink, Spawn, Shell],
+            RefPtr::init_ref,
+            FileSink,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        // Every write completes here, also those of a stream that `Bun.write()` writes to a file.
+        #[cfg(windows)]
+        PollTag::FileSink => io_arm!(
+            [FileSink, Bodies, Spawn, Shell],
+            RefPtr::init_ref,
+            FileSink,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        #[cfg(windows)]
+        PollTag::WindowsNamedPipe => io_arm!(
+            [Sockets],
+            <*mut _>::as_ref_unchecked,
+            WindowsNamedPipe,
+            |this, _, event| this.on_writer_io(event)
+        ),
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
                 this.on_io(event)
@@ -1034,6 +1010,19 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::ShellPipeReader => {
             io_arm!([Shell], clone_rc, ShellPipeReader, |this, _, event| {
                 this.read(Some(event))
+            })
+        }
+        #[cfg(not(windows))]
+        PollTag::ShellIoWriter => {
+            io_arm!([Shell], clone_rc, ShellIoWriter, |this, _, event| {
+                this.on_io(event)
+            })
+        }
+        // Every write completes here, also those of `bun run` and `bun exec`.
+        #[cfg(windows)]
+        PollTag::ShellIoWriter => {
+            io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
+                this.on_io(event)
             })
         }
 
@@ -1061,6 +1050,28 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             <*mut _>::as_mut_unchecked,
             SecurityScanSubprocess<'_>,
             |this, _, event| this.on_io(event)
+        ),
+        PollTag::SecurityScanWriter => io_arm!(
+            [Install],
+            <*mut _>::as_mut_unchecked,
+            SecurityScanSubprocess<'_>,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        PollTag::SubprocessStdinWriter => io_arm!(
+            [Spawn],
+            <*mut _>::as_ref_unchecked,
+            Subprocess<'_>,
+            |this, _, event| this.on_stdin_io(event)
+        ),
+
+        // Only `Bun.$` redirects stdin from a buffer. `this` is not used once `on_stdin_writer_close` runs, which may free it.
+        PollTag::ShellStdinWriter => io_arm!(
+            [Shell],
+            <*mut _>::as_mut_unchecked,
+            ShellSubprocess,
+            |this, _, event| if let Some(cmd) = this.on_stdin_io(event) {
+                cmd.on_stdin_writer_close();
+            }
         ),
 
         // These free themselves once they have read to the end.
@@ -1621,13 +1632,21 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             boxed_arm!(task, $features, |payload: $ty| { payload.release_unrun() })
         };
     }
+    /// [`release_in!`] for a [`RefTask`].
+    macro_rules! release_counted_in {
+        ($features:tt, $ty:ty) => {
+            counted_arm!(task, $features, |payload: $ty| {
+                <$ty as RefTask>::release_unrun(payload)
+            })
+        };
+    }
     match task.tag() {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
-        task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
+        task_tag::BakePendingReloadEvent => release_counted_in!([Bundler], BakePendingReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
             release_boxed_in!(
@@ -1685,7 +1704,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
         task_tag::HTMLRewriterBackgroundPull => {
-            release_in!(
+            release_counted_in!(
                 [HtmlRewriter],
                 crate::api::html_rewriter::RewriterPipeBackgroundPull
             )
@@ -1740,7 +1759,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FileSink)
+            release_counted_in!([FileSink, Spawn, Shell], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
@@ -1750,8 +1769,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
         task_tag::S3RefusedRequest => release_boxed_in!([S3Client], S3RefusedRequest),
-        task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
-        task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
+        task_tag::S3UploadWriterCollected => {
+            release_counted_in!([S3Client], S3UploadWriterCollected)
+        }
+        task_tag::SendQueueDeferred => release_counted_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
         }
@@ -1773,12 +1794,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::StatWatcherHop => {
-            release_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
+            release_counted_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
         }
         task_tag::AsyncCpTask => release_boxed_in!([NodeFs], crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
-        task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunction => release_counted_in!([NativeAddons], ThreadSafeFunction),
         task_tag::ThreadSafeFunctionRefRequest => {
             release_boxed_in!([NativeAddons], TsfnRefRequest)
         }

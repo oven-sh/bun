@@ -28,7 +28,9 @@ pub mod visit;
 
 pub use lower::import_meta_glob::*;
 pub use p::P;
-pub use parse::parse_entry::{Options as ParserOptions, Parser};
+pub use parse::parse_entry::{
+    CacheLookup, Options as ParserOptions, ParsedForCache, Parser, TranspilerCache,
+};
 
 // The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.
 #[allow(non_snake_case)]
@@ -91,13 +93,6 @@ pub mod Macro {
             states
         }
     }
-    /// Frees this thread's `SOURCE_CODE_PRINTER` if a macro allocated it.
-    impl Drop for MacroLoadStates {
-        #[inline]
-        fn drop(&mut self) {
-            __bun_macro_drop_source_code_printer();
-        }
-    }
 
     #[derive(Clone, Copy)]
     pub struct MacroContext<'a> {
@@ -122,7 +117,6 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error>;
-        safe fn __bun_macro_drop_source_code_printer();
         // See [`collect_vm_garbage`] for the call-site contract.
         safe fn __bun_macro_collect_vm_garbage();
     }

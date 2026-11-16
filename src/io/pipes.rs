@@ -13,7 +13,7 @@ use crate::{EventLoopHandle, FilePoll, FilePollFlag, OwnedFilePoll, Owner};
 
 /// An fd, and its poll once it is waited on. Dropping it releases the poll. The fd stays open.
 #[cfg(not(windows))]
-pub struct PipeHandle {
+pub(crate) struct PipeHandle {
     /// `INVALID` when closed.
     fd: Cell<Fd>,
     /// Forced: the kernel keeps a fired poll for as long as the file is open.
@@ -45,6 +45,10 @@ impl PipeHandle {
         self.with_poll(|poll| unsafe { poll.set_owner(owner) });
     }
 
+    pub(crate) fn owner(&self) -> Owner {
+        self.owner.get()
+    }
+
     pub(crate) fn get_fd(&self) -> Fd {
         self.fd.get()
     }
@@ -53,25 +57,21 @@ impl PipeHandle {
         self.get_fd() == Fd::INVALID
     }
 
-    pub fn has_poll(&self) -> bool {
+    pub(crate) fn has_poll(&self) -> bool {
         self.poll.is_some()
     }
 
-    pub fn is_registered(&self) -> bool {
-        self.with_poll(FilePoll::is_registered) == Some(true)
-    }
-
-    pub fn is_watching(&self) -> bool {
+    pub(crate) fn is_watching(&self) -> bool {
         self.with_poll(FilePoll::is_watching) == Some(true)
     }
 
     /// Does nothing without a poll.
-    pub fn set_poll_flag(&self, flag: FilePollFlag) {
+    pub(crate) fn set_poll_flag(&self, flag: FilePollFlag) {
         self.with_poll(|poll| poll.set_flag(flag));
     }
 
     /// Releases the poll. The fd that `fd` replaces stays open.
-    pub fn set_fd(&self, fd: Fd) {
+    pub(crate) fn set_fd(&self, fd: Fd) {
         self.poll.set(None);
         self.fd.set(fd);
     }

@@ -1122,7 +1122,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1269,7 +1269,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -2657,16 +2657,7 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
-                sys::windows::kernel32::GetCurrentDirectoryW(
-                    (buf.len() - 4) as u32,
-                    buf.as_mut_ptr().add(root.len()),
-                )
-            } as usize;
-            'try_bunx_file: {
-                if cwd_len == 0 {
-                    break 'try_bunx_file;
-                }
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
                 let mut ptr = root.len() + cwd_len;
                 let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);

@@ -18,6 +18,8 @@ pub extern crate bun_core as bun_str;
 pub extern crate bun_libuv_sys;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use core::mem::MaybeUninit;
+#[cfg(windows)]
+use std::os::windows::io::IntoRawHandle as _;
 
 pub mod fd;
 pub use fd::{FdExt, MakeLibUvOwnedError, RawFd};
@@ -831,9 +833,9 @@ pub use tmp::Tmpfile;
 // `#[cfg(windows)]` arms in dependents.
 pub mod windows;
 
+use core::ffi::c_void;
 #[cfg(not(windows))]
-use core::ffi::c_int;
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_int};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
@@ -1313,6 +1315,10 @@ impl Tag {
     pub const epoll_create1: Tag = Tag(112);
     pub const pthread_create: Tag = Tag(113);
     pub const _open_osfhandle: Tag = Tag(114);
+    #[cfg(not(windows))]
+    pub(crate) const getsockname: Tag = Tag(115);
+    #[cfg(not(windows))]
+    pub(crate) const getifaddrs: Tag = Tag(116);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1320,7 +1326,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 115] = [
+        const NAMES: [&str; 117] = [
             "TODO",
             "dup",
             "access",
@@ -1437,6 +1443,8 @@ impl Tag {
             "epoll_create1",
             "pthread_create",
             "_open_osfhandle",
+            "getsockname",
+            "getifaddrs",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -3223,42 +3231,15 @@ mod posix_impl {
             // case bump RCVBUF/SNDBUF instead.
             #[cfg(target_os = "macos")]
             {
+                let setsockopt = |end: &crate::CloseOnDrop, name, value| {
+                    net::setsockopt_int(end.fd(), libc::SOL_SOCKET, name, value)
+                };
                 if for_shell {
-                    let so_recvbuf: libc::c_int = 1024 * 128;
-                    let so_sendbuf: libc::c_int = 1024 * 128;
-                    // SAFETY: setsockopt on freshly-created socketpair fds.
-                    unsafe {
-                        libc::setsockopt(
-                            pair[1].fd().native(),
-                            libc::SOL_SOCKET,
-                            libc::SO_RCVBUF,
-                            core::ptr::from_ref::<i32>(&so_recvbuf).cast(),
-                            core::mem::size_of::<i32>() as u32,
-                        );
-                        libc::setsockopt(
-                            pair[0].fd().native(),
-                            libc::SOL_SOCKET,
-                            libc::SO_SNDBUF,
-                            core::ptr::from_ref::<i32>(&so_sendbuf).cast(),
-                            core::mem::size_of::<i32>() as u32,
-                        );
-                    }
+                    let _ = setsockopt(&pair[1], libc::SO_RCVBUF, 1024 * 128);
+                    let _ = setsockopt(&pair[0], libc::SO_SNDBUF, 1024 * 128);
                 } else {
-                    let on: libc::c_int = 1;
                     for end in &pair {
-                        // SAFETY: setsockopt on freshly-created socketpair fds.
-                        if unsafe {
-                            libc::setsockopt(
-                                end.fd().native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_NOSIGPIPE,
-                                core::ptr::from_ref::<i32>(&on).cast(),
-                                core::mem::size_of::<i32>() as u32,
-                            )
-                        } < 0
-                        {
-                            return Err(Error::from_code_int(last_errno(), Tag::setsockopt));
-                        }
+                        setsockopt(end, libc::SO_NOSIGPIPE, 1)?;
                     }
                 }
             }
@@ -4039,19 +4020,9 @@ mod windows_impl {
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let len =
-            unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
-        if len == 0 {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
-        }
-        // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
-        // returns the *required* size (incl. NUL), which can exceed
-        // `wbuf.len()` under long-path opt-in. Guard so the slice below
-        // surfaces ENAMETOOLONG instead of panicking on OOB.
-        if len as usize > wbuf.len() {
-            return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
-        }
-        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
+        let len = w::GetCurrentDirectoryW(&mut wbuf[..])
+            .map_err(|err| Error::from_win32(err, Tag::getcwd))?;
+        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len]);
         Ok(utf8.len())
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
@@ -4296,12 +4267,8 @@ mod windows_impl {
         }
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
-        let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
-        if attrs == w::INVALID_FILE_ATTRIBUTES {
-            return Err(
-                Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
-            );
-        }
+        let attrs = w::GetFileAttributesW(wpath)
+            .map_err(|err| Error::from_win32(err, Tag::access).with_path(path.as_bytes()))?;
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (mode & W_OK) != 0 && is_readonly && !is_directory {
@@ -4417,13 +4384,7 @@ mod windows_impl {
     /// `SetFilePointerEx(.., FILE_END)`
     /// returning the new offset as `usize`.
     pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
-        let mut new: i64 = 0;
-        // SAFETY: `fd` is a valid kernel handle (caller invariant).
-        let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
-        if ok == w::FALSE {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
-        }
-        Ok(usize::try_from(new).expect("int cast"))
+        lseek(fd, 0, w::FILE_END as i32).map(|new| usize::try_from(new).expect("int cast"))
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
@@ -5059,7 +5020,7 @@ pub mod c {
         target_os = "netbsd",
         target_os = "openbsd"
     ))]
-    pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
+    pub use libc::{getloadavg, sysctlbyname};
 
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
@@ -5072,13 +5033,9 @@ pub mod c {
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.
     #[cfg(windows)]
-    pub use crate::windows::{
-        CopyFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
-    };
+    pub use crate::windows::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
     #[cfg(windows)]
-    pub use bun_windows_sys::kernel32::{
-        FlushFileBuffers, GetFileAttributesW, SetConsoleCtrlHandler,
-    };
+    pub use bun_windows_sys::kernel32::{FlushFileBuffers, SetConsoleCtrlHandler};
 
     // ── `bun.c` Darwin surface — C symbols picked up via
     // `@cImport` of system headers. The `libc` crate already binds all of
@@ -5137,7 +5094,6 @@ pub mod c {
         // <sys/sysctl.h> — `sysctlbyname` already re-exported above for all BSDs.
         sysctl,
         sysctlnametomib,
-        // <net/if_dl.h> — `sockaddr_dl` already re-exported above for all BSDs.
         // misc libc
         truncate,
         vm_deallocate,
@@ -5518,6 +5474,23 @@ pub mod linux {
         let sigmask = sigmask.map_or(core::ptr::null(), core::ptr::from_ref);
         // SAFETY: `fds` is writable for `fds.len()` entries; `timeout` and `sigmask` are null or live.
         unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout, sigmask) }
+    }
+    /// `prctl(2)` operations (`PR_*`) that take at most one integer argument.
+    #[derive(Clone, Copy)]
+    #[repr(i32)]
+    pub enum PrctlOp {
+        SET_PDEATHSIG = libc::PR_SET_PDEATHSIG,
+        SET_CHILD_SUBREAPER = libc::PR_SET_CHILD_SUBREAPER,
+        SET_NO_NEW_PRIVS = libc::PR_SET_NO_NEW_PRIVS,
+        GET_NO_NEW_PRIVS = libc::PR_GET_NO_NEW_PRIVS,
+        SET_MDWE = libc::PR_SET_MDWE,
+        GET_MDWE = libc::PR_GET_MDWE,
+    }
+    /// `prctl(op, arg, 0, 0, 0)` — libc-convention return.
+    pub fn prctl(op: PrctlOp, arg: libc::c_ulong) -> c_int {
+        const UNUSED: libc::c_ulong = 0;
+        // SAFETY: no `PrctlOp` takes a pointer, and each argument is the `unsigned long` that libc reads.
+        unsafe { libc::prctl(op as c_int, arg, UNUSED, UNUSED, UNUSED) }
     }
     /// `EPOLL_CTL_DEL` takes no `event`.
     ///
@@ -6057,15 +6030,14 @@ impl DynLib {
         // monomorphisation.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
-    pub fn close(self) {
-        // SAFETY: `self.handle` was returned by `dlopen` in `open()` and has
-        // not been closed (this consumes `self`).
-        #[cfg(unix)]
-        unsafe {
-            libc::dlclose(self.handle);
-        }
-        // Windows: FreeLibrary via windows mod; intentionally leaked here
-        // (close is a no-op on Windows in our usage).
+}
+
+/// On Windows the library stays loaded.
+#[cfg(unix)]
+impl Drop for DynLib {
+    fn drop(&mut self) {
+        // SAFETY: `open` got the handle from `dlopen`.
+        unsafe { libc::dlclose(self.handle) };
     }
 }
 
@@ -6494,8 +6466,7 @@ pub fn normalize_path_windows_opts<'a>(
                 /*ADD_NT_PREFIX*/ true,
             >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
             let len = norm.len();
-            // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-            return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
+            return Ok(WStr::from_buf(buf, len));
         }
         // `add_nt_prefix = false` — produce a Win32 path
         // (no `\??\` object prefix) for callers that feed kernel32 APIs
@@ -6513,8 +6484,7 @@ pub fn normalize_path_windows_opts<'a>(
             /*ADD_NT_PREFIX*/ false,
         >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
         let len = norm.len();
-        // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-        return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
+        return Ok(WStr::from_buf(buf, len));
     }
 
     // Strip a leading drive letter (`C:`) on the relative part; the bypass
@@ -6694,23 +6664,15 @@ fn open_windows_device_path(
     creation_disposition: u32,
     flags_and_attributes: u32,
 ) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
-    // SAFETY: path is NUL-terminated UTF-16.
-    let rc = unsafe {
-        w::CreateFileW(
-            path.as_ptr(),
-            desired_access,
-            FILE_SHARE,
-            core::ptr::null_mut(),
-            creation_disposition,
-            flags_and_attributes,
-            core::ptr::null_mut(),
-        )
-    };
-    if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        return Err(Error::from_win32(windows::Win32Error::get(), Tag::open));
-    }
-    Ok(Fd::from_system(rc))
+    windows::CreateFileW(
+        path,
+        desired_access,
+        FILE_SHARE,
+        creation_disposition,
+        flags_and_attributes,
+    )
+    .map(|handle| Fd::from_system(handle.into_raw_handle()))
+    .map_err(|err| Error::from_win32(err, Tag::open))
 }
 
 /// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
@@ -6720,6 +6682,15 @@ fn open_windows_device_path(
 fn is_nt_object_name(p: &[u16]) -> bool {
     bun_core::strings::has_prefix_comptime_utf16(p, &windows::NT_OBJECT_PREFIX_U8)
         || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
+}
+
+/// The `RootDirectory` that `path` resolves against.
+#[cfg(windows)]
+fn nt_root_directory(dir: Fd, path: &[u16]) -> Option<windows::HANDLE> {
+    if is_nt_object_name(path) {
+        return None;
+    }
+    Some(if dir.is_valid() { dir } else { Fd::cwd() }.native())
 }
 
 /// `openDirAtWindowsNtPath` — `NtCreateFile` with
@@ -6780,58 +6751,29 @@ pub(crate) fn open_dir_at_windows_nt_path(
         );
     }
 
-    let path_len_bytes = (p.len() * 2) as u16;
-    let mut nt_name = w::UNICODE_STRING {
-        Length: path_len_bytes,
-        MaximumLength: path_len_bytes,
-        Buffer: p.as_ptr().cast_mut().cast::<u16>(),
-    };
-    let mut attr = w::OBJECT_ATTRIBUTES {
-        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(p) {
-            core::ptr::null_mut()
-        } else if dir_fd.is_valid() {
-            dir_fd.native()
-        } else {
-            Fd::cwd().native()
-        },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        ObjectName: &mut nt_name,
-        SecurityDescriptor: core::ptr::null_mut(),
-        SecurityQualityOfService: core::ptr::null_mut(),
-    };
-    let mut fd: w::HANDLE = bun_windows_sys::INVALID_HANDLE_VALUE;
-    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-    // SAFETY: FFI; all pointer args valid for the call.
-    let rc = unsafe {
-        w::ntdll::NtCreateFile(
-            &mut fd,
-            flags,
-            &mut attr,
-            &mut io,
-            core::ptr::null_mut(),
-            0,
-            FILE_SHARE,
-            match options.op {
+    windows::NtCreateFile(
+        nt_root_directory(dir_fd, p),
+        p,
+        NtCreateFileOptions {
+            access_mask: flags,
+            disposition: match options.op {
                 WindowsOpenDirOp::OnlyOpen => w::FILE_OPEN,
                 WindowsOpenDirOp::OnlyCreate => w::FILE_CREATE,
                 WindowsOpenDirOp::OpenOrCreate => w::FILE_OPEN_IF,
             },
-            w::FILE_DIRECTORY_FILE
+            options: w::FILE_DIRECTORY_FILE
                 | w::FILE_SYNCHRONOUS_IO_NONALERT
                 | windows::FILE_OPEN_FOR_BACKUP_INTENT
                 | open_reparse,
-            core::ptr::null_mut(),
-            0,
-        )
-    };
+            attributes: 0,
+            sharing_mode: FILE_SHARE,
+        },
+    )
+    .map(|handle| Fd::from_system(handle.into_raw_handle()))
     // Not `Error::new(rc)`: the curated NTSTATUS table maps
     // `OBJECT_NAME_INVALID` to EINVAL, and `open` of a bad name is ENOENT
     // (libuv/Node), which `RtlNtStatusToDosError` gives.
-    match windows::Win32Error::from_nt_status(rc) {
-        windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
-        code => Err(Error::from_win32(code, Tag::open)),
-    }
+    .map_err(|rc| Error::from_win32(windows::Win32Error::from_nt_status(rc), Tag::open))
 }
 
 /// Absolute paths (`\??\…`, `\Device\…`) must be full NT object names and
@@ -6841,60 +6783,17 @@ pub(crate) fn open_dir_at_windows_nt_path(
 pub(crate) fn open_file_at_windows_nt_path(
     dir: Fd,
     path: &bun_core::WStr,
-    options: NtCreateFileOptions,
+    mut options: NtCreateFileOptions,
 ) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
     let p = path.as_slice();
-    let mut result: w::HANDLE = core::ptr::null_mut();
-    let path_len_bytes = match u16::try_from(p.len() * 2) {
-        Ok(v) => v,
-        Err(_) => return Err(Error::from_code(E::ENOMEM, Tag::open)),
-    };
-    let mut nt_name = w::UNICODE_STRING {
-        Length: path_len_bytes,
-        MaximumLength: path_len_bytes,
-        Buffer: p.as_ptr().cast_mut().cast::<u16>(),
-    };
-    let mut attr = w::OBJECT_ATTRIBUTES {
-        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        // [ObjectName] must be a fully qualified file specification or the
-        // name of a device object (`\??\…`, `\Device\…`), unless it is the
-        // name of a file relative to the directory specified by RootDirectory.
-        ObjectName: &mut nt_name,
-        RootDirectory: if is_nt_object_name(p) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        SecurityDescriptor: core::ptr::null_mut(),
-        SecurityQualityOfService: core::ptr::null_mut(),
-    };
-    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let root_directory = nt_root_directory(dir, p);
 
-    let mut attributes = options.attributes;
     loop {
-        // SAFETY: FFI; all pointer args valid for the call.
-        let rc = unsafe {
-            w::ntdll::NtCreateFile(
-                &mut result,
-                options.access_mask,
-                &mut attr,
-                &mut io,
-                core::ptr::null_mut(),
-                attributes,
-                options.sharing_mode,
-                options.disposition,
-                options.options,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
+        let result = windows::NtCreateFile(root_directory, p, options);
 
-        if rc == w::NTSTATUS::ACCESS_DENIED
-            && attributes == w::FILE_ATTRIBUTE_NORMAL
+        if matches!(result, Err(w::NTSTATUS::ACCESS_DENIED))
+            && options.attributes == w::FILE_ATTRIBUTE_NORMAL
             && (options.access_mask & (w::GENERIC_READ | w::GENERIC_WRITE)) == w::GENERIC_WRITE
         {
             // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
@@ -6908,26 +6807,25 @@ pub(crate) fn open_file_at_windows_nt_path(
             //
             // See https://github.com/oven-sh/bun/issues/6820
             //     https://github.com/libuv/libuv/pull/3380
-            attributes = w::FILE_ATTRIBUTE_HIDDEN;
+            options.attributes = w::FILE_ATTRIBUTE_HIDDEN;
             continue;
         }
 
-        return match windows::Win32Error::from_nt_status(rc) {
-            windows::Win32Error::SUCCESS => {
-                let file = File::from_fd(Fd::from_system(result));
-                if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
-                    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
-                    // SAFETY: FFI; result is a valid handle.
-                    if unsafe { w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END) }
-                        == 0
-                    {
-                        return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
-                    }
+        return match result {
+            Ok(handle) => {
+                let file = File::from(handle);
+                if (options.access_mask & w::FILE_APPEND_DATA) != 0
+                    && lseek(file.fd(), 0, w::FILE_END as i32).is_err()
+                {
+                    return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                 }
                 Ok(file.into_raw())
             }
             // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
-            code => Err(Error::from_win32(code, Tag::open)),
+            Err(rc) => Err(Error::from_win32(
+                windows::Win32Error::from_nt_status(rc),
+                Tag::open,
+            )),
         };
     }
 }
@@ -7098,8 +6996,7 @@ pub struct WindowsFileAttributes {
 }
 
 /// `getFileAttributes`. Accepts a UTF-8 path (the
-/// resolver only ever calls it with one); the wide-path arm is the
-/// `GetFileAttributesW` body inlined. Returns `None` on
+/// resolver only ever calls it with one). Returns `None` on
 /// `INVALID_FILE_ATTRIBUTES`.
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
@@ -7107,11 +7004,7 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
     // Win32 API does file path normalization, so we do not need the valid path assertion here.
-    // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
-    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
-    if dword == windows::INVALID_FILE_ATTRIBUTES {
-        return None;
-    }
+    let dword = windows::GetFileAttributesW(wpath).ok()?;
     Some(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -7129,14 +7022,11 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
-        use std::os::windows::io::{HandleOrInvalid, OwnedHandle};
         // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
-        // SAFETY: path is NUL-terminated UTF-16.
-        let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
-        if attrs == windows::INVALID_FILE_ATTRIBUTES {
+        let Ok(attrs) = windows::GetFileAttributesW(path) else {
             return false;
-        }
+        };
         if file_only && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
             return false;
         }
@@ -7157,19 +7047,14 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                 }
             }
             // Name surrogate (or no tag available): follow it by opening the target.
-            // SAFETY: path is NUL-terminated; null security/template handles.
-            let target = unsafe {
-                HandleOrInvalid::from_raw_handle(w::CreateFileW(
-                    path.as_ptr(),
-                    0,
-                    0,
-                    core::ptr::null_mut(),
-                    w::OPEN_EXISTING,
-                    w::FILE_FLAG_BACKUP_SEMANTICS,
-                    core::ptr::null_mut(),
-                ))
-            };
-            return OwnedHandle::try_from(target).is_ok();
+            return windows::CreateFileW(
+                path,
+                0,
+                0,
+                w::OPEN_EXISTING,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+            )
+            .is_ok();
         }
         true
     }
@@ -7196,13 +7081,7 @@ fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     };
     let attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if is_nt_object_name(path) {
-            core::ptr::null_mut()
-        } else if dir.is_valid() {
-            dir.native()
-        } else {
-            Fd::cwd().native()
-        },
+        RootDirectory: nt_root_directory(dir, path).unwrap_or(core::ptr::null_mut()),
         Attributes: 0,
         ObjectName: &mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),
@@ -7686,30 +7565,10 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
     }
     #[cfg(windows)]
     {
-        // Populated by `windows::env::convert_env_to_wtf8()` at startup
-        // (bun_runtime::bin_entry). The slice is NUL-terminated WTF-8
-        // C strings; the underlying allocation is `Box::leak`'d for the
-        // process lifetime so `'static` here is sound.
-        // SAFETY: written exactly once at startup before any reader runs.
-        let s = unsafe { bun_core::os::environ() };
-        // SAFETY: a `CStrRef` is a non-null pointer to a C string, as each entry is; the
-        // fat-pointer cast preserves the original slice's (ptr, len) metadata
-        // exactly instead of re-deriving it.
-        unsafe { &*(s as *const [*mut c_char] as *const [bun_core::CStrRef<'static>]) }
+        let entries = bun_core::os::environ().unterminated();
+        // SAFETY: each entry is `Some` by the contract of `set_environ`, so it has the bytes of a `CStrRef`.
+        unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len()) }
     }
-}
-
-/// [`environ()`] including its null terminator.
-#[cfg(windows)]
-pub fn environ_list() -> bun_core::CStrList<'static> {
-    // SAFETY: no precondition on Windows.
-    let entries = unsafe { environ() };
-    if entries.is_empty() {
-        return bun_core::CStrList::new(&[None]);
-    }
-    // SAFETY: `convert_env_to_wtf8` pushes a trailing null pointer into the same allocation.
-    let items = unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len() + 1) };
-    bun_core::CStrList::new(items)
 }
 
 // ── moveFileZWithHandle ──
@@ -7946,13 +7805,13 @@ pub mod posix {
 
     // ── sockaddr family ──
     #[cfg(unix)]
-    pub use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+    pub use libc::{sockaddr_in, sockaddr_in6, sockaddr_storage};
     // Route through `bun_libuv_sys` (not `bun_windows_sys::ws2_32`) so types
-    // returned by libuv APIs (`uv_interface_address_t`, `uv_udp_*`) are the
+    // returned by libuv APIs (`uv_udp_*`) are the
     // *same* nominal type callers see via `bun_sys::posix::sockaddr_*` — Rust
     // doesn't structurally unify two identical-layout `#[repr(C)]` structs.
     #[cfg(windows)]
-    pub use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+    pub use bun_libuv_sys::{sockaddr_in, sockaddr_in6, sockaddr_storage};
 
     // ── access(2) mode bits ──
     // POSIX-standard values; libuv re-uses the same numbers on Windows
@@ -8007,15 +7866,8 @@ pub mod posix {
     }
 
     // ── poll ──
-    /// `struct pollfd`.
     #[cfg(unix)]
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct PollFd {
-        pub fd: c_int,
-        pub events: i16,
-        pub revents: i16,
-    }
+    pub use libc::pollfd as PollFd;
     #[cfg(unix)]
     pub const POLL_IN: i16 = libc::POLLIN;
     #[cfg(unix)]
@@ -8028,15 +7880,11 @@ pub mod posix {
         timeout_ms: c_int,
     ) -> core::result::Result<c_int, super::Error> {
         loop {
-            // SAFETY: PollFd is layout-identical to libc::pollfd.
+            // SAFETY: the kernel reads and writes `fds.len()` entries.
             #[cfg(target_os = "macos")]
-            let rc = unsafe {
-                super::nocancel::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms)
-            };
-            // SAFETY: `PollFd` is `repr(C)` and layout-identical to
-            // `libc::pollfd`; `fds` is a valid exclusive slice.
+            let rc = unsafe { super::nocancel::poll(fds.as_mut_ptr(), fds.len() as _, timeout_ms) };
             #[cfg(not(target_os = "macos"))]
-            let rc = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
+            let rc = bun_core::poll_once(fds, timeout_ms);
             if rc < 0 {
                 let e = super::last_errno();
                 if e == libc::EINTR {
@@ -8130,9 +7978,7 @@ pub mod posix {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Socket address
-// (just the sockaddr union + a couple of constructors; full resolver lives in
-// `bun_dns`). Dependents only need the data shape + Display.
+// Socket addresses and socket calls. The resolver is in `bun_dns`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod net {
     use core::fmt;
@@ -8141,16 +7987,12 @@ pub mod net {
     // both through a private `sock` shim so the body below is target-agnostic.
     #[cfg(unix)]
     mod sock {
-        pub(super) use libc::{
-            AF_INET, AF_INET6, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
-        };
+        pub(super) use libc::{AF_INET, AF_INET6, sockaddr_storage};
     }
     #[cfg(windows)]
     mod sock {
-        // Same nominal types as `bun_sys::posix::sockaddr*` (see comment there)
-        // so `Address::init_posix` accepts pointers callers cast through that
-        // path. AF_* values come from ws2def.h.
-        pub(super) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+        // Same nominal type as `bun_sys::posix::sockaddr_storage` (see comment there).
+        pub(super) use bun_libuv_sys::sockaddr_storage;
         pub(super) use bun_windows_sys::ws2_32::{AF_INET, AF_INET6};
     }
     use sock::*;
@@ -8226,6 +8068,7 @@ pub mod net {
             scope_id: 0,
         };
     }
+    bun_core::impl_pod!(sockaddr_in, sockaddr_in6);
     const _: () = assert!(
         core::mem::size_of::<sockaddr_in>() == core::mem::size_of::<crate::posix::sockaddr_in>()
     );
@@ -8240,36 +8083,14 @@ pub mod net {
             == core::mem::align_of::<crate::posix::sockaddr_in6>()
     );
 
-    /// Tagged union over sockaddr_in/in6/un.
+    /// A `sockaddr_storage` that is read by its family.
+    #[repr(transparent)]
     #[derive(Clone, Copy)]
     pub struct Address {
         /// Generic storage; `family()` discriminates. Every byte is initialized.
-        pub(crate) any: sockaddr_storage,
+        any: sockaddr_storage,
     }
     impl Address {
-        /// Construct from a borrowed `*const sockaddr`.
-        /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
-        pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
-            // SAFETY: caller contract — `addr` points to a valid `sockaddr`
-            // header, so `sa_family` is readable.
-            let len = match unsafe { (*addr).sa_family } as i32 {
-                AF_INET => core::mem::size_of::<sockaddr_in>(),
-                AF_INET6 => core::mem::size_of::<sockaddr_in6>(),
-                _ => core::mem::size_of::<sockaddr>(),
-            };
-            // SAFETY: `len` is sized from `sa_family` and never exceeds
-            // `size_of::<sockaddr_storage>()`; caller guarantees `addr` spans
-            // `len` bytes; `storage` is fresh stack so the ranges cannot overlap.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    addr.cast::<u8>(),
-                    (&raw mut storage).cast::<u8>(),
-                    len,
-                );
-            }
-            Self { any: storage }
-        }
         /// Truncates or zero-pads `bytes` to the size of a `sockaddr_storage`.
         pub fn from_bytes(bytes: &[u8]) -> Self {
             let mut any: sockaddr_storage = bun_core::ffi::zeroed();
@@ -8278,53 +8099,43 @@ pub mod net {
             unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), (&raw mut any).cast(), len) };
             Self { any }
         }
+        pub fn from_ref(any: &sockaddr_storage) -> &Self {
+            // SAFETY: `Address` is `#[repr(transparent)]` over `sockaddr_storage`. Safe code only gets one
+            // with every byte initialized, except from `PacketBuffer::get_peer` on Windows, where only
+            // the address is: that one must not be copied or passed to `as_bytes`.
+            unsafe { &*core::ptr::from_ref(any).cast::<Self>() }
+        }
         #[inline]
         pub fn family(&self) -> i32 {
             self.any.ss_family as i32
         }
-        #[inline]
-        pub fn as_sockaddr(&self) -> *const sockaddr {
-            (&raw const self.any).cast()
-        }
 
         /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
         pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
-            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
             match ip {
-                core::net::IpAddr::V4(v4) => {
-                    let inner = sockaddr_in {
-                        family: AF_INET as sa_family_t,
-                        port: port.to_be(),
-                        addr: u32::from_ne_bytes(v4.octets()),
-                        ..sockaddr_in::ZEROED
-                    };
-                    // SAFETY: `sockaddr_storage` holds a POD `sockaddr_in`; they cannot overlap.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            (&raw const inner).cast::<u8>(),
-                            (&raw mut any).cast::<u8>(),
-                            core::mem::size_of::<sockaddr_in>(),
-                        );
-                    }
-                }
-                core::net::IpAddr::V6(v6) => {
-                    let inner = sockaddr_in6 {
-                        family: AF_INET6 as sa_family_t,
-                        port: port.to_be(),
-                        addr: v6.octets(),
-                        ..sockaddr_in6::ZEROED
-                    };
-                    // SAFETY: as above, for `sockaddr_in6`.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            (&raw const inner).cast::<u8>(),
-                            (&raw mut any).cast::<u8>(),
-                            core::mem::size_of::<sockaddr_in6>(),
-                        );
-                    }
-                }
+                core::net::IpAddr::V4(v4) => Self::from_bytes(bun_core::bytes_of(&sockaddr_in {
+                    family: AF_INET as sa_family_t,
+                    port: port.to_be(),
+                    addr: u32::from_ne_bytes(v4.octets()),
+                    ..sockaddr_in::ZEROED
+                })),
+                core::net::IpAddr::V6(v6) => Self::from_bytes(bun_core::bytes_of(&sockaddr_in6 {
+                    family: AF_INET6 as sa_family_t,
+                    port: port.to_be(),
+                    addr: v6.octets(),
+                    ..sockaddr_in6::ZEROED
+                })),
             }
-            Self { any }
+        }
+
+        /// `None` unless the family is `AF_INET` or `AF_INET6`.
+        #[cfg(unix)]
+        pub fn port(&self) -> Option<u16> {
+            let port = match self.as_in4() {
+                Some(v4) => v4.port,
+                None => self.as_in6()?.port,
+            };
+            Some(u16::from_be(port))
         }
 
         /// Ignored unless the family is `AF_INET` or `AF_INET6`.
@@ -8344,15 +8155,6 @@ pub mod net {
             }
         }
 
-        /// Bytes of `sockaddr_storage` this address actually occupies.
-        pub fn socklen(&self) -> u32 {
-            (if self.family() == AF_INET6 {
-                core::mem::size_of::<sockaddr_in6>()
-            } else {
-                core::mem::size_of::<sockaddr_in>()
-            }) as u32
-        }
-
         /// The bytes of the `sockaddr_in` or `sockaddr_in6`; empty for any other family.
         pub fn as_bytes(&self) -> &[u8] {
             if let Some(v4) = self.as_in4() {
@@ -8368,12 +8170,12 @@ pub mod net {
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
         #[inline]
-        pub fn as_in4(&self) -> Option<&sock::sockaddr_in> {
+        pub fn as_in4(&self) -> Option<&sockaddr_in> {
             if self.family() == AF_INET {
                 // SAFETY: the bytes of `any` are initialized, any bytes are a valid
                 // `sockaddr_in`, and `sockaddr_storage` is guaranteed by POSIX/ws2def.h
                 // to have size and alignment >= `sockaddr_in`.
-                Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in>() })
+                Some(unsafe { &*(&raw const self.any).cast::<sockaddr_in>() })
             } else {
                 None
             }
@@ -8381,10 +8183,20 @@ pub mod net {
         /// Tag-checked borrow of the IPv6 payload. `None` unless
         /// `family() == AF_INET6`.
         #[inline]
-        pub fn as_in6(&self) -> Option<&sock::sockaddr_in6> {
+        pub fn as_in6(&self) -> Option<&sockaddr_in6> {
             if self.family() == AF_INET6 {
                 // SAFETY: as in `as_in4`, for `sockaddr_in6`.
-                Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in6>() })
+                Some(unsafe { &*(&raw const self.any).cast::<sockaddr_in6>() })
+            } else {
+                None
+            }
+        }
+        /// `None` unless `family() == AF_UNIX`.
+        #[cfg(unix)]
+        pub fn as_un(&self) -> Option<&libc::sockaddr_un> {
+            if self.family() == libc::AF_UNIX {
+                // SAFETY: as in `as_in4`, for `sockaddr_un`.
+                Some(unsafe { &*(&raw const self.any).cast::<libc::sockaddr_un>() })
             } else {
                 None
             }
@@ -8398,12 +8210,7 @@ pub mod net {
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             if let Some(v4) = self.as_in4() {
-                // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
-                // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
-                // raw octets so both shapes resolve.
-                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-                let octets: [u8; 4] =
-                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                let octets = v4.addr.to_ne_bytes();
                 write!(
                     f,
                     "{}.{}.{}.{}:{}",
@@ -8411,30 +8218,164 @@ pub mod net {
                     octets[1],
                     octets[2],
                     octets[3],
-                    u16::from_be(v4.sin_port)
+                    u16::from_be(v4.port)
                 )
             } else if let Some(v6) = self.as_in6() {
-                // `sin6_addr` is `in6_addr { s6_addr: [u8; 16] }` on every
-                // target; reinterpret as raw octets to stay independent of the
-                // wrapper struct name.
-                // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
-                let octets: [u8; 16] =
-                    unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
                 // `SocketAddrV6`'s Display emits `[addr]:port` (with `%scope`
                 // when nonzero), matching Zig's `std.net.Ip6Address.format` —
                 // the shape `bun_core::fmt::format_ip` expects to strip.
                 fmt::Display::fmt(
                     &std::net::SocketAddrV6::new(
-                        std::net::Ipv6Addr::from(octets),
-                        u16::from_be(v6.sin6_port),
-                        u32::from_be(v6.sin6_flowinfo),
-                        v6.sin6_scope_id,
+                        std::net::Ipv6Addr::from(v6.addr),
+                        u16::from_be(v6.port),
+                        u32::from_be(v6.flowinfo),
+                        v6.scope_id,
                     ),
                     f,
                 )
             } else {
                 write!(f, "<addr family={}>", self.family())
             }
+        }
+    }
+
+    #[cfg(unix)]
+    pub use posix_impl::*;
+    #[cfg(unix)]
+    mod posix_impl {
+        use super::{Address, sockaddr_storage};
+        use crate::{Fd, Maybe, Tag, err_with};
+        use core::ffi::{c_int, c_uint};
+        use core::mem::offset_of;
+        use libc::{sockaddr, socklen_t};
+
+        pub fn getsockname(fd: Fd) -> Maybe<Address> {
+            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
+            let mut len = size_of::<sockaddr_storage>() as socklen_t;
+            // SAFETY: getsockname(2) writes at most `len` bytes into `any`.
+            if unsafe { libc::getsockname(fd.native(), (&raw mut any).cast(), &raw mut len) } != 0 {
+                return Err(err_with(Tag::getsockname));
+            }
+            Ok(Address { any })
+        }
+
+        pub fn setsockopt_int(fd: Fd, level: c_int, name: c_int, value: c_int) -> Maybe<()> {
+            let len = size_of::<c_int>() as socklen_t;
+            // SAFETY: setsockopt(2) reads at most `len` bytes, too few for an option that holds a pointer.
+            let rc = unsafe {
+                libc::setsockopt(fd.native(), level, name, (&raw const value).cast(), len)
+            };
+            if rc != 0 {
+                return Err(err_with(Tag::setsockopt));
+            }
+            Ok(())
+        }
+
+        pub fn getifaddrs() -> Maybe<IfAddrList> {
+            let mut list = core::ptr::null_mut();
+            // SAFETY: valid out-pointer
+            if unsafe { libc::getifaddrs(&raw mut list) } != 0 {
+                return Err(err_with(Tag::getifaddrs));
+            }
+            Ok(IfAddrList(list))
+        }
+
+        /// The list that `getifaddrs` returns.
+        pub struct IfAddrList(*mut libc::ifaddrs);
+
+        impl IfAddrList {
+            pub fn iter(&self) -> impl Iterator<Item = IfAddr<'_>> {
+                // SAFETY: each link is null or an entry that lives until `drop`.
+                core::iter::successors(unsafe { self.0.as_ref() }, |it| unsafe {
+                    it.ifa_next.as_ref()
+                })
+                .map(IfAddr)
+            }
+        }
+
+        impl Drop for IfAddrList {
+            fn drop(&mut self) {
+                // SAFETY: returned by getifaddrs
+                unsafe { libc::freeifaddrs(self.0) };
+            }
+        }
+
+        /// An entry of an [`IfAddrList`].
+        #[derive(Clone, Copy)]
+        pub struct IfAddr<'a>(&'a libc::ifaddrs);
+
+        impl<'a> IfAddr<'a> {
+            pub fn name(self) -> &'a [u8] {
+                // SAFETY: `ifa_name` is a NUL-terminated C string that lives as long as the list.
+                unsafe { bun_core::ffi::cstr(self.0.ifa_name) }.to_bytes()
+            }
+
+            pub fn flags(self) -> c_uint {
+                self.0.ifa_flags
+            }
+
+            fn address_bytes(self) -> Option<&'a [u8]> {
+                // SAFETY: `ifa_addr` is null or points into the list.
+                unsafe { sockaddr_bytes(self.0.ifa_addr) }
+            }
+
+            /// The netmask gets the family of the address (BSD can leave it unset). A null `ifa_netmask` reads as all zeros.
+            pub fn address_and_netmask(self) -> Option<(Address, Address)> {
+                let address = Address::from_bytes(self.address_bytes()?);
+                // SAFETY: `ifa_netmask` is null or points into the list.
+                let netmask = unsafe { sockaddr_bytes(self.0.ifa_netmask) };
+                let mut netmask = Address::from_bytes(netmask.unwrap_or_default());
+                netmask.any.ss_family = address.any.ss_family;
+                Some((address, netmask))
+            }
+
+            /// The bytes from `sll_addr` / `LLADDR()` on. `None` unless the family is `AF_PACKET` / `AF_LINK`.
+            pub fn link_layer_address(self) -> Option<&'a [u8]> {
+                let bytes = self.address_bytes()?;
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    let family: libc::sa_family_t = bun_core::read_prefix(bytes)?;
+                    (c_int::from(family) == libc::AF_PACKET)
+                        .then(|| &bytes[offset_of!(libc::sockaddr_ll, sll_addr)..])
+                }
+                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+                {
+                    use libc::sockaddr_dl;
+                    let family = *bytes.get(offset_of!(sockaddr_dl, sdl_family))?;
+                    if c_int::from(family) != libc::AF_LINK {
+                        return None;
+                    }
+                    // The name and the address can extend past the declared size of `sdl_data`.
+                    let after_name =
+                        bytes
+                            .get(offset_of!(sockaddr_dl, sdl_nlen))
+                            .and_then(|&len| {
+                                bytes.get(offset_of!(sockaddr_dl, sdl_data) + usize::from(len)..)
+                            });
+                    Some(after_name.unwrap_or_default())
+                }
+            }
+        }
+
+        /// # Safety
+        /// `addr` is null, or points into a `getifaddrs` list that lives for `'a`.
+        unsafe fn sockaddr_bytes<'a>(addr: *const sockaddr) -> Option<&'a [u8]> {
+            if addr.is_null() {
+                return None;
+            }
+            // SAFETY: every sockaddr starts with `sa_family`.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let len = match c_int::from(unsafe { (*addr).sa_family }) {
+                libc::AF_INET => size_of::<libc::sockaddr_in>(),
+                libc::AF_INET6 => size_of::<libc::sockaddr_in6>(),
+                libc::AF_PACKET => size_of::<libc::sockaddr_ll>(),
+                _ => size_of::<sockaddr>(),
+            };
+            // SAFETY: every sockaddr starts with `sa_len`. A netmask can be shorter than the struct of its family.
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            let len = usize::from(unsafe { (*addr).sa_len });
+            // SAFETY: `getifaddrs` initialized `len` bytes at `addr`.
+            Some(unsafe { core::slice::from_raw_parts(addr.cast::<u8>(), len) })
         }
     }
 }
@@ -8853,10 +8794,7 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 /// `link(u16, ...)` Windows arm — `CreateHardLinkW` with errno mapping.
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
-    if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
-        return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
-    }
-    Ok(())
+    windows::CreateHardLinkW(dest, src).map_err(|err| Error::from_win32(err, Tag::link))
 }
 
 /// `rmdir` — `rmdirat(FD.cwd(), to)`. Exposed on all
@@ -9393,29 +9331,20 @@ mod normalize_path_windows_tests {
         panic!("no clamp floor within 64 levels");
     }
 
-    /// Open a directory handle with raw `CreateFileW` so the fixture fd does
+    /// Open a directory handle with `CreateFileW` so the fixture fd does
     /// not depend on the code under test.
     fn open_dir_handle(path: &std::path::Path) -> File {
         use std::os::windows::ffi::OsStrExt;
         let wp: Vec<u16> = path.as_os_str().encode_wide().chain([0u16]).collect();
-        // SAFETY: `wp` is NUL-terminated and outlives the call.
-        let h = unsafe {
-            w::CreateFileW(
-                wp.as_ptr(),
-                w::GENERIC_READ,
-                FILE_SHARE,
-                core::ptr::null_mut(),
-                w::OPEN_EXISTING,
-                w::FILE_FLAG_BACKUP_SEMANTICS,
-                core::ptr::null_mut(),
-            )
-        };
-        assert_ne!(
-            h,
-            bun_windows_sys::INVALID_HANDLE_VALUE,
-            "CreateFileW {path:?}"
-        );
-        File::from_fd(Fd::from_system(h))
+        windows::CreateFileW(
+            bun_core::WStr::from_slice_with_nul(&wp),
+            w::GENERIC_READ,
+            FILE_SHARE,
+            w::OPEN_EXISTING,
+            w::FILE_FLAG_BACKUP_SEMANTICS,
+        )
+        .unwrap_or_else(|err| panic!("CreateFileW {path:?}: {err:?}"))
+        .into()
     }
 
     /// pid-suffixed temp dir removed on drop (declare before handle guards so

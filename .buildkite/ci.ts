@@ -573,7 +573,7 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (profile?.startsWith("hardened")) args.push("--hardened=on");
   if (profile?.startsWith("hardened-")) args.push("--lock-environment=off");
   if (profile === "hardened-unsigned") {
-    args.push("--sign-return-addresses=off", "--webkit-version=3bc94211496460feda299ef85eef710eb67fafb3");
+    args.push("--sign-return-addresses=off", "--webkit-version=ae8978d0331bfce97259b446378265eb327c407a");
   }
 
   if (canary === false) args.push("--canary=off");

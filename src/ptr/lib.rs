@@ -14,7 +14,7 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 mod cell_ext;
-pub use cell_ext::{CellExt, OptionCellExt};
+pub use cell_ext::{CellExt, OptionCellExt, VecCellExt};
 
 mod js_cell;
 pub use js_cell::JsCell;
@@ -317,45 +317,6 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
     unsafe { &mut *core::ptr::from_mut::<T>(r) }
 }
 
-/// Marker trait for types whose `&mut self` methods launder `self` through
-/// `core::hint::black_box` (PORT_NOTES_PLAN **R-2**) before dispatching a
-/// re-entrant parent/user callback, then reborrow via [`LaunderedSelf::r`].
-///
-/// This trait makes the reborrow sound without scattering
-/// `unsafe { &mut *this }` at every field access.
-///
-/// # Safety (impl contract)
-/// For every method on `Self` that calls [`r`](Self::r):
-/// - `Self` is an inline/intrusive field of a heap object that is **never
-///   freed** during the re-entrant callback (the laundered raw pointer aliases
-///   a `&mut self` whose stack frame is still live);
-/// - re-entry runs on the **single JS thread** (no concurrent `&mut Self`);
-/// - each `&mut Self` produced by [`r`](Self::r) is short-lived and is the
-///   sole live borrow at the point of use — never held across the next
-///   parent/user dispatch.
-pub unsafe trait LaunderedSelf: Sized {
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
-    ///
-    /// `this` is the `black_box`-laundered address of an outer `&mut self`;
-    /// the laundered raw pointer carries no `noalias`, so the compiler may not
-    /// cache fields across re-entry. See the trait-level safety contract for
-    /// the encapsulated invariant.
-    // The safety contract is on `unsafe impl LaunderedSelf` (the implementor
-    // promises every `this` it passes is a live laundered `&mut self`); the
-    // method is safe-to-call by design — that's the point of `unsafe trait`.
-    // Clippy's `not_unsafe_ptr_arg_deref` doesn't see the trait-level
-    // invariant; making this `unsafe fn` would force 89 call sites to restate
-    // a contract they cannot violate.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: `LaunderedSelf` impl contract — `this` aliases a live
-        // `&mut self` on the single JS thread; sole borrow at point of use.
-        unsafe { &mut *this }
-    }
-}
-
 /// Shorter alias for [`detach_lifetime_ref`] — two workstreams converged on
 /// slightly different names; both are kept so callers from either land cleanly.
 pub use detach_lifetime_ref as detach_ref;
@@ -611,7 +572,7 @@ unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 // it across a call that could reach the same slot. Under that protocol the
 // single `unsafe` in [`get_mut`] is sound; keeping it here (rather than at
 // each host-fn call site) is the same centralisation trade-off `BackRef::get`
-// / `LaunderedSelf::r` already make in this crate.
+// already makes in this crate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A nullable slot for a lifetime-erased `&mut T` borrowed from an outer scope.

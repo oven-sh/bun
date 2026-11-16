@@ -24,6 +24,7 @@ use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
+use crate::webcore::streams::SourceHandle;
 use crate::webcore::{self, AbortSignal, FileSink};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
@@ -44,9 +45,9 @@ pub(crate) use readable::Readable;
 pub(crate) mod writable;
 pub(crate) use writable::Writable;
 
-pub(crate) use bun_spawn::static_pipe_writer;
-pub(crate) use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
+use bun_spawn::static_pipe_writer::{self, PipeState};
 
+use bun_io::IoEvent;
 pub(crate) use bun_io::MaxBuf;
 
 bun_output::declare_scope!(Subprocess, visible);
@@ -62,16 +63,7 @@ type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
 type StdioPipeItem = ExtraPipe;
 
-pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
-
-impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::StaticPipeWriter;
-    type Source = webcore::AnyBlob;
-    unsafe fn on_close_io(this: *mut Self, _: StdioKind) {
-        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
-        unsafe { (*this).on_close_stdin() }
-    }
-}
+pub(crate) type StaticPipeWriter = static_pipe_writer::StaticPipeWriter<webcore::AnyBlob>;
 
 #[derive(EnumSetType, strum::IntoStaticStr)]
 pub enum ObservableGetter {
@@ -96,7 +88,7 @@ pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
     /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
     pub(crate) process: RefPtr<Process>,
-    pub(crate) stdin: JsCell<Writable<'a>>,
+    pub(crate) stdin: JsCell<Writable>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
     pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
@@ -142,14 +134,7 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 
-impl<'a> Subprocess<'a> {
-    fn take_pending_start_writer(&self) -> Option<RefPtr<StaticPipeWriter<'a>>> {
-        match self.stdin.get() {
-            Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start_ref.take(),
-            _ => None,
-        }
-    }
-
+impl Subprocess<'_> {
     #[inline]
     pub(crate) fn process(&self) -> &Process {
         &self.process
@@ -339,18 +324,23 @@ impl Subprocess<'_> {
         false
     }
 
-    pub(crate) fn on_close_stdin(&self) {
-        self.stdin.with_mut(|stdin| match stdin {
-            Writable::Pipe(_) => {
-                let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
-                    unreachable!()
-                };
-                pipe.source.with_mut(|s| s.clear());
-            }
-            Writable::Buffer(_) => drop(core::mem::replace(stdin, Writable::Ignore)),
-            _ => {}
-        });
-        self.update_has_pending_activity();
+    pub(crate) fn close_stdin_buffer(&self) {
+        if matches!(self.stdin.get(), Writable::Buffer(_)) {
+            self.stdin.set(Writable::Ignore);
+            self.update_has_pending_activity();
+        }
+    }
+
+    pub(crate) fn on_stdin_io(&self, event: IoEvent) {
+        if let Writable::Buffer(buffer) = self.stdin.get() {
+            self.on_stdin_state(buffer.on_io(event));
+        }
+    }
+
+    pub(crate) fn on_stdin_state(&self, state: PipeState) {
+        if state == PipeState::Closed {
+            self.close_stdin_buffer();
+        }
     }
 
     fn on_output_read(&self, reader: &PipeReader, output: Readable) {
@@ -771,11 +761,7 @@ impl Subprocess<'_> {
         }
 
         // We won't be sending any more data.
-        let pending_start = self.take_pending_start_writer();
-        if let Writable::Buffer(buffer) = self.stdin.get() {
-            Writable::buffer_writer_mut(buffer).close();
-        }
-        drop(pending_start);
+        self.close_stdin_buffer();
 
         if !existing_stdin_value.is_empty() {
             crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
@@ -806,33 +792,20 @@ impl Subprocess<'_> {
             self.weak_file_sink_stdin_ptr.set(None);
             self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
-            // `pipe_ptr` came from a live FileSink (either `self.stdin.pipe`'s
-            // +1-intrusive ref or the cached JS sink kept live by GC) and
-            // outlives this scope on the single mutator thread — `BackRef`
-            // invariant. Shared deref via `BackRef::Deref`; the one mutable
-            // call below stays unsafe.
-            let pipe = bun_ptr::BackRef::from(pipe_ptr);
+            // SAFETY: `self.stdin` or the cached JS sink holds a ref.
+            let pipe = unsafe { RefPtr::init_ref(pipe_ptr.as_ptr()) };
 
             // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
             // re-enter Writable.onClose → pipe.deref() on the still-running pipe.
             let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
             if matches!(
-                *pipe.source.get(),
-                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_const_ptr() == self_ptr.cast_const()
+                pipe.source.get(),
+                SourceHandle::Subprocess(p) if p.as_const_ptr() == self_ptr.cast_const()
             ) {
-                // `source` is a `JsCell`; `with_mut` takes `&self`, so the
-                // shared `pipe: &FileSink` deref above is sufficient.
-                pipe.source.with_mut(|s| s.clear());
+                pipe.source.set(SourceHandle::None);
             }
             let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
-
-            // `pipe_ptr` is live (see `pipe` borrow above) and is the canonical
-            // `*mut FileSink` from `FileSink::create*`; pass it straight through —
-            // `on_attached_process_exit` re-enters via the writer backref and may
-            // free `this`, so no `&mut FileSink` is materialized at the boundary.
-            // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
-            // provenance, held live by the `Writable::Pipe`/cache +1.
-            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), status) };
+            pipe.on_attached_process_exit(status);
         }
 
         let mut did_update_has_pending_activity = false;
@@ -946,14 +919,10 @@ impl Subprocess<'_> {
 
         match io {
             StdioKind::Stdin => {
-                let pending_start = self.take_pending_start_writer();
-                if let Some(writer) = &pending_start {
-                    Writable::buffer_writer_mut(writer).close();
-                }
                 if !called {
                     Writable::finalize(self);
                 } else {
-                    self.stdin.with_mut(|s| s.close());
+                    Writable::close(&self.stdin);
                 }
             }
             StdioKind::Stdout => {
@@ -1243,21 +1212,16 @@ pub(crate) mod testing_apis {
         Ok(true)
     }
 
-    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
+    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper.
     pub(crate) fn close_stdin_writer(
         _: &mut JsScope<'_>,
         subprocess: &Subprocess<'static>,
     ) -> bool {
-        #[cfg(windows)]
-        use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-
         let Writable::Pipe(pipe) = subprocess.stdin.get() else {
             return false;
         };
-        let writer = pipe.writer.as_ptr();
-        // SAFETY: the Subprocess's ref keeps the sink and its writer live on entry;
-        // `close()` may free both, and nothing touches them afterwards.
-        unsafe { (*writer).close() };
+        let pipe = pipe.clone();
+        pipe.writer.close(&*pipe);
         true
     }
 }

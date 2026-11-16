@@ -3,8 +3,7 @@
 // REFACTOR_BUN_AST: this module holds only the data-shaped runtime pieces
 // that the AST crate (and `bun_js_printer::Options`) need:
 // `Runtime::source_code`, `Imports`, `ReplaceableExport*`, `ServerComponentsMode`.
-// The `Features` struct (carries `&mut RuntimeTranspilerCache`) and
-// `Fallback` HTML rendering (needs `bun_options_types::schema`, `bun_io`,
+// `Features` and `Fallback` HTML rendering (needs `bun_options_types::schema`, `bun_io`,
 // `bun_base64`) live in `bun_js_parser::parser::Runtime` to avoid the
 // `bun_options_types → bun_ast → bun_options_types` cycle.
 

@@ -7446,6 +7446,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
     if (globalObject->vm().hasCompiledCode()) {
         Bun::clearSavedResolutions(globalObject);
         JSC::AOT::didBeginTestFile(globalObject);
+        JSC::AOT::releaseEndedTestFiles(globalObject);
     }
 #else
     UNUSED_PARAM(globalObject);

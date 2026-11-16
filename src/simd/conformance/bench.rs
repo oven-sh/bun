@@ -841,6 +841,13 @@ fn to_shared() {
             highway::copy_ascii_prefix(opaque(&t[..n]), out).len(),
             rust::copy_ascii_prefix_to_shared(opaque(&t[..n]), shared(out))
         );
+        if n <= 64 {
+            compare!(
+                "to shared: copy_short_ascii_prefix {n}",
+                highway::copy_ascii_prefix(opaque(&t[..n]), out).len(),
+                rust::copy_short_ascii_prefix_to_shared(opaque(&t[..n]), shared(out))
+            );
+        }
         if n <= 16 {
             compare!(
                 "to shared: copy_few_ascii {n}",

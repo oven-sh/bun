@@ -47,6 +47,37 @@ pub(crate) mod simd {
         U8::map_to_shared_until(from, to, |v| v, |v| v.bitcast::<I8>().simd_lt(0).cast())
     }
 
+    /// The same for a few dozen bytes.
+    #[export(baseline)]
+    #[inline]
+    pub fn copy_short_ascii_prefix_to_shared(from: &[u8], to: &[AtomicU8]) -> usize {
+        let len = from.len().min(to.len());
+        let (from, to) = (&from[..len], &to[..len]);
+        let copy = |from: &[u8; 8], to| {
+            let word = Vector::from_array(*from);
+            from.is_ascii().then(|| word.store_shared(to))
+        };
+        let mut done = 0;
+        for (from, to) in from.as_chunks().0.iter().zip(to.as_chunks().0) {
+            if copy(from, to).is_none() {
+                break;
+            }
+            done += 8;
+        }
+        if len - done < 8
+            && let (Some((_, from)), Some((_, to))) =
+                (from.split_last_chunk(), to.split_last_chunk())
+            && copy(from, to).is_some()
+        {
+            return len;
+        }
+        while done < len && from[done].is_ascii() {
+            to[done].store(from[done], Relaxed);
+            done += 1;
+        }
+        done
+    }
+
     #[inline(always)]
     fn copy_ends_if_ascii<const N: usize>(from: &[u8], to: &[AtomicU8]) -> Option<bool> {
         let (first, last) = (*from.first_chunk::<N>()?, *from.split_last_chunk::<N>()?.1);
@@ -69,23 +100,20 @@ pub(crate) mod simd {
             return false;
         }
         let to = &to[..len];
-        if let Some(is_copied) = copy_ends_if_ascii::<8>(from, to) {
-            return is_copied;
-        }
-        if let Some(is_copied) = copy_ends_if_ascii::<4>(from, to) {
-            return is_copied;
-        }
-        let Some(last) = len.checked_sub(1) else {
-            return true;
-        };
-        let all = [0, len / 2, last];
-        let is_ascii = all.iter().fold(0, |bits, &at| bits | from[at]).is_ascii();
-        if is_ascii {
-            for at in all {
-                to[at].store(from[at], Relaxed);
+        if len >= 8 {
+            copy_ends_if_ascii::<8>(from, to) == Some(true)
+        } else if len >= 4 {
+            copy_ends_if_ascii::<4>(from, to) == Some(true)
+        } else if len > 0 {
+            let all = [0, len / 2, len - 1];
+            let is_ascii = all.iter().fold(0, |bits, &at| bits | from[at]).is_ascii();
+            if is_ascii {
+                all.iter().for_each(|&at| to[at].store(from[at], Relaxed));
             }
+            is_ascii
+        } else {
+            true
         }
-        is_ascii
     }
 
     #[inline(always)]

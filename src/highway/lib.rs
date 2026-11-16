@@ -288,16 +288,6 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     found
 }
 
-/// [`index_of_char`] of bytes that another thread may be writing. The byte found can have changed by the time this returns.
-///
-/// # Safety
-/// `len` bytes at `haystack` are readable.
-#[inline(always)]
-pub unsafe fn index_of_char_raw(haystack: *const u8, len: usize, needle: u8) -> Option<usize> {
-    // SAFETY: the caller's.
-    found_at(unsafe { highway_index_of_char(haystack, len, needle) }, len)
-}
-
 #[inline(always)]
 pub fn last_index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     if scalar_only(haystack.len()) {
@@ -584,8 +574,6 @@ pub struct ScannerStopsBuffer {
     /// As long as the longest text so far needs: the kernel writes all that is read, so nothing
     /// is cleared from one text to the next.
     planes: Vec<u8>,
-    /// The address and the length of the text that `planes` is filled for.
-    filled_for: Option<(usize, usize)>,
 }
 
 /// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
@@ -614,26 +602,6 @@ impl ScannerStopsBuffer {
         self.filled(text)
     }
 
-    /// The stops of `text`, which may be the text of the last call. The caller has held on to that
-    /// text since, or has called [`ScannerStopsBuffer::forget`]: another text can get the same address.
-    pub fn find_again(&mut self, text: &[u8]) -> ScannerStops<'_> {
-        if self.filled_for != Some((text.as_ptr().addr(), text.len())) {
-            self.fill(text);
-        }
-        #[cfg(debug_assertions)]
-        {
-            let found = self.planes.clone();
-            self.fill(text);
-            assert!(found == self.planes, "the text has changed");
-        }
-        self.filled(text)
-    }
-
-    /// The text of the last call is no longer held on to.
-    pub fn forget(&mut self) {
-        self.filled_for = None;
-    }
-
     fn fill(&mut self, text: &[u8]) {
         let plane_len = Self::plane_len(text);
         if self.planes.len() < 3 * plane_len {
@@ -651,7 +619,6 @@ impl ScannerStopsBuffer {
                 plane_len,
             );
         }
-        self.filled_for = Some((text.as_ptr().addr(), text.len()));
     }
 
     fn filled(&self, text: &[u8]) -> ScannerStops<'_> {

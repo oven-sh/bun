@@ -681,6 +681,11 @@ fn conversions() {
                 &from,
                 kernels::copy_ascii_prefix_to_shared,
             );
+            check_shared_prefix(
+                &ascii[..prefix],
+                &from,
+                kernels::copy_short_ascii_prefix_to_shared,
+            );
         }
 
         let wide: Vec<u16> = (0..len)
@@ -701,8 +706,8 @@ fn conversions() {
 #[test]
 fn few_ascii() {
     let ones = [0xFF; 20];
-    for len in 0..=18 {
-        for not_ascii in 0..=len {
+    for len in sample(0..=18, 3) {
+        for not_ascii in sample((0..=len).rev(), 7) {
             let mut from = b"abcdefghijklmnopqr"[..len].to_vec();
             if let Some(byte) = from.get_mut(not_ascii) {
                 *byte = 0x80;
@@ -979,7 +984,7 @@ fn json() {
 fn byte_classes() {
     use kernels::{json_class as json, xml_class as xml};
     for byte in 0..=u8::MAX {
-        let is_in = |set: &[u8]| set.iter().any(|&it| it == byte);
+        let is_in = |set: &[u8]| set.contains(&byte);
         let has = |class| json::OF_BYTE[usize::from(byte)] & class != 0;
         assert_eq!(has(json::STRUCTURAL), is_in(b"{}[]:,"), "{byte}");
         assert_eq!(has(json::WHITESPACE), is_in(b" \t\n\r"), "{byte}");

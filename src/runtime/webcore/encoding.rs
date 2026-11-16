@@ -291,7 +291,8 @@ fn hex_string(len: usize, encode: impl FnOnce(Out<'_, u8>) -> &mut [u8]) -> BunS
     }
     let (str, chars) = BunString::create_uninitialized_latin1(len * 2);
     if !str.is_dead() {
-        assert_eq!(encode(chars.into()).len(), len * 2);
+        let digits = encode(chars.into());
+        assert_eq!(digits.len(), len * 2);
     }
     str
 }

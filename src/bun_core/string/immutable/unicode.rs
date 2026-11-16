@@ -2,7 +2,7 @@ use crate::string::WStr;
 use crate::string::immutable::{
     U3Fast, UNICODE_REPLACEMENT as unicode_replacement, first_non_ascii, first_non_ascii16,
 };
-use crate::strings_impl::store_bytes;
+use crate::strings_impl::{copy_all_utf16_into_shared_utf8, store_bytes};
 use bun_alloc::AllocError;
 use core::sync::atomic::AtomicU8;
 
@@ -962,24 +962,17 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
             utf16.len(),
             input.utf8_len()
         );
-        if input.utf8_len() <= buf.len() {
-            let result = simdutf::convert::utf16::to::utf8::with_errors::le_to_shared(input, buf);
-            if result.is_successful() {
-                return EncodeIntoResult {
-                    read: utf16.len(),
-                    written: result.count,
-                };
-            }
+        if let Some(result) = copy_all_utf16_into_shared_utf8(buf, input) {
+            return result;
         }
     }
 
     let (mut remaining, mut utf16_remaining) = (buf, utf16);
     loop {
-        let ascii_len =
-            first_non_ascii16(utf16_remaining).map_or(utf16_remaining.len(), |i| i as usize);
+        let fit = &utf16_remaining[..utf16_remaining.len().min(remaining.len())];
+        let ascii_len = first_non_ascii16(fit).map_or(fit.len(), |i| i as usize);
         if ascii_len > 0 {
-            let copied =
-                bun_simd_kernels::copy_u16_to_shared(&utf16_remaining[..ascii_len], remaining);
+            let copied = bun_simd_kernels::copy_u16_to_shared(&fit[..ascii_len], remaining);
             remaining = &remaining[copied..];
             utf16_remaining = &utf16_remaining[copied..];
         }

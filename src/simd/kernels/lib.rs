@@ -25,8 +25,9 @@ use bun_simd::SharedU8;
 
 pub use convert::simd::{
     bswap16_shared, bswap32_shared, bswap64_shared, copy_ascii_prefix_to_shared,
-    copy_few_ascii_to_shared, copy_u16_to_shared, copy_u16_to_u8, fill_with_mask,
-    fill_with_mask_from_shared, lower_ascii, lower_ascii16, mask_in_place,
+    copy_few_ascii_to_shared, copy_short_ascii_prefix_to_shared, copy_u16_to_shared,
+    copy_u16_to_u8, fill_with_mask, fill_with_mask_from_shared, lower_ascii, lower_ascii16,
+    mask_in_place,
 };
 pub use hex::simd::{
     decode_hex, decode_hex_to_shared, decode_hex16, decode_hex16_to_shared, encode_hex_lower,

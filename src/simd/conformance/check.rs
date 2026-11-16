@@ -365,6 +365,20 @@ impl Round<'_> {
             None,
             rust::copy_ascii_prefix_to_shared,
         );
+        self.prefix(
+            "copy_short_ascii_prefix",
+            text,
+            copy,
+            None,
+            rust::copy_short_ascii_prefix_to_shared,
+        );
+        self.prefix(
+            "copy_few_ascii",
+            &text[..len % 17],
+            |from, to| if from.is_ascii() { copy(from, to) } else { 0 },
+            None,
+            |from, to| from.len() * usize::from(rust::copy_few_ascii_to_shared(from, to)),
+        );
 
         let hex = all(highway::encode_hex_lower);
         self.from_to("encode_hex_lower", (text, 2 * len), &hex, |from, to| {

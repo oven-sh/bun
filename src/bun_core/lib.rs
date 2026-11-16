@@ -1729,15 +1729,8 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
-        // Fast path: if buf can definitely hold the whole conversion, try simdutf.
-        if input.utf8_len() <= buf.len() {
-            let result = simdutf::convert::utf16::to::utf8::with_errors::le_to_shared(input, buf);
-            if result.is_successful() {
-                return EncodeIntoResult {
-                    read: utf16.len(),
-                    written: result.count,
-                };
-            }
+        if let Some(result) = copy_all_utf16_into_shared_utf8(buf, input) {
+            return result;
         }
         // Scalar path (handles unpaired surrogates + partial-buffer fill).
         let mut read = 0usize;
@@ -1754,6 +1747,22 @@ pub(crate) mod strings_impl {
             read += adv as usize;
         }
         EncodeIntoResult { read, written }
+    }
+
+    /// `None` if `buf` may be too short, or if there is an unpaired surrogate.
+    #[inline]
+    pub(crate) fn copy_all_utf16_into_shared_utf8(
+        buf: &[AtomicU8],
+        input: WithUtf8Len<'_, u16>,
+    ) -> Option<EncodeIntoResult> {
+        if input.utf8_len() > buf.len() {
+            return None;
+        }
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le_to_shared(input, buf);
+        result.is_successful().then_some(EncodeIntoResult {
+            read: input.slice().len(),
+            written: result.count,
+        })
     }
 
     /// As many of a few bytes as fit.
@@ -1795,7 +1804,7 @@ pub(crate) mod strings_impl {
     fn copy_latin1_into_shared_utf8_by_runs(buf: &[AtomicU8], latin1: &[u8]) -> EncodeIntoResult {
         let (mut to, mut from) = (buf, latin1);
         loop {
-            let copied = kernels::copy_ascii_prefix_to_shared(from, to);
+            let copied = copy_ascii_prefix_to_shared(to, from);
             (to, from) = (&to[copied..], &from[copied..]);
             let (Some((pair, to_rest)), [byte, rest @ ..]) = (to.split_first_chunk::<2>(), from)
             else {
@@ -1810,10 +1819,18 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Copies up to the first byte that is not ASCII or does not fit, and returns the count.
     #[inline]
+    fn copy_ascii_prefix_to_shared(to: &[AtomicU8], from: &[u8]) -> usize {
+        const MIN_LEN_FOR_DISPATCH: usize = 64;
+        if from.len().min(to.len()) >= MIN_LEN_FOR_DISPATCH {
+            return kernels::copy_ascii_prefix_to_shared(from, to);
+        }
+        kernels::copy_short_ascii_prefix_to_shared(from, to)
+    }
+
+    /// Copies up to the first byte that is not ASCII or does not fit, and returns the count.
     pub fn copy_ascii_prefix(to: &mut [u8], from: &[u8]) -> usize {
-        kernels::copy_ascii_prefix_to_shared(from, AtomicU8::from_mut_slice(to))
+        copy_ascii_prefix_to_shared(AtomicU8::from_mut_slice(to), from)
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so

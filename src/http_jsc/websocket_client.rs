@@ -124,7 +124,7 @@ struct Unmask {
 
 impl Unmask {
     fn copy(&mut self, output: &mut [u8], input: &[u8]) {
-        kernels::fill_with_mask(self.key, output.into(), input);
+        kernels::fill_with_mask(self.key, (&mut output[..input.len()]).into(), input);
         self.key.rotate_left(input.len() % 4);
     }
 }
@@ -2518,6 +2518,7 @@ impl Copy<'_> {
                 debug_assert_eq!(encoded.read, latin1.len());
             }
             Copy::Bytes(bytes) => {
+                assert_eq!(parts.payload.len(), bytes.len());
                 match mask {
                     Some(mask) => _ = kernels::fill_with_mask(mask, parts.payload.into(), bytes),
                     None => parts.payload.copy_from_slice(bytes),
@@ -2525,6 +2526,7 @@ impl Copy<'_> {
                 return;
             }
             Copy::Shared(bytes) => {
+                assert_eq!(parts.payload.len(), bytes.len());
                 let mask = mask.unwrap_or(NO_MASK);
                 kernels::fill_with_mask_from_shared(mask, parts.payload.into(), bytes);
                 return;

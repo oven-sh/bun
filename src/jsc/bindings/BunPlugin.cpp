@@ -1457,7 +1457,7 @@ static bool isOriginalLoadedAgain(Zig::GlobalObject* globalObject, JSModuleMock*
     auto file = Bun::compiledModuleForPath(specifier);
     if (file && JSC::AOT::isOriginalEvicted(globalObject, *file))
         return true;
-    if (file && mock->isOfVitest() && !isInNodeModules(specifier) && !JSC::AOT::isESModule(*file) && !JSC::AOT::isDataFile(*file) && JSC::AOT::hasIntactOriginal(globalObject, *file)) {
+    if (file && (mock->isOfVitest() || mock->coversFileOfPreload) && !isInNodeModules(specifier) && !JSC::AOT::isESModule(*file) && !JSC::AOT::isDataFile(*file) && JSC::AOT::hasIntactOriginal(globalObject, *file)) {
         JSC::AOT::LoadedBy loadedBy = JSC::AOT::evaluatedBy(globalObject, *file);
         if (loadedBy == JSC::AOT::LoadedBy::EarlierTestFile || loadedBy == JSC::AOT::LoadedBy::Preload)
             return true;
@@ -8880,6 +8880,12 @@ bool hasSynchronousMockFactory(Zig::GlobalObject* globalObject, const String& pa
 bool hasRegisteredModuleMock(Zig::GlobalObject* globalObject, const String& path)
 {
     return Zig::registeredModuleMock(globalObject, path);
+}
+
+bool hasMockOverFileOfPreload(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto* mock = Zig::registeredModuleMock(globalObject, path);
+    return mock && mock->coversFileOfPreload;
 }
 
 bool canRequireMockOriginalAt(Zig::GlobalObject* globalObject, const String& path)

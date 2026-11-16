@@ -75,6 +75,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         if (!urlObject.isValid())
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
         url = urlObject.fileSystemPath();
+        options.entryQueryAndFragment = makeString(urlObject.queryWithLeadingQuestionMark(), urlObject.fragmentIdentifierWithLeadingNumberSign());
     }
 
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));

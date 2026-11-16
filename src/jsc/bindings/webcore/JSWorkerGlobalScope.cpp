@@ -6,6 +6,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSEventTarget.h"
 #include "JSWorkerLocation.h"
+#include "WorkerMessagingProxy.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/CustomGetterSetter.h>
@@ -17,6 +18,7 @@
 
 // `vm.main` (src/jsc/virtual_machine_exports.rs): a file path, a `blob:` or `data:` URL, or empty.
 extern "C" BunString Bun__VirtualMachine__main(void* bunVM);
+extern "C" WebCore::WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
 namespace WebCore {
 
@@ -232,9 +234,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorkerGlobalScope_location, (JSGlobalObject * lexical
     if (auto* location = globalObject->m_workerLocation.get())
         return JSValue::encode(location);
 
-    // A file entry is a file: URL. A blob: or data: entry is the URL itself.
+    // A file entry is a file: URL, with the query and fragment the start URL had. A blob: or data: entry is the URL itself.
     String entry = Bun__VirtualMachine__main(globalObject->bunVM()).transferToWTFString();
-    URL url = entry.startsWith("blob:"_s) || entry.startsWith("data:"_s) ? URL { entry } : URL::fileURLWithFileSystemPath(entry);
+    URL url;
+    if (entry.startsWith("blob:"_s) || entry.startsWith("data:"_s))
+        url = URL { entry };
+    else if (auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM()))
+        url = URL { makeString(URL::fileURLWithFileSystemPath(entry).string(), proxy->options().entryQueryAndFragment.isolatedCopy()) };
+    else
+        url = URL::fileURLWithFileSystemPath(entry);
     auto* location = JSWorkerLocation::create(vm, *globalObject, WTF::move(url));
     globalObject->m_workerLocation.set(vm, globalObject, location);
     return JSValue::encode(location);

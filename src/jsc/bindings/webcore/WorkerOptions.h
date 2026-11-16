@@ -17,6 +17,8 @@ struct WorkerOptions {
     };
 
     String name;
+    // The query and fragment of a `file:` entry URL, which the path the loader gets does not carry. For `location`.
+    String entryQueryAndFragment;
     bool mini { false };
     bool unref { false };
     // worker_threads `env: SHARE_ENV`: the environment tree resolved on the parent

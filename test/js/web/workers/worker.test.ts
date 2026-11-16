@@ -793,7 +793,7 @@ describe("web worker", () => {
           thrown(() => Object.getOwnPropertyDescriptor(globalThis, "location").get.call({})),
           thrown(() => Object.getOwnPropertyDescriptor(WorkerLocation.prototype, "href").get.call({})),
         ],
-        eventTarget: [types.isEventTarget(self), events.getMaxListeners(self), events.getEventListeners(self, "message").length],
+        eventTarget: [types.isEventTarget(self), events.getMaxListeners(self), events.getEventListeners(self, "message").length, events.listenerCount(self, "message")],
       });
     `;
 
@@ -831,7 +831,7 @@ describe("web worker", () => {
           "TypeError: Can only call WorkerLocation.href on instances of WorkerLocation",
         ],
         // node:events and util.types agree with `self instanceof EventTarget`.
-        eventTarget: [true, 10, 0],
+        eventTarget: [true, 10, 0, 0],
       });
       expect(data.location.tag).toBe("[object WorkerLocation]");
       expect(data.location.origin).toBe("null");
@@ -850,6 +850,19 @@ describe("web worker", () => {
         pathname: Bun.pathToFileURL(file).pathname,
         search: "",
         hash: "",
+      });
+    });
+
+    test("a file: URL worker keeps the query and fragment in location", async () => {
+      using dir = tempDir("worker-global-scope", { "worker.js": report });
+      const url = new URL("worker.js?mode=fast&v=2#top", Bun.pathToFileURL(String(dir) + "/"));
+      const data = await reportOf(new Worker(url));
+      expectScope(data);
+      expect(data.location).toMatchObject({
+        href: url.href,
+        pathname: url.pathname,
+        search: "?mode=fast&v=2",
+        hash: "#top",
       });
     });
 

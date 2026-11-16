@@ -1361,18 +1361,14 @@ const IOV_MAX: usize = libc::IOV_MAX as usize;
 const IOV_MAX: usize = core::ffi::c_uint::MAX as usize;
 
 pub(crate) struct VectorArrayBuffer {
-    value: JSValue,
     #[cfg(unix)]
     buffers: Vec<PlatformIoVec>,
     #[cfg(windows)]
     pub(crate) buffers: Vec<PlatformIoVec>,
-    /// The collected elements, in order. Rooted (and their backing stores
-    /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
-    views: Vec<JSValue>,
+    _pins: jsc::ArrayBufferViewPins,
     /// The pinned elements over a non-shared `WebAssembly.Memory`. A pin doesn't stop `grow()`
     /// from freeing the memory's block.
     wasm: Vec<WasmElement>,
-    pinned: bool,
 }
 
 struct WasmElement {
@@ -1381,65 +1377,6 @@ struct WasmElement {
     view: JSValue,
     /// The native bytes its iovec points to.
     native: Option<PinnedArrayBuffer>,
-}
-
-impl Drop for VectorArrayBuffer {
-    /// Releases the roots and pins taken by `from_js(.., pin: true)` (JS thread).
-    fn drop(&mut self) {
-        if !self.pinned {
-            return;
-        }
-        for view in &self.views {
-            view.unpin_array_buffer();
-            view.unprotect();
-        }
-        self.value.unprotect();
-    }
-}
-
-unsafe extern "C" {
-    fn Bun__JSArray__collectBufferSpans(
-        global_object: &JSGlobalObject,
-        value: JSValue,
-        pin_buffers: bool,
-        ctx: *mut std::ffi::c_void,
-        append: unsafe extern "C" fn(
-            ctx: *mut std::ffi::c_void,
-            element: JSValue,
-            data: *mut u8,
-            byte_len: usize,
-            is_wasm_memory: bool,
-        ),
-    ) -> i32;
-}
-
-unsafe extern "C" fn append_buffer_span(
-    ctx: *mut std::ffi::c_void,
-    element: JSValue,
-    data: *mut u8,
-    byte_len: usize,
-    is_wasm_memory: bool,
-) {
-    // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
-    // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
-    // duration of the call.
-    let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
-    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
-        &mut []
-    } else {
-        // SAFETY: `data..data + byte_len` is the byte range of `element`'s
-        // backing store, valid and unaliased for the duration of the callback.
-        unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
-    };
-    if is_wasm_memory {
-        out.wasm.push(WasmElement {
-            index: out.buffers.len(),
-            view: element,
-            native: None,
-        });
-    }
-    out.buffers.push(bun_sys::platform_iovec_create(slice));
-    out.views.push(element);
 }
 
 impl VectorArrayBuffer {
@@ -1458,66 +1395,41 @@ impl VectorArrayBuffer {
         pin: bool,
         read: bool,
     ) -> JsResult<VectorArrayBuffer> {
-        let mut out = VectorArrayBuffer {
-            value: val,
-            buffers: Vec::new(),
-            views: Vec::new(),
-            wasm: Vec::new(),
-            pinned: false,
-        };
-        bun_jsc::validation_scope!(scope, global_object);
-        // SAFETY: `out` outlives the call; the callback only dereferences the
-        // ctx pointer it is handed.
-        let status = unsafe {
-            Bun__JSArray__collectBufferSpans(
-                global_object,
-                val,
-                pin,
-                (&raw mut out).cast(),
-                append_buffer_span,
-            )
-        };
-        scope.assert_exception_presence_matches(status == -1);
-        if pin {
-            // The C++ side already pinned each backing store; root the views
-            // themselves so a getter-returned element that is not reachable
-            // from `value` survives until completion. Set `pinned` even on
-            // failure so `Drop` balances the elements collected before the error.
-            out.pinned = true;
-            for view in &out.views {
-                view.protect();
-            }
-            val.protect();
-        }
-        match status {
-            0 => {
-                for element in &mut out.wasm {
-                    let pinned = if read {
-                        PinnedArrayBuffer::root(global_object, element.view).map(|mut pinned| {
-                            let len = pinned.byte_len;
-                            pinned.write_to_scratch_if_wasm(0, len);
-                            pinned
-                        })
-                    } else {
-                        PinnedArrayBuffer::root_read_only(global_object, element.view)
-                    };
-                    let Some(pinned) = pinned else {
-                        return Err(global_object.throw_out_of_memory());
-                    };
-                    let mut bytes: jsc::ArrayBuffer = *pinned;
-                    out.buffers[element.index] =
-                        bun_sys::platform_iovec_create(bytes.byte_slice_mut());
-                    element.native = Some(pinned);
+        let mut buffers = Vec::new();
+        let mut wasm = Vec::new();
+        let pins =
+            jsc::ArrayBufferViewPins::collect(global_object, val, pin, |view, bytes, is_wasm| {
+                if is_wasm {
+                    wasm.push(WasmElement {
+                        index: buffers.len(),
+                        view,
+                        native: None,
+                    });
                 }
-                Ok(out)
-            }
-            -1 => Err(jsc::JsError::Thrown),
-            2 => Err(global_object.throw_out_of_memory()),
-            _ => {
-                Err(global_object
-                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
-            }
+                buffers.push(bun_sys::platform_iovec_create(bytes));
+            })?;
+        for element in &mut wasm {
+            let pinned = if read {
+                PinnedArrayBuffer::root(global_object, element.view).map(|mut pinned| {
+                    let len = pinned.byte_len;
+                    pinned.write_to_scratch_if_wasm(0, len);
+                    pinned
+                })
+            } else {
+                PinnedArrayBuffer::root_read_only(global_object, element.view)
+            };
+            let Some(pinned) = pinned else {
+                return Err(global_object.throw_out_of_memory());
+            };
+            let mut bytes: jsc::ArrayBuffer = *pinned;
+            buffers[element.index] = bun_sys::platform_iovec_create(bytes.byte_slice_mut());
+            element.native = Some(pinned);
         }
+        Ok(VectorArrayBuffer {
+            buffers,
+            _pins: pins,
+            wasm,
+        })
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -1868,17 +1780,14 @@ pub(crate) type DirentKind = bun_sys::FileKind;
 
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
-// `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
-// pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
-// (`*mut *mut JSString`), so the validity proof lives in the type signature.
 unsafe extern "C" {
     safe fn Bun__JSDirentObjectConstructor(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__Dirent__toJS(
+    fn Bun__Dirent__toJS(
         global: &JSGlobalObject,
         kind: i32,
         name: bun_core::String,
         path: bun_core::String,
-        cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
+        previous_path: &mut *mut jsc::JSString,
     ) -> JSValue;
 }
 
@@ -1887,16 +1796,35 @@ impl Dirent {
         Bun__JSDirentObjectConstructor(global)
     }
 
-    pub(crate) fn into_js(
-        self,
+    pub(crate) fn into_js_array(
+        items: Box<[Dirent]>,
         global_object: &JSGlobalObject,
-        cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
+        let array = JSValue::create_empty_array(global_object, items.len())?;
+        let mut previous_path = core::ptr::null_mut();
+        for (i, item) in items.into_iter().enumerate() {
+            let kind = item.uv_kind();
+            // SAFETY: `previous_path` is null, or the path of the last entry of `array`.
+            let res = bun_jsc::from_js_host_call(global_object, || unsafe {
+                Bun__Dirent__toJS(
+                    global_object,
+                    kind,
+                    item.name,
+                    item.path,
+                    &mut previous_path,
+                )
+            })?;
+            array.put_index(global_object, i as u32, res)?;
+        }
+        Ok(array)
+    }
+
+    fn uv_kind(&self) -> i32 {
         use bun_libuv_sys::{
             UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
             UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
         };
-        let kind_int: i32 = match self.kind {
+        match self.kind {
             DirentKind::File => UV_DIRENT_FILE,
             DirentKind::BlockDevice => UV_DIRENT_BLOCK,
             DirentKind::CharacterDevice => UV_DIRENT_CHAR,
@@ -1906,16 +1834,7 @@ impl Dirent {
             DirentKind::UnixDomainSocket => UV_DIRENT_SOCKET,
             DirentKind::SymLink => UV_DIRENT_LINK,
             DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
-        };
-        bun_jsc::from_js_host_call(global_object, || {
-            Bun__Dirent__toJS(
-                global_object,
-                kind_int,
-                self.name,
-                self.path,
-                cached_previous_path_jsvalue,
-            )
-        })
+        }
     }
 }
 

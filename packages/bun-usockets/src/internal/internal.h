@@ -446,6 +446,11 @@ static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
   return !s->flags.is_closed && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
 }
 
+/* The handlers in Rust read a null first word as a socket that has no owner yet. */
+static inline void us_internal_socket_clear_ext(struct us_socket_t *s, int ext_size) {
+  if (ext_size >= (int) sizeof(void *)) *(void **) (s + 1) = NULL;
+}
+
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
  * (is_closed + adopted, prev -> replacement; freed by the outermost tick's
  * us_internal_free_closed_sockets, so it is still readable mid-dispatch). A

@@ -629,7 +629,8 @@ pub(crate) fn run_task(
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
             bun_jsc::mark_binding();
-            cast!(JSCDeferredWorkTask).run(global)?;
+            // SAFETY: §Dispatch — the tag identifies the type, and the task left its queue once.
+            unsafe { JSCDeferredWorkTask::run(cast_ptr!(JSCDeferredWorkTask), global) }?;
         }
         task_tag::RuntimeTranspilerStore => in_features!(
             [RuntimeTranspiler],

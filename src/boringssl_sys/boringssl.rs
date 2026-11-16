@@ -13,18 +13,6 @@ use core::ptr::null_mut;
 use bun_core::vec::BorrowedCursor;
 use bun_core::{BoundedArray, CStrRef};
 
-/// `bun_opaque::opaque_ffi!` without `opaque_ref`. Alignment 2 makes `bun_opaque::opaque_deref` reject these types too.
-macro_rules! opaque {
-    ($(#[$m:meta])* $name:ident) => {
-        $(#[$m])*
-        #[repr(C, align(2))]
-        pub struct $name {
-            _p: core::cell::UnsafeCell<[u8; 0]>,
-            _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-        }
-    };
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════════════
@@ -87,90 +75,50 @@ pub struct RSA_PSS_PARAMS {
 // Opaque handles
 // ═══════════════════════════════════════════════════════════════════════════
 
-opaque!(
+bun_opaque::sealed_handle! {
     /// `struct engine_st` (`typedef ... ENGINE`).
-    ENGINE
-);
-opaque!(
+    pub struct ENGINE;
     /// `struct env_md_st` (`typedef ... EVP_MD`).
-    EVP_MD
-);
-opaque!(
+    pub struct EVP_MD;
     /// `struct ssl_st` (`typedef ... SSL`).
-    SSL
-);
-opaque!(
+    pub struct SSL;
     /// `struct ssl_ctx_st` (`typedef ... SSL_CTX`).
-    SSL_CTX
-);
-opaque!(
+    pub struct SSL_CTX;
     /// `struct ssl_cipher_st` (`typedef ... SSL_CIPHER`).
-    SSL_CIPHER
-);
-opaque!(
+    pub struct SSL_CIPHER;
     /// `struct crypto_buffer_pool_st` (`typedef ... CRYPTO_BUFFER_POOL`).
-    CRYPTO_BUFFER_POOL
-);
-opaque!(
+    pub struct CRYPTO_BUFFER_POOL;
     /// `struct crypto_buffer_st` (`typedef ... CRYPTO_BUFFER`).
-    CRYPTO_BUFFER
-);
-opaque!(
+    pub struct CRYPTO_BUFFER;
     /// `struct x509_lazy_cert_set_st` (`typedef ... X509_LAZY_CERT_SET`, oven-sh/boringssl).
-    X509_LAZY_CERT_SET
-);
-opaque!(
+    pub struct X509_LAZY_CERT_SET;
     /// `struct x509_st` (`typedef ... X509`).
-    X509
-);
-opaque!(
+    pub struct X509;
     /// `struct X509_name_st` (`typedef ... X509_NAME`).
-    X509_NAME
-);
-opaque!(
+    pub struct X509_NAME;
     /// `struct X509_name_entry_st` (`typedef ... X509_NAME_ENTRY`).
-    X509_NAME_ENTRY
-);
-opaque!(
+    pub struct X509_NAME_ENTRY;
     /// `struct X509_extension_st` (`typedef ... X509_EXTENSION`).
-    X509_EXTENSION
-);
-opaque!(
+    pub struct X509_EXTENSION;
     /// `struct v3_ext_method` (`typedef ... X509V3_EXT_METHOD`).
-    X509V3_EXT_METHOD
-);
-opaque!(
+    pub struct X509V3_EXT_METHOD;
     /// `struct asn1_object_st` (`typedef ... ASN1_OBJECT`).
-    ASN1_OBJECT
-);
-opaque!(
+    pub struct ASN1_OBJECT;
     /// `struct asn1_type_st` (`typedef ... ASN1_TYPE`).
-    ASN1_TYPE
-);
-opaque!(
+    pub struct ASN1_TYPE;
     /// `struct X509_algor_st` (`typedef ... X509_ALGOR`).
-    X509_ALGOR
-);
-opaque!(
+    pub struct X509_ALGOR;
     /// `struct evp_pkey_ctx_st`.
-    EVP_PKEY_CTX
-);
-opaque!(
+    pub struct EVP_PKEY_CTX;
     /// `struct evp_md_pctx_ops` (private vtable).
-    evp_md_pctx_ops
-);
-opaque!(
+    pub struct evp_md_pctx_ops;
     /// `STACK_OF(X509)` — opaque stack handle.
-    struct_stack_st_X509
-);
-opaque!(
+    pub struct struct_stack_st_X509;
     /// `STACK_OF(GENERAL_NAME)` — opaque stack handle.
-    struct_stack_st_GENERAL_NAME
-);
-opaque!(
+    pub struct struct_stack_st_GENERAL_NAME;
     /// `struct crypto_ex_data_st` (`typedef ... CRYPTO_EX_DATA`).
-    CRYPTO_EX_DATA
-);
+    pub struct CRYPTO_EX_DATA;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EVP digest context (by-value layout — stored inline by callers)
@@ -469,10 +417,11 @@ unsafe extern "C" {
     fn GENERAL_NAME_free(name: *mut GENERAL_NAME);
 }
 
-/// Owns one `SSL_CTX` reference; `SSL_CTX_free`s it on drop. Construct from a
-/// pointer that already carries a +1 (`SSL_CTX_new`, `SSL_CTX_up_ref`).
-#[repr(transparent)]
-pub struct OwnedSslCtx(core::ptr::NonNull<SSL_CTX>);
+// SAFETY: made from a pointer that already carries a +1 (`SSL_CTX_new`, `SSL_CTX_up_ref`).
+bun_opaque::owned_handle! {
+    /// Owns one `SSL_CTX` reference; `SSL_CTX_free`s it on drop.
+    pub struct OwnedSslCtx(SSL_CTX) => unsafe SSL_CTX_free;
+}
 
 impl OwnedSslCtx {
     /// Takes the +1 `raw` carries; `None` when `raw` is null.
@@ -493,14 +442,6 @@ impl OwnedSslCtx {
     }
 }
 
-impl core::ops::Deref for OwnedSslCtx {
-    type Target = SSL_CTX;
-    fn deref(&self) -> &SSL_CTX {
-        // SAFETY: live until `self` is dropped.
-        unsafe { self.0.as_ref() }
-    }
-}
-
 impl Clone for OwnedSslCtx {
     /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
     fn clone(&self) -> Self {
@@ -510,44 +451,14 @@ impl Clone for OwnedSslCtx {
     }
 }
 
-impl Drop for OwnedSslCtx {
-    fn drop(&mut self) {
-        // SAFETY: we own exactly one reference, released once.
-        unsafe { SSL_CTX_free(self.0.as_ptr()) }
-    }
-}
-
-/// An owner of one reference, released on drop. `Option<$name>` is a nullable `$handle *`.
-macro_rules! owned_handle {
-    ($($name:ident($handle:ident) => $free:ident;)+) => {$(
-        #[doc = concat!("Owns one `", stringify!($handle), "` reference.")]
-        #[repr(transparent)]
-        pub struct $name(core::ptr::NonNull<$handle>);
-
-        impl core::ops::Deref for $name {
-            type Target = $handle;
-            fn deref(&self) -> &$handle {
-                // SAFETY: live until `self` is dropped.
-                unsafe { self.0.as_ref() }
-            }
-        }
-
-        impl Drop for $name {
-            fn drop(&mut self) {
-                // SAFETY: we own exactly one reference, released once.
-                unsafe { $free(self.0.as_ptr()) }
-            }
-        }
-    )+};
-}
-
-owned_handle! {
-    OwnedSslSession(SSL_SESSION) => SSL_SESSION_free;
-    OwnedX509(X509) => X509_free;
-    OwnedX509Crl(X509_CRL) => X509_CRL_free;
-    OwnedX509Store(X509_STORE) => X509_STORE_free;
-    OwnedEvpPkey(EVP_PKEY) => EVP_PKEY_free;
-    OwnedRsa(RSA) => RSA_free;
+// SAFETY: each is made from one reference that BoringSSL handed over.
+bun_opaque::owned_handle! {
+    pub struct OwnedSslSession(SSL_SESSION) => unsafe SSL_SESSION_free;
+    pub struct OwnedX509(X509) => unsafe X509_free;
+    pub struct OwnedX509Crl(X509_CRL) => unsafe X509_CRL_free;
+    pub struct OwnedX509Store(X509_STORE) => unsafe X509_STORE_free;
+    pub struct OwnedEvpPkey(EVP_PKEY) => unsafe EVP_PKEY_free;
+    pub struct OwnedRsa(RSA) => unsafe RSA_free;
 }
 
 impl SSL_CTX {
@@ -1645,14 +1556,12 @@ const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 /// parameters.
 pub(crate) type ossl_ssize_t = isize;
 
-opaque!(
+bun_opaque::sealed_handle! {
     /// `struct bio_method_st` (`typedef ... BIO_METHOD`).
-    BIO_METHOD
-);
-opaque!(
+    pub struct BIO_METHOD;
     /// `struct bio_st` (`typedef ... BIO`).
-    BIO
-);
+    pub struct BIO;
+}
 
 /// `#define BIO_CTRL_FLUSH 11`
 pub const BIO_CTRL_FLUSH: c_int = 11;
@@ -1663,26 +1572,18 @@ pub const BIO_TYPE_SOURCE_SINK: c_int = 0x0400;
 // Additional opaque handles
 // ═══════════════════════════════════════════════════════════════════════════
 
-opaque!(
+bun_opaque::sealed_handle! {
     /// `struct ssl_method_st` (`typedef ... SSL_METHOD`).
-    SSL_METHOD
-);
-opaque!(
+    pub struct SSL_METHOD;
     /// `struct x509_store_st` (`typedef ... X509_STORE`).
-    X509_STORE
-);
-opaque!(
+    pub struct X509_STORE;
     /// `struct x509_store_ctx_st` (`typedef ... X509_STORE_CTX`).
-    X509_STORE_CTX
-);
-opaque!(
+    pub struct X509_STORE_CTX;
     /// `struct X509_crl_st` (`typedef ... X509_CRL`).
-    X509_CRL
-);
-opaque!(
+    pub struct X509_CRL;
     /// `struct rsa_st` (`typedef ... RSA`).
-    RSA
-);
+    pub struct RSA;
+}
 
 /// `int (*SSL_verify_cb)(int preverify_ok, X509_STORE_CTX *ctx)` — verify
 /// callback type for `SSL_set_verify` / `SSL_CTX_set_verify`.
@@ -1932,14 +1833,12 @@ unsafe extern "C" {
 // Extern functions — TLS context/session setup for QUIC (node:quic)
 // ═══════════════════════════════════════════════════════════════════════════
 
-opaque!(
+bun_opaque::sealed_handle! {
     /// `struct evp_pkey_st` (`typedef ... EVP_PKEY`).
-    EVP_PKEY
-);
-opaque!(
+    pub struct EVP_PKEY;
     /// `struct ssl_session_st` (`typedef ... SSL_SESSION`).
-    SSL_SESSION
-);
+    pub struct SSL_SESSION;
+}
 
 /// `TLS1_2_VERSION` (`openssl/tls1.h`).
 pub const TLS1_2_VERSION: u16 = 0x0303;

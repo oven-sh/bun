@@ -187,7 +187,8 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
+    ArrayBuffer, ArrayBufferPin, ArrayBufferViewPins, BinaryType, JSCArrayBuffer,
+    MarkedArrayBuffer, OffThreadBytes, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -386,7 +387,7 @@ pub use self::js_map::JSMap;
 pub use self::js_runtime_type::JSRuntimeType;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
-pub use self::regular_expression::RegularExpression;
+pub use self::regular_expression::OwnedRegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
@@ -863,7 +864,7 @@ pub use self::resolved_source_tag::ResolvedSourceTag;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
-pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName, HeadersInit, HeadersRef};
 
 /// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index
@@ -928,6 +929,29 @@ impl Drop for EnsureStillAlive {
     #[inline]
     fn drop(&mut self) {
         self.0.ensure_still_alive();
+    }
+}
+
+/// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
+pub struct DOMWrapped<T> {
+    native: core::ptr::NonNull<T>,
+    _wrapper: EnsureStillAlive,
+}
+impl<T> DOMWrapped<T> {
+    /// # Safety
+    /// `native` is null, or valid for as long as `wrapper` is not collected.
+    pub(crate) unsafe fn new(wrapper: JSValue, native: *mut T) -> Option<Self> {
+        Some(Self {
+            native: core::ptr::NonNull::new(native)?,
+            _wrapper: EnsureStillAlive(wrapper),
+        })
+    }
+}
+impl<T> core::ops::Deref for DOMWrapped<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the contract of `new`.
+        unsafe { self.native.as_ref() }
     }
 }
 

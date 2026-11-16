@@ -5107,15 +5107,7 @@ pub(crate) mod ret {
     impl Readdir {
         pub(crate) fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
-                Readdir::WithFileTypes(items) => {
-                    let array = JSValue::create_empty_array(global_object, items.len())?;
-                    let mut previous_jsstring: *mut bun_jsc::JSString = core::ptr::null_mut();
-                    for (i, item) in items.into_vec().into_iter().enumerate() {
-                        let res = item.into_js(global_object, Some(&mut previous_jsstring))?;
-                        array.put_index(global_object, i as u32, res)?;
-                    }
-                    Ok(array)
-                }
+                Readdir::WithFileTypes(items) => Dirent::into_js_array(items, global_object),
                 Readdir::Buffers(mut items) => {
                     // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
                     // `Uint8Array[]`. Ownership of every `Buffer`'s bytes

@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
@@ -413,7 +412,7 @@ pub mod vec {
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
     // `MaybeUninit<u8>` and every C-ABI fill site (simdutf,
-    // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
+    // base64) needs `*mut u8` / `&mut [u8]`.
 
     /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
     /// syscall producer to fill. Pair with [`commit_spare`] (or use
@@ -1781,36 +1780,29 @@ pub(crate) mod strings_impl {
     #[inline(always)]
     fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
         let n = src.len();
-        assert!(n <= 16 && n <= dst.len());
-        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
-        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
-        unsafe {
-            if n >= 8 {
-                let first = from.cast::<u64>().read_unaligned();
-                let last = from.add(n - 8).cast::<u64>().read_unaligned();
-                if (first | last) & 0x8080_8080_8080_8080 != 0 {
-                    return false;
-                }
-                to.cast::<u64>().write_unaligned(first);
-                to.add(n - 8).cast::<u64>().write_unaligned(last);
-            } else if n >= 4 {
-                let first = from.cast::<u32>().read_unaligned();
-                let last = from.add(n - 4).cast::<u32>().read_unaligned();
-                if (first | last) & 0x8080_8080 != 0 {
-                    return false;
-                }
-                to.cast::<u32>().write_unaligned(first);
-                to.add(n - 4).cast::<u32>().write_unaligned(last);
-            } else if n > 0 {
-                // The first, the middle and the last of one, two or three bytes are all of them.
-                let (first, middle, last) = (*from, *from.add(n / 2), *from.add(n - 1));
-                if (first | middle | last) >= 0x80 {
-                    return false;
-                }
-                *to = first;
-                *to.add(n / 2) = middle;
-                *to.add(n - 1) = last;
+        debug_assert!(n <= 16);
+        let dst = &mut dst[..n];
+        if let (Some(&first), Some(&last)) = (src.first_chunk::<8>(), src.last_chunk()) {
+            if (u64::from_ne_bytes(first) | u64::from_ne_bytes(last)) & 0x8080_8080_8080_8080 != 0 {
+                return false;
             }
+            *dst.first_chunk_mut().unwrap() = first;
+            *dst.last_chunk_mut().unwrap() = last;
+        } else if let (Some(&first), Some(&last)) = (src.first_chunk::<4>(), src.last_chunk()) {
+            if (u32::from_ne_bytes(first) | u32::from_ne_bytes(last)) & 0x8080_8080 != 0 {
+                return false;
+            }
+            *dst.first_chunk_mut().unwrap() = first;
+            *dst.last_chunk_mut().unwrap() = last;
+        } else if n > 0 {
+            // The first, the middle and the last of one, two or three bytes are all of them.
+            let (first, middle, last) = (src[0], src[n / 2], src[n - 1]);
+            if (first | middle | last) >= 0x80 {
+                return false;
+            }
+            dst[0] = first;
+            dst[n / 2] = middle;
+            dst[n - 1] = last;
         }
         true
     }

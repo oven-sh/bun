@@ -1172,7 +1172,7 @@ impl Snapshots {
             return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
         };
 
-        if !self.snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached, true)) {
+        if !self.snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached)) {
             let after_dir = core::mem::replace(&mut buf[dir_len], 0);
             match bun_sys::mkdir(ZStr::from_buf(&buf[..], dir_len), 0o777) {
                 Err(err) if err.get_errno() != bun_sys::Errno::EEXIST => return Err(err),

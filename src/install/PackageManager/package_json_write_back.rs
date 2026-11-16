@@ -425,7 +425,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
             .map_or(invalid_package_id, |id| id as PackageID)
     };
     (edited.iter())
-        .map(|e| e.target.name_hash.map_or(0, &id_of))
+        .map(|e| e.target.name_hash.map_or(0, id_of))
         .collect()
 }
 

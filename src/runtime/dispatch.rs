@@ -152,10 +152,6 @@ use crate::bake::dev_server::source_map_store::SourceMapStore;
 use crate::node::fs::async_ as fs_async;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
-use crate::node::node_zlib_binding;
-use crate::node::zlib::{
-    native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd,
-};
 
 use crate::dns_jsc::Resolver as DNSResolver;
 use crate::server::ServerAllConnectionsClosedTask;
@@ -240,15 +236,6 @@ pub(crate) fn run_task(
                 $(-> $Result)?
                 $body
             )
-        };
-    }
-    macro_rules! compression_arm {
-        ($feature:ident, $T:ty) => {
-            feature_arm!([$feature], |stream: $T| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns the ref `write()` took.
-                let write = unsafe { node_zlib_binding::PendingWrite::from_raw(stream) };
-                node_zlib_binding::run_from_js_thread(write);
-            })
         };
     }
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
@@ -688,11 +675,6 @@ pub(crate) fn run_task(
             for_each_fs_uv_op!(__fs_run);
         }
 
-        // ── compression streams ──────────────────────────────────────────
-        task_tag::NativeZlib => compression_arm!(NodeZlib, NativeZlib),
-        task_tag::NativeBrotli => compression_arm!(NodeZlibBrotli, NativeBrotli),
-        task_tag::NativeZstd => compression_arm!(NodeZlibZstd, NativeZstd),
-
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
@@ -831,7 +813,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 85,
+    task_tag::COUNT == 82,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1680,9 +1662,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
                 NativePromiseContextDeferredDerefTask
             )
         }
-        task_tag::NativeBrotli => release_in!([NodeZlibBrotli], NativeBrotli),
-        task_tag::NativeZlib => release_in!([NodeZlib], NativeZlib),
-        task_tag::NativeZstd => release_in!([NodeZlibZstd], NativeZstd),
         task_tag::PosixSignalTask => release!(PosixSignalTask),
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {

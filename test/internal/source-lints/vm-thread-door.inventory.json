@@ -184,9 +184,6 @@
       "CStrPtr"
     ]
   },
-  "src/runtime/node/node_zlib_binding.rs": {
-    "WorkPool::schedule*": 1
-  },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
     "unsafe impl Sync": [
@@ -209,11 +206,6 @@
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
-  },
-  "src/runtime/webcore/CompressionStreamCoder.rs": {
-    "unsafe impl Send": [
-      "CompressionAsyncCtx"
-    ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {
     "unsafe impl Send": [

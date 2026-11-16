@@ -610,7 +610,7 @@ impl FrameworkRouter {
                         }
 
                         for banned_dir in t.ignore_dirs.iter() {
-                            if strings::eql_long(base, banned_dir, true) {
+                            if strings::eql_long(base, banned_dir) {
                                 continue 'outer;
                             }
                         }

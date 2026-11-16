@@ -22,6 +22,12 @@ class GlobalInternals : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<GlobalInternals*>(cell)->GlobalInternals::~GlobalInternals();
+    }
+
     static GlobalInternals* create(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -34,7 +40,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForV8GlobalInternals, m_subspaceForV8GlobalInternals));
+        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForV8GlobalInternals, m_subspaceForV8GlobalInternals));
     }
 
     JSC::Structure* objectTemplateStructure(JSC::JSGlobalObject* globalObject) const
@@ -127,8 +133,6 @@ private:
     JSC::LazyClassStructure m_functionTemplateStructure;
     JSC::LazyClassStructure m_v8FunctionStructure;
     WTF::HashMap<void*, EscapeReservation> m_escapeReservations;
-    // No inline capacity, because in-cell inline Vector storage would leave stale ASAN container
-    // annotations behind (this cell is swept without running destructors).
     WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
     JSC::LazyProperty<GlobalInternals, Bun::HandleScopeImpl> m_globalHandles;
 

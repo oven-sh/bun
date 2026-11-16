@@ -17,7 +17,8 @@ use bun_sema::program::{
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
-    HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
+    HostResolution, JsxRuntime, JsxSettings, Options, Resolver, is_javascript, is_same_path,
+    is_typescript_file_name, join,
 };
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -713,11 +714,35 @@ pub(super) fn default_project(
     if let Json::Object(options) = &mut options {
         config::merge_compiler_options(options, config::compile_build_overrides(), &[]);
         options.retain(|option| option.0 != b"verbatimModuleSyntax" && option.0 != b"lib");
+        let settings = options_of_jsx(&code.jsx);
+        options.retain(|option| settings.iter().all(|setting| option.0 != setting.0));
+        options.extend(settings);
     }
     let directory = &code.working_directory;
     let mut project = config::without_config(host, directory, options, entry_paths.to_vec());
     project.files.retain(|path| is_typescript_file_name(path));
     project
+}
+
+fn options_of_jsx(settings: &JsxSettings) -> Vec<(Vec<u8>, Json)> {
+    let default = JsxSettings::default();
+    let text = |name: &[u8], value: Vec<u8>| (name.to_vec(), Json::String(value));
+    let mut options = Vec::new();
+    match settings.runtime {
+        JsxRuntime::Automatic => {
+            if settings.import_source != default.import_source {
+                options.push(text(b"jsxImportSource", settings.import_source.clone()));
+            }
+        }
+        JsxRuntime::Classic => {
+            options.push(text(b"jsx", b"react".to_vec()));
+            if settings.factory != default.factory || settings.fragment != default.fragment {
+                options.push(text(b"jsxFactory", settings.factory.join(&b'.')));
+                options.push(text(b"jsxFragmentFactory", settings.fragment.join(&b'.')));
+            }
+        }
+    }
+    options
 }
 
 fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> bool {

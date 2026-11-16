@@ -332,8 +332,9 @@ test.skipIf(!isSupported)(
     using dir = tempDir("aot-order-file-api", {
       "program.ts": program,
       "helper.ts": helper,
-      "build.ts": `const [entry, outfile, aotOrder] = process.argv.slice(2);
-const { success } = await Bun.build({ entrypoints: [entry], compile: { aot: true, outfile, aotOrder: aotOrder ?? false } });
+      "build.ts": `const [entry, outfile, ...names] = process.argv.slice(2);
+const aotOrder = names.length > 1 ? names : (names[0] ?? false);
+const { success } = await Bun.build({ entrypoints: [entry], compile: { aot: true, outfile, aotOrder } });
 if (!success) process.exit(1);
 `,
     });
@@ -351,6 +352,9 @@ if (!success) process.exit(1);
     // The flag alone is split at commas.
     expect(await buildByApi(order)).toBe(bytes);
     expect(await buildByApi()).toBe(unordered);
+    // An empty name is no file, as it is for the flag.
+    expect(await buildByApi("")).toBe(unordered);
+    expect(await buildByApi("", order)).toBe(bytes);
   },
   240_000,
 );

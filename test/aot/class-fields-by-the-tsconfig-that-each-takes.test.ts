@@ -6,7 +6,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned } from "./harness/commands";
+import { moreBuildFlags, slot, spawned } from "./harness/commands";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { test } from "./supported";
 
@@ -43,6 +43,8 @@ const rows = (stdout: string, executable: string) =>
     .replace(executable, "<executable>")
     .replace(/  [\d.]+ MB$/m, "  <size>")
     .replace(/^build id  [0-9a-f]+$/m, "build id  <id>");
+/** What a build with --aot writes to stderr: nothing. With AOT_BUILD_FLAGS it takes more flags (harness/commands.ts) and names them there. */
+const stderrOfAotBuild = moreBuildFlags.length ? expect.not.stringMatching(/^error\b/m) : "";
 
 type Answers = { run: string; executable: string; aot: string };
 type Project = { entry: string; files: Record<string, string>; beside: Answers; above: Answers };
@@ -159,45 +161,41 @@ for (const [name, project] of Object.entries(projects)) {
     const lines = sources.join("").split("\n").length - 1;
     const bundled = `bundle  ${sources.length} modules\n`;
     const checked = `check  ${lines} lines  ${sources.length} files compiled without types\n`;
+    const rowsOfBuild = `${bundled}compile  <executable>\n`;
+    const rowsOfAotBuild = `${bundled}${checked}compile  <executable>  <size>\nbuild id  <id>\n`;
 
+    const commandsIn = (place: "beside" | "above") => {
+      const cwd = place === "beside" ? folderOfEntry : join(folderOfEntry, "..");
+      const built = (...flags: string[]) =>
+        slot(async () => {
+          const executable = join(String(dir), place + flags.join("") + (isWindows ? ".exe" : ""));
+          const words = ["build", "--compile", ...flags, ...withoutDebugInformation, entry, "--outfile", executable];
+          try {
+            const build = await spawned([bunExe(), ...words], cwd, bunEnv);
+            return {
+              build: { ...build, stdout: rows(build.stdout, executable) },
+              start: build.exitCode === 0 ? await spawned([executable], String(dir), bunEnv) : undefined,
+            };
+          } finally {
+            // An executable is the size of Bun, and nothing starts this one again. One that is gone before the system has written it to the disk is never written.
+            // Windows may still hold the file of a process that has just ended. There it goes with the folder.
+            if (!isWindows) rmSync(executable, { force: true });
+          }
+        });
+      return [slot(() => spawned([bunExe(), entry], cwd, bunEnv)), built(), built("--aot")] as const;
+    };
     // The commands of one working directory need nothing of one another, and nothing of those of the other: each starts as soon as a processor is free.
-    const seen = await Promise.all(
-      (["beside", "above"] as const).map(async place => {
-        const cwd = place === "beside" ? folderOfEntry : join(folderOfEntry, "..");
-        const built = (...flags: string[]) =>
-          slot(async () => {
-            const executable = join(String(dir), place + flags.join("") + (isWindows ? ".exe" : ""));
-            const words = ["build", "--compile", ...flags, ...withoutDebugInformation, entry, "--outfile", executable];
-            try {
-              const build = await spawned([bunExe(), ...words], cwd, bunEnv);
-              return {
-                build: { ...build, stdout: rows(build.stdout, executable) },
-                start: build.exitCode === 0 ? await spawned([executable], String(dir), bunEnv) : undefined,
-              };
-            } finally {
-              // An executable is the size of Bun, and nothing starts this one again. One that is gone before the system has written it to the disk is never written.
-              rmSync(executable, { force: true });
-            }
-          });
-        const [run, executable, aot] = await Promise.all([
-          slot(() => spawned([bunExe(), entry], cwd, bunEnv)),
-          built(),
-          built("--aot"),
-        ]);
-        return { place, run, executable, aot };
-      }),
-    );
+    const started = { beside: commandsIn("beside"), above: commandsIn("above") };
+    // The folder stays until the last command has ended, also where one of them threw.
+    await Promise.allSettled([...started.beside, ...started.above]);
 
-    for (const answers of seen) {
-      const { run, executable, aot } = project[answers.place];
-      expect(answers).toEqual({
-        place: answers.place,
-        run: printed(run),
-        executable: { build: ended(`${bundled}compile  <executable>\n`), start: printed(executable) },
-        aot: {
-          build: ended(`${bundled}${checked}compile  <executable>  <size>\nbuild id  <id>\n`),
-          start: printed(aot),
-        },
+    for (const place of ["beside", "above"] as const) {
+      const [run, executable, aot] = await Promise.all(started[place]);
+      expect({ place, run, executable, aot }).toEqual({
+        place,
+        run: printed(project[place].run),
+        executable: { build: ended(rowsOfBuild), start: printed(project[place].executable) },
+        aot: { build: { ...ended(rowsOfAotBuild), stderr: stderrOfAotBuild }, start: printed(project[place].aot) },
       });
     }
   });

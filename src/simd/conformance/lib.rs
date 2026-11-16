@@ -1,6 +1,6 @@
 //! `bun test --run-simd-tests`, in debug and canary builds, for `test/internal/simd.test.ts`.
 //! `BUN_SIMD_TARGET` picks the target.
-#![feature(optimize_attribute, stmt_expr_attributes)]
+#![feature(stmt_expr_attributes)]
 #![cfg_attr(target_arch = "aarch64", feature(aarch64_unstable_target_feature))]
 
 mod bench;

@@ -469,7 +469,7 @@ impl Drop for DevServer {
         let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
         // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
         // transfers to `shutdown`, which reclaims or hands off to the thread.
-        unsafe { Watcher::shutdown(Box::into_raw(watcher), true) };
+        unsafe { Watcher::shutdown(Box::into_raw(watcher)) };
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 

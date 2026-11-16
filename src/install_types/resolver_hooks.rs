@@ -13,7 +13,6 @@
 
 use core::cmp::Ordering;
 use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
 
 use bun_core::strings;
 use bun_semver::version::VersionInt;
@@ -333,23 +332,6 @@ pub enum DependencyVersionTag {
     Catalog = 9,
 }
 
-/// Resolver-visible projection of `install::dependency::Version`. The resolver
-/// only reads `.tag` and round-trips the whole value through [`AutoInstaller`]
-/// methods; the parsed `Version.Value` union is install-internal and is stored
-/// here as an opaque inline buffer so the struct stays `Send`/`Clone`.
-///
-/// `#[repr(C)]` + identical field order make this layout-compatible with
-/// `bun_install::dependency::Version`; `bun_install::auto_installer` asserts
-/// `size_of`/`align_of` equality at compile time so the lockfile dependency
-/// buffer can be reinterpreted without copying.
-// ─── Dependency.Version.Value payload types ───────────────────────────────
-// MOVE_DOWN from `bun_install::dependency` — every variant is either a
-// `Semver.String` handle, a `Repository`, or a `Semver.Query.Group` (all
-// lower-tier `bun_semver` data), so the full union is spellable here. Putting
-// the real union in this crate lets the resolver inspect
-// `value.npm.version.is_exact()` directly and
-// round-trip the parsed value through [`AutoInstaller`] without type erasure.
-
 #[derive(Clone, Copy)]
 pub enum URI {
     Local(SemverString),
@@ -360,27 +342,18 @@ impl URI {
     pub(crate) fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         match (lhs, rhs) {
             (URI::Local(l), URI::Local(r)) | (URI::Remote(l), URI::Remote(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
+                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf))
             }
             _ => false,
         }
     }
 }
 
+#[derive(Clone)]
 pub struct NpmInfo {
     pub name: SemverString,
     pub version: semver::query::Group,
     pub is_alias: bool,
-}
-
-impl Clone for NpmInfo {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name,
-            version: self.version.clone(),
-            is_alias: self.is_alias,
-        }
-    }
 }
 
 impl NpmInfo {
@@ -407,109 +380,50 @@ impl TarballInfo {
     }
 }
 
-/// Untagged union; the discriminant
-/// lives in [`DependencyVersion::tag`]. The `npm` arm owns a `Box` linked list
-/// (`Semver.Query.Group`) and is `ManuallyDrop`-wrapped because the union has
-/// no tag; [`DependencyVersion`]'s `Drop`/`Clone` dispatch on `tag` to free /
-/// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
-#[repr(C)]
-pub union DependencyVersionValue {
-    pub(crate) uninitialized: (),
-
-    pub npm: ManuallyDrop<NpmInfo>,
-    pub dist_tag: TagInfo,
-    pub tarball: TarballInfo,
-    pub folder: SemverString,
-
+/// In the order of [`DependencyVersionTag`].
+#[derive(Default, Clone, bun_core::EnumTag)]
+#[enum_tag(existing = DependencyVersionTag)]
+#[repr(u8)]
+#[expect(clippy::large_enum_variant, reason = "`Npm` is the common case")]
+pub enum DependencyVersionValue {
+    #[default]
+    Uninitialized,
+    Npm(NpmInfo),
+    DistTag(TagInfo),
+    Tarball(TarballInfo),
+    Folder(SemverString),
     /// Equivalent to npm link
-    pub symlink: SemverString,
-
-    pub workspace: SemverString,
-    pub git: ManuallyDrop<Repository>,
-    pub github: ManuallyDrop<Repository>,
-
+    Symlink(SemverString),
+    Workspace(SemverString),
+    Git(Repository),
+    Github(Repository),
     /// dep version without 'catalog:' protocol — empty string == default catalog
-    pub catalog: SemverString,
+    Catalog(SemverString),
 }
 
-impl Default for DependencyVersionValue {
-    #[inline]
-    fn default() -> Self {
-        DependencyVersionValue { uninitialized: () }
-    }
-}
-
-// No `Clone for DependencyVersionValue`: a tag-blind bitwise clone would double-free `npm`.
-
-#[repr(C)]
+#[derive(Default, Clone)]
 pub struct DependencyVersion {
-    pub tag: DependencyVersionTag,
     pub literal: SemverString,
     pub value: DependencyVersionValue,
 }
 
-impl Default for DependencyVersion {
-    fn default() -> Self {
-        Self {
-            tag: DependencyVersionTag::Uninitialized,
-            literal: SemverString::default(),
-            value: DependencyVersionValue { uninitialized: () },
-        }
-    }
-}
-
-impl Clone for DependencyVersion {
-    fn clone(&self) -> Self {
-        let value = match self.tag {
-            DependencyVersionTag::Npm => DependencyVersionValue {
-                // SAFETY: tag == Npm, so `npm` is the active arm.
-                npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
-            },
-            // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
-            _ => unsafe { core::ptr::read(&raw const self.value) },
-        };
-        Self {
-            tag: self.tag,
-            literal: self.literal,
-            value,
-        }
-    }
-}
-
-impl Drop for DependencyVersion {
-    #[inline(never)]
-    fn drop(&mut self) {
-        if self.tag == DependencyVersionTag::Npm {
-            // SAFETY: tag == Npm, so `npm` is the active arm.
-            unsafe { ManuallyDrop::drop(&mut self.value.npm) };
-        }
-    }
-}
-
 impl DependencyVersion {
-    // Tag-checked accessors for the untagged [`DependencyVersionValue`] union.
-    // Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
-    // `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
-    // "wrong" variant is not UB — it yields garbage. `_mut` variants let the
-    // handful of mutate-in-place call sites (`runTasks.rs` package-name
-    // back-patching, `Package.rs` workspace resolution) write through the
-    // active arm without an `unsafe` block apiece.
-    bun_core::extern_union_accessors! {
-        tag: tag as DependencyVersionTag, value: value;
-        Npm       => npm: NpmInfo,            mut npm_mut;
-        DistTag   => dist_tag: TagInfo,       mut dist_tag_mut;
-        Tarball   => tarball: TarballInfo,    mut tarball_mut;
-        Folder    => folder: SemverString,    mut folder_mut;
-        Symlink   => symlink: SemverString,   mut symlink_mut;
-        Workspace => workspace: SemverString, mut workspace_mut;
-        Git       => git: Repository,         mut git_mut;
-        Github    => github: Repository,      mut github_mut;
-        Catalog   => catalog: SemverString,   mut catalog_mut;
+    #[inline]
+    pub fn tag(&self) -> DependencyVersionTag {
+        self.value.tag()
     }
 
     #[inline]
     pub fn try_npm(&self) -> Option<&NpmInfo> {
-        (self.tag == DependencyVersionTag::Npm).then(|| self.npm())
+        match &self.value {
+            DependencyVersionValue::Npm(npm) => Some(npm),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn is_npm_alias(&self) -> bool {
+        self.try_npm().is_some_and(|npm| npm.is_alias)
     }
 
     /// Returns false for non-npm tags.
@@ -519,29 +433,12 @@ impl DependencyVersion {
     }
 }
 
-/// Field order mirrors `bun_install::dependency::Dependency` (`name_hash`,
-/// `name`, `version`, `behavior`) and both are `#[repr(C)]` so the lockfile's
-/// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
-/// `bun_install::auto_installer`).
-#[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
-}
-
-impl Clone for Dependency {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self {
-            name_hash: self.name_hash,
-            name: self.name,
-            version: self.version.clone(),
-            behavior: self.behavior,
-        }
-    }
 }
 
 impl Dependency {

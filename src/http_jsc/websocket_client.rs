@@ -959,7 +959,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let mut unmask = self.unmask.get();
             let mut receive_buffer = self.receive_buffer.borrow_mut();
             let writable = bun_core::handle_oom(receive_buffer.writable_with_size(chunk.len()));
-            unmask.copy(&mut writable[..chunk.len()], chunk);
+            unmask.copy(writable, chunk);
             receive_buffer.update(chunk.len());
             self.unmask.set(unmask);
         }

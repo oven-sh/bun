@@ -162,12 +162,12 @@ fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
 }
 
 pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
-    if strings::has_prefix_comptime_type::<u16>(utf16, &windows::NT_OBJECT_PREFIX) {
+    if utf16.starts_with(&windows::NT_OBJECT_PREFIX) {
         wbuf[..utf16.len()].copy_from_slice(utf16);
         wbuf[utf16.len()] = 0;
         return wstr_in_buf(wbuf, utf16.len());
     }
-    if strings::has_prefix_comptime_type::<u16>(utf16, &windows::LONG_PATH_PREFIX) {
+    if utf16.starts_with(&windows::LONG_PATH_PREFIX) {
         // Replace prefix
         return add_nt_path_prefix(wbuf, &utf16[windows::LONG_PATH_PREFIX.len()..]);
     }
@@ -510,7 +510,7 @@ mod tests {
                     | u32::from(input[i + 2] & 0x3F);
                 if (0xD800..=0xDFFF).contains(&cp) {
                     return SIMDUTFResult {
-                        status: Status::SURROGATE,
+                        status: Status(6), // SURROGATE
                         count: i,
                     };
                 }

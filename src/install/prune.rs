@@ -1747,7 +1747,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache);
+        remove_from_older_places(manager, &places, cache.handle.fd());
         restore_tree(&mut manager.lockfile, saved);
     }
 }
@@ -1762,23 +1762,23 @@ fn tarball_may_contain(
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
-    let buf = &mut **bun_paths::path_buffer_pool::get();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let entry = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
-            crate::package_manager::cached_npm_package_folder_name_print(
+            crate::package_manager::cached_npm_package_folder_name(
                 manager,
-                buf,
+                &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
         ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, buf, res.github(), None)
+            crate::package_manager::cached_github_folder_name(manager, &mut buf, res.github(), None)
         }
         // A tarball dependency can contain anything.
         _ => return true,

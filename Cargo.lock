@@ -467,7 +467,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_ptr",
- "bun_simdutf_sys",
  "bun_wyhash",
  "hashbrown 0.15.5",
  "paste",
@@ -1052,6 +1051,7 @@ dependencies = [
  "bun_resolver",
  "bun_s3_signing",
  "bun_sha_hmac",
+ "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_spawn",
  "bun_sys",
@@ -1080,6 +1080,7 @@ name = "bun_libdeflate_sys"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "bun_opaque",
 ]
 
@@ -1993,7 +1994,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_boringssl",
  "bun_collections",
  "bun_core",

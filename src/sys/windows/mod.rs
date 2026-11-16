@@ -908,7 +908,7 @@ pub(crate) fn GetFinalPathNameByHandle(
         bun_core::fmt::utf16(ret)
     );
 
-    if bun_core::strings::has_prefix_comptime_type::<u16>(ret, &LONG_PATH_PREFIX) {
+    if ret.starts_with(&LONG_PATH_PREFIX) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = &mut ret[4..];
         if bun_core::has_prefix_comptime_utf16(ret, b"UNC\\") {

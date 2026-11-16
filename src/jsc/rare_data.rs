@@ -9,7 +9,7 @@ use crate::node_path::PathOrFileDescriptor;
 use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::webcore_types::store::{Data, File, IsAllAscii, Store};
+use crate::webcore_types::store::{Data, File, Store};
 use crate::{JSGlobalObject, JsCell};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
@@ -185,7 +185,7 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    /// By file descriptor.
+    /// Indexed by `Stdio`.
     stdio: [OnceCell<StdioStore>; 3],
 
     entropy_cache: JsCell<Option<Box<EntropyCache>>>,
@@ -691,12 +691,12 @@ impl RareData {
 
     /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
     /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::Decompressor> {
+    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::OwnedDecompressor> {
         let cell = &self.libdeflate_decompressor;
         if cell.get().is_none() {
             let _ = cell.set(libdeflate::OwnedDecompressor::new()?);
         }
-        cell.get().map(|decompressor| &**decompressor)
+        cell.get()
     }
 
     pub fn default_csrf_secret(&self) -> &[u8] {
@@ -837,7 +837,7 @@ impl RareData {
 
 struct StdioStore {
     store: RefPtr<Store>,
-    /// As it was when the store was made.
+    /// `st_mode` when the store was created.
     mode: Mode,
 }
 
@@ -863,17 +863,15 @@ impl RareData {
                 Stdio::StdOut => Output::stdout_descriptor_type() == terminal,
                 Stdio::StdErr => Output::stderr_descriptor_type() == terminal,
             };
-            let store = RefPtr::new(Store {
-                data: Data::File(File {
+            let store = RefPtr::new(Store::new(
+                Data::File(File {
                     pathlike: PathOrFileDescriptor::Fd(fd),
                     is_atty: Some(is_atty),
                     mode,
                     ..Default::default()
                 }),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
-            });
+                bun_http_types::MimeType::NONE,
+            ));
             StdioStore { store, mode }
         })
     }

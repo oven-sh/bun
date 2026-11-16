@@ -263,7 +263,7 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
 /// fat-LTO parks them tens of MB away from the startup symbol cluster.
 /// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
-/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
+/// `cli_dupe` / `cli_dupe_z`), so a `LazyLock` there faults a
 /// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
@@ -296,12 +296,8 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
 
 /// [`cli_dupe`] without the copy, for a large buffer that the caller owns. Thread-safe.
 fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    /// Keeps them reachable for LeakSanitizer.
-    static ADOPTED: bun_threading::Guarded<Vec<&'static [u8]>> =
-        bun_threading::Guarded::new(Vec::new());
-    let bytes = &*Box::leak(b);
-    ADOPTED.lock().push(bytes);
-    bytes
+    bun_core::asan::ignore_object(b.as_ptr().cast());
+    Box::leak(b)
 }
 
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL.
@@ -310,7 +306,7 @@ fn cli_dupe_z(s: &[u8]) -> bun_core::CStrRef<'static> {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
-    bun_core::CStrRef::from_bytes_with_nul(buf)
+    bun_core::CStrRef::from_slice_with_nul(buf)
 }
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going

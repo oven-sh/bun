@@ -763,7 +763,7 @@ static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 #[cfg(not(windows))]
 impl IoRequestLoop {
     /// On failure, closes the fds it opened so a later call can retry.
-    fn load() -> sys::Result<Self> {
+    fn init() -> sys::Result<Self> {
         #[cfg(not(target_os = "macos"))]
         use bun_sys::FdExt as _;
 
@@ -872,8 +872,8 @@ impl IoRequestLoop {
         let this = match LOOP.get() {
             Some(this) => this,
             None => {
-                let loaded = Self::load()?;
-                LOOP.get_or_init(|| loaded)
+                let request_loop = Self::init()?;
+                LOOP.get_or_init(|| request_loop)
             }
         };
         if !IS_RUNNING.load(Ordering::Relaxed) {
@@ -1248,16 +1248,16 @@ pub unsafe trait IntrusiveUvFs: Sized {
     /// `core::mem::offset_of!(Self, io_request)`.
     const UV_FS_OFFSET: usize;
 
-    /// Recover `*mut Self` from the `*mut uv::fs_t` libuv passes back.
+    /// Take back the `Box<Self>` that was left to libuv, from the `*mut uv::fs_t` it passes back.
     ///
     /// # Safety
     /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// live `Self` allocation, and the pointer's provenance must cover the
+    /// leaked `Box<Self>` that nothing else takes back, and the pointer's provenance must cover the
     /// whole allocation.
     #[inline(always)]
-    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
+    unsafe fn take_from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> Box<Self> {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
+        unsafe { bun_core::heap::take(bun_core::container_of(req, Self::UV_FS_OFFSET)) }
     }
 }
 
@@ -1897,7 +1897,7 @@ pub enum PathOrFileDescriptor<'a> {
 // ─── Waker (moved from bun_io) ──────────────────────────────────────────────
 //
 // io (T2) owns the
-// Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
+// Waker so `IoRequestLoop::init` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
     #[cfg(not(windows))]

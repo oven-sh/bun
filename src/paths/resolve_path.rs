@@ -586,7 +586,7 @@ pub fn relative_normalized_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     let equal = if P::P == Platform::Windows {
         strings::eql_case_insensitive_ascii(from, to, true)
     } else {
-        from.len() == to.len() && strings::eql_long(from, to, false)
+        strings::eql_long(from, to)
     };
     if equal {
         return b"";
@@ -2128,7 +2128,7 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
 
         // skip over volume name
         let volume = &part[0..windows_volume_name_len(part).0];
-        if !volume.is_empty() && !strings::eql_long(volume, root, true) {
+        if !volume.is_empty() && !strings::eql_long(volume, root) {
             continue;
         }
 

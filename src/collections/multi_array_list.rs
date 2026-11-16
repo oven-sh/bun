@@ -299,9 +299,7 @@ struct Reflected<T>(PhantomData<T>);
 impl<T> Reflected<T> {
     /// Number of fields in `T`; const-panics unless `T` is laid out as a struct.
     ///
-    /// The reflection API has no "is this a struct" query (`Type::of::<T>().kind`
-    /// ICEs on nightly-2026-09-15, and `variant(0)` is a hard error on a struct),
-    /// so the check is on what the scatter/gather needs: one variant (not a
+    /// The check is on what the scatter/gather needs: one variant (not a
     /// multi-variant enum), fields unless `T` is zero-sized (not a primitive,
     /// pointer or array), and fields that do not overlap (not a union; disjoint
     /// fields cannot sum past `size_of::<T>()`). A single-variant enum with an
@@ -384,9 +382,7 @@ impl<T> Reflected<T> {
             let mut j = 0;
             while j + 1 + i < n {
                 if Self::META[idx[j]].align < Self::META[idx[j + 1]].align {
-                    let tmp = idx[j];
-                    idx[j] = idx[j + 1];
-                    idx[j + 1] = tmp;
+                    idx.swap(j, j + 1);
                 }
                 j += 1;
             }
@@ -764,14 +760,16 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// The bytes of column `field_index` (declaration order), for a serializer.
     ///
-    /// SAFETY: the field has no padding or other uninitialized bytes in any row.
+    /// # Safety
+    /// The field has no padding or other uninitialized bytes in any row.
     #[inline]
     pub unsafe fn column_bytes(&self, field_index: usize) -> &[u8] {
         let size = Reflected::<T>::META[field_index].size;
         Col::new(self.col_ptr::<u8>(field_index), self.len * size).as_slice()
     }
 
-    /// SAFETY: only valid values of the field are written, and only initialized bytes are read.
+    /// # Safety
+    /// Only valid values of the field are written, and only initialized bytes are read.
     #[inline]
     pub unsafe fn column_bytes_mut(&mut self, field_index: usize) -> &mut [u8] {
         let size = Reflected::<T>::META[field_index].size;
@@ -1020,7 +1018,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         // **intentionally preserved**:
         // [`clone`] is a bitwise SoA memcpy, so two live lists
         // can alias the same column heap pointers — see `bundle_v2.rs`
-        // `clone_ast` / `BundleV2::drop`, which drains exactly
+        // `create_linker_graph` / `BundleV2::drop`, which drains exactly
         // one alias and relies on the other dropping slab-only. Running
         // element destructors here would double-free that side.
         //

@@ -419,7 +419,7 @@ pub(crate) fn add_part_to_file(
 }
 
 /// The columns that say which part declares and which part uses a symbol.
-pub(crate) struct SymbolUses<'s, 'a> {
+pub(crate) struct SymbolUseColumns<'s, 'a> {
     pub(crate) parts: &'s mut [part::List<'a>],
     pub(crate) ast_flags: &'s mut [bundled_ast::Flags],
     pub(crate) exports_ref: &'s [Ref],
@@ -430,7 +430,7 @@ pub(crate) struct SymbolUses<'s, 'a> {
     pub(crate) imports_to_bind: &'s mut [RefImportData],
 }
 
-impl SymbolUses<'_, '_> {
+impl SymbolUseColumns<'_, '_> {
     pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.named_exports, name)
     }
@@ -581,10 +581,10 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    fn symbol_uses(&mut self) -> SymbolUses<'_, 'a> {
+    fn symbol_use_columns(&mut self) -> SymbolUseColumns<'_, 'a> {
         let ast = self.ast.split_mut();
         let meta = self.meta.split_mut();
-        SymbolUses {
+        SymbolUseColumns {
             parts: ast.parts,
             ast_flags: ast.flags,
             exports_ref: ast.exports_ref,
@@ -603,12 +603,13 @@ impl<'a> LinkerGraph<'a> {
         name: &[u8],
         count: u32,
     ) -> Result<(), bun_alloc::AllocError> {
-        self.symbol_uses().generate_runtime_symbol_import_and_use(
-            source_index,
-            entry_point_part_index,
-            name,
-            count,
-        )
+        self.symbol_use_columns()
+            .generate_runtime_symbol_import_and_use(
+                source_index,
+                entry_point_part_index,
+                name,
+                count,
+            )
     }
 
     pub(crate) fn add_part_to_file(
@@ -634,7 +635,7 @@ impl<'a> LinkerGraph<'a> {
         use_count: u32,
         source_index_to_import_from: Index,
     ) -> Result<(), bun_alloc::AllocError> {
-        self.symbol_uses().generate_symbol_import_and_use(
+        self.symbol_use_columns().generate_symbol_import_and_use(
             source_index,
             part_index,
             ref_,
@@ -873,7 +874,7 @@ impl<'a> LinkerGraph<'a> {
         Ok(())
     }
 
-    /// `clone_ast` left each
+    /// `create_linker_graph` left each
     /// `PartList`/import-record list with its allocator handle pointing at
     /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
     /// bundle-thread arena) so linker-side `add_part_to_file` pushes call

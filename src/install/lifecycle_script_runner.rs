@@ -501,7 +501,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         Output::flush();
     }
 
-    /// SAFETY: `this` is what [`Self::watch`] handed out. It may be freed.
+    /// # Safety
+    /// `this` is what [`Self::watch`] handed out. It may be freed.
     #[inline(never)]
     unsafe fn maybe_finished(this: *mut Self) {
         bun_removable_features::removable_definition!(Install, Self::maybe_finished);
@@ -554,11 +555,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.current_script_index = next_script_index;
         match self.spawn() {
             Ok(spawned) => self.watch(spawned),
-            Err(err) => self.exit_unspawned(err),
+            Err(err) => self.exit_with_error(err),
         }
     }
 
-    fn exit_unspawned(&self, err: crate::Error) -> ! {
+    fn exit_with_error(&self, err: crate::Error) -> ! {
         Output::err_generic(
             "Failed to run script <b>{}<r> due to error <b>{}<r>",
             (bstr::BStr::new(self.script_name()), err.name()),
@@ -648,8 +649,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         ]
         .concat();
         let script_envp = [&lifecycle_event, &lifecycle_script]
-            .map(|variable| Some(CStrRef::from_bytes_with_nul(variable)));
-        let envp = [self.envp.entries(), &script_envp, &[None]].concat();
+            .map(|variable| Some(CStrRef::from_slice_with_nul(variable)));
+        let envp = [self.envp.unterminated(), &script_envp, &[None]].concat();
         let envp = Some(CStrList::new(&envp));
         Ok(bun_spawn::spawn_process(
             &spawn_options,
@@ -680,7 +681,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                         Self::reset_output_flags(&mut (*this).stdout, stdout);
                         if let Err(err) = (*this).stdout.start(stdout, true) {
-                            (*this).exit_unspawned(err.into());
+                            (*this).exit_with_error(err.into());
                         }
                         if let Some(poll) = (*this).stdout.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
@@ -696,7 +697,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                         Self::reset_output_flags(&mut (*this).stderr, stderr);
                         if let Err(err) = (*this).stderr.start(stderr, true) {
-                            (*this).exit_unspawned(err.into());
+                            (*this).exit_with_error(err.into());
                         }
                         if let Some(poll) = (*this).stderr.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
@@ -712,14 +713,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
                     (*this).remaining_fds += 1;
                     if let Err(err) = (*this).stdout.start_with_current_pipe() {
-                        (*this).exit_unspawned(err.into());
+                        (*this).exit_with_error(err.into());
                     }
                 }
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
                     (*this).stderr.set_source(bun_io::Source::Pipe(pipe));
                     (*this).remaining_fds += 1;
                     if let Err(err) = (*this).stderr.start_with_current_pipe() {
-                        (*this).exit_unspawned(err.into());
+                        (*this).exit_with_error(err.into());
                     }
                 }
             }

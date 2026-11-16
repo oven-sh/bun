@@ -576,7 +576,7 @@ impl PackageManagerCommand {
             }
 
             let mut dir = bun_paths::path_buffer_pool::get();
-            let fd = get_cache_directory(pm);
+            let fd = get_cache_directory(pm).handle.fd();
             let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => Self::crash_getting_cache_directory(err),
@@ -658,7 +658,7 @@ impl PackageManagerCommand {
                 let name = lockfile.buffers.dependencies[dep_id as usize]
                     .name
                     .slice(lockfile.buffers.string_bytes.as_slice());
-                (!trusted_only || is_trusted(lockfile, dep_id))
+                (!trusted_only || is_trusted(pm, dep_id))
                     && (names.is_empty() || names.contains(&name))
             };
 
@@ -928,7 +928,7 @@ fn print_node_modules_folder_structure(
         let mut found_node_modules = false;
         while dir_index < directories.len() {
             // A node_modules is removed from the list before it is printed.
-            if strings::eql_long(&possible_path, &directories[dir_index].relative_path, true) {
+            if strings::eql_long(&possible_path, &directories[dir_index].relative_path) {
                 found_node_modules = true;
                 let next = directories.remove(dir_index);
 
@@ -1013,10 +1013,12 @@ fn print_selected_dependencies_flat(
 }
 
 /// `InstalledFilter` kept `dep_id`, so it resolves to a package of `lockfile`. The same holds for `print_flat_list`.
-fn is_trusted(lockfile: &Lockfile, dep_id: DependencyID) -> bool {
+fn is_trusted(pm: &PackageManager, dep_id: DependencyID) -> bool {
+    let lockfile: &Lockfile = &pm.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let package_id = lockfile.buffers.resolutions[dep_id as usize] as usize;
     lockfile.has_trusted_dependency(
+        &pm.options,
         lockfile.buffers.dependencies[dep_id as usize]
             .name
             .slice(buf),

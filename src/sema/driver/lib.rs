@@ -166,7 +166,7 @@ pub fn for_each_parallel_in_runs(
     } else if is_pool_thread() {
         region.work_off_with_idle_threads(runners - 1);
     } else {
-        region_pool().each((), |(), (), _| region.work_off(), &mut vec![(); runners]);
+        region_pool().each((), |(), (), _| region.work_off(), &vec![(); runners]);
     }
     region.panic.resume();
 }
@@ -186,11 +186,11 @@ pub(crate) fn for_each_parallel_while(
         return meanwhile();
     }
     let region = Region::new(caches, count, run, work);
-    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
+    let runners = vec![(); threads.clamp(1, count.div_ceil(run))];
     region_pool().each_while(
         (),
         |(), (), _| region.work_off(),
-        &mut runners,
+        &runners,
         || {
             region.panic.catch(meanwhile);
         },
@@ -219,7 +219,7 @@ pub(crate) fn for_each_with_helpers(
         region_pool().each_while(
             (),
             |(), (), _| region.work_off(),
-            &mut vec![(); helpers],
+            &vec![(); helpers],
             || region.work_off(),
         );
     }
@@ -244,7 +244,7 @@ pub(crate) fn for_each_with_share(
     region_pool().each_while(
         (),
         |(), (), _| region.work_off(),
-        &mut vec![(); helpers.min(count.div_ceil(run).saturating_sub(1))],
+        &vec![(); helpers.min(count.div_ceil(run).saturating_sub(1))],
         || {
             let _lent = caches.lend();
             region.work_off_with_spare_threads(shares);
@@ -752,7 +752,7 @@ impl<'a> Region<'a> {
                         self.work_off();
                         shares.lend(1);
                     },
-                    &mut vec![(); helpers],
+                    &vec![(); helpers],
                     || self.work_off_with_spare_threads(shares),
                 );
             }
@@ -5941,7 +5941,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 };
                 // A task requests its next file before it commits the last one, and that commit can make a discarded
                 // file the next.
-                let file = first.take().or_else(&mut next);
+                let file = first.take().or_else(next);
                 first = file.and_then(|file| run_task(file, &mut next));
                 if file.is_some() && is_called_again {
                     return true;

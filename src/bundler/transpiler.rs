@@ -468,10 +468,7 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// `configure_linker*` / `run_env_loader` — used by
-// `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
-// `JSBundleCompletionTask`,
-// `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
+// `configure_linker*` / `run_env_loader`
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_resolver::tsconfig_json::TSConfigJSON;
@@ -1803,7 +1800,7 @@ fn parse_data_loader<'a>(
                 if count > 0 {
                     let stmt0 = bun_ast::Stmt::alloc(
                         bun_ast::S::Local {
-                            decls: bun_ast::G::DeclList::move_from_list(decls),
+                            decls: bun_alloc::AstAlloc::vec_from_iter(decls),
                             kind: bun_ast::S::Kind::KVar,
                             ..Default::default()
                         },

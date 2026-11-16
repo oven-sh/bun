@@ -240,7 +240,7 @@ impl Ticket {
         self.post_intrusive(bun_core::heap::into_raw_nn(task));
     }
 
-    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
         test_gate::before_ticket_post(self);
         debug_assert!(
@@ -359,7 +359,7 @@ impl VmHandle {
         })
     }
 
-    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted<()> {
         // SAFETY: handed over by the caller and not yet queued anywhere.
         let tag = unsafe { task.as_ref() }.task.tag();
@@ -889,12 +889,12 @@ impl ConcurrentPoster {
 
 // ── Erased form for crates below bun_jsc (spawn, bundler) ─────────────────
 
-struct PosterData {
+struct VmPoster {
     handle: VmHandle,
     kind: LoopKind,
 }
 
-impl bun_event_loop::PostToJs for PosterData {
+impl bun_event_loop::PostToJs for VmPoster {
     fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
         self.handle.post(self.kind, task)
     }
@@ -903,7 +903,7 @@ impl bun_event_loop::PostToJs for PosterData {
 impl VmHandle {
     /// An erased weak poster for `kind`, for code that cannot name `VmHandle`.
     fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
-        Arc::new(PosterData {
+        Arc::new(VmPoster {
             handle: self.clone(),
             kind,
         })
@@ -925,18 +925,18 @@ impl VirtualMachine {
 // weak poster with the same gate discipline, closed before the loop is freed.
 // The VM cannot tear down under it: its creator drives it synchronously.
 
-/// Opaque outside this crate: the poster of a spawnSync isolated loop.
-pub struct IsolatedPosterInner {
+/// The poster of a spawnSync isolated loop.
+pub(crate) struct IsolatedPoster {
     open: core::sync::atomic::AtomicBool,
     active: AtomicU32,
     event_loop: *const EventLoop,
 }
 // SAFETY: `event_loop` is dereferenced only under the gate (open && counted).
-unsafe impl Send for IsolatedPosterInner {}
+unsafe impl Send for IsolatedPoster {}
 // SAFETY: as above.
-unsafe impl Sync for IsolatedPosterInner {}
+unsafe impl Sync for IsolatedPoster {}
 
-impl IsolatedPosterInner {
+impl IsolatedPoster {
     pub(crate) fn new(event_loop: *const EventLoop) -> Arc<Self> {
         Arc::new(Self {
             open: core::sync::atomic::AtomicBool::new(true),
@@ -955,7 +955,7 @@ impl IsolatedPosterInner {
     }
 }
 
-impl bun_event_loop::PostToJs for IsolatedPosterInner {
+impl bun_event_loop::PostToJs for IsolatedPoster {
     fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
         self.active.fetch_add(1, Ordering::SeqCst);
         let posted = if self.open.load(Ordering::SeqCst) {

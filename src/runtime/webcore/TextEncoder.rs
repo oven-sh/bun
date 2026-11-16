@@ -5,6 +5,7 @@ use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
+use bun_simdutf_sys::simdutf::WithUtf8Len;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 
@@ -95,7 +96,8 @@ unsafe extern "C" fn TextEncoder__encode16(
         return uint8array;
     }
 
-    let need = strings::element_length_utf16_into_utf8(slice);
+    let input = WithUtf8Len::utf16_with_replacement(slice);
+    let need = input.utf8_len();
 
     if need == 0 {
         return replacement_char_uint8_array(global_this);
@@ -109,7 +111,7 @@ unsafe extern "C" fn TextEncoder__encode16(
     };
     debug_assert!(array_buffer.len == need);
     let bytes = AtomicU8::from_mut_slice(array_buffer.byte_slice_mut());
-    let result = strings::copy_utf16_into_utf8_with_utf8_len(bytes, slice, need);
+    let result = strings::copy_utf16_into_utf8_with_utf8_len(bytes, input);
     if result.written == need && result.read == slice.len() {
         return uint8array;
     }

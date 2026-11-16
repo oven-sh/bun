@@ -106,7 +106,7 @@ enum Written {
 fn create_file(filename: &[u8], contents: &[u8], existing: Existing) -> bun_sys::Result<Written> {
     let flags = match bun_sys::File::read_from(Fd::cwd(), filename) {
         Ok(on_disk) => {
-            let holds = |body: &[u8]| strings::eql_long(&on_disk, body, true);
+            let holds = |body: &[u8]| strings::eql_long(&on_disk, body);
             if holds(contents) {
                 return Ok(Written::AlreadyThere);
             }

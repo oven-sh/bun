@@ -15,10 +15,7 @@
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
-// For code that only builds error text, like the message for a file that doesn't parse or for a rejected option.
-// `#[optimize(size)]` roughly halves that code, and its speed doesn't matter. Nothing that runs for a file without
-// errors uses it.
-#![feature(optimize_attribute)]
+// `#[optimize(size)]` is for code that only builds error text. Nothing that runs for a file without errors has it.
 
 pub mod ast;
 pub mod code_path;

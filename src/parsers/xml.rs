@@ -30,10 +30,11 @@ use bun_alloc::ArenaVecExt as _;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
+use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
 use bun_simd::Out;
 use bun_simd_kernels::xml_class as class;
-use bun_simdutf_sys::simdutf;
+use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
 use crate::xml_index::StructuralIndex;
 
@@ -1282,16 +1283,13 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 }
             })
             .collect();
-        let len = simdutf::length::utf8::from::utf16::le(&units);
-        let slot = self.bump.alloc_uninit_slice::<u8>(len);
-        // SAFETY: simdutf only writes into `utf8`; only the `result.count` bytes it wrote are read.
-        let utf8: &'a mut [u8] =
-            unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) };
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, utf8);
+        let input = WithUtf8Len::utf16(&units);
+        let mut utf8 = BorrowedBuf::from(self.bump.alloc_uninit_slice::<u8>(input.utf8_len()));
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(input, utf8.unfilled());
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
-        self.src = U::from_bytes(&utf8[..result.count]);
+        self.src = U::from_bytes(utf8.into_filled());
         self.pos = 0;
         self.transcoded = true;
         Ok(())

@@ -766,12 +766,12 @@ pub mod fs {
             }
         }
 
-        /// Listing dir + fd snapshot under `entries_mutex` (watch
+        /// Listing dir snapshot under `entries_mutex` (watch
         /// registration); `None` when the slot holds a read error.
-        pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
+        pub(crate) fn dir(&self) -> Option<&'static [u8]> {
             let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
-                EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
+                EntriesOption::Entries(entries) => Some(entries.dir),
                 EntriesOption::Err(_) => None,
             }
         }
@@ -1669,7 +1669,7 @@ pub mod dir_entry_accessor {
         type Handle = DirEntryHandle;
 
         #[inline]
-        fn next(&mut self) -> Maybe<Option<walk::DirEntry<'_>>> {
+        fn next(&mut self) -> Maybe<Option<walk::AccessorDirEntry<'_>>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);
@@ -1693,7 +1693,7 @@ pub mod dir_entry_accessor {
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.
                 let symlink_target = entry.cache().symlink.as_bytes();
-                Ok(Some(walk::DirEntry {
+                Ok(Some(walk::AccessorDirEntry {
                     name: key,
                     kind: fskind,
                     symlink_target: (!symlink_target.is_empty()).then_some(symlink_target),
@@ -1956,16 +1956,6 @@ pub mod cache {
         /// The caller's, such as one from the resolver's entry cache. Never closed here.
         Borrowed(Fd),
         Owned(bun_sys::File),
-    }
-
-    impl SourceFd {
-        /// As [`bun_sys::File::into_raw`].
-        pub fn into_raw(self) -> Fd {
-            match self {
-                SourceFd::Borrowed(fd) => fd,
-                SourceFd::Owned(file) => file.into_raw(),
-            }
-        }
     }
 
     impl core::ops::Deref for SourceFd {

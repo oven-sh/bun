@@ -102,8 +102,6 @@ struct HttpContext {
     template<bool> friend struct TemplatedApp;
     template<bool> friend struct HttpResponse;
 private:
-    HttpContext() = default;
-
     /* Embedded list-head for accepted sockets. The vtable is `httpVTable` below;
      * SSL_CTX comes from the listener, not from here. */
     us_socket_group_t group{};
@@ -1244,16 +1242,12 @@ private:
 public:
     /* Construct a new HttpContext using specified loop. SSL_CTX is built and
      * owned by TemplatedApp; we only learn about it at listen() time. */
-    static HttpContext *create(Loop *loop) {
-        HttpContext *httpContext = new HttpContext;
-        us_socket_group_init(&httpContext->group, (us_loop_t *) loop, &httpVTable<false>, httpContext);
-        return httpContext;
+    explicit HttpContext(Loop *loop) {
+        us_socket_group_init(&group, (us_loop_t *) loop, &httpVTable<false>, this);
     }
 
-    /* Destruct the HttpContext, it does not follow RAII */
-    void free() {
+    ~HttpContext() {
         us_socket_group_deinit(&group);
-        delete this;
     }
 
     void filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {

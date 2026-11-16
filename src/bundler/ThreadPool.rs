@@ -359,7 +359,7 @@ impl Worker {
         let heap = AliasableBox::new(ThreadLocalArena::new());
         // SAFETY: `heap` is the last field to drop.
         let arena: &'static ThreadLocalArena = unsafe { &*heap.as_ptr() };
-        let log: *mut bun_ast::Log = arena.alloc(bun_ast::Log::init());
+        let log: &bun_ast::Log = arena.alloc(bun_ast::Log::init());
         // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         let ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
 
@@ -386,7 +386,7 @@ impl Worker {
 
     pub(crate) fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         if target == Target::Browser && self.transpiler.options.target != target {
-            let (arena, log) = (self.arena(), self.transpiler.log);
+            let (arena, log) = (self.arena(), self.transpiler.log());
             let other = self.other_transpiler.get_or_insert_with(|| {
                 let client = self.ctx.client_transpiler_ref().unwrap();
                 Box::new(Transpiler::for_worker(client, arena, log))

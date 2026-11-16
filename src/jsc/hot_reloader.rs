@@ -42,7 +42,7 @@ pub fn enable_hot_module_reloading(
     }
     let reloader = HotReloader {
         reload_immediately: vm.hot_reload.get() == HotReload::Watch,
-        verbose: (vm.log_ref()).is_some_and(|l| l.level.at_least(bun_ast::Level::Info)),
+        verbose: (vm.log_level.get()).is_some_and(|l| l.at_least(bun_ast::Level::Info)),
         main: MainFile::init(entry_path.unwrap_or(b"")),
         reload_handle: Some(vm.handle()),
         changed_paths: ChangedPaths {

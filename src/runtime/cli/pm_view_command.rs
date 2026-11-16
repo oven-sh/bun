@@ -97,8 +97,8 @@ pub(crate) fn view(
                 };
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
-                let mut pkg_log = bun_ast::Log::init();
-                let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, &bump) else {
+                let pkg_log = bun_ast::Log::init();
+                let Ok(pkg_json) = JSON::parse_utf8(source, &pkg_log, &bump) else {
                     break 'from_package_json;
                 };
                 if let Some(name) = string_of(&pkg_json, &bump, b"name").filter(|n| !n.is_empty()) {
@@ -146,23 +146,23 @@ pub(crate) fn view(
         npm::response_error::<false>(href, &res, Some((name, version)), &mut response_buf)?;
     }
 
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let source = &bun_ast::Source::init_path_string(b"view.json", response_buf.list.as_slice());
-    let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
+    let json: ast::Expr = match JSON::parse_utf8(source, &log, &bump) {
         Ok(j) => j,
         Err(err) => {
             Output::err(err, "failed to parse response body as JSON", ());
             Global::crash();
         }
     };
-    if log.errors > 0 {
+    if log.has_errors() {
         log.print(Output::error_writer())?;
         Global::crash();
     }
 
     let parsed_manifest = match PackageManifest::parse(
         scope.manifest_cache_key(),
-        &mut log,
+        &log,
         response_buf.list.as_slice(),
         name,
         b"",  // last_modified (not needed for view)

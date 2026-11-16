@@ -31,7 +31,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_type_script_decorators(
         &mut self,
     ) -> Result<&'a mut [ExprNodeIndex], Error> {

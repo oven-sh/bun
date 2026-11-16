@@ -33,7 +33,7 @@ pub(crate) fn parse_data<'s>(
     file: &SourceFile<'_>,
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<DataModule<'s>, DataFailure> {
     let source = Source::init_path_string(file.path, file.contents);
     match file.loader {
@@ -129,7 +129,7 @@ fn parse_structured<'s>(
     source: &Source,
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<DataModule<'s>, DataFailure> {
     let default: &'s DataValue<'s> = if is_short_blank_text(source.contents()) {
         arena.alloc(DataValue::Object(&[]))
@@ -147,12 +147,12 @@ fn parse_structured_value<'s>(
     source: &Source,
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<&'s DataValue<'s>, DataFailure> {
-    let errors_before = log.errors;
+    let errors_before = log.errors.get();
     with_ast_scope(|scratch| {
         let Some(root) = parse_tree(format, source, log, scratch) else {
-            if log.errors == errors_before {
+            if log.errors.get() == errors_before {
                 let path = BStr::new(source.path.text);
                 log.add_error_fmt(
                     Some(source),
@@ -172,7 +172,7 @@ fn parse_structured_value<'s>(
 fn parse_tree<'a>(
     format: StructuredFormat,
     source: &'a Source,
-    log: &mut Log,
+    log: &Log,
     scratch: &'a Arena,
 ) -> Option<Expr> {
     match format {
@@ -265,13 +265,13 @@ mod tests {
                 let atoms = Interner::new_in(&session);
                 let arena = Arena::new();
                 let embedded = EmbeddedFiles::default();
-                let mut log = Log::init();
+                let log = Log::init();
                 let file = SourceFile {
                     path,
                     contents,
                     loader,
                 };
-                let result = parse_data(context, &embedded, &file, &arena, &atoms, &mut log);
+                let result = parse_data(context, &embedded, &file, &arena, &atoms, &log);
                 check(Outcome {
                     context,
                     atoms: &atoms,
@@ -286,7 +286,7 @@ mod tests {
     fn assert_fails_with_error(loader: Loader, contents: &[u8]) {
         load(loader, contents, |outcome| {
             assert!(matches!(outcome.result, Err(DataFailure::InvalidText)));
-            assert!(outcome.log.errors >= 1);
+            assert!(outcome.log.errors.get() >= 1);
         });
     }
 
@@ -404,7 +404,7 @@ mod tests {
             b"<script src=\"./client.ts\"></script>",
             |outcome| {
                 assert_eq!(outcome.result.unwrap(), DataModule::Page);
-                assert_eq!(outcome.log.errors, 0);
+                assert_eq!(outcome.log.errors.get(), 0);
                 assert!(outcome.embedded.into_output_files().is_empty());
             },
         );

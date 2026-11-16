@@ -229,7 +229,7 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     let this_transpiler: &'static mut Transpiler<'static> =
-        arena.alloc(Transpiler::init(arena, ctx.log, ctx.args.clone(), None)?);
+        arena.alloc(Transpiler::init(arena, ctx.log(), ctx.args.clone(), None)?);
     if reads_no_configuration {
         this_transpiler.options.load_tsconfig_json = false;
         this_transpiler.resolver.opts.load_tsconfig_json = false;
@@ -263,12 +263,12 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
 
 fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {
     // After a failure the patterns stay as written: the build expands them again and reports it.
-    let mut unreported = bun_ast::Log::init();
+    let unreported = bun_ast::Log::init();
     let expanded = expand_entry_points(
         &this_transpiler.options.entry_points,
         FileSystem::get().top_level_dir(),
         run_compiled::files_in_memory(),
-        &mut unreported,
+        &unreported,
     );
     if let Some(expanded) = expanded {
         this_transpiler.options.entry_points =
@@ -279,7 +279,7 @@ fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {
 /// A native addon among the assets is a further entry point.
 fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'static>) {
     let working_directory = FileSystem::get().top_level_dir();
-    let mut unreported = bun_ast::Log::init();
+    let unreported = bun_ast::Log::init();
     let mut addons: Vec<Vec<u8>> = Vec::new();
     for asset in &ctx.bundler_options.compile_assets {
         let asset = super::build::trim_trailing_separators(asset);
@@ -288,7 +288,7 @@ fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'
             continue;
         }
         let in_folder = [[asset, b"/**/*.node"].concat()];
-        let found = expand_entry_points(&in_folder, working_directory, None, &mut unreported);
+        let found = expand_entry_points(&in_folder, working_directory, None, &unreported);
         addons.extend(found.unwrap_or_default());
     }
     if addons.is_empty() {
@@ -301,8 +301,7 @@ fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'
         .map(|path| path.to_vec());
     let all: Vec<Vec<u8>> = written.chain(addons).collect();
     let in_memory = run_compiled::files_in_memory();
-    if let Some(distinct) = expand_entry_points(&all, working_directory, in_memory, &mut unreported)
-    {
+    if let Some(distinct) = expand_entry_points(&all, working_directory, in_memory, &unreported) {
         this_transpiler.options.entry_points =
             distinct.into_iter().map(Vec::into_boxed_slice).collect();
     }
@@ -520,7 +519,7 @@ fn finish(
     }
 
     this_transpiler.configure_defines()?;
-    this_transpiler.configure_linker();
+    this_transpiler.configure_from_tsconfig();
 
     this_transpiler.options.compile_target_builtins = options::CompileTargetBuiltins::Host;
 
@@ -641,7 +640,7 @@ pub(super) fn request_from_context<'r>(
             ],
             embeds_source_maps,
         },
-        log: ctx.log,
+        log: ctx.log(),
     }
 }
 

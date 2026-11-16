@@ -18,7 +18,8 @@ use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
+    CONSOLE_DEPTH, Debugger, DebuggerEnable, HotReload, IS_SILENT, MacroOptions, Shard,
+    TestEnvironment, TestGlobals,
 };
 use bun_options_types::schema::api;
 use bun_paths::platform;
@@ -1311,7 +1312,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
         // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
         // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
-        ctx.debug.silent = args.flag(b"--silent");
+        IS_SILENT.store(args.flag(b"--silent"));
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
@@ -1673,7 +1674,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 }
             };
             // Treat depth=0 as maxInt(u16) for infinite depth
-            ctx.runtime_options.console_depth = Some(if depth == 0 { u16::MAX } else { depth });
+            CONSOLE_DEPTH.store(if depth == 0 { u16::MAX } else { depth });
         }
 
         if let Some(order) = args.option(b"--dns-result-order") {
@@ -1962,7 +1963,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {
-            ctx.debug.silent = true;
+            IS_SILENT.store(true);
         }
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
@@ -2075,11 +2076,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             api::MessageLevel::Warn => bun_ast::Level::Warn,
             _ => bun_ast::Level::Err,
         });
-        // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
-        // shared with another thread.
-        unsafe {
-            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
-        }
+        ctx.log().level.set(bun_ast::DEFAULT_LOG_LEVEL.load());
     }
 
     if args.flag(b"--no-macros") {

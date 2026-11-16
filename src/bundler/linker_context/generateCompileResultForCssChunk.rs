@@ -219,7 +219,7 @@ fn layer_order_to_css(
 /// An "@import" takes one set of conditions, so the inner ones go into nested data URL imports.
 pub(crate) fn nest_external_imports<'a>(
     c: &LinkerContext<'_, 'a>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     order: &mut [CssImportOrder<'a>],
 ) {
     let arena = c.graph.arena();

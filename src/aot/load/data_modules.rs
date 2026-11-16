@@ -29,17 +29,18 @@ pub(crate) fn parse_data_module<'s>(
     let (mut failure, mut failed_at) = (None, None);
     let module = messages.with_log(|log| {
         let module = provider.parse_data(source, arena, atoms, log);
+        let msgs = log.msgs.get_mut();
         if matches!(module, Err(DataFailure::InvalidText))
-            && let Some(first) = log.msgs.iter().position(|it| it.kind == Kind::Err)
+            && let Some(first) = msgs.iter().position(|it| it.kind == Kind::Err)
         {
-            failure = Some(log.msgs[first].data.text.to_vec());
-            failed_at.clone_from(&log.msgs[first].data.location);
-            for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
+            failure = Some(msgs[first].data.text.to_vec());
+            failed_at.clone_from(&msgs[first].data.location);
+            for message in msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
                 message.kind = Kind::Warn;
             }
-            log.warnings += core::mem::take(&mut log.errors);
+            log.warnings.update(|n| n + log.errors.take());
         }
-        for message in log.msgs.iter_mut().filter(|it| it.data.location.is_none()) {
+        for message in msgs.iter_mut().filter(|it| it.data.location.is_none()) {
             message.data.location = Some(Location {
                 file: Box::from(to_native(source.path)),
                 ..Default::default()
@@ -234,24 +235,20 @@ mod tests {
             &self,
             arena: &'s Arena,
             atoms: &Interner<'s>,
-            log: &mut Log,
+            log: &Log,
         ) -> FoldOptions<'s> {
             WithoutServices.fold_options(arena, atoms, log)
         }
 
-        fn resolve(
-            &self,
-            request: &ResolveRequest<'_>,
-            log: &mut Log,
-        ) -> Result<Resolution, Failed> {
+        fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
             WithoutServices.resolve(request, log)
         }
 
-        fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
             WithoutServices.load(request, log)
         }
 
-        fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
             WithoutServices.finish_deferred_loads(log)
         }
 
@@ -260,7 +257,7 @@ mod tests {
             file: &SourceFile<'_>,
             arena: &'s Arena,
             atoms: &Interner<'s>,
-            log: &mut Log,
+            log: &Log,
         ) -> Result<DataModule<'s>, DataFailure> {
             let embedded_path = atoms.intern(file.path);
             match file.loader {
@@ -277,7 +274,7 @@ mod tests {
             }
         }
 
-        fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
             WithoutServices.check_embedded_files(log)
         }
     }
@@ -297,8 +294,8 @@ mod tests {
         let mut diagnostics = Diagnostics::new();
         diagnostics.add_load_messages(messages);
         assert!(!diagnostics.has_internal_errors());
-        let mut log = Log::init();
-        diagnostics.write_to(&mut log);
+        let log = Log::init();
+        diagnostics.write_to(&log);
         log
     }
 
@@ -450,7 +447,7 @@ mod tests {
         assert_eq!(parsed.host_values, undefined);
         assert!(parsed.web_assembly.is_none());
         assert_eq!(parsed.failure, None);
-        assert_eq!(written_log(&messages).errors, 1);
+        assert_eq!(written_log(&messages).errors.get(), 1);
     }
 
     #[test]
@@ -467,7 +464,7 @@ mod tests {
         let said = &b"\"/project/a.json\" is not valid JSON"[..];
         assert_eq!(parsed.failure.as_deref(), Some(said));
         let log = written_log(&messages);
-        assert_eq!((log.errors, log.warnings), (0, 1));
+        assert_eq!((log.errors.get(), log.warnings.get()), (0, 1));
     }
 
     #[test]
@@ -482,7 +479,7 @@ mod tests {
         };
         let parsed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
         assert!(parsed.web_assembly.is_none());
-        assert_eq!(written_log(&messages).errors, 1);
+        assert_eq!(written_log(&messages).errors.get(), 1);
     }
 
     #[test]
@@ -510,7 +507,7 @@ mod tests {
         let default = default_export(&file.hir);
         assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
 
-        assert!(written_log(&messages).msgs.is_empty());
+        assert_eq!(written_log(&messages).msgs_len(), 0);
     }
 
     #[test]
@@ -535,7 +532,7 @@ mod tests {
         let default = default_export(&file.hir);
         assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
 
-        assert!(written_log(&messages).msgs.is_empty());
+        assert_eq!(written_log(&messages).msgs_len(), 0);
         assert!(parse(Loader::Base64).web_assembly.is_none());
     }
 
@@ -551,7 +548,7 @@ mod tests {
         };
         let file = parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms);
         assert!(file.web_assembly.is_none());
-        assert!(written_log(&messages).msgs.is_empty());
+        assert_eq!(written_log(&messages).msgs_len(), 0);
     }
 
     #[test]
@@ -571,6 +568,6 @@ mod tests {
         assert!(matches!(parsed.hir[root].kind, ExprKind::Object(_)));
         let entries = [(atoms.intern(b"a"), DataValue::Number(1.0))];
         assert_eq!(*value, DataValue::Object(&entries));
-        assert!(written_log(&messages).msgs.is_empty());
+        assert_eq!(written_log(&messages).msgs_len(), 0);
     }
 }

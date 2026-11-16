@@ -147,7 +147,7 @@ impl Diagnostics {
 
     pub(crate) fn add_load_messages(&mut self, messages: &LoadMessages) {
         let lists = std::mem::take(&mut *messages.lists.lock());
-        for message in lists.log.msgs {
+        for message in lists.log.msgs.into_inner() {
             self.add_message(0, message);
         }
         self.internal_errors.extend(lists.internal_errors);
@@ -180,7 +180,7 @@ impl Diagnostics {
         });
     }
 
-    pub(crate) fn write_to(mut self, log: &mut Log) {
+    pub(crate) fn write_to(mut self, log: &Log) {
         self.drop_invalid_patterns_beside_other_errors();
         self.drop_second_error_of_import();
         self.apply_ignore_comments();
@@ -188,7 +188,7 @@ impl Diagnostics {
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);
         for entry in self.entries {
-            write_message(log, entry.message);
+            log.add_counted_msg(entry.message);
         }
         write_internal_errors(log, self.internal_errors);
     }
@@ -233,21 +233,12 @@ impl DiagnosticBuffer {
     }
 }
 
-pub fn log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
+pub fn log_diagnostic(log: &Log, code: Code, arguments: &[&[u8]]) {
     let diagnostic = Diagnostic::new(code, None, arguments);
-    write_message(log, to_message(None, &diagnostic));
+    log.add_counted_msg(to_message(None, &diagnostic));
 }
 
-pub(super) fn write_message(log: &mut Log, message: Msg) {
-    match message.kind {
-        Kind::Err => log.errors += 1,
-        Kind::Warn => log.warnings += 1,
-        Kind::Note | Kind::Debug | Kind::Verbose => {}
-    }
-    log.add_msg(message);
-}
-
-fn write_internal_errors(log: &mut Log, mut errors: Vec<InternalError>) {
+fn write_internal_errors(log: &Log, mut errors: Vec<InternalError>) {
     errors
         .shared_sort_by(|a, b| (a.stage as usize, &a.message).cmp(&(b.stage as usize, &b.message)));
     errors.dedup_by(|next, previous| {
@@ -267,15 +258,12 @@ fn write_internal_errors(log: &mut Log, mut errors: Vec<InternalError>) {
         } else {
             Box::new([])
         };
-        write_message(
-            log,
-            Msg {
-                kind: Kind::Err,
-                data: data_without_location(Cow::Owned(text)),
-                notes,
-                ..Default::default()
-            },
-        );
+        log.add_counted_msg(Msg {
+            kind: Kind::Err,
+            data: data_without_location(Cow::Owned(text)),
+            notes,
+            ..Default::default()
+        });
     }
 }
 

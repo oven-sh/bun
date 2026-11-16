@@ -194,7 +194,7 @@ impl PluginRequests {
     pub(crate) fn resolve(
         &self,
         request: &ResolveRequest<'_>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<Resolution, Failed> {
         if !self.has_resolve_plugin(request.specifier) {
             return Ok(Resolution::NotHandled);
@@ -274,7 +274,7 @@ impl PluginRequests {
             .insert_ref(module.path.to_vec(), is_matched)
     }
 
-    pub(crate) fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    pub(crate) fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         if !self.has_load_plugin(request.module) {
             return Ok(Loaded::from_file(
                 (request.read_file)(),
@@ -308,7 +308,7 @@ impl PluginRequests {
 
     pub(crate) fn finish_deferred_loads(
         &self,
-        log: &mut Log,
+        log: &Log,
     ) -> Vec<(Vec<u8>, Vec<u8>, Result<Loaded, Failed>)> {
         let mut deferred = core::mem::take(&mut *self.deferred.lock());
         if deferred.is_empty() {
@@ -324,8 +324,8 @@ impl PluginRequests {
     }
 
     pub(crate) fn shut_down(self) {
-        let mut scratch = Log::init();
-        let _ = self.finish_deferred_loads(&mut scratch);
+        let scratch = Log::init();
+        let _ = self.finish_deferred_loads(&scratch);
     }
 
     fn plugins(&self) -> &Plugin {
@@ -381,7 +381,7 @@ impl PluginRequests {
     fn finish_deferred_load(
         &self,
         entry: PendingDeferredLoad,
-        log: &mut Log,
+        log: &Log,
     ) -> (Vec<u8>, Vec<u8>, Result<Loaded, Failed>) {
         let PendingDeferredLoad {
             pending,
@@ -412,7 +412,7 @@ fn load_value(answer: Answer) -> LoadValue {
     }
 }
 
-fn resolution_from_value(value: ResolveValue, log: &mut Log) -> Result<Resolution, Failed> {
+fn resolution_from_value(value: ResolveValue, log: &Log) -> Result<Resolution, Failed> {
     match value {
         ResolveValue::NoMatch => Ok(Resolution::NotHandled),
         ResolveValue::Success(success) if success.external => Ok(Resolution::External {
@@ -440,7 +440,7 @@ fn loaded_from_value(
     value: LoadValue,
     read_file: impl FnOnce() -> Option<Cow<'static, [u8]>>,
     default_loader: Loader,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Loaded, Failed> {
     match value {
         LoadValue::Success(success) => Ok(Loaded::Source {
@@ -459,11 +459,9 @@ fn loaded_from_value(
     }
 }
 
-fn record_message(message: Msg, log: &mut Log) -> Result<(), Failed> {
+fn record_message(message: Msg, log: &Log) -> Result<(), Failed> {
     let kind = message.kind;
-    log.msgs.push(message);
-    log.errors += (kind == Kind::Err) as u32;
-    log.warnings += (kind == Kind::Warn) as u32;
+    log.add_counted_msg(message);
     if kind == Kind::Err {
         return Err(Failed);
     }
@@ -491,7 +489,7 @@ mod tests {
     }
 
     fn counts(log: &Log) -> (u32, u32, usize) {
-        (log.errors, log.warnings, log.msgs.len())
+        (log.errors.get(), log.warnings.get(), log.msgs_len())
     }
 
     fn resolve_success(namespace: &[u8], external: bool) -> ResolveValue {
@@ -609,18 +607,18 @@ mod tests {
 
     #[test]
     fn resolve_answers() {
-        let mut log = Log::init();
+        let log = Log::init();
         assert!(matches!(
-            resolution_from_value(ResolveValue::NoMatch, &mut log),
+            resolution_from_value(ResolveValue::NoMatch, &log),
             Ok(Resolution::NotHandled)
         ));
         assert!(matches!(
-            resolution_from_value(resolve_success(b"virtual", false), &mut log),
+            resolution_from_value(resolve_success(b"virtual", false), &log),
             Ok(Resolution::Module { namespace, path })
                 if namespace == b"virtual" && path == b"/p/a.ts"
         ));
         assert!(matches!(
-            resolution_from_value(resolve_success(b"", false), &mut log),
+            resolution_from_value(resolve_success(b"", false), &log),
             Ok(Resolution::Module { namespace, .. }) if namespace == FILE_NAMESPACE
         ));
         assert_eq!(counts(&log), (0, 0, 0));
@@ -628,10 +626,10 @@ mod tests {
 
     #[test]
     fn external_answer_carries_plugin_path() {
-        let mut log = Log::init();
+        let log = Log::init();
         for namespace in [&b""[..], b"virtual"] {
             assert!(matches!(
-                resolution_from_value(resolve_success(namespace, true), &mut log),
+                resolution_from_value(resolve_success(namespace, true), &log),
                 Ok(Resolution::External { specifier }) if specifier == b"/p/a.ts"
             ));
         }
@@ -640,25 +638,25 @@ mod tests {
 
     #[test]
     fn resolve_error_fails() {
-        let mut log = Log::init();
+        let log = Log::init();
         let value = ResolveValue::Err(message(Kind::Err));
-        let answer = resolution_from_value(value, &mut log);
+        let answer = resolution_from_value(value, &log);
         assert!(answer.is_err());
         assert_eq!(counts(&log), (1, 0, 1));
     }
 
     #[test]
     fn resolve_warning_is_not_handled() {
-        let mut log = Log::init();
+        let log = Log::init();
         let value = ResolveValue::Err(message(Kind::Warn));
-        let answer = resolution_from_value(value, &mut log);
+        let answer = resolution_from_value(value, &log);
         assert!(matches!(answer, Ok(Resolution::NotHandled)));
         assert_eq!(counts(&log), (0, 1, 1));
     }
 
     #[test]
     fn load_success_is_from_plugin() {
-        let mut log = Log::init();
+        let log = Log::init();
         let value = LoadValue::Success(LoadSuccess {
             source_code: Box::from(&b"from plugin"[..]),
             loader: Loader::Json,
@@ -667,7 +665,7 @@ mod tests {
             value,
             || unreachable!("an answered load reads no file"),
             Loader::Ts,
-            &mut log,
+            &log,
         );
         assert!(matches!(
             loaded,
@@ -678,27 +676,27 @@ mod tests {
 
     #[test]
     fn declined_load_reads_file() {
-        let mut log = Log::init();
-        let loaded = loaded_from_value(LoadValue::NoMatch, file, Loader::Ts, &mut log);
+        let log = Log::init();
+        let loaded = loaded_from_value(LoadValue::NoMatch, file, Loader::Ts, &log);
         assert!(is_file_source(&loaded));
         assert_eq!(counts(&log), (0, 0, 0));
     }
 
     #[test]
     fn declined_load_without_file_is_not_found() {
-        let mut log = Log::init();
-        let loaded = loaded_from_value(LoadValue::NoMatch, || None, Loader::Ts, &mut log);
+        let log = Log::init();
+        let loaded = loaded_from_value(LoadValue::NoMatch, || None, Loader::Ts, &log);
         assert!(matches!(loaded, Ok(Loaded::NotFound)));
     }
 
     #[test]
     fn load_error_fails() {
-        let mut log = Log::init();
+        let log = Log::init();
         let loaded = loaded_from_value(
             LoadValue::Err(message(Kind::Err)),
             || unreachable!("a failed load reads no file"),
             Loader::Ts,
-            &mut log,
+            &log,
         );
         assert!(loaded.is_err());
         assert_eq!(counts(&log), (1, 0, 1));
@@ -706,9 +704,9 @@ mod tests {
 
     #[test]
     fn load_warning_reads_file() {
-        let mut log = Log::init();
+        let log = Log::init();
         let value = LoadValue::Err(message(Kind::Warn));
-        let loaded = loaded_from_value(value, file, Loader::Ts, &mut log);
+        let loaded = loaded_from_value(value, file, Loader::Ts, &log);
         assert!(is_file_source(&loaded));
         assert_eq!(counts(&log), (0, 1, 1));
     }

@@ -82,7 +82,7 @@ struct ParseOutput {
 
 fn parse_impl(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     opts: JSONOptions,
     check_len: bool,
 ) -> crate::Result<ParseOutput> {
@@ -91,7 +91,7 @@ fn parse_impl(
 
 fn parse_impl_in(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     opts: JSONOptions,
     check_len: bool,
     tape_alloc: E::TapeAlloc,
@@ -107,26 +107,30 @@ fn parse_impl_in(
     if let Some(e) = sidx.index_error {
         return Err(report_index_error(e, source, log));
     }
-    let log_mark = (log.errors, log.msgs.len());
+    let log_mark = (log.errors.get(), log.msgs_len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
 
-    let drop_stage2_errors = |log: &mut bun_ast::Log| {
-        let mut i = log_mark.1;
-        while i < log.msgs.len() {
-            if log.msgs[i].kind == bun_ast::Kind::Err {
-                log.msgs.remove(i);
-            } else {
-                i += 1;
+    let drop_stage2_errors = |log: &bun_ast::Log| {
+        log.with_msgs(|msgs| {
+            let mut i = log_mark.1;
+            while i < msgs.len() {
+                if msgs[i].kind == bun_ast::Kind::Err {
+                    msgs.remove(i);
+                } else {
+                    i += 1;
+                }
             }
-        }
-        log.errors = log_mark.0;
+        });
+        log.errors.set(log_mark.0);
     };
     let min_stage2_err = |log: &bun_ast::Log| {
-        log.msgs[log_mark.1..]
-            .iter()
-            .filter(|m| m.kind == bun_ast::Kind::Err)
-            .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
-            .min()
+        log.with_msgs(|msgs| {
+            msgs[log_mark.1..]
+                .iter()
+                .filter(|m| m.kind == bun_ast::Kind::Err)
+                .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
+                .min()
+        })
     };
     let rejected_comment = |sidx: &StructuralIndex, before: usize| {
         !opts.allow_comments
@@ -142,11 +146,13 @@ fn parse_impl_in(
             IndexError::DocumentTooLarge => 0,
         };
         if !rejected_comment(&sidx, pos) {
-            let earlier_stage2_err = log.msgs[log_mark.1..]
-                .iter()
-                .filter(|m| m.kind == bun_ast::Kind::Err)
-                .filter_map(|m| m.data.location.as_ref())
-                .any(|l| l.offset + l.length.max(1) <= pos);
+            let earlier_stage2_err = log.with_msgs(|msgs| {
+                msgs[log_mark.1..]
+                    .iter()
+                    .filter(|m| m.kind == bun_ast::Kind::Err)
+                    .filter_map(|m| m.data.location.as_ref())
+                    .any(|l| l.offset + l.length.max(1) <= pos)
+            });
             if !earlier_stage2_err {
                 drop_stage2_errors(log);
                 return Err(report_index_error(e, source, log));
@@ -170,7 +176,7 @@ fn parse_impl_in(
         );
         return Err(crate::Error::SyntaxError);
     }
-    if sidx.index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
+    if sidx.index_error.is_some() || (result.is_ok() && log.errors.get() > log_mark.0) {
         return Err(crate::Error::SyntaxError);
     }
     result
@@ -178,7 +184,7 @@ fn parse_impl_in(
 
 fn run_stage2<'s>(
     source: &'s bun_ast::Source<'s>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
     check_len: bool,
@@ -206,7 +212,7 @@ fn run_stage2<'s>(
 fn report_index_error(
     err: IndexError,
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> crate::Error {
     match err {
         IndexError::UnterminatedBlockComment { .. } => {
@@ -302,7 +308,7 @@ pub fn guess_indentation(s: &[u8]) -> Indentation {
 /// Parse JSON into the classic `E::Object` / `E::Array` AST, with every string stored as UTF-8.
 pub fn parse_utf8(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     parse_utf8_impl::<false>(source, log, bump)
@@ -311,7 +317,7 @@ pub fn parse_utf8(
 #[inline]
 pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
@@ -322,7 +328,7 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
 
 fn parse_classic(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
     opts: JSONOptions,
     check_len: bool,
@@ -354,7 +360,7 @@ fn parse_classic(
 pub fn clone_out_of_store(
     root: &Expr,
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     root.deep_clone(bump).map_err(|err| {
@@ -372,25 +378,19 @@ pub fn clone_out_of_store(
 
 impl ParsedJson {
     /// Strict JSON.
-    pub fn parse_json(
-        source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
-    ) -> crate::Result<ParsedJson> {
+    pub fn parse_json(source: &bun_ast::Source, log: &bun_ast::Log) -> crate::Result<ParsedJson> {
         parse_to_rows(source, log, JSON_OPTS, false)
     }
 
     /// JSONC (comments and trailing commas).
-    pub fn parse_jsonc(
-        source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
-    ) -> crate::Result<ParsedJson> {
+    pub fn parse_jsonc(source: &bun_ast::Source, log: &bun_ast::Log) -> crate::Result<ParsedJson> {
         parse_to_rows(source, log, TSCONFIG_OPTS, false)
     }
 
     /// JSONC, with nothing but whitespace and comments after the value.
     pub fn parse_jsonc_document(
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
         parse_to_rows(source, log, TSCONFIG_OPTS, true)
     }
@@ -398,7 +398,7 @@ impl ParsedJson {
     /// package.json (comments & trailing commas allowed).
     pub fn parse_package_json(
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
         parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
@@ -406,7 +406,7 @@ impl ParsedJson {
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
     pub fn parse_npm_manifest(
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
         const MANIFEST_OPTS: JSONOptions = JSONOptions {
             json_warn_duplicate_keys: false,
@@ -419,7 +419,7 @@ impl ParsedJson {
 /// [`ParsedJson::parse_json`], with the whole document (tape included) allocated in `arena`.
 pub fn parse_json_into_arena(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     arena: &Bump,
 ) -> crate::Result<Expr> {
     parse_to_rows_in(source, log, JSON_OPTS, arena)
@@ -428,7 +428,7 @@ pub fn parse_json_into_arena(
 /// [`parse_json_into_arena`] for the JSONC dialect (comments, trailing commas).
 pub fn parse_jsonc_into_arena(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     arena: &Bump,
 ) -> crate::Result<Expr> {
     parse_to_rows_in(source, log, TSCONFIG_OPTS, arena)
@@ -436,7 +436,7 @@ pub fn parse_jsonc_into_arena(
 
 fn parse_to_rows(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     opts: JSONOptions,
     check_len: bool,
 ) -> crate::Result<ParsedJson> {
@@ -462,7 +462,7 @@ fn parse_to_rows(
 
 fn parse_to_rows_in(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     opts: JSONOptions,
     arena: &Bump,
 ) -> crate::Result<Expr> {
@@ -482,7 +482,7 @@ fn parse_to_rows_in(
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
@@ -501,7 +501,7 @@ pub struct JsonResult {
 pub fn parse_package_json_utf8_with_opts(
     opts: JSONOptions,
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<JsonResult> {
     if source.contents.is_empty() {
@@ -518,7 +518,7 @@ pub fn parse_package_json_utf8_with_opts(
 }
 
 /// The strings of the result are in `bump`: `json` belongs to an object that the next macro can free.
-pub fn parse_for_macro(json: &[u8], log: &mut bun_ast::Log, bump: &Bump) -> crate::Result<Expr> {
+pub fn parse_for_macro(json: &[u8], log: &bun_ast::Log, bump: &Bump) -> crate::Result<Expr> {
     if json.is_empty() {
         return Ok(empty_object_expr());
     }
@@ -530,7 +530,7 @@ pub fn parse_for_macro(json: &[u8], log: &mut bun_ast::Log, bump: &Bump) -> crat
 #[inline]
 pub fn parse_ts_config(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
@@ -542,7 +542,7 @@ pub fn parse_ts_config(
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
 pub fn parse_env_json(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
@@ -626,7 +626,7 @@ fn leads_a_number(contents: &[u8]) -> bool {
 
 fn parse_auto_quoted_string(
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
@@ -661,7 +661,7 @@ fn parse_auto_quoted_string(
 /// Extracts the top-level `name` and `version` strings from a package.json.
 pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source<'a>,
-    log: &'a mut bun_ast::Log,
+    log: &'a bun_ast::Log,
 
     pub(crate) found_version_buf: [u8; 1024],
     pub(crate) found_name_buf: [u8; 1024],
@@ -672,7 +672,7 @@ pub struct PackageJSONVersionChecker<'a> {
 }
 
 impl<'a> PackageJSONVersionChecker<'a> {
-    pub fn init(source: &'a bun_ast::Source<'a>, log: &'a mut bun_ast::Log) -> Self {
+    pub fn init(source: &'a bun_ast::Source<'a>, log: &'a bun_ast::Log) -> Self {
         Self {
             source,
             log,
@@ -685,10 +685,9 @@ impl<'a> PackageJSONVersionChecker<'a> {
         }
     }
 
-    /// Whether the checker's exclusively-borrowed `Log` recorded any errors.
     #[inline]
     pub fn has_errors(&self) -> bool {
-        self.log.errors > 0
+        self.log.has_errors()
     }
 
     #[inline]
@@ -936,7 +935,7 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 pub fn materialize(
     root: &Expr,
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
@@ -1101,25 +1100,25 @@ mod tests {
     fn run(contents: &[u8], which: Which) -> Parsed {
         bun_ast::initialize_store_or_reset();
         let scope = js_ast::StoreResetGuard::new();
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let bump = Box::new(Bump::new());
         let source = bun_ast::Source::init_path_string("fixture.json", contents);
         let mut tape = None;
         let r = match which {
-            Which::Utf8 => parse_utf8(&source, &mut log, &bump),
-            Which::TsConfig => parse_ts_config(&source, &mut log, &bump),
-            Which::Env => parse_env_json(&source, &mut log, &bump),
-            Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
-            Which::Jsonc => ParsedJson::parse_jsonc(&source, &mut log).map(|p| {
+            Which::Utf8 => parse_utf8(&source, &log, &bump),
+            Which::TsConfig => parse_ts_config(&source, &log, &bump),
+            Which::Env => parse_env_json(&source, &log, &bump),
+            Which::PackageJson => parse_package_json_utf8(&source, &log, &bump),
+            Which::Jsonc => ParsedJson::parse_jsonc(&source, &log).map(|p| {
                 tape = p.tape;
                 p.root
             }),
-            Which::JsoncDocument => ParsedJson::parse_jsonc_document(&source, &mut log).map(|p| {
+            Which::JsoncDocument => ParsedJson::parse_jsonc_document(&source, &log).map(|p| {
                 tape = p.tape;
                 p.root
             }),
             Which::Immutable => {
-                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT, false).map(|mut p| {
+                parse_to_rows(&source, &log, JSONOptions::DEFAULT, false).map(|mut p| {
                     tape = p.tape.take();
                     p.root
                 })
@@ -1127,13 +1126,14 @@ mod tests {
         };
         let first_msg = log
             .msgs
+            .take()
             .first()
             .map(|m| String::from_utf8_lossy(&m.data.text).into_owned())
             .unwrap_or_default();
         Parsed {
             root: r.ok(),
-            errors: log.errors as usize,
-            warnings: log.warnings as usize,
+            errors: log.errors.get() as usize,
+            warnings: log.warnings.get() as usize,
             first_msg,
             _bump: bump,
             _tape: tape,
@@ -1609,14 +1609,14 @@ mod tests {
             (format!("{sep}app{sep}package.json"), 1),
         ] {
             let _scope = js_ast::StoreResetGuard::new();
-            let mut log = bun_ast::Log::init();
+            let log = bun_ast::Log::init();
             let source = bun_ast::Source::init_path_string(path.as_str(), &doc[..]);
-            let parsed = ParsedJson::parse_package_json(&source, &mut log).unwrap();
+            let parsed = ParsedJson::parse_package_json(&source, &log).unwrap();
             assert!(matches!(
                 parsed.root.data,
                 js_ast::expr::Data::EObjectJSON(_)
             ));
-            assert_eq!(log.warnings as usize, warnings, "{path}");
+            assert_eq!(log.warnings.get() as usize, warnings, "{path}");
         }
     }
 
@@ -1780,9 +1780,8 @@ mod tests {
                 let p = run(doc.as_bytes(), immutable_which);
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
                 let bump = Bump::new();
-                let mut mlog = bun_ast::Log::init();
-                let root =
-                    materialize(p.root.as_ref().unwrap(), &source, &mut mlog, &bump).unwrap();
+                let mlog = bun_ast::Log::init();
+                let root = materialize(p.root.as_ref().unwrap(), &source, &mlog, &bump).unwrap();
                 (root.loc, canon_full(&root))
             };
             assert_eq!(full, materialized, "materialized tree differs for {doc:?}");
@@ -2225,13 +2224,13 @@ mod tests {
     fn package_json_version_checker() {
         bun_ast::initialize_store_or_reset();
         let _scope = js_ast::StoreResetGuard::new();
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string(
             "package.json",
             br#"{"private": true, "name": "my-pkg", "scripts": {"x": "y"}, "version": "1.2.3"}"#
                 .as_slice(),
         );
-        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        let mut checker = PackageJSONVersionChecker::init(&source, &log);
         checker.parse().unwrap();
         assert!(checker.has_found_name && checker.has_found_version);
         assert_eq!(checker.found_name(), b"my-pkg");
@@ -2240,16 +2239,16 @@ mod tests {
             "package.json",
             br#"{"version": {"x": 1}, "name": 1, "name": "n2", "version": "9.9.9"}"#.as_slice(),
         );
-        let mut log = bun_ast::Log::init();
-        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        let log = bun_ast::Log::init();
+        let mut checker = PackageJSONVersionChecker::init(&source, &log);
         checker.parse().unwrap();
         assert_eq!(
             (checker.found_name(), checker.found_version()),
             (b"n2".as_slice(), b"9.9.9".as_slice())
         );
         let source = bun_ast::Source::init_path_string("package.json", b"".as_slice());
-        let mut log = bun_ast::Log::init();
-        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        let log = bun_ast::Log::init();
+        let mut checker = PackageJSONVersionChecker::init(&source, &log);
         checker.parse().unwrap();
         assert!(!checker.has_found_name && !checker.has_errors());
     }

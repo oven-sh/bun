@@ -2855,25 +2855,14 @@ pub struct ParserOptions<'a> {
     /// Whether to ignore invalid rules and declarations rather than erroring.
     pub error_recovery: bool,
     /// A list that will be appended to when a warning occurs.
-    ///
-    /// Stored as a raw `NonNull<Log>` so `warn(&self)`
-    /// can soundly write through it. Deriving `&mut Log` from a `&self`-reachable
-    /// `&'a mut Log` (the previous representation) is UB under Stacked Borrows
-    /// — see PORTING.md §Forbidden patterns. Only `default` sets it, from a
-    /// `&'a mut Log`.
-    logger: Option<core::ptr::NonNull<Log>>,
+    logger: Option<&'a Log>,
     /// Feature flags to enable.
     pub flags: ParserFlags,
-    _lt: core::marker::PhantomData<&'a mut Log>,
 }
 
 impl<'a> ParserOptions<'a> {
     pub(crate) fn warn(&self, warning: &ParseError<ParserError>) {
         if let Some(lg) = self.logger {
-            // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
-            // `default`); the pointee outlives `'a` and no other borrow of the
-            // Log exists for the duration of parsing.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col(
                 self.filename,
                 warning.location.line,
@@ -2885,9 +2874,6 @@ impl<'a> ParserOptions<'a> {
 
     pub(crate) fn warn_fmt(&self, args: fmt::Arguments<'_>, line: u32, column: u32) {
         if let Some(lg) = self.logger {
-            // SAFETY: see `warn` — `logger` carries `*mut Log` provenance from a
-            // unique `&'a mut Log`; no other borrow exists during this call.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col(self.filename, line, column, args);
         }
     }
@@ -2900,21 +2886,18 @@ impl<'a> ParserOptions<'a> {
         notes: Box<[bun_ast::Data]>,
     ) {
         if let Some(lg) = self.logger {
-            // SAFETY: see `warn`.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes);
         }
     }
 
-    pub fn default(log: Option<&'a mut Log>) -> ParserOptions<'a> {
+    pub fn default(log: Option<&'a Log>) -> ParserOptions<'a> {
         ParserOptions {
             filename: b"",
             css_modules: None,
             source_index: 0,
             error_recovery: false,
-            logger: log.map(core::ptr::NonNull::from),
+            logger: log,
             flags: ParserFlags::default(),
-            _lt: core::marker::PhantomData,
         }
     }
 }

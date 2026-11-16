@@ -191,7 +191,7 @@ pub trait DefineDataExt: Sized {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error>;
 
@@ -201,14 +201,14 @@ pub trait DefineDataExt: Sized {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), crate::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error>;
 }
@@ -243,7 +243,7 @@ impl DefineDataExt for DefineData {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), crate::Error> {
         user_defines.put_assume_capacity(
@@ -265,7 +265,7 @@ impl DefineDataExt for DefineData {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
         let mut key_splitter = strings::split(key, b".");
@@ -412,7 +412,7 @@ impl DefineDataExt for DefineData {
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error> {
         let mut user_defines = UserDefines::default();

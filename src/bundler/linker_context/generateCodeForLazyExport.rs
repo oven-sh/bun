@@ -16,7 +16,7 @@ type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];

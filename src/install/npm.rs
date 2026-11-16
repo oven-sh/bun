@@ -123,9 +123,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Output::flush();
     }
 
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
+    let parsed = match JSON::ParsedJson::parse_json(&source, &log) {
         Ok(j) => j,
         Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -160,9 +160,9 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     response_body: &mut MutableString,
 ) -> Result<core::convert::Infallible, AllocError> {
     let message: Option<Vec<u8>> = 'message: {
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
+        let parsed = match JSON::ParsedJson::parse_json(&source, &log) {
             Ok(j) => j,
             Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(AllocError);
@@ -762,7 +762,7 @@ pub mod registry {
         registry: ManifestCacheKey,
         response: &bun_http::HTTPResponseMetadata,
         body: &[u8],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
         temp_dir: Option<&'static TemporaryDirectory>,
@@ -1753,7 +1753,7 @@ pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>
 
 impl MinimumReleaseAgeExcludes {
     /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the name.
-    pub(crate) fn parse(entries: &[&'static [u8]], log: &mut bun_ast::Log) -> Self {
+    pub(crate) fn parse(entries: &[&'static [u8]], log: &bun_ast::Log) -> Self {
         let mut list = Vec::new();
         for &entry in entries {
             // Skip a scope's leading `@` so `@types/node@20.0.0` splits after the name.
@@ -2403,7 +2403,7 @@ impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
         registry: registry::ManifestCacheKey,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         json_buffer: &[u8],
         expected_name: &[u8],
         last_modified: &[u8],
@@ -2421,7 +2421,7 @@ impl PackageManifest {
             Ok(j) => j,
             Err(_) => {
                 // It knows a source by its address, and `json_buffer` is about to be freed.
-                log.line_column_tracker = None;
+                log.line_column_tracker.set(None);
                 return Ok(None);
             }
         };

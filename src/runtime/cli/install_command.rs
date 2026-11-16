@@ -5,7 +5,6 @@ use bun_install::package_manager_real::{
     update_package_json_and_install_with_manager,
 };
 
-use crate::Cli;
 use crate::cli::pm_update_package_json::analyze_dependencies_and_install;
 use crate::command::ContextData;
 
@@ -13,21 +12,19 @@ pub(crate) struct InstallCommand;
 
 impl InstallCommand {
     pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
-        install(ctx).or_else(Self::handle_error)
+        install(ctx).or_else(|e| Self::handle_error(ctx.log(), e))
     }
 
     /// Out of line, so that the hot `bun install` dispatch in `exec` stays small in `.text`.
     #[cold]
     #[inline(never)]
-    pub(crate) fn handle_error(e: Error) -> Result<(), Error> {
+    pub(crate) fn handle_error(log: &bun_ast::Log, e: Error) -> Result<(), Error> {
         if matches!(
             e,
             crate::Error::Install(
                 bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
             )
         ) {
-            // SAFETY: `Cli::start()` initialised `Cli::LOG_`; no other `&mut` to it is live here.
-            let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
             let _ = log.print(Output::error_writer());
             Global::exit(1);
         }

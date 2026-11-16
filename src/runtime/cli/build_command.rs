@@ -48,10 +48,7 @@ impl BuildCommand {
             long_running: true,
             ..Default::default()
         });
-        let log = ctx.log;
-        // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
-        // and never freed for the duration of the command body.
-        let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
+        let log = ctx.log();
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
@@ -205,8 +202,8 @@ impl BuildCommand {
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
-            if !type_check(checked, log_ref) {
-                log_ref.print(Output::error_writer())?;
+            if !type_check(checked, log) {
+                log.print(Output::error_writer())?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
@@ -533,7 +530,7 @@ impl BuildCommand {
         }
 
         this_transpiler.configure_defines()?;
-        this_transpiler.configure_linker();
+        this_transpiler.configure_from_tsconfig();
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
@@ -629,10 +626,10 @@ impl BuildCommand {
                 this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
+                let result = this_transpiler.transform(ctx.args.clone())?;
 
-                if log_ref.has_errors() {
-                    log_ref.print(Output::error_writer())?;
+                if log.has_errors() {
+                    log.print(Output::error_writer())?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -682,8 +679,8 @@ impl BuildCommand {
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    if !log_ref.msgs.is_empty() {
-                        log_ref.print(Output::error_writer())?;
+                    if log.has_msgs() {
+                        log.print(Output::error_writer())?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -797,7 +794,7 @@ impl BuildCommand {
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
             if let Some(option) = skips_typed_files_for {
-                crate::cli::check_command::warn_about_skipped_typed_files(option, log_ref);
+                crate::cli::check_command::warn_about_skipped_typed_files(option, log);
             }
         }
 
@@ -813,7 +810,7 @@ impl BuildCommand {
                 writes_package_json: ctx.bundler_options.library,
             };
             compiler_options =
-                super::compile_command::add_typed_files(&request, log_ref, &mut output_files);
+                super::compile_command::add_typed_files(&request, log, &mut output_files);
         }
 
         if ctx.bundler_options.library {
@@ -821,7 +818,7 @@ impl BuildCommand {
                 ctx,
                 src_root_dir,
                 &compiler_options,
-                log_ref,
+                log,
                 &mut output_files,
             );
         }
@@ -959,7 +956,7 @@ impl BuildCommand {
                     );
                     if let Err(failure) = checked {
                         super::compile_command::exit_with_failure(
-                            log_ref,
+                            log,
                             super::compile_command::RequestOrigin::CompileCommand,
                             compile_target,
                             &failure,
@@ -998,7 +995,7 @@ impl BuildCommand {
                 ) {
                     Ok(plan) => plan,
                     Err(failure) => super::compile_command::exit_with_failure(
-                        log_ref,
+                        log,
                         super::compile_command::RequestOrigin::BuildFlag,
                         compile_target,
                         &failure,
@@ -1160,7 +1157,7 @@ impl BuildCommand {
                 break 'dump;
             }
 
-            if log_ref.errors == 0 {
+            if !log.has_errors() {
                 if opt_transform_only {
                     bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",
@@ -1300,7 +1297,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(Output::error_writer())?;
+        log.print(Output::error_writer())?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

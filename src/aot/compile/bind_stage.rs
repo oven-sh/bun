@@ -1518,7 +1518,7 @@ impl Build<'_> {
             }
         };
         let provider = self.provider;
-        let bundle = |pages: &[FileId], log: &mut Log| {
+        let bundle = |pages: &[FileId], log: &Log| {
             let paths: Vec<&[u8]> = pages.iter().map(path_of).collect();
             provider.bundle_pages(&paths, log)
         };
@@ -1534,14 +1534,14 @@ impl Build<'_> {
             if manifests.is_ok() {
                 let sentence = first_error_of(&said);
                 warn_instead_of_errors(&mut said);
-                loaded.messages.say(&mut said);
+                loaded.messages.say(&said);
                 let refused = &mut self.refused_guessed_files;
                 refused.extend(guessed.into_iter().map(|page| (page, sentence.clone())));
                 refused.sort_unstable();
             }
             said = said_of_sure;
         }
-        loaded.messages.say(&mut said);
+        loaded.messages.say(&said);
         self.diagnostics.add_load_messages(loaded.messages);
         let Ok(manifests) = manifests else {
             return Vec::new();

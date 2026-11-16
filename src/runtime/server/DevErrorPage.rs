@@ -4,7 +4,7 @@
 
 use std::io::Write as _;
 
-use bun_ast::{Kind, Location, Log, Metadata, Msg};
+use bun_ast::{Kind, Location, Metadata, Msg};
 use bun_core::fmt::{JSONFormatterUTF8Options, format_json_string_utf8, substitute_named};
 use bun_core::strings;
 use bun_jsc::exception_list::{JsException, StackTrace};
@@ -17,7 +17,7 @@ pub(crate) struct DevErrorPage<'a> {
     pub cwd: &'a [u8],
     pub exceptions: &'a [JsException],
     /// Build/resolve errors logged while handling the request.
-    pub log: Option<&'a Log>,
+    pub msgs: &'a [Msg],
 }
 
 impl DevErrorPage<'_> {
@@ -71,12 +71,8 @@ impl DevErrorPage<'_> {
 
         // `Log.errors` / `Log.warnings` don't count messages added via
         // `add_msg`, which is how build/resolve errors reach this log.
-        let msgs: &[Msg] = match self.log {
-            Some(log) => &log.msgs,
-            None => &[],
-        };
         let (mut errors, mut warnings) = (0u32, 0u32);
-        for msg in msgs {
+        for msg in self.msgs {
             errors += (msg.kind == Kind::Err) as u32;
             warnings += (msg.kind == Kind::Warn) as u32;
         }
@@ -85,7 +81,7 @@ impl DevErrorPage<'_> {
             "],\"build\":{{\"errors\":{errors},\"warnings\":{warnings},\"msgs\":["
         )
         .unwrap();
-        for (i, msg) in msgs.iter().enumerate() {
+        for (i, msg) in self.msgs.iter().enumerate() {
             if i > 0 {
                 w.push(b',');
             }

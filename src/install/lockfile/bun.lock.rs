@@ -1688,7 +1688,7 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
 fn parse_integrity(
     integrity_str: &[u8],
     lockfile_version: Version,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
     index: usize,
@@ -1728,7 +1728,7 @@ fn parse_catalog(
     catalog: &mut super::catalog_map::Map,
     rows: &[JSON::E::PropertyJSON],
     string_buf: &mut StringBuf<'_>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     invalid: ParseError,
 ) -> Result<(), ParseError> {
@@ -1759,7 +1759,7 @@ fn parse_catalog(
             dep_name_hash,
             version_sliced.slice,
             &version_sliced,
-            &mut *log,
+            log,
             None,
         ) else {
             log.add_error(
@@ -1798,7 +1798,7 @@ pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     manager: Option<&PackageManager>,
 ) -> Result<(), ParseError> {
     let at_value = |key_loc| value_loc_of(source, key_loc);
@@ -1961,7 +1961,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         },
                         version_str,
                         &mut sbuf!(lockfile),
-                        &mut *log,
+                        log,
                     )
                     .map_err(|_| ParseError::OutOfMemory)?;
                 if !ok {
@@ -2020,7 +2020,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         rule_target,
                         version_str,
                         &mut sbuf!(lockfile),
-                        &mut *log,
+                        log,
                     )
                     .map_err(|_| ParseError::OutOfMemory)?;
                 if !ok {
@@ -2225,7 +2225,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let (off, len) = parse_append_dependencies(
             lockfile,
             &root_pkg_exr,
-            &mut *log,
+            log,
             source,
             &mut optional_peers_buf,
             &mut unresolved_rows,
@@ -2284,7 +2284,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let (off, len) = parse_append_dependencies(
                 lockfile,
                 &value,
-                &mut *log,
+                log,
                 source,
                 &mut optional_peers_buf,
                 &mut unresolved_rows,
@@ -2575,7 +2575,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         let (off, len) = parse_append_dependencies(
                             lockfile,
                             &deps_expr,
-                            &mut *log,
+                            log,
                             source,
                             &mut optional_peers_buf,
                             &mut unresolved_rows,
@@ -3031,8 +3031,8 @@ pub(crate) fn parse_into_binary_lockfile(
         lockfile.tag_workspace_links(link_workspace_packages);
 
         // The install reports a refused name itself, after it applies package.json.
-        let mut refused_names = bun_ast::Log::init();
-        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(&mut refused_names) {
+        let refused_names = bun_ast::Log::init();
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(&refused_names) {
             return Err(ParseError::OutOfMemory);
         }
     }
@@ -3302,7 +3302,7 @@ fn dependency_resolution_failure(
     pkg_path: Option<&[u8]>,
     buf: &[u8],
     source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     loc: bun_ast::Loc,
 ) -> ParseError {
     let behavior_str = if dep.behavior.contains(Behavior::DEV) {
@@ -3345,7 +3345,7 @@ fn dependency_resolution_failure(
 fn parse_append_dependencies(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
     // Receives the optional dependencies that `obj` lists as "unresolved".
@@ -3442,7 +3442,7 @@ fn parse_append_dependencies(
                         name.hash,
                         version_sliced.slice,
                         &version_sliced,
-                        &mut *log,
+                        log,
                         None,
                     ) {
                         Some(v) => v,

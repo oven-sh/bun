@@ -16,7 +16,7 @@ use bun_ast::ts::Metadata;
 // canonical definition in `TypeScript.rs`.
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(
@@ -1461,8 +1461,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         F: FnOnce(&mut Self) -> Result<R, Error>,
     {
         self.mark_type_script_only();
-        // The Lexer
-        // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;

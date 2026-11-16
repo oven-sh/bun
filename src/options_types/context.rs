@@ -2,11 +2,12 @@
 //! the CLI crate so subsystems (install, bundler, bake, shell) can reference
 //! the parsed-options shape without importing the CLI itself.
 //!
-//! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
+//! `create()` (which calls `Arguments.parse`) and the
 //! `context_data` storage stay in `cli.rs`.
 
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
+use bun_core::AtomicCell;
 
 use crate::bundle_enums;
 use crate::code_coverage_options::CodeCoverageOptions;
@@ -20,12 +21,8 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Raw pointer (not `&mut`) so `Default` works and so the
-    /// process-global `CONTEXT_DATA` static can be zero-initialized before
-    /// `create_context_data()` writes the real `&mut Log` into it.
-    // SAFETY: written exactly once in single-threaded CLI startup; thereafter
-    // always non-null for the process lifetime. Callers deref via `ctx.log()`.
-    pub log: *mut bun_ast::Log,
+    /// `None` only in `ContextData::default()`.
+    pub log: Option<&'static bun_ast::Log>,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
@@ -70,7 +67,7 @@ impl Default for ContextData {
         Self {
             start_time: 0,
             args: api::TransformOptions::default(),
-            log: core::ptr::null_mut(),
+            log: None,
             positionals: Vec::new(),
             passthrough: Vec::new(),
             install: None,
@@ -92,93 +89,11 @@ impl Default for ContextData {
 }
 
 impl ContextData {
-    /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
-    ///
-    /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
-    /// `&mut Log` to an exclusive borrow of the `ContextData` — a
-    /// `&self -> &mut Log` accessor would let two
-    /// live `&mut Log` overlap (UB). Note this is *necessary but not
-    /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
-    /// caller and is also fanned out to and stored by the transpiler/bundler
-    /// options, the install pipeline (migration,
-    /// `PackageManagerOptions`), JSON parsing,
-    /// etc. Exclusive `self` does NOT exclude those
-    /// aliases — see `# Safety` for the full precondition.
-    ///
-    /// # Safety
-    /// - `self.log` must have been populated by `create_context_data()` (i.e.
-    ///   this `ContextData` is the global CLI context) and remain valid for the
-    ///   lifetime of the returned reference.
-    /// - No other reference (`&` or `&mut`) to the pointed-to `Log` — including
-    ///   any derived from the CLI caller's original `*Log` or from copies held
-    ///   by the transpiler/bundler/install/JSON subsystems — may be live for
-    ///   the lifetime of the returned `&mut`.
-    #[inline]
-    pub unsafe fn log(&mut self) -> &mut bun_ast::Log {
-        debug_assert!(!self.log.is_null());
-        // SAFETY: single-threaded CLI startup writes a process-lifetime pointer
-        // and never invalidates it; the caller's `# Safety` contract guarantees
-        // no overlapping borrow of the same `Log` (which is aliased elsewhere —
-        // `&mut self` alone cannot prove exclusivity here).
-        unsafe { &mut *self.log }
-    }
-
-    /// Mutable accessor for the process-lifetime CLI `Log`.
-    ///
-    /// `self.log` is the `*mut bun_ast::Log` written exactly once by
-    /// `create_context_data()` during single-threaded CLI startup, pointing at
-    /// the static `Cli::LOG_` storage. Other subsystems that copy the same
-    /// `*mut Log` (transpiler, install) reborrow it via their own raw-pointer
-    /// accessors. Centralizing the deref here removes ~20 identical
-    /// `unsafe { &mut *ctx.log }` blocks at call sites.
-    ///
-    /// Takes `&self` (not `&mut self`) because several CLI entry points hold
-    /// `&Context<'_>` (= `&&mut ContextData`) and a `&mut self` receiver could
-    /// not prove exclusivity over the `Log` anyway — the pointer is aliased
-    /// outside `ContextData` (see `Transpiler::log_mut`,
-    /// `PackageManager::log_mut`). Note that a `&self` receiver provides **no**
-    /// static guarantee against interleaving two `log_mut()` results — shared
-    /// borrows do not exclude one another — hence this function is `unsafe`.
-    ///
-    /// # Safety
-    /// The caller must ensure that for the lifetime of the returned `&mut Log`
-    /// no other reference to the same `Log` exists: no second `log_mut()`
-    /// borrow, no overlapping [`log_ref`] borrow, and no live `&mut Log`
-    /// obtained via any other aliasing path (`Transpiler::log_mut`,
-    /// `PackageManager::log_mut`, etc.). CLI dispatch is single-threaded, so
-    /// this reduces to "do not hold the result across a call that may itself
-    /// reborrow the log".
-    ///
-    /// # Panics
-    /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
-        assert!(
-            !self.log.is_null(),
-            "ContextData::log_mut() before create_context_data()"
-        );
-        // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_` (`'static`); the caller's `# Safety`
-        // contract guarantees no overlapping borrow of the same `Log`.
-        unsafe { &mut *self.log }
-    }
-
-    /// Shared-ref counterpart of [`log_mut`] for read-only inspection
-    /// (`has_errors()`, `print()`).
-    #[track_caller]
-    #[inline]
-    pub fn log_ref(&self) -> &bun_ast::Log {
-        assert!(
-            !self.log.is_null(),
-            "ContextData::log_ref() before create_context_data()"
-        );
-        // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_`; shared `&` may freely alias other
-        // shared borrows. Callers of `log_mut` are obligated not to hold a
-        // live `&mut Log` overlapping this.
-        unsafe { &*self.log }
+    pub fn log(&self) -> &'static bun_ast::Log {
+        self.log
+            .expect("ContextData::log() before create_context_data()")
     }
 }
 
@@ -324,50 +239,13 @@ impl Default for BundlerOptions {
 
 pub type Context<'a> = &'a mut ContextData;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Process-global CLI context handle.
-//
-// `ContextData` is owned by the CLI crate (storage lives in
-// `bun_runtime::cli::command::CONTEXT_DATA`), but lower-tier crates such as
-// `bun_jsc` need read access to parsed runtime options (e.g.
-// `runtime_options.console_depth`) without taking a forward dep on
-// `bun_runtime`. The CLI publishes its pointer here via `set_global` during
-// single-threaded startup; readers use `try_get`.
-static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+/// `--console-depth`, `console.depth`. Read by every thread that runs JavaScript.
+pub static CONSOLE_DEPTH: AtomicCell<u16> = AtomicCell::new(2);
 
-/// Publish the process-global CLI context. Called once from
-/// `bun_runtime::cli::command::create_context_data` during single-threaded
-/// startup.
-///
-/// # Safety
-/// `ctx` must outlive the process (it points into a `static`).
-#[inline]
-pub unsafe fn set_global(ctx: *mut ContextData) {
-    GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
-}
-
-/// Raw pointer to the process-global CLI context (null before
-/// `set_global`). Higher-tier crates that need a `&mut` view should go
-/// through this single source of truth rather than keeping a parallel static.
-#[inline]
-pub fn global_ptr() -> *mut ContextData {
-    GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire)
-}
-
-/// Read-only handle to the process-global CLI context, or `None` if the CLI
-/// has not been initialized (embedder/tests). Prefer this over
-/// `bun_runtime::cli::Command::get` from crates below `bun_runtime`.
-#[inline]
-pub fn try_get<'a>() -> Option<&'a ContextData> {
-    let p = GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: pointer was published from a process-lifetime `static` in
-    // single-threaded startup; treated as read-only here.
-    unsafe { p.as_ref() }
-}
+/// `--silent`, `run.silent`. Read by every thread that runs a server.
+pub static IS_SILENT: AtomicCell<bool> = AtomicCell::new(false);
 
 pub struct DebugOptions {
-    pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
@@ -400,7 +278,6 @@ impl Default for DebugOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
             watch_kill_signal_arg: None,
@@ -705,7 +582,6 @@ pub struct RuntimeOptions {
     /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
     pub interactive: bool,
     pub preserve_symlinks_main: bool,
-    pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
@@ -775,7 +651,6 @@ impl Default for RuntimeOptions {
             expose_gc: false,
             interactive: false,
             preserve_symlinks_main: false,
-            console_depth: None,
             cron_title: Box::default(),
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),

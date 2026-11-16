@@ -311,7 +311,7 @@ fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
     };
     hir.exprs.iter().any(|node| match node.kind {
         ExprKind::Ident(name) => names_loader(name),
-        ExprKind::String(text) => text.is_some() && is_test_module(atoms.bytes(text)),
+        ExprKind::String(text) => is_test_module(atoms.bytes(text)),
         ExprKind::Dot { name, .. } => names_loader(name),
         ExprKind::ImportCall { args } => !is_string(hir.ids(args).next()),
         ExprKind::Call(call) => {
@@ -516,7 +516,6 @@ fn read_what_file_writes_by(
     let sited: FxHashSet<Vec<u8>> = written.paths.iter().map(|it| it.0.clone()).collect();
     for node in hir.exprs.iter() {
         if let ExprKind::String(text) = node.kind
-            && text.is_some()
             && is_relative(atoms.bytes(text))
         {
             let path = from_argument(folder, atoms.bytes(text));

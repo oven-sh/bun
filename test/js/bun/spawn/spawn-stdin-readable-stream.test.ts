@@ -1261,7 +1261,7 @@ describe("spawn stdin ReadableStream", () => {
   // drains stdout concurrently and samples the child's progress while the
   // stderr reader is deliberately stalled.
   //
-  // Windows: WindowsBufferedReader::on_read discards the on_read_chunk return
+  // Windows: WindowsBufferedReader::read_chunks discards the on_read_chunk return
   // value, so FileReader's highwater mark never propagates to uv_read_stop and
   // the pipe drains at socket speed regardless of JS demand. Same limitation as
   // the process-stdin.test.ts "pipe backpressure" suite; skipped there too.

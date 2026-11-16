@@ -131,7 +131,7 @@ impl Archive {
         let compress = parse_compression_options(global, options.to_js())?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob) = blob_from_js(data) {
+        if let Some(blob) = data.as_class_ref::<Blob>() {
             if let Some(store) = blob.store.get().as_ref() {
                 return Ok(Self {
                     store: store.clone(),
@@ -221,12 +221,6 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Archive {
     Archive { store, compress }
 }
 
-/// The caller's `value` keeps the `Blob` alive.
-#[inline]
-fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
-    value.as_class_ref::<Blob>()
-}
-
 /// Shared helper that builds tarball bytes from a JS object
 fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
     let Some(js_obj) = obj.get_object() else {
@@ -259,8 +253,12 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let key_slice = key.to_utf8();
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
+        let blob = value.as_class_ref::<Blob>();
         let mut array_buffer = None;
-        let data_slice = get_entry_data(global, value, &mut array_buffer)?;
+        let data_slice = match &blob {
+            Some(blob) => Utf8Bytes::Borrowed(blob.shared_view()),
+            None => get_entry_data(global, value, &mut array_buffer)?,
+        };
         let data = data_slice.slice();
 
         writer
@@ -288,12 +286,6 @@ fn get_entry_data<'a>(
     value: JSValue,
     array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
 ) -> JsResult<Utf8Bytes<'a>> {
-    // For Blob, use sharedView (no copy needed). The backing store outlives
-    // the returned slice for the duration of the caller's tarball build.
-    if let Some(blob) = blob_from_js(value) {
-        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
-    }
-
     // For ArrayBuffer/TypedArray, use view (no copy needed)
     if let Some(buffer) = value.as_array_buffer(global) {
         return Ok(Utf8Bytes::Borrowed(array_buffer.insert(buffer).slice()));
@@ -343,7 +335,7 @@ impl Archive {
         }
 
         // For Blobs, use store reference with options compression
-        if let Some(blob) = blob_from_js(data_arg) {
+        if let Some(blob) = data_arg.as_class_ref::<Blob>() {
             if let Some(store) = blob.store.get().as_ref() {
                 return start_write_task(
                     &cx,

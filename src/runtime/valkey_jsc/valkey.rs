@@ -640,7 +640,7 @@ impl ValkeyClient {
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
         // Still open means usockets parked the fast shutdown behind its
-        // ciphertext spill (`us_internal_ssl_close`, crypto/openssl.c), with
+        // ciphertext spill (`us_internal_ssl_close`, crypto/openssl.cpp), with
         // no timer; that only happens for a close with no reason pointer,
         // which is what `AnySocket::close` passes.
         if code == uws::CloseCode::FastShutdown && !socket.is_closed() {

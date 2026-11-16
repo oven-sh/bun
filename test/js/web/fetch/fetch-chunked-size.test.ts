@@ -49,6 +49,9 @@ describe("fetch: chunked chunk-size token validation", () => {
       ["5", "hello"],
       ["5;ext", "hello"],
       ["5;ext=1", "hello"],
+      ["5; ext = 1 ;;", "hello"],
+      ['5;ext="a;\\"b\\\\";more', "hello"],
+      ["0000000000000005", "hello"],
       ["05", "hello"],
       ["A", "0123456789"],
     ])("token %j", async (token, payload) => {
@@ -76,10 +79,18 @@ describe("fetch: chunked chunk-size token validation", () => {
     expect((await fetchText(url))?.code).toBe(code);
   });
 
-  // picohttpparser fails a decode once chunk framing passes 100 KB and 75% of
-  // the bytes read; that limit is meant for servers and is patched out. It is
-  // only evaluated on a decode that ends mid-body, so the terminator is held
-  // back until the client has consumed every chunk.
+  it("accepts a body that arrives one byte at a time", async () => {
+    const { server, url } = await serveChunked(async socket => {
+      socket.setNoDelay(true);
+      for (const byte of head + '6;a="b"\r\nhello \r\n05\r\nworld\r\n0;c\r\nD: e\r\nF:\r\n\r\n') {
+        await new Promise(resolve => socket.write(byte, () => setImmediate(resolve)));
+      }
+    });
+    await using _s = server;
+    expect(await (await fetch(url, { keepalive: false })).text()).toBe("hello world");
+  });
+
+  // The terminator is held back until the client has consumed every chunk.
   it("accepts a long body made of one-byte chunks", async () => {
     const count = 34_000; // 170 KB of framing around 34 KB of data
     const allRead = Promise.withResolvers<void>();

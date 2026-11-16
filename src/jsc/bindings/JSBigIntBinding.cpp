@@ -78,5 +78,5 @@ extern "C" BunString JSC__JSBigInt__toString(JSBigInt* bigInt, JSGlobalObject* g
     String result = bigInt->toString(globalObject, 10);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return toStringRef(result);
+    return toStringRef(result).leak();
 }

@@ -968,7 +968,7 @@ fn apply_transport_params(
             let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
                 continue;
             };
-            let stored = session::StoredAddr::from_socket_address(addr);
+            let stored = session::StoredAddr::from_socket_address(&addr);
             let Some((_family, port, ip)) = stored.decode() else {
                 continue;
             };
@@ -1089,12 +1089,6 @@ impl QuicEndpoint {
     ) -> JsResult<JsWrapper<'a, Self>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
-            // SAFETY: pure library init.
-            unsafe {
-                lsquic::lsquic_global_init(
-                    lsquic::LSQUIC_GLOBAL_CLIENT | lsquic::LSQUIC_GLOBAL_SERVER,
-                )
-            };
             if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_lsquic")).is_some() {
                 // SAFETY: static C string.
                 unsafe { lsquic::us_nq_enable_logging(c"debug".as_ptr()) };
@@ -1117,7 +1111,7 @@ impl QuicEndpoint {
                 .filter(|v| !v.is_empty_or_undefined_or_null())
             {
                 if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(addr);
+                    let stored = StoredAddr::from_socket_address(&addr);
                     if let Some((_, port, ip)) = stored.decode() {
                         use core::fmt::Write;
                         let mut host = String::new();
@@ -1143,7 +1137,8 @@ impl QuicEndpoint {
                 }
             }
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
+                if let Some(bl) =
+                    crate::generated_bindgen::block_list::js_BlockList::from_js(&bl_js)
                 {
                     block_list = Some(bl.as_ptr());
                     block_list_js = Some(bun_jsc::Strong::create(bl_js, global));
@@ -2249,7 +2244,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         };
-        let remote = StoredAddr::from_socket_address(addr);
+        let remote = StoredAddr::from_socket_address(&addr);
         if let Some(version) = read_u64_option(global, options, "version")?
             .map(|v| v as u32)
             .filter(|v| *v != QUIC_VERSION_1 && *v != QUIC_VERSION_2)

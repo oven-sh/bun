@@ -33,9 +33,10 @@ use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::header_has_token;
 use bun_http::{HeaderValueIterator, Headers};
+use bun_http_types::ETag::Header;
+use bun_http1::{ChunkedDecoder, HeadOptions, Response, ResponseParser};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
-use bun_picohttp as picohttp;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
@@ -77,11 +78,6 @@ fn max_response_head_len() -> usize {
     bun_http::max_http_header_size().saturating_add(1024)
 }
 
-/// One slot per line is enough: picohttpparser never emits more than one header per line.
-fn header_slots(head: &[u8]) -> Vec<picohttp::Header> {
-    vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
-}
-
 /// `uws.NewSocketHandler(ssl)`
 type Socket<const SSL: bool> = SocketHandler<SSL>;
 
@@ -98,9 +94,9 @@ enum State {
 
 /// Matches node:http's (and so `ws`'s) definition of an upgrade response: status 101, a non-empty
 /// `Upgrade` header, and `upgrade` listed in `Connection`. The result is passed to ws.ts.
-fn is_upgrade(response: &picohttp::Response) -> bool {
+fn is_upgrade(response: &Response) -> bool {
     let (mut has_upgrade, mut connection_has_upgrade) = (false, false);
-    for header in response.headers.list {
+    for header in response.headers.iter() {
         if strings::eql_case_insensitive_ascii(header.name(), b"upgrade", true) {
             has_upgrade |= !header.value().is_empty();
         } else if strings::eql_case_insensitive_ascii(header.name(), b"connection", true) {
@@ -114,18 +110,18 @@ fn is_upgrade(response: &picohttp::Response) -> bool {
 #[derive(Clone, Copy)]
 enum ResponseBody {
     Length(u64),
-    Chunked(picohttp::phr_chunked_decoder),
+    Chunked(ChunkedDecoder),
     UntilClose,
 }
 
 impl ResponseBody {
-    fn from_response(response: &picohttp::Response) -> Self {
+    fn from_response(response: &Response) -> Self {
         if matches!(response.status_code, 101 | 204 | 304) {
             return Self::Length(0);
         }
         let mut transfer_encoding: Option<bun_http::Encoding> = None;
         let mut content_length: Option<u64> = None;
-        for header in response.headers.list {
+        for header in response.headers.iter() {
             if strings::eql_case_insensitive_ascii(header.name(), b"transfer-encoding", true) {
                 let coding = transfer_encoding.get_or_insert(bun_http::Encoding::Identity);
                 if bun_http::fold_transfer_encoding(header.value(), coding).is_err() {
@@ -136,17 +132,13 @@ impl ResponseBody {
             }
         }
         match transfer_encoding {
-            Some(bun_http::Encoding::Chunked) => {
-                let mut decoder = picohttp::phr_chunked_decoder::default();
-                decoder.consume_trailer = 1;
-                Self::Chunked(decoder)
-            }
+            Some(bun_http::Encoding::Chunked) => Self::Chunked(ChunkedDecoder::default()),
             Some(_) => Self::UntilClose,
             None => content_length.map_or(Self::UntilClose, Self::Length),
         }
     }
 
-    /// Strips `data` down to body bytes, in place. Returns true once the body has ended.
+    /// Strips `data` down to body bytes. Returns true once the body has ended.
     fn decode(&mut self, data: &mut Vec<u8>) -> bool {
         match self {
             Self::Length(remaining) => {
@@ -155,18 +147,16 @@ impl ResponseBody {
                 *remaining == 0
             }
             Self::Chunked(decoder) => {
-                let mut len = data.len();
-                // SAFETY: `data` holds `len` initialized bytes. Decoding is in place and never
-                // grows `len`.
-                let rc = unsafe {
-                    picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
-                };
-                data.truncate(len);
-                // -2: needs more data. -1: malformed, so stop here and leave the body incomplete.
-                if rc >= 0 {
-                    *self = Self::Length(0);
+                let encoded = core::mem::take(data);
+                match decoder.decode(&encoded, data) {
+                    Ok(None) => false,
+                    Ok(Some(_)) => {
+                        *self = Self::Length(0);
+                        true
+                    }
+                    // Stop here and leave the body incomplete.
+                    Err(_) => true,
                 }
-                rc != -2
             }
             Self::UntilClose => false,
         }
@@ -199,10 +189,9 @@ pub struct HTTPClient<const SSL: bool> {
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
     to_send_len: Cell<usize>,
-    /// Unconsumed bytes received since the last request (CONNECT or upgrade) was sent.
+    response_parser: JsCell<ResponseParser>,
+    /// Unconsumed bytes, starting with a complete response head or with its body.
     body: JsCell<Vec<u8>>,
-    /// Bytes of interim 1xx responses skipped since the last final response.
-    interim_len: Cell<usize>,
     /// Created by the `ws` module, which runs its own handshake timer, validates the 101 itself and
     /// reads the body of a non-upgrade response.
     ws_mode: bool,
@@ -466,8 +455,8 @@ where
             outgoing_websocket: JsCell::new(None),
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
+            response_parser: JsCell::new(ResponseParser::default()),
             body: JsCell::new(Vec::new()),
-            interim_len: Cell::new(0),
             ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
@@ -846,60 +835,41 @@ where
         socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
-    /// Appends `data` to `body`. Once `body` starts with a complete response head, calls `on_head`
+    /// Once the bytes received start with a complete response head, calls `on_head`
     /// with the parsed response and the bytes after it. Skips interim 1xx responses, and fails the
     /// connection if the head is malformed or too large. All interim responses together may be as
     /// large as one head, or a server could keep the client parsing them forever. The result
     /// depends only on the bytes received so far, not on how they were split across reads.
     ///
-    /// `on_head` gets a copy and the head stays in `body`: a `handshake` listener can spin the event
+    /// `on_head` gets a copy and the head goes to `body`: a `handshake` listener can spin the event
     /// loop, and the next read then appends after it.
     fn with_response_head(
         this: ThisPtr<Self>,
         data: &[u8],
-        on_head: impl FnOnce(&picohttp::Response, &[u8]),
+        on_head: impl FnOnce(&Response, &[u8]),
     ) {
-        this.body.with_mut(|b| b.extend_from_slice(data));
-        let received = this.body.get().clone();
-        let mut unparsed: &[u8] = &received;
+        let mut received = this.body.take();
+        received.extend_from_slice(data);
         let cap = max_response_head_len();
-        let drop_interim = |unparsed: &[u8]| {
-            this.body
-                .with_mut(|b| drop(b.drain(..received.len() - unparsed.len())));
+        let options = HeadOptions {
+            max_len: u32::try_from(cap).unwrap_or(u32::MAX),
+            max_headers: usize::MAX,
+            max_interim_len: cap,
+            spare_capacity: 0,
         };
-        loop {
-            let window = &unparsed[..unparsed.len().min(cap)];
-            let mut slots = header_slots(window);
-            let error = match picohttp::Response::parse(window, &mut slots) {
-                Ok(response) if matches!(response.status_code, 100 | 102..=199) => {
-                    unparsed = &unparsed[response.bytes_read..];
-                    this.interim_len
-                        .set(this.interim_len.get() + response.bytes_read);
-                    if this.interim_len.get() <= cap {
-                        continue;
-                    }
-                    ErrorCode::ResponseHeadersTooLarge
-                }
-                Ok(response) => {
-                    drop_interim(unparsed);
-                    this.interim_len.set(0);
-                    return on_head(&response, &unparsed[response.bytes_read..]);
-                }
-                Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
-                    ErrorCode::InvalidResponse
-                }
-                // picohttpparser validates nothing until it has 9 bytes, so check the prefix here.
-                Err(picohttp::ParseResponseError::ShortRead)
-                    if !b"HTTP/1.".starts_with(&window[..window.len().min(7)]) =>
-                {
-                    ErrorCode::InvalidResponse
-                }
-                Err(picohttp::ParseResponseError::ShortRead) if unparsed.len() > cap => {
-                    ErrorCode::ResponseHeadersTooLarge
-                }
-                Err(picohttp::ParseResponseError::ShortRead) => return drop_interim(unparsed),
-            };
-            return Self::terminate(this, error);
+        match this
+            .response_parser
+            .with_mut(|p| p.feed(&received, options))
+        {
+            Ok(Some((response, rest))) => {
+                this.body.set([&response.headers.buf, rest].concat());
+                on_head(&response, rest);
+            }
+            Ok(None) => {}
+            Err(bun_http1::Error::HeadTooLong) => {
+                Self::terminate(this, ErrorCode::ResponseHeadersTooLarge);
+            }
+            Err(_) => Self::terminate(this, ErrorCode::InvalidResponse),
         }
     }
 
@@ -962,11 +932,7 @@ where
     }
 
     /// Caller holds a `RefPtr` guard. `response` and `rest` must not borrow `self`.
-    fn process_websocket_upgrade_response(
-        this: ThisPtr<Self>,
-        response: &picohttp::Response,
-        rest: &[u8],
-    ) {
+    fn process_websocket_upgrade_response(this: ThisPtr<Self>, response: &Response, rest: &[u8]) {
         let Some(ws) = this.cpp_websocket() else {
             return Self::terminate(this, ErrorCode::Cancel);
         };
@@ -1079,7 +1045,7 @@ where
     fn process_proxy_response(
         this: ThisPtr<Self>,
         socket: Socket<SSL>,
-        response: &picohttp::Response,
+        response: &Response,
         remain_buf: &[u8],
     ) {
         if !bun_http::is_successful_connect_status(response.status_code) {
@@ -1089,9 +1055,9 @@ where
                 ErrorCode::ProxyConnectFailed
             };
             let mut status_line = response.status_code.to_string().into_bytes();
-            if !response.status.is_empty() {
+            if !response.status_text().is_empty() {
                 status_line.push(b' ');
-                status_line.extend_from_slice(response.status);
+                status_line.extend_from_slice(response.status_text());
             }
             let detail = BunString::clone_latin1(&status_line);
             return Self::fail(this, code, BunString::EMPTY, detail);
@@ -1272,17 +1238,17 @@ where
     /// `permessage-deflate` params, if any. `ws` validates in JS instead: see `HandshakeVerdict`.
     fn validate_upgrade(
         &self,
-        response: &picohttp::Response,
+        response: &Response,
     ) -> Result<Option<WebSocketDeflate::Params>, ErrorCode> {
-        let mut upgrade_header = picohttp::Header::ZERO;
+        let mut upgrade_header = Header::new(b"", b"");
         let mut connection_header_seen = false;
         let mut connection_has_upgrade = false;
-        let mut websocket_accept_header = picohttp::Header::ZERO;
+        let mut websocket_accept_header = Header::new(b"", b"");
         let mut protocol_header_seen = false;
 
         let mut deflate_params: Option<WebSocketDeflate::Params> = None;
 
-        for header in response.headers.list {
+        for header in response.headers.iter() {
             match header.name().len() {
                 len if len == b"Connection".len() => {
                     if strings::eql_case_insensitive_ascii_ignore_length(
@@ -1300,7 +1266,7 @@ where
                             b"Upgrade",
                         )
                     {
-                        upgrade_header = *header;
+                        upgrade_header = header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Version".len() => {
@@ -1320,7 +1286,7 @@ where
                             b"Sec-WebSocket-Accept",
                         )
                     {
-                        websocket_accept_header = *header;
+                        websocket_accept_header = header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Protocol".len() => {
@@ -1543,6 +1509,7 @@ where
 
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
+        cost += self.response_parser.get().memory_cost();
         cost += self.body.get().capacity();
         cost += self.to_send_len.get();
         cost
@@ -1638,6 +1605,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();
+        self.response_parser.set(ResponseParser::default());
         self.body.set(Vec::new());
 
         if !self.hostname.get().is_empty() {

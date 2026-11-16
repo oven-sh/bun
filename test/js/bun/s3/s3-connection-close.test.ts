@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // Every S3 PUT/DELETE answers with a zero-length body, and any endpoint behind
 // a load balancer may reply with `Connection: close`. The client must treat
 // `Content-Length: 0` as complete rather than reading to EOF, FIN or not.
-function fixture(op: "write" | "delete", sendFin: boolean) {
+function fixture(op: "write" | "delete", sendFin: boolean, head: string) {
   return `
 import net from "node:net";
 
@@ -17,7 +17,7 @@ const server = net.createServer(socket => {
     if (headerEnd === -1) return;
     const match = /content-length: *(\\d+)/i.exec(buffer.subarray(0, headerEnd).toString());
     if (buffer.length - headerEnd - 4 < (match ? Number(match[1]) : 0)) return;
-    socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+    socket.write(${JSON.stringify(`HTTP/1.1 ${head}\r\n\r\n`)});
     ${sendFin ? "socket.end();" : "// the peer keeps the socket open"}
   });
 });
@@ -115,11 +115,18 @@ const envWithoutProxy = {
   https_proxy: undefined,
 };
 
+const EMPTY_RESPONSES = [
+  ["write", "200 OK\r\nContent-Length: 0\r\nConnection: close"],
+  ["delete", "200 OK\r\nContent-Length: 0\r\nConnection: close"],
+  ["delete", "204 No Content\r\nTransfer-Encoding: chunked"],
+  ["delete", "204 No Content\r\nContent-Type: text/event-stream"],
+] as const;
+
 describe.each([true, false])("peer sends FIN: %p", sendFin => {
-  test.concurrent.each(["write", "delete"] as const)(
-    "S3Client.%s() resolves on a Content-Length: 0 + Connection: close response",
-    async op => {
-      using dir = tempDir("s3-connection-close", { "fixture.ts": fixture(op, sendFin) });
+  test.concurrent.each(EMPTY_RESPONSES)(
+    "S3Client.%s() resolves on a response that has no body: %j",
+    async (op, head) => {
+      using dir = tempDir("s3-connection-close", { "fixture.ts": fixture(op, sendFin, head) });
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "fixture.ts"],

@@ -22,6 +22,7 @@ public:
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
 
     static JSC::Structure* createStructure(JSC::VM& vm);
+    static void destroy(JSC::JSCell* cell) { static_cast<GlobalObject*>(cell)->GlobalObject::~GlobalObject(); }
 
     void finishCreation(JSC::VM& vm);
 

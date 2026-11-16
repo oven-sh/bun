@@ -4411,8 +4411,8 @@ pub mod formatter {
             }
 
             // `DOMFormData` is a C++-backed WebCore type — no `JsClass` impl,
-            // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
-            if crate::DOMFormData::from_js(value).is_some() {
+            // so use its dedicated FFI downcast instead of `as_class_ref`.
+            if crate::DOMFormData::from_js(&value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;

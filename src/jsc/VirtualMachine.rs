@@ -19,7 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
+    PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -161,10 +161,8 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: JsCell<Transpiler<'static>>,
-    /// Hot-reload import watcher (heap `Box`, installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
-    /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: Cell<*mut crate::hot_reloader::ImportWatcher>,
+    /// `None` when hot reload is disabled.
+    pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -306,8 +304,10 @@ pub struct VirtualMachine {
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
+    #[cfg(not(windows))]
     pub(crate) after_event_loop_callback_ctx: Cell<Option<*mut c_void>>,
-    pub(crate) after_event_loop_callback: Cell<Option<OpaqueCallback>>,
+    #[cfg(not(windows))]
+    pub(crate) after_event_loop_callback: Cell<Option<bun_io::OpaqueCallback>>,
 
     pub(crate) remap_stack_frames_mutex: bun_threading::Mutex,
 
@@ -1425,44 +1425,12 @@ impl VirtualMachine {
         VM::opaque_ref(self.jsc_vm.get())
     }
 
-    /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// `*mut ImportWatcher` installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
-    /// `Box` heap allocation), or null when hot reload is disabled.
-    ///
-    /// NOTE: unlike `event_loop`, the pointee is **not** JS-thread-only —
-    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
-    /// the spawned file-watcher thread (`Watcher::thread_main`), and
-    /// `RuntimeTranspilerStore` reads it from transpiler workers. The pointee
-    /// guards itself with an internal mutex, so we
-    /// return the raw pointer and leave the `unsafe` deref at the call site to
-    /// keep the cross-thread hazard visible. Callers must scope any reborrow to
-    /// a single mutex-guarded `Watcher` operation.
-    #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
-        self.bun_watcher.get()
-    }
-
-    /// Shuts down the file watcher. Its thread reads this VM while handling a change, so this waits
-    /// for the current change to finish and prevents new ones.
-    fn stop_import_watcher(&self) {
-        use crate::hot_reloader::ImportWatcher;
-        if self.bun_watcher.get().is_null() {
-            return;
+    /// Call it after the transpile jobs have ended: their copies of the transpiler hold no count.
+    fn stop_watcher(&self) {
+        if let Some(watcher) = self.bun_watcher.take() {
+            watcher.shutdown();
+            self.transpiler.with_mut(|t| t.resolver.watcher = None);
         }
-        // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
-        // Keep it installed until `shutdown` returns because the in-progress change still reads it.
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) =
-            unsafe { &mut *self.bun_watcher.get() };
-        // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w) };
-        self.transpiler.with_mut(|t| t.resolver.watcher = None);
-        let watcher = self.bun_watcher.replace(core::ptr::null_mut());
-        // SAFETY: as above.
-        let watcher = unsafe { bun_core::heap::take(watcher) };
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = *watcher;
-        // `shutdown` transferred ownership to the watcher thread.
-        let _ = Box::into_raw(w);
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop.
@@ -1640,6 +1608,7 @@ impl VirtualMachine {
     }
 
     pub fn on_after_event_loop(&self) {
+        #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.take() {
             let ctx = self.after_event_loop_callback_ctx.take();
             // SAFETY: `cb` was registered with the matching `ctx`.
@@ -1715,7 +1684,7 @@ impl VirtualMachine {
         // e.g. `process.stdout` on a pipe with nothing left to write.
         let disarmed = rare
             .and_then(|rare| rare.file_polls.get())
-            .map_or(0, |polls| polls.get().disarmed_count());
+            .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
@@ -1980,7 +1949,7 @@ impl VirtualMachine {
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
-        !self.bun_watcher.get().is_null()
+        self.bun_watcher.get().is_some()
     }
 
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
@@ -2263,7 +2232,8 @@ impl VirtualMachine {
                 _ => break,
             };
             for hook in hooks {
-                (hook.func)(hook.ctx);
+                // SAFETY: `push_cleanup_hook`'s contract, and the list no longer has it.
+                unsafe { (hook.func)(hook.ctx) };
                 // A hook's C signature returns nothing, so one that entered JS
                 // (an addon finalizer) leaves what it threw pending: fold it here,
                 // this loop being its dispatcher.
@@ -2454,7 +2424,7 @@ impl VirtualMachine {
             rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));
         }
         vm.run_cleanup_hooks();
-        vm.stop_import_watcher();
+        vm.stop_watcher();
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -2907,7 +2877,7 @@ pub struct RuntimeHooks {
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
         loop_() => (*this).uws_loop(),
-        file_polls_ptr() => (*this).rare_data().file_polls_ptr(),
+        file_polls_ptr() => (*this).rare_data().file_polls(),
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         increment_pending_unref_counter() => {
             (*this)
@@ -3093,7 +3063,7 @@ impl VirtualMachine {
         let vm = VirtualMachine {
             global: Cell::new(core::ptr::null_mut()),
             transpiler: JsCell::new(transpiler),
-            bun_watcher: Cell::new(core::ptr::null_mut()),
+            bun_watcher: JsCell::new(None),
             console,
             log: Cell::new(NonNull::new(log)),
             main: JsCell::new(None),
@@ -3152,7 +3122,9 @@ impl VirtualMachine {
             preloads_kept_for_reload: Cell::new(false),
             has_patched_run_main: Cell::new(false),
             transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore::init(),
+            #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
+            #[cfg(not(windows))]
             after_event_loop_callback: Cell::new(None),
             remap_stack_frames_mutex: bun_threading::Mutex::new(),
             argv: opts.argv,
@@ -4421,7 +4393,7 @@ impl VirtualMachine {
             if !self.hot_reload_deferred.get() {
                 break;
             }
-            self.reload(None);
+            self.reload();
             // This reload wasn't started by a task, so run its microtasks here before the loop sleeps.
             self.tick();
         }
@@ -4438,46 +4410,9 @@ impl VirtualMachine {
     /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
     /// enabled.
     pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
-        if !self.is_watcher_enabled() || path.is_empty() {
-            return;
+        if let Some(watcher) = self.bun_watcher.get() {
+            let _ = watcher.add_file_by_path_slow(path);
         }
-        let watcher = self.bun_watcher_ptr();
-        if !watcher.is_null() {
-            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
-            // `enable_hot_module_reloading`. The pointee is shared with the
-            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
-            // discriminant is write-once at install and read-only thereafter,
-            // and `add_file_by_path_slow` serializes the inner watchlist write
-            // via `Watcher.mutex`. Borrow is scoped to this single
-            // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        }
-    }
-
-    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
-    /// enabled.
-    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
-        struct Shared {
-            watcher: *mut crate::hot_reloader::ImportWatcher,
-            _ticket: crate::Ticket,
-        }
-        // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
-        // shared with other threads (see `bun_watcher_ptr`).
-        unsafe impl Send for Shared {}
-        if !self.is_watcher_enabled() {
-            return None;
-        }
-        // One of these threads at a time has the `&mut`.
-        let shared = bun_threading::Guarded::new(Shared {
-            watcher: self.bun_watcher_ptr(),
-            _ticket: self.ticket(),
-        });
-        Some(move |path: &[u8]| {
-            let shared = shared.lock();
-            let watcher = shared.watcher;
-            // SAFETY: as in `add_to_watcher_if_needed`.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        })
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
@@ -4515,7 +4450,7 @@ impl VirtualMachine {
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
-    pub(crate) fn reload(&self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+    pub(crate) fn reload(&self) {
         if self.hot_reload.get() == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).
@@ -6147,8 +6082,6 @@ impl VirtualMachine {
         }
 
         if value.js_type() == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
-            // R-2: shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                 if !build_error.logged.get() {
                     if self.had_errors.get() {

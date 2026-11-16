@@ -1355,11 +1355,11 @@ fn on_unhandled_rejection(
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
     // error so the subtype reaches the parent intact.
-    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
-        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
-        // worker (JS) thread that owns it.
-        let text: &[u8] = unsafe { &(*bm).msg.data.text };
-        error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
+    if let Some(syntax_error) = error_instance
+        .as_class_ref::<crate::BuildMessage>()
+        .map(|bm| EncodedSlice::utf8(&bm.msg.data.text).to_syntax_error_instance(global_object))
+    {
+        error_instance = syntax_error;
     }
 
     let mut array: Vec<u8> = Vec::new();

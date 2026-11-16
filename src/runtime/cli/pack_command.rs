@@ -23,9 +23,7 @@ use bun_parsers::json as JSON;
 use bun_paths::resolve_path::{self, normalize_buf_z_spill};
 use bun_paths::{self as path, SEP_STR};
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
 /// Returns a raw projection, because `pack()` holds the resulting `&mut MapEntry` across other uses
 /// of `ctx.manager`.
@@ -1931,13 +1929,8 @@ pub(crate) fn pack(
                 bun_sys::O::RDONLY,
                 0,
             )
-            .and_then(|file| {
-                file.make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                )
-            })
             .map(CloseOnDrop::new)
+            .and_then(|file| file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open))
             .unwrap_or_else(|err| fail_file(err, "open", path));
 
             let stat = bun_sys::sys_uv::fstat(file.fd())

@@ -30,7 +30,6 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
 use crate::event_loop::{ConcurrentTask, EventLoop};
-use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
@@ -731,21 +730,7 @@ impl TranspilerJob {
         }
         let macro_load_states = transpiler::MacroLoadStates::default();
 
-        let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
-
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init
-        // (BACKREF — when non-null it points at the process-lifetime watcher
-        // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
-        // holds for this transpile job's duration). Raw `(*vm)` field
-        // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.get().cast()) };
-        if let Some(iw) = import_watcher {
-            // Never read through the watchlist's stored fd; see
-            // `ImportWatcher::snapshot_package_json`.
-            package_json = iw.snapshot_package_json(hash);
-        }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
@@ -838,17 +823,13 @@ impl TranspilerJob {
         let parse_result = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
-        if let Some(iw) = import_watcher
+        if let Some(watcher) = &transpiler.resolver.watcher
             && input_file.is_some()
             && !is_node_override
             && bun_paths::is_absolute(path.text)
             && !strings::contains(path.text, b"node_modules")
         {
-            // SAFETY: BACKREF — process-lifetime watcher; no other
-            // `&ImportWatcher` is live here, and `add_file` is
-            // thread-safe via watcher mutex.
-            let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_file(input_file, path.text, hash, package_json);
+            let _ = watcher.add_file(input_file, path.text, hash);
         }
 
         let Some(mut parse_result) = parse_result else {

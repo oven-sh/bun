@@ -952,8 +952,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
     })
 }
 
-/// Resolves `specifier` relative to `source` as an `import` does. `for_require`, unless `None`, gets the
-/// path that `require()` resolves it to when that is another file. A specifier the resolver cannot resolve (the
+/// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.

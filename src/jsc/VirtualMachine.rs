@@ -421,7 +421,7 @@ pub struct VirtualMachine {
     /// the finalizer). Not the current context: that is what the async context says.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     pub(crate) is_in_on_resolve: Cell<bool>,
-    /// Set around a resolve whose caller takes a miss for an answer: `_resolve` then does not list the importer's folder again to look once more.
+    /// Set around a resolve that takes a miss for an answer: `_resolve` then skips the retry that lists the importer's folder again.
     takes_miss_for_answer: Cell<bool>,
     pub test_isolation_enabled: Cell<bool>,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
@@ -5032,7 +5032,7 @@ impl VirtualMachine {
         )
     }
 
-    /// Resolves `specifier` as an `import` does and, with `also_for_require`, as `require()` does: the second path is `None` if it is the first one, a miss or a builtin module. Each pass asks the `onResolve` plugins, as an `import` and as `require()` ask them.
+    /// Resolves `specifier` as an `import` does and, with `also_for_require`, as `require()` does. The second path is `None` if it is the first one, a miss or a builtin module.
     pub fn resolve_for_import_and_require(
         global: &JSGlobalObject,
         specifier: &bun_core::String,

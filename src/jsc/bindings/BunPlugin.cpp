@@ -7109,8 +7109,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     return JSValue::encode(loading);
 }
 
-// The key that jest's lookups of `specifier` use. In a CommonJS file that is the path that require() resolves the name to, unless a mock of the name
-// stands or runs its factory: a mock of a name replaces the file that an import loads, and that file is its original.
+// A mock of the name replaces the file that an import loads, so for a CommonJS caller too that file is the original while the mock stands or runs.
 static const String& keyOfJestLookup(Zig::GlobalObject* globalObject, const ModuleMockSpecifier& specifier)
 {
     if (specifier.requireKey.isNull())

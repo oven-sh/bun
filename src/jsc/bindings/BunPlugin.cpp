@@ -7235,7 +7235,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             }
             if (!isOfPackage) {
                 mock->patchesPreloadMock = false;
-                if (auto file = mock->isFromPreload ? Bun::compiledModuleForPath(mock->specifier->tryGetValue().data) : std::nullopt)
+                if (auto file = mock->isFromPreload ? Bun::compiledModuleForPath(mock->specifier->tryGetValue().data) : std::nullopt; file && (mock->state != JSModuleMock::State::NotCalled || JSC::AOT::hasActiveMock(globalObject, *file)))
                     JSC::AOT::didRemoveActiveMockEntry(globalObject, *file);
             }
             if (std::exchange(mock->wasRestoredByTestMock, false))

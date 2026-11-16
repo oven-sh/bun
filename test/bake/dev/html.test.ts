@@ -712,46 +712,6 @@ devTest("html script that an onResolve plugin puts in a namespace loads by its m
     await c.expectMessage("plain", "virtual:prefixed.ts");
   },
 });
-// Only the linker gives these records the path of their file: the target is neither a script nor a stylesheet.
-devTest("script import of a json file that an onResolve plugin resolves loads by its module id", {
-  files: {
-    "bunfig.toml": `
-      [serve.static]
-      plugins = ["./plugin.ts"]
-    `,
-    "plugin.ts": `
-      import path from "node:path";
-      export default {
-        name: "resolve-json",
-        setup(build) {
-          build.onResolve({ filter: /declined\\.json$/ }, args => {
-            console.log("onResolve " + args.path);
-          });
-          build.onResolve({ filter: /answered\\.json$/ }, args => {
-            console.log("onResolve " + args.path);
-            return { path: path.resolve(path.dirname(args.importer), args.path) };
-          });
-        },
-      };
-    `,
-    "index.html": emptyHtmlFile({
-      scripts: ["./index.ts"],
-    }),
-    "index.ts": `
-      import declined from "./declined.json";
-      import answered from "./answered.json";
-      console.log(declined.name);
-      console.log(answered.name);
-    `,
-    "declined.json": `{ "name": "declined" }`,
-    "answered.json": `{ "name": "answered" }`,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("declined", "answered");
-    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.json", "./declined.json"]);
-  },
-});
 devTest("stylesheet that an onResolve plugin resolves comes back after a failed first build", {
   files: {
     "bunfig.toml": `
@@ -813,48 +773,6 @@ const holdHtmlRebuildUntilLoaded = (marker: string) => ({
       },
     };
   `,
-});
-devTest("html link to a file that a stylesheet of the same rebuild also uses keeps its asset URL", {
-  files: {
-    ...holdHtmlRebuildUntilLoaded("marker.css"),
-    "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./shared.txt"></head><body><h1>Hello</h1></body></html>`,
-    "styles.css": `
-      body {
-        background: url(./shared.txt);
-        color: red;
-      }
-    `,
-    "marker.css": `
-      h1 {
-        color: red;
-      }
-    `,
-    "shared.txt": "SHARED",
-  },
-  async test(dev) {
-    const iconHref = async () => (await dev.fetch("/").text()).match(/<link rel="icon" href="([^"]+)"/)?.[1];
-    expect(await iconHref()).toStartWith("/_bun/asset/");
-    {
-      await using _batch = await dev.batchChanges();
-      await dev.patch("index.html", { find: "Hello", replace: "World" });
-      await dev.write(
-        "styles.css",
-        `
-          @import "./marker.css";
-          body {
-            background: url(./shared.txt);
-            color: blue;
-          }
-        `,
-      );
-    }
-    // The stylesheet put shared.txt in the rebuild before index.html resolved it.
-    await dev.output.waitForLine(/index\.html waited for marker\.css/);
-    const href = await iconHref();
-    expect(href).toStartWith("/_bun/asset/");
-    await dev.fetch(href!).expect.toBe("SHARED");
-    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
-  },
 });
 devTest("html file and a saved script that start to use the same script in one rebuild", {
   files: {

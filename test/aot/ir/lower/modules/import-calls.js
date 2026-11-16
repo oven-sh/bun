@@ -42,8 +42,8 @@
 // MISSING-NEXT: Unreachable
 // MISSING: [[handler]]() role=CatchHandler:
 // MISSING-NEXT: [[error]] = CatchValue
-// MISSING: [[reject]] = Builtin builtin=PromiseReject
-// MISSING: = Call [[reject]], {{*}}, [[error]]
+// MISSING: [[helper]] = Builtin builtin=CompilerHelpersImportRejectedByLoader
+// MISSING: = Call [[helper]], {{*}}[[error]]
 // MISSING: Return
 
 import "./imports/pages/first";

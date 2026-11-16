@@ -245,3 +245,31 @@ fn node_without_import_site_has_no_answer() {
         assert_eq!(program.graph.find_site_answer(main, site), None);
     });
 }
+
+#[test]
+fn exported_function_member_is_found() {
+    let path = "
+        const { Base } = require('node:os');
+        use(Base, require('node:os').Base, require('node:os').Missing);
+        export default 1;
+    ";
+    let files = [
+        ("main.js", "import 'node:path';\n"),
+        ("/$bun/js/node/path.ts", path),
+        (
+            "/$bun/js/node/os.ts",
+            "function Os() {}\nfunction Base() {}\nOs.Base = Base;\nexport default Os;\n",
+        ),
+    ];
+    with_runtime_program(&files, |program| {
+        let file = |name| Some(file_named(program.input, name));
+        assert_eq!(
+            program.files_declaring_last_arguments("/$bun/js/node/path.ts"),
+            [
+                file("/$bun/js/node/os.ts"),
+                file("/$bun/js/node/os.ts"),
+                None
+            ]
+        );
+    });
+}

@@ -208,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 
     JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
     inputObj->putDirect(vm, vm.propertyNames->name, jsString(vm, channel->name()), 0);
-    inputObj->putDirect(vm, Identifier::fromString(vm, "active"_s), jsBoolean(!channel->isClosed()), 0);
+    Bun::putDirectNamed(vm, inputObj, "active"_s, jsBoolean(!channel->isClosed()));
 
     JSFunction* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -370,7 +370,6 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_closeBody(
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    impl.jsUnref(lexicalGlobalObject);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
 }
 
@@ -387,7 +386,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_refBody(JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsRef(lexicalGlobalObject); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsRef(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -403,7 +402,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_unrefBody(
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    impl.jsUnref(lexicalGlobalObject);
+    impl.jsUnref();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
 }
 
@@ -441,11 +440,12 @@ bool JSBroadcastChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknow
     return false;
 }
 
-void JSBroadcastChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSBroadcastChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsBroadcastChannel = static_cast<JSBroadcastChannel*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsBroadcastChannel->wrapped(), jsBroadcastChannel);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

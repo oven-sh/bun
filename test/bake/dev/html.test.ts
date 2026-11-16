@@ -517,22 +517,16 @@ devTest("editing a file imported from outside the project root hot-reloads", {
     await c.expectMessage("three");
   },
 });
-// One watch batch that holds an html file and a file it references makes both
-// entry points of one rebuild. https://github.com/oven-sh/bun/issues/22263
-// The client connects after the rebuild, because a client that is connected gets
-// the html file as a hot update. https://github.com/oven-sh/bun/issues/31908
+// One watch batch that holds an html file and a file it references makes both entry points of one rebuild.
+// An editor that saves by renaming makes such a batch: https://github.com/oven-sh/bun/issues/20877
 devTest("html file and its scripts rebuilt together load by their module ids", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["script.ts", "./other.ts"],
       body: "<h1>Hello</h1>",
     }),
-    "script.ts": `
-      console.log("v1");
-    `,
-    "other.ts": `
-      console.log("other v1");
-    `,
+    "script.ts": `console.log("v1");`,
+    "other.ts": `console.log("other v1");`,
   },
   async test(dev) {
     await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");

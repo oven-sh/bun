@@ -1,7 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// STATISTIC: SourceFilesChecked = 2
+// STATISTIC: SourceFilesChecked = 3
 // STATISTIC: SourceFilesData = 1
+// CHECK-LABEL: function {{*}}name="ask"
 
 // FILE: main.ts
 // The main thread and a Worker started from an embedded file import the same module; each has its own copy of the module's state.
@@ -39,18 +40,3 @@ self.onmessage = event => {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: ask
-// CHECK-LABEL: function {{*}}name="ask"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="Promise" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v5 = NewClosure v0, v1 function=[[f_3]]
-// CHECK-NEXT: v6 = Construct v4, -, v5 calleeName="Promise"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

@@ -26,7 +26,6 @@ class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
 class GlobalEventScope;
-class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
@@ -83,7 +82,6 @@ class JSMockFunction;
 
 namespace WebCore {
 class GlobalEventScope;
-class SubtleCrypto;
 class EventTarget;
 }
 
@@ -173,6 +171,7 @@ public:
         return structure;
     }
     void didCreateDOMStructure(JSC::Structure*);
+    void didCreateDOMConstructor(JSC::JSObject*);
     const WebCore::DOMConstructors& constructors() const
     {
         ASSERT(!Thread::mayBeGCThread());
@@ -212,7 +211,6 @@ public:
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
-    void setConsole(void* console);
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
@@ -273,7 +271,6 @@ public:
     JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
-    Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
@@ -287,8 +284,6 @@ public:
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
-    // Maps a JSSourceCode to the value its synthetic module exports (ObjectModule.cpp).
-    JSWeakMap* moduleSourceValueMap() const { return m_moduleSourceValueMap.getInitializedOnMainThread(this); }
 
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
@@ -325,6 +320,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
+    void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
@@ -338,7 +335,6 @@ public:
 
     WebCore::EventTarget& eventTarget();
 
-    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
@@ -530,14 +526,12 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
-    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleSourceValueMap)                                \
     V(private, WriteBarrier<JSObject>, m_lazyRequireCacheObject)                                             \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     /* Bun::LintHost, for the JavaScript plugins of `bun lint` */                                            \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lintHost)                                              \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
@@ -711,15 +705,21 @@ public:
     napi_env makeNapiEnvForFFI();
     void adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal);
 
+    // `bun test` only. ShadowRealm and node:vm realms created while this was the thread's global, so --isolate can retire them with it.
+    WTF::Vector<JSC::Weak<JSC::JSGlobalObject>> m_derivedRealms;
+    void addDerivedRealm(JSC::JSGlobalObject*);
+
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
     // happened: a Bun.ModuleGraph, or null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
+
+    // Last, so that its observers among the other members hear of its destruction before their own.
+    const Ref<WebCore::ScriptExecutionContext> m_scriptExecutionContext;
 };
 
 class EvalGlobalObject : public GlobalObject {
@@ -745,8 +745,6 @@ public:
 } // namespace Zig
 
 namespace Bun {
-
-void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {
@@ -795,13 +793,13 @@ inline Zig::GlobalObject* getDefaultGlobalObject()
 }
 }
 
+// A subclass with its own ClassInfo, another kind of global object, or none.
+Zig::GlobalObject* defaultGlobalObjectSlow(JSC::JSGlobalObject*);
 inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    if (!globalObject) {
-        return ___private___::getDefaultGlobalObject();
-    }
-    return globalObject;
+    if (lexicalGlobalObject && lexicalGlobalObject->classInfo() == Zig::GlobalObject::info()) [[likely]]
+        return uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    return defaultGlobalObjectSlow(lexicalGlobalObject);
 }
 inline Zig::GlobalObject* defaultGlobalObject()
 {
@@ -831,7 +829,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 
 #endif

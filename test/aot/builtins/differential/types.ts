@@ -150,7 +150,14 @@ function findInstanceMismatch(
   const description = realm.table.classes.get(part.class);
   const classes = realm.classesOf(value);
   const hasBrand = description !== undefined && description.instanceTest !== "None";
-  const canRecognize = hasBrand || isObject(realm.valueOf(description?.prototype ?? null)) || classes.includes(part.class);
+  // A bound function is known by its name. The one that `format` of a formatter answers has none, as any native function may.
+  const mayBeBoundUnseen =
+    part.class === "BoundFunction" &&
+    typeof value === "function" &&
+    Reflect.getOwnPropertyDescriptor(value, "name")?.value === "" &&
+    !Object.hasOwn(value, "prototype");
+  const canRecognize =
+    !mayBeBoundUnseen && (hasBrand || isObject(realm.valueOf(description?.prototype ?? null)) || classes.includes(part.class));
   // Whatever its prototype is, an object that no other class claims is an ordinary object.
   const isOrdinary = part.class === "Object" && typeof value === "object" && (classes.length === 0 || classes[0] === "Object");
   if (canRecognize && !isOrdinary && !classes.includes(part.class)) return `${describeClass(realm, value)} is no ${part.class}`;
@@ -296,8 +303,30 @@ export function findPrimitiveMismatch(type: DumpedType, value: unknown): string 
   }
 }
 
+// Any value, but the objects that native code makes among them, and all that those hold, are of the classes that the type lists. What an operand brought is the program's.
+function findObjectOfUnlistedClass(context: TypeContext, type: DumpedType, value: unknown, depth: number): string | undefined {
+  if (!isObject(value) || depth > maxPlainDataDepth || context.visited.has(value) || context.run.log.originOf(value) !== undefined) return undefined;
+  const mismatch = findMismatch(context, { ...type, isAnything: false, isMadeOfListedClasses: false }, value);
+  if (mismatch !== undefined) return `${mismatch}, which is of none of the classes that the type lists`;
+  context.visited.add(value);
+  try {
+    const held = [
+      ...Reflect.ownKeys(value).map(key => Reflect.getOwnPropertyDescriptor(value, key)?.value),
+      ...internalsOf(value, context.run.log).map(internal => internal.value),
+    ];
+    for (const inner of held) {
+      const found = findObjectOfUnlistedClass(context, type, inner, depth + 1);
+      if (found !== undefined) return found;
+    }
+  } finally {
+    context.visited.delete(value);
+  }
+  return undefined;
+}
+
 // Undefined where the value lies in the type, else what the value is.
 export function findMismatch(context: TypeContext, type: DumpedType, value: unknown): string | undefined {
+  if (type.isMadeOfListedClasses) return findObjectOfUnlistedClass(context, type, value, 0);
   if (type.isAnything) return undefined;
   let mismatch: string | undefined;
   if (isObject(value)) {

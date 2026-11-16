@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""mostly-integer-members.py <seed> [<functions>]: typed classes and records whose number members are whole nearly always and now and then are not; small typed functions read one or two of them and ASK THEM AS NUMBERS in every way that could become an integer operation: truthiness, !, comparisons with constants and with each other, ===, an index into an array, | 0, >>> 0, ~~, Math.abs | floor | trunc | sign | min | max, + - * with constants, %, a sum carried round a loop, a number joined by ?: ?? || && with another, optional members. Each function runs over a grid of values: 0, -0, 1, -1, 2, 7, 2^31 - 1, -2^31, 2^31, 2^32, 2^53, -2^53, 0.5, -0.5, 1e21, NaN, both infinities, and undefined where the member is optional; first 300 times on small whole numbers. -0 is told from 0 in what is printed."""
+"""mostly-integer-members.py <seed> [<functions>]: Typed classes and records whose number members are almost always
+integers and occasionally are not. Small typed functions read one or two of them and use them as numbers in every
+way.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 90
 R = random.Random(seed)

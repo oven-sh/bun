@@ -70,7 +70,7 @@ async function main(): Promise<void> {
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
       // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (libspng ← zlib.h) don't
+      // unchanged so depfile-tracked .o files (lsquic ← zlib.h) don't
       // recompile after a no-op re-fetch.
       writeIfChanged(outPath, text);
       return;

@@ -158,6 +158,7 @@ __attribute__((constructor)) static void start(void)
 `;
 
 const waits = `import { existsSync } from "node:fs";
+Bun.spawnSync(["true"]);
 for (let i = 0; i < 2000 && !existsSync(process.env.INTRUDER_REPORT!); i++) await Bun.sleep(5);
 console.log("done");
 `;

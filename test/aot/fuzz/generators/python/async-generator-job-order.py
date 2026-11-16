@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""async-generator-job-order.py <seed>: THE ORDER OF JOBS IS LAW. Each scene: one to three PRODUCERS (async generators: yields of plain values, settled | pending | rejected promises, thenables; awaits between the yields; try | finally; return; throw; yield* of another async generator, of a sync iterable, of an array of promises; jobs queued from inside the body), one to three CONSUMERS (for await in an async function that is in its first run | has been resumed by the job loop; bodies that await nothing | a value | a promise; break | return | throw at the k-th step; next() by hand, several at once; return() and throw() by hand, while running and while suspended; a generator that consumes another; two consumers of one generator), and WITNESSES: chains of `.then` that count the ticks and jobs queued at every joint, so that a job that is skipped or added moves a line. Every line as plain Bun's."""
+"""async-generator-job-order.py <seed>: The job order of async generators. Each scene has one to three producers (yields
+of plain values, settled, pending and rejected promises, thenables; awaits between yields; try/finally; return;
+throw; yield*) and consumers that log every step.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

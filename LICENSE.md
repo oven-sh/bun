@@ -28,7 +28,7 @@ Bun statically links these libraries:
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
-| [`picohttp`](https://github.com/h2o/picohttpparser) | dual-licensed under the Perl License or the MIT License |
+| [`picohttpparser`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from parts of it) | dual-licensed under the Perl License or the MIT License |
 | [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
@@ -40,7 +40,8 @@ Bun statically links these libraries:
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
-| [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
+| [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
+| [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |

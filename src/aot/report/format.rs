@@ -18,7 +18,6 @@ impl PathPrinter {
 
     pub(super) fn write_path(&self, out: &mut Vec<u8>, path: &[u8]) {
         let start = out.len();
-        // `relative` fills fixed buffers: at most "../" per directory component, then `path`.
         let can_relativize = is_absolute(&self.working_directory)
             && is_absolute(path)
             && 2 * self.working_directory.len() + path.len() < MAX_PATH_BYTES;
@@ -80,26 +79,6 @@ pub(super) fn write_percent(out: &mut Vec<u8>, tenths: u32) {
         write_decimal(out, tenths % 10);
     }
     out.push(b'%');
-}
-
-pub(super) fn write_code(out: &mut Vec<u8>, member_name: &str) {
-    let name = member_name.as_bytes();
-    for (index, &byte) in name.iter().enumerate() {
-        if index > 0 && byte.is_ascii_uppercase() {
-            let follows_uppercase = name[index - 1].is_ascii_uppercase();
-            let precedes_lowercase = name.get(index + 1).is_some_and(u8::is_ascii_lowercase);
-            if !follows_uppercase || precedes_lowercase {
-                out.push(b'-');
-            }
-        }
-        out.push(byte.to_ascii_lowercase());
-    }
-}
-
-pub(super) fn code_of(member_name: &str) -> Vec<u8> {
-    let mut code = Vec::new();
-    write_code(&mut code, member_name);
-    code
 }
 
 pub(super) fn lower_camel_case(member_name: &str) -> Vec<u8> {
@@ -197,24 +176,6 @@ mod tests {
     }
 
     #[test]
-    fn codes_are_kebab_case() {
-        let code = |member_name| written(|out| write_code(out, member_name));
-        assert_eq!(code("UnknownObject"), "unknown-object");
-        assert_eq!(code("Unknown"), "unknown");
-        assert_eq!(code("RegExpWithoutCode"), "reg-exp-without-code");
-        assert_eq!(code(""), "");
-    }
-
-    #[test]
-    fn acronym_is_one_word_of_code() {
-        let code = |member_name| written(|out| write_code(out, member_name));
-        assert_eq!(code("WasmUnsupportedCPU"), "wasm-unsupported-cpu");
-        assert_eq!(code("WasmHasGCTypes"), "wasm-has-gc-types");
-        assert_eq!(code("CPU"), "cpu");
-        assert_eq!(code("Int32Overflow"), "int32-overflow");
-    }
-
-    #[test]
     fn path_under_directory_is_relative() {
         assert_eq!(path_from("/p/app", "/p/app/a.ts"), native("a.ts"));
         assert_eq!(path_from("/p/app", "/p/app/src/a.ts"), native("src/a.ts"));
@@ -262,11 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn member_names_in_both_spellings() {
-        assert_eq!(
-            BString::from(code_of("UnknownKeyStore")),
-            "unknown-key-store"
-        );
+    fn member_names_start_in_lower_case() {
         assert_eq!(
             BString::from(lower_camel_case("CompileTime")),
             "compileTime"

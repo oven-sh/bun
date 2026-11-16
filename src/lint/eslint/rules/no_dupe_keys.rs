@@ -8,7 +8,7 @@ use std::borrow::Cow;
 /// Disallow duplicate keys in object literals.
 pub struct NoDupeKeys;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate key '{{name}}'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate key '{{name}}'.");
 
 const GET: u8 = 1 << 0;
 const SET: u8 = 1 << 1;

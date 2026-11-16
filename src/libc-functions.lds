@@ -13,4 +13,7 @@
 	sigignore;
 	pthread_sigmask;
 	sigprocmask;
+	sighold;
+	sigblock;
+	sigsetmask;
 };

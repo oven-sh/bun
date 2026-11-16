@@ -10,18 +10,18 @@ pub struct HookUseState {
     allow_destructured_state: bool,
 }
 
-const USE_STATE_ERROR_MESSAGE: Message =
-    Message::new("useStateErrorMessage", "useState call is not destructured into value + setter pair");
-const USE_STATE_ERROR_MESSAGE_OR_ADD_OPTION: Message = Message::new(
+const USE_STATE_ERROR_MESSAGE: &Message =
+    &Message::new("useStateErrorMessage", "useState call is not destructured into value + setter pair");
+const USE_STATE_ERROR_MESSAGE_OR_ADD_OPTION: &Message = &Message::new(
     "useStateErrorMessageOrAddOption",
     "useState call is not destructured into value + setter pair (you can allow destructuring by enabling \
      \"allowDestructuredState\" option)",
 );
-const SUGGEST_PAIR: Message = Message::new("suggestPair", "Destructure useState call into value + setter pair");
-const SUGGEST_MEMO: Message = Message::new("suggestMemo", "Replace useState call with useMemo");
-const REQUIRE_TO_DESTRUCT: Message = Message::new("", "useState call is not destructured into value + setter pair");
-const FOLLOW_NAMING_CONVENTION: Message =
-    Message::new("", "useState call does not follow the [thing, setThing] naming convention");
+const SUGGEST_PAIR: &Message = &Message::new("suggestPair", "Destructure useState call into value + setter pair");
+const SUGGEST_MEMO: &Message = &Message::new("suggestMemo", "Replace useState call with useMemo");
+const REQUIRE_TO_DESTRUCT: &Message = &Message::new("", "useState call is not destructured into value + setter pair");
+const FOLLOW_NAMING_CONVENTION: &Message =
+    &Message::new("", "useState call does not follow the [thing, setThing] naming convention");
 
 /// What `Components.detect` collects from `import .. from "react"`. At any node, upstream only has the imports above
 /// it.

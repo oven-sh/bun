@@ -294,6 +294,20 @@ function turn(i: number): number {
   const b = xs.concat(xs);
   return (b[i & 3] ?? 0) + (b[2] ?? 0);
 }
+//// concat-a-number-of-unknown-size.read-twice
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.concat(i * 3);
+  return (b[i & 3] ?? 0) + (b[8] ?? 0);
+}
+//// concat-a-number-of-unknown-size.summed-in-a-loop
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.concat(i * 3);
+  let sum = 0;
+  for (let k = 0; k < b.length; k++) sum += b[k]!;
+  return sum;
+}
 //// spread.whole-literal
 const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
 function turn(i: number): number {

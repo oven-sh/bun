@@ -2,7 +2,7 @@ use super::lanes::Lanes;
 use crate::check::aot::answers::{ClassRef, MemberName, ObjectMemberKind};
 use crate::check::aot::queries::Queries;
 use crate::program::{FileId, Sym};
-use std::hash::Hasher;
+use smallvec::SmallVec;
 
 pub(super) type Key = [u64; 2];
 
@@ -43,6 +43,7 @@ pub(super) enum Tag {
     Untrusted,
     BackReference,
     Cyclic,
+    ConstructorFunctionInstance,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -72,7 +73,15 @@ impl Description {
 
     pub(super) fn bytes(&mut self, bytes: &[u8]) {
         self.word(bytes.len() as u64);
-        self.lanes.write(bytes);
+        let (words, rest) = bytes.as_chunks::<8>();
+        for word in words {
+            self.word(u64::from_le_bytes(*word));
+        }
+        let mut last = 0;
+        for (index, &byte) in rest.iter().enumerate() {
+            last |= u64::from(byte) << (8 * index);
+        }
+        self.word(last ^ (bytes.len() as u64) << 56);
     }
 
     pub(super) fn key(&mut self, key: Key) {
@@ -117,22 +126,16 @@ impl Description {
     }
 
     pub(super) fn name(&mut self, name: NameKey<'_>) {
-        match name {
-            NameKey::String(bytes) => {
-                self.word(0);
-                self.bytes(bytes);
-            }
-            NameKey::Symbol(bytes) => {
-                self.word(1);
-                self.bytes(bytes);
-            }
-            NameKey::Private(bytes) => {
-                self.word(2);
-                self.bytes(bytes);
-            }
-        }
+        let (kind, bytes) = match name {
+            NameKey::String(bytes) => (0, bytes),
+            NameKey::Symbol(bytes) => (1, bytes),
+            NameKey::Private(bytes) => (2, bytes),
+        };
+        self.word(kind);
+        self.bytes(bytes);
     }
 
+    #[inline]
     pub(super) fn member(
         &mut self,
         name: NameKey<'_>,
@@ -190,28 +193,57 @@ pub(super) fn member_name_key<'p>(queries: &Queries<'_, 'p, '_>, name: MemberNam
 }
 
 pub(super) fn describe_untyped_members<'a>(
-    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)> + Clone,
 ) -> [u64; 2] {
-    describe_listed_untyped_members(members.collect())
+    if let Some(count) = count_if_in_order(members.clone()) {
+        return describe_members_in_order(count, members);
+    }
+    let mut members: SmallVec<[(&[u8], ObjectMemberKind); 8]> = members.collect();
+    describe_listed_untyped_members(&mut members)
 }
 
-// It stands once, whatever lists the members.
-fn describe_listed_untyped_members(mut sorted: Vec<(&[u8], ObjectMemberKind)>) -> [u64; 2] {
-    sorted.sort_by(|left, right| left.0.cmp(right.0));
-    sorted.dedup_by(|later, earlier| {
-        let is_same_name = later.0 == earlier.0;
-        if is_same_name {
-            *earlier = *later;
+/// The number of members, if each name comes after the one before it.
+fn count_if_in_order<'a>(
+    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+) -> Option<usize> {
+    let mut count = 0;
+    let mut before: &[u8] = &[];
+    for (name, _) in members {
+        if count != 0 && before >= name {
+            return None;
         }
-        is_same_name
-    });
+        before = name;
+        count += 1;
+    }
+    Some(count)
+}
+
+fn describe_members_in_order<'a>(
+    count: usize,
+    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+) -> [u64; 2] {
     let mut description = Description::new(Tag::Object);
-    description.word(sorted.len() as u64);
-    for (name, kind) in sorted {
+    description.word(count as u64);
+    for (name, kind) in members {
         description.member(NameKey::String(name), kind, false, None);
     }
     description.word(0);
     description.finish()
+}
+
+fn describe_listed_untyped_members(sorted: &mut [(&[u8], ObjectMemberKind)]) -> [u64; 2] {
+    sorted.sort_by(|left, right| left.0.cmp(right.0));
+    let mut count = 0;
+    for at in 0..sorted.len() {
+        let later = sorted[at];
+        if count > 0 && sorted[count - 1].0 == later.0 {
+            sorted[count - 1] = later;
+        } else {
+            sorted[count] = later;
+            count += 1;
+        }
+    }
+    describe_members_in_order(count, sorted[..count].iter().copied())
 }
 
 #[cfg(test)]

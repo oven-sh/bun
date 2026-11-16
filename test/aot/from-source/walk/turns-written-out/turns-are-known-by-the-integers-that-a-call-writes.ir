@@ -1,0 +1,28 @@
+# `range(1, 4)`, `range(0, 6, 2)`: how many arguments a call has and the integers that it writes decide the branches in front of the callee's loop and how often the loop turns: the callee is copied and the turns are written out.
+# `range(i & 3)`: the bound is not known: the function is called. A look at the caller's loop passes over what the known integers decide, so the caller's sum stays a number.
+# f1 = range, f2 = repeat, f3 = run, f4 = thrice, f5 = often
+# -- source: turns-are-known-by-the-integers-that-a-call-writes.js
+# function range(start, end, step) { if (arguments.length === 1) { end = start; start = 0; } if (arguments.length < 3) step = 1; var n = 0; for (var v = start; v < end; v += step) n += v; return n; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += range(i & 3) + range(1, 4) + range(0, 6, 2); return total; }
+# function repeat(text, times) { var s = 0; for (var i = 0; i < times; i++) s += text; return s; }
+# function thrice(x) { return repeat(x | 0, 3); }
+# function often(x) { return repeat(x | 0, 9); }
+# sink(run, thrice, often);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f1
+# CHECK: : int|whole @Double, {{*}} isLoopHead=true
+# RUN(ONE): walk f3 mechanisms=all
+# ONE-COUNT-1: isLoopHead=true
+# ONE-COUNT-1: = CallDirect {{*}} function=f1
+# ONE-NOT: Arguments
+# RUN(THRICE): walk f4 mechanisms=all
+# THRICE-LABEL: code f4:Body
+# THRICE: frame 1 callee=f2
+# THRICE-NOT: isLoopHead=true
+# RUN(OFTEN): walk f5 mechanisms=all
+# More turns than are written out: the loop is a loop.
+# OFTEN-LABEL: code f5:Body
+# OFTEN: isLoopHead=true

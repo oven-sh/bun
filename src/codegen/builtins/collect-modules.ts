@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { helperModules, moduleList, nativeStartIndex, specifierOf } from "../builtins-manifest-model.ts";
 import { idToEnumName } from "../internal-module-registry-scanner.ts";
@@ -10,9 +10,11 @@ import {
   type ModuleExportDeclaration,
   type ModuleExportHolder,
   type Problems,
+  type SignatureDeclaration,
   type Source,
   type SourcedDeclaration,
 } from "./declarations.ts";
+import * as b from "./lib.ts";
 import { parseOwnProperties } from "./own-properties.ts";
 import { compareBytes, memberPathOf } from "./paths.ts";
 import { targetPlatforms, type BuiltinPath, type TargetPlatform } from "./vocabulary.ts";
@@ -35,9 +37,19 @@ export interface ListedModule {
   exports: ListedExport[];
 }
 
+type NativeValue = "Function" | "Number";
+
+interface NativeExports {
+  /** What the module passes to put() and putNativeFn(). */
+  names: readonly string[];
+  /** What the C++ says of the value: putNativeFn() makes a function of its own, a row of a NumericConstant table is put as a number. */
+  values: ReadonlyMap<string, NativeValue>;
+}
+
 interface ExportLists {
   listed: ReadonlyMap<string, ListedModule>;
   absentOnWindows: ReadonlyMap<string, ListedModule>;
+  native: ReadonlyMap<string, NativeExports>;
 }
 
 const objectModules: ReadonlyMap<string, BuiltinPath> = new Map([
@@ -59,6 +71,23 @@ const exportsFile = "src/codegen/builtins/data/module-exports.txt";
 const absentOnWindowsFile = "src/codegen/builtins/data/module-exports-absent-on-windows.txt";
 export const ownPropertiesFile = "src/codegen/builtins/data/own-properties.txt";
 const importableModulesFile = "src/resolve_builtins/HardcodedModule.rs";
+const nativeModulesDirectory = "src/jsc/modules";
+const nativeModulePattern = /macro\("([^"]+)"_s, (\w+)\)/g;
+const nativeModuleBodyPattern = /^DEFINE_NATIVE_MODULE(?:_NOINLINE)?\((\w+)\)\n\{\n(.*?)^\}/gms;
+const nativeExportPattern = /\bput(NativeFn)?\(\s*(?:JSC::)?Identifier::fromString\(vm, "([^"]+)"_s\)/g;
+const numericConstantPattern = /\{ "(\w+)", static_cast<double>\(/g;
+// putNativeFn() in src/jsc/modules/_NativeModule.h.
+const lengthOfNativeFunction = 1;
+const readOfNumber: SignatureDeclaration = {
+  mode: "Get",
+  receiver: null,
+  parameters: [],
+  result: b.f64.spec,
+  capability: "none",
+  throws: false,
+  isUndeclared: false,
+  implementation: b.generic,
+};
 const importableSpecifierPattern = /#\[strum\(serialize = "([^"]+)"\)\]/g;
 
 const sourceAt = (file: string, line: number | null): Source => ({ file, line, origin: "Host", proof: "Structure" });
@@ -158,9 +187,53 @@ export function parseModuleExports(text: string, file: string): Map<string, List
   return modules;
 }
 
+/** What the C++ of a native module says of its exports, by specifier. */
+function findNativeExports(bunRoot: string): Map<string, NativeExports> {
+  const read = (file: string) => readFileSync(path.join(bunRoot, nativeModulesDirectory, file), "utf8");
+  const specifiers = new Map(
+    Array.from(read("NativeModuleList.h").matchAll(nativeModulePattern), ([, specifier, name]) => [name, specifier]),
+  );
+  const found = new Map<string, NativeExports>();
+  for (const file of readdirSync(path.join(bunRoot, nativeModulesDirectory)).sort()) {
+    for (const [, name, body] of read(file).matchAll(nativeModuleBodyPattern)) {
+      const specifier = specifiers.get(name);
+      if (specifier === undefined) continue;
+      const put = Array.from(body.matchAll(nativeExportPattern));
+      found.set(specifier, {
+        names: put.map(([, , name]) => name),
+        values: new Map<string, NativeValue>([
+          ...Array.from(body.matchAll(numericConstantPattern), ([, name]) => [name, "Number"] as const),
+          ...put.flatMap(([, makesFunction, name]) =>
+            makesFunction === undefined ? [] : [[name, "Function"] as const],
+          ),
+        ]),
+      });
+    }
+  }
+  return found;
+}
+
+/** The lines of module-exports.txt, and with each native module the exports that its C++ names. */
+export function readListedExports(bunRoot: string): Map<string, ListedModule> {
+  const listed = parseModuleExports(readFileSync(path.join(bunRoot, exportsFile), "utf8"), exportsFile);
+  for (const [specifier, { names }] of findNativeExports(bunRoot)) {
+    const exports = listed.get(specifier)?.exports;
+    if (exports === undefined) continue;
+    for (const name of names) {
+      if (!exports.some(known => known.name === name)) exports.push({ name, holder: unwrittenHolderOf(name) });
+    }
+    exports.sort((left, right) => compareBytes(left.name, right.name));
+  }
+  return listed;
+}
+
 function readExportLists(bunRoot: string): ExportLists {
-  const read = (file: string) => parseModuleExports(readFileSync(path.join(bunRoot, file), "utf8"), file);
-  return { listed: read(exportsFile), absentOnWindows: read(absentOnWindowsFile) };
+  const absentOnWindows = readFileSync(path.join(bunRoot, absentOnWindowsFile), "utf8");
+  return {
+    listed: readListedExports(bunRoot),
+    absentOnWindows: parseModuleExports(absentOnWindows, absentOnWindowsFile),
+    native: findNativeExports(bunRoot),
+  };
 }
 
 function lineNumbersOf(list: ReadonlyMap<string, ListedModule>): Map<string, number> {
@@ -224,17 +297,18 @@ function declareExport(
   exportPath: BuiltinPath,
   platforms: readonly TargetPlatform[],
   isBindingOfNamespaceOnly: boolean,
+  value: NativeValue | undefined,
 ): MemberDeclaration {
   return {
     declares: "Member",
     path: exportPath,
-    kind: "DataProperty",
+    kind: value === "Function" ? "Function" : "DataProperty",
     isOwnPropertyOfInstances: false,
     isLazilyCreated: false,
-    signatures: [],
+    signatures: value === "Number" ? [readOfNumber] : [],
     dispatches: [],
     constant: null,
-    length: null,
+    length: value === "Function" ? lengthOfNativeFunction : null,
     columns: {
       ...(platforms.length === targetPlatforms.length ? {} : { platforms }),
       ...(isBindingOfNamespaceOnly ? { defaultExport: true } : {}),
@@ -292,8 +366,11 @@ function declareModule(
     },
     ...exportsOfObject.flatMap(({ name, holder, platforms }): Declaration[] => {
       const exportPath = memberPathOf(namespace, name);
-      const member = declareExport(exportPath, platforms, holder === "ModuleObject");
-      return holder === "ModuleObject"
+      // abort-controller puts `default` on the object too.
+      const isBindingOfNamespaceOnly = holder === "ModuleObject" && !ownNames?.has(name);
+      const value = lists.native.get(specifier)?.values.get(name);
+      const member = declareExport(exportPath, platforms, isBindingOfNamespaceOnly, value);
+      return isBindingOfNamespaceOnly
         ? [member, { declares: "SameObject", path: exportPath, original: namespace }]
         : [member];
     }),

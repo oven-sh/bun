@@ -148,22 +148,6 @@ impl ZStr {
         // SAFETY: `p[len] == 0` (strlen postcondition) and `p[..len]` readable.
         unsafe { Self::from_raw(p.cast::<u8>(), len) }
     }
-    // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
-    // supported only as a transitional shim for ported fields that were typed
-    // `Box<ZStr>` before `ZBox` existed (e.g. `PackageManager.cache_directory_path`).
-    // The slice metadata of the returned `Box<ZStr>` covers `bytes.len() + 1`
-    // (i.e. INCLUDES the trailing NUL) so `Drop` deallocates the full
-    // allocation; `as_bytes()` will therefore include the trailing NUL.
-    // Retire once all `Box<ZStr>` fields are migrated to `ZBox`.
-    pub fn boxed(bytes: &[u8]) -> Box<ZStr> {
-        let mut v = Vec::with_capacity(bytes.len() + 1);
-        v.extend_from_slice(bytes);
-        v.push(0);
-        let b: Box<[u8]> = v.into_boxed_slice();
-        // SAFETY: `ZStr` is a transparent newtype over `[u8]`; the fat-pointer
-        // metadata (len = bytes.len()+1) is preserved by the `as *mut ZStr` cast.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
-    }
 }
 
 /// Owned, heap-allocated, NUL-terminated byte string. `.len()` / `Deref`
@@ -455,35 +439,12 @@ impl WStr {
     pub const fn as_ptr(&self) -> *const u16 {
         self.0.as_ptr()
     }
-    /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
-    /// Mirrors [`ZStr::from_raw_mut`] so callers can rewrite UTF-16 path
-    /// chars in place (Windows tar path-escape pass) without round-tripping
-    /// through an owned buffer.
-    #[inline]
-    pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
-        // SAFETY: caller upholds `ptr[..=len]` writable for `'a`; `WStr` is
-        // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
-        unsafe {
-            &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len))
-                as *mut WStr)
-        }
-    }
-    #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [u16] {
-        &mut self.0
-    }
 }
 impl core::ops::Deref for WStr {
     type Target = [u16];
     #[inline]
     fn deref(&self) -> &[u16] {
         &self.0
-    }
-}
-impl core::ops::DerefMut for WStr {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u16] {
-        &mut self.0
     }
 }
 impl AsRef<[u16]> for WStr {
@@ -567,21 +528,21 @@ macro_rules! opaque_extern {
 // ─── Mutex / RwLock (poison-free std::sync wrappers) ──────────────────────
 //
 // LAYERING: `bun_core` sits *below* `bun_threading` in the crate graph, so it
-// cannot use the futex-backed `Guarded<T>` / `RwLock<T>` defined there. The
+// cannot use the futex-backed `Guarded<T>` defined there. The
 // handful of low-tier call sites (this crate, `bun_ptr`, `bun_alloc`) instead
 // get thin newtype wrappers around `std::sync` that strip the poisoning API —
 // Bun aborts on panic, so a poisoned lock is unreachable in practice and the
 // `LockResult` ceremony is pure noise. Higher-tier crates should use
-// `bun_threading::Guarded` / `bun_threading::RwLock` directly.
+// `bun_threading::Guarded` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
+// `.lock()` → guard (no `Result`), `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
-/// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
+/// Guard returned by [`Mutex::lock`]. Re-exported so
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
@@ -598,15 +559,6 @@ impl<T> Mutex<T> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        match self.0.try_lock() {
-            Ok(g) => Some(g),
-            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
     }
 }
 
@@ -684,10 +636,7 @@ pub use bun_alloc::SEP;
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
 /// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
-/// hard `assert!`. We do *not* bump this struct
-/// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
-/// `&mut [u8]` *as* `PathBuffer`, and raising the nominal alignment would
-/// make *those* casts unsound instead. In practice every `PathBuffer` fed to
+/// hard `assert!`. In practice every `PathBuffer` fed to
 /// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
 /// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]
@@ -995,26 +944,6 @@ impl Fd {
         Fd(Self::WINDOWS_CWD)
     }
 
-    /// Whether this is the process's stdin/stdout/stderr.
-    #[cfg(not(windows))]
-    #[inline]
-    pub const fn is_stdio(self) -> bool {
-        matches!(self.0, 0..=2)
-    }
-    #[cfg(windows)]
-    pub fn is_stdio(self) -> bool {
-        // Cache check first (matches `to_uv_index`): the cache reflects what the
-        // process saw at startup, even after `SetStdHandle`/`AllocConsole`.
-        if self == Self::stdin() || self == Self::stdout() || self == Self::stderr() {
-            return true;
-        }
-        // Cache may not be populated yet; fall back to a live `GetStdHandle`.
-        let handle = self.native();
-        fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle)
-            || fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle)
-            || fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle)
-    }
-
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
     #[cfg(not(windows))]
     #[inline]
@@ -1288,9 +1217,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 /// -2 when the buffer is too small, 0 on
 /// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
 /// down from `bun_sys` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable `u16` units.
-pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
+pub fn fd_path_raw_w(fd: Fd, buf: &mut [u16]) -> isize {
     #[cfg(windows)]
     {
         unsafe extern "system" {
@@ -1301,9 +1228,11 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
                 dwFlags: u32,
             ) -> u32;
         }
+        let cap = buf.len();
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf.as_mut_ptr(), cap as u32, 0) }
+            as usize;
         // The size check below is `>=` because a return
         // value equal to `cap` is the buffer-too-small sentinel (required size
         // including NUL), not a successful write of `cap` chars.
@@ -1317,44 +1246,33 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
-        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
-        // `buf` would invalidate that borrow's tag under Stacked Borrows.
-        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
-        // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+        let buf = &mut buf[..n];
         let bs = b'\\' as u16;
         let off: usize =
-            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+            if n >= 4 && buf[0] == bs && buf[1] == bs && buf[2] == b'?' as u16 && buf[3] == bs {
                 if n >= 8
-                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                    && at(7) == bs
+                    && (buf[4] == b'U' as u16 || buf[4] == b'u' as u16)
+                    && (buf[5] == b'N' as u16 || buf[5] == b'n' as u16)
+                    && (buf[6] == b'C' as u16 || buf[6] == b'c' as u16)
+                    && buf[7] == bs
                 {
                     // `\\?\UNC\server\share` → `\\server\share`
-                    // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
+                    buf[6] = bs;
+                    buf.copy_within(6.., 0);
                     6
                 } else {
                     // `\\?\C:\...` → `C:\...`
+                    buf.copy_within(4.., 0);
                     4
                 }
             } else {
                 0
             };
-        let out_len = n - off;
-        if off != 0 {
-            // SAFETY: src = buf+off and dst = buf both derive from the same
-            // raw `*mut u16` provenance (no intervening reference), src > dst,
-            // and `out_len` units fit within the `n` initialized units.
-            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
-        }
-        return out_len as isize;
+        return (n - off) as isize;
     }
     #[cfg(not(windows))]
     {
-        let _ = (fd, buf, cap);
+        let _ = (fd, buf);
         0
     }
 }
@@ -1584,54 +1502,87 @@ pub fn kind_from_mode(mode: Mode) -> FileKind {
 }
 
 // ─── io::Writer (from bun_io) ─────────────────────────────────────────────
-// TYPE_ONLY: output.rs holds `*mut io::Writer` opaquely (erased adapter head);
-// real write/flush/print dispatch lives in bun_sys via the OutputSinkVTable.
 pub mod io {
-    /// Opaque writer interface header. bun_sys guarantees this is the first
-    /// `repr(C)` field of every concrete adapter, so `&mut Adapter as &mut Writer`
-    /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
-    #[repr(C)]
-    pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> crate::CrateResult<()>,
-        pub flush: unsafe fn(*mut Writer) -> crate::CrateResult<()>,
+    use core::cell::Cell;
+
+    use crate::Fd;
+    use crate::output::output_sink;
+
+    /// Best-effort writer. Takes `&self` because a `Display` impl can print re-entrantly.
+    pub struct Writer<Buf: ?Sized = [Cell<u8>]> {
+        fd: Cell<Fd>,
+        /// How much of `buf` is waiting to be written.
+        pos: Cell<usize>,
+        buf: Buf,
     }
-    impl Writer {
-        #[inline]
-        pub fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
-            // (see type doc); `self` was produced by upcasting `&mut Adapter`,
-            // so the vtable fn receives the same pointer it was registered with.
-            unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
+
+    /// The storage of a [`Writer`] that buffers up to `N` bytes.
+    pub type WriterStorage<const N: usize> = Writer<[Cell<u8>; N]>;
+
+    impl<const N: usize> WriterStorage<N> {
+        pub const fn new(fd: Fd) -> Self {
+            Self {
+                fd: Cell::new(fd),
+                pos: Cell::new(0),
+                buf: [const { Cell::new(0) }; N],
+            }
         }
-        #[inline]
-        pub fn flush(&mut self) -> crate::CrateResult<()> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
-            // `self` is the same pointer the adapter registered its vtable with,
-            // so the callee's downcast back to the concrete type is sound.
-            unsafe { (self.flush)(std::ptr::from_mut(self)) }
+
+        pub(crate) fn fd(&self) -> Fd {
+            self.fd.get()
+        }
+
+        pub(crate) fn reset(&self, fd: Fd) {
+            self.fd.set(fd);
+            self.pos.set(0);
+        }
+    }
+
+    impl Writer {
+        pub fn write_all(&self, bytes: &[u8]) -> crate::CrateResult<()> {
+            let mut spare = &self.buf[self.pos.get()..];
+            if bytes.len() > spare.len() {
+                self.flush()?;
+                // Large writes bypass the buffer so the next small write still coalesces.
+                if bytes.len() >= self.buf.len() {
+                    let _ = output_sink().write_all_quiet(self.fd.get(), bytes);
+                    return Ok(());
+                }
+                spare = &self.buf;
+            }
+            for (slot, &byte) in spare.iter().zip(bytes) {
+                slot.set(byte);
+            }
+            self.pos.set(self.pos.get() + bytes.len());
+            Ok(())
+        }
+        pub fn flush(&self) -> crate::CrateResult<()> {
+            let pos = self.pos.get();
+            if pos > 0 {
+                // SAFETY: `write_all` keeps `pos` within `buf`. `Self` is not `Sync` and the sink
+                // does not print, so nothing writes to `buf` while this is live.
+                let buffered =
+                    unsafe { core::slice::from_raw_parts(self.buf.as_ptr().cast(), pos) };
+                let _ = output_sink().write_all_quiet(self.fd.get(), buffered);
+                self.pos.set(0);
+            }
+            Ok(())
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
-        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
+        pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.print(args)
         }
         #[inline]
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
-            use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, crate::CrateResult<()>);
-            impl core::fmt::Write for A<'_> {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.1 = self.0.write_all(s.as_bytes());
-                    if self.1.is_err() {
-                        Err(core::fmt::Error)
-                    } else {
-                        Ok(())
-                    }
-                }
-            }
-            let mut a = A(self, Ok(()));
-            let _ = a.write_fmt(args);
-            a.1
+        pub fn print(&self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
+            let _ = fmt::Write::write_fmt(&mut &*self, args);
+            Ok(())
+        }
+    }
+
+    impl fmt::Write for &Writer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            Writer::write_all(self, s.as_bytes()).map_err(|_| fmt::Error)
         }
     }
 
@@ -1808,20 +1759,15 @@ pub mod io {
         }
     }
 
-    /// Bridge the type-erased vtable header into the generic `Write` trait so
-    /// printers taking `W: io::Write` accept process stdout/stderr sinks.
-    impl Write for Writer {
+    /// So printers taking `W: io::Write` accept process stdout/stderr sinks.
+    impl Write for &Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
+            Writer::write_all(self, buf)
         }
         #[inline]
         fn flush(&mut self) -> crate::CrateResult<()> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.flush)(core::ptr::from_mut(self)) }
+            Writer::flush(self)
         }
     }
 
@@ -2801,27 +2747,23 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+pub fn append_in_parallel(mut to: crate::vec::BorrowedCursor<'_, u8>, from: &[u8]) {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
     let threads = usize::from(get_thread_count())
-        .min(len / MIN_BYTES_PER_THREAD)
+        .min(from.len() / MIN_BYTES_PER_THREAD)
         .min(16);
     if threads < 2 {
-        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
-        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+        return to.append(from);
     }
-    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
-    let (to, from) = (to as usize, from as usize);
-    for_each_in_parallel((0..len).step_by(share), |start| {
-        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                (from + start) as *const u8,
-                (to + start) as *mut u8,
-                share.min(len - start),
-            )
-        }
-    });
+    let share = from.len().div_ceil(threads).next_multiple_of(1 << 16);
+    // SAFETY: each of the first `from.len()` bytes is in one part, and each part is written.
+    unsafe {
+        let parts = to.as_mut()[..from.len()].chunks_mut(share);
+        for_each_in_parallel(parts.zip(from.chunks(share)), |(to, from)| {
+            to.write_copy_of_slice(from);
+        });
+        to.advance(from.len());
+    }
 }
 
 /// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.
@@ -2925,13 +2867,19 @@ pub enum EmbedKind {
 
 #[doc(hidden)]
 pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
-    // SAFETY: CODEGEN_PATH/BASE_PATH originate from `option_env!` (`&'static str`
-    // → bytes), so the bytes are valid UTF-8 by construction.
-    let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
+    // `core::str::from_utf8`, not simdutf (`strings::str_utf8`): a `const fn` cannot call FFI.
+    const fn utf8(b: &'static [u8]) -> &'static str {
+        match ::core::str::from_utf8(b) {
+            Ok(s) => s,
+            Err(_) => panic!("build_options path is not UTF-8"),
+        }
+    }
+    const CODEGEN_PATH: &str = utf8(crate::build_options::CODEGEN_PATH);
+    const BASE_PATH: &str = utf8(crate::build_options::BASE_PATH);
     let mut p = match kind {
-        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Codegen => ::std::path::PathBuf::from(CODEGEN_PATH),
         EmbedKind::Src => {
-            let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
+            let mut b = ::std::path::PathBuf::from(BASE_PATH);
             b.push("src");
             b
         }
@@ -3031,6 +2979,7 @@ pub struct StringPointer {
     pub offset: u32,
     pub length: u32,
 }
+impl_any_bit_pattern!(StringPointer);
 impl StringPointer {
     #[inline]
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
@@ -3089,26 +3038,20 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. Four crates hand-rolled the same accessor shape (Resolution, Bin,
-// DependencyVersion, PackageManager Task) — this macro is the single definition.
+// sites stay safe. `Resolution` and `Bin` share it.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
 // `debug_assert!(self.$tag_field == $TagTy::$Variant)`.
 //
 // Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
-// formed (defensive against partially-initialized padding). The trailing
-// `as *const $Ty` cast is identity for plain fields and unwraps
-// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `Task::Request`/`Data`
-// case without needing a separate macro arm.
+// formed (defensive against partially-initialized padding).
 //
 // Syntax:
 //   extern_union_accessors! {
 //       tag: <tag_field> as <TagTy>, value: <union_field>;
 //       Variant => accessor: Ty;                          // ro, accessor==union field
 //       Variant => accessor: Ty, mut accessor_mut;        // ro+rw
-//       Variant => accessor @ union_field: Ty;            // ro, accessor≠union field
-//       Variant => accessor @ union_field: Ty, mut accessor_mut;
 //   }
 #[macro_export]
 macro_rules! extern_union_accessors {
@@ -3119,58 +3062,40 @@ macro_rules! extern_union_accessors {
         $crate::extern_union_accessors!(@arms [$tag_field, $TagTy, $value_field] $($arms)*);
     };
 
-    // arm: accessor name == union-field name, ro only
+    // arm: ro only
     (@arms [$tf:ident, $TT:ident, $vf:ident]
         $Variant:ident => $field:ident: $Ty:ty;
         $($rest:tt)*
     ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $field, $Ty);
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $Ty);
         $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
     };
-    // arm: accessor name == union-field name, ro + rw
+    // arm: ro + rw
     (@arms [$tf:ident, $TT:ident, $vf:ident]
         $Variant:ident => $field:ident: $Ty:ty, mut $field_mut:ident;
         $($rest:tt)*
     ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $field, $Ty);
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $Ty);
         $crate::extern_union_accessors!(@emit_rw [$tf, $TT, $vf] $Variant, $field, $field_mut, $Ty);
-        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
-    };
-    // arm: accessor name ≠ union-field name (`accessor @ ufield`), ro only
-    (@arms [$tf:ident, $TT:ident, $vf:ident]
-        $Variant:ident => $accessor:ident @ $ufield:ident: $Ty:ty;
-        $($rest:tt)*
-    ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $ufield, $accessor, $Ty);
-        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
-    };
-    // arm: accessor name ≠ union-field name, ro + rw
-    (@arms [$tf:ident, $TT:ident, $vf:ident]
-        $Variant:ident => $accessor:ident @ $ufield:ident: $Ty:ty, mut $accessor_mut:ident;
-        $($rest:tt)*
-    ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $ufield, $accessor, $Ty);
-        $crate::extern_union_accessors!(@emit_rw [$tf, $TT, $vf] $Variant, $ufield, $accessor_mut, $Ty);
         $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
     };
     (@arms [$tf:ident, $TT:ident, $vf:ident]) => {};
 
-    (@emit_ro [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor:ident, $Ty:ty) => {
+    (@emit_ro [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $Ty:ty) => {
         #[inline]
-        pub fn $accessor(&self) -> &$Ty {
+        pub fn $field(&self) -> &$Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
-            // intermediate `&Union`. Cast is identity for plain fields and
-            // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$ufield) as *const $Ty) }
+            // intermediate `&Union`.
+            unsafe { &*::core::ptr::addr_of!(self.$vf.$field) }
         }
     };
-    (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor_mut:ident, $Ty:ty) => {
+    (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $field_mut:ident, $Ty:ty) => {
         #[inline]
-        pub fn $accessor_mut(&mut self) -> &mut $Ty {
+        pub fn $field_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$ufield) as *mut $Ty) }
+            unsafe { &mut *::core::ptr::addr_of_mut!(self.$vf.$field) }
         }
     };
 }
@@ -3470,6 +3395,7 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
@@ -3482,8 +3408,9 @@ pub mod base64 {
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        let mut dest = BorrowedBuf::from(dest);
+        simdutf::base64::encode(source, dest.unfilled(), false);
+        dest.len()
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.
@@ -3565,33 +3492,69 @@ pub mod base64 {
     }
 }
 
-// ── dupe_z / free_sensitive ───────────────────────────────────────────────
-/// `bun.default_allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated
-/// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
-/// stores C-strings. Caller frees via [`free_sensitive`].
-///
-/// Allocated via the default allocator (`bun_alloc::default_alloc` —
-/// mimalloc, or `std::alloc::System` under `cfg(bun_asan)`), so the
-/// allocation is visible to ASAN's interceptor and LeakSanitizer like every
-/// other heap allocation. Pairs with [`free_sensitive`], which frees through
-/// the same `default_alloc::free`.
-pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    let p = bun_alloc::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
-    if p.is_null() {
-        crate::out_of_memory();
+/// A C string that is zeroed before it is freed. A slice of them is a `char **`.
+#[repr(transparent)]
+pub struct SensitiveCString(core::ptr::NonNull<core::ffi::c_char>);
+
+// SAFETY: it is the only owner of the allocation.
+unsafe impl Send for SensitiveCString {}
+// SAFETY: `&self` only reads.
+unsafe impl Sync for SensitiveCString {}
+
+impl SensitiveCString {
+    /// The string ends at the first NUL in `bytes`.
+    pub fn new(bytes: &[u8]) -> Self {
+        let bytes = crate::slice_to_nul(bytes);
+        let Some(p) = core::ptr::NonNull::new(bun_alloc::default_alloc::malloc(bytes.len() + 1))
+        else {
+            crate::out_of_memory();
+        };
+        let p = p.cast::<u8>();
+        // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), bytes.len());
+            p.add(bytes.len()).write(0);
+        }
+        Self(p.cast())
     }
-    // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-        *p.add(bytes.len()) = 0;
+
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr()
     }
-    p.cast_const().cast::<core::ffi::c_char>()
+
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        // SAFETY: `new` has terminated it, and it lives until `drop`.
+        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_cstr().to_bytes()
+    }
 }
 
-/// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
-/// case used by http SSLConfig — re-exported from `bun_alloc` so the
-/// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
-pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+impl Clone for SensitiveCString {
+    fn clone(&self) -> Self {
+        Self::new(self.as_bytes())
+    }
+}
+
+impl PartialEq for SensitiveCString {
+    fn eq(&self, other: &Self) -> bool {
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes())
+    }
+}
+
+impl Drop for SensitiveCString {
+    fn drop(&mut self) {
+        let len = self.as_bytes().len();
+        // SAFETY: `new` got the allocation from `default_alloc`, whose `free` needs no size.
+        unsafe {
+            secure_zero(core::slice::from_raw_parts_mut(self.0.as_ptr().cast(), len));
+            bun_alloc::default_alloc::free(self.0.as_ptr().cast());
+        }
+    }
+}
+
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
 
@@ -3800,8 +3763,6 @@ pub(crate) fn set_bun_options_argc(n: usize) {
 }
 
 /// Trait for arg types accepted by [`append_options_env`].
-/// Impl'd for `bun_core::String`
-/// and `Box<ZStr>` in their owning crates.
 pub trait OptionsEnvArg {
     fn from_slice(s: &[u8]) -> Self;
     fn from_buf(buf: Vec<u8>) -> Self;
@@ -3822,22 +3783,6 @@ impl OptionsEnvArg for &'static ZStr {
         buf.push(0);
         let z: &'static [u8] = buf.leak();
         ZStr::from_slice_with_nul(z)
-    }
-}
-
-/// Owned `Box<ZStr>` arm of `appendOptionsEnv` — used by `bun::init_argv`'s
-/// BUN_OPTIONS splice path, which stores argv entries as `Box<ZStr>`.
-impl OptionsEnvArg for Box<ZStr> {
-    fn from_slice(s: &[u8]) -> Self {
-        ZStr::boxed(s)
-    }
-    fn from_buf(mut buf: Vec<u8>) -> Self {
-        buf.push(0);
-        let b: Box<[u8]> = buf.into_boxed_slice();
-        // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`; the fat-pointer
-        // metadata (len includes the trailing NUL) is preserved by the cast —
-        // identical to `ZStr::boxed` but consuming the Vec without re-copying.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 
@@ -4562,6 +4507,7 @@ pub mod spawn_ffi {
             pid: *mut c_int,
             path: *const c_char,
             request: *const BunSpawnRequest,
+            pending_fork: *const core::ffi::c_void,
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> isize;
@@ -4665,6 +4611,7 @@ fn spawn_sync_inherit_impl(
                 &raw mut pid,
                 exe,
                 &raw const req,
+                core::ptr::null(),
                 ptrs.as_ptr(),
                 environ,
             );

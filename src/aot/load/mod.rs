@@ -1,22 +1,32 @@
+pub(crate) mod asked_by_test_runner;
 pub(crate) mod builtin_uses;
-mod bundled_commonjs;
+pub(crate) mod bundled_commonjs;
 pub(crate) mod compiler_declarations;
+pub(crate) mod contents;
+mod copied_factories;
 pub(crate) mod data_modules;
 pub(crate) mod disk_delegation;
-pub(crate) mod evaluated_texts;
 pub(crate) mod externals;
 pub(crate) mod fold_inputs;
+#[cfg(test)]
+mod format_grid;
+pub(crate) mod globals_of_a_window;
+pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
+pub(crate) mod import_functions;
+pub(crate) mod import_meta_glob;
+pub(crate) mod known_evaluations;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
-pub(crate) mod macros;
+mod made_own_require;
+pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
-pub(crate) mod named_loads;
+pub(crate) mod modules_with_queries;
+pub(crate) mod objects_created_below;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
-pub(crate) mod runtime_declarations;
 pub(crate) mod runtime_host;
 pub(crate) mod runtime_modules;
 pub(crate) mod runtime_roots;
@@ -25,7 +35,7 @@ pub(crate) mod runtime_types;
 pub mod source_provider;
 pub mod sources;
 pub(crate) mod test_runner_names;
-pub(crate) mod worker_files;
+mod text_for_json_parse;
 
 #[cfg(not(test))]
 pub use bun_aot_interface::load::source_provider;
@@ -34,6 +44,7 @@ pub use project::{PerProject, ProgramFile, ProjectId};
 pub use sources::{EntryPoint, EntryPointKind, ModulePaths, SourceKind, Sources};
 
 use crate::builtins::Platforms;
+use bun_core::ZBox;
 use bun_core::strings::{contains, contains_char};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
@@ -52,14 +63,9 @@ pub fn host_platform() -> Platforms {
     }
 }
 
+#[inline]
 pub(crate) fn is_host_path(path: &[u8]) -> bool {
-    path.starts_with(HOST_ROOT)
-}
-
-pub(crate) fn is_in_archive_of_bun(path: &[u8]) -> bool {
-    bun_sema_driver::host::is_bundled(path)
-        || path.starts_with(bun_builtin_sources::VIRTUAL_ROOT)
-        || path.starts_with(runtime_types::PACKAGES)
+    path.get(1) == Some(&HOST_ROOT[1]) && path.starts_with(HOST_ROOT)
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {
@@ -74,10 +80,28 @@ pub(crate) fn read_file_bytes(path: &[u8]) -> Option<Vec<u8>> {
     File::read_from(Fd::cwd(), native_path).ok()
 }
 
+pub(crate) fn file_size(path: &[u8]) -> Option<u64> {
+    let native_path = to_native(path);
+    if contains_char(native_path, 0) {
+        return None;
+    }
+    let stat = bun_sys::stat(&ZBox::from_bytes(native_path)).ok()?;
+    u64::try_from(stat.st_size).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bun_sema_driver::host::from_native;
+    use bun_sema_driver::host::{from_native, is_regular_file};
+
+    #[test]
+    fn folders_and_names_with_nul_are_no_regular_files() {
+        let executable = std::env::current_exe().unwrap();
+        let path = from_native(executable.to_str().unwrap().as_bytes()).to_vec();
+        assert!(is_regular_file(&path));
+        assert!(!is_regular_file(bun_paths::dirname(&path).unwrap()));
+        assert!(!is_regular_file(&[&path[..], b"\0"].concat()));
+    }
 
     #[test]
     fn host_platform_is_one_platform() {
@@ -113,11 +137,14 @@ mod tests {
         let path = from_native(file.as_os_str().as_encoded_bytes());
 
         let bytes = read_file_bytes(&path);
+        let size = file_size(&path);
         let bytes_at_truncated_path = read_file_bytes(&[&path[..], b"\0.ts"].concat());
         std::fs::remove_file(&file).unwrap();
 
         assert_eq!(bytes.as_deref(), Some(&utf16_text[..]));
+        assert_eq!(size, Some(4));
         assert_eq!(bytes_at_truncated_path, None);
         assert_eq!(read_file_bytes(&path), None);
+        assert_eq!(file_size(&path), None);
     }
 }

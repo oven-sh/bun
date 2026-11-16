@@ -1,15 +1,12 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
-use crate::shared::Data;
 
-pub struct CopyData {
-    pub data: Data,
+pub struct CopyData<'a> {
+    pub data: &'a [u8],
 }
 
-impl CopyData {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
+impl<'a> CopyData<'a> {
+    pub fn decode_internal(reader: &NewReader<'a>) -> Result<Self, AnyPostgresError> {
         let remaining = reader.body_length()?;
 
         Ok(Self {

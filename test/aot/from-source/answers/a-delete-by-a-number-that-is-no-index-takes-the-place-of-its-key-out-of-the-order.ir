@@ -1,0 +1,9 @@
+# -- source: main.js
+# const made = { a: 1, 4294967295: 2, x: 3 };
+# function run(o, gone, added) { const answer = delete o[gone]; o[added] = 5; return answer; }
+# print(run(made, JSON.parse("4294967295"), JSON.parse('"w"')) + " " + Object.keys(made).join());
+# -- end of source
+# 4294967295 fits in 32 bits and is one past the greatest index: a name. A delete that takes it for an index takes its place out of the order of the keys all the same, so the key that is added next comes last.
+# RUN: run-in-shell
+# CHECK: true a,x,w
+# CHECK-NEXT: exited with 0

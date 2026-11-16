@@ -475,24 +475,8 @@ mod _impl {
 
     #[cfg(windows)]
     fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
-        if err != 0 {
-            return Err(OsError::Any);
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_cpu_info
-            unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
-        };
-
-        let values =
-            JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
-
-        // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-        let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
+        let infos = libuv::List::<libuv::uv_cpu_info_t>::get().map_err(|_| OsError::Any)?;
+        let values = JSValue::create_empty_array(global_this, infos.len())?;
         for (i, cpu_info) in infos.iter().enumerate() {
             let times = CPUTimes {
                 user: cpu_info.cpu_times.user,
@@ -732,6 +716,28 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) use network_interfaces_windows as network_interfaces;
 
+    /// The list that `getifaddrs` returns.
+    #[cfg(unix)]
+    struct Interfaces(*mut libc::ifaddrs);
+
+    #[cfg(unix)]
+    impl Interfaces {
+        fn iter(&self) -> impl Iterator<Item = &libc::ifaddrs> {
+            // SAFETY: each link is null or an entry that lives until `drop`.
+            core::iter::successors(unsafe { self.0.as_ref() }, |it| unsafe {
+                it.ifa_next.as_ref()
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Interfaces {
+        fn drop(&mut self) {
+            // SAFETY: returned by getifaddrs
+            unsafe { libc::freeifaddrs(self.0) };
+        }
+    }
+
     #[cfg(unix)]
     pub(crate) fn network_interfaces_posix(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -763,10 +769,7 @@ mod _impl {
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
         }
-        scopeguard::defer! {
-            // SAFETY: returned by getifaddrs
-            unsafe { libc::freeifaddrs(interface_start) };
-        };
+        let interfaces = Interfaces(interface_start);
 
         // We'll skip interfaces that aren't actually available
         fn skip(iface: &libc::ifaddrs) -> bool {
@@ -804,30 +807,11 @@ mod _impl {
         // The list currently contains entries for link-layer interfaces
         //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
         //  but need the link-layer entries to determine MAC address.
-        // So, on our first pass through the linked list we'll count the number of
-        //  INET interfaces only.
-        let mut num_inet_interfaces: usize = 0;
-        let mut it = interface_start;
-        while !it.is_null() {
-            // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
-            if !(skip(iface) || is_link_layer(iface)) {
-                num_inet_interfaces += 1;
-            }
-            it = iface.ifa_next;
-        }
-        let _ = num_inet_interfaces;
-
         let ret = JSValue::create_empty_object(global_this, 0);
 
-        // Second pass through, populate each interface object
-        let mut it = interface_start;
-        while !it.is_null() {
-            // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
-            let next = iface.ifa_next;
+        // Populate each interface object
+        for iface in interfaces.iter() {
             if skip(iface) || is_link_layer(iface) {
-                it = next;
                 continue;
             }
 
@@ -923,27 +907,20 @@ mod _impl {
             // mac <string> The MAC address of the network interface
             {
                 // We need to search for the link-layer interface whose name matches this one
-                let mut ll_it = interface_start;
                 let maybe_ll_addr: Option<*const c_void> = 'search: {
-                    while !ll_it.is_null() {
-                        // SAFETY: ll_it is a valid pointer in the linked list
-                        let ll_iface = unsafe { &*ll_it };
-                        let ll_next = ll_iface.ifa_next;
+                    for ll_iface in interfaces.iter() {
                         if skip(ll_iface) || !is_link_layer(ll_iface) {
-                            ll_it = ll_next;
                             continue;
                         }
 
                         // SAFETY: ifa_name is a NUL-terminated C string
                         let ll_name = unsafe { bun_core::ffi::cstr(ll_iface.ifa_name) }.to_bytes();
                         if !strings::has_prefix(ll_name, interface_name) {
-                            ll_it = ll_next;
                             continue;
                         }
                         if ll_name.len() > interface_name.len()
                             && ll_name[interface_name.len()] != b':'
                         {
-                            ll_it = ll_next;
                             continue;
                         }
 
@@ -1019,8 +996,6 @@ mod _impl {
                 array.put_index(global_this, 0, interface)?;
                 ret.put_may_be_index(global_this, &key, array)?;
             }
-
-            it = next;
         }
 
         Ok(ret)
@@ -1029,11 +1004,7 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) fn network_interfaces_windows(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
-        if err != 0 {
+        let iface_slice = libuv::List::<libuv::uv_interface_address_t>::get().map_err(|err| {
             let sys_err = SystemError {
                 message: BunString::static_("uv_interface_addresses failed").into(),
                 code: BunString::static_("ERR_SYSTEM_ERROR").into(),
@@ -1042,22 +1013,15 @@ mod _impl {
                 syscall: BunString::static_("uv_interface_addresses").into(),
                 ..Default::default()
             };
-            return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_interface_addresses
-            unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
-        };
+            global_this.throw_value(sys_err.to_error_instance(global_this))
+        })?;
 
         let ret = JSValue::create_empty_object(global_this, 8);
 
         // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
         let mut ip_buf = [0u8; 65];
 
-        // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-        let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
-        for iface in iface_slice {
+        for iface in iface_slice.iter() {
             let interface = JSValue::create_empty_object(global_this, 7);
 
             // address <string> The assigned IPv4 or IPv6 address

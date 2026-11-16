@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""typed-objects-through-built-ins-and-back.py <n>: an object of the program goes through a built-in and comes back.
-The n-th of 820 programs: (kind of typed object) x (road). The object is made in typed code, goes down the road (Object.values, Array.from, a Map, Promise.all, a generator ..), and what comes out, which TypeScript still types, is
-read, stored to, deleted from, added to, called, spread and compared with the original. No cast, no any. `names` lists the programs; a name does in place of the number.
-As plain Bun, line by line."""
+"""typed-objects-through-builtins.py <n>: The n-th of 820 programs: (kind of typed object) x (path). The object is
+created in typed code, goes through a built-in (Object.values, JSON, structuredClone, a Map, a promise ..) and comes
+back.
+"""
 import sys, json
 KINDS = {
  'record': ('interface T { id: number; name: string; note?: string }', '{ id: 1, name: "one" }', []),

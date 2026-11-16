@@ -3,28 +3,18 @@
 // CHECK-NEXT: ([[a]]: anything, [[b]]: anything):
 // CHECK: = Add [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="bitAnd"
-// CHECK: [[left]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = BitAnd [[left]], [[right]]
+// CHECK: = BitAnd [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="bitOr"
-// CHECK: [[left]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = BitOr [[left]], [[right]]
+// CHECK: = BitOr [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="bitXor"
-// CHECK: [[left]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = BitXor [[left]], [[right]]
+// CHECK: = BitXor [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="divide"
-// CHECK: [[left]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = Div [[left]], [[right]]
+// CHECK: = Div [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="equal"
 // CHECK: = Eq [[a]], [[b]]
 // CHECK-NOT: LogicalNot
 // CHECK-LABEL: function {{*}}name="exponent"
-// CHECK: [[left]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = Pow [[left]], [[right]]
+// CHECK: = Pow [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="greater"
 // CHECK: = Greater [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="greaterOrEqual"
@@ -32,28 +22,20 @@
 // CHECK-LABEL: function {{*}}name="instanceOf"
 // CHECK: = InstanceOf [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="leftShift"
-// CHECK: [[left]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = LShift [[left]], [[right]]
+// CHECK: = LShift [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="less"
 // CHECK: = Less [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="lessOrEqual"
 // CHECK: = LessEq [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="multiply"
-// CHECK: [[left]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = Mul [[left]], [[right]]
+// CHECK: = Mul [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="notEqual"
 // CHECK: [[loose]] = Eq [[a]], [[b]]
 // CHECK-NEXT: = LogicalNot [[loose]]
 // CHECK-LABEL: function {{*}}name="remainder"
-// CHECK: [[left]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = Mod [[left]], [[right]]
+// CHECK: = Mod [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="rightShift"
-// CHECK: [[left]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = RShift [[left]], [[right]]
+// CHECK: = RShift [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="strictEqual"
 // CHECK: = StrictEq [[a]], [[b]]
 // CHECK-NOT: LogicalNot
@@ -61,13 +43,9 @@
 // CHECK: [[strict]] = StrictEq [[a]], [[b]]
 // CHECK-NEXT: = LogicalNot [[strict]]
 // CHECK-LABEL: function {{*}}name="subtract"
-// CHECK: [[left]] = Convert [[a]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: = Sub [[left]], [[right]]
+// CHECK: = Sub [[a]], [[b]]
 // CHECK-LABEL: function {{*}}name="unsignedRightShift"
-// CHECK: [[left]] = Convert [[a]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: [[right]] = Convert [[b]] declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: = URShift [[left]], [[right]]
+// CHECK: = URShift [[a]], [[b]]
 
 export function add(a: any, b: any) {
   return a + b;

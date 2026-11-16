@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow octal literals.
 pub struct NoOctal;
 
-const NO_OCTAL: Message = Message::new("noOctal", "Octal literals should not be used.");
+const NO_OCTAL: &Message = &Message::new("noOctal", "Octal literals should not be used.");
 
 impl Rule for NoOctal {
     const META: Meta = Meta::eslint("no-octal", Kind::Suggestion).recommended().hints();

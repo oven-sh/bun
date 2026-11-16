@@ -6,6 +6,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
+import { reads } from "./harness/reads";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -84,6 +85,7 @@ describe.concurrent("calls made at build time", () => {
           using _ = small.dir;
           const large = await build(`console.log(${expression}.length);\n`);
           using __ = large.dir;
+          reads(`a build that computes ${expression}`, large.peakMemory / small.peakMemory, 2, "times the peak");
           expect(large.peakMemory / small.peakMemory).toBeLessThan(2);
           expect((await spawned([large.executable], large.folder, env)).stdout).toBe("1073741824\n");
         }),

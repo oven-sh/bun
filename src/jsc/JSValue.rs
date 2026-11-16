@@ -8,12 +8,13 @@
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
-    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
+    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -871,61 +872,26 @@ impl JSValue {
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
-    pub fn as_<T: JsClass>(self) -> Option<*mut T> {
+    pub fn as_class_ref<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         if !self.is_cell() {
             return None;
         }
         T::from_js(self)
     }
-    /// `JSValue.asDirect(T)` — unchecked-prototype downcast.
-    /// Caller must have already verified `is_cell()`; dispatches via
-    /// [`JsClass::from_js_direct`] (skips the prototype-chain walk that `as_`
-    /// performs, so subclasses are *not* matched).
+    /// Whether [`as_class_ref`](Self::as_class_ref) is `Some`. Does not keep the value alive.
     #[inline]
-    pub fn as_direct<T: JsClass>(self) -> Option<*mut T> {
-        debug_assert!(self.is_cell());
+    pub fn is<T: JsClass>(self) -> bool {
+        ManuallyDrop::new(T::from_js(&self)).is_some()
+    }
+    /// Whether [`as_direct`](Self::as_direct) is `Some`. Does not keep the value alive.
+    #[inline]
+    pub fn is_direct<T: JsClass>(self) -> bool {
+        ManuallyDrop::new(T::from_js_direct(&self)).is_some()
+    }
+    /// Dispatches via [`JsClass::from_js_direct`], so subclasses are *not* matched.
+    #[inline]
+    pub fn as_direct<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         T::from_js_direct(self)
-    }
-    /// Safe shared-borrow downcast — `as_<T>()` followed by `&*ptr`.
-    ///
-    /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
-    /// sound because JSC's conservative stack scanner keeps the cell alive
-    /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
-    /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
-    /// for as long as the caller holds `self`.
-    ///
-    /// The `'static` lifetime is a pragmatic over-approximation (there is no
-    /// stack-root guard type to tie it to); callers MUST NOT stash the
-    /// reference past the point where `self` is last used. This mirrors the
-    /// raw-pointer contract of [`as_`](Self::as_) but lets read-only callers
-    /// drop their `unsafe { &*p }` boilerplate.
-    ///
-    /// There is intentionally **no** `as_class_mut`: re-entry into JS (via a
-    /// getter, `toString`, etc.) can produce a second `JSValue` for the same
-    /// cell and thus a second `&mut T`, which is instant UB. Callers needing
-    /// mutation must keep using [`as_`](Self::as_) and scope the `&mut`
-    /// themselves.
-    #[inline]
-    pub fn as_class_ref<T: JsClass>(self) -> Option<&'static T> {
-        // SAFETY: `T::from_js` returns either `None` or a non-null, properly
-        // aligned pointer to the `T` payload owned by the live JSC cell that
-        // `self` encodes. The cell is kept alive by JSC's conservative stack
-        // scan for as long as `self` is reachable on the stack, so the shared
-        // borrow is valid for the caller's frame. We never hand out `&mut`,
-        // so aliasing with other `as_class_ref` borrows is fine.
-        self.as_::<T>().map(|p| unsafe { &*p })
-    }
-
-    /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for payloads that are intrusively refcounted: lets the caller
-    /// take its own ref (`RefPtr::from_this`) or dispatch into a
-    /// `ThisPtr`-taking entry point. Same frame-scoped validity.
-    #[inline]
-    pub fn as_class_this_ptr<T: JsClass>(self) -> Option<bun_ptr::ThisPtr<T>> {
-        // SAFETY: as for `as_class_ref` — the pointer is the live payload of the
-        // cell `self` encodes, which the stack scan keeps alive for this frame.
-        self.as_::<T>().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
     }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer; conjuring a
@@ -936,16 +902,6 @@ impl JSValue {
             return None;
         }
         let p = JSC__JSValue__asPromise(self);
-        if p.is_null() { None } else { Some(p) }
-    }
-    /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
-    /// Returns a raw pointer; see
-    /// [`as_promise`] for the aliasing rationale.
-    pub(crate) fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
-        if !self.is_cell() {
-            return None;
-        }
-        let p = JSC__JSValue__asInternalPromise(self);
         if p.is_null() { None } else { Some(p) }
     }
     pub fn as_any_promise(self) -> Option<AnyPromise> {
@@ -1662,7 +1618,7 @@ impl JSValue {
     fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
         let vm = global.bun_vm();
         vm.calls_nobody()
-            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+            || (vm.test_isolation_enabled.get() && self.is_from_retired_test_isolation_realm())
     }
 
     /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
@@ -1679,13 +1635,6 @@ impl JSValue {
 #[must_use = "dropping immediately unprotects; bind to a local"]
 pub struct Protected(JSValue);
 impl Protected {
-    /// Wrap an **already-protected** value so it is unprotected on drop.
-    /// Unlike [`JSValue::protected`], this does *not* bump the protect
-    /// refcount — use when adopting a `protect()` taken elsewhere.
-    #[inline]
-    pub fn adopt(value: JSValue) -> Self {
-        Self(value)
-    }
     #[inline]
     pub fn value(&self) -> JSValue {
         self.0
@@ -2164,10 +2113,11 @@ pub type ForEachCallback =
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
+/// C++ passes the address of a stack `EncodedSlice` as `key`.
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::EncodedSlice,
+    key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,
@@ -2355,6 +2305,13 @@ impl JSValue {
         }
         JSC__JSValue__isCompiledGenerator(self)
     }
+    /// True for the placeholder that an executable compiled ahead of time hands out for a built-in whose code the build omitted. It has the built-in's name and length; reading any other property throws.
+    pub fn is_placeholder_for_omitted_builtin(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isPlaceholderForOmittedBuiltin(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isPlaceholderForOmittedBuiltin(self)
+    }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {
@@ -2418,6 +2375,27 @@ impl JSValue {
         JSC__JSValue__forEachProperty(self, global, ctx, callback);
         scope.return_if_exception()
     }
+    /// Like `for_each_property`, but passes what an own getter returns, or the accessor itself if the getter throws.
+    #[inline(always)]
+    pub(crate) fn for_each_property_calling_own_getters(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyCallingOwnGetters(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyCallingOwnGetters(self, global, ctx, callback);
+        scope.return_if_exception()
+    }
     /// `JSValue.forEachPropertyNonIndexed` — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
     /// keys.
@@ -2445,7 +2423,7 @@ impl JSValue {
     /// stable enumeration order (used by `console.log` with
     /// `ordered_properties`).
     #[inline(always)]
-    pub fn for_each_property_ordered(
+    pub(crate) fn for_each_property_ordered(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2460,13 +2438,53 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        crate::top_scope!(scope, global);
         JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
+        scope.return_if_exception()
+    }
+    /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
+    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
+    #[inline(always)]
+    pub fn for_each_property_ordered_calling_getters(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<bool> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            ) -> bool;
+        }
+        crate::top_scope!(scope, global);
+        let is_same =
+            JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
+        scope.return_if_exception().map(|()| is_same)
+    }
+    /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
+    #[inline(always)]
+    pub fn for_each_property_ordered_with_non_enumerable(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
+        scope.return_if_exception()
     }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
@@ -2726,21 +2744,19 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison.
+    /// snapshot-property-matcher subset comparison. Also returns the value to print for `self`. If the result
+    /// equals `replace_when`, that's a copy with `subset`'s asymmetric matchers in place of what they matched.
     pub fn jest_deep_match(
         self,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_props_with_asymmetric_matchers: bool,
-    ) -> JsResult<bool> {
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(
-                self,
-                subset,
-                global,
-                replace_props_with_asymmetric_matchers,
-            )
-        })
+        replace_when: bool,
+    ) -> JsResult<(bool, JSValue)> {
+        let mut shown = self;
+        let matched = host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestDeepMatch(self, subset, global, replace_when, &mut shown)
+        })?;
+        Ok((matched, shown))
     }
 
     // ── BigInt ordering. ────────────────────────────────
@@ -2851,7 +2867,8 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_props: bool,
+        replace_when: bool,
+        shown: &mut JSValue,
     ) -> bool;
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;

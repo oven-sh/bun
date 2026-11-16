@@ -11,29 +11,29 @@ use bun_lint::utils::ts_utils::get_this_expression;
 /// Disallow calling a value with type `any`.
 pub struct NoUnsafeCall;
 
-const ERROR_CALL: Message =
-    Message::new("errorCall", "Unsafe call of a type that could not be resolved.");
-const ERROR_CALL_THIS: Message = Message::new(
+const ERROR_CALL: &Message =
+    &Message::new("errorCall", "Unsafe call of a type that could not be resolved.");
+const ERROR_CALL_THIS: &Message = &Message::new(
     "errorCallThis",
     "Unsafe call of a `this` type that could not be resolved.",
 );
-const ERROR_NEW: Message = Message::new(
+const ERROR_NEW: &Message = &Message::new(
     "errorNew",
     "Unsafe construction of a type that could not be resolved.",
 );
-const ERROR_TEMPLATE_TAG: Message = Message::new(
+const ERROR_TEMPLATE_TAG: &Message = &Message::new(
     "errorTemplateTag",
     "Unsafe use of a template tag whose type could not be resolved.",
 );
-const UNSAFE_CALL: Message = Message::new("unsafeCall", "Unsafe call of {{type}} typed value.");
-const UNSAFE_CALL_THIS: Message = Message::new(
+const UNSAFE_CALL: &Message = &Message::new("unsafeCall", "Unsafe call of {{type}} typed value.");
+const UNSAFE_CALL_THIS: &Message = &Message::new(
     "unsafeCallThis",
     "Unsafe call of {{type}} typed value. `this` is typed as {{type}}.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
-const UNSAFE_NEW: Message =
-    Message::new("unsafeNew", "Unsafe construction of {{type}} typed value.");
-const UNSAFE_TEMPLATE_TAG: Message =
-    Message::new("unsafeTemplateTag", "Unsafe use of {{type}} typed template tag.");
+const UNSAFE_NEW: &Message =
+    &Message::new("unsafeNew", "Unsafe construction of {{type}} typed value.");
+const UNSAFE_TEMPLATE_TAG: &Message =
+    &Message::new("unsafeTemplateTag", "Unsafe use of {{type}} typed template tag.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Use {

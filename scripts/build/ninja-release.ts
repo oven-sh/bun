@@ -16,13 +16,12 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
 import type { Config } from "./config.ts";
-import { downloadWithRetry, extractZip } from "./download.ts";
+import { checkSha256, downloadWithRetry, extractZip } from "./download.ts";
 import { describeError } from "./error.ts";
 import { formatElapsed, nameColor } from "./tty.ts";
 
@@ -113,10 +112,7 @@ async function fetchNinja(cfg: NinjaConfig, say: (line: string) => void): Promis
     // at the start of every build. (One try also means download.ts has nothing to log: its retry lines go to
     // stdout, which is the built program's.)
     await downloadWithRetry(url, zip, "ninja", { attempts: 1, backoffMs: () => 0 }, AbortSignal.timeout(10_000));
-    const actual = createHash("sha256")
-      .update(await readFile(zip))
-      .digest("hex");
-    if (actual !== sha256) throw new Error(`${archive}: sha256 is ${actual}, expected ${sha256}`);
+    checkSha256(zip, sha256);
     await extractZip(zip, scratch);
     await rm(zip);
     await chmod(join(scratch, `ninja${cfg.host.exeSuffix}`), 0o755);

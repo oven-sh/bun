@@ -1,6 +1,6 @@
 // A literal of another file that nothing changes: its members are known where they are read. Beside it stand literals that are changed by name, under a key, by a built-in and by a file
 // that runs later: their members are read.
-// STATISTIC: NarrowConstantVariablesChanges >= 1
+// An earlier compiler counted the pass that gave a variable or a field the type of its one constant: NarrowConstantVariablesChanges >= 1. There are no passes now, and nothing counts such fields.
 import { fixed, changedByName, changedByKey, changedByBuiltin, changedLater, make } from "./declarations.mjs";
 console.log(fixed.port + 1, fixed.name + "!", fixed.nested.deep ? "deep" : "shallow", fixed.half, Object.is(fixed.zero, -0), fixed.none, fixed.missing);
 console.log(changedByName.port, changedByKey.port, changedByBuiltin.port, changedLater.port);

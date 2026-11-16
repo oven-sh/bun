@@ -1,0 +1,15 @@
+# Reflect.construct(P, [t]) where P is proven to be the constructor of a class and the list is a fresh one: nothing tells it from `new P(t)`: IsConstructor holds, the list is an object, and its elements are in sight.
+# It used to go to the host function: about 640 instructions a call. A list that is not proven to be an object, or a target that is not proven to be a class, stays with the built-in, whose errors are worded otherwise.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: = CallBuiltin
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK-NOT: = CallBuiltin
+# RUN(LIST): walk f2:Body mechanisms=all
+# LIST: = CallBuiltin {{*}}overload=ReflectConstruct/0
+# -- source: reflect-construct-of-a-proven-class-is-walked-as-new.mjs
+# class P { constructor(x) { this.x = x; } }
+# function f(t) { return Reflect.construct(P, [t]); }
+# function g(list) { return Reflect.construct(P, list); }
+# globalThis.kept = [f, g];
+# console.log(f(Number("3")).x, g(JSON.parse("[4]")).x);
+# -- end of source

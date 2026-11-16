@@ -1,8 +1,6 @@
 //! `bun.sys.File` — high-level file handle.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
-//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
-//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
+//! Owns the fd; Drop is [`FdExt::close`]. Use [`File::into_raw`] to hand it off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
 
@@ -16,9 +14,7 @@ pub struct File {
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
-        if self.handle != Fd::INVALID && !self.handle.is_stdio() {
-            let _ = close(self.handle);
-        }
+        self.handle.close();
     }
 }
 
@@ -33,7 +29,7 @@ pub struct ReadToEndResult {
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
     // ── construction / identity ──────────────────────────────────────────
-    /// Wrap an existing fd. See also the `From` impls below.
+    /// Take ownership of an open fd.
     #[inline]
     pub fn from_fd(fd: Fd) -> Self {
         Self { handle: fd }
@@ -59,19 +55,6 @@ impl File {
     pub fn borrow(fd: &Fd) -> &File {
         // SAFETY: `File` is `#[repr(transparent)]` over `Fd`.
         unsafe { &*(core::ptr::from_ref(fd).cast::<File>()) }
-    }
-    /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
-    #[inline]
-    pub fn stdin() -> Self {
-        Self {
-            handle: Fd::stdin(),
-        }
-    }
-    #[inline]
-    pub fn stdout() -> Self {
-        Self {
-            handle: Fd::stdout(),
-        }
     }
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
@@ -156,22 +139,17 @@ impl File {
     /// Loop `read()` into a **fixed** caller-owned slice until EOF or full.
     /// Returns total bytes read.
     pub fn read_all(&self, buf: &mut [u8]) -> Maybe<usize> {
-        let mut rest = &mut *buf;
-        let mut total_read: usize = 0;
-        while !rest.is_empty() {
-            let n = read(self.handle, rest)?;
-            if n == 0 {
-                break;
-            }
-            rest = &mut rest[n..];
-            total_read += n;
-        }
-        Ok(total_read)
+        self.read_all_buf(BorrowedBuf::from(buf).unfilled())
+    }
+    pub fn read_all_buf(&self, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
+        let start = cursor.written();
+        while cursor.capacity() != 0 && read_buf(self.handle, cursor.reborrow())? != 0 {}
+        Ok(cursor.written() - start)
     }
     /// Growable-`Vec` variant (was previously misnamed `read_all`). Kept for
     /// callers that want cursor-relative streaming into an existing `Vec`.
     pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
-        read_fill_vec(buf, 8192, |dst, _| read(self.handle, dst))
+        read_fill_vec(buf, 8192, |dst, _| read_buf(self.handle, dst))
     }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
@@ -214,12 +192,12 @@ impl File {
         read_fill_vec(list, 16, |dst, off| {
             #[cfg(unix)]
             {
-                pread(self.handle, dst, off)
+                pread_buf(self.handle, dst, off)
             }
             #[cfg(not(unix))]
             {
                 let _ = off;
-                read(self.handle, dst)
+                read_buf(self.handle, dst)
             }
         })
     }
@@ -237,17 +215,17 @@ impl File {
     /// Loop `pread()` from `offset` until `buf` is
     /// full or EOF. Returns total bytes read (may be `< buf.len()` on EOF).
     pub fn pread_all(&self, buf: &mut [u8], offset: u64) -> Maybe<usize> {
-        let mut off = offset as i64;
-        let mut total: usize = 0;
-        while total < buf.len() {
-            let n = pread(self.handle, &mut buf[total..], off)?;
-            if n == 0 {
+        self.pread_all_buf(BorrowedBuf::from(buf).unfilled(), offset)
+    }
+    pub fn pread_all_buf(&self, mut cursor: BorrowedCursor<'_, u8>, offset: u64) -> Maybe<usize> {
+        let start = cursor.written();
+        while cursor.capacity() != 0 {
+            let at = offset as i64 + (cursor.written() - start) as i64;
+            if pread_buf(self.handle, cursor.reborrow(), at)? == 0 {
                 break;
             }
-            total += n;
-            off += n as i64;
         }
-        Ok(total)
+        Ok(cursor.written() - start)
     }
 
     // ── seek / stat / kind ───────────────────────────────────────────────
@@ -306,15 +284,6 @@ impl File {
             })
         }
     }
-    /// Close now. Equivalent to dropping `self` but the syscall result is
-    /// observable. Skips the same sentinels as `Drop`.
-    pub fn close(self) -> Maybe<()> {
-        let fd = self.into_raw();
-        if fd == Fd::INVALID || fd.is_stdio() {
-            return Ok(());
-        }
-        close(fd)
-    }
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
     /// closing the handle after the rename so `move_file_z_with_handle`'s
     /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
@@ -324,9 +293,7 @@ impl File {
     /// into the EXDEV fallback.)
     pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Maybe<()> {
         let cwd = Fd::cwd();
-        let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
-        let _ = self.close(); // close error is non-actionable; discarded
-        result
+        move_file_z_with_handle(self.handle, cwd, src, cwd, dest)
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
@@ -413,21 +380,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn close_disarms_drop() {
-        let _g = FD_TEST_LOCK.lock();
-        let f = open_cwd();
-        f.close().unwrap();
-    }
-
-    #[test]
-    fn close_skips_invalid_sentinel() {
-        let _g = FD_TEST_LOCK.lock();
-        // `File::close()` must not call the syscall on `Fd::INVALID`.
-        let f = File::from_fd(Fd::INVALID);
-        assert!(f.close().is_ok());
-    }
-
-    #[test]
     fn into_raw_disarms_drop() {
         let _g = FD_TEST_LOCK.lock();
         let f = open_cwd();
@@ -451,21 +403,7 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` wrap process-shared descriptors that
-        // the caller does not own. Dropping the wrapper must not tear down the
-        // test harness's output.
-        for _ in 0..16 {
-            let _ = File::stdin();
-            let _ = File::stdout();
-        }
+        drop(File::from_fd(Fd::stdout()));
         assert!(fstat(Fd::stdout()).is_ok());
-    }
-
-    #[test]
-    fn dropping_invalid_fd_is_safe() {
-        let _g = FD_TEST_LOCK.lock();
-        for _ in 0..16 {
-            let _ = File::from_fd(Fd::INVALID);
-        }
     }
 }

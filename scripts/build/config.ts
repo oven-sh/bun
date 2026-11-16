@@ -241,9 +241,10 @@ export interface Config {
    */
   shadowRealm: boolean;
   /**
-   * Default true. Off builds a Bun whose `bun:ffi` calls no native function: dlopen(), linkSymbols(), CFunction(),
-   * JSCallback() and what cc() returns throw. A WebKit built from source (`webkit: "local"`) is also built with
-   * ENABLE_FFI=0, which leaves the engine's half of those calls out of the binary; a prebuilt one keeps it.
+   * Default true. Off builds a Bun whose `bun:ffi` calls no native function and loads no library: dlopen(),
+   * linkSymbols(), CFunction(), JSCallback(), cc() with a `library` and what cc() returns throw. A WebKit built from
+   * source (`webkit: "local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
+   * the binary; a prebuilt one keeps it.
    */
   ffi: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */

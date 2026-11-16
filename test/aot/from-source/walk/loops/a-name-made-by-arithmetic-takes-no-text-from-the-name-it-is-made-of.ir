@@ -1,0 +1,18 @@
+# -- source: a-name-made-by-arithmetic-takes-no-text-from-the-name-it-is-made-of.js
+# function scale(texts) {
+#   let s = "7", n = 0, m = 0;
+#   for (let i = 0; i < texts.length; i++) { const t = texts[i]; m = n + 1; n = s * 2; s = typeof t === "string" ? t : "0"; }
+#   return m;
+# }
+# sink(scale(["1", "2", "3", "4"]));
+# -- end of source
+# `n` is made of the text `s` by a product: a number, whatever `s` holds. The look for the head's own parameters in what comes round goes through arithmetic only to operands that are numbers or big integers:
+# a text, a boolean, null or an object hands its kind to nothing there. `n` took `string` from `s` before, and `m`, made of `n` by a sum, came round as number|string and stayed a boxed value at the head.
+# f1 = scale
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: number|string
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 5
+# SHELL: exited with 0

@@ -4,6 +4,7 @@ use crate::ir::generated::{
     check_program,
 };
 use crate::ir::ids::{Id, StringId};
+use crate::ir::parallel::{InParallel, run_serially};
 use crate::ir::program::Program;
 use crate::ir::strings::StringTable;
 use crate::ir::wtf8::is_canonical_wtf8;
@@ -24,6 +25,27 @@ fn intern_and_get(bytes: &[u8]) -> Vec<u8> {
     let mut table = StringTable::default();
     let id = table.intern(bytes);
     table.get(id).to_vec()
+}
+
+fn run_in_reverse(count: usize, work: &(dyn Fn(usize) + Sync)) {
+    for index in (0..count).rev() {
+        work(index);
+    }
+}
+
+#[track_caller]
+fn assert_same_answers(table: &StringTable, expected: &StringTable) {
+    assert_eq!(table.len(), expected.len());
+    assert_eq!(table.byte_len(), expected.byte_len());
+    assert_eq!(table.bytes(), expected.bytes());
+    for id in expected.ids() {
+        let text = expected.get(id);
+        assert_eq!(table.get(id), text, "{id}");
+        assert_eq!(table.hash(id), expected.hash(id), "{id}");
+        assert_eq!(table.name_class(id), expected.name_class(id), "{id}");
+        assert_eq!(table.builtin_name(id), expected.builtin_name(id), "{id}");
+        assert_eq!(table.find(text), Some(id), "{id}");
+    }
 }
 
 #[test]
@@ -75,51 +97,6 @@ fn find_returns_interned_strings_only() {
 }
 
 #[test]
-fn hashed_writers_agree_with_intern() {
-    let mut table = StringTable::default();
-    let hash = StringTable::hash_of(b"a");
-    let hashed = table.intern_hashed(hash, b"a");
-    assert_eq!(table.intern(b"a"), hashed);
-    assert_eq!(table.intern_hashed(hash, b"a"), hashed);
-    let interned = table.intern(b"b");
-    assert_ne!(interned, hashed);
-    assert_eq!(
-        table.intern_hashed(StringTable::hash_of(b"b"), b"b"),
-        interned
-    );
-    assert_eq!(table.find(b"b"), Some(interned));
-    assert_eq!(table.hash(interned), StringTable::hash_of(b"b"));
-    assert_eq!(table.len(), 2);
-}
-
-#[test]
-#[cfg(debug_assertions)]
-#[should_panic]
-fn intern_hashed_rejects_surrogate_pair() {
-    let mut table = StringTable::default();
-    table.intern_hashed(StringTable::hash_of(SURROGATE_PAIR), SURROGATE_PAIR);
-}
-
-#[test]
-#[cfg(debug_assertions)]
-#[should_panic]
-fn intern_hashed_rejects_hash_of_other_bytes() {
-    let mut table = StringTable::default();
-    table.intern_hashed(StringTable::hash_of(b"a"), b"b");
-}
-
-#[test]
-fn intern_hashed_stores_ill_formed_bytes_unchanged() {
-    let mut table = StringTable::default();
-    for &bytes in ILL_FORMED {
-        assert!(!is_canonical_wtf8(bytes), "{bytes:x?}");
-        let id = table.intern_hashed(StringTable::hash_of(bytes), bytes);
-        assert_eq!(table.get(id), bytes, "{bytes:x?}");
-        assert_eq!(table.intern(bytes), id, "{bytes:x?}");
-    }
-}
-
-#[test]
 fn ids_survive_index_growth() {
     let mut table = StringTable::default();
     let texts: Vec<String> = (0..2000).map(|index| format!("string {index}")).collect();
@@ -168,18 +145,17 @@ fn ill_formed_bytes_are_stored_unchanged() {
 #[test]
 fn name_class_is_stored() {
     let mut table = StringTable::default();
-    let expected: [(&[u8], NameClass); 4] = [
+    let expected: [(&[u8], NameClass); 5] = [
         (b"length", NameClass::Length),
         (b"0", NameClass::Index),
         (b"x", NameClass::Ordinary),
         (b"-0", NameClass::CanonicalNumericString),
+        (b"then", NameClass::Then),
     ];
     for (text, class) in expected {
         let id = table.intern(text);
         assert_eq!(table.name_class(id), class);
     }
-    let hashed = table.intern_hashed(StringTable::hash_of(b"then"), b"then");
-    assert_eq!(table.name_class(hashed), NameClass::Then);
 }
 
 #[test]
@@ -216,6 +192,57 @@ fn ids_lists_every_id() {
     let interned = [b"a", b"b", b"c"].map(|text| table.intern(text));
     assert_eq!(table.ids().len(), 3);
     assert_eq!(table.ids().collect::<Vec<_>>(), interned);
+}
+
+#[test]
+fn table_of_distinct_strings_answers_like_one_that_interned_them() {
+    let mut texts: Vec<Vec<u8>> = (0..5000)
+        .map(|index| ("x".repeat(index % 7) + &index.to_string()).into_bytes())
+        .collect();
+    let classified: [&[u8]; 7] = [
+        b"length",
+        b"then",
+        b"prototype",
+        b"-0",
+        b"",
+        JOINED_PAIR,
+        HIGH_SURROGATE,
+    ];
+    texts.extend(
+        classified
+            .iter()
+            .chain(ILL_FORMED)
+            .map(|text| text.to_vec()),
+    );
+    let mut sources = [StringTable::default(), StringTable::default()];
+    let mut places: Vec<(usize, StringId)> = Vec::new();
+    for (index, text) in texts.iter().enumerate() {
+        let source = index % 2;
+        if index % 3 == 0 {
+            sources[source].intern(format!("left out {index}").as_bytes());
+        }
+        places.push((source, sources[source].intern(text)));
+    }
+    places.reverse();
+    let string_at = |index: usize| (&sources[places[index].0], places[index].1);
+    let schedules: [InParallel<'_>; 2] = [&run_serially, &run_in_reverse];
+    for in_parallel in schedules {
+        let mut table = StringTable::of_distinct_strings(places.len(), &string_at, in_parallel);
+        let mut expected = StringTable::default();
+        for index in 0..places.len() {
+            let (source, id) = string_at(index);
+            assert_eq!(expected.intern(source.get(id)).index(), index);
+        }
+        assert_same_answers(&table, &expected);
+        let added = (0..3000).map(|index| format!("added {index}"));
+        for text in added.chain(["length".to_string(), String::new()]) {
+            let id = table.intern(text.as_bytes());
+            assert_eq!(id, expected.intern(text.as_bytes()));
+        }
+        assert_same_answers(&table, &expected);
+        let empty = StringTable::of_distinct_strings(0, &string_at, in_parallel);
+        assert_same_answers(&empty, &StringTable::default());
+    }
 }
 
 fn create_program(interned: &[&[u8]]) -> Program {

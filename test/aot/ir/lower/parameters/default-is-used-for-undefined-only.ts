@@ -5,8 +5,6 @@
 // CHECK: [[isMissing]] = TypeTest [[a]] testedType=undefined @
 // CHECK-NEXT: Branch [[isMissing]] -> taken [[missing]](| 0), notTaken [[present]](| 0)
 // CHECK: [[missing]]([[proof]]):
-// CHECK-NEXT: Jump -> next [[default]]()
-// CHECK: [[default]]():
 // CHECK: = Call
 // CHECK: [[present]]([[value]]):
 // CHECK-NEXT: Jump -> next [[join]]([[value]])

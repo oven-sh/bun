@@ -4,6 +4,7 @@ use super::ids::{
     PropertyKeyId, StringId, TypeId, TypeSiteId, VariableId,
 };
 use crate::builtins::id::BuiltinId;
+use core::any::type_name;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ReferenceKind {
@@ -79,9 +80,22 @@ pub struct IdMap<'a> {
     pub data: &'a [Option<DataId>],
 }
 
+#[cold]
+#[inline(never)]
+fn panic_on_missing_record<I: Id>(id: I) -> ! {
+    panic!(
+        "a record that is moved names one that the program lacks: {} {}",
+        type_name::<I>(),
+        id.index()
+    );
+}
+
 #[inline]
 pub fn remap<I: Id>(id: &mut I, map: &[Option<I>]) {
-    *id = map[id.index()].expect("retained code names a dropped item");
+    let Some(&Some(program_id)) = map.get(id.index()) else {
+        panic_on_missing_record(*id)
+    };
+    *id = program_id;
 }
 
 #[inline]
@@ -99,6 +113,7 @@ fn remap_word<I: Id>(word: u32, map: &[Option<I>]) -> u32 {
 }
 
 impl IdMap<'_> {
+    #[inline]
     pub fn remap_word(&self, kind: ReferenceKind, word: u32) -> u32 {
         match kind {
             ReferenceKind::String => remap_word(word, self.strings),

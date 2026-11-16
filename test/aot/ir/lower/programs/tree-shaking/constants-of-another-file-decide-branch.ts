@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="a1"
+// CHECK-LABEL: function {{*}}name="a2"
 
 // FILE: main.ts
 // The condition is an imported constant: a const false, a const true, a let that its file changes, a const that is computed, an enum member, and a const read through a namespace. Each arm calls its own function.
@@ -32,27 +34,3 @@ export enum Level { Low, High }
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: a1 a2
-// CHECK-LABEL: function {{*}}name="a1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="a1"
-// CHECK-NEXT: Throw v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="a2"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="OFF is false"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_2]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

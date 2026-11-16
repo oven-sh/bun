@@ -1,19 +1,29 @@
+use crate::bind::{Binding, BindingStability};
 use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
-use crate::hir::{Flags, has_body_node, rare};
+use crate::hir::{ExprId, Flags, StmtKind, has_body_node, rare};
 use crate::node::{Kind, Node, NodeData};
 use crate::program::FileId;
 
 impl Checker<'_, '_> {
     pub(in crate::check) fn is_strict_mode_code(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
-        if hir.is_strict || hir.get_containing_class(node).is_some() {
+        let class = hir.get_containing_class_excluding_class_decorators(node);
+        if hir.is_strict || class.is_some() {
             return true;
         }
         let function = hir.function_of(hir.get_containing_function(node));
-        hir.fns
+        let is_in_strict_function = hir
+            .fns
             .get(function.idx())
-            .is_some_and(|function| function.is_strict)
+            .is_some_and(|function| function.is_strict);
+        let is_strict_namespace = |ancestor: Node| match hir.data(ancestor) {
+            NodeData::Stmt(statement) => {
+                matches!(hir[statement].kind, StmtKind::Module(it) if hir.is_strict_namespace(it))
+            }
+            _ => false,
+        };
+        is_in_strict_function || hir.find_ancestor(node, is_strict_namespace).is_some()
     }
 
     pub(in crate::check) fn is_erased_syntax(&self, file: FileId, node: Node) -> bool {
@@ -39,8 +49,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// For `await` (`ASYNC`) or `yield` (`GENERATOR`) as a name where the code around it has the operator. A function
-    /// expression reads its own name as its own modifiers say.
     pub(in crate::check) fn operator_as_name_error_class(
         &self,
         file: FileId,
@@ -66,22 +74,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    pub(in crate::check) fn is_read_as_strict_mode_code(&self, file: FileId, node: Node) -> bool {
-        self.is_strict_mode_code(file, node) || self.hir(file).follows_dropped_directive(node)
-    }
-
-    pub(in crate::check) fn strict_mode_name_error_class(
-        &self,
-        file: FileId,
-        node: Node,
-    ) -> DiagnosticClass {
-        if self.is_read_as_strict_mode_code(file, node) {
-            self.early_error_class(file, node)
-        } else {
-            DiagnosticClass::TypeScriptGrammar
-        }
-    }
-
     pub(in crate::check) fn strict_mode_error_class(
         &self,
         file: FileId,
@@ -92,5 +84,12 @@ impl Checker<'_, '_> {
         } else {
             DiagnosticClass::TypeScriptGrammar
         }
+    }
+
+    pub(in crate::check) fn names_member_of_container(&self, file: FileId, name: ExprId) -> bool {
+        let bound = self.bound(file);
+        bound.runtime.is_computed()
+            && matches!(bound.binding(name), Binding::Symbol(symbol)
+                if bound.binding_stability(symbol) == BindingStability::ContainerMember)
     }
 }

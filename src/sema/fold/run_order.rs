@@ -1,220 +1,302 @@
 use super::children::{TreeNode, push_children};
-use crate::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, Bound, Decl, SymbolId,
+use crate::bind::{Binding, BindingKind, Bound, Decl, SymbolId};
+use crate::hir::{
+    ExprId, ExprKind, File, Flags, PatKind, StmtId, StmtKind, is_moved_to_file_start,
 };
-use crate::hir::{ExprId, ExprKind, File, FnId, StmtKind};
-use crate::util::{FxHashMap, SharedSort};
+use crate::util::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
 
-const NEVER: u32 = u32::MAX;
-
-#[derive(Copy, Clone)]
-enum Place {
-    Statement(u32),
-    Function(FnId),
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum ReadOrder {
-    MayComeFirst,
-    Behind,
-    BehindUnlessCalledByImporter,
-}
+const RUNS_LATER: u32 = u32::MAX;
 
 pub(super) struct RunOrder {
     statement_of_initializer: FxHashMap<ExprId, u32>,
-    /// Found when somebody asks about a variable that a statement of the body of the file initializes. Most variables belong to functions.
-    places: OnceCell<Places>,
+    statement_of_read: OnceCell<Vec<u32>>,
+    first_function_use: OnceCell<u32>,
 }
 
-struct Places {
-    /// By expression. 0: no read of a variable. Odd: in a statement of the body. Even: in a function.
-    place_of_variable_read: Vec<u32>,
-    first_run: Vec<u32>,
-}
-
-impl Places {
-    fn note_variable_read(&mut self, read: ExprId, place: Place) {
-        self.place_of_variable_read[read.idx()] = match place {
-            Place::Statement(statement) => 2 * statement + 1,
-            Place::Function(function) => 2 * function.0 + 2,
-        };
-    }
-
-    fn place_of_variable_read(&self, read: ExprId) -> Option<Place> {
-        match self.place_of_variable_read[read.idx()] {
-            0 => None,
-            place if place % 2 == 1 => Some(Place::Statement(place / 2)),
-            place => Some(Place::Function(FnId(place / 2 - 1))),
-        }
-    }
-}
-
-struct Walk<'a, 's> {
+/// Finds the first statement of a file that may call one of the file's functions, or pass one to
+/// other code. No function of the file runs before it.
+struct FunctionUses<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
-    order: Places,
-    is_declared: Vec<bool>,
-    function_of_symbol: FxHashMap<SymbolId, Option<FnId>>,
-    reached_from: Vec<(FnId, FnId)>,
+    exported: FxHashSet<SymbolId>,
+    variables_with_functions: FxHashSet<SymbolId>,
 }
 
-impl Walk<'_, '_> {
-    fn can_run_at(&mut self, function: FnId, place: Place) {
-        match place {
-            Place::Statement(statement) => {
-                let first_run = &mut self.order.first_run[function.idx()];
-                *first_run = statement.min(*first_run);
-            }
-            Place::Function(outer) => self.reached_from.push((outer, function)),
-        }
-    }
-
-    fn find_declared_function(&mut self, symbol: SymbolId) -> Option<FnId> {
-        let (hir, bound) = (self.hir, self.bound);
-        let found = self.function_of_symbol.entry(symbol);
-        *found.or_insert_with(|| match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Function(function) => Some(function),
-            _ => None,
-        })
-    }
-
-    fn visit_name(&mut self, name: ExprId, place: Place) {
-        let Binding::Symbol(symbol) = self.bound.binding(name) else {
-            return;
-        };
-        match self.bound.binding_kind(symbol) {
-            BindingKind::Var => self.order.note_variable_read(name, place),
-            BindingKind::Function => match self.find_declared_function(symbol) {
-                Some(function) => self.can_run_at(function, place),
-                None => self.order.first_run.fill(0),
-            },
-            _ => {}
-        }
-    }
-
-    fn visit_declaration(&mut self, function: FnId) {
-        let symbol = self.bound.declared_symbol(Decl::Fn(function));
-        let stability = self.bound.binding_stability(symbol);
-        self.is_declared[function.idx()] = stability != BindingStability::ContainerMember;
-        if self.bound.is_visible_to_eval(symbol) {
-            self.order.first_run[function.idx()] = 0;
-        }
-    }
-
-    fn visit_body(&mut self) {
-        let hir = self.hir;
-        // All of `stack` is in one place. What a function holds waits in `functions` until the place around it is through.
-        let mut stack = Vec::new();
-        let mut functions = Vec::new();
-        for (index, statement) in (0..).zip(hir.ids(hir.body)) {
-            let mut place = Place::Statement(index);
-            stack.push(TreeNode::Stmt(statement));
-            loop {
-                while let Some(node) = stack.pop() {
-                    match node {
-                        TreeNode::Stmt(statement) => {
-                            if let StmtKind::Fn(function) = hir[statement].kind {
-                                self.visit_declaration(function);
-                            }
-                        }
-                        TreeNode::Function(function) => {
-                            if !self.is_declared[function.idx()] {
-                                self.can_run_at(function, place);
-                            }
-                            functions.push(function);
-                            continue;
-                        }
-                        TreeNode::Expr(e) => {
-                            if let ExprKind::Ident(_) = hir[e].kind {
-                                self.visit_name(e, place);
-                            }
-                        }
-                        TreeNode::Class(_) | TreeNode::Pattern(_) => {}
-                    }
-                    push_children(hir, node, &mut stack);
-                }
-                let Some(function) = functions.pop() else {
-                    break;
-                };
-                place = Place::Function(function);
-                push_children(hir, TreeNode::Function(function), &mut stack);
-            }
-        }
-    }
-
-    fn spread_to_reached_functions(&mut self) {
-        self.reached_from
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        let first_run = &mut self.order.first_run;
-        let mut changed: Vec<FnId> = (0..first_run.len() as u32)
-            .map(FnId)
-            .filter(|function| first_run[function.idx()] != NEVER)
-            .collect();
-        while let Some(outer) = changed.pop() {
-            let start = self.reached_from.partition_point(|entry| entry.0 < outer);
-            let reached = self.reached_from[start..].iter();
-            for &(_, function) in reached.take_while(|entry| entry.0 == outer) {
-                if first_run[outer.idx()] < first_run[function.idx()] {
-                    first_run[function.idx()] = first_run[outer.idx()];
-                    changed.push(function);
-                }
-            }
-        }
-    }
-}
-
-impl Places {
-    fn new<'s>(hir: &File<'s>, bound: &Bound<'s>) -> Places {
-        let mut walk = Walk {
+impl<'a, 's> FunctionUses<'a, 's> {
+    fn find_first(hir: &'a File<'s>, bound: &'a Bound<'s>) -> u32 {
+        let mut uses = FunctionUses {
             hir,
             bound,
-            order: Places {
-                place_of_variable_read: vec![0; hir.exprs.len()],
-                first_run: vec![NEVER; hir.fns.len()],
-            },
-            is_declared: vec![false; hir.fns.len()],
-            function_of_symbol: FxHashMap::default(),
-            reached_from: Vec::new(),
+            exported: exported_symbols(hir, bound),
+            variables_with_functions: FxHashSet::default(),
         };
-        walk.visit_body();
-        walk.spread_to_reached_functions();
-        walk.order
+        // An import cycle may call it before the first statement: plain Bun also moves classes and
+        // default exports up.
+        let mut statements = hir.ids(hir.body);
+        if uses.exported.iter().any(|&it| uses.holds_function(it))
+            || statements.any(|it| uses.is_default_function(it))
+        {
+            return 0;
+        }
+        let mut statements = (1..).zip(hir.ids(hir.body));
+        statements
+            .find(|&(_, statement)| uses.has_use(statement))
+            .map_or(u32::MAX, |(number, _)| number)
     }
+
+    fn is_default_function(&self, statement: StmtId) -> bool {
+        let StmtKind::ExportDefault(value) = self.hir[statement].kind else {
+            return false;
+        };
+        let mut stack = vec![TreeNode::Expr(value)];
+        while let Some(node) = stack.pop() {
+            if let TreeNode::Function(_) | TreeNode::Class(_) = node {
+                return true;
+            }
+            push_children(self.hir, node, &mut stack);
+        }
+        false
+    }
+
+    fn has_use(&mut self, statement: StmtId) -> bool {
+        let hir = self.hir;
+        let mut stack = Vec::new();
+        match hir[statement].kind {
+            StmtKind::Fn(_) => {}
+            StmtKind::Class(_) => return !is_moved_to_file_start(hir, statement),
+            StmtKind::Var(declarations) => {
+                for declaration in declarations.iter().map(|it| &hir[it]) {
+                    let init = declaration
+                        .init
+                        .some()
+                        .map(|it| hir.skip_type_assertions(it));
+                    if let (PatKind::Ident(_), Some(init)) = (hir[declaration.pat].kind, init)
+                        && matches!(hir[init].kind, ExprKind::Fn(_))
+                    {
+                        let symbol = self.bound.declared_symbol(Decl::Var(declaration.pat));
+                        if self.exported.contains(&symbol) {
+                            return true;
+                        }
+                        self.variables_with_functions.insert(symbol);
+                        continue;
+                    }
+                    stack.push(TreeNode::Pattern(declaration.pat));
+                    stack.extend(declaration.init.some().map(TreeNode::Expr));
+                }
+            }
+            _ => stack.push(TreeNode::Stmt(statement)),
+        }
+        while let Some(node) = stack.pop() {
+            let may_run_function = match node {
+                TreeNode::Function(_) | TreeNode::Class(_) => true,
+                TreeNode::Expr(e) => self.may_run_function(e),
+                TreeNode::Stmt(stmt) => may_run_function_unnamed(hir, stmt),
+                TreeNode::Pattern(_) => false,
+            };
+            if may_run_function {
+                return true;
+            }
+            push_children(hir, node, &mut stack);
+        }
+        false
+    }
+
+    fn may_run_function(&self, e: ExprId) -> bool {
+        match self.hir[e].kind {
+            ExprKind::Ident(_) => self.names_function(e),
+            ExprKind::Call(_) => self.bound.eval_scope(e).is_some(),
+            // The factory of an element is called without a mention of it.
+            ExprKind::Jsx(_)
+            | ExprKind::JsxText(_)
+            | ExprKind::ImportCall { .. }
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_)
+            | ExprKind::Super
+            | ExprKind::PrivateIdentifier(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::NewTarget(_)
+            | ExprKind::Missing => true,
+            ExprKind::This
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::Template { .. }
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::Array(_)
+            | ExprKind::Object(_)
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::New(_)
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Spread(_)
+            | ExprKind::Await(_)
+            | ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+            | ExprKind::ImportMeta => false,
+        }
+    }
+
+    fn names_function(&self, identifier: ExprId) -> bool {
+        match self.bound.binding(identifier) {
+            Binding::Symbol(symbol) => self.holds_function(symbol),
+            Binding::Free | Binding::Arguments(_) | Binding::CommonJs(_) => false,
+        }
+    }
+
+    fn holds_function(&self, symbol: SymbolId) -> bool {
+        let kind = self.bound.binding_kind(symbol);
+        matches!(kind, BindingKind::Function | BindingKind::Class)
+            || self.variables_with_functions.contains(&symbol)
+            || (self.bound.symbol(symbol).decls.iter())
+                .any(|it| matches!(it, Decl::Fn(_) | Decl::Class(_)))
+    }
+}
+
+fn may_run_function_unnamed(hir: &File<'_>, statement: StmtId) -> bool {
+    match hir[statement].kind {
+        StmtKind::Enum(_)
+        | StmtKind::Module(_)
+        | StmtKind::With { .. }
+        | StmtKind::ImportEquals(_)
+        | StmtKind::Fn(_)
+        | StmtKind::Class(_)
+        | StmtKind::Return(_) => true,
+        StmtKind::Empty
+        | StmtKind::Debugger
+        | StmtKind::Expr(_)
+        | StmtKind::Var(_)
+        | StmtKind::Interface(_)
+        | StmtKind::TypeAlias(_)
+        | StmtKind::If { .. }
+        | StmtKind::For { .. }
+        | StmtKind::ForIn { .. }
+        | StmtKind::ForOf { .. }
+        | StmtKind::While { .. }
+        | StmtKind::DoWhile { .. }
+        | StmtKind::Block(_)
+        | StmtKind::Switch { .. }
+        | StmtKind::Try { .. }
+        | StmtKind::Throw(_)
+        | StmtKind::Break(_)
+        | StmtKind::Continue(_)
+        | StmtKind::Labeled { .. }
+        | StmtKind::Import(_)
+        | StmtKind::ExportNamed(_)
+        | StmtKind::ExportStar { .. }
+        | StmtKind::ExportDefault(_)
+        | StmtKind::ExportAssign(_)
+        | StmtKind::ExportAsNamespace(_)
+        | StmtKind::Directive { .. } => false,
+    }
+}
+
+fn exported_symbols(hir: &File<'_>, bound: &Bound<'_>) -> FxHashSet<SymbolId> {
+    let mut symbols = FxHashSet::default();
+    if !hir.has_module_syntax {
+        return symbols;
+    }
+    for &(_, exported) in bound.table(bound.symbol(bound.file_symbol).exports) {
+        symbols.insert(exported);
+        for &declaration in bound.symbol(exported).decls {
+            match declaration {
+                Decl::ExportSpec(spec) => {
+                    if let Binding::Symbol(local) = bound.exported_binding(spec) {
+                        symbols.insert(local);
+                    }
+                }
+                Decl::Var(_) | Decl::Fn(_) | Decl::Class(_) => {
+                    symbols.insert(bound.declared_symbol(declaration));
+                }
+                _ => {}
+            }
+        }
+    }
+    symbols
+}
+
+fn find_statements_of_reads(hir: &File<'_>) -> Vec<u32> {
+    let mut statement_of_read = vec![0; hir.exprs.len()];
+    let mut stack = Vec::new();
+    for (number, statement) in (1..).zip(hir.ids(hir.body)) {
+        stack.push(TreeNode::Stmt(statement));
+        while let Some(node) = stack.pop() {
+            match node {
+                TreeNode::Function(_) => continue,
+                TreeNode::Expr(e) if statement_of_read[e.idx()] == RUNS_LATER => {
+                    statement_of_read[e.idx()] = 0;
+                    continue;
+                }
+                TreeNode::Expr(e) if matches!(hir[e].kind, ExprKind::Ident(_)) => {
+                    statement_of_read[e.idx()] = number;
+                }
+                TreeNode::Class(class) => {
+                    for member in hir[class].members.iter().map(|member| &hir[member]) {
+                        if member.init.is_some() && !member.flags.contains(Flags::STATIC) {
+                            statement_of_read[member.init.idx()] = RUNS_LATER;
+                        }
+                    }
+                }
+                TreeNode::Expr(_) | TreeNode::Stmt(_) | TreeNode::Pattern(_) => {}
+            }
+            push_children(hir, node, &mut stack);
+        }
+    }
+    statement_of_read
 }
 
 impl RunOrder {
     pub(super) fn new(hir: &File<'_>) -> RunOrder {
         let mut statement_of_initializer = FxHashMap::default();
-        for (index, statement) in (0..).zip(hir.ids(hir.body)) {
+        for (number, statement) in (1..).zip(hir.ids(hir.body)) {
             if let StmtKind::Var(declarations) = hir[statement].kind {
                 let initializers = declarations.iter().filter_map(|it| hir[it].init.some());
-                statement_of_initializer.extend(initializers.map(|it| (it, index)));
+                statement_of_initializer.extend(initializers.map(|it| (it, number)));
             }
         }
         RunOrder {
             statement_of_initializer,
-            places: OnceCell::new(),
+            statement_of_read: OnceCell::new(),
+            first_function_use: OnceCell::new(),
         }
     }
 
-    pub(super) fn order_of_read<'s>(
+    /// Like `is_read_behind`, for a read in a function too.
+    pub(super) fn is_initialized_at<'s>(
         &self,
         hir: &File<'s>,
         bound: &Bound<'s>,
         read: ExprId,
         initializer: ExprId,
-    ) -> ReadOrder {
+    ) -> bool {
         let Some(&initialized) = self.statement_of_initializer.get(&initializer) else {
-            return ReadOrder::MayComeFirst;
+            return false;
         };
-        let places = self.places.get_or_init(|| Places::new(hir, bound));
-        match places.place_of_variable_read(read) {
-            Some(Place::Statement(statement)) if statement >= initialized => ReadOrder::Behind,
-            Some(Place::Function(function)) if places.first_run[function.idx()] > initialized => {
-                ReadOrder::BehindUnlessCalledByImporter
+        let find = || find_statements_of_reads(hir);
+        match self.statement_of_read.get_or_init(find)[read.idx()] {
+            0 => {
+                let find = || FunctionUses::find_first(hir, bound);
+                initialized < *self.first_function_use.get_or_init(find)
             }
-            _ => ReadOrder::MayComeFirst,
+            statement => statement >= initialized,
         }
+    }
+
+    pub(super) fn is_read_behind(&self, hir: &File<'_>, read: ExprId, initializer: ExprId) -> bool {
+        let Some(&initialized) = self.statement_of_initializer.get(&initializer) else {
+            return false;
+        };
+        let find = || find_statements_of_reads(hir);
+        self.statement_of_read.get_or_init(find)[read.idx()] >= initialized
     }
 }

@@ -8,6 +8,14 @@ use super::Expect;
 use super::get_signature;
 use super::throw;
 
+/// Vitest's check.
+fn is_dom_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    match global.to_js_value().get(global, "Node")? {
+        Some(node) if node.is_callable() => value.is_instance_of(global, node),
+        _ => Ok(false),
+    }
+}
+
 impl Expect {
     pub(crate) fn to_contain(
         &self,
@@ -38,8 +46,9 @@ impl Expect {
                     break;
                 }
             }
-        } else if value.is_string_literal() && expected.is_string_literal() {
+        } else if value.is_string_literal() && (expected.is_string_literal() || this.is_vitest()) {
             let value_string = value.to_utf8(global)?;
+            // Vitest searches with `indexOf()`, which converts `expected` to a string. Jest refuses a non-string.
             let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {
@@ -51,6 +60,15 @@ impl Expect {
                 // edge case two empty strings are true
                 pass = true;
             }
+        } else if this.is_vitest() && is_dom_node(global, value)? {
+            if !is_dom_node(global, expected)? {
+                return Err(global.throw_type_error(format_args!(
+                    "toContain() expected a DOM node as the argument, but got {}",
+                    expected.js_type_string(global)
+                )));
+            }
+            let contains = value.get(global, "contains")?.unwrap_or(JSValue::UNDEFINED);
+            pass = contains.call(global, value, &[expected])?.to_boolean();
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
                 global,

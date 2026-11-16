@@ -57,25 +57,6 @@ test("an alias only the other package has", () => {
   expect(graph.file("lib/index.ts")).toMatchObject({ typeEdges: ["lib/src/util.ts"], codeEdges: ["lib/src/util.ts"] });
 });
 
-// TODO: a name that only the outer tsconfig.json's paths know is an edge of a file below the inner one.
-test.todo("the nearest governs alone", () => {
-  using graph = describeTree(
-    {
-      "app/tsconfig.json": appTsconfig({ paths: { "the-app": ["./src/api.ts"] } }),
-      "app/main.ts": 'import { next } from "./mods/one.ts";\nnext({ n: 1 });',
-      "app/src/api.ts": "export interface Settings { n: number }",
-      "app/mods/tsconfig.json": tsconfig(),
-      "app/mods/one.ts":
-        'import type { Settings } from "the-app";\nexport function next(s: Settings): number { return s.n + 1; }',
-    },
-    ["app/main.ts"],
-  );
-  // The unresolved name is the checker's TS2307. The load reports nothing.
-  expect(graph.diagnostics).toEqual([]);
-  expect(graph.file("app/mods/one.ts").typeEdges).toEqual([]);
-  expect(graph.has("app/src/api.ts")).toBe(false);
-});
-
 const dependency = "app/node_modules/dep";
 const edgesUnderProgramOptions = ["app/shared.ts", `${dependency}/inner.ts`];
 
@@ -100,16 +81,6 @@ test.each([
   using graph = describeDependency(text);
   expect(graph.diagnostics).toEqual([]);
   expect(graph.file(`${dependency}/index.ts`)).toMatchObject({ role: "Checked", typeEdges: edgesUnderProgramOptions });
-});
-
-// TODO: the file of the dependency is described otherwise than here.
-test.todo("a sound configuration in a dependency governs it", () => {
-  using graph = describeDependency(tsconfig());
-  expect(graph.diagnostics).toEqual([]);
-  expect(graph.file(`${dependency}/index.ts`)).toMatchObject({
-    role: "Checked",
-    typeEdges: [`${dependency}/inner.ts`],
-  });
 });
 
 test("a dependency without a configuration", () => {

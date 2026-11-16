@@ -30,9 +30,6 @@ pub mod shared {
     #[path = "ConnectionTimers.rs"]
     pub mod connection_timers;
 
-    #[path = "RowDecoder.rs"]
-    pub mod row_decoder;
-
     pub mod datetime_text;
 
     #[path = "QueryCtorArgs.rs"]

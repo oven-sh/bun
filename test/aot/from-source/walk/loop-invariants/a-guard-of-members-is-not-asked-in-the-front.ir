@@ -1,0 +1,20 @@
+# A way round that does nothing may still write what nobody sees: it begins the guards of a class, it flattens a text, it lays a field into an object of the turn
+# What such a way may write is not read in the front: asked there, in front of the operation that begins them, the guards say no and the loop leaves for its closed copy for good
+# -- source: main.js
+# const { inherits } = require("node:util");
+# function Shape(a) { this.a = a; }
+# function Plain() { }
+# Plain.prototype.first = function () { return this.a; };
+# function Round(a, b) { Shape.call(this, a); this.b = b; }
+# inherits(Round, Plain);
+# inherits(Shape, Plain);
+# Round.prototype.second = function () { return this.b + this.first(); };
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Round(i & 1023, 2); total += item.second() + item.a; } return total; }
+# console.log(run(1000));
+# -- end of source
+# Shape is called by Round and does not stand above it, so what begins the guards of Round in front of the loop does not begin those of Shape.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: = BeginMemberGuards
+# CHECK: = BeginMemberGuards
+# CHECK-NEXT: = AreMembersUnchanged {{*}}key="call"

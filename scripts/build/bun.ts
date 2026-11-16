@@ -198,9 +198,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
   }
 
-  // Collect all dep lib paths, include dirs, output stamps, and directly-
-  // compiled source files (deps like picohttpparser that provide .c files
-  // instead of a .a — we compile those alongside bun's own sources).
+  // Collect all dep lib paths, include dirs and output stamps.
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
@@ -305,6 +303,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.debug) {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_byte_set.cpp"));
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
@@ -317,9 +317,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(rescle);
     noPchSources.add(rescleBinding);
   }
-
-  // Deps with provides.sources compiled in the loop below so each dep's
-  // phony can point at its own .o files.
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
@@ -375,19 +372,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     cxxObjects.push(object);
     if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
+  const aotNativeTestObjects = sources.aotNativeTests.map(src =>
+    cxx(n, cfg, src, { flags: cxxFlagsFull, pch: pchOut.pch, pchHeader: pchOut.wrapperHeader }),
+  );
 
   // Compile all .c files. No PCH — dep signal applied directly.
-  const cObjects: string[] = [];
-  const compileC = (src: string): string => {
-    const obj = cc(n, cfg, src, {
-      flags: cFlagsFull,
-      implicitInputs: depHeaderSignal,
-      orderOnlyInputs: codegenOrderOnly,
-    });
-    cObjects.push(obj);
-    return obj;
-  };
-  for (const src of cSources) compileC(src);
+  const cObjects = cSources.map(src =>
+    cc(n, cfg, src, { flags: cFlagsFull, implicitInputs: depHeaderSignal, orderOnlyInputs: codegenOrderOnly }),
+  );
 
   // InternalModuleRegistryConstants.S — `.incbin`s the bundled JS module sources
   // so InternalModuleRegistry.cpp sees a tiny {offset, length} table instead of
@@ -408,16 +400,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
         implicitInputs: [codegen.builtinSourcesArchive],
       }),
     );
-  }
-
-  // Deps that contribute source files for bun to compile directly (via
-  // provides.sources) instead of building a lib. Compile them here with
-  // bun's full flag set and give each a phony so `--target <name>` builds
-  // its .o files. libs.length === 0 guard: deps with a build step already
-  // got a phony in resolveDep — don't emit a duplicate.
-  for (const d of deps) {
-    if (d.sources.length === 0 || d.libs.length > 0) continue;
-    n.phony(d.name, d.sources.map(compileC));
   }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
@@ -457,7 +439,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
+  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -474,9 +456,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
- * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
- * bun. With a tarball that has only the linked programs it is the fetch.
+ * it; `testaot` also with the native tests that ask that table
+ * (test/aot/native). On request (`--target=jsc`). `engine-test-programs` is
+ * what test/aot runs, `jsc` and `testaot`: a default target in CI, which packs
+ * them beside bun. With a tarball that has only the linked programs it is the
+ * fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -484,16 +468,18 @@ function emitJscPrograms(
   deps: ReadonlyMap<DepName, ResolvedDep>,
   headersReady: string,
   builtinTableObjects: readonly string[],
+  aotNativeTestObjects: readonly string[],
 ): void {
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
+    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
     for (const { header, files } of program.pch ?? []) {
       const base = prefixes[0]?.prefix;
       const prefix = pch(n, cfg, header, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(base !== undefined && { base }),
       });
       prefixes.unshift({ prefix, files });
@@ -502,15 +488,19 @@ function emitJscPrograms(
       const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
       return cxx(n, cfg, src, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
-    const from = (["WebKit", "mimalloc", ...(program.deps ?? [])] as const).map(name => deps.get(name)!);
+    objects.push(
+      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
+    );
+    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),
     );
+    if (program.name === "testaot") objects.push(...aotNativeTestObjects);
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
       libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
@@ -1137,12 +1127,11 @@ export function validateBunConfig(cfg: Config): void {
       `--local-deps: ${name} is disabled for ${cfg.os}-${cfg.arch}${cfg.abi ? `-${cfg.abi}` : ""} in this configuration, so the checkout at ${path} would never be built`,
       { hint: `Drop ${name} from --local-deps, or build a target/config where its \`enabled\` predicate holds` },
     );
-    // A dep the graph fetches but never reads (no build step, no sources, no
-    // includes — lolhtml, which cargo consumes through the workspace
-    // Cargo.toml's `path = "vendor/lolhtml"`) can't be redirected from here.
-    const provides = dep.provides(cfg);
+    // A dep the graph fetches but never reads (no build step, no includes —
+    // lolhtml, which cargo consumes through the workspace Cargo.toml's
+    // `path = "vendor/lolhtml"`) can't be redirected from here.
     assert(
-      (provides.sources ?? []).length > 0 || provides.includes.length > 0 || dep.build(cfg).kind !== "none",
+      dep.provides(cfg).includes.length > 0 || dep.build(cfg).kind !== "none",
       `--local-deps: ${name} is only fetched by the build graph, never compiled or included by it, so redirecting it to ${path} would change nothing`,
       {
         hint: `Point ${name}'s real consumer at the checkout instead (for a cargo path dependency: the workspace Cargo.toml)`,

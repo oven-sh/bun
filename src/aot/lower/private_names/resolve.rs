@@ -46,6 +46,7 @@ impl FileLowering<'_, '_, '_, '_> {
             class,
             member,
             holder,
+            written: None,
         }
     }
 }

@@ -49,7 +49,6 @@ impl DevServer {
 
         let file_paths = watchlist.items_file_path();
         let kinds = watchlist.items_kind();
-        let mut slice = watchlist.slice();
 
         let atomics = self.watcher_atomics.as_ptr();
         // SAFETY: `atomics` is the heap `WatcherAtomics`; watcher thread holds
@@ -70,7 +69,6 @@ impl DevServer {
             }
 
             let file_path = &file_paths[event.index as usize];
-            slice.items_mut::<"count", u32>()[event.index as usize] += 1;
             let kind = kinds[event.index as usize];
 
             debug_log!(

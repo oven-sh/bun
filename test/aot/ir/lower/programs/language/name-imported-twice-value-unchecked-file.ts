@@ -1,10 +1,28 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: TS2300 6
+// `named` and `star` read one variable of the other file, `byDefault` and `once` another.
+// CHECK: [[namedRead]] = GetModuleVariable variable=[[second]]
+// CHECK-NEXT: CheckInitialized [[namedRead]] name="named"
+// CHECK-NEXT: String string="second"
+// CHECK-NEXT: [[defaultRead]] = GetModuleVariable variable=[[first]]
+// CHECK-NEXT: CheckInitialized [[defaultRead]] name="byDefault"
+// CHECK-NEXT: String string="first"
+// CHECK-NEXT: [[starRead]] = GetModuleVariable variable=[[second]]
+// CHECK-NEXT: CheckInitialized [[starRead]] name="star"
+// CHECK-NEXT: String string="second"
+// CHECK-NEXT: [[onceRead]] = GetModuleVariable variable=[[first]]
+// CHECK-NEXT: CheckInitialized [[onceRead]] name="once"
+// CHECK-NEXT: String string="first"
+
+// RUN(DISTINCT): lower
+// DISTINCT: GetModuleVariable variable=[[second]]
+// DISTINCT-NEXT: name="named"
+// DISTINCT-NOT: variable=[[second]]
+// DISTINCT: name="byDefault"
 
 // FILE: main.ts
 // @ts-nocheck
-// Each of the first three names is imported twice as a value, so it is declared twice in one scope. One import of the last pair is gone when the program runs.
+// `bun run` drops an import whose name is imported again further down.
 import { first as named } from "./other";
 import { second as named } from "./other";
 import byDefault from "./other";

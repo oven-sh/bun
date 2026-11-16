@@ -1,0 +1,163 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`mocks > in a Map 1`] = `
+Map {
+  "f" => [MockFunction],
+}
+`;
+
+exports[`mocks > in an array 1`] = `
+[
+  [MockFunction],
+  [MockFunction x],
+]
+`;
+
+exports[`mocks > in an object 1`] = `
+{
+  "onClick": [MockFunction],
+  "onNamed": [MockFunction named],
+  "plain": [Function],
+}
+`;
+
+exports[`mocks > mock.calls 1`] = `
+[
+  [
+    1,
+    "a",
+  ],
+  [],
+]
+`;
+
+exports[`mocks > mock.results 1`] = `
+[
+  {
+    "type": "return",
+    "value": "ok",
+  },
+  {
+    "type": "throw",
+    "value": [Error: e],
+  },
+]
+`;
+
+exports[`mocks > mockObject 1`] = `
+{
+  "a": [MockFunction],
+  "b": {
+    "c": [MockFunction],
+  },
+  "d": 1,
+}
+`;
+
+exports[`mocks > names 1`] = `
+[
+  "vi.fn()",
+  "vi.fn()",
+  "vi.fn()",
+  "x",
+  "vi.fn()",
+  "m",
+  "get g",
+  "y",
+  "x",
+  "vi.fn()",
+]
+`;
+
+exports[`mocks > the object spied on 1`] = `
+{
+  "m": [MockFunction m],
+  "n": 1,
+}
+`;
+
+exports[`mocks > vi.fn() 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.fn() after mockClear 1`] = `[MockFunction n]`;
+
+exports[`mocks > vi.fn() after mockReset 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.fn() after mockRestore 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.fn() that threw 1`] = `
+[MockFunction] {
+  "calls": [
+    [],
+  ],
+  "results": [
+    {
+      "type": "throw",
+      "value": [Error: x],
+    },
+  ],
+}
+`;
+
+exports[`mocks > vi.fn() that was called 1`] = `
+[MockFunction] {
+  "calls": [
+    [
+      1,
+      "two",
+    ],
+    [
+      {
+        "a": 1,
+      },
+    ],
+  ],
+  "results": [
+    {
+      "type": "return",
+      "value": undefined,
+    },
+    {
+      "type": "return",
+      "value": undefined,
+    },
+  ],
+}
+`;
+
+exports[`mocks > vi.fn() with empty mockName 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.fn() with mockName 1`] = `[MockFunction renamed]`;
+
+exports[`mocks > vi.fn() with odd mockName 1`] = `[MockFunction a \`b\` \${c} \\]`;
+
+exports[`mocks > vi.fn(arrow) 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.fn(class) 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.fn(impl) that was called 1`] = `
+[MockFunction] {
+  "calls": [
+    [
+      2,
+    ],
+  ],
+  "results": [
+    {
+      "type": "return",
+      "value": 4,
+    },
+  ],
+}
+`;
+
+exports[`mocks > vi.fn(named function) 1`] = `[MockFunction]`;
+
+exports[`mocks > vi.spyOn getter 1`] = `[MockFunction get g]`;
+
+exports[`mocks > vi.spyOn method 1`] = `[MockFunction method]`;
+
+exports[`mocks > vi.spyOn method, live 1`] = `[MockFunction m]`;
+
+exports[`mocks > vi.spyOn symbol 1`] = `[MockFunction [sm]]`;
+
+exports[`mocks > vi.spyOn with mockName 1`] = `[MockFunction spy name]`;

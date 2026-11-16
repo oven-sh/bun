@@ -1,0 +1,10 @@
+# -- source: main.js
+# function sum(box) { const bytes = box.bytes; let s = 0; for (let i = 0; i < bytes.length; i++) s += bytes[i]; return s; }
+# const go = { sum }[JSON.parse('"sum"')];
+# console.log(go({ bytes: new Uint8Array(300).fill(3) }));
+# -- end of source
+# The front end draws "a list of numbers" for the field from `.length` and `[i]`: nobody wrote it. What the field gives in front of the loop is told apart as a variable with such a word is: the list, bytes, the other views, each with turns of its own.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = GetSlot {{*}}key="bytes"
+# WALK: = IsPristine {{*}}builtinClass=Uint8Array
+# WALK: = GetTypedArrayElement {{*}}typedArrayType=2 {{*}}isInsideView

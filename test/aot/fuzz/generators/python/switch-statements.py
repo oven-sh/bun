@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""switch-statements.py <seed>: random strict TypeScript programs about switch statements: labels that are dense, sparse, negative, at the ends of int32 and uint32, in windows of 31 | 32 | 63 | 64 | 65,
-many labels that share a few targets, fall-through, default first | in the middle | last | missing, labels that are strings, single characters, enum members, computed; what is switched on: parameters that only ever get integers,
-parameters that also get fractions, -0, NaN, infinities, 2^32 + k, char codes, `x | 0`, `x >>> 0`, `x & 63`, lengths, unions with strings, unknown values (strings of digits, booleans, null, undefined, bigints, objects)."""
+"""switch-statements.py <seed>: Random strict TypeScript programs about switch statements: labels that are dense,
+sparse, negative, at the ends of int32 and uint32, in windows of 31, 32, 63, 64 and 65, and many labels that share a
+few targets.
+"""
 import random, sys, os
 
 HEAD = r'''const lines: string[] = [];

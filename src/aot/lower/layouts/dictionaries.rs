@@ -3,7 +3,6 @@ use bun_sema::check::aot::ShapeKind;
 use crate::lower::{CheckerTypeId, FileLowering};
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The keys of `Record<string, Item>` are data: no name is known at build time, so a layout would have no field.
     pub(in crate::lower) fn is_dictionary_type(&mut self, ty: CheckerTypeId) -> bool {
         if let Some(&is_dictionary) = self.layouts.dictionaries.get(&ty) {
             return is_dictionary;

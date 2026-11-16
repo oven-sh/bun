@@ -1,6 +1,5 @@
 // A class at the top of a module is defined when something first needs it. Each family here is first needed in another way, and afterwards it must look as if its definition had run in its place.
 // The uses stand in a function: a class that only the body of its own module reads needs no variable, so there is nothing to put off.
-// STATISTIC: ClassesDeferredInVariables >= 20
 function attempt(run: () => unknown): string {
   try {
     return String(run());

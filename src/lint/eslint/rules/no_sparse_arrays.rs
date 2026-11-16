@@ -3,12 +3,12 @@ use bun_lint::prelude::*;
 /// Disallow sparse arrays.
 pub struct NoSparseArrays;
 
-const UNEXPECTED_SPARSE_ARRAY: Message =
-    Message::new("unexpectedSparseArray", "Unexpected comma in middle of array.");
+const UNEXPECTED_SPARSE_ARRAY: &Message =
+    &Message::new("unexpectedSparseArray", "Unexpected comma in middle of array.");
 /// oxlint's messages.
-const UNEXPECTED_COMMA: Message = Message::new("unexpectedSparseArray", "Unexpected comma in middle of array");
-const UNEXPECTED_COMMAS: Message =
-    Message::new("unexpectedSparseArray", "{{count}} unexpected commas in middle of array");
+const UNEXPECTED_COMMA: &Message = &Message::new("unexpectedSparseArray", "Unexpected comma in middle of array");
+const UNEXPECTED_COMMAS: &Message =
+    &Message::new("unexpectedSparseArray", "{{count}} unexpected commas in middle of array");
 
 impl Rule for NoSparseArrays {
     const META: Meta = Meta::eslint("no-sparse-arrays", Kind::Problem).recommended().hints();

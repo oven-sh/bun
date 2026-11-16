@@ -2,7 +2,10 @@ use super::{
     BindInput, ExportBinding, ImportPhase, ModuleExport, ModuleGraph, ModuleRef, ModuleRequest,
     bind_modules,
 };
-use crate::compile::testing::{default_settings, with_bind_input, with_runtime_bind_input};
+use crate::compile::testing::{
+    default_settings, with_bind_input, with_bind_input_of_test_files, with_runtime_bind_input,
+    with_test_run_bind_input,
+};
 use crate::ir::generated::ModuleRequestKind;
 use bstr::BStr;
 use bun_sema::atom::Atom;
@@ -12,12 +15,18 @@ use bun_sema::program::FileId;
 
 const PROJECT_ROOT: &[u8] = b"/project/";
 
+pub(crate) fn bind_whole_program(input: &BindInput<'_, '_>) -> ModuleGraph {
+    let mut graph = bind_modules(input).graph;
+    graph.finish_plan(input.in_parallel);
+    graph
+}
+
 pub(crate) fn with_graph<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
 ) -> R {
     with_bind_input(files, &default_settings(), |input| {
-        then(&bind_modules(input).graph, input)
+        then(&bind_whole_program(input), input)
     })
 }
 
@@ -25,7 +34,25 @@ pub(crate) fn with_runtime_graph<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
 ) -> R {
-    with_runtime_bind_input(files, |input| then(&bind_modules(input).graph, input))
+    with_runtime_bind_input(files, |input| then(&bind_whole_program(input), input))
+}
+
+pub(crate) fn with_test_run_graph<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
+) -> R {
+    with_test_run_bind_input(files, |input| then(&bind_whole_program(input), input))
+}
+
+pub(crate) fn with_graph_of_test_files<R>(
+    files: &[(&str, &str)],
+    test_files: usize,
+    preloads: usize,
+    then: impl FnOnce(&ModuleGraph, &BindInput<'_, '_>) -> R,
+) -> R {
+    with_bind_input_of_test_files(files, test_files, preloads, |input| {
+        then(&bind_whole_program(input), input)
+    })
 }
 
 pub(crate) fn file_named(input: &BindInput<'_, '_>, name: &str) -> FileId {
@@ -42,7 +69,6 @@ pub(crate) fn symbol_named(input: &BindInput<'_, '_>, file: FileId, name: &str) 
     symbol.expect("the file scope does not declare the name")
 }
 
-/// The first access under the name.
 pub(crate) fn member_named(input: &BindInput<'_, '_>, file: FileId, name: &str) -> ExprId {
     let name = input.files.atoms.intern(name.as_bytes());
     let hir = input.files.hir(file);
@@ -62,6 +88,9 @@ pub(crate) fn describe_module(
     let interop = graph.interop(ModuleRef::File(file));
     let (kind, rule, result) = (interop.kind, interop.export_rule, interop.require_result);
     let mut lines = vec![format!("kind {kind:?} {rule:?} {result:?}")];
+    if interop.loader_returns_namespace {
+        lines.push(String::from("namespace for the loader"));
+    }
     if graph.has_top_level_await(file) {
         lines.push(String::from("await"));
     }
@@ -84,7 +113,6 @@ pub(crate) fn describe_module(
     text
 }
 
-/// What the module asks for at last, one request a line.
 pub(crate) fn describe_requests_of(
     graph: &ModuleGraph,
     input: &BindInput<'_, '_>,
@@ -172,7 +200,7 @@ pub(crate) fn describe_module_ref(input: &BindInput<'_, '_>, module: ModuleRef) 
         ModuleRef::Inner { file, callback } => {
             format!("{}#{}", project_path(input, file), callback.0)
         }
-        ModuleRef::Face(file) => format!("face:{}", project_path(input, file)),
+        ModuleRef::Facade(file) => format!("facade:{}", project_path(input, file)),
         ModuleRef::Check(file) => format!("check:{}", project_path(input, file)),
         ModuleRef::Runtime(module) => format!("runtime:{module:?}"),
         ModuleRef::External { specifier, .. } => {
@@ -195,6 +223,7 @@ fn atom_text<'a>(input: &BindInput<'a, '_>, atom: Atom) -> &'a BStr {
 mod tests {
     use super::*;
     use crate::builtins::RuntimeModule;
+    use crate::load::sources::parsed_source;
 
     fn check_descriptions(files: &[(&str, &str)], expected: &[(&str, &str)]) {
         with_graph(files, |graph, input| {
@@ -315,6 +344,7 @@ mod tests {
                 module: ModuleRef::External {
                     importer: file_named(input, "main.js"),
                     specifier: input.files.atoms.intern(b"left-pad"),
+                    type_attribute: None,
                 },
                 name: input.files.atoms.intern(b"pad"),
             };
@@ -336,6 +366,7 @@ mod tests {
             let external = ModuleRef::External {
                 importer: other,
                 specifier: input.files.atoms.intern(b"left-pad"),
+                type_attribute: None,
             };
             let runtime = ModuleRef::Runtime(RuntimeModule::NodeFs);
             let file = ModuleRef::File(other);
@@ -352,6 +383,20 @@ mod tests {
                 describe_module(graph, input, "/$bun/js/node/path.ts"),
                 "kind RuntimeSource RuntimeModule DefaultExport\ndynamic\n"
             );
+        });
+    }
+
+    #[test]
+    fn test_run_is_loaded_and_bound_as_a_test_run() {
+        let main = "import { spyOn } from 'bun:test';\n\
+                    const object = { x() {} };\n\
+                    spyOn(object, 'x');\n";
+        with_test_run_graph(&[("main.test.js", main)], |_, input| {
+            let file = file_named(input, "main.test.js");
+            let source = parsed_source(input.files, file).expect("the load has parsed the file");
+            assert_eq!(source.builtins.spy_calls().len(), 1);
+            assert!(input.runs_tests);
+            assert!(input.runner_starts_entry_points);
         });
     }
 

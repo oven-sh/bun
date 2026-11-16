@@ -1,11 +1,8 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="arithmetic"
-// CHECK: [[calledFirst]] = Call {{*}}calleeName="f"
-// CHECK-NEXT: [[first]] = Convert [[calledFirst]] declared={type=number flags=[IsExpected]}
-// CHECK: [[calledSecond]] = Call {{*}}calleeName="g"
-// CHECK-NEXT: [[second]] = Convert [[calledSecond]] declared={type=number flags=[IsExpected]}
-// CHECK: [[calledThird]] = Call {{*}}calleeName="h"
-// CHECK-NEXT: [[third]] = Convert [[calledThird]] declared={type=number flags=[IsExpected]}
+// CHECK: [[first]] = Call {{*}}calleeName="f"
+// CHECK: [[second]] = Call {{*}}calleeName="g"
+// CHECK: [[third]] = Call {{*}}calleeName="h"
 // CHECK-NEXT: [[product]] = Mul [[second]], [[third]]
 // CHECK-NEXT: = Add [[first]], [[product]]
 // CHECK-LABEL: function {{*}}name="comparison"
@@ -14,8 +11,7 @@
 // CHECK-NEXT: = Less [[left]], [[right]]
 // CHECK-LABEL: function {{*}}name="membership"
 // CHECK: [[key]] = Call {{*}}calleeName="f"
-// CHECK: [[calledObject]] = Call {{*}}calleeName="g"
-// CHECK-NEXT: [[object]] = Convert [[calledObject]] declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK: [[object]] = Call {{*}}calleeName="g"
 // CHECK-NEXT: = ElemHas [[object]], [[key]]
 
 export function arithmetic(f: any, g: any, h: any) {

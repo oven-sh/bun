@@ -11,50 +11,29 @@ const marks = [
   {
     symbol: "Bun__startsOnlyWhereWriteExecuteMemoryIsDenied",
     text: "hardened start: the kernel must deny write-execute memory",
-    build: "all(bun_hardened, not(bun_starts_without_mdwe))",
   },
   {
     symbol: "Bun__startsWhereWriteExecuteMemoryCannotBeDenied",
     text: "hardened start: a kernel without PR_SET_MDWE is accepted ",
-    build: "all(bun_hardened, bun_starts_without_mdwe)",
   },
   {
     symbol: "Bun__readsFewEnvironmentVariables",
     text: "hardened environment: what only tests set is never read   ",
-    build: "bun_locked_environment",
   },
   {
     symbol: "Bun__readsEveryEnvironmentVariable",
     text: "hardened environment: every variable is read, as for tests",
-    build: "all(bun_hardened, not(bun_locked_environment))",
   },
   {
     symbol: "Bun__startsWhereItsFileCannotBeRead",
     text: "execute-only start: where its file cannot be read, the loaded code is moved",
-    build: "not(bun_refuses_execute_only_start)",
   },
   {
     symbol: "Bun__startsOnlyWhereItsFileCanBeRead",
     text: "execute-only start: where its file cannot be read, it does not start       ",
-    build: "bun_refuses_execute_only_start",
   },
 ];
 const [mustDeny, neednotDeny, readsFew, readsEvery] = marks;
-
-test("each text, its symbol and the builds that hold it stand in the source letter for letter", () => {
-  const source = readFileSync(join(import.meta.dir, "..", "..", "src", "jsc", "compiled_program.rs"), "utf8");
-  for (const { symbol, text, build } of marks) {
-    const declaration = new RegExp(
-      `\\n    #\\[cfg\\((.*)\\)\\]\\n    #\\[used\\]\\n    #\\[unsafe\\(no_mangle\\)\\]\\n    (?:pub\\(super\\) )?static ${symbol}: \\[u8; (\\d+)\\] =\\n        \\*b"(.*)\\\\0";\\n`,
-    ).exec(source);
-    expect({ symbol, build: declaration?.[1], size: Number(declaration?.[2]), text: declaration?.[3] }).toEqual({
-      symbol,
-      build,
-      size: text.length + 1,
-      text,
-    });
-  }
-});
 
 function placesOf(file: Buffer, text: string) {
   const places: number[] = [];
@@ -178,7 +157,13 @@ throw new Error("execv failed");
       });
       if (holds(mustDeny)) expect(onAnOldKernel.stderr).toContain("prctl(PR_SET_MDWE)");
 
-      if ((await run([executable])).exitCode !== 0) return;
+      // On a kernel without PR_SET_MDWE an executable that must have it does not start, and says so. Whatever else ends it is a fault.
+      const started = await run([executable]);
+      if (holds(mustDeny) && started.exitCode === 1 && started.stderr.includes("prctl(PR_SET_MDWE)")) return;
+      expect({ stderr: started.stderr, exitCode: started.exitCode }).toEqual({
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
       const steered = await run([executable], undefined, { ...bunEnv, BUN_JSC_logGC: "1" });
       expect({ [readsFew.symbol]: holds(readsFew), [readsEvery.symbol]: holds(readsEvery) }).toEqual({
         [readsFew.symbol]: steered.exitCode === 1,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""async-code-order.py <seed>: random strict TypeScript programs about the ORDER in which asynchronous code runs and what it keeps alive: many async functions, arrows, methods and async generators started
-together, each logging every step; awaits of plain values, settled and pending promises, thenables (with getters, that call back at once, late, twice, or throw), promises returned from async functions, `return await`; try | catch | finally
-around awaits, rejections thrown into frames, loops with awaits, for await over async generators, arrays of promises and sync iterables; Promise.all | allSettled | race | any | then chains | queueMicrotask in between; many locals of every
-kind (cells, strings, doubles, integers, booleans, closures) alive across each await, with collections at random steps."""
+"""async-code-order.py <seed>: Random strict TypeScript programs about the order in which asynchronous code runs and
+what it keeps alive: many async functions, arrows, methods and async generators started together, each logging every
+step.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

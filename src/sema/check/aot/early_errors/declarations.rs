@@ -28,71 +28,76 @@ impl Checker<'_, '_> {
         }
     }
 
-    // In TypeScript an import may share its name with another declaration, because one of the two may be a type. Only the
-    // file that is imported from says whether it is. Where both are there when the program runs, the name is declared twice.
     pub(super) fn check_import_redeclaration_early_errors(&mut self, file: FileId) {
         if self.hir(file).is_js {
             return;
         }
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
-        let is_kept_import = |decl: &Decl| {
-            matches!(
-                decl,
-                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_)
-            ) && !files.is_type_only_import_or_export_declaration(file, *decl)
-        };
         let is_import = |decl: &Decl| {
             matches!(
                 decl,
                 Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_)
             )
         };
-        let is_value = |flags: SymFlags| flags.intersects(SymFlags::VALUE);
-        for redeclaration in bound.redeclarations.iter() {
-            let mut earlier = bound.symbol(redeclaration.symbol).decls.iter();
-            let (Some(&earlier), true) = (
-                earlier.find(|earlier| is_kept_import(earlier)),
-                is_kept_import(&redeclaration.decl),
-            ) else {
-                continue;
-            };
-            let sym = files.sym(file, redeclaration.symbol);
-            if self.flags_of_alias_target(sym).is_some_and(is_value) {
-                for decl in [earlier, redeclaration.decl] {
-                    let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
-                    self.early_error_at((file, start, end), 2300, &[Arg::Sym(sym)]);
+        let is_type_only =
+            |decl: &Decl| files.is_type_only_import_or_export_declaration(file, *decl);
+        let is_kept_import = |decl: &Decl| is_import(decl) && !is_type_only(decl);
+        let aliases = self.symbols_of_alias_declarations(file);
+        let accepted = aliases.iter().map(|(&decl, &sym)| (decl, sym));
+        let rejected = bound.redeclarations.iter();
+        let rejected = rejected.map(|rejected| (rejected.decl, files.sym(file, rejected.symbol)));
+        let declarations: Vec<(Decl, Sym)> = accepted.chain(rejected).collect();
+        let values = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+        let mut first_of_the_file: FxHashMap<Sym, u32> = FxHashMap::default();
+        for &(decl, sym) in &declarations {
+            let is_of_the_file = match decl {
+                Decl::ImportEquals(_) => !is_type_only(&decl),
+                _ => {
+                    files.flags(sym).intersects(values)
+                        && !is_import(&decl)
+                        && !self.is_erased_syntax(file, hir.node(decl))
                 }
+            };
+            if is_of_the_file {
+                let start = self.get_error_range_for_node(file, hir.node(decl)).0;
+                let first = first_of_the_file.entry(sym).or_insert(start);
+                *first = start.min(*first);
             }
         }
-        for (&decl, &sym) in self.symbols_of_alias_declarations(file).iter() {
+        for (decl, sym) in declarations {
             if !is_kept_import(&decl) {
                 continue;
             }
-            let values = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-            let mut others = files.symbol(sym).decls.iter();
-            let is_declared_again = files.flags(sym).intersects(values)
-                && others.any(|other| {
-                    !is_import(other) && !self.is_erased_syntax(file, hir.node(*other))
-                });
-            if !is_declared_again {
+            let Some(&first) = first_of_the_file.get(&sym) else {
                 continue;
-            }
-            if self.flags_of_alias_target(sym).is_some_and(is_value) {
-                let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
+            };
+            let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
+            if first < start {
                 self.early_error_at((file, start, end), 2440, &[Arg::Sym(sym)]);
             }
         }
     }
 
-    // `bun build` refuses a file that assigns to a `const` or `using` binding or to an import, wherever the assignment stands.
     pub(super) fn check_constant_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_bundled = self.p.files.options.builds_executable && !self.is_left_to_loader(file);
+        let is_in_text = |decl: &Decl| match *decl {
+            Decl::Var(pat) | Decl::Require(pat) => hir[pat].pos != hir[pat].end,
+            _ => true,
+        };
         for store in bound.runtime.stores() {
             let ExprKind::Ident(name) = hir[store.target].kind else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[store.target].pos) {
+                continue;
+            }
             let code = match bound.binding_kind(store.symbol) {
+                BindingKind::Const if !bound.symbol(store.symbol).decls.iter().any(is_in_text) => {
+                    continue;
+                }
                 BindingKind::Const => 2588,
+                BindingKind::Import if !is_bundled => continue,
                 BindingKind::Import => 2632,
                 _ => continue,
             };
@@ -101,10 +106,12 @@ impl Checker<'_, '_> {
         }
     }
 
-    // `bun build` refuses a file that assigns to a member of `import * as star` or deletes one.
     pub(super) fn check_namespace_member_assignment_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir.imports.iter().any(|import| import.namespace.is_some()) {
+        if self.p.files.options.allows_es_module_mark
+            || self.is_left_to_loader(file)
+            || !hir.imports.iter().any(|import| import.namespace.is_some())
+        {
             return;
         }
         let star_of = |e: ExprId| {
@@ -147,6 +154,9 @@ impl Checker<'_, '_> {
             let Some((star, star_name)) = star_of(e) else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[e].pos) {
+                continue;
+            }
             let (at, name) = match hir[e].kind {
                 ExprKind::Dot { name, .. } => (hir.name_pos(e), Some(name)),
                 ExprKind::Index { index, .. } => match hir[index].kind {

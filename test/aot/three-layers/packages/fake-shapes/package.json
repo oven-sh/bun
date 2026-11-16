@@ -1,0 +1,1 @@
+{ "name": "fake-shapes", "version": "1.0.0", "type": "module", "main": "./index.js", "types": "./index.d.ts", "exports": { ".": { "types": "./index.d.ts", "default": "./index.js" }, "./more": { "types": "./more.d.ts", "default": "./more.js" }, "./ops": { "types": "./ops.d.ts", "default": "./ops.js" }, "./hot": { "types": "./hot.d.ts", "default": "./hot.js" } } }

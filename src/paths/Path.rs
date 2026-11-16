@@ -198,7 +198,7 @@ pub trait PathUnit: crate::PathChar {
     /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
     // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
     // underlying pool hands out heap buffers and reclaims them in `deinit`.
-    // Modeled as Box with put-back in `Path`'s Drop impl below (the pool's
+    // Modeled as Box with put-back in `Buf`'s Drop impl below (the pool's
     // RAII guard type is not generic over unit).
     fn pool_get() -> Box<Self::Buffer>;
     fn pool_put(buf: Box<Self::Buffer>);
@@ -350,22 +350,22 @@ impl PathUnit for u16 {
 // Buf — only the `.pool` variant is implemented
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
+pub(crate) struct Buf<U: PathUnit> {
     // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in deinit()).
-    // Wrapped in ManuallyDrop so `Path::drop` can move the Box back into the pool
+    // Wrapped in ManuallyDrop so `Buf::drop` can move the Box back into the pool
     // without leaving a dangling Box behind for the field destructor.
     pooled: ManuallyDrop<Box<U::Buffer>>,
     len: usize,
 }
 
-impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
+impl<U: PathUnit> Buf<U> {
     #[inline]
     fn set_length(&mut self, new_len: usize) {
         self.len = new_len;
     }
 
     /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
-    fn append(&mut self, characters: &[U], add_separator: bool) {
+    fn append<const SEP_OPT: u8>(&mut self, characters: &[U], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -396,7 +396,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 
     /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
-    fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
+    fn append_other<const SEP_OPT: u8>(&mut self, characters: &[U::Other], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -601,7 +601,7 @@ pub struct Path<
     const SEP_OPT: u8 = { PathSeparators::ANY },
     const CHECK: u8 = { CheckLength::ASSUME },
 > {
-    _buf: Buf<U, SEP_OPT>,
+    _buf: Buf<U>,
     _unit: PhantomData<U>,
 }
 
@@ -618,8 +618,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             _unit: PhantomData,
         }
     }
-
-    // `deinit` → impl Drop (below). Body returns the buffer to the pool.
 
     fn trimmed_top_level_dir() -> &'static [u8] {
         debug_assert!(crate::fs::FileSystem::instance_loaded());
@@ -683,8 +681,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             {
                 let mut wbuf = crate::w_path_buffer_pool::get();
                 let wslice: &mut [u16] = wbuf.as_mut_slice();
-                // SAFETY: wslice is valid for wslice.len() writable u16 units.
-                let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
+                let n = bun_core::fd_path_raw_w(fd, wslice);
                 if n <= 0 {
                     // `GetFinalPathNameByHandle` surfaces
                     // FileNotFound (return_length==0 → -1) or
@@ -720,8 +717,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
             let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
-            // SAFETY: buf is valid for buf.len() writable u16 units.
-            let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
+            let n = bun_core::fd_path_raw_w(fd, buf);
             if n <= 0 {
                 // `GetFinalPathNameByHandle` surfaces
                 // FileNotFound (return_length==0 → -1) or
@@ -832,21 +828,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     fn reinterpret<const NEW_SEP: u8, const NEW_CHECK: u8>(
         self,
     ) -> Path<U, KIND, NEW_SEP, NEW_CHECK> {
-        // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
-        // Rust gives no layout-compat guarantee between distinct const-generic
-        // instantiations. Rebuilding field-by-field is layout-agnostic and
-        // optimizes to the same no-op move.
-        let mut this = ManuallyDrop::new(self);
-        let len = this._buf.len;
-        // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
-        // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
-        // and observe the now-uninitialized field.
-        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
         Path {
-            _buf: Buf {
-                pooled: ManuallyDrop::new(pooled),
-                len,
-            },
+            _buf: self._buf,
             _unit: PhantomData,
         }
     }
@@ -1282,30 +1265,30 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         if TypeId::of::<C>() == TypeId::of::<u8>() {
             let bytes = C::id_u8(characters);
             if TypeId::of::<U>() == TypeId::of::<u8>() {
-                self._buf.append(U::id_from_u8(bytes), add_separator);
+                self._buf
+                    .append::<SEP_OPT>(U::id_from_u8(bytes), add_separator);
             } else {
                 self._buf
-                    .append_other(<U::Other>::id_from_u8(bytes), add_separator);
+                    .append_other::<SEP_OPT>(<U::Other>::id_from_u8(bytes), add_separator);
             }
         } else {
             let words = C::id_u16(characters);
             if TypeId::of::<U>() == TypeId::of::<u16>() {
-                self._buf.append(U::id_from_u16(words), add_separator);
+                self._buf
+                    .append::<SEP_OPT>(U::id_from_u16(words), add_separator);
             } else {
                 self._buf
-                    .append_other(<U::Other>::id_from_u16(words), add_separator);
+                    .append_other::<SEP_OPT>(<U::Other>::id_from_u16(words), add_separator);
             }
         }
     }
 }
 
-impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
-    for Path<U, KIND, SEP_OPT, CHECK>
-{
+impl<U: PathUnit> Drop for Buf<U> {
     fn drop(&mut self) {
         // match BufType::Pool
         // SAFETY: `pooled` is initialized in `init()` and never taken before this; Drop runs once.
-        let pooled = unsafe { ManuallyDrop::take(&mut self._buf.pooled) };
+        let pooled = unsafe { ManuallyDrop::take(&mut self.pooled) };
         U::pool_put(pooled);
     }
 }

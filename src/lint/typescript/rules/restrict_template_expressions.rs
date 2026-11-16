@@ -17,8 +17,8 @@ pub struct RestrictTemplateExpressions {
     allow_reg_exp: bool,
 }
 
-const INVALID_TYPE: Message =
-    Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
+const INVALID_TYPE: &Message =
+    &Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
 
 const ALLOWED_BY_DEFAULT: [&str; 3] = ["Error", "URL", "URLSearchParams"];
 

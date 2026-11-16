@@ -1,0 +1,18 @@
+# the same program without copies, without what is known of fresh objects, and without guesses: the allocation lists nothing, and the body or its copy stores
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(NEVER): walk f2 mechanisms=all-Inlining
+# NEVER-NOT: = NewObject {{*}}fields=[
+# RUN(UNKNOWN): walk f2 mechanisms=all-EscapeAnalysis
+# UNKNOWN-NOT: = NewObject {{*}}fields=[
+# RUN(UNASKED): walk f2 mechanisms=all-Guesses
+# UNASKED-NOT: = NewObject {{*}}fields=[
+# -- source: allocation-lists-what-the-head-of-a-copied-constructor-function-stores.ts
+# declare function sink(...values: unknown[]): void;
+# function Node(this: any, kind: number, pos: number, end: number) { this.pos = pos; this.end = end; this.kind = kind; this.id = 0; this.flags = 0; this.parent = undefined; }
+# function make(kind: number) { return new (Node as any)(kind, -1, -1); }
+# sink(make);
+# -- end of source
+# f1 = Node, f2 = make

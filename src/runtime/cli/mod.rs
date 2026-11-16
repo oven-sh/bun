@@ -81,6 +81,10 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
+    /// `bun test --aot --shard`: puts test files that import the same modules in the same shard.
+    #[path = "ShardsByReach.rs"]
+    pub(crate) mod shards_by_reach;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -259,7 +263,7 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
 /// fat-LTO parks them tens of MB away from the startup symbol cluster.
 /// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
-/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
+/// `cli_dupe` / `cli_dupe_z`), so a `LazyLock` there faults a
 /// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
@@ -290,30 +294,19 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
     cli_arena().alloc_slice_copy(s)
 }
 
-/// Adopt an already-owned `Box<[u8]>` into a process-lifetime side-table and
-/// return a `&'static [u8]` borrow — zero-copy (the `Box`'s heap allocation has
-/// a stable address; only the `Box` value moves into the table). Use when the
-/// caller already owns a large buffer (e.g. tarball, request body) so
-/// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
+/// [`cli_dupe`] without the copy, for a large buffer that the caller owns. Thread-safe.
 fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
-        bun_threading::Guarded::new(Vec::new());
-    let (ptr, len) = (b.as_ptr(), b.len());
-    ADOPTED.lock().push(b);
-    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
-    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
-    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    bun_core::asan::ignore_object(b.as_ptr().cast());
+    Box::leak(b)
 }
 
-/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
-/// return the C-string pointer (for argv/envp construction).
+/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL.
 #[inline]
-fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+fn cli_dupe_z(s: &[u8]) -> bun_core::CStrRef<'static> {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
-    buf.as_ptr().cast::<core::ffi::c_char>()
+    bun_core::CStrRef::from_slice_with_nul(buf)
 }
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
@@ -391,9 +384,7 @@ pub(crate) mod cli {
             // message. The bake production path returns `error.BuildFailed`
             // with the actual parse/link errors sitting in `ctx.log` (== this
             // `log`); without this print, users see only the opaque error name.
-            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                bun_core::Output::error_writer(),
-            ));
+            let _ = log.print(bun_core::Output::error_writer());
             bun_crash_handler::handle_root_error(err);
         }
     }
@@ -618,7 +609,7 @@ pub(crate) mod command {
 
     pub(crate) use bun_options_types::command_tag::Tag;
     pub(crate) use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
-    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
+    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload};
 
     // Process-lifetime
     // storage, written exactly once in `create_context_data` during
@@ -1052,6 +1043,16 @@ pub(crate) mod command {
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
                 bun_standalone_graph::Graph::exit_without_program();
             }
+        }
+
+        #[cfg(not(bun_locked_environment))]
+        if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
+            && first
+                .as_bytes()
+                .starts_with(run_compiled::PROGRAM_FILE_FLAG)
+            && let Some(graph) = run_compiled::load_program_file()?
+        {
+            return boot_standalone(graph, log);
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
@@ -2045,6 +2046,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   Short for <b>bun build --compile --aot<r>. Without an entry point, it compiles the file that \"bin\" in
   <b>package.json<r> points to, then \"module\", then \"main\", then index.ts, index.tsx, index.mts or index.js.
+  The entry point can be the name of an executable of an installed package, as in <b>bun run<r>.
 
 <b>Flags:<r>"
                 );
@@ -2058,6 +2060,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Choose the name of the executable<r>
   <b><green>bun compile<r> <cyan>--outfile=my-app<r> <blue>./cli.ts<r>
+
+  <d>Compile the command-line tool of an installed package<r>
+  <b><green>bun compile<r> <blue>rollup<r>
 
   <d>List the code that compiled to a slow path<r>
   <b><green>bun compile<r> <cyan>--explain<r> <blue>./server.ts<r>
@@ -2101,9 +2106,6 @@ Full documentation is available at <magenta>https://bun.com/docs/compiler/aot<r>
 
   <d>Compile the test files ahead of time, then run them<r>
   <b><green>bun test<r> <cyan>--aot<r>
-
-  <d>The same, and log every value that doesn't match its declared type<r>
-  <b><green>bun test<r> <cyan>--aot-log-type-mismatches<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

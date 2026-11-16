@@ -323,9 +323,6 @@ function createHttp1FallbackResponseHandle(
       this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
       return this.end(chunk, encoding, undefined, strictContentLength);
     },
-    writeWholeResponse() {
-      return undefined;
-    },
     write(
       this: $Node.Http1ResponseHandle,
       chunk: $Node.HttpChunk | null | undefined,

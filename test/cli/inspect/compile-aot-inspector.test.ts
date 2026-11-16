@@ -20,12 +20,23 @@ interface Options {
   host: string;
   port: number;
 }
+class Keeps extends Map<string, number> {
+  #kept = 5;
+  #method(): number {
+    return this.#kept;
+  }
+  read(): number {
+    return this.#method();
+  }
+}
 const account = new Account("ann", 10, new Account("root", 1, null));
 const options: Options = { host: "h", port: 1 };
 const shared = globalThis as unknown as Record<string, unknown>;
 shared.account = account;
 shared.options = options;
 shared.list = [account, account.parent];
+shared.keeps = new Keeps();
+shared.read = (shared.keeps as Keeps).read();
 console.log("ready", account, options);
 setInterval(() => {}, 1000);
 `,
@@ -219,6 +230,18 @@ describe("the inspector on an executable built with --aot --compile-inspector", 
     expect(byName.balance).toMatchObject({ type: "number", value: 10 });
     expect(byName.parent).toMatchObject({ type: "object", className: "Account" });
     expect(byName.tags).toMatchObject({ type: "object", subtype: "array", size: 2 });
+  });
+
+  test("an object of a compiled class below a built-in shows the private names that are written, and no other", async () => {
+    const { result } = await session.send("Runtime.evaluate", { expression: "keeps" });
+    const { properties } = await session.send("Runtime.getProperties", {
+      objectId: result.objectId,
+      ownProperties: true,
+    });
+    const shown = properties.filter((property: any) => property.name !== "__proto__");
+    expect(shown.map((property: any) => [property.name, property.value])).toEqual([
+      ["#kept", { type: "number", value: 5, description: "5" }],
+    ]);
   });
 
   test("an array of compiled objects is previewed as an array", async () => {

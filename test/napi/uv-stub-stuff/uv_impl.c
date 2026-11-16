@@ -1,6 +1,7 @@
 #include <node_api.h>
 
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -800,6 +801,78 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// --- uv_default_loop on another thread ---------------------------------------
+
+static uv_work_t default_loop_work;
+static uv_timer_t default_loop_timer;
+static pthread_t default_loop_caller;
+
+static void print_thread(void) {
+  printf("on the calling thread: %d\n",
+         pthread_equal(pthread_self(), default_loop_caller) != 0);
+  fflush(stdout);
+}
+
+static void default_loop_work_cb(uv_work_t *req) { (void)req; }
+
+static void default_loop_after_work_cb(uv_work_t *req, int status) {
+  (void)req;
+  (void)status;
+  print_thread();
+}
+
+static void default_loop_timer_cb(uv_timer_t *handle) {
+  print_thread();
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static napi_value test_default_loop_work(napi_env env,
+                                         napi_callback_info info) {
+  default_loop_caller = pthread_self();
+  uv_queue_work(uv_default_loop(), &default_loop_work, default_loop_work_cb,
+                default_loop_after_work_cb);
+  return NULL;
+}
+
+static napi_value test_default_loop_timer(napi_env env,
+                                          napi_callback_info info) {
+  default_loop_caller = pthread_self();
+  uv_timer_init(uv_default_loop(), &default_loop_timer);
+  uv_timer_start(&default_loop_timer, default_loop_timer_cb, 1, 0);
+  return NULL;
+}
+
+static atomic_bool thread_work_ran;
+
+static void thread_work_cb(uv_work_t *req) {
+  (void)req;
+  atomic_store(&thread_work_ran, true);
+}
+
+// Returns once the work has run, which it does without the JS thread.
+static void *queue_work_thread(void *out) {
+  int32_t *result = out;
+  *result = uv_queue_work(uv_default_loop(), &default_loop_work, thread_work_cb,
+                          default_loop_after_work_cb);
+  while (*result == 0 && !atomic_load(&thread_work_ran)) {
+    sched_yield();
+  }
+  return NULL;
+}
+
+static napi_value test_queue_work_from_thread(napi_env env,
+                                              napi_callback_info info) {
+  int32_t result;
+  pthread_t thread;
+  default_loop_caller = pthread_self();
+  if (pthread_create(&thread, NULL, queue_work_thread, &result) != 0) {
+    napi_throw_error(env, NULL, "pthread_create failed");
+    return NULL;
+  }
+  pthread_join(thread, NULL);
+  return make_int32_array(env, &result, 1);
+}
+
 // --- uv_idle_t / uv_prepare_t / uv_check_t -----------------------------------
 
 struct watcher_test {
@@ -1253,6 +1326,15 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_cancel_work, NULL, &fn);
   napi_set_named_property(env, exports, "testCancelWork", fn);
+
+  napi_create_function(env, NULL, 0, test_default_loop_work, NULL, &fn);
+  napi_set_named_property(env, exports, "testDefaultLoopWork", fn);
+
+  napi_create_function(env, NULL, 0, test_default_loop_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "testDefaultLoopTimer", fn);
+
+  napi_create_function(env, NULL, 0, test_queue_work_from_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testQueueWorkFromThread", fn);
 
   napi_create_function(env, NULL, 0, test_mutex_init_destroy, NULL, &fn);
   napi_set_named_property(env, exports, "testMutexInitDestroy", fn);

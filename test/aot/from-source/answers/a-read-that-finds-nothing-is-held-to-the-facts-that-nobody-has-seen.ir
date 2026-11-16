@@ -1,0 +1,27 @@
+# -- source: a-read-that-finds-nothing-is-held-to-the-facts-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { weight: number; constructor(weight: number) { this.weight = weight; } }
+# function look(weight: number, changes: boolean) { const parcel: any = new Parcel(weight); if (changes) Object.setPrototypeOf(parcel, { missing: "from above" }); return parcel.missing; }
+# const looks = id(look);
+# print(looks(1, false));
+# print(looks(5, true));
+# -- end of source
+# LIBRARY: own
+# A read of a property that no receiver has and that nothing on the prototype chain declares is folded to undefined.
+# The fold requires that the cell has its layout's prototype and has no own property besides its fields.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact is known. It does not change the walk's state.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) whatever the access relies on is checked at run time. Here nothing has established it, so the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: undefined
+# RIGHT-NEXT: from above
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: undefined
+# HARDENED-NEXT: from above
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
+# LIE: undefined
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (look)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

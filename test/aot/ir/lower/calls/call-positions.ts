@@ -1,13 +1,11 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="callResult"
-// CHECK: [[made]] = Call {{*}}calleeName="f" @604
-// CHECK-NEXT: [[convertedMade]] = Convert [[made]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[convertedMade]], {{*}} @607
+// CHECK: [[made]] = Call {{*}}calleeName="f" @437
+// CHECK-NEXT: = Call [[made]], {{*}} @440
 // CHECK-LABEL: function {{*}}name="index"
-// CHECK: = Call {{*}} @660
+// CHECK: = Call {{*}} @493
 // CHECK-LABEL: function {{*}}name="member"
-// CHECK: [[result]] = Call {{*}}calleeName="a.b.c" @723
-// CHECK-NEXT: = Convert [[result]] {{*}} @719
+// CHECK: [[result]] = Call {{*}}calleeName="a.b.c" @556
 
 interface Holder {
   b: { c(x: number): number };

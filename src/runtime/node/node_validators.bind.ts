@@ -42,12 +42,12 @@ export const validateUint32 = validator(
 );
 export const validateFiniteNumber = validator("validateFiniteNumber", valueAndName, usesOfValueAndName, b.bool);
 
-/** The number, or `fallback` for `undefined` and `NaN`. */
+/** The number, or `fallback` for `undefined` and `NaN`: `undefined` where no `fallback` is passed. */
 export const checkRangesOrGetDefault = validator(
   "checkRangesOrGetDefault",
   { ...valueAndName, lower: operand, upper: operand, fallback: operand },
   { ...usesOfValueAndName, lower: convertedToNumber, upper: convertedToNumber, fallback: [table.returned] },
-  b.any,
+  b.any.returning(table.union(table.f64, table.undefined, table.operand("fallback")).spec),
 );
 
 /** A string counts for the number that it converts to. */

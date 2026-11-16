@@ -35,14 +35,13 @@ pub enum ModuleFailureKind {
         specifier: Atom,
         reason: CodeFailure,
     },
-    /// What an `import` or `export .. from` names, in a module that only a site which can catch the failure loads.
     UnresolvedAtLoad {
         specifier: Atom,
         reason: CodeFailure,
     },
-    /// The importer is a file that nothing but the way it is loaded calls a program, and that is none. The site is the statement that stands in place of its text.
     NotAProgram {
         is_loaded_at_start: bool,
+        is_silent: bool,
     },
     ExportNotFound {
         exporter: ModuleRef,
@@ -52,7 +51,6 @@ pub enum ModuleFailureKind {
         exporter: ModuleRef,
         name: Atom,
     },
-    /// A name that an ES module imports of a CommonJS module whose body may end without it. Only the run knows.
     ExportMayBeAbsent {
         exporter: ModuleRef,
         name: Atom,
@@ -61,7 +59,6 @@ pub enum ModuleFailureKind {
 }
 
 impl ModuleFailure {
-    /// The module that the importer names and that lacks the name.
     pub fn exporter(&self) -> Option<ModuleRef> {
         match self.kind {
             ModuleFailureKind::ExportNotFound { exporter, .. }
@@ -73,22 +70,50 @@ impl ModuleFailure {
         }
     }
 
+    pub fn is_refusal_of_package_json(&self) -> bool {
+        match self.kind {
+            ModuleFailureKind::Unresolved { reason, .. }
+            | ModuleFailureKind::UnresolvedAtLoad { reason, .. } => {
+                reason.is_refusal_of_package_json()
+            }
+            ModuleFailureKind::NotAProgram { .. }
+            | ModuleFailureKind::ExportNotFound { .. }
+            | ModuleFailureKind::ExportAmbiguous { .. }
+            | ModuleFailureKind::ExportMayBeAbsent { .. } => false,
+        }
+    }
+
+    pub fn is_refusal_of_compiler(&self) -> bool {
+        matches!(
+            self.kind,
+            ModuleFailureKind::Unresolved {
+                reason: CodeFailure::QueryString,
+                ..
+            }
+        )
+    }
+
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
+            ModuleFailureKind::Unresolved { .. } if self.is_refusal_of_compiler() => {
+                FailureEffect::StopsBuild
+            }
             ModuleFailureKind::Unresolved { .. } => match site_form(self.site) {
                 SiteForm::Declaration => FailureEffect::StopsBuild,
-                SiteForm::Load | SiteForm::Resolve | SiteForm::GetBuiltinModule => {
-                    FailureEffect::ThrowsAtSite
-                }
+                SiteForm::Load
+                | SiteForm::Resolve
+                | SiteForm::GetBuiltinModule
+                | SiteForm::Mock => FailureEffect::ThrowsAtSite,
             },
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: true,
+                ..
             }
             | ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
-            // What throws it: the body of the module that stands in its place, the body of each module whose load it fails, the check of the graph where the imports are linked.
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: false,
+                ..
             }
             | ModuleFailureKind::UnresolvedAtLoad { .. }
             | ModuleFailureKind::ExportMayBeAbsent { .. } => FailureEffect::ThrowsAtSite,
@@ -114,7 +139,6 @@ pub(super) struct PendingFailure {
     pub failure: ModuleFailure,
 }
 
-/// Where a module writes a specifier, or a name of another module.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct WrittenPart {
     pub order: FailureOrder,

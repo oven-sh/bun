@@ -15,7 +15,7 @@
 
 // The repacked ICU data archive (and the patched udata.cpp that calls this
 // hook) are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
-// Dockerfile.windows. On macOS ICU is the unmodified system one, so there is
+// Dockerfile.windows / Dockerfile.freebsd / Dockerfile.android. On macOS ICU is the unmodified system one, so there is
 // nothing to decompress and the weak externs below would have no definer —
 // gate the implementation to the platforms whose prebuilts carry compressed
 // items.
@@ -26,7 +26,7 @@
 // repacked sicudt.lib defines them anyway (an unresolved weak external only
 // becomes a problem when two TUs reference it, see the WTFTimer__* notes in
 // oven-sh/WebKit).
-#if OS(LINUX) || OS(WINDOWS)
+#if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
 
 #include "MimallocWTFMalloc.h"
 
@@ -126,4 +126,4 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
     return Bun::ICUDecompressor::get().decompress(p, length);
 }
 
-#endif // OS(LINUX)
+#endif // OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)

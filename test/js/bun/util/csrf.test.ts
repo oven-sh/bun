@@ -82,21 +82,20 @@ describe("Bun.CSRF", () => {
   });
 
   test("token with expiresIn parameter works", async () => {
-    // Generate a token with a longer expiration (1 second)
-    const token = CSRF.generate(secret, {
-      expiresIn: 100,
-    });
+    // On a busy machine any sleep can outlast a short expiration, so the token that has to stay valid lasts an hour.
+    const lasting = CSRF.generate(secret, { expiresIn: 60 * 60 * 1000 });
+    const start = performance.now();
+    const expiring = CSRF.generate(secret, { expiresIn: 100 });
+    expect(CSRF.verify(lasting, { secret })).toBe(true);
 
-    // Should be valid immediately
-    expect(CSRF.verify(token, { secret })).toBe(true);
-
-    // Should still be valid after a short time
-    await Bun.sleep(10);
-    expect(CSRF.verify(token, { secret })).toBe(true);
-
-    // Ensure that expiration works properly
-    await Bun.sleep(100);
-    expect(CSRF.verify(token, { secret })).toBe(false);
+    while (CSRF.verify(expiring, { secret })) {
+      if (performance.now() - start > 4000) throw new Error("The token is still valid 4 seconds after it was made.");
+      await Bun.sleep(1);
+    }
+    // Not ahead of its time. The slack is for a wall clock that is adjusted meanwhile.
+    expect(performance.now() - start).toBeGreaterThan(80);
+    expect(CSRF.verify(expiring, { secret })).toBe(false);
+    expect(CSRF.verify(lasting, { secret })).toBe(true);
   });
 
   test("token format doesn't affect verification", () => {

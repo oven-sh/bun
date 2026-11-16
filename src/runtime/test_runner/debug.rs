@@ -1,25 +1,24 @@
 use core::fmt;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_jsc::JsResult;
+use bun_ptr::CellExt as _;
 
-use crate::test_runner::bun_test::{DescribeScope, ExecutionEntry, TestScheduleEntry};
-use crate::test_runner::execution::Execution;
+use crate::test_runner::bun_test::{BunTest, DescribeScope, ExecutionEntry, TestScheduleEntry};
 
-fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
+fn dump_sub(buntest: &BunTest, current: TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
     match current {
-        TestScheduleEntry::Describe(describe) => dump_describe(describe)?,
-        TestScheduleEntry::TestCallback(test_callback) => dump_test(test_callback, b"test")?,
+        TestScheduleEntry::Describe(describe) => dump_describe(buntest, buntest.scope(describe))?,
+        TestScheduleEntry::TestCallback(test_callback) => dump_test(buntest.entry(test_callback), b"test")?,
     }
     Ok(())
 }
 
-pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
+pub(crate) fn dump_describe(buntest: &BunTest, describe: &DescribeScope) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
@@ -29,26 +28,26 @@ pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
         describe.base.mode.tag_name(),
-        describe.base.only.tag_name(),
-        describe.base.has_callback,
+        describe.base.only.get().tag_name(),
+        describe.base.has_callback.get(),
     ));
 
-    for entry in describe.before_all.as_slice() {
-        dump_test(entry, b"beforeAll")?;
-    }
-    for entry in describe.before_each.as_slice() {
-        dump_test(entry, b"beforeEach")?;
-    }
-    for entry in describe.entries.as_slice() {
-        dump_sub(entry)?;
-    }
-    for entry in describe.after_each.as_slice() {
-        dump_test(entry, b"afterEach")?;
-    }
-    for entry in describe.after_all.as_slice() {
-        dump_test(entry, b"afterAll")?;
-    }
-    Ok(())
+    describe.hooks.with_taken(|hooks| {
+        for &entry in &hooks.before_all {
+            dump_test(buntest.entry(entry), b"beforeAll")?;
+        }
+        for &entry in &hooks.before_each {
+            dump_test(buntest.entry(entry), b"beforeEach")?;
+        }
+        describe.entries.with_taken(|entries| entries.iter().try_for_each(|&entry| dump_sub(buntest, entry)))?;
+        for &entry in &hooks.after_each {
+            dump_test(buntest.entry(entry), b"afterEach")?;
+        }
+        for &entry in &hooks.after_all {
+            dump_test(buntest.entry(entry), b"afterAll")?;
+        }
+        Ok(())
+    })
 }
 
 fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
@@ -60,43 +59,39 @@ fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
-        current.base.only.tag_name(),
+        current.base.only.get().tag_name(),
     ));
     Ok(())
 }
 
-pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
+pub(crate) fn dump_order(buntest: &BunTest) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
     let _guard = group::begin_msg(format_args!("dumpOrder"));
 
-    for (group_index, group_value) in this.groups.iter().enumerate() {
+    for (group_index, group_value) in buntest.execution.groups().iter().enumerate() {
         let _guard = group::begin_msg(format_args!(
             "{} ConcurrentGroup ({}-{})",
             group_index, group_value.sequence_start, group_value.sequence_end,
         ));
 
-        for (sequence_index, sequence) in group_value.sequences_const(this).iter().enumerate() {
+        for (sequence_index, sequence) in group_value.sequences(&buntest.execution).iter().enumerate() {
             let _guard = group::begin_msg(format_args!(
                 "{} Sequence ({}x)",
-                sequence_index, sequence.remaining_repeat_count,
+                sequence_index, sequence.remaining_repeat_count.get(),
             ));
 
-            let mut current_entry: Option<NonNull<ExecutionEntry>> = sequence.first_entry;
-            while let Some(entry_ptr) = current_entry {
-                // SAFETY: linked-list nodes are owned by the Execution and remain valid for the
-                // duration of this read-only dump.
-                let entry = unsafe { entry_ptr.as_ref() };
+            for (_, sequence_entry) in buntest.sequence_entries_from(sequence.first_entry) {
+                let entry = buntest.entry(sequence_entry.entry);
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),
                     entry.base.concurrent,
                     entry.base.mode.tag_name(),
-                    entry.base.only.tag_name(),
-                    entry.base.has_callback,
+                    entry.base.only.get().tag_name(),
+                    entry.base.has_callback.get(),
                 ));
-                current_entry = entry.next.and_then(NonNull::new);
             }
         }
     }

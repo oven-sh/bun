@@ -28,10 +28,10 @@
 // RUN(BRAND): lower
 // BRAND-LABEL: function {{*}}name="C" {{*}}kind=BaseConstructor
 // BRAND: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// BRAND-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// BRAND-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
 // BRAND-NOT: PrivateDefine
 // BRAND: = CallDirect [[this]] function=
-// BRAND-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}} flags=[IsFromCompiler]}
+// BRAND-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}}}
 // BRAND: PrivateDefine [[receiver]], [[token]], [[token]] layout=[[layout]] @
 // BRAND: PrivateDefine {{*}}field=1 @
 // BRAND: PrivateDefine {{*}}field=2 @

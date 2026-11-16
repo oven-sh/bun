@@ -42,6 +42,7 @@ extern "C" void Bun__getEnvValueAt(JSGlobalObject* globalObject, size_t index, E
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
+extern "C" bool isBunTest;
 
 namespace Bun {
 
@@ -142,7 +143,7 @@ static void setNativeEnvValue(JSGlobalObject* globalObject, const String& name, 
 static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
-static bool shouldApplyTZSideEffect(JSGlobalObject*);
+static void applyTZDeleted(JSGlobalObject*);
 
 // TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
 // (which drops the CustomAccessor) still updates the process timezone like
@@ -260,6 +261,36 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
     RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
 }
 
+static bool isHandedBackByCompiledObjects(JSObject* environment, JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    VM& vm = globalObject->vm();
+    if (!vm.hasCompiledCode()) [[likely]]
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (!uid || uid->isSymbol() || uid->isEmpty() || WTF::equal(uid, "TZ"_s) || WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s) || isProxyEnvVarName(vm, uid))
+        return false;
+    if (isValidOffset(environment->structure()->get(vm, propertyName)))
+        return false;
+
+    bool isBelowCompiledObject = false;
+    for (JSValue above = environment->getPrototypeDirect(); above.isObject(); above = asObject(above)->getPrototypeDirect()) {
+        JSObject* object = asObject(above);
+        Structure* structure = object->structure();
+        if (structure->isCompiledStructure())
+            isBelowCompiledObject = true;
+        else if (structure->typeInfo().overridesPut())
+            return false;
+        PropertySlot slot(environment, PropertySlot::InternalMethodType::Get);
+        bool hasProperty = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (hasProperty)
+            return isBelowCompiledObject && !(slot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+    }
+    return isBelowCompiledObject;
+}
+
 bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
@@ -278,6 +309,15 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
             && descriptor.enumerablePresent() && descriptor.enumerable())) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
         return false;
+    }
+
+    bool isHandedBack = isHandedBackByCompiledObjects(object, globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isHandedBack) [[unlikely]] {
+        JSString* string = coerceEnvValue(globalObject, scope, descriptor.value());
+        RETURN_IF_EXCEPTION(scope, false);
+        PropertyDescriptor variable(string, 0);
+        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(object, globalObject, propertyName, variable, shouldThrow));
     }
 
     // Node's EnvDefiner delegates to EnvSetter (plain assignment). put() keeps TZ/proxy
@@ -343,10 +383,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     // the CustomAccessor and existing Dates keep the old offset. put() handles re-set.
     auto* uid = propertyName.publicName();
     if (uid && WTF::equal(uid, "TZ"_s)) {
-        if (shouldApplyTZSideEffect(globalObject)) {
-            WTF::setTimeZoneOverride(String());
-            resetDateCachesAfterTimeZoneChange(vm);
-        }
+        applyTZDeleted(globalObject);
         auto* clientData = WebCore::clientData(vm);
         DeletePropertySlot dataSlot;
         Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
@@ -518,10 +555,7 @@ JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObj
     auto keyView = asString(key)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (WTF::equal(keyView, "TZ"_s)) {
-        if (shouldApplyTZSideEffect(globalObject)) {
-            WTF::setTimeZoneOverride(String());
-            resetDateCachesAfterTimeZoneChange(vm);
-        }
+        applyTZDeleted(globalObject);
     } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
         applyTLSRejectFromString(globalObject, String());
     }
@@ -703,6 +737,16 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
+extern "C" void Bun__VM__restoreTestTimeZone(void* bunVM);
+
+// `bun test` goes back to the zone it started with: $TZ, or UTC if that isn't set.
+static void applyTZDeleted(JSGlobalObject* globalObject)
+{
+    if (!isBunTest)
+        applyTZFromString(globalObject, String());
+    else if (shouldApplyTZSideEffect(globalObject))
+        Bun__VM__restoreTestTimeZone(bunVM(globalObject));
+}
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
     /* Node only treats the exact string "0" as disabling verification. */
@@ -803,9 +847,8 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // existing Date instances keep the deleted zone's offset.
     String key(uid);
     String normalizedKey = SharedEnvStore::normalizeKey(key);
-    if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
-        WTF::setTimeZoneOverride(String());
-        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    if (normalizedKey == "TZ"_s) {
+        applyTZDeleted(globalObject);
     } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
         applyTLSRejectFromString(globalObject, String());
     } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {
@@ -990,7 +1033,8 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     }
 
     // Compiled code keeps what the first read of process.env and of Bun.env gave.
-    JSC::AOT::hostDidReplaceProperty(globalObject, envIdentifier.impl());
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidReplaceProperty(globalObject, envIdentifier.impl());
 
     return store;
 }

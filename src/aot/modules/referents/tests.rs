@@ -31,6 +31,7 @@ impl<'s> BoundProgram<'_, '_, 's> {
             builtin_names: self.input.builtin_names,
             platform: self.input.platform,
             library: None,
+            known_helpers: None,
         }
     }
 
@@ -158,16 +159,19 @@ fn deferred_namespace_is_unknown() {
 }
 
 #[test]
-fn commonjs_import_is_unknown() {
+fn commonjs_import_names_what_the_file_stores_in_its_exports() {
     let main = "
-        import { A } from './legacy.cjs';
+        import { A, missing } from './legacy.cjs';
         import * as ns from './legacy.cjs';
         const member = ns.A;
-        console.log(A, member);
+        console.log(A, missing, member);
     ";
     let files = [("main.js", main), ("legacy.cjs", "exports.A = class {};\n")];
     with_program(&files, |program| {
-        assert_eq!(program.referent("main.js", "A"), UNLINKED_IMPORT);
+        let found = program.referent("main.js", "A");
+        assert!(matches!(found, StaticReferent::Class(_)), "{found:?}");
+        let missing = program.referent("main.js", "missing");
+        assert!(matches!(missing, StaticReferent::Unknown(_)), "{missing:?}");
         assert_eq!(program.referent("main.js", "member"), UNLINKED_IMPORT);
         assert_eq!(
             program.referent("main.js", "ns"),
@@ -262,4 +266,56 @@ fn store_in_dead_code_is_ignored() {
             StaticReferent::Unknown(stored)
         );
     });
+}
+
+#[test]
+fn long_literal_answers_as_short_one() {
+    let cases = [
+        ("m: class {}, FILLER", Some(0)),
+        ("FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER m: class {}", Some(1)),
+        ("m: class {}, m: class {}, FILLER", Some(1)),
+        ("m: class {}, FILLER ...other", None),
+        ("...other, FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER [key]: 0", None),
+        ("[key]: 0, FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER get m() { return 0; }", None),
+        ("get m() { return 0; }, FILLER m: class {}", Some(0)),
+        ("m: class {}, FILLER set m(value) {}", None),
+        ("m: class {}, ...other, FILLER n: class {}", None),
+        ("n: class {}, FILLER", None),
+    ];
+    let many: String = (0..20)
+        .map(|index| format!("f{index}: {index}, "))
+        .collect();
+    let mut wrong = Vec::new();
+    for (literal, class) in cases {
+        let referent_with = |filler: &str| {
+            let literal = literal.replace("FILLER", filler);
+            let main = format!(
+                "const other = {{}}, key = String(1);\nconst table = {{ {literal} }};\nconst used = table.m;\nconsole.log(used, other, key);\nexport {{}};\n"
+            );
+            let mut found = None;
+            with_program(&[("main.js", &main)], |program| {
+                let referent = program.referent("main.js", "used");
+                let file = file_named(program.input, "main.js");
+                let expected = class.map(|class| ClassRef {
+                    file,
+                    class: ClassId(class),
+                });
+                let is_expected = match (referent, expected) {
+                    (StaticReferent::Class(found), Some(expected)) => found == expected,
+                    (StaticReferent::Unknown(_), None) => true,
+                    _ => false,
+                };
+                found = Some((referent, is_expected));
+            });
+            found.unwrap()
+        };
+        let (short, long) = (referent_with(""), referent_with(&many));
+        if short != long || !long.1 {
+            wrong.push(literal);
+        }
+    }
+    assert_eq!(wrong, Vec::<&str>::new());
 }

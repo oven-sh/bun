@@ -1,0 +1,17 @@
+# f3 = bubble
+# -- source: main.mjs
+# function Fiber(flags) { this.child = null; this.sibling = null; this.parent = null; this.flags = flags; this.subtree = 0; this.lanes = flags & 1; this.below = 0; }
+# function make(depth) { const made = new Fiber(depth); let last = null; for (let i = 0; i < 3 && depth > 0; i++) { const next = make(depth - 1); if (last) last.sibling = next; else made.child = next; last = next; } return made; }
+# function bubble(top) { let lanes = 0, flags = 0, next = top.child; while (next !== null) { lanes |= next.lanes | next.below; flags |= next.subtree; flags |= next.flags; next.parent = top; next = next.sibling; } top.subtree |= flags; top.below = lanes; return flags * 10 + lanes; }
+# globalThis.kept = make(3);
+# print(bubble(globalThis.kept.child), bubble(globalThis.kept), bubble(JSON.parse('{"child":{"lanes":1,"below":2,"subtree":4,"flags":8,"sibling":null}}')));
+# -- end of source
+# The turn stores, so it has no version that begins it again. The class is asked once, by the first read of the arm; the fields behind it are read out of their slots and reckoned with as numbers.
+# RUN: walk f3:Body mechanisms=all
+# CHECK-NOT: GetValueAtSiteOrAbsent {{*}} key="lanes"
+# CHECK: = ShapeTest {{*}} layouts=[L0]
+# CHECK: = GetSlot {{*}} key="lanes" receivers=[L0] level=Proven
+# CHECK: = GetSlot {{*}} key="below" receivers=[L0] level=Proven
+# CHECK: = GetSlot {{*}} key="subtree" receivers=[L0] level=Proven
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11 31 123

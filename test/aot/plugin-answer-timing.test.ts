@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const build = `import plugin from "./plugin";
 const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true }, loader: { ".md": "text" }, plugins: [plugin], throw: false });

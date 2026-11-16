@@ -234,3 +234,18 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
 });
+
+// A `data:` URL has no file name, so a "." in the module's text isn't the start of an extension.
+test.each([
+  ["a number", `export const value = 1.5;`, 1.5],
+  ["a member access", `import path from "node:path"; export const value = path.sep.length;`, 1],
+  ["an import of a file", `import { url } from ${JSON.stringify(resolvedURL)}; export const value = url;`, resolvedURL],
+  ["a text that ends in .json", `export const value = 1; // a.json`, 1],
+  ["a text that ends in .css", `export const value = 1; // a.css`, 1],
+  ["a text that ends in .txt", `export const value = 1; // a.txt`, 1],
+  ["another data: URL", `export * from "data:text/javascript,export const value = 2.5;";`, 2.5],
+])("a data: module with a dot in %s", async (_, text, value) => {
+  for (const url of [`data:text/javascript,${text}`, `data:text/javascript,${encodeURIComponent(text)}`]) {
+    expect({ ...(await import(url)) }).toEqual({ value });
+  }
+});

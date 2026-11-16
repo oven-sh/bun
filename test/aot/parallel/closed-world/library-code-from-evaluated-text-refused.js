@@ -1,6 +1,5 @@
-// A program that evaluates text where the compiler sees it keeps eval. Much of what process, console, Bun and Buffer offer is written in JavaScript, and the executable holds the part of it that the program uses. The compiler does not know what the text will name, so a built-in whose code was left out reads as a function of its name, and only a call of that function throws. The error names the built-in and what to do. Where the built-in is an object in plain Bun, a call of one of its methods finds nothing to call, and that error goes on with the same sentence. The name itself stays, and the program goes on.
+// A program that evaluates text where the compiler sees it keeps eval. Much of what process, console, Bun and Buffer offer is written in JavaScript, and the executable holds the part of it that the program uses. The compiler does not know what the text will name, so a read of a built-in whose code was left out throws. The error names the built-in and what to do, and the text can catch it. A standard stream reads as an object that answers `fd`, `isTTY`, `columns`, `rows` and `write`, and any other operation on it throws that error. The name itself stays, and the program goes on.
 // Text that is decoded at run time is unknown to the compiler.
-// Alone: what it prints depends on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text
 const decoded = text => Buffer.from(text).toString();
 function outcome(error) {
   const message = String(error.message);
@@ -45,26 +44,26 @@ attempt("typeof process.stdout.write");
 attempt("process.pid > 0 && typeof process.cwd() + typeof Bun.version + typeof console.log");
 console.log("the program goes on");
 /* Output:
-typeof process.stdout.write: undefined
-typeof process.stderr.write: undefined
-typeof process.stdin.on: undefined
+typeof process.stdout.write: function
+typeof process.stderr.write: function
+typeof process.stdin.on: function
 typeof process.stdout.isTTY: undefined
-typeof process.stdout._writableState: undefined
-typeof console._stdout.write: undefined
-typeof console._stderr.write: undefined
-typeof process.openStdin().pause().on: refused: process.openStdin().pause is not a function. (In 'process.openStdin().pause()', 'process.openStdin().pause' is undefined). None of process.openStdin or process.stdin was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof process.stdout._writableState: refused: None of process.stdout, process.stderr, console._stdout or console._stderr was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof console._stdout.write: function
+typeof console._stderr.write: function
+typeof process.openStdin().pause().on: refused: None of process.stdin or process.openStdin was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 new console.Console(process.stdout).log.name: refused: console.Console was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-typeof console.Console: function
-(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(process): 
-(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(console): 
-(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(Bun): 
-typeof process.finalization.register: undefined
-typeof process.allowedNodeEnvironmentFlags.has: undefined
+typeof console.Console: refused: console.Console was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(process): allowedNodeEnvironmentFlags,finalization
+(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(console): Console
+(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(Bun): $,SQL,postgres,sql
+typeof process.finalization.register: refused: process.finalization was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof process.allowedNodeEnvironmentFlags.has: refused: process.allowedNodeEnvironmentFlags was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 typeof process.loadEnvFile: function
 process.loadEnvFile('/nothing-there'): refused: process.loadEnvFile was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-typeof Bun.$: function
-typeof Bun.sql: function
-typeof Bun.SQL: function
+typeof Bun.$: refused: Bun.$ was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof Bun.sql: refused: Bun.sql was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof Bun.SQL: refused: Bun.SQL was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 typeof Bun.peek: function
 Bun.peek(1): refused: Bun.peek was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 typeof new Bun.Glob('*').scanSync: function
@@ -74,8 +73,8 @@ Buffer.alloc(1).parent.byteLength > 0: true
 Buffer.alloc(1).offset >= 0: true
 JSON.stringify(Buffer.alloc(1)): {"type":"Buffer","data":[0]}
 typeof console.write: function
-console.write(''): refused: console.write was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-typeof process.stdout.write: undefined
+console.write(''): 0
+typeof process.stdout.write: function
 process.pid > 0 && typeof process.cwd() + typeof Bun.version + typeof console.log: stringstringfunction
 the program goes on
 */

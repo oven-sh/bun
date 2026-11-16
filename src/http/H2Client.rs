@@ -5,7 +5,7 @@
 //! connection-scoped state — HPACK tables, write/read buffers, server
 //! SETTINGS — and a map of active `Stream`s, each bound to one `HTTPClient`.
 //! Response frames are parsed into per-stream buffers and then handed to the
-//! same `picohttp.Response` / `handleResponseBody` machinery the HTTP/1.1
+//! same `Response` / `handleResponseBody` machinery the HTTP/1.1
 //! path uses, so redirects, decompression and the result callback are shared.
 
 use core::sync::atomic::AtomicI32;
@@ -66,10 +66,9 @@ pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 
 // ═══════════════════════════════════════════════════════════════════════
-// Thin `h2_*` forwarders on HTTPClient / HTTPContext that the h2_client
+// Thin `h2_*` forwarders on HTTPClient that the h2_client
 // modules call. The real bodies live in lib.rs
-// (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
-// (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
+// (`register_abort_tracker` … `progress_update`); these monomorphize the const-generic
 // `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only). Kept as inherent methods so the
 // many call sites in `h2_client/*.rs` need no churn.
 // ═══════════════════════════════════════════════════════════════════════
@@ -111,10 +110,6 @@ mod bridge {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]
-        pub(crate) fn h2_clone_metadata(&mut self, response: &bun_picohttp::Response<'_>) {
-            self.clone_metadata(response);
-        }
-        #[inline]
         pub(crate) fn h2_handle_response_body(
             &mut self,
             buf: &[u8],
@@ -125,13 +120,6 @@ mod bridge {
         #[inline]
         pub(crate) fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
             self.drain_response_body::<true>(socket);
-        }
-    }
-
-    impl NewHTTPContext<true> {
-        #[inline]
-        pub(crate) fn h2_register(&mut self, session: *mut super::ClientSession) {
-            self.register_h2(session);
         }
     }
 }

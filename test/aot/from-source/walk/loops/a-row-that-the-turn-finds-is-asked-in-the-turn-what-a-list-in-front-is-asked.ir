@@ -1,0 +1,35 @@
+# `d[i][0] * d[i][1]` over a list of lists of numbers: the row is a list that the turn itself finds. In the typed copy of the loop it is asked, in the turn, what a list in front of the loop is asked:
+# whether it is as made and which kind its storage has; where an answer fails the turn begins again in the other copy. Behind the answers `d[i]` is read once and both elements are raw numbers.
+# The kind is decided once a row: an arm for storage of doubles, one for int32, one for boxed values (a literal of whole numbers is born so), each with the reads and what leans on them; no read asks the kind again.
+# In each arm the greatest index is compared with the length of the row once; a row that is too short begins the turn again in the other copy, and no read compares its index.
+# In a nest the inner loop is built twice as well, though the list of rows was proven by the loop around it.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# CHECK: = IsPristine {{*}} builtinClass=Array aspects=[Storage, Names]
+# CHECK: = HasArrayStorage [[row]] arrayStorage=Double
+# CHECK: [[length]]: int[0, 4294967295] @Int64 = GetArrayLength [[row]]
+# CHECK: = Less {{*}}, [[length]] form=Integers
+# CHECK: = HasArrayStorage [[row]] arrayStorage=Int32
+# CHECK: = GetArrayElement [[row]], {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
+# CHECK: = GetArrayElement [[row]], {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK: = Mul {{*}} form=Numbers
+# CHECK: = GetArrayLength [[row]]
+# CHECK: = HasArrayStorage [[row]] arrayStorage=Contiguous
+# CHECK: = GetArrayElement [[row]], {{*}} arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK: = GetArrayElement [[row]], {{*}} arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK: = GetArrayLength [[row]]
+# CHECK: = GetArrayElement [[row]], {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK: = GetArrayElement [[row]], {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-NOT: admitsInt32Storage
+# RUN(NEST): walk f2 mechanisms=all
+# NEST-LABEL: code f2:Body
+# NEST: = HasArrayStorage {{*}} arrayStorage=Double
+# NEST: = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# -- source: a-row-that-the-turn-finds-is-asked-in-the-turn-what-a-list-in-front-is-asked.ts
+# declare function sink(...values: unknown[]): void;
+# function products(d: number[][]): number { let s = 0; for (let i = 0; i < d.length; i++) s += d[i][0] * d[i][1]; return s; }
+# function columns(d: number[][], m: number): number { let out = 0; for (let a = 0; a < m; a++) { let sa = 0; for (let i = 0; i < d.length; i++) { const x = d[i][a]; sa += x; } out += sa * sa; } return out; }
+# sink(products, columns);
+# -- end of source

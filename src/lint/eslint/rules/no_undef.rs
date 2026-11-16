@@ -9,7 +9,7 @@ pub struct NoUndef {
     considers_typeof: bool,
 }
 
-const UNDEF: Message = Message::new("undef", "'{{name}}' is not defined.");
+const UNDEF: &Message = &Message::new("undef", "'{{name}}' is not defined.");
 
 /// ESLint's `hasTypeOfOperator`.
 fn has_typeof_operator(reference: Reference) -> bool {

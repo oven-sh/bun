@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""doors-by-which-plain-data-comes-to-a-class.py <n>: a value that satisfies its type is never refused.
-The n-th of 113 programs, one door each: class User { id: number = 0; name: string = "made" }; `parsed` is any, an array of two objects that untyped code built and that have both members; `holder` and `record` hold them.
-The door is a way of ordinary TypeScript by which such an object comes to be held to User: patterns, push and splice, static fields, defaults, callbacks that untyped code calls, type guards, generic helpers and classes, getters and
-setters, literals, other classes with the same members .. `names` lists the programs; a name does in place of the number.
-As plain Bun, line by line."""
+"""external-data-into-classes.py <n>: The n-th of 113 programs, one per way for parsed plain data to reach a place typed
+as a class: class User { id: number = 0; name: string = "made" }. A value that satisfies its type must be accepted.
+"""
 import sys
 DOORS = {
  'genericByConstructor': 'function load<T>(ctor: new () => T, data: any): T[] { return data; }\nconst got = load(User, parsed);\nuse(got[0]);',

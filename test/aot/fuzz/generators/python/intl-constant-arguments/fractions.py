@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""fractions.py <part> <parts>: constant number formatters and number.toLocaleString with constant arguments on numbers with fractions, against twins with opaque arguments. The program is typed TypeScript (parameters are `number`), so the typed lowering is exercised.
-Values: decimal ties at every digit position (x.5, x.05, ... both signs), values one ulp either side of a tie, carries that add a digit or a group (9.995, 999.995, 9999.995, 999999.995), results that round to zero or to -0, the limits 1e-6 and 2^53, sums such as 0.1 + 0.2, and 60,000 pseudo-random doubles of every magnitude and digit count."""
+"""fractions.py <part> <parts>: Constant number formatters and number.toLocaleString with constant arguments on
+fractional numbers, against twins with opaque arguments. The program is typed TypeScript.
+"""
 import sys, json, itertools
 part, parts = int(sys.argv[1]), int(sys.argv[2])
 def obj(d): return "{ " + ", ".join("%s: %s" % (k, json.dumps(v)) for k, v in d.items()) + " }"

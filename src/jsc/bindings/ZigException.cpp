@@ -82,8 +82,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
+    frame.source_url = Bun::toStringRef(Zig::displayPath(vm, stackFrame));
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -268,6 +267,7 @@ public:
 
         bool isConstructor = false;
         bool isGlobalCode = false;
+        bool isFunction = false;
         bool isAsync = false;
     };
 
@@ -307,12 +307,12 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
-        // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
-        auto closingParentheses = line.reverseFind(')');
-
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
+        // A path can have parentheses of its own. The location is in parentheses only if the line ends with one,
+        // and they open after the function's name.
+        auto closingParentheses = line.endsWith(')') ? line.length() - 1 : WTF::notFound;
+        auto openingParentheses = closingParentheses == WTF::notFound ? WTF::notFound : line.find(" ("_s);
+        if (openingParentheses != WTF::notFound)
+            openingParentheses++;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             // Special case: "unknown" frames don't have parentheses but are valid
@@ -406,6 +406,8 @@ public:
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
+        } else {
+            frame.isFunction = true;
         }
 
         if (functionName.startsWith("async "_s)) {
@@ -653,6 +655,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (frame.isFunction) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;
@@ -861,9 +865,8 @@ extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGloba
     populateStackTrace(arg0->vm(), arg0->stackForReporting(arg0->vm()), *trace, PopulateStackTraceFlags::OnlyPosition);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+static void toZigException(JSC::JSValue value, JSC::JSGlobalObject* global, ZigException* exception)
 {
-    JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
         exception->type = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
@@ -894,6 +897,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     }
 
     exceptionFromString(*exception, value, global);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(global));
+    toZigException(JSC::JSValue::decode(jsException), global, exception);
+    // The caller prints whatever could be read, so drop anything the error's getters threw.
+    (void)scope.clearExceptionExceptTermination();
 }
 
 extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)

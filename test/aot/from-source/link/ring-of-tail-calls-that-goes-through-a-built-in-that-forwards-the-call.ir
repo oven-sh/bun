@@ -1,0 +1,30 @@
+# `return Reflect.apply(pong, undefined, [n])`: the row of the built-in returns what its operand returns, so the walk puts the call of `pong` in its place, and that call has to be a jump where it stands on a ring.
+# Link took every built-in in tail position for native code that comes back: it saw no ring, `ping` returned a raw Int32 and `pong`, which shares the call with the built-in, a boxed value: ping(3000000) threw a RangeError, where plain Bun answers 7.
+# a built-in that comes back stands on no ring: `floor` keeps its raw form. `up` and `down` are a ring of calls of values: ring-of-tail-calls-returns-raw-values-only-where-each-call-is-written-direct.ir
+# f1 = ping, f2 = pong, f3 = up, f4 = down, f5 = floor
+# -- source: ring-of-tail-calls-that-goes-through-a-built-in-that-forwards-the-call.ts
+# declare function sink(...values: unknown[]): void;
+# let work = 0;
+# function ping(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 7; return Reflect.apply(pong, undefined, [n]); }
+# function pong(n: number): number { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; return ping(n - 1); }
+# function floor(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; return Math.floor(n / 2); }
+# function up(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 1; return down(n - 1); }
+# function down(n: number): number { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; if (n === 0) return 0; return up(n - 1); }
+# sink(ping(4), floor(5), up(4));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}ring-by-value
+# CHECK: function f2 {{*}}ring-by-value
+# RUN(LISTED): link functions mechanisms=all
+# LISTED-NOT: function f5 {{*}}ring-by-value
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:Body ({{*}}) -> (JSValue)
+# PLAN: unit f2:Body ({{*}}) -> (JSValue)
+# PLAN: unit f3:Body ({{*}}) -> (JSValue)
+# PLAN: unit f4:Body ({{*}}) -> (JSValue)
+# PLAN: unit f5:Body ({{*}}) -> (Double)
+# RUN(WALK): walk f1 f2 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: ReturnCall
+# WALK-LABEL: code f2:Body
+# WALK: ReturnCall

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""stores-from-runtime-code.py <seed>: EVERY ALLOCATION AND EVERY STORE OF THE STEPS IS DONE BY TEXT MADE AT RUN TIME (new Function): under --aot that text stays in the interpreter.
-Old holders (they have outlived full collections) get YOUNG values: object literals of many sizes, ropes, arrays, closures: by put_by_id (replace | add), put_by_val, put_to_scope. A model of plain numbers and of strings built another way stands beside. Random steps: store, move, clear, join, add a property, collect the young (once | in a row), collect fully, make garbage that takes the room of whatever was freed too early, check. It prints only sums: as plain Bun, and `wrong 0`."""
+"""stores-from-runtime-code.py <seed>: Every allocation and store in the steps is done by code created at run time (new
+Function), which stays in the interpreter under --aot. Old holders that have survived full collections get young
+values.
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 steps = R.choice([15000, 30000, 50000])

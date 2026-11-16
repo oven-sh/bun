@@ -45,7 +45,7 @@ test.skipIf(process.platform !== "linux")("Bun.spawn stdin from Blob falls back 
 });
 
 test.skipIf(process.platform !== "linux")("large Response body Blob falls back when memfd is disabled", async () => {
-  // LinuxMemFdAllocator.shouldUse triggers at ≥ 1 MiB (smol) / larger otherwise;
+  // memfd::should_use triggers at ≥ 1 MiB (smol) / larger otherwise;
   // sending a body well past that ensures the memfd path is attempted.
   await using proc = Bun.spawn({
     cmd: [

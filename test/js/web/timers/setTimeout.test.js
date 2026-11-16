@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles, withoutAsanQuarantine } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -581,7 +581,7 @@ for (const mode of ["clear", "refresh", "repeat"]) {
   it(`setTimeout doesn't leak when ${mode} is called inside its own callback`, async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-clear-in-callback-leak-fixture.js"), mode],
-      env: bunEnv,
+      env: withoutAsanQuarantine(bunEnv),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -858,4 +858,86 @@ it("timer heap clock is monotonic, not wall-clock", () => {
   expect(t0).toBeGreaterThan(0);
   expect(t1).toBeGreaterThanOrEqual(t0);
   expect(t1).toBeLessThan(wallNow / 2);
+});
+
+describe("a delay of 0", () => {
+  it("does not wait for Node's minimum of 1 ms in bun test", async () => {
+    let fired = false;
+    const timer = setTimeout(() => (fired = true), 350);
+    // With the minimum these take 400 ms or more.
+    for (let i = 0; i < 400; i++) await new Promise(resolve => setTimeout(resolve, 0));
+    clearTimeout(timer);
+    expect(fired).toBe(false);
+  });
+
+  it("still lets what was queued before it run first", async () => {
+    const seen = [];
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => seen.push("message");
+    await new Promise(resolve =>
+      setTimeout(() => {
+        port2.postMessage(0);
+        setImmediate(() => seen.push("immediate"));
+        setTimeout(() => {
+          seen.push("timer");
+          resolve();
+        }, 0);
+      }, 0),
+    );
+    port1.close();
+    expect(seen).toEqual(["message", "immediate", "timer"]);
+  });
+
+  it("keeps its place among the timers, as in Node", async () => {
+    const seen = [];
+    setTimeout(() => seen.push("1 ms, set first"), 1);
+    setTimeout(() => seen.push("0 ms"), 0);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect(seen).toEqual(["1 ms, set first", "0 ms"]);
+  });
+
+  it("is 1 ms for setInterval", async () => {
+    const start = performance.now();
+    let ticks = 0;
+    await new Promise(resolve => {
+      const interval = setInterval(() => {
+        if (++ticks < 20) return;
+        clearInterval(interval);
+        resolve();
+      }, 0);
+    });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(19);
+  });
+
+  it("waits for the new interval after _repeat turns the timeout into an interval", async () => {
+    const start = performance.now();
+    let ticks = 0;
+    await new Promise(resolve => {
+      const timer = setTimeout(() => {
+        if (++ticks < 4) return;
+        clearInterval(timer);
+        resolve();
+      }, 0);
+      timer._repeat = 10;
+    });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(29);
+  });
+
+  it("is 1 ms outside bun test", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const start = performance.now();
+         for (let i = 0; i < 50; i++) await new Promise(resolve => setTimeout(resolve, 0));
+         console.log(performance.now() - start >= 49);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
 });

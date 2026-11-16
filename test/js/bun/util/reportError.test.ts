@@ -147,12 +147,12 @@ test.concurrent.each([
   {
     name: "reportError(value)",
     script: `reportError(${throwsWhenPrinted}); console.log("after");`,
-    expected: { stdout: "after\n", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+    expected: { stdout: "after\n", stderr: "error\n[threw while printing]\n\nBun v<bun-version>", exitCode: 1 },
   },
   {
     name: "unhandled rejection",
     script: `Promise.reject(${throwsWhenPrinted});`,
-    expected: { stdout: "", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+    expected: { stdout: "", stderr: "error\n[threw while printing]\n\nBun v<bun-version>", exitCode: 1 },
   },
   {
     name: "AggregateError member",

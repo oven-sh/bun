@@ -208,6 +208,43 @@ unsafe extern "C" fn Bun__encoding__constructFromUTF16(
     bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
 }
 
+/// `Buffer.from(string, encoding)` at compile time, for a constant string.
+///
+/// # Safety
+/// Caller (C++) must guarantee `input[..len]` is valid for reading and that `append` may be called with `sink`.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__encoding__encodeLatin1(
+    input: *const u8,
+    len: usize,
+    encoding: u8,
+    sink: *mut core::ffi::c_void,
+    append: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
+) {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let bytes = construct_from_u8_dyn(input, encoding_from_u8(encoding));
+    // SAFETY: forwarded from this fn's contract.
+    unsafe { append(sink, bytes.as_ptr(), bytes.len()) };
+}
+
+/// The same for a 16-bit string.
+///
+/// # Safety
+/// Caller (C++) must guarantee `input[..len]` is valid for reading and that `append` may be called with `sink`.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__encoding__encodeUTF16(
+    input: *const u16,
+    len: usize,
+    encoding: u8,
+    sink: *mut core::ffi::c_void,
+    append: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
+) {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let bytes = construct_from_u16_dyn(input, encoding_from_u8(encoding));
+    // SAFETY: forwarded from this fn's contract.
+    unsafe { append(sink, bytes.as_ptr(), bytes.len()) };
+}
 // for SQL statement
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
@@ -448,19 +485,10 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     if to.try_reserve_exact(to_len).is_err() {
         return BunString::OUT_OF_MEMORY;
     }
-    // SAFETY: the spare bytes are write-only; the encoder reports how many it
-    // initialized and only those are committed.
-    let wrote = unsafe {
-        bun_core::vec::fill_spare(&mut to, 0, |spare| {
-            let wrote = if url_safe {
-                bun_base64::encode_url_safe(&mut spare[..to_len], input)
-            } else {
-                bun_base64::encode(&mut spare[..to_len], input)
-            };
-            (wrote, wrote)
-        })
-    };
-    debug_assert_eq!(wrote, to_len);
+    bun_core::vec::append_with(&mut to, to_len, |spare| {
+        bun_simdutf::base64::encode(input, spare, url_safe)
+    });
+    debug_assert_eq!(to.len(), to_len);
     create_external_globally_allocated_latin1(to)
 }
 

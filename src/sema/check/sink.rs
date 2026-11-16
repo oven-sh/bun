@@ -189,6 +189,8 @@ impl Reported {
     }
 
     /// `AddRelatedInfo`
+    #[cold]
+    #[inline(never)]
     pub(super) fn add_related_info(&mut self, related: Reported) -> &mut Self {
         self.related_information.push(related);
         self
@@ -249,8 +251,6 @@ pub(super) struct Sink<'s> {
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
     /// The queries under which a task has reported (`owned_part`), each with the `Task::number` of the first task that did.
     owners: Guarded<FxHashMap<(Query, Option<FileId>), u64>>,
-    /// See `Program::keep_what_is_reported`.
-    keeps_buffers: bool,
 }
 
 impl<'s> Sink<'s> {
@@ -258,7 +258,6 @@ impl<'s> Sink<'s> {
         Sink {
             by_file: vec_from_iter_in((0..files).map(|_| Guarded::default()), arena),
             owners: Guarded::default(),
-            keeps_buffers: false,
         }
     }
 
@@ -401,17 +400,7 @@ impl super::Program<'_> {
 
     /// Takes the diagnostics the tasks have reported in `file`.
     pub(super) fn take_buffer(&self, file: FileId) -> Vec<Reported> {
-        let mut buffer = self.sink.by_file[file.idx()].lock();
-        match self.sink.keeps_buffers {
-            true => buffer.clone(),
-            false => std::mem::take(&mut *buffer),
-        }
-    }
-
-    /// A query reports when it is evaluated, which is once. True: the files are checked again later, for another of the programs
-    /// that hold them, and what the queries have reported in a file until then is reported in it again.
-    pub fn keep_what_is_reported(&mut self, keeps: bool) {
-        self.sink.keeps_buffers = keeps;
+        std::mem::take(&mut *self.sink.by_file[file.idx()].lock())
     }
 
     /// `CompareDiagnostics`
@@ -514,6 +503,7 @@ impl Checker<'_, '_> {
         // `NewDiagnosticChain`
         let mut diagnostic = self.new_diagnostic((chain.file, chain.start, chain.end), code, args);
         diagnostic.related_information = std::mem::take(&mut chain.related_information);
+        diagnostic.subject = diagnostic.subject.or(chain.subject);
         diagnostic.message_chain.push(chain);
         diagnostic
     }

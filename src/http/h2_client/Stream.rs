@@ -7,15 +7,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::time::Instant;
 
-use crate::Error;
-use bun_picohttp as picohttp;
+use crate::{Error, Headers};
 
 // `live_streams` lives in the parent module of `h2_client/`.
 use crate::HTTPClient;
-
-// See `Stream::new` below, which fills the
-// field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
-// Drop runs when removed from the map.
 
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
@@ -38,8 +33,7 @@ pub struct Stream {
     /// HPACK is decoded eagerly at parse time so the dynamic table stays
     /// consistent across multiple HEADERS in one read; the resulting strings
     /// land here until `deliverStream` hands them to handleResponseMetadata.
-    pub(crate) decoded_bytes: Vec<u8>,
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    pub(crate) decoded_headers: Headers,
     /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
     pub(crate) status_code: u32,
 
@@ -116,8 +110,6 @@ pub enum State {
 impl Drop for Stream {
     fn drop(&mut self) {
         let _ = super::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
-        // header_block / body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
-        // Freeing the Box is the caller's drop; nothing to do here.
     }
 }
 
@@ -127,16 +119,15 @@ impl Stream {
         async_http_id: Option<u32>,
         client: Option<NonNull<HTTPClient<'static>>>,
         send_window: i32,
-    ) -> Box<Self> {
-        Box::new(Self {
+    ) -> Self {
+        Self {
             id,
             async_http_id,
             client,
             opened_at: Instant::now(),
             header_block: Vec::new(),
             body_buffer: Vec::new(),
-            decoded_bytes: Vec::new(),
-            decoded_headers: Vec::new(),
+            decoded_headers: Headers::default(),
             status_code: 0,
             state: State::Open,
             rst_done: false,
@@ -148,7 +139,7 @@ impl Stream {
             data_bytes_received: 0,
             send_window,
             pending_body: bun_ptr::RawSlice::EMPTY,
-        })
+        }
     }
 
     // No `rst()` here: re-entering the session via the `session` backref

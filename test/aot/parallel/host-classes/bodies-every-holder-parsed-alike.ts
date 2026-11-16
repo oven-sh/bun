@@ -1,6 +1,5 @@
 // `await body.json()` gives the same whether or not it goes to a declared type, whatever holds the body: a string, bytes, a Blob, a stream of bytes or of strings, a file, a request or a response that came over the network.
 // The bodies are drawn from a fixed seed: JSON that fits the type and JSON that does not, behind byte order marks of every kind, with lone surrogates, with bytes that are no UTF-8, cut short, blank and empty.
-// STATISTIC: TypedResultsSelected >= 9
 import { closeSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

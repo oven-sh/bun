@@ -1,0 +1,13 @@
+# -- source: name-laid-on-a-function-that-has-met-another-goes-to-unseen-code.js
+# function Ok() { }
+# function Err() { }
+# Ok.of = function (v) { return v; };
+# const pick = sink(1) ? Ok : Err;
+# const of = pick.of;
+# sink(Ok.of(1), of("text"));
+# -- end of source
+# `pick.of`: a read by name through two functions that have met gives anything, and a call of that enters unseen code. If what is laid on Ok did not go there, the function would be entered with arguments that Link never saw:
+# its parameter was proven an integer, and the program ended in an illegal instruction.
+# f3 = what is assigned to Ok.of: it returns what either call passes
+# RUN: link functions mechanisms=all
+# CHECK: function f3 {{*}}result=int[0, 2147483647]|string

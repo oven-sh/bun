@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { locksEnvironment } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -26,7 +27,7 @@ async function compileAndRun(source: string) {
       env: {
         ...bunEnv,
         BUN_JSC_crashIfInterpreterIsUsed: crashIfInterpreterIsUsed,
-        BUN_CRASH_REPORT_URL: "",
+        ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
         BUN_ENABLE_CRASH_REPORTING: "0",
       },
       stdout: "pipe",
@@ -37,23 +38,6 @@ async function compileAndRun(source: string) {
   }
   return { withoutTheOption: results[0], withTheOption: results[1] };
 }
-
-// TODO: with the option the program runs on and names no literal.
-test.todo("a literal that cannot be compiled is named and stops the program", async () => {
-  // No string is long enough to match, and the compiler of regular expressions does not take counts beyond 2 ** 31 - 1.
-  const { withoutTheOption, withTheOption } = await compileAndRun(
-    `console.log("before");\nconsole.log(/a{2147483648}/.test("aaa"));\n`,
-  );
-  expect({ stdout: withoutTheOption.stdout, hasFailed: withoutTheOption.hasFailed }).toEqual({
-    stdout: "before\nfalse\n",
-    hasFailed: false,
-  });
-  expect(withTheOption.stderr).toContain("crashIfInterpreterIsUsed: regular expression /a{2147483648}/");
-  expect({ stdout: withTheOption.stdout, hasFailed: withTheOption.hasFailed }).toEqual({
-    stdout: "before\n",
-    hasFailed: true,
-  });
-});
 
 test("a written empty pattern given to the constructor is compiled", async () => {
   const { withoutTheOption, withTheOption } = await compileAndRun(`

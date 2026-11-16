@@ -761,7 +761,7 @@ export function storedOutgoingHeaders(message: any): Record<string, [string, unk
 }
 
 /**
- * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
+ * The syscalls instrumented in bsd.cpp, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
  * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.

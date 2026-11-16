@@ -12,7 +12,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -295,6 +295,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // here — root-pch.h transitively includes Windows.h via WTF, so the
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
+
+  // bsd.cpp defines __APPLE_USE_RFC_3542 before <netinet/in.h>. None of these use WTF.
+  for (const src of cxxSources) {
+    if (dirname(src) === resolve(cfg.cwd, "packages/bun-usockets/src")) noPchSources.add(src);
+  }
 
   // highway_json.cpp is compiled -O2 even in debug profiles (see its
   // fileOverrides entry in flags.ts); a TU at a different -O level than the

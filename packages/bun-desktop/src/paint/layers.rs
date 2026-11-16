@@ -49,7 +49,7 @@ pub trait Target {
     fn can_draw(&mut self) -> bool;
     /// Replaces what is on the surfaces, and returns when that is done.
     fn draw(&mut self, instances: &[Instance], passes: &[Pass<Self::Surface>]) -> bool;
-    fn show(&mut self, position: Position, rect: IntRect, surface: &Self::Surface);
+    fn show(&mut self, position: Position, rect: IntRect, surface: &Self::Surface, is_opaque: bool);
     fn remove(&mut self, position: Position);
 }
 
@@ -327,7 +327,7 @@ fn tiles_in(grid: &Grid, area: IntRect) -> impl Iterator<Item = (usize, usize)> 
         columns.start,
     );
     rows.flat_map(move |row| {
-        let index = move |column| grid.start_of(row) + column as usize;
+        let index = move |column| row as usize * grid.columns + column as usize;
         columns.clone().map(move |column| {
             (
                 index(column),
@@ -392,8 +392,6 @@ pub struct Layers<T: Target> {
     moving: Range<i32>,
     moved: Range<i32>,
     frames_scrolled: u32,
-    /// The window server takes longer with what the CPU has written.
-    pub avoids_cpu: bool,
 }
 
 impl<T: Target> Layers<T> {
@@ -409,6 +407,11 @@ impl<T: Target> Layers<T> {
         } else {
             0
         };
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn frames_scrolled(&self) -> u32 {
+        self.frames_scrolled
     }
 
     /// The window server keeps up best with few cells that are the same in every frame. Returns whether they are others.
@@ -453,7 +456,6 @@ impl<T: Target> Layers<T> {
             moving: 0..0,
             moved: 0..0,
             frames_scrolled: 0,
-            avoids_cpu: false,
         }
     }
 
@@ -510,20 +512,18 @@ impl<T: Target> Layers<T> {
         Some(buffer)
     }
 
-    /// What `is_in_front` has no cells where there is nothing, and only cells of one height.
-    pub fn paint(&mut self, compositor: &mut Compositor, wanted: IntRect, is_in_front: bool) {
+    pub fn paint(&mut self, compositor: &mut Compositor, width: i32, height: i32) {
         const WORTH_DRAWING: usize = 480;
         const WORTH_MOVING: usize = 32;
         const TILES_PER_THREAD: usize = 400;
         const MAX_THREADS: usize = 4;
         let start = diagnostics::logs_frames().then(Instant::now);
         let round_up = |length: i32, step: i32| (length.max(1) + step - 1) / step * step;
-        let top = wanted.top / TILE_HEIGHT * TILE_HEIGHT;
         let window = IntRect::new(
             0,
-            top,
-            round_up(wanted.right, TILE_WIDTH),
-            round_up(wanted.bottom, TILE_HEIGHT),
+            0,
+            round_up(width, TILE_WIDTH),
+            round_up(height, TILE_HEIGHT),
         );
         let grid = &Grid {
             window,
@@ -537,16 +537,12 @@ impl<T: Target> Layers<T> {
         let edges = columns(&self.breaks, window.right);
         let columns = &edges[..edges.len() - 1];
         let column_at = |x: i32| columns.partition_point(|left| *left <= x) - 1;
-        let rows = top / CELL_HEIGHT..round_up(window.bottom, CELL_HEIGHT) / CELL_HEIGHT;
+        let rows = 0..round_up(window.bottom, CELL_HEIGHT) / CELL_HEIGHT;
         let area_of = |position| {
             let (left, top) = origin(position);
             IntRect::new(left, top, edges[column_at(left) + 1], top + CELL_HEIGHT).intersect(window)
         };
-        let is_empty = |position| {
-            is_in_front && tiles_in(grid, area_of(position)).all(|(tile, _)| tiles[tile].is_clear())
-        };
-        let is_gone =
-            |it: &Position| !columns.contains(&it.0) || !rows.contains(&it.1) || is_empty(*it);
+        let is_gone = |it: &Position| !columns.contains(&it.0) || !rows.contains(&it.1);
         for (position, buffer) in self.shown.extract_if(|it, _| is_gone(it)) {
             self.target.remove(position);
             self.spare.push(buffer);
@@ -556,19 +552,17 @@ impl<T: Target> Layers<T> {
         let positions = rows
             .clone()
             .flat_map(|row| columns.iter().map(move |left| (*left, row)));
-        for position in positions.filter(|it| !is_empty(*it)) {
+        for position in positions {
             let ((left, top), area) = (origin(position), area_of(position));
-            let height = if is_in_front {
-                CELL_HEIGHT
-            } else {
-                round_up(area.bottom - top, CELL_HEIGHT / 4)
-            };
             let step = if area.right == window.right {
                 CELL_WIDTH / 4
             } else {
                 TILE_WIDTH
             };
-            let size = (round_up(area.right - left, step), height);
+            let size = (
+                round_up(area.right - left, step),
+                round_up(area.bottom - top, CELL_HEIGHT / 4),
+            );
             let is_right = |it: &Buffer<_>| {
                 tiles_in(grid, area).all(|(tile, own)| it.hashes[own] == tiles[tile].hash)
             };
@@ -625,7 +619,7 @@ impl<T: Target> Layers<T> {
             &compositor.primitives,
         );
         let work = changes.iter().map(|change| change.work).sum::<usize>();
-        if work >= if self.avoids_cpu { 1 } else { WORTH_DRAWING } && self.target.can_draw() {
+        if work >= WORTH_DRAWING && self.target.can_draw() {
             self.instances.clear();
             let passes = changes
                 .iter()
@@ -669,10 +663,7 @@ impl<T: Target> Layers<T> {
             let changed = grid.around(|tile| actions[tile] == Action::Paint);
             let moved = survey(&compositor.shown, grid, down, changed);
             for (tile, action) in actions.iter_mut().enumerate() {
-                let (row, column) = (
-                    top / TILE_HEIGHT + (tile / grid.columns) as i32,
-                    (tile % grid.columns) as i32,
-                );
+                let (row, column) = ((tile / grid.columns) as i32, (tile % grid.columns) as i32);
                 let source = grid.rect(row, column..column + 1).offset(0, -down);
                 let is_there = |y: i32| {
                     self.shown
@@ -786,10 +777,15 @@ impl<T: Target> Layers<T> {
             );
         }
         let now = Instant::now();
-        for Change { buffer, .. } in changes {
+        for Change { buffer, area, .. } in changes {
             let (left, top) = origin(buffer.position);
             let rect = IntRect::new(left, top, left + buffer.size.0, top + buffer.size.1);
-            self.target.show(buffer.position, rect, &buffer.surface);
+            self.target.show(
+                buffer.position,
+                rect,
+                &buffer.surface,
+                tiles_in(grid, area).all(|(tile, _)| tiles[tile].is_opaque()),
+            );
             let old = self.shown.insert(buffer.position, buffer);
             self.spare.extend(old.map(|old| Buffer {
                 last_shown: now,
@@ -865,7 +861,7 @@ mod tests {
             false
         }
 
-        fn show(&mut self, position: Position, rect: IntRect, surface: &Rc<Memory>) {
+        fn show(&mut self, position: Position, rect: IntRect, surface: &Rc<Memory>, _: bool) {
             self.shown.insert(position, (rect, surface.clone()));
         }
 
@@ -962,54 +958,6 @@ mod tests {
     }
 
     #[test]
-    fn shows_any_part_of_a_plane() {
-        let (mut layers, mut compositor, size) = (
-            Layers::new(Screen::default()),
-            Compositor::default(),
-            (1536, 6400),
-        );
-        let (kept, mut whole) = (lines(&compositor), vec![[0; 4]; (size.0 * size.1) as usize]);
-        for (frame, top) in [2048, 2176, 2304, 2176, 1920, 2560, 4096, 3968, 128, 0]
-            .into_iter()
-            .enumerate()
-        {
-            let scrolled = frame as i32 / 4 * 47;
-            let without_background = |compositor: &mut Compositor, lines: &[Sprite]| {
-                page(compositor, lines, size, scrolled, false);
-                compositor.primitives.remove(0);
-            };
-            without_background(&mut compositor, &kept);
-            layers.paint(
-                &mut compositor,
-                IntRect::new(0, top, size.0, top + 1280),
-                true,
-            );
-            layers.target.next_frame(frame as u32 % 3);
-            let mut fresh = Compositor::default();
-            let again = lines(&fresh);
-            without_background(&mut fresh, &again);
-            fresh.paint(Pixels {
-                id: 1,
-                data: &mut whole,
-                width: size.0 as usize,
-                shown: size,
-                platform_moves: false,
-            });
-            for y in top..top + 1280 {
-                let expected = &whole[(y * size.0) as usize..][..size.0 as usize];
-                assert!(
-                    layers.target.row(y, 0, 1024) == &expected[..1024],
-                    "frame {frame}, row {y}"
-                );
-                assert!(
-                    layers.target.row(y, 1024, size.0) == &expected[1024..],
-                    "frame {frame}, row {y}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn shows_what_a_single_buffer_does() {
         let (mut layers, mut compositor) = (Layers::new(Screen::default()), Compositor::default());
         let sizes = [
@@ -1030,7 +978,7 @@ mod tests {
             page(&mut compositor, &kept, size, scrolled, frame % 2 == 0);
             layers.keep_apart([0..0, 0..576, 0..700, 1500..4000][frame / 5 % 4].clone());
             layers.set_scrolling(frame % 13 > 1);
-            layers.paint(&mut compositor, IntRect::new(0, 0, size.0, size.1), false);
+            layers.paint(&mut compositor, size.0, size.1);
             layers.target.next_frame(frame as u32 % 3);
             if frame % 20 == 19 {
                 layers.release_spares(Duration::ZERO);

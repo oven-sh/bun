@@ -8,6 +8,16 @@ fn is_breakable_space(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\n')
 }
 
+fn is_ideograph(character: char) -> bool {
+    matches!(character, '\u{4E00}'..='\u{9FFF}' | '\u{AC00}'..='\u{D7A3}')
+}
+
+/// The common ones of those that words are made of.
+fn is_letter(character: char) -> bool {
+    matches!(character, 'a'..='z' | 'A'..='Z' | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{24F}' | '\u{38E}'..='\u{3A1}' | '\u{3A3}'..='\u{481}'
+        | '\u{5D0}'..='\u{5EA}' | '\u{620}'..='\u{64A}' | '\u{671}'..='\u{6D3}' | '\u{1E00}'..='\u{1EFF}')
+}
+
 /// `LineBreakData::FillAscii` and `ShouldBreakFast` in Blink.
 fn breaks_between_ascii(before_last: Option<char>, last: u8, next: u8) -> bool {
     if last == b'-' && next.is_ascii_digit() {
@@ -94,12 +104,16 @@ pub struct Breaks {
 
 impl Breaks {
     fn segment_word_at(&mut self, text: &str, offset: usize, rules: u8) {
+        let is_limit = |it: &(usize, char)| is_breakable_space(it.1) || is_ideograph(it.1);
         self.word_start = text[..offset]
-            .rfind(is_breakable_space)
-            .map_or(0, |space| space + 1);
-        self.word_end = text[offset..]
-            .find(is_breakable_space)
-            .map_or(text.len(), |space| offset + space);
+            .char_indices()
+            .rfind(is_limit)
+            .map_or(0, |(at, it)| at + usize::from(it.is_ascii()));
+        let (end, last) = text[offset..]
+            .char_indices()
+            .find(is_limit)
+            .map_or((text.len(), 0), |(at, it)| (offset + at, it.len_utf8()));
+        self.word_end = end + usize::from(last > 1);
         let kind = match rules & !abi::BREAK_CJ {
             abi::BREAK_LOOSE => host::BREAK_LINES_LOOSE,
             abi::BREAK_STRICT => host::BREAK_LINES_STRICT,
@@ -111,11 +125,7 @@ impl Breaks {
             kind
         };
         self.rules = rules;
-        find_breaks(
-            kind,
-            &text[self.word_start..text.len().min(self.word_end + 1)],
-            &mut self.unicode,
-        );
+        find_breaks(kind, &text[self.word_start..end + last], &mut self.unicode);
         self.next = 0;
     }
 
@@ -147,6 +157,12 @@ impl Breaks {
             return last > ' '
                 && next > ' '
                 && breaks_between_ascii(before.next(), last as u8, next as u8);
+        }
+        if is_ideograph(last) && is_ideograph(next) {
+            return true;
+        }
+        if is_letter(last) && is_letter(next) {
+            return false;
         }
         if offset >= self.word_end || rules != self.rules {
             self.segment_word_at(text, offset, rules);

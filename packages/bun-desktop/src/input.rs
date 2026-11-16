@@ -719,10 +719,6 @@ fn scroll(
     if phase == Phase::Started {
         offer(at, |motion, _, _| motion.begin_gesture());
     }
-    #[cfg(target_os = "macos")]
-    if phase == Phase::Started && surface::with_motion(id, at[1], at[2], Motion::expect_scrolling) {
-        window::refresh(state.id);
-    }
     // There, momentum follows.
     if cfg!(target_os = "macos") && dx == 0. && dy == 0. {
         return;

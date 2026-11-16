@@ -13,8 +13,8 @@ pub struct Shaped {
     pub faces: Vec<abi::Face>,
     pub base_level: u8,
     placed: Vec<Placed>,
-    /// A cluster, where its glyphs start and end, and their advance.
-    groups: Vec<(usize, u32, u32, f32)>,
+    /// A cluster, the next one with glyphs if it has no group, where its glyphs start and end, and their advance.
+    groups: Vec<(usize, Option<usize>, u32, u32, f32)>,
     items: Vec<Item>,
 }
 
@@ -102,6 +102,43 @@ impl Shaped {
         for (index, run) in runs.iter().enumerate() {
             let end = (run.end as usize).clamp(start, bytes.len());
             let primary = fonts.primary_for_ascii(run.font);
+            if let Some(candidate) = primary {
+                self.clusters.extend((start..end).map(|offset| {
+                    let breaks = if breaks_in_ascii(bytes, offset) {
+                        abi::CLUSTER_BREAK_BEFORE
+                    } else {
+                        0
+                    };
+                    let space = if matches!(bytes[offset], b' ' | b'\t') {
+                        abi::CLUSTER_SPACE
+                    } else {
+                        0
+                    };
+                    Cluster {
+                        start: offset as u32,
+                        advance: 0.,
+                        glyphs: Span::default(),
+                        bidi_level: 0,
+                        flags: breaks | space,
+                        face: 0,
+                    }
+                }));
+                for part in bytes[start..end]
+                    .chunk_by(|a, b| is_undrawn((*a).into()) == is_undrawn((*b).into()))
+                {
+                    start += part.len();
+                    self.items.push(Item {
+                        run: index,
+                        candidate,
+                        level: 0,
+                        script,
+                        draws: !is_undrawn(part[0].into()),
+                        is_small_capital: false,
+                        end: start,
+                    });
+                }
+                continue;
+            }
             for offset in start..end {
                 let byte = bytes[offset];
                 let breaks = if breaks_in_ascii(bytes, offset) {
@@ -123,15 +160,14 @@ impl Shaped {
                     face: 0,
                 });
                 let draws = !is_undrawn(byte.into());
-                let candidate = match primary {
-                    Some(primary) => Some(primary),
-                    None if draws => fonts.select(
+                let candidate = match draws {
+                    true => fonts.select(
                         run.font,
                         &text[offset..offset + 1],
                         Presentation::Any,
                         &mut Vec::new(),
                     ),
-                    None => fonts.primary(run.font),
+                    false => fonts.primary(run.font),
                 };
                 let candidate = candidate.unwrap_or(usize::MAX);
                 self.extend_items(Item {
@@ -312,21 +348,42 @@ impl Shaped {
         WORDS.with_borrow_mut(|words| words.shape(&shaping, text, start..end, placed));
 
         let scale = size / face.units_per_em() / STEPS_PER_UNIT as f32;
-        let index_of = |offset: u32| {
-            clusters
-                .partition_point(|cluster| cluster.start <= offset)
-                .saturating_sub(1)
-        };
         let has_vertical_metrics =
             is_vertical && face.table(u32::from_be_bytes(*b"vmtx")).is_some();
         let groups = &mut self.groups;
         groups.clear();
-        let (mut glyph, mut guess) = (0, 0);
+        let (mut glyph, mut guess, is_plain) =
+            (0, 0, !is_vertical && !is_rtl && !face.file.has_color);
+        self.glyphs.reserve(placed.len());
         while glyph < placed.len() {
+            while is_plain
+                && let (Some([it, next]), Some([cluster, after])) = (
+                    placed[glyph..].first_chunk(),
+                    clusters[guess..].first_chunk_mut(),
+                )
+                && (it.cluster, next.cluster) == (cluster.start, after.start)
+            {
+                let start = self.glyphs.len() as u32;
+                (cluster.glyphs, cluster.advance) = (
+                    Span {
+                        start,
+                        end: start + 1,
+                    },
+                    it.advance as f32 * scale,
+                );
+                self.glyphs.push(Glyph {
+                    id: it.id.into(),
+                    x: it.dx as f32 * scale,
+                    y: -it.dy as f32 * scale,
+                });
+                (glyph, guess) = (glyph + 1, guess + 1);
+            }
             let offset = placed[glyph].cluster;
             let owner = match clusters.get(guess) {
                 Some(cluster) if cluster.start == offset => guess,
-                _ => index_of(offset),
+                _ => clusters
+                    .partition_point(|cluster| cluster.start <= offset)
+                    .saturating_sub(1),
             };
             guess = owner + 1;
             let owner_end = clusters.get(owner + 1).map_or(u32::MAX, |next| next.start);
@@ -374,7 +431,15 @@ impl Shaped {
                     .flatten()
                     .unwrap_or(advance as f32 * scale);
             }
-            groups.push((owner, group_start, self.glyphs.len() as u32, x));
+            let next = placed.get(glyph).filter(|_| is_plain).map(|next| {
+                owner
+                    + clusters[owner + 1..]
+                        .iter()
+                        .take_while(|it| it.start <= next.cluster)
+                        .count()
+            });
+            guess = next.unwrap_or(guess);
+            groups.push((owner, next, group_start, self.glyphs.len() as u32, x));
         }
         if is_rtl {
             groups.reverse();
@@ -382,10 +447,10 @@ impl Shaped {
 
         let first_character =
             |cluster: &Cluster| text[cluster.start as usize..].chars().next().unwrap_or(' ');
-        for (index, &(owner, start, end, advance)) in groups.iter().enumerate() {
-            let next = groups
-                .get(index + 1)
-                .map_or(clusters.len(), |group| group.0);
+        for (index, &(owner, next, start, end, advance)) in groups.iter().enumerate() {
+            let next = next
+                .or(groups.get(index + 1).map(|group| group.0))
+                .unwrap_or(clusters.len());
             let owner = (owner..next)
                 .find(|it| !is_default_ignorable(first_character(&clusters[*it])))
                 .unwrap_or(owner);

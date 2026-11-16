@@ -192,15 +192,6 @@ pub struct Motion {
     moving: Vec<(usize, Next)>,
     /// Those that the system moves.
     lifted: Vec<usize>,
-    /// How far right, and since when.
-    #[cfg(target_os = "macos")]
-    sideways: FastMap<u32, (f32, f64)>,
-    /// The scroller that fingers have come down on.
-    #[cfg(target_os = "macos")]
-    expected: Option<u32>,
-    /// For each scroller, how far down it is, since when, and how many times in a row that has changed.
-    #[cfg(target_os = "macos")]
-    heights: FastMap<u32, (f32, f64, u32)>,
 }
 
 /// Calls `f` with each item, and the matrix and the clip around it.
@@ -613,63 +604,6 @@ impl Motion {
     pub fn set_lifted(&mut self, items: Vec<usize>) {
         self.lifted = items;
         self.find_next();
-    }
-
-    /// The items that scroll what keeps moving up or down, with the offset that was painted.
-    #[cfg(target_os = "macos")]
-    pub fn sliders(&mut self, now: f64, lasts: f64) -> Vec<(usize, f32)> {
-        let (mut heights, mut sliders) = (FastMap::default(), Vec::new());
-        for driver in &self.tables.drivers {
-            let Source::Scroll { scroller: index } = driver.source else {
-                continue;
-            };
-            let Some(scroller) = self.tables.scrollers.get(index as usize) else {
-                continue;
-            };
-            let height = scroller.offset[1] + self.moved(index)[1];
-            let is_touched = self.expected.take_if(|id| *id == scroller.id).is_some();
-            let is_touched = is_touched
-                || self
-                    .scrolled
-                    .get(&scroller.id)
-                    .is_some_and(|it| it.is_scrolling);
-            let (since, times) = match self.heights.get(&scroller.id) {
-                _ if is_touched && scroller.min[1] != scroller.max[1] => (now, 3),
-                Some(&(before, since, times)) if before == height => (since, times),
-                Some(&(_, since, times)) if now - since < lasts => (now, times + 1),
-                _ => (now, 0),
-            };
-            heights.insert(scroller.id, (height, since, times));
-            let left = scroller.offset[0] + self.moved(index)[0];
-            let sideways = self.sideways.entry(scroller.id).or_insert((left, 0.));
-            if sideways.0 != left {
-                *sideways = (left, now);
-            }
-            if times >= 3 && now - since < lasts && now - sideways.1 >= lasts {
-                sliders.push((self.first_item + driver.item as usize, scroller.offset[1]));
-            }
-        }
-        self.sideways.retain(|id, _| heights.contains_key(id));
-        self.heights = heights;
-        sliders
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn expect_scrolling(&mut self, scene: &Scene, position: [f32; 2]) -> bool {
-        self.expected = [1., -1.]
-            .into_iter()
-            .find_map(|down| self.target(scene, position, [0., down])?);
-        self.expected.is_some()
-    }
-
-    /// The items that move something by how far it is scrolled.
-    #[cfg(target_os = "macos")]
-    pub fn sticky(&self) -> impl Iterator<Item = usize> {
-        self.tables
-            .drivers
-            .iter()
-            .filter(|it| matches!(it.source, Source::Offset { .. }))
-            .map(|it| self.first_item + it.item as usize)
     }
 
     /// What goes on for a while, and is not moved twice.

@@ -122,8 +122,7 @@ pub(crate) use yield_::Yield;
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
 pub(crate) mod dispatch_tasks;
 
-/// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
-/// `runtime::dispatch::__bun_run_io` can name `StaticPipeWriter<ShellSubprocess>`.
+/// `bun.shell.subproc`. Exposed so `runtime::dispatch::__bun_run_io` can name `ShellSubprocess`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 

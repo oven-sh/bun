@@ -6,6 +6,7 @@ pub mod bitmap;
 mod cff;
 pub mod color;
 mod glyf;
+pub mod memo;
 pub mod variations;
 pub mod work;
 
@@ -390,7 +391,13 @@ impl Font {
     }
 
     pub fn glyph(&self, character: u32) -> Option<u32> {
-        self.charmap.as_ref()?.map(character)
+        let charmap = self.charmap.as_ref()?;
+        memo::remembered(
+            u32::from(charmap.is_symbol) + u32::from(charmap.is_mac_roman) * 2,
+            charmap.table,
+            character & 0xff_ffff,
+            || charmap.map(character),
+        )
     }
 
     pub fn glyph_variant(&self, character: u32, selector: u32) -> Option<u32> {

@@ -100,9 +100,6 @@ void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo, bool blinks
     }
 }
 
-void bd_layer_move(void* layer, double x, double y) { ((__bridge CALayer*)layer).position = CGPointMake(x, y); }
-void bd_layer_set_order(void* layer, double order) { ((__bridge CALayer*)layer).zPosition = order; }
-
 void bd_layer_clip(void* pointer, double radius, float opacity, double order)
 {
     CALayer* layer = (__bridge CALayer*)pointer;
@@ -157,6 +154,7 @@ void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t c
     }
 }
 
+void bd_layer_set_opaque(void* layer, bool isOpaque) { ((__bridge CALayer*)layer).opaque = isOpaque; }
 void bd_layer_remove(void* layer) { [(__bridge CALayer*)layer removeFromSuperlayer]; }
 
 void bd_layers_flush(void)
@@ -223,17 +221,16 @@ void* bd_gpu_texture(IOSurfaceRef surface)
 typedef struct { size_t offset, count; void* slots[8]; } BDBatch;
 typedef struct { void* texture; float cell[4]; size_t batches; } BDPass;
 
-static NSMutableArray<id<MTLCommandBuffer>>* unfinished;
+static id<MTLCommandBuffer> unfinished;
 
 char* bd_gpu_finish(void)
 {
     return answer(^id {
-        NSArray* all = unfinished;
+        id<MTLCommandBuffer> commands = unfinished;
         unfinished = nil;
-        [all makeObjectsPerformSelector:@selector(waitUntilCompleted)];
-        for (id<MTLCommandBuffer> commands in all)
-            if (commands.status != MTLCommandBufferStatusCompleted)
-                fail(commands.error.description ?: @"it did not complete");
+        [commands waitUntilCompleted];
+        if (commands && commands.status != MTLCommandBufferStatusCompleted)
+            fail(commands.error.description ?: @"it did not complete");
         return nil;
     });
 }
@@ -261,16 +258,14 @@ char* bd_gpu_draw(void* instances, const BDPass* passes, size_t count, const BDB
             for (const BDBatch* end = batch + pass->batches; batch < end; batch++) {
                 [encoder setVertexBuffer:all offset:batch->offset atIndex:0];
                 [encoder setFragmentBuffer:all offset:batch->offset atIndex:0];
-                for (int slot = 0; slot < 8; slot++)
-                    [encoder setFragmentBuffer:(__bridge id<MTLBuffer>)batch->slots[slot] offset:0 atIndex:2 + slot];
+                [encoder setFragmentBuffers:(__unsafe_unretained id<MTLBuffer> const*)(void*)batch->slots offsets:(NSUInteger[8]) { 0 } withRange:NSMakeRange(2, 8)];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:batch->count];
             }
             [encoder endEncoding];
         }
         [commands commit];
         [commands waitUntilScheduled];
-        unfinished = unfinished ?: [NSMutableArray new];
-        [unfinished addObject:commands];
+        unfinished = commands;
         return nil;
     });
 }

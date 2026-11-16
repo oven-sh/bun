@@ -22,6 +22,12 @@ impl Script {
             'a'..='z' | 'A'..='Z' => Script::LATIN,
             '\0'..='\u{a9}' | '\u{2010}'..='\u{2070}' | '\u{2190}'..='\u{27ff}' => Script::COMMON,
             '\u{4e00}'..='\u{9fff}' => Script::HAN,
+            '\u{410}'..='\u{44f}' => Script(*b"Cyrl"),
+            '\u{5d0}'..='\u{5ea}' => Script(*b"Hebr"),
+            '\u{620}'..='\u{63f}' | '\u{641}'..='\u{64a}' => Script(*b"Arab"),
+            '\u{3041}'..='\u{3096}' => Script(*b"Hira"),
+            '\u{30a1}'..='\u{30fa}' => Script(*b"Kana"),
+            '\u{ac00}'..='\u{d7a3}' => Script(*b"Hang"),
             _ => Script((host().script_of)(character.into()).to_be_bytes()),
         }
     }
@@ -36,7 +42,8 @@ const UCHAR_EMOJI_PRESENTATION: u32 = 58;
 const UCHAR_LINE_BREAK: u32 = 0x1008;
 
 pub fn is_emoji(character: char) -> bool {
-    (host().character_property)(character.into(), UCHAR_EMOJI) != 0
+    !matches!(character, '\u{af}'..'\u{203c}' | '\u{3400}'..='\u{ffff}')
+        && (host().character_property)(character.into(), UCHAR_EMOJI) != 0
 }
 
 pub fn has_emoji_presentation(character: char) -> bool {
@@ -82,7 +89,7 @@ pub fn find_breaks(kind: u8, text: &str, offsets: &mut Vec<u32>) {
 
 /// Whether it is a grapheme cluster of its own next to others of its kind.
 pub fn stands_alone(character: char) -> bool {
-    matches!(character as u32, 0..=0xc | 0xe..0x300 | 0x370..0x483 | 0x48a..0x591 | 0x1e00..0x200c | 0x2010..0x20d0 | 0x2100..0x2cef
+    matches!(character as u32, 0..=0xc | 0xe..0x300 | 0x370..0x483 | 0x48a..0x591 | 0x5d0..0x600 | 0x620..0x64b | 0x660..=0x66f | 0x671..0x6d6 | 0x1e00..0x200c | 0x2010..0x20d0 | 0x2100..0x2cef
         | 0x2e00..0x302a | 0x3030..0x3099 | 0x309b..0xa66f | 0xac00..0xd7a4 | 0xff00..0xff9e)
 }
 

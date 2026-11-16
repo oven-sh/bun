@@ -1187,23 +1187,35 @@ impl DesktopBundle {
         if target.os != OperatingSystem::Mac {
             return None;
         }
-        if !cfg!(target_os = "macos") {
-            return Some(
-                "The .app is not signed as a whole. Run codesign on macOS before you distribute it",
-            );
-        }
-        let arguments: [&[u8]; 6] = [
-            b"/usr/bin/codesign",
-            b"--force",
-            b"--deep",
-            b"--sign",
-            b"-",
-            &self.root,
-        ];
-        let is_signed = bun_core::util::spawn_sync_inherit_no_stdin(&arguments)
-            .is_ok_and(|status| status.is_ok());
-        (!is_signed).then_some("codesign failed, so the .app is not signed as a whole")
+        const NOT_SIGNED: &str =
+            "The .app is not signed as a whole. Run codesign on macOS before you distribute it";
+        #[cfg(not(target_os = "macos"))]
+        return Some(NOT_SIGNED);
+        #[cfg(target_os = "macos")]
+        bun_removable_features::call_removable_or!(
+            ChildProcess,
+            ReturnDefault,
+            { Some(NOT_SIGNED) },
+            codesign,
+            &self.root
+        )
     }
+}
+
+#[cfg(target_os = "macos")]
+#[inline(never)]
+fn codesign(bundle: &[u8]) -> Option<&'static str> {
+    let arguments: [&[u8]; 6] = [
+        b"/usr/bin/codesign",
+        b"--force",
+        b"--deep",
+        b"--sign",
+        b"-",
+        bundle,
+    ];
+    let is_signed =
+        bun_core::util::spawn_sync_inherit_no_stdin(&arguments).is_ok_and(|status| status.is_ok());
+    (!is_signed).then_some("codesign failed, so the .app is not signed as a whole")
 }
 
 fn not_written(path: &[u8], error: &bun_sys::Error) -> CompileError {

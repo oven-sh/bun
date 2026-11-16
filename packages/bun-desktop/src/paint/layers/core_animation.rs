@@ -3,9 +3,10 @@ use std::ffi::c_void;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use crate::hash::FastMap;
+
 use super::metal::{self, Buffers};
 use super::{Instance, Locked, Pass, Position, Target};
-use crate::hash::FastMap;
 use crate::paint::flatten::{Curve, Lifted};
 use crate::paint::raster::IntRect;
 use crate::platform::macos::Object;
@@ -43,8 +44,7 @@ unsafe extern "C" {
         cycle: f64,
         cycles: f64,
     );
-    safe fn bd_layer_move(layer: &c_void, x: f64, y: f64);
-    safe fn bd_layer_set_order(layer: &c_void, order: f64);
+    safe fn bd_layer_set_opaque(layer: &c_void, is_opaque: bool);
     safe fn bd_layer_remove(layer: &c_void);
     safe fn bd_layers_flush();
 }
@@ -59,12 +59,6 @@ pub fn uses_gpu() -> bool {
     static IS_WANTED: LazyLock<bool> =
         LazyLock::new(|| std::env::var("BUN_DESKTOP_RENDERER").as_deref() != Ok("software"));
     *IS_WANTED
-}
-
-pub fn slides() -> bool {
-    static IS_WANTED: LazyLock<bool> =
-        LazyLock::new(|| std::env::var("BUN_DESKTOP_SLIDE").is_ok_and(|it| it != "0"));
-    *IS_WANTED && uses_gpu()
 }
 
 pub struct Surface {
@@ -113,10 +107,6 @@ struct Overlay {
 }
 
 pub struct Tree {
-    /// With the layer at the top left corner of the window that it is in, if `corner` is somewhere else.
-    clip: Option<(Object, Object)>,
-    /// Like `corner`, in front of other trees.
-    front: Option<Object>,
     overlays: Vec<Overlay>,
     /// By their contents, with how long they are kept.
     pictures: FastMap<u128, (Surface, Instant)>,
@@ -131,13 +121,11 @@ pub struct Tree {
 }
 
 impl Tree {
-    fn new(root: *mut c_void) -> Tree {
+    pub fn new(root: *mut c_void) -> Tree {
         // SAFETY: the layer of a view.
         let corner = unsafe { bd_layer_create(root) };
         let buffers = uses_gpu().then(Buffers::default);
         Tree {
-            front: None,
-            clip: None,
             overlays: Vec::new(),
             pictures: FastMap::default(),
             caret: None,
@@ -148,44 +136,6 @@ impl Tree {
             is_flipped: false,
             buffers,
         }
-    }
-
-    pub fn of_window(root: *mut c_void) -> Tree {
-        let mut tree = Tree::new(root);
-        // SAFETY: the layer of a view.
-        let front = tree.front.insert(unsafe { bd_layer_create(root) });
-        bd_layer_set_order(front, 3.);
-        tree
-    }
-
-    pub fn clipped(root: *mut c_void, order: f64) -> Tree {
-        // SAFETY: layers.
-        let (outer, clip) = unsafe {
-            let outer = bd_layer_create(root);
-            let clip = bd_layer_create(&*outer);
-            (outer, clip)
-        };
-        bd_layer_set_order(&outer, order);
-        let mut tree = Tree::new((&raw const *clip).cast_mut());
-        tree.clip = Some((outer, clip));
-        tree
-    }
-
-    /// `down` pixels higher than the cells are said to be.
-    pub fn show_through(&self, rect: IntRect, down: i32, radius: f32) {
-        let Some((_, clip)) = &self.clip else { return };
-        self.place(clip, rect);
-        bd_layer_clip(clip, f64::from(radius) / self.scale, 1., 0.);
-        let y = if self.is_flipped {
-            -rect.top - down
-        } else {
-            rect.bottom + down
-        };
-        bd_layer_move(
-            &self.corner,
-            f64::from(-rect.left) / self.scale,
-            f64::from(y) / self.scale,
-        );
     }
 
     fn place(&self, layer: &Object, rect: IntRect) {
@@ -211,8 +161,7 @@ impl Tree {
     }
 
     pub fn begin(&mut self, scale: f64, is_opaque: bool) {
-        self.front.as_ref().map(|it| bd_layer_pin(it));
-        let is_flipped = bd_layer_pin(self.clip.as_ref().map_or(&self.corner, |it| &it.0));
+        let is_flipped = bd_layer_pin(&self.corner);
         if (scale, is_opaque, is_flipped) != (self.scale, self.is_opaque, self.is_flipped) {
             crate::diagnostics::log!(
                 "layers: scale {scale}, opaque {is_opaque}, flipped {is_flipped}"
@@ -285,11 +234,6 @@ impl Tree {
             else {
                 continue;
             };
-            let clip = if clip.is_empty() {
-                IntRect::default()
-            } else {
-                clip
-            };
             if let Some(pixels) = lifted
                 .pixels
                 .take()
@@ -300,8 +244,7 @@ impl Tree {
             }
             let mut overlay = same.or_else(|| unused.pop()).unwrap_or_else(|| {
                 // SAFETY: layers.
-                let clip =
-                    unsafe { bd_layer_create(&**self.front.as_ref().unwrap_or(&self.corner)) };
+                let clip = unsafe { bd_layer_create(&*self.corner) };
                 // SAFETY: as above.
                 Overlay {
                     picture: unsafe { bd_layer_create(&*clip) },
@@ -370,9 +313,7 @@ impl Tree {
             return layer.iter().for_each(|layer| bd_layer_remove(layer));
         };
         // SAFETY: a layer.
-        let layer = layer.unwrap_or_else(|| unsafe {
-            bd_layer_create(&**self.front.as_ref().unwrap_or(&self.corner))
-        });
+        let layer = layer.unwrap_or_else(|| unsafe { bd_layer_create(&*self.corner) });
         if shown.is_none_or(|it| it.rect != caret.rect) {
             self.place(&layer, caret.rect);
         }
@@ -401,8 +342,7 @@ impl Tree {
 impl Drop for Tree {
     fn drop(&mut self) {
         metal::finish();
-        bd_layer_remove(self.clip.as_ref().map_or(&self.corner, |it| &it.0));
-        self.front.iter().for_each(|it| bd_layer_remove(it));
+        bd_layer_remove(&self.corner);
     }
 }
 
@@ -440,7 +380,7 @@ impl Target for Tree {
             .is_some_and(|buffers| metal::draw(buffers, instances, passes))
     }
 
-    fn show(&mut self, position: Position, rect: IntRect, surface: &Surface) {
+    fn show(&mut self, position: Position, rect: IntRect, surface: &Surface, is_opaque: bool) {
         let known = self.cells.remove(&position);
         let has_moved = known.as_ref().is_none_or(|(_, placed)| *placed != rect);
         // SAFETY: a layer.
@@ -452,6 +392,7 @@ impl Target for Tree {
             self.place(&layer, rect);
         }
         bd_layer_show(&layer, &surface.surface);
+        bd_layer_set_opaque(&layer, is_opaque || self.is_opaque);
         self.cells.insert(position, (layer, rect));
     }
 

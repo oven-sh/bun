@@ -9,11 +9,19 @@ use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
 use super::buffer::{self, Buffer, Glyph};
 use super::{Direction, position, substitute};
 use crate::small_vec::SmallVec;
+use crate::text::sfnt::memo::remembered;
 use crate::text::sfnt::variations::{self, Coords};
 use crate::text::sfnt::work::spend;
 use crate::text::sfnt::{Data, Font, Tag};
 
 pub fn coverage(table: Data, glyph: u32) -> Option<usize> {
+    remembered(0, table, glyph.min(1 << 16) | 1 << 24, || {
+        Some(search_coverage(table, glyph)? as u32)
+    })
+    .map(|it| it as usize)
+}
+
+fn search_coverage(table: Data, glyph: u32) -> Option<usize> {
     let (glyph, count) = (u16::try_from(glyph).ok()?, usize::from(table.u16(2)?));
     if table.u16(0)? == 1 {
         return table
@@ -58,39 +66,62 @@ pub fn class_of(table: Option<Data>, glyph: u32) -> u16 {
                         .filter(|it| Some(*it) < table.u16(4))?,
                 ) * 2,
             ),
-            _ => find_range(table, table.u16(2)?.into(), glyph)?.u16(4),
+            _ => remembered(0, table, u32::from(glyph) | 2 << 24, || {
+                find_range(table, table.u16(2)?.into(), glyph)?
+                    .u16(4)
+                    .map(u32::from)
+            })
+            .map(|it| it as u16),
         }
     };
     find().unwrap_or(0)
 }
 
 /// Tells quickly that a glyph is not in a set.
-#[derive(Clone, Copy, Default)]
-pub struct Digest([u64; 3]);
+#[derive(Clone, Copy)]
+pub struct Digest<const WORDS: usize = 32> {
+    remainders: [u64; WORDS],
+    quotients: u64,
+}
 
-impl Digest {
-    const SHIFTS: [u32; 3] = [4, 0, 9];
+impl<const WORDS: usize> Digest<WORDS> {
+    pub const EMPTY: Self = Digest {
+        remainders: [0; WORDS],
+        quotients: 0,
+    };
+    const BITS: u32 = WORDS as u32 * 64;
 
-    pub fn add(&mut self, first: u32, last: u32) {
-        for (mask, shift) in self.0.iter_mut().zip(Digest::SHIFTS) {
-            let (first, count) = (first >> shift, (last >> shift).wrapping_sub(first >> shift));
-            *mask |= if count >= 63 {
-                u64::MAX
-            } else {
-                ((2u64 << count) - 1).rotate_left(first & 63)
-            };
+    pub fn add(&mut self, glyph: u32) {
+        self.remainders[(glyph % Self::BITS / 64) as usize] |= 1 << (glyph % 64);
+        self.quotients |= 1 << (glyph / Self::BITS % 64);
+    }
+
+    fn add_range(&mut self, first: u32, last: u32) {
+        (first / Self::BITS..=last / Self::BITS).for_each(|it| self.quotients |= 1 << (it % 64));
+        for word in (first / 64..=last / 64).take(WORDS + 1) {
+            let [from, to] = [first.saturating_sub(word * 64), (last - word * 64).min(63)];
+            self.remainders[word as usize % WORDS] |= u64::MAX << from & u64::MAX >> (63 - to);
+        }
+        if last.saturating_sub(first) >= Self::BITS {
+            self.remainders = [u64::MAX; WORDS];
         }
     }
 
     fn may_have(&self, glyph: u32) -> bool {
-        self.0
-            .iter()
-            .zip(Digest::SHIFTS)
-            .all(|(mask, shift)| mask >> (glyph >> shift & 63) & 1 != 0)
+        self.remainders[(glyph % Self::BITS / 64) as usize] >> (glyph % 64)
+            & self.quotients >> (glyph / Self::BITS % 64)
+            & 1
+            != 0
     }
 
-    fn may_meet(&self, other: &Digest) -> bool {
-        self.0.iter().zip(other.0).all(|(a, b)| a & b != 0)
+    fn may_meet(&self, other: &Self) -> bool {
+        self.quotients & other.quotients != 0
+            && self
+                .remainders
+                .iter()
+                .zip(&other.remainders)
+                .fold(0, |any, (a, b)| any | a & b)
+                != 0
     }
 }
 
@@ -146,7 +177,7 @@ impl Definitions {
 pub struct Subtable {
     pub kind: u16,
     pub data: Data,
-    digest: Digest,
+    digest: Digest<8>,
 }
 
 pub struct Lookup {
@@ -164,7 +195,7 @@ const USE_MARK_SET: u32 = 16;
 pub struct Table {
     data: Data,
     pub positions: bool,
-    lookups: Vec<OnceLock<Option<Lookup>>>,
+    lookups: Vec<OnceLock<Option<Box<Lookup>>>>,
     /// Offsets can make a small table look huge.
     budget: AtomicI64,
 }
@@ -203,6 +234,7 @@ impl Table {
                 0
             };
             let spend = |cost: usize| self.budget.fetch_sub(cost as i64, Relaxed) > 0;
+            let mut all = Digest::EMPTY;
             let subtables = (0..count).take_while(|_| spend(32)).filter_map(|it| {
                 let (kind, data) = (table.u16(0)?, table.at16(6 + it * 2)?);
                 let (kind, data) = if kind == extension {
@@ -215,26 +247,28 @@ impl Table {
                     3 if kind == chain => 6 + usize::from(data.u16(2)?) * 2,
                     _ => 2,
                 };
-                let mut digest = Digest::default();
+                let mut digest = Digest::EMPTY;
                 let coverage = data
                     .at16(first)
                     .filter(|it| spend(it.u16(2).unwrap_or(0).into()))?;
-                covered(coverage).for_each(|(first, last)| digest.add(first.into(), last.into()));
+                for (first, last) in covered(coverage)
+                    .take_while(|it| spend(usize::from(it.1.saturating_sub(it.0)) / 256))
+                {
+                    digest.add_range(first.into(), last.into());
+                    all.add_range(first.into(), last.into());
+                }
                 Some(Subtable { kind, data, digest })
             });
-            let subtables: Vec<_> = subtables.collect();
-            let digest = Digest(std::array::from_fn(|it| {
-                subtables
-                    .iter()
-                    .fold(0, |all, table| all | table.digest.0[it])
-            }));
-            Some(Lookup {
-                flags: flags | set,
-                subtables,
-                digest,
-            })
+            Some(
+                Lookup {
+                    flags: flags | set,
+                    subtables: subtables.collect(),
+                    digest: all,
+                }
+                .into(),
+            )
         };
-        self.lookups.get(index)?.get_or_init(read).as_ref()
+        self.lookups.get(index)?.get_or_init(read).as_deref()
     }
 
     fn records(list: Data, at: usize) -> impl Iterator<Item = (Tag, Option<Data>)> {
@@ -785,13 +819,15 @@ impl Apply<'_> {
             return;
         }
         self.at = 0;
-        while let Some(glyph) = self
+        while let Some(skipped) = self
             .buffer
             .glyphs
-            .get(self.at)
-            .filter(|_| self.buffer.budget > 0)
+            .get(self.at..)
+            .and_then(|it| it.iter().position(|it| applies(self, it)))
+            && self.buffer.budget > 0
         {
-            if !(applies(self, glyph) && self.apply_here(lookup)) {
+            self.at += skipped;
+            if !self.apply_here(lookup) {
                 self.at += 1;
             }
         }

@@ -4,15 +4,16 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
+use crate::hash::FastMap;
+use crate::small_vec::SmallVec;
+
 use super::arena::{Arena, Block};
 use super::flatten::{Kind, Primitive};
 use super::raster::{
     IntRect, Layer, Pixel, blend_row, fill_row, fill_through, over, premultiply, scale, set_row,
 };
-use crate::hash::FastMap;
 #[cfg(any(test, not(target_os = "macos")))]
 use crate::platform::{Painted, Pixels};
-use crate::small_vec::SmallVec;
 
 /// A part of a texture.
 #[derive(Clone, Copy)]
@@ -752,11 +753,6 @@ pub(super) struct Grid {
 }
 
 impl Grid {
-    /// The index of its first tile.
-    pub fn start_of(&self, row: i32) -> usize {
-        (row - self.window.top / TILE_HEIGHT) as usize * self.columns
-    }
-
     pub fn columns_of(&self, area: IntRect) -> Range<i32> {
         area.left / TILE_WIDTH..(area.right - 1) / TILE_WIDTH + 1
     }
@@ -794,7 +790,8 @@ impl Grid {
             end: 0,
         });
         for row in self.rows_of(self.window) {
-            let is_included = |column: &i32| is_included(self.start_of(row) + *column as usize);
+            let is_included =
+                |column: &i32| is_included(row as usize * self.columns + *column as usize);
             let mut all = self.columns_of(self.window);
             let Some(first) = all.find(is_included) else {
                 continue;
@@ -839,7 +836,8 @@ impl Grid {
     ) {
         let mut start = columns.start;
         for column in columns.start..=columns.end {
-            if column == columns.end || !is_included(self.start_of(row) + column as usize) {
+            if column == columns.end || !is_included(row as usize * self.columns + column as usize)
+            {
                 if start < column {
                     f(self.rect(row, start..column));
                 }
@@ -860,8 +858,8 @@ pub(super) struct Tile {
 
 impl Tile {
     #[cfg(any(test, target_os = "macos"))]
-    pub fn is_clear(&self) -> bool {
-        self.is_flat && self.base == [0; 4]
+    pub fn is_opaque(&self) -> bool {
+        self.base[3] == 255
     }
 
     fn flat(base: Pixel, first: usize) -> Tile {
@@ -897,7 +895,8 @@ fn survey_again(
     });
     let columns = grid.columns_of(wanted);
     for row in grid.rows_of(wanted) {
-        tiles[grid.start_of(row)..][columns.start as usize..columns.end as usize].fill(empty);
+        tiles[row as usize * grid.columns..][columns.start as usize..columns.end as usize]
+            .fill(empty);
     }
     for (index, summary) in summaries.iter().enumerate().skip(empty.first as usize) {
         let area = summary.area.offset(0, down).intersect(grid.window);
@@ -913,7 +912,9 @@ fn survey_again(
                 pair(area.top, area.bottom),
             );
             for row in grid.rows_of(visited) {
-                for tile in &mut tiles[grid.start_of(row)..][all.start as usize..all.end as usize] {
+                for tile in
+                    &mut tiles[row as usize * grid.columns..][all.start as usize..all.end as usize]
+                {
                     (tile.hash, tile.is_flat) = (combine(tile.hash, value), false);
                 }
             }
@@ -942,7 +943,8 @@ fn survey_again(
             } else {
                 all.end..all.end
             };
-            let tiles = &mut tiles[grid.start_of(row)..][all.start as usize..all.end as usize];
+            let tiles =
+                &mut tiles[row as usize * grid.columns..][all.start as usize..all.end as usize];
             let (before, rest) = tiles.split_at_mut((filled.start - all.start) as usize);
             let (inside, after) = rest.split_at_mut(filled.len());
             for tile in before.iter_mut().chain(after) {
@@ -1006,22 +1008,6 @@ fn differing<'a>(
 }
 
 /// How far down most of what moved did.
-/// By how much most of it has moved, if more has than has stayed.
-pub(super) fn shift(before: &[Summary], after: &[Summary]) -> Option<i32> {
-    let down = movement(before, after).filter(|it| *it != 0)?;
-    let places: FastMap<_, _> = before
-        .iter()
-        .map(|it| ((it.shape, it.y.round() as i32), ()))
-        .collect();
-    let count = |down: i32| {
-        after
-            .iter()
-            .filter(|it| places.contains_key(&(it.shape, it.y.round() as i32 - down)))
-            .count()
-    };
-    (count(down) > count(0)).then_some(down)
-}
-
 pub(super) fn movement(before: &[Summary], after: &[Summary]) -> Option<i32> {
     const SAMPLES: usize = 12;
     let (_, before, after) = differing(before, after);
@@ -1079,21 +1065,15 @@ pub(super) struct Plan<'a> {
 impl Plan<'_> {
     /// `area` is made of whole tiles.
     pub fn paint(&self, band: &mut Band, area: IntRect) {
-        let (
-            Plan {
-                grid,
-                tiles,
-                actions,
-                has_changes,
-                ..
-            },
-            top,
-        ) = (self, self.grid.window.top / TILE_HEIGHT);
-        for row in grid
-            .rows_of(area)
-            .filter(|row| has_changes[(*row - top) as usize])
-        {
-            let (first, columns) = (grid.start_of(row), grid.columns_of(area));
+        let Plan {
+            grid,
+            tiles,
+            actions,
+            has_changes,
+            ..
+        } = self;
+        for row in grid.rows_of(area).filter(|row| has_changes[*row as usize]) {
+            let (first, columns) = (row as usize * grid.columns, grid.columns_of(area));
             let mut column = columns.start;
             while column < columns.end {
                 let (start, base) = (column, tiles[first + column as usize].base);
@@ -1120,7 +1100,7 @@ impl Plan<'_> {
                 |tile: usize| actions[tile] == Action::Paint && tiles[tile].first <= index as u32;
             for row in grid
                 .rows_of(visible)
-                .filter(|row| has_changes[(*row - top) as usize])
+                .filter(|row| has_changes[*row as usize])
             {
                 grid.runs(row, grid.columns_of(visible), is_needed, |run| {
                     band.paint(primitive, run.intersect(visible))
@@ -1145,25 +1125,7 @@ pub struct Compositor {
     buffers: SmallVec<(u64, Vec<u64>), 3>,
 }
 
-/// What a `Compositor` knows about one of several planes.
-#[cfg(any(test, target_os = "macos"))]
-#[derive(Default)]
-pub struct Plane {
-    pub primitives: Vec<Primitive>,
-    shown: Vec<Summary>,
-    tiles: Vec<Tile>,
-    window: IntRect,
-}
-
 impl Compositor {
-    #[cfg(any(test, target_os = "macos"))]
-    pub fn exchange(&mut self, plane: &mut Plane) {
-        std::mem::swap(&mut self.primitives, &mut plane.primitives);
-        std::mem::swap(&mut self.shown, &mut plane.shown);
-        std::mem::swap(&mut self.tiles, &mut plane.tiles);
-        std::mem::swap(&mut self.window, &mut plane.window);
-    }
-
     /// While `window` is that of `shown`.
     pub(super) fn survey(&mut self, summaries: &[Summary], grid: &Grid) -> Vec<Tile> {
         let mut tiles = std::mem::take(&mut self.tiles);
@@ -1263,7 +1225,7 @@ impl Compositor {
                 .rows_of(changed)
                 .flat_map(|row| grid.columns_of(changed).map(move |column| (row, column)))
             {
-                let tile = grid.start_of(row) + column as usize;
+                let tile = row as usize * grid.columns + column as usize;
                 // Few large areas are less work for the platform than many small ones.
                 let is_worth_it =
                     pixels.platform_moves || actions[tile] == Action::Paint && !tiles[tile].is_flat;

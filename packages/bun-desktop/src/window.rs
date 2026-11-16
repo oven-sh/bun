@@ -99,13 +99,6 @@ pub struct WindowState {
     /// By the app, so that it is drawn before it comes back.
     #[cfg(target_os = "macos")]
     was_hidden: Cell<bool>,
-    #[cfg(target_os = "macos")]
-    planes: RefCell<Option<layers::Planes>>,
-    /// For each surface.
-    #[cfg(target_os = "macos")]
-    sliders: RefCell<Vec<layers::Sliders>>,
-    #[cfg(target_os = "macos")]
-    did_not_slide: Cell<Option<Instant>>,
     /// The identities of animations, and when that turned out.
     #[cfg(target_os = "macos")]
     unlifted: RefCell<Vec<([f64; 5], Instant)>>,
@@ -227,64 +220,7 @@ pub fn any_is_stale() -> bool {
 pub mod layers {
     use super::*;
     use crate::paint::layers::core_animation::Caret;
-    use crate::paint::software::{self, Plane};
-
-    /// After it has moved.
-    const SLIDES_FOR: Duration = Duration::from_millis(1500);
-
-    pub type Sliders = (u32, Vec<(usize, f32)>);
-
-    pub struct Planes {
-        contents: (Layers<Tree>, Plane),
-        in_front: (Layers<Tree>, Plane),
-    }
-
-    fn present_slide(
-        state: &WindowState,
-        window: &dyn platform::Window,
-        slide: Option<flatten::Slide>,
-    ) {
-        let planes = &mut *state.planes.borrow_mut();
-        let Some(slide) = slide else {
-            return *planes = None;
-        };
-        let plane = |order| {
-            (
-                Layers::new(Tree::clipped(window.layer(), order)),
-                Plane::default(),
-            )
-        };
-        let Planes { contents, in_front } = planes.get_or_insert_with(|| Planes {
-            contents: plane(1.),
-            in_front: plane(2.),
-        });
-        let (compositor, scale) = (
-            &mut *state.compositor.lock(),
-            state.metrics.get().scale.into(),
-        );
-        let parts = [
-            (
-                contents,
-                slide.contents,
-                slide.painted,
-                slide.down,
-                slide.radius,
-            ),
-            (in_front, slide.in_front, slide.clip, 0, 0.),
-        ];
-        for ((layers, plane), primitives, painted, down, radius) in parts {
-            plane.primitives = primitives;
-            layers.avoids_cpu = true;
-            layers.keep_apart(0..slide.clip.left);
-            layers.set_scrolling(down == 0);
-            layers.target.begin(scale, false);
-            layers.target.show_through(slide.clip, down, radius);
-            compositor.exchange(plane);
-            layers.paint(compositor, painted, true);
-            compositor.exchange(plane);
-            layers.release_spares(SPARES_LAST);
-        }
-    }
+    use crate::paint::software;
 
     thread_local! {
         static HAS_CHANGES: Cell<bool> = const { Cell::new(false) };
@@ -301,7 +237,6 @@ pub mod layers {
                     .borrow_mut()
                     .iter_mut()
                     .for_each(Layers::forget_contents);
-                state.planes.take();
                 refresh(state.id);
             }
         }
@@ -322,18 +257,6 @@ pub mod layers {
             .unlifted
             .borrow_mut()
             .retain(|(_, when)| when.elapsed() < RETRY);
-        let slides = core_animation::slides()
-            && state
-                .did_not_slide
-                .get()
-                .is_none_or(|when| when.elapsed() >= RETRY);
-        state.sliders.replace(
-            surfaces
-                .iter()
-                .filter(|_| slides)
-                .map(|it| sliders(&mut it.borrow_mut()))
-                .collect(),
-        );
         loop {
             let since = since.filter(|it| state.covered_caret.get() != Some(*it));
             let mut counts = Vec::new();
@@ -353,21 +276,7 @@ pub mod layers {
                     blinks,
                 })
             });
-            if cache
-                .slide
-                .as_mut()
-                .is_some_and(|slide| !flatten::separate(primitives, slide))
-            {
-                crate::diagnostics::trace!("it does not slide");
-                state.did_not_slide.set(Some(Instant::now()));
-                state.sliders.take();
-                continue;
-            }
             if refused.is_empty() && caret.is_some() == since.is_some() {
-                let redraw_at = redraw_at
-                    .into_iter()
-                    .chain(cache.slide.as_ref().map(|_| Instant::now() + SLIDES_FOR))
-                    .min();
                 let mut first = 0;
                 let next_motion = |(surface, end): (Rc<RefCell<Surface>>, usize)| {
                     let surface = &mut *surface.borrow_mut();
@@ -402,16 +311,6 @@ pub mod layers {
                 .covered_caret
                 .set(if caret.is_none() { since } else { None }.or(state.covered_caret.get()));
         }
-    }
-
-    fn sliders(surface: &mut Surface) -> Sliders {
-        (
-            surface.id,
-            surface.motion.sliders(
-                surface::milliseconds(Instant::now()),
-                SLIDES_FOR.as_millis() as f64,
-            ),
-        )
     }
 
     pub(super) fn movers<'a>(
@@ -449,7 +348,7 @@ pub mod layers {
             ..
         } = state.metrics.get();
         let mut layers = state.layers.borrow_mut();
-        let layers = layers.get_or_insert_with(|| Layers::new(Tree::of_window(window.layer())));
+        let layers = layers.get_or_insert_with(|| Layers::new(Tree::new(window.layer())));
         layers.target.begin(scale.into(), is_opaque);
         let all = IntRect::new(
             0,
@@ -457,22 +356,22 @@ pub mod layers {
             (width * scale).ceil() as i32,
             (height * scale).ceil() as i32,
         );
-        let shows = software::see_through(&state.compositor.lock().primitives, all);
-        let points = [shows.start, shows.end].map(|it| f64::from(it) / f64::from(scale));
-        let [left, right] = window
-            .fit_backdrop(points)
-            .map(|it| (it * f64::from(scale)).round() as i32);
-        layers.keep_apart(left..right);
-        let slides = state.cache.borrow().slide.is_some();
-        let is_scrolling = surface::shown_in(state)
-            .iter()
-            .any(|it| it.borrow().is_scrolling());
-        layers.set_scrolling(is_scrolling && slides == state.planes.borrow().is_some());
-        layers.avoids_cpu = slides;
-        layers.paint(&mut state.compositor.lock(), all, false);
+        layers.set_scrolling(
+            surface::shown_in(state)
+                .iter()
+                .any(|it| it.borrow().is_scrolling()),
+        );
+        if layers.frames_scrolled().is_multiple_of(8) {
+            let shows = software::see_through(&state.compositor.lock().primitives, all);
+            let points = [shows.start, shows.end].map(|it| f64::from(it) / f64::from(scale));
+            let [left, right] = window
+                .fit_backdrop(points)
+                .map(|it| (it * f64::from(scale)).round() as i32);
+            layers.keep_apart(left..right);
+        }
+        layers.paint(&mut state.compositor.lock(), all.right, all.bottom);
         layers.target.show_caret(caret);
         let cache = &mut *state.cache.borrow_mut();
-        present_slide(state, window, cache.slide.take());
         cache.known_contents = layers.target.show_lifted(std::mem::take(&mut cache.lifted));
         HAS_CHANGES.set(true);
         RELEASE_AT.set(
@@ -655,12 +554,6 @@ pub fn create(mut options: Options) -> Result<()> {
         unlifted: RefCell::default(),
         #[cfg(target_os = "macos")]
         was_hidden: Cell::default(),
-        #[cfg(target_os = "macos")]
-        planes: RefCell::default(),
-        #[cfg(target_os = "macos")]
-        sliders: RefCell::default(),
-        #[cfg(target_os = "macos")]
-        did_not_slide: Cell::default(),
         options: RefCell::new(options),
     });
     WINDOWS.with_borrow_mut(|windows| {
@@ -777,7 +670,6 @@ fn forget_what_was_drawn(state: &WindowState) {
     }
     #[cfg(target_os = "macos")]
     if state.was_hidden.get() {
-        state.planes.take();
         state.layers.take();
     }
     state.is_stale.set(true);
@@ -978,30 +870,14 @@ fn flatten_surfaces(
             rect.intersect(device(metrics.content)),
         );
         #[cfg(target_os = "macos")]
-        let (movers, sliders) = (
-            &layers::movers(state, &surface, frame.now),
-            state.sliders.borrow(),
-        );
-        #[cfg(target_os = "macos")]
-        let sliders = sliders
-            .iter()
-            .find(|it| it.0 == surface.id)
-            .map_or(&[][..], |it| &it.1);
-        #[cfg(target_os = "macos")]
-        let sticky = &surface
-            .motion
-            .sticky()
-            .filter(|_| !sliders.is_empty())
-            .collect::<Vec<_>>();
+        let movers = &layers::movers(state, &surface, frame.now);
         #[cfg(not(target_os = "macos"))]
-        let (movers, sliders, sticky) = (&[], &[], &[]);
+        let movers = &[];
         flatten::paint(
             &surface.scene,
             &frame,
             &Placement {
                 movers,
-                sliders,
-                sticky,
                 origin,
                 clip,
                 background,
@@ -1019,8 +895,6 @@ fn flatten_surfaces(
     state.frame_buttons.replace(buttons);
     let placement = Placement {
         movers: &[],
-        sliders: &[],
-        sticky: &[],
         origin: (0, 0),
         clip: everything,
         background,

@@ -18,10 +18,24 @@ fn fold(a: u64, b: u64) -> u64 {
 impl Hasher for FastHasher {
     fn write(&mut self, bytes: &[u8]) {
         let (blocks, rest) = bytes.as_chunks::<16>();
-        let (mut lanes, mut last) = ([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344], [0; 16]);
-        last[..rest.len()].copy_from_slice(rest);
-        for block in blocks.iter().chain([&last]) {
-            let block = u128::from_le_bytes(*block);
+        let mut lanes = [0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344];
+        let last = match (
+            rest.first_chunk().zip(rest.last_chunk()),
+            rest.first_chunk().zip(rest.last_chunk()),
+        ) {
+            (Some((a, b)), _) => {
+                u128::from(u64::from_le_bytes(*a)) << 64 | u128::from(u64::from_le_bytes(*b))
+            }
+            (_, Some((a, b))) => {
+                u128::from(u32::from_le_bytes(*a)) << 32 | u128::from(u32::from_le_bytes(*b))
+            }
+            _ => rest.iter().fold(0, |all, it| all << 8 | u128::from(*it)),
+        };
+        for block in blocks
+            .iter()
+            .map(|it| u128::from_le_bytes(*it))
+            .chain([last])
+        {
             lanes = [
                 lanes[1],
                 fold(lanes[0] ^ block as u64, ODD ^ (block >> 64) as u64),

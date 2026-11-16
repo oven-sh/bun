@@ -1,6 +1,9 @@
-use std::borrow::Cow;
 use std::ops::Range;
 use std::time::{Duration, Instant};
+
+use crate::gfx::{Pixmap, Transform};
+use crate::hash::FastMap;
+use crate::small_vec::SmallVec;
 
 use super::cpu::{self, GlyphKey, GlyphPlacer, Painter, gradient_axis};
 use super::digest::{self, Digest};
@@ -9,14 +12,11 @@ use super::raster::{
     Clip, IntRect, Layer, Paint, average_scale, has_radii, map_rect, multiply, premultiply,
 };
 use super::scene::{Frame, Scene, cross_fades, tile_bounds};
-use super::software::{self, Atlas, Compositor, Sprite as Tile, Summary};
+use super::software::{self, Atlas, Compositor, Sprite as Tile};
 use super::stretch::{STRETCHED, Stretch};
 use crate::abi::{BlendMode, Filter, Glyph, Item, LineStyle, Rect, RoundedRect};
-use crate::gfx::{Pixmap, Transform};
-use crate::hash::FastMap;
 use crate::images::{self, Content};
 use crate::motion::sample;
-use crate::small_vec::SmallVec;
 use crate::text::{self, GlyphPixels};
 use crate::webview;
 
@@ -62,17 +62,6 @@ impl Primitive {
         }
     }
 
-    fn higher(&self, by: i32, clip: IntRect) -> Primitive {
-        Primitive {
-            bounds: Rect {
-                y: self.bounds.y - by as f32,
-                ..self.bounds
-            },
-            clip: self.clip.offset(0, -by).intersect(clip),
-            ..*self
-        }
-    }
-
     fn visible(&self) -> IntRect {
         IntRect::around(self.bounds).intersect(self.clip)
     }
@@ -106,28 +95,6 @@ pub struct Cache {
     pub lifted: Vec<Lifted>,
     /// The `contents` whose pixels are not needed again.
     pub known_contents: Vec<u128>,
-    pub slide: Option<Slide>,
-    /// What was subtracted from the offset of the last one.
-    origin_of_slide: i32,
-    last_slide: Vec<Summary>,
-}
-
-/// The contents of a scroller, in a plane that the system moves.
-#[cfg_attr(
-    not(target_os = "macos"),
-    expect(dead_code, reason = "Core Animation does it")
-)]
-pub struct Slide {
-    /// In the window.
-    pub clip: IntRect,
-    pub radius: f32,
-    /// How much lower everything is in the plane than in the window.
-    pub down: i32,
-    /// In the plane.
-    pub painted: IntRect,
-    pub contents: Vec<Primitive>,
-    /// In the window.
-    pub in_front: Vec<Primitive>,
 }
 
 /// A `PushTransform` or a `PushLayer` with what drives it.
@@ -233,16 +200,12 @@ pub struct Lifted {
     pub moves: Option<Curve>,
     origin: [f64; 5],
     is_clipped: bool,
-    is_refused: bool,
     /// The run of an invisible primitive, which finds out what happens to it, and what was visible of that.
     marker: (u32, IntRect),
 }
 
 impl Lifted {
     fn follow_marker(&mut self, primitives: &[Primitive]) -> Option<()> {
-        if self.is_refused || self.marker.1.is_empty() {
-            return (!self.is_refused).then_some(());
-        }
         let mut found = primitives
             .iter()
             .enumerate()
@@ -327,7 +290,6 @@ impl Cache {
         self.draw += 1;
         self.primitives.clear();
         self.lifted.clear();
-        self.slide = None;
     }
 
     pub fn finish(&mut self, compositor: &mut Compositor) {
@@ -512,9 +474,6 @@ fn is_identity(filter: &Filter) -> bool {
 /// Where a scene goes in the window.
 pub struct Placement<'a> {
     pub movers: &'a [Mover<'a>],
-    /// The items that scroll something, with the offset that was painted.
-    pub sliders: &'a [(usize, f32)],
-    pub sticky: &'a [usize],
     pub origin: (i32, i32),
     pub clip: IntRect,
     /// What is behind the scene.
@@ -532,23 +491,11 @@ struct Flattener<'a> {
     layer_start: Option<usize>,
     /// Beyond it, the CPU paints what the primitives leave out.
     flattened: IntRect,
-    is_in_slide: bool,
-    /// What stays while that moves. There is an invisible primitive in its place.
-    stuck: Vec<(IntRect, Vec<Primitive>)>,
 }
-
-const EVERYTHING: IntRect = IntRect {
-    left: i32::MIN,
-    top: i32::MIN,
-    right: i32::MAX,
-    bottom: i32::MAX,
-};
 
 const CARET: u32 = u32::MAX;
 
 const MAX_LIFTED: u32 = 64;
-const SLIDE: u32 = CARET - MAX_LIFTED - 1;
-const MAX_STUCK: u32 = 16;
 
 fn is_marker(primitive: &Primitive) -> bool {
     (CARET - MAX_LIFTED..CARET).contains(&primitive.run)
@@ -558,7 +505,6 @@ fn is_uncovered(primitives: &[Primitive], index: usize) -> bool {
     let rect = primitives[index].visible();
     primitives[index + 1..].iter().all(|it| match it.kind {
         _ if is_marker(it) => true,
-        _ if (SLIDE - MAX_STUCK..=SLIDE).contains(&it.run) => !it.visible().overlaps(rect),
         Kind::Quad { color, border, .. } if color & 0xFF == 0 => {
             let edge = border.into_iter().chain(it.radii).fold(0., f32::max).ceil() as i32 + 1;
             !it.visible().overlaps(rect) || IntRect::around(it.bounds).outset(-edge).contains(rect)
@@ -581,44 +527,6 @@ pub fn lift_caret(primitives: &mut Vec<Primitive>) -> Option<(IntRect, u32)> {
     let is_whole = primitives[index + 1..].iter().all(|it| it.run != CARET);
     (is_plain && is_whole && is_uncovered(primitives, index)).then(|| primitives.remove(index))?;
     Some((caret.visible(), color))
-}
-
-/// Hands it what is in front of it. Returns whether it can be apart from the rest.
-#[cfg(target_os = "macos")]
-pub fn separate(primitives: &mut Vec<Primitive>, slide: &mut Slide) -> bool {
-    let mut found = primitives
-        .iter()
-        .enumerate()
-        .filter(|(_, it)| it.run == SLIDE);
-    let (Some((index, &marker)), None) = (found.next(), found.next()) else {
-        return false;
-    };
-    if marker.visible() != slide.clip
-        || marker.opacity != 1.
-        || marker.radii != [marker.radii[0]; 4]
-    {
-        return false;
-    }
-    slide.radius = marker.radii[0];
-    let later = primitives.split_off(index + 1);
-    primitives.pop();
-    for it in later {
-        let visible = it.visible();
-        if visible.overlaps(slide.clip) {
-            slide.in_front.push(Primitive {
-                clip: visible.intersect(slide.clip),
-                ..it
-            });
-            primitives.extend(
-                visible
-                    .without(slide.clip)
-                    .map(|clip| Primitive { clip, ..it }),
-            );
-        } else {
-            primitives.push(it);
-        }
-    }
-    true
 }
 
 /// Returns the identities of those that have to stay where they are.
@@ -664,9 +572,7 @@ pub fn paint(
         cache,
         budget: BUDGET,
         layer_start: None,
-        flattened: EVERYTHING,
-        is_in_slide: false,
-        stuck: Vec::new(),
+        flattened: IntRect::new(i32::MIN, i32::MIN, i32::MAX, i32::MAX),
     };
     flattener.range(0..scene.items.len(), &root, placement.clip);
     images::expect_all(
@@ -967,156 +873,6 @@ impl Flattener<'_> {
         }
     }
 
-    fn slide(
-        &mut self,
-        index: usize,
-        offset: f32,
-        matrix: &Transform,
-        clip: IntRect,
-        may_shift: bool,
-    ) -> Option<()> {
-        const WORTH_IT: i64 = 600 * 600;
-        const STEP: i32 = 512;
-        const ROOM: Range<i32> = 1 << 10..1 << 15;
-        let Painter { scene, frame, .. } = self.painter;
-        let Item::PushTransform(by) = scene.items[index] else {
-            return None;
-        };
-        let needs_backdrop = |item: &Item| match item {
-            Item::PushLayer { blend, .. } => *blend != BlendMode::Normal,
-            _ => matches!(item, Item::Backdrop { .. }),
-        };
-        (self.cache.slide.is_none()
-            && !self.is_in_slide
-            && clip.area() >= WORTH_IT
-            && clip.left >= 0)
-            .then_some(())?;
-        (!scene.items[index..scene.end(index)]
-            .iter()
-            .any(needs_backdrop))
-        .then_some(())?;
-        let inner = frame.concat(matrix, by);
-        let scrolled = (offset * inner.sy + matrix.ty - inner.ty).round() as i32;
-        if !ROOM.contains(&(scrolled - self.cache.origin_of_slide)) {
-            self.cache.origin_of_slide = scrolled - (ROOM.end >> 1);
-        }
-        let down = scrolled - self.cache.origin_of_slide;
-        let (top, bottom) = (
-            (clip.top + down) / STEP * STEP,
-            (clip.bottom + down + STEP - 1) / STEP * STEP,
-        );
-        let painted = IntRect {
-            top,
-            bottom,
-            ..clip
-        };
-        let (first, number_lifted, flattened) = (
-            self.cache.primitives.len(),
-            self.cache.lifted.len(),
-            self.flattened,
-        );
-        (self.flattened, self.is_in_slide) = (EVERYTHING, true);
-        self.range(
-            scene.content(index),
-            &inner.post_translate(0., down as f32),
-            painted,
-        );
-        (self.flattened, self.is_in_slide) = (flattened, false);
-        let (mut contents, mut in_front) = (self.cache.primitives.split_off(first), Vec::new());
-        for (number, (area, stuck)) in std::mem::take(&mut self.stuck)
-            .into_iter()
-            .enumerate()
-            .rev()
-            .filter(|it| !it.1.0.is_empty())
-        {
-            let is_for_it = |it: &Primitive| it.run == SLIDE - 1 - number as u32;
-            let is_intact =
-                |it: &Primitive| it.visible() == area && it.opacity == 1. && it.radii == [0.; 4];
-            if let Some(index) = in_front
-                .iter()
-                .position(is_for_it)
-                .filter(|it| is_intact(&in_front[*it]))
-            {
-                in_front.splice(index..=index, stuck);
-            } else if let Some(index) = contents
-                .iter()
-                .position(is_for_it)
-                .filter(|it| is_intact(&contents[*it]))
-            {
-                if is_uncovered(&contents, index) {
-                    contents.remove(index);
-                    in_front.splice(0..0, stuck);
-                } else {
-                    contents.splice(index..=index, stuck);
-                }
-            } else {
-                self.cache.lifted.truncate(number_lifted);
-                return None;
-            }
-        }
-        // A list has made room for what is out of sight, and scrolled by as much.
-        let summaries: Vec<_> = contents.iter().map(Summary::of).collect();
-        if let Some(by) = software::shift(&self.cache.last_slide, &summaries).filter(|_| may_shift)
-        {
-            self.cache.origin_of_slide += by;
-            self.cache.lifted.truncate(number_lifted);
-            return self.slide(index, offset, matrix, clip, false);
-        }
-        self.cache.last_slide = summaries;
-        self.cache.primitives.push(Primitive {
-            run: SLIDE,
-            ..Primitive::new(clip.to_rect(), clip, solid(0))
-        });
-        for it in &mut self.cache.lifted[number_lifted..] {
-            let stays = in_front.iter().any(|other| other.run == it.marker.0);
-            let swept = it.marker.1.offset(0, -down);
-            // Beyond `flattened`, the CPU has painted it as it is now.
-            let is_shown =
-                flattened.contains(swept) || flattened.contains(swept.intersect(clip).outset(1));
-            it.is_refused = !stays && it.follow_marker(&contents).is_none()
-                || !is_shown
-                || it.radius > 0. && !clip.contains(swept);
-            (it.rect, it.clip, it.marker.1) = (
-                it.rect.offset(0, -down),
-                it.clip.offset(0, -down).intersect(clip),
-                swept.intersect(clip),
-            );
-            if !stays
-                && !it.marker.1.is_empty()
-                && self
-                    .cache
-                    .primitives
-                    .iter()
-                    .all(|other| other.run != it.marker.0)
-            {
-                self.cache.primitives.push(Primitive {
-                    run: it.marker.0,
-                    ..Primitive::new(swept.to_rect(), clip, solid(0))
-                });
-            }
-        }
-        contents.retain(|it| !is_marker(it));
-        if let Some(caret) = contents
-            .iter()
-            .position(|it| it.run == CARET)
-            .filter(|it| is_uncovered(&contents, *it))
-        {
-            self.push(contents.remove(caret).higher(down, clip));
-        }
-        in_front
-            .iter()
-            .for_each(|it| self.push(it.higher(down, clip)));
-        self.cache.slide = Some(Slide {
-            clip,
-            radius: 0.,
-            down,
-            painted,
-            contents,
-            in_front: Vec::new(),
-        });
-        Some(())
-    }
-
     fn leave_out(&mut self, mover: &Mover, matrix: &Transform, clip: IntRect) -> Option<()> {
         let (scene, index, number) = (self.painter.scene, mover.item, self.cache.lifted.len());
         let needs_its_place = |item: &Item| match item {
@@ -1248,7 +1004,6 @@ impl Flattener<'_> {
             moves,
             origin,
             is_clipped,
-            is_refused: false,
             marker,
         });
         Some(())
@@ -1263,11 +1018,6 @@ impl Flattener<'_> {
         {
             return;
         }
-        if let Some((_, offset)) = self.placement.sliders.iter().find(|it| it.0 == index)
-            && self.slide(index, *offset, matrix, clip, true).is_some()
-        {
-            return;
-        }
         match scene.items[index] {
             Item::PushClip(shape) => {
                 let shape = map_shape(matrix, &frame.snap_shape(&shape));
@@ -1275,30 +1025,10 @@ impl Flattener<'_> {
                 self.range(scene.content(index), matrix, inside);
                 self.round(first, &shape, index, matrix, clip);
             }
-            Item::PushTransform(by) => {
-                match frame.concat(matrix, by) {
-                    inner if is_axis_aligned(&inner) => {
-                        self.range(scene.content(index), &inner, clip)
-                    }
-                    _ => self.rasterize_all(index, matrix, clip),
-                }
-                if self.is_in_slide
-                    && by[5] != 0.
-                    && self.placement.sticky.contains(&index)
-                    && self.stuck.len() < MAX_STUCK as usize
-                {
-                    let primitives = self.cache.primitives.split_off(first);
-                    let area = primitives
-                        .iter()
-                        .map(Primitive::visible)
-                        .fold(IntRect::default(), IntRect::union);
-                    self.push(Primitive {
-                        run: SLIDE - 1 - self.stuck.len() as u32,
-                        ..Primitive::new(area.to_rect(), area, solid(0))
-                    });
-                    self.stuck.push((area, primitives));
-                }
-            }
+            Item::PushTransform(by) => match frame.concat(matrix, by) {
+                inner if is_axis_aligned(&inner) => self.range(scene.content(index), &inner, clip),
+                _ => self.rasterize_all(index, matrix, clip),
+            },
             Item::PushLayer { .. } => self.layer(index, matrix, clip),
             Item::Mask { .. } | Item::Input | Item::Pop => {}
             Item::Backdrop {
@@ -1988,31 +1718,15 @@ impl Flattener<'_> {
             ..self.painter
         };
         let mut digest = Digest::new(area);
-        let (atlas, mut primitives) = (self.atlas, Cow::from(&self.cache.primitives[first..]));
-        if let Some(slide) = self
-            .cache
-            .slide
-            .as_ref()
-            .filter(|it| it.clip.overlaps(area))
-            && let Some(marker) = primitives.iter().position(|it| it.run == SLIDE)
-        {
-            let contents = slide
-                .contents
-                .iter()
-                .map(|it| it.higher(slide.down, slide.clip));
-            primitives.to_mut().splice(
-                marker..=marker,
-                contents.filter(|it| it.visible().overlaps(area)),
-            );
-        }
-        digest.value((reduction, software::hash_of_snapshot(&primitives, area)));
+        let (atlas, primitives) = (self.atlas, &self.cache.primitives[first..]);
+        digest.value((reduction, software::hash_of_snapshot(primitives, area)));
         let (factor, background) = (1. / reduction as f32, self.placement.background);
         let matrix = self
             .root
             .post_translate(-area.left as f32, -area.top as f32)
             .post_scale(factor, factor);
         (digest, move || {
-            if let Some(layer) = atlas.snapshot(&primitives, area, reduction as usize) {
+            if let Some(layer) = atlas.snapshot(primitives, area, reduction as usize) {
                 return Some(layer);
             }
             let frame = painter.frame.rescaled(factor);

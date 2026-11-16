@@ -82,7 +82,11 @@ pub fn is_invisible(character: u32) -> bool {
 }
 
 pub fn mirror(character: u32) -> u32 {
-    (host().mirror)(character)
+    if let 0x20 | 0xc0..0xf00 = character {
+        character
+    } else {
+        (host().mirror)(character)
+    }
 }
 
 /// The second one may be 0.

@@ -128,6 +128,13 @@ thread_local! {
 
 /// Adds the space before `word` and what is in reach, as far as it is in `item`.
 fn widen(text: &str, word: &Range<usize>, item: &Range<usize>, reach: Reach) -> Range<usize> {
+    let bytes = word.start.saturating_sub(reach.before + 1).max(item.start)
+        ..(word.end + reach.after).min(item.end);
+    if text.as_bytes()[bytes.start..word.start].is_ascii()
+        && text.as_bytes()[word.end..bytes.end].is_ascii()
+    {
+        return bytes;
+    }
     let before = text[item.start..word.start]
         .chars()
         .rev()

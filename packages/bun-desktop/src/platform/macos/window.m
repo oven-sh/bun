@@ -290,7 +290,7 @@ static void tickAll(void* clock)
     isClosing = true;
     [self stopLinkForGood];
     views[@(_number)] = nil;
-    NSWindow* window = owned;
+    NSWindow *window = owned, *parent = window.sheetParent;
     owned = nil;
     if (window.attachedSheet)
         [window endSheet:window.attachedSheet];
@@ -302,6 +302,8 @@ static void tickAll(void* clock)
     whenIdle(^{
         [self unlessChangingSpace:^{
             [window close];
+            if (parent.isVisible && NSApp.isActive && !NSApp.keyWindow)
+                [parent makeKeyWindow];
             window.delegate = nil;
             [self removeFromSuperview];
         }];

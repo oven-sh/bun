@@ -15,7 +15,7 @@ pub const REVERSE: u16 = 8;
 fn substituted(context: &mut Apply, id: u16, how: u16, guess: u16) -> Glyph {
     const HISTORY: u16 = SUBSTITUTED | LIGATED | MULTIPLIED;
     let (mut glyph, id) = (*context.current(), u32::from(id));
-    context.digest.add(id, id);
+    context.digest.add(id);
     let class = glyph.class & !if how == LIGATED { MULTIPLIED } else { 0 } | SUBSTITUTED | how;
     glyph.class = match context.definitions.classes {
         Some(_) => class & HISTORY | context.definitions.class(id),

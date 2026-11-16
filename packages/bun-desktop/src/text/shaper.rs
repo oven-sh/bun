@@ -345,8 +345,8 @@ impl Shaper<'_> {
         else {
             return;
         };
-        let mut digest = Digest::default();
-        buffer.glyphs.iter().for_each(|it| digest.add(it.id, it.id));
+        let mut digest = Digest::EMPTY;
+        buffer.glyphs.iter().for_each(|it| digest.add(it.id));
         let (definitions, coords, last_base) = (&self.tables.definitions, self.coords, (None, 0));
         let mut context = Apply {
             table,

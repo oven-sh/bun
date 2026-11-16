@@ -64,27 +64,32 @@ pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bo
             .map_or(std::ptr::null_mut(), std::ptr::from_mut),
         std::ptr::null_mut(),
     );
-    assert!(source.unwrap_or(0).max(wake) < libc::FD_SETSIZE as i32);
-    // SAFETY: zero is the empty set, which has room for both.
-    unsafe {
-        let mut set: libc::fd_set = std::mem::zeroed();
-        source
-            .into_iter()
-            .chain([wake])
-            .for_each(|fd| libc::FD_SET(fd, &raw mut set));
-        let result = libc::select(
-            source.unwrap_or(0).max(wake) + 1,
-            &raw mut set,
-            none,
-            none,
-            timeout,
-        );
-        if result > 0 && libc::FD_ISSET(wake, &raw const set) {
-            pipe.clear();
-        }
-        // A signal is for the event loop to look at.
-        result < 0 || source.is_some_and(|source| libc::FD_ISSET(source, &raw const set))
+    unsafe extern "C" {
+        /// For any number of descriptors.
+        #[link_name = "select$DARWIN_EXTSN"]
+        fn select(
+            count: i32,
+            read: *mut u32,
+            write: *mut u32,
+            error: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> i32;
     }
+    let count = source.unwrap_or(0).max(wake) + 1;
+    let mut set: smallvec::SmallVec<[u32; 8]> =
+        std::iter::repeat_n(0, count as usize / 32 + 1).collect();
+    source
+        .into_iter()
+        .chain([wake])
+        .for_each(|fd| set[fd as usize / 32] |= 1 << (fd % 32));
+    // SAFETY: a bit for each.
+    let result = unsafe { select(count, set.as_mut_ptr(), none, none, timeout) };
+    let is_set = |fd: i32| set[fd as usize / 32] & 1 << (fd % 32) != 0;
+    if result > 0 && is_set(wake) {
+        pipe.clear();
+    }
+    // A signal is for the event loop to look at.
+    result < 0 || source.is_some_and(is_set)
 }
 
 /// Returns whether `source` is readable.

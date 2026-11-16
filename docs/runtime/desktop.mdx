@@ -243,6 +243,28 @@ new WebContentsView({ webPreferences: { webEngine: true } }); // Whatever it sho
 session.defaultSession.setWebEngineHosts(["example.com"]); // HTTP requests use the network stack of the engine
 ```
 
+| Option of `trustOrigins()` | Effect                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `except`                   | These URLs are shown in the web engine                                                                   |
+| `exceptWhenLoaded`         | The same, but a page in your process stays when it gets there with `history.pushState()`                 |
+| `inFrames`                 | Frames with these URLs are in your process, so `contentDocument` works. `true` means all, and popups too |
+
+A frame of the web engine in such a frame sees its parent as `window.top`.
+
+`protocol.serve()` answers requests for an origin with files of your app. Whatever can run code has to be answered: otherwise scripts are refused, and documents are shown in the web engine. Everything else goes to the network.
+
+```ts
+protocol.serve("https://example.com", (request, network) => {
+  if (request.destination === "document") return new Response(Bun.file("index.html"));
+});
+```
+
+| `app.commandLine` switch        | Effect                                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `disable-http2`                 | Sessions only use HTTP/1.1                                                    |
+| `safe-storage-name=<name>`      | The name under which the system keeps the key of `safeStorage` and of cookies |
+| `safe-storage-copy-from=<name>` | If there is no key yet, it is copied from that of the app with this name      |
+
 Both sides have the same cookies. They do not share `localStorage`, IndexedDB or caches.
 
 A page in your process has a realm of its own without `Bun`, `process` and `require`, and its requests are subject to CORS and its Content Security Policy. Scripts and workers from an origin that you do not trust are refused whatever the policy says. The realm keeps honest code apart. It is not a sandbox: a script that runs there can get out, where Electron would keep it in a sandboxed process. Cross-site scripting on a trusted origin gives away all that your app can do, unless your executable refuses JavaScript that is not in it. If the main process needs `executeJavaScript()` or `eval()`, refuse it for pages only:
@@ -265,6 +287,7 @@ Compiled scripts are part of your program: `process`, `Bun`, `require` and `glob
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `BUN_DESKTOP_LOG`      | `1` prints what the UI library does, and `frames` every frame as well.                                                           |
 | `BUN_DESKTOP_RENDERER` | `software` or `gpu`. The default on macOS is `layers`, which paints small changes with the CPU and large ones with the GPU.      |
+| `BUN_DESKTOP_SPELLING` | `0` does not ask macOS to check the spelling of text that is being edited.                                                       |
 | `BUN_DESKTOP_THREADS`  | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only. |
 
 With two threads on macOS, AppKit has the main thread. The functions of Node-API addons still run there, while JavaScript waits. Functions that are called through `bun:ffi` do not.

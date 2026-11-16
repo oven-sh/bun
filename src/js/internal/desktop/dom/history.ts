@@ -95,7 +95,7 @@ function rememberScroll(page: Page) {
 function restoreScroll(page: Page) {
   const { scroll, scrollRestoration } = currentOf(page);
   if (scrollRestoration !== "auto" || (page.host.loadsAtTop && page.doc.readyState !== "complete")) return;
-  if (scroll) html.scroll(page.doc, 1, { left: scroll[0], top: scroll[1], behavior: "instant" }, undefined, false);
+  if (scroll) html.scroll(page.doc, 1, scroll[0], scroll[1], false, 1);
   else page.scrollToFragment();
 }
 

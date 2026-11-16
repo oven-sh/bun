@@ -7,6 +7,8 @@
 #[allow(dead_code)]
 mod abi;
 mod accessibility;
+#[cfg(target_os = "macos")]
+mod allocator;
 mod app;
 mod bridge;
 mod canvas;
@@ -25,6 +27,7 @@ mod menu;
 mod motion;
 mod native;
 mod paint;
+mod png_rows;
 mod surface;
 mod svg_limits;
 mod text;
@@ -40,6 +43,10 @@ use std::time::Instant;
 
 use host::thread;
 use serde_json::{Value, json};
+
+#[cfg(target_os = "macos")]
+#[global_allocator]
+static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// Owned by this library: the caller hands it back to `bun_desktop_free`.
 #[repr(C)]
@@ -413,6 +420,12 @@ pub extern "C" fn bun_desktop_drain() -> Bytes {
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_desktop_pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
     guard("fatal", true, || host::pump(source, timeout_ns, from_tick))
+}
+
+/// Whether JavaScript has more than a frame to see to. Does not run the UI.
+#[unsafe(no_mangle)]
+pub extern "C" fn bun_desktop_has_input() -> bool {
+    host::has_input()
 }
 
 /// Draws the windows that waited for JavaScript to handle their `frame` events.

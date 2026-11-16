@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use crate::abi::Rect;
 use crate::animation::Timing;
+use crate::boxes::{BoxId, Kind};
 use crate::cssom;
 use crate::document::{Document, Environment, Quirks};
 use crate::editing::{Mark, Point, Range};
@@ -54,6 +55,7 @@ fn timing(values: &[f64], easing_source: &[u8]) -> Timing {
     Timing {
         delay: at(0),
         end_delay: at(1),
+        relative_delays: [at(7), at(8)],
         duration: at(2),
         iterations: at(3),
         iteration_start: at(4),
@@ -125,9 +127,14 @@ impl Document {
         if self.selectors.len() > 1024 {
             self.selectors.clear();
         }
+        let is_quirky = self.environment.quirks == Quirks::All;
+        let parser = crate::selector_parser::Parser {
+            is_quirky,
+            ..Default::default()
+        };
         self.selectors
-            .entry(bun_wyhash::hash(source))
-            .or_insert_with(|| crate::selector_parser::Parser::default().parse(source))
+            .entry(bun_wyhash::hash(source) ^ u64::from(is_quirky))
+            .or_insert_with(|| parser.parse(source))
             .clone()
     }
 
@@ -141,6 +148,11 @@ impl Document {
         let list = self.selector(source)?;
         self.update_directions();
         let host = self.tree.host_of(self.tree[scope].scope);
+        let scope = if scope == DOCUMENT || self.tree.element(scope).is_some() {
+            scope
+        } else {
+            NodeId::MAX
+        };
         let matcher = Matcher::new(&self.tree, host, scope, None);
         let keys = list
             .iter()
@@ -187,9 +199,17 @@ impl Document {
 
 impl Document {
     fn client_metrics(&self, node: NodeId) -> [f32; 4] {
-        let client = self
-            .own_box(node)
-            .map_or(Rect::default(), |it| self.client_box(it));
+        let is_table = |it: BoxId| self.boxes[it].kind == Kind::Table;
+        let client =
+            self.own_box(node)
+                .map_or_else(Rect::default, |it| match self.client_box(it) {
+                    Rect { x, y, .. } if is_table(it) => Rect {
+                        x,
+                        y,
+                        ..self.border_box(it)
+                    },
+                    client => client,
+                });
         client
             .to_array()
             .map(|it| (it / self.zoom_of(node)).round())
@@ -822,6 +842,8 @@ impl Engine {
 
     pub(crate) fn pending(&mut self) -> u32 {
         let document = &mut *self.0;
+        document.request_fonts();
+        document.report_finished_scrolls();
         u32::from(!document.events.is_empty() || document.scrolling.has_events()) << 1
             | u32::from(document.has_requests()) << 2
             | u32::from(document.needs_frame || document.is_dirty()) << 3
@@ -983,6 +1005,10 @@ impl Engine {
             0..4 => document.client_metrics(node)[which],
             4..6 => document.scroll_position(node)[which - 4],
             6..8 => document.scroll_size(node)[which - 6],
+            13 => return document.last_scroll_request().into(),
+            14 if document.tree[node].layout_box == 0 => 1.0,
+            14 => document.zoom_of(node),
+            15..17 => document.position_in_document(node)[which - 15],
             _ => document.offset_metrics(node)[(which - 8) % 5],
         })
     }
@@ -1191,12 +1217,10 @@ impl Engine {
 
     pub(crate) fn scroll_to(&mut self, node: u32, x: f64, y: f64, behavior: u8) {
         let (document, node) = self.laid_out(node);
-        document.scroll_to(
-            node,
-            [x, y].map(|it| it as f32 * document.zoom_of(node)),
-            behavior & 3,
-            behavior & 4 != 0,
-        );
+        let to = [x, y].map(|it| it as f32 * document.zoom_of(node));
+        document.scroll_for_script(behavior & 8 != 0, |it| {
+            it.scroll_to(node, to, behavior & 3, behavior & 4 != 0)
+        });
     }
 
     pub(crate) fn scroll_into_view(
@@ -1215,7 +1239,9 @@ impl Engine {
         let (document, node) = self.laid_out(node);
         let align = [inline, block]
             .map(|it| [Start, Center, End, Nearest, CenterIfNeeded][usize::from(it.min(4))]);
-        document.scroll_into_view(node, align, behavior, only_nearest);
+        document.scroll_for_script(behavior & 8 != 0, |it| {
+            it.scroll_into_view(node, align, behavior & 3, only_nearest)
+        });
         if !document.carousels.is_empty() {
             document.pin_marker_around(node);
         }
@@ -1259,15 +1285,19 @@ impl Engine {
 
     pub(crate) fn hit_test_all(&mut self, x: f64, y: f64) -> Vec<u32> {
         let (document, mut found) = (self.painted(), Vec::new());
-        for node in document
-            .nodes_at([x as f32, y as f32])
-            .map(|it| document.not_generated(it))
-        {
+        for node in document.nodes_at([x as f32, y as f32]) {
             if !found.contains(&node) {
                 found.push(node);
             }
         }
+        let is_repeated = |it: &NodeId| {
+            document.tree[*it].text().is_some() && found.contains(&document.tree.flat_parent(*it))
+        };
         found
+            .iter()
+            .filter(|it| !is_repeated(it))
+            .map(|it| document.not_generated(*it))
+            .collect()
     }
 
     pub(crate) fn cursor_at(&mut self, x: f64, y: f64) -> &'static str {

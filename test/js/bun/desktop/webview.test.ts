@@ -129,6 +129,65 @@ describe.skipIf(!hasLibrary).concurrent("in the process of the app", () => {
     ).toEqual(["undefined"]);
   });
 
+  test("what decides whether a script runs cannot be talked round", async () => {
+    expect(
+      await run(`
+        app.trustOrigins([], { except: ["app://trusted/user/*"] });
+        const page = await open(({ url }) => url.endsWith("upload")
+          ? new Response("<script>ran = 1</script>", { headers: { "content-type": 'text/plain; name="a.html"' } })
+          : respond("<p>a onx=ran=2 b</p><!-- <i onx=ran=3> --><textarea><i onx=ran=5></textarea><noscript><i onx=ran=6></noscript><template><i onclick=own=1></i></template><script type=application/json>{ \\"a\\": \\" onx=ran=4 \\" }</script>")());
+        print(await page.executeJavaScript(\`(\${() => {
+          document.body.appendChild(document.querySelector("template").content.firstChild.cloneNode()).click();
+          if (typeof own === "undefined") return "the handler of the template did not run";
+          const policy = "<meta http-equiv=Content-Security-Policy content=\\"default-src * 'unsafe-inline'\\">";
+          document.body.append(new DOMParser().parseFromString("<head>" + policy + "</head>", "text/html").documentElement);
+          for (const n of [2, 3, 4, 5, 6, 7]) {
+            document.body.insertAdjacentHTML("beforeend", "<b onclick=ran=" + n + "></b>");
+            document.body.lastChild.click();
+          }
+          return typeof ran;
+        }})()\`));
+        for (const url of ["app://trusted/user/a", "app://x@trusted/user/a", "app://trusted/%75ser/a", "app://trusted//user/a"]) {
+          print(await page.loadURL(url).then(() => "loaded", () => "refused"));
+        }
+        await page.loadURL("app://trusted/upload");
+        print(await page.executeJavaScript("typeof ran"));`),
+    ).toEqual(["undefined", "refused", "refused", "refused", "refused", "undefined"]);
+  });
+
+  test("what the app throws or returns to a page is of the realm of the page", async () => {
+    expect(
+      await run(`
+        const page = await open("");
+        print(await page.executeJavaScript(\`(\${async () => {
+          const thrown = run => Promise.try(run).then(value => value, error => error);
+          const directory = await navigator.storage.getDirectory();
+          const opening = indexedDB.open("a");
+          opening.onupgradeneeded = () => opening.result.createObjectStore("b").put(1, 2);
+          await new Promise(resolve => (opening.onsuccess = resolve));
+          const keys = opening.result.transaction("b").objectStore("b").getAllKeys();
+          await new Promise(resolve => (keys.onsuccess = resolve));
+          const all = [await thrown(() => prompt()), await thrown(() => directory.getFileHandle("a".repeat(300), { create: true })), keys.result];
+          return all.map(it => it instanceof Object);
+        }})()\`));`),
+    ).toEqual([[true, true, true]]);
+  });
+
+  test("a download that does not finish leaves the file alone", async () => {
+    expect(
+      await run(`
+        const file = path.join(__dirname, "kept.txt");
+        await Bun.write(file, "kept");
+        const done = new Promise(resolve => session.defaultSession.on("will-download", (_, item) => {
+          item.once("done", (_, state) => resolve(state));
+          item.setSavePath(file);
+          item.cancel();
+        }));
+        session.defaultSession.downloadURL(site({}));
+        print([await done, await Bun.file(file).text()]);`),
+    ).toEqual([["cancelled", "kept"]]);
+  });
+
   test("setCompiledScripts with source", async () => {
     expect(
       await run(`
@@ -412,6 +471,46 @@ for (const engine of engines) {
       ).toEqual([[true, false, "in"], [false]]);
     });
 
+    test("a frame of the app is handed over if the app does not have its document", async () => {
+      expect(
+        await run(`
+          const origin = site({ "/shell": "<script>parent.postMessage(location.pathname, '*')</script>" });
+          app.trustOrigins([origin], { inFrames: [origin + "/shell*"] });
+          protocol.serve(origin, ({ destination }) => destination === "document" ? respond(inbox + "<iframe src=/shell></iframe>")() : undefined);
+          const { webContents: page } = new BrowserWindow();
+          await page.loadURL(origin);
+          print(await page.executeJavaScript("next().then(e => [e.data, e.source === frames[0], document.querySelector('iframe').contentDocument])"));`),
+      ).toEqual([["/shell", true, null]]);
+    });
+
+    test("a frame in an empty window that a page has opened", async () => {
+      expect(
+        await run(`
+          const origin = site({ "/": "<script>parent.postMessage(location.ancestorOrigins[0].replace(/^https:..(.*).app.invalid/, 'app://$1'), '*')</script>" });
+          const page = await open("");
+          page.setWindowOpenHandler(() => ({ action: "allow" }));
+          print(await page.executeJavaScript(\`new Promise(resolve => {
+            const opened = open("about:blank");
+            opened.addEventListener("message", event => resolve(event.data));
+            opened.document.body.append(Object.assign(opened.document.createElement("iframe"), { src: "\${origin}" }));
+          })\`));`),
+      ).toEqual(["app://trusted"]);
+    });
+
+    test("the background of the view is that of the page", async () => {
+      expect(
+        await run(`
+          const window = new BrowserWindow({ backgroundColor: "#00f" });
+          const origin = site({ "/dark": "<meta name=color-scheme content=dark>" });
+          await window.loadURL(origin);
+          print(await pixel(window.webContents, 5, 5));
+          window.setBackgroundColor("#0f0");
+          await until(async () => (await pixel(window.webContents, 5, 5)) === "0,255,0,255");
+          await window.loadURL(origin + "/dark");
+          await until(async () => (await pixel(window.webContents, 5, 5)) === "18,18,18,255");`),
+      ).toEqual(["255,0,0,255"]);
+    });
+
     test("a frame of the app around a frame that is not", async () => {
       expect(
         await run(`
@@ -429,12 +528,15 @@ for (const engine of engines) {
           page.sendInputEvent({ type: "keyDown", keyCode: "a" });
           page.sendInputEvent({ type: "char", keyCode: "a" });
           page.sendInputEvent({ type: "keyUp", keyCode: "a" });
-          print(await page.executeJavaScript("frames[0].next().then(e => [e.data, e.source.top === self, document.activeElement.localName, frames[0].document.activeElement.localName])"));`),
+          print(await page.executeJavaScript("frames[0].next().then(e => [e.data, e.source.top === self, document.activeElement.localName, frames[0].document.activeElement.localName])"));
+          const { focusedFrame, mainFrame } = page;
+          print([focusedFrame.origin === origin, focusedFrame.parent.url, focusedFrame.top === mainFrame, focusedFrame.parent.frameTreeNodeId === mainFrame.frameTreeNodeId]);`),
       ).toEqual([
         ["shell", null],
         [true, "iframe", null],
         [[10, 15], true, true],
         ["a", true, "iframe", "iframe"],
+        [true, "app://trusted/shell", true, false],
       ]);
     });
 

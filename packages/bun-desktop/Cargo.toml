@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 anyhow = "1"
 brotli-decompressor = "6"
 dirs = "6"
+fdeflate = "0.3"
 flate2 = "1"
 global-hotkey = "0.9"
 gpui = { path = "../../vendor/zed/crates/gpui", default-features = false }

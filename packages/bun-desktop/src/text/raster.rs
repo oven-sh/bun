@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, LazyLock, OnceLock};
 
@@ -486,12 +487,28 @@ pub fn shade_for(color: u32) -> u32 {
     if cfg!(target_os = "macos") {
         return 0xFF;
     }
-    let [r, g, b, _] = color
-        .to_be_bytes()
-        .map(|channel| (f32::from(channel) / 255.).powf(GAMMA));
-    let luminance =
-        ((r * 0.2126 + g * 0.7152 + b * 0.0722).powf(1. / GAMMA) * 255.).round() as u32 >> 5;
-    (luminance << 5 | luminance << 2 | luminance >> 1) * 0x0101_0100 | 0xFF
+    thread_local! {
+        static KNOWN: [Cell<(u32, u32)>; 64] = const { [const { Cell::new((0, 0xFF)) }; 64] };
+    }
+    KNOWN.with(|known| {
+        let (rgb, known) = (
+            color >> 8,
+            &known[((color >> 8).wrapping_mul(0x9E37_79B9) >> 26) as usize],
+        );
+        if known.get().0 != rgb {
+            let [r, g, b, _] = color
+                .to_be_bytes()
+                .map(|channel| (f32::from(channel) / 255.).powf(GAMMA));
+            let luminance = ((r * 0.2126 + g * 0.7152 + b * 0.0722).powf(1. / GAMMA) * 255.).round()
+                as u32
+                >> 5;
+            known.set((
+                rgb,
+                (luminance << 5 | luminance << 2 | luminance >> 1) * 0x0101_0100 | 0xFF,
+            ));
+        }
+        known.get().1
+    })
 }
 
 /// `SkTMaskGamma_build_correcting_lut`, which makes blending look as if it were done in linear light.

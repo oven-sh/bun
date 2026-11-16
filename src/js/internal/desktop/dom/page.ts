@@ -225,6 +225,7 @@ function createPage(host: any, options?: { global?: object; baseUrl?: string; mi
       page.focusedFrame?.x.edit
         ? page.focusedFrame.x.edit(name)
         : task(() => editing.execute(page.doc, name.toLowerCase(), "", false)),
+    focusedFrame: () => page.focusedFrame?.x?.focusedFrame(),
     insertText: (text: string) => task(() => editing.insertText(page.doc, text)),
     dictionaryChanged: () => void (page.spelling !== null && require("internal/desktop/dom/spelling").checkAgain(page)),
     insertCSS(css: string) {

@@ -48,7 +48,9 @@ function construct(definition: Definition): unknown {
   const { ctor } = definition;
   const [before, { page }, registry] = [active.$get(ctor), realm, core.setRegistry(undefined)];
   active.$set(ctor, definition);
-  realm.page = realm.root;
+  // Without interfaces of its own, a window cannot be told from the class that is extended.
+  const owner = definition.registry.doc?.page;
+  realm.page = owner && !owner.mirror ? owner : realm.root;
   try {
     return new ctor();
   } finally {

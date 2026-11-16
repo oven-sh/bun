@@ -282,7 +282,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDesktopWindowOf, (JSGlobalObject * globalObje
         else
             break;
     }
-    JSValue impl = object->realm()->getDirect(vm, WebCore::builtinNames(vm).implPrivateName());
+    auto* realm = object->structure()->realm();
+    JSValue impl = realm ? realm->getDirect(vm, WebCore::builtinNames(vm).implPrivateName()) : JSValue();
     return JSValue::encode(impl ? impl : jsUndefined());
 }
 

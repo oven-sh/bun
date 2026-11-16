@@ -21,6 +21,11 @@ function pageOf(self: any): Page {
   return self == null ? realm.page : (self.$impl?.x ?? realm.page);
 }
 
+function viewOf(self: any): Page {
+  if (self != null && self !== globalThis) core.brand(self);
+  return pageOf(self);
+}
+
 function same<T>(self: unknown, key: string, make: (page: Page) => T): T {
   const page = pageOf(self);
   let value = page.same.$get(key);
@@ -32,16 +37,19 @@ class MediaQueryList extends EventTarget {
   #page: Page;
   #media: string;
 
-  constructor(page: Page, media: string) {
+  constructor(page: Page | null = null, media = "") {
+    if (page?.watchedQueries === undefined) core.illegalConstructor();
     super();
-    this.#page = this.$impl.x = page;
+    this.#page = this.$impl.x = page!;
     this.#media = media;
   }
   get media() {
     return this.#media;
   }
   get matches() {
-    return this.#page.doc.engine.matchMedia(this.#media);
+    const { doc } = this.#page;
+    doc.container?.measure();
+    return doc.engine.matchMedia(this.#media);
   }
   #watch() {
     if (!this.#page.watchedQueries.$has(this)) this.#page.watchedQueries.$set(this, this.matches);
@@ -178,12 +186,14 @@ class Screen extends EventTarget {
   #page: Page;
   #orientation = new ScreenOrientation();
 
-  constructor(page: Page) {
+  constructor(page: Page | null = null) {
+    if (page?.watchedQueries === undefined) core.illegalConstructor();
     super();
-    this.#page = page;
+    this.#page = page!;
   }
   #area(name: "bounds" | "workArea") {
-    const { environment, surfaceWidth, surfaceHeight } = this.#page;
+    const { environment, surfaceWidth, surfaceHeight, isDisposed } = this.#page;
+    if (isDisposed) return { x: 0, y: 0, width: 0, height: 0 };
     return environment.screen?.[name] ?? { x: 0, y: 0, width: surfaceWidth, height: surfaceHeight };
   }
   get width() {
@@ -222,9 +232,10 @@ events.defineHandlers(Screen.prototype, ["change"]);
 class VisualViewport extends EventTarget {
   #page: Page;
 
-  constructor(page: Page) {
+  constructor(page: Page | null = null) {
+    if (page?.watchedQueries === undefined) core.illegalConstructor();
     super();
-    this.#page = this.$impl.x = page;
+    this.#page = this.$impl.x = page!;
   }
   get offsetLeft() {
     core.brand(this);
@@ -626,9 +637,11 @@ class WindowMembers {
     return pageOf(this).window.navigator;
   }
   get screen() {
+    viewOf(this);
     return same(this, "screen", page => new Screen(page));
   }
   get visualViewport() {
+    viewOf(this);
     return same(this, "visualViewport", page => new VisualViewport(page));
   }
   get scheduler() {
@@ -662,43 +675,53 @@ class WindowMembers {
     return false;
   }
   get devicePixelRatio() {
-    return pageOf(this).scale;
+    return viewOf(this).scale;
   }
   get innerWidth() {
-    return Math.floor(pageOf(this).width);
+    const page = viewOf(this);
+    page.doc.container?.measure();
+    return Math.floor(page.width);
   }
   get innerHeight() {
-    return Math.floor(pageOf(this).height);
+    const page = viewOf(this);
+    page.doc.container?.measure();
+    return Math.floor(page.height);
   }
   get outerWidth() {
+    viewOf(this);
     return bounds(this).width;
   }
   get outerHeight() {
+    viewOf(this);
     return bounds(this).height;
   }
   get screenX() {
+    viewOf(this);
     return bounds(this).x;
   }
   get screenY() {
+    viewOf(this);
     return bounds(this).y;
   }
   get screenLeft() {
+    viewOf(this);
     return bounds(this).x;
   }
   get screenTop() {
+    viewOf(this);
     return bounds(this).y;
   }
   get scrollX() {
-    return pageOf(this).scroll(0);
+    return viewOf(this).scroll(0);
   }
   get scrollY() {
-    return pageOf(this).scroll(1);
+    return viewOf(this).scroll(1);
   }
   get pageXOffset() {
-    return pageOf(this).scroll(0);
+    return viewOf(this).scroll(0);
   }
   get pageYOffset() {
-    return pageOf(this).scroll(1);
+    return viewOf(this).scroll(1);
   }
 
   requestAnimationFrame(callback: Function, phase: unknown = undefined) {
@@ -711,8 +734,8 @@ class WindowMembers {
     core.invalidate(page.doc);
     return page.nextCallback++;
   }
-  paintNow() {
-    pageOf(this).paintNow();
+  paintNow(deliversResizes: unknown = false) {
+    pageOf(this).paintNow(!!deliversResizes);
   }
   cancelAnimationFrame(id: number) {
     if ($argumentCount() < 1) core.tooFew(1);
@@ -743,32 +766,54 @@ class WindowMembers {
   }
   matchMedia(query: string) {
     if ($argumentCount() < 1) core.tooFew(1);
-    return new MediaQueryList(pageOf(this), engine.parseMedia(String(query)).join(", "));
+    return new MediaQueryList(viewOf(this), engine.parseMedia(String(query)).join(", "));
   }
   scroll(first: any = undefined, second?: any) {
-    html.scroll(pageOf(this).doc, 1, first, second, false);
+    return html.scrollFromScript(
+      this == null || this === (globalThis as any) ? pageOf(this) : this.$impl?.x,
+      $argumentCount(),
+      first,
+      second,
+      false,
+    );
   }
   scrollTo(first: any = undefined, second?: any) {
-    html.scroll(pageOf(this).doc, 1, first, second, false);
+    return html.scrollFromScript(
+      this == null || this === (globalThis as any) ? pageOf(this) : this.$impl?.x,
+      $argumentCount(),
+      first,
+      second,
+      false,
+    );
   }
   scrollBy(first: any = undefined, second?: any) {
-    html.scroll(pageOf(this).doc, 1, first, second, true);
+    return html.scrollFromScript(
+      this == null || this === (globalThis as any) ? pageOf(this) : this.$impl?.x,
+      $argumentCount(),
+      first,
+      second,
+      true,
+    );
   }
   moveTo(x: number, y: number) {
     if ($argumentCount() < 2) core.tooFew(2);
-    pageOf(this).host.moveWindow?.({ ...bounds(this), x, y });
+    viewOf(this).host.moveWindow?.({ ...bounds(this), x, y });
   }
   moveBy(x: number, y: number) {
     if ($argumentCount() < 2) core.tooFew(2);
-    pageOf(this).host.moveWindow?.({ ...bounds(this), x: bounds(this).x + x, y: bounds(this).y + y });
+    viewOf(this).host.moveWindow?.({ ...bounds(this), x: bounds(this).x + x, y: bounds(this).y + y });
   }
   resizeTo(width: number, height: number) {
     if ($argumentCount() < 2) core.tooFew(2);
-    pageOf(this).host.moveWindow?.({ ...bounds(this), width, height });
+    viewOf(this).host.moveWindow?.({
+      ...bounds(this),
+      width: Math.max(width | 0, 100),
+      height: Math.max(height | 0, 100),
+    });
   }
   resizeBy(x: number, y: number) {
     if ($argumentCount() < 2) core.tooFew(2);
-    pageOf(this).host.moveWindow?.({ ...bounds(this), width: bounds(this).width + x, height: bounds(this).height + y });
+    viewOf(this).host.moveWindow?.({ ...bounds(this), width: bounds(this).width + x, height: bounds(this).height + y });
   }
   requestResize() {
     const page = pageOf(this);

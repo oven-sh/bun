@@ -3512,6 +3512,12 @@ impl StandaloneModuleGraph {
         Self::payload_of_executable().is_some()
     }
 
+    pub fn is_desktop_program() -> bool {
+        Self::payload_of_executable()
+            .and_then(|(base, len)| Self::read_offsets(base, len))
+            .is_some_and(|offsets| offsets.flags.contains(Flags::LOADS_GRAPHICS_DRIVERS))
+    }
+
     fn payload_of_executable() -> Option<(*mut u8, usize)> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();

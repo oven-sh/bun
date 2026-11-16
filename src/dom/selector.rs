@@ -413,6 +413,8 @@ bitflags::bitflags! {
         const DESCENDANT = 1;
         const SIBLING = 2;
         const EARLIER_SIBLING = 4;
+        /// Assigned to a slot.
+        const SLOTTED = 8;
     }
 }
 
@@ -560,6 +562,51 @@ impl Selector {
     }
 
     /// Reports each key, where the subject is, and a key that the same element has to have.
+    /// Whether `Dependencies::signature` tells if it matches.
+    pub(crate) fn follows_from_signature(&self) -> bool {
+        self.compounds.iter().all(|compound| {
+            matches!(
+                compound.combinator,
+                Combinator::None | Combinator::Child | Combinator::Descendant
+            ) && compound.simples.iter().all(|it| match it {
+                Simple::Class(_)
+                | Simple::Id(_)
+                | Simple::Tag(..)
+                | Simple::Exists(..)
+                | Simple::State(_)
+                | Simple::NotState(_) => true,
+                Simple::CustomState(_)
+                | Simple::Root
+                | Simple::Scope
+                | Simple::Never
+                | Simple::Html
+                | Simple::InHtml
+                | Simple::Math
+                | Simple::Namespace(_) => true,
+                Simple::Attribute(test) => !crate::name::is_name!(test.names.1, "style" | "id"),
+                Simple::Is(list) | Simple::Not(list) => {
+                    list.iter().all(Selector::follows_from_signature)
+                }
+                _ => false,
+            })
+        })
+    }
+
+    /// Those that have no key for the value.
+    pub(crate) fn compared_attributes(&self, out: &mut crate::name::Set<Name>) {
+        for simple in self.compounds.iter().flat_map(|it| &it.simples) {
+            match simple {
+                Simple::Attribute(test) if test.key == Name::NONE => {
+                    out.extend([test.names.0, test.names.1])
+                }
+                Simple::Is(list) | Simple::Not(list) => {
+                    list.iter().for_each(|it| it.compared_attributes(out))
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn features(
         &self,
         mut relation: Relation,
@@ -672,6 +719,7 @@ impl Selector {
                     report(key::STRUCTURE, relation, with);
                     Relation::SIBLING
                 }
+                Combinator::Slot => Relation::DESCENDANT | Relation::SLOTTED,
                 _ => Relation::DESCENDANT,
             };
         }
@@ -786,9 +834,28 @@ pub(crate) struct Bloom {
     known: Vec<(NodeId, u32, u32)>,
     /// How many of `path` and `known` are the same.
     same: usize,
+    /// For the first of `path`, with what they were made from.
+    signatures: RefCell<(usize, Vec<Name>)>,
+    pub(crate) last_signature: Cell<((NodeId, usize), Name)>,
 }
 
 impl Bloom {
+    /// `sign` adds an element to the signature of its ancestors.
+    pub(crate) fn signature_of_path(
+        &self,
+        version: usize,
+        sign: impl Fn(Name, NodeId) -> Name,
+    ) -> Name {
+        let (known, all) = &mut *self.signatures.borrow_mut();
+        if core::mem::replace(known, version) != version {
+            all.clear();
+        }
+        for id in &self.path[all.len()..] {
+            all.push(sign(all.last().copied().unwrap_or(Name::NONE), *id));
+        }
+        all.last().copied().unwrap_or(Name::NONE)
+    }
+
     pub(crate) fn new() -> Bloom {
         Bloom {
             counters: Box::new([0; 1 << 14]),
@@ -799,6 +866,8 @@ impl Bloom {
             path: Vec::new(),
             known: Vec::new(),
             same: 0,
+            signatures: RefCell::default(),
+            last_signature: Cell::default(),
         }
     }
 
@@ -808,6 +877,8 @@ impl Bloom {
             *self = Bloom::new();
         }
         self.traversal += 1;
+        self.signatures.get_mut().1.clear();
+        self.last_signature.take();
     }
 
     fn hash(key: Name) -> u32 {
@@ -816,6 +887,12 @@ impl Bloom {
 
     fn slots(hash: u32) -> [usize; 2] {
         [hash as usize & 0x3fff, (hash >> 14) as usize & 0x3fff]
+    }
+
+    pub(crate) fn is_above(&self, tree: &Tree, id: NodeId) -> bool {
+        self.path
+            .last()
+            .is_some_and(|it| *it == tree.flat_parent(id))
     }
 
     pub(crate) fn depth(&self) -> usize {
@@ -828,6 +905,7 @@ impl Bloom {
 
     pub(crate) fn truncate(&mut self, depth: usize) {
         self.path.truncate(depth);
+        self.signatures.get_mut().1.truncate(depth);
         self.same = self.same.min(depth);
     }
 
@@ -1336,6 +1414,7 @@ impl<'a> Matcher<'a> {
             let matches = |candidate| inner.matches(relative, candidate);
             match chain[chain.len() - 1].combinator {
                 Combinator::Child if chain.len() == 1 => tree.element_children(parent).any(matches),
+                Combinator::Next | Combinator::Later if id == self.host => false,
                 Combinator::Next if is(Combinator::Next) => tree
                     .next_elements(id)
                     .nth(chain.len() - 1)

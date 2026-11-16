@@ -24,6 +24,33 @@ describe("tree", () => {
     expect(() => list.firstChild.append(list)).toThrow(expect.objectContaining({ name: "HierarchyRequestError" }));
   });
 
+  test("selectors match alike in and out of the document", () => {
+    using page = open(
+      `<section><p id=a class="x  Y" data-k=1><b class=xy hidden></b></p><svg><foreignObject class=x /></svg><input type=TEXT></section>`,
+    );
+    const ask = (root: any, selector: string) => [
+      Array.from(root.querySelectorAll(selector), (it: any) => it.localName),
+      root.querySelector(selector)?.localName,
+      root.querySelector("b").closest(selector)?.localName,
+      root.firstChild.matches(selector),
+    ];
+    const selectors = [
+      "*",
+      "p",
+      ".x",
+      ".x.Y",
+      ".y",
+      "#a",
+      '[data-k="1"]',
+      "b[hidden] , p",
+      "foreignobject",
+      "[type=text]",
+    ];
+    for (const selector of selectors) {
+      expect(ask(page.$("section").cloneNode(true), selector)).toEqual(ask(page.$("section"), selector));
+    }
+  });
+
   test("a node has one wrapper, which keeps what scripts put on it", () => {
     using page = open("<p id=a></p>");
     page.$("p").custom = 1;
@@ -407,6 +434,32 @@ test("bun:desktop/dom makes the global object a window", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("selectAll stays in the shadow tree that has the caret", () => {
+  using page = open("<p>outside</p><div></div>");
+  const root = page.$("div").attachShadow({ mode: "open" });
+  root.innerHTML = "<p>inside</p>";
+  page.window.getSelection().collapse(root.firstChild.firstChild, 1);
+  page.document.execCommand("selectAll");
+  expect(String(page.window.getSelection()).trim()).toBe("inside");
+});
+
+test("custom elements and constructed sheets of a frame that shares the interfaces", () => {
+  using page = open("<iframe></iframe>");
+  const { customElements, document, CSSStyleSheet, HTMLElement, getComputedStyle } = page.$("iframe").contentWindow;
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(":host { margin-left: 3px }");
+  customElements.define(
+    "x-a",
+    class extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" }).adoptedStyleSheets = [sheet];
+      }
+    },
+  );
+  expect(getComputedStyle(document.body.appendChild(document.createElement("x-a"))).marginLeft).toBe("3px");
+});
+
 test("moveBefore updates inherited custom properties", () => {
   using page = open(
     `<div id=to style="--x:4px"><div style="--x:1px"><div id=moved><p style="margin-left:var(--x)"></div></div></div>`,
@@ -595,5 +648,21 @@ describe("removed trees are collected", () => {
       return page.window.getComputedStyle(element).color;
     });
     expect(colors).toEqual(["rgb(255, 0, 0)", "rgb(0, 0, 255)", "rgb(0, 255, 0)"]);
+  });
+
+  test("after a live collection has listed them", async () => {
+    using page = open();
+    const all = page.document.getElementsByTagName("div");
+    const references = (() => {
+      page.document.body.innerHTML = Buffer.alloc(COUNT * 11, "<div></div>").toString();
+      const listed = Array.from(all, (it: object) => new WeakRef(it));
+      page.document.body.replaceChildren();
+      return listed;
+    })();
+    page.render();
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+    expect(references.filter(it => it.deref() !== undefined).length).toBeLessThan(COUNT / 4);
+    expect(all.length).toBe(0);
   });
 });

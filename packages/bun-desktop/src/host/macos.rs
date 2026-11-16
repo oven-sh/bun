@@ -23,7 +23,7 @@ use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
-use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSPoint};
+use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSPoint, NSRunLoop};
 
 pub use super::unix::wake;
 use super::{thread, unix};
@@ -43,7 +43,27 @@ pub fn wake_ui() {
 }
 
 extern "C" fn has_jobs(_: *const c_void) {
-    turn();
+    if thread::exists() {
+        return turn();
+    }
+    if !is_in_next_event() && super::can_tick() && (IS_READY.take() || bridge::has_events()) {
+        super::tick();
+        // It was armed before the callbacks ran, which may have set timers.
+        if SOURCE_WAS_READY.take() {
+            arm(None, Some(Duration::ZERO));
+        }
+    }
+    window::layers::flush();
+}
+
+/// The menu bar is tracked from inside of it.
+fn is_in_next_event() -> bool {
+    // SAFETY: a constant.
+    let default = unsafe { NSDefaultRunLoopMode };
+    IS_IN_NEXT_EVENT.get()
+        && NSRunLoop::mainRunLoop()
+            .currentMode()
+            .is_some_and(|mode| &*mode == default)
 }
 
 pub fn init() {
@@ -140,6 +160,7 @@ thread_local! {
     static TIMER: Cell<CFRunLoopTimerRef> = const { Cell::new(null_mut()) };
     static FIRES_AT: Cell<f64> = const { Cell::new(NEVER) };
     static IS_RUNNING: Cell<bool> = const { Cell::new(false) };
+    static SOURCE_WAS_READY: Cell<bool> = const { Cell::new(false) };
     static IS_READY: Cell<bool> = const { Cell::new(false) };
     /// `wait` itself is what runs the run loop, and not a menu, a drag or a resize.
     static IS_IN_NEXT_EVENT: Cell<bool> = const { Cell::new(false) };
@@ -168,6 +189,7 @@ fn enable(descriptor: CFFileDescriptorRef) {
 
 extern "C" fn source_is_ready(_: CFFileDescriptorRef, _: CFOptionFlags, _: *mut c_void) {
     IS_READY.set(true);
+    SOURCE_WAS_READY.set(true);
 }
 
 extern "C" fn was_woken(descriptor: CFFileDescriptorRef, _: CFOptionFlags, _: *mut c_void) {
@@ -178,23 +200,40 @@ extern "C" fn was_woken(descriptor: CFFileDescriptorRef, _: CFOptionFlags, _: *m
 extern "C" fn time_is_up(_: CFRunLoopTimerRef, _: *mut c_void) {
     IS_READY.set(true);
     FIRES_AT.set(NEVER);
-    turn();
+    if thread::exists() {
+        wake_ui();
+    }
 }
 
+/// An observer or a timer is not called again before it returns, so what may run a loop of its own is left to the source.
 extern "C" fn before_waiting(_: CFRunLoopObserverRef, _: CFRunLoopActivity, _: *mut c_void) {
-    if thread::exists() {
-        return turn();
-    }
-    if !IS_READY.get() && !super::has_work() {
-        return window::layers::flush();
-    }
-    if !IS_IN_NEXT_EVENT.get() {
-        if super::can_tick() && (IS_READY.take() || bridge::has_events()) {
-            super::tick();
+    let is_due = if thread::exists() {
+        crate::input::flush_raw_key();
+        let timeout = super::time_until_next_turn().filter(|_| IS_RUNNING.get());
+        let is_free = super::running().is_some_and(|running| !running.handle.is_borrowed());
+        arm(
+            None,
+            timeout.map(|it| {
+                if is_free {
+                    it
+                } else {
+                    it.max(Duration::from_millis(1))
+                }
+            }),
+        );
+        is_free && timeout == Some(Duration::ZERO)
+    } else if is_in_next_event() {
+        if IS_READY.get() || super::has_work() {
+            return post_empty_event();
         }
-        return window::layers::flush();
+        false
+    } else {
+        super::can_tick() && (IS_READY.get() || bridge::has_events())
+    };
+    match is_due {
+        true => wake_ui(),
+        false => window::layers::flush(),
     }
-    post_empty_event();
 }
 
 /// Only an event makes `nextEventMatchingMask:` return.

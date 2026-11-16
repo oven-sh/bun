@@ -160,7 +160,7 @@ class Window extends EventEmitter {
       height: options.height ?? 600,
       minWidth: this.#limits.min[0],
       minHeight: this.#limits.min[1],
-      show: this.#visible,
+      show: this.#visible && !this.#isSheet(),
       focus: this.#visible && options.focus !== false,
       frame: options.frame !== false,
       hiddenTitleBar,
@@ -171,13 +171,15 @@ class Window extends EventEmitter {
       movable: options.movable !== false,
       acceptFirstMouse: !!options.acceptFirstMouse || options.type === "popup",
       minimizable: options.minimizable !== false,
-      kind: this.#modal
-        ? "dialog"
-        : options.type === "panel"
-          ? "floating"
-          : options.type === "popup"
-            ? "popup"
-            : "normal",
+      kind: this.#isSheet()
+        ? "normal"
+        : this.#modal
+          ? "dialog"
+          : options.type === "panel"
+            ? "floating"
+            : options.type === "popup"
+              ? "popup"
+              : "normal",
       maximized: !!options.maximized,
       fullscreen: !!(options.fullscreen || options.kiosk),
       appId: app.identifier,
@@ -208,7 +210,7 @@ class Window extends EventEmitter {
       roundedCorners: options.frame !== false || (options.roundedCorners !== false && !options.transparent),
     });
     if (options.alwaysOnTop) this.setAlwaysOnTop(true);
-    if (isMac && this.#visible && this.#parent && !this.#modal) this.#tell("parent", this.#parent.id);
+    if (isMac && this.#visible && this.#parent) this.#tell(this.#modal ? "sheet" : "parent", this.#parent.id);
     if (options.skipTaskbar) this.setSkipTaskbar(true);
     if (options.opacity !== undefined) this.setOpacity(options.opacity);
     this.#updateMenus();
@@ -414,12 +416,14 @@ class Window extends EventEmitter {
 
   /** For a key that the content had no use for. */
   handleShortcut(event: { key: string; code: string; m: number }): boolean {
-    if (this.#internal) return false;
+    if (this.#internal && !isMac) return false;
     return require("internal/desktop/menu").activateByKey(this.#activeMenu(), this, event);
   }
 
   deferShortcut(event: object) {
-    return this.#internal ? undefined : require("internal/desktop/menu").deferByKey(this.#activeMenu(), this, event);
+    return this.#internal && !isMac
+      ? undefined
+      : require("internal/desktop/menu").deferByKey(this.#activeMenu(), this, event);
   }
 
   [kHandle](name: string, value: any) {
@@ -440,18 +444,22 @@ class Window extends EventEmitter {
         return this.emit(value ? "enter-full-screen" : "leave-full-screen");
       case "swipe":
         return this.emit("swipe", new Event(), value);
-      case "visibility": {
-        if (isMac && this.#occluded !== (!value && this.#visible)) {
-          this.#occluded = !this.#occluded;
-          this.#page?.environmentChanged();
-          this.emit(kOcclusionChanged);
-        }
-        const minimized = !value && this.#visible && !!this.#ask("isMinimized");
-        if (minimized === this.#minimized) return;
-        this.#minimized = minimized;
+      case "resizing":
+        return this.emit(value ? "will-resize" : "resized", new Event(), this.getBounds(), { edge: "bottom-right" });
+      case "moving":
+        return this.emit("will-move", new Event(), this.getBounds());
+      case "visibility":
+        if (!isMac) return this[kHandle]("minimized", !value && this.#visible && !!this.#ask("isMinimized"));
+        if (value) this[kHandle]("minimized", false);
+        if (this.#occluded === (!value && this.#visible)) return;
+        this.#occluded = !this.#occluded;
         this.#page?.environmentChanged();
-        return this.emit(minimized ? "minimize" : "restore");
-      }
+        return this.emit(kOcclusionChanged);
+      case "minimized":
+        if (value === this.#minimized) return;
+        this.#minimized = value;
+        this.#page?.environmentChanged();
+        return this.emit(value ? "minimize" : "restore");
       case "bounds": {
         const before = this.#geometry!;
         const { x, y, width, height, maximized, fullscreen } = (this.#geometry = value as Geometry);
@@ -579,10 +587,15 @@ class Window extends EventEmitter {
     return this.#destroyed;
   }
 
+  #isSheet() {
+    return isMac && this.#modal;
+  }
+
   #show(focus: boolean) {
     const wasVisible = this.#visible;
     this.#visible = true;
-    this.#tell("show", focus);
+    if (this.#isSheet() && !wasVisible) this.#tell("sheet", this.#parent!.id);
+    else this.#tell("show", focus);
     if (wasVisible) return;
     this.#occluded = false;
     if (isMac && this.#parent && !this.#modal) this.#tell("parent", this.#parent.id);
@@ -596,7 +609,7 @@ class Window extends EventEmitter {
   }
 
   showInactive() {
-    this.#show(false);
+    if (!this.#modal) this.#show(false);
   }
 
   hide() {
@@ -611,7 +624,8 @@ class Window extends EventEmitter {
   }
 
   isVisible() {
-    return this.#visible && !this.#destroyed;
+    if (!this.#visible || this.#destroyed) return false;
+    return !(isMac && (this.#minimized || (this.#occluded && native.ask("isHidden"))));
   }
 
   focus() {

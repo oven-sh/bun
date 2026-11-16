@@ -614,6 +614,12 @@ enum Mouse {
 }
 
 fn emit_mouse(state: &WindowState, action: Mouse, at: [f64; 6], button: u8, clicks: usize) {
+    surface::change_motion(at[0] as u32, |motion| {
+        motion.release_wheel();
+        if action == Mouse::Down {
+            motion.report_scrolls(at[0] as u32);
+        }
+    });
     let fields = [
         (action as u8).into(),
         button.into(),
@@ -855,6 +861,16 @@ fn scroll(state: &WindowState, event: &ScrollEvent) {
         is_precise.into(),
         phase_number(event.touch_phase),
     ];
+    if at[5] >= 256. {
+        let ([a, b, c, d, e, f], [g, h, i, j]) = (at, fields);
+        return surface::change_motion(a as u32, |motion| {
+            motion.report_wheel(
+                [a, b, c, d, e, f, g, h, i, j],
+                surface::milliseconds(Instant::now()),
+            )
+        });
+    }
+    surface::change_motion(at[0] as u32, Motion::release_wheel);
     emit_located(Kind::Wheel, at, fields, false);
 }
 

@@ -105,6 +105,7 @@ class Page {
   environmentChanged = false;
   /** The media queries that have listeners, and whether they matched. */
   watchedQueries = new Map<any, boolean>();
+  scrollRequests = new Map<number, (result: object) => void>();
   background = -1;
 
   timeOrigin = performance.now();
@@ -164,7 +165,6 @@ class Page {
   changedSelections = new Set<N>();
   highlights: any = undefined;
   paintedHighlights = new Set<string>();
-  /** From the first time that text is edited. */
   spelling: any = null;
   isAccessible = false;
   accessibilityTimer: any = null;
@@ -403,8 +403,8 @@ class Page {
     if (this.doc.scheduled && this.surface !== 0 && this.container === null) updateRendering(this);
   }
 
-  /** For a script that takes long to answer input: shows what it has so far, and calls nothing. */
-  paintNow() {
+  /** For a script that takes long to answer input: shows what it has so far, unless an observer has yet to hear of a new size. */
+  paintNow(deliversResizes: boolean) {
     const now = performance.now();
     if (
       this.earlyPaintsLeft === 0 ||
@@ -421,10 +421,14 @@ class Page {
     )
       return;
     if (!this.hasPainted || this.isDisposed || this.wasResized || !this.doc.scheduled) return;
-    this.earlyPaintsLeft--;
     const engine = sync(this.doc);
     engine.setTime(now);
     engine.updateLayout();
+    if (deliversResizes) {
+      for (let depth = 0; (depth = observers.deliverResizes(this, depth)) !== Infinity && depth >= 0;)
+        sync(this.doc).updateLayout();
+    } else if (observers.hasResizedBoxes(this)) return;
+    this.earlyPaintsLeft--;
     showSelection(this);
     engine.paint(this.surface);
     this.unpaintedSince = performance.now();
@@ -948,7 +952,7 @@ function showSelection(page: Page) {
   if (page.spelling !== null) spelling().beforeFrame(page);
   if (selection === null || page.focusedFrame !== null) return;
   if (!editing.updateInputMethod(page)) return;
-  if (page.host.checksSpelling !== undefined && (page.spelling !== null || page.inputMethodState.text !== "")) {
+  if (page.host.checksSpelling !== undefined) {
     page.spelling ??= new (spelling().Spelling)();
     spelling().caretOrTextChanged(page);
   }
@@ -992,7 +996,7 @@ function reportPaint(page: Page, hasMoved: boolean) {
 }
 
 /** https://html.spec.whatwg.org/#update-the-rendering */
-const EARLY_PAINT_AFTER = 20;
+const EARLY_PAINT_AFTER = 4;
 const EARLY_PAINT_UNTIL = 500;
 
 function updateRendering(page: Page) {
@@ -1013,6 +1017,8 @@ function updateRendering(page: Page) {
       if (events.hasListeners(page.target, "pagereveal"))
         events.dispatch(page.target, new events.PageRevealEvent("pagereveal"));
     }
+    const lists = doc.cachedLists;
+    if (lists.length > 0) doc.cachedLists = lists.filter(forget => !forget(lists.length > 256));
     if (page.earlyCallbacks.length > 0) runEarlyCallbacks(page, time);
     if (page.autofocusCandidates.length > 0) focusing.autofocus(page);
     if (page.wasResized) {

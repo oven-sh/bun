@@ -49,7 +49,7 @@ function createElement(doc: Doc, namespace: string | null, prefix: string | null
 }
 
 function caretAt(doc: Doc, x: number, y: number): [N, number] | null {
-  const found = doc.page === null ? [] : sync(doc).pointAt(1, +x, +y);
+  const found = isInViewport(doc.page, x, y) ? sync(doc).pointAt(1, +x, +y) : [];
   return found.length === 0 || found[0] === 0 ? null : ranges.fromEngine(doc, found[0], found[1]);
 }
 
@@ -68,7 +68,8 @@ class CaretPosition {
   getClientRect() {
     const [node, offset] = this.$impl;
     if (node.scope === null) return null;
-    return rectAt(sync(node.doc).caretRect(ranges.pointId(node), ranges.pointOffset(node, offset), false));
+    const [x, y, , height] = sync(node.doc).caretRect(ranges.pointId(node), ranges.pointOffset(node, offset), false);
+    return rectAt([x, y, 0, height]);
   }
 }
 expose(CaretPosition);
@@ -331,7 +332,10 @@ class Document extends Node {
   }
   get scrollingElement() {
     core.brand(this);
-    return this.documentElement;
+    const { doc } = this.$impl;
+    if (!doc.quirks) return this.documentElement;
+    const body = core.bodyOf(doc);
+    return body !== null && body.name === "body" && !html.isScrollableBody(body) ? core.wrap(body) : null;
   }
   get head() {
     return wrapOrNull(core.rootChild(this.$impl.doc, "head"));
@@ -681,8 +685,8 @@ class Document extends Node {
     requireHtml(this);
     return this.$impl.doc.page === null ? "" : editing.commands().value(this.$impl.doc, asciiLower(String(name)));
   }
-  caretRangeFromPoint(x: number, y: number) {
-    const found = caretAt(this.$impl.doc, x, y);
+  caretRangeFromPoint(x = 0, y = 0) {
+    const found = caretAt(this.$impl.doc, x | 0, y | 0);
     if (found === null) return null;
     let [node, offset] = found;
     for (let root; (root = core.rootOf(node)) !== this.$impl;) {
@@ -778,6 +782,7 @@ function elementFor(scope: N, id: number): N | null {
 }
 
 function isInViewport(page: Page | null, x: number, y: number): boolean {
+  if (!Number.isFinite(+x) || !Number.isFinite(+y)) throw new TypeError("The provided double value is non-finite.");
   return page !== null && x >= 0 && y >= 0 && x < page.width && y < page.height;
 }
 
@@ -823,14 +828,17 @@ const documentOrShadowRoot = {
     if ($argumentCount() < 2) core.tooFew(2);
     const { doc }: N = this.$impl;
     if (!isInViewport(doc.page, x, y)) return [];
-    const found = new Set(
-      sync(doc)
-        .hitTestAll(+x, +y)
-        .map(id => elementFor(this.$impl, id)),
-    );
-    found.$add(core.documentElement(doc));
-    found.$delete(null);
-    return Array.from(found, node => wrap(node!));
+    const found: N[] = [];
+    const seen = new Set<number>();
+    for (const id of sync(doc).hitTestAll(+x, +y)) {
+      const node = elementFor(this.$impl, id);
+      const isItself = node === doc.nodes[id];
+      if (node !== null && node !== found.at(-1) && (isItself || !seen.$has(node.id))) found.push(node);
+      seen.$add(node?.id ?? 0);
+    }
+    const root = core.documentElement(doc);
+    if (root !== null && !found.includes(root)) found.push(root);
+    return found.map(node => wrap(node));
   },
   getSelection(this: any) {
     return this.$impl.doc.page === null ? null : ranges.wrapSelection(this.$impl.doc, this.$impl);

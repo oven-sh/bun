@@ -66,6 +66,7 @@ type Navigation = {
 const all = new Map<number, WebContents>();
 const kPrivate = Symbol("private");
 let nextId = 1;
+const MAX_ENTRIES = 50;
 let nextItem = 1;
 let focused: WebContents | null = null;
 
@@ -75,6 +76,9 @@ const sandboxDirective = /(?:^|[;,])\s*sandbox\b([^;,]*)/i;
 const isWeb = /^https?:/;
 const withoutHash = (url: string) => url.split("#")[0];
 const toLevel = (factor: number) => Math.log(factor) / Math.log(1.2);
+
+/** The page whose message is being delivered. It may have sent it while it was unloaded. */
+let sender: unknown;
 
 class WebFrameMain extends EventEmitter {
   #page;
@@ -128,7 +132,7 @@ class WebFrameMain extends EventEmitter {
   }
 
   get frameTreeNodeId() {
-    return this.#page.webContents.id;
+    return this.#page.context.state.contents.id;
   }
 
   get visibilityState() {
@@ -337,6 +341,7 @@ class WebContents extends EventEmitter {
       settings: new Map<string, unknown[]>(),
       startGuest: () => state.guest ?? (this.#isForGuest() ? this.#newGuest().commit() : undefined),
       staysInGuest: () => !this.#hasShownTrusted && this.#isForGuest(),
+      isForGuest: (url: string) => this.#isForGuest(url),
       leavePage: () => {
         this.#page.dispose();
         this.#page = this.#newPage("about:blank", { isInitial: true });
@@ -617,10 +622,14 @@ class WebContents extends EventEmitter {
         this.#frame ? { ...current, frames: frames.$set(this.#place, item) } : { ...item, frames },
       );
       this.#top().#tellOthersOfPruning(this);
+      if (joint.entries.length <= MAX_ENTRIES) return;
+      joint.entries.shift();
+      joint.index--;
+      queueTask(() => page.disposed || this.#top().#tellOthersOfPruning());
     }
   }
 
-  #tellOthersOfPruning(except: WebContents) {
+  #tellOthersOfPruning(except?: WebContents) {
     if (this !== except) this.#page.controller?.keepEntries(this.#items().map(it => it.state?.key));
     for (const frame of this.#framesInProcess()) frame.#tellOthersOfPruning(except);
   }
@@ -815,7 +824,8 @@ class WebContents extends EventEmitter {
         console.error(error);
       if (this.#pending !== pending) return;
       this.#pending = undefined;
-      if (error?.needsWebEngine && !this.#frame && webEngine().isAvailable()) {
+      if (error?.needsWebEngine && webEngine().isAvailable()) {
+        if (this.#frame) return this.#frame.element.useWebEngine(pending.url);
         this.#hasShownTrusted = true;
         this.#loading = false;
         this.#notServed = withoutHash(pending.url);
@@ -891,7 +901,9 @@ class WebContents extends EventEmitter {
         "DesktopWarning",
       );
     }
-    throw loader.netError("BLOCKED_BY_CLIENT");
+    throw Object.assign(loader.netError("BLOCKED_BY_CLIENT"), {
+      needsWebEngine: this.#frame?.element.kind === "iframe",
+    });
   }
 
   async #fetchDocument(pending: { controller: AbortController; url: string }, navigation: Navigation) {
@@ -1070,15 +1082,20 @@ class WebContents extends EventEmitter {
   }
 
   #dispatch(page: any, name: string, event: any, channel: string, args: unknown[]) {
-    this.emit(name, event, channel, ...args);
-    for (const ipc of [page.handle.ipc, this.ipc, ipcMain]) ipc.emit(channel, event, ...args);
+    sender = page;
+    try {
+      this.emit(name, event, channel, ...args);
+      for (const ipc of [page.handle.ipc, this.ipc, ipcMain]) ipc.emit(channel, event, ...args);
+    } finally {
+      sender = undefined;
+    }
   }
 
   #ipcEvent(page: any, more?: object) {
     return Object.defineProperty(
       new Event({ type: "frame", sender: this, frameId: page.id, processId: this.id, ...more }),
       "senderFrame",
-      { get: () => (page.disposed ? null : page.handle), enumerable: true },
+      { get: () => (page.disposed && page !== sender ? null : page.handle), enumerable: true },
     );
   }
 
@@ -1196,25 +1213,39 @@ class WebContents extends EventEmitter {
     sendSync: (page: any, channel: string, args: unknown[]) => {
       let answered = false;
       let result: unknown;
+      let resume: (() => void) | undefined;
       const event = Object.defineProperty(this.#ipcEvent(page, this.#replier(page)), "returnValue", {
         get() {},
         set(value) {
           answered = true;
           result = value;
+          resume?.();
         },
       });
       this.#dispatch(page, "ipc-message-sync", event, channel, args);
-      if (!answered) {
-        throw new Error(
-          `event.returnValue of '${channel}' has to be set before the listener returns: the page and the main process share a thread`,
-        );
+      if (answered) return result;
+      if (
+        [page.handle.ipc, this.ipc, ipcMain].some(ipc => ipc.listenerCount(channel) > 0) ||
+        this.listenerCount("ipc-message-sync") > 0
+      ) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        // All pages wait, so an answer that depends on one of them never comes.
+        const timer = setTimeout((resume = resolve), 5000);
+        Page.block(promise);
+        clearTimeout(timer);
       }
+      if (!answered) throw new Error(`event.returnValue of '${channel}' was not set`);
       return result;
     },
     invoke: async (page: any, channel: string, args: unknown[]) => {
       const target = [page.handle.ipc, this.ipc, ipcMain].find(ipc => ipc._invokeHandlers.has(channel));
       if (!target) throw new Error(`No handler registered for '${channel}'`);
-      return target._invokeHandlers.get(channel)(this.#ipcEvent(page), ...args);
+      sender = page;
+      try {
+        return target._invokeHandlers.get(channel)(this.#ipcEvent(page), ...args);
+      } finally {
+        sender = undefined;
+      }
     },
     navigate: (
       page: any,
@@ -1371,7 +1402,11 @@ class WebContents extends EventEmitter {
   }
 
   get focusedFrame() {
-    return this.isFocused() ? (this[kPrivate].guest?.focusedFrame ?? this.mainFrame) : null;
+    const { guest } = this[kPrivate];
+    return (
+      (guest ? guest.focusedFrame : this.#page.controller?.focusedFrame?.()) ??
+      (this.isFocused() ? this.mainFrame : null)
+    );
   }
 
   get opener() {

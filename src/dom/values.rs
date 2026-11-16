@@ -1363,8 +1363,24 @@ pub(crate) fn link<'a>(p: &mut P<'_, 'a>) -> Option<(&'a [u8], &'a [u8])> {
         })
 }
 
+/// If it has modifiers, they and the referrer follow, each after a 0.
+pub(crate) fn request(url: &[u8], modifiers: &[u8], cx: &Ctx) -> Str {
+    match modifiers.trim_ascii() {
+        b"" => cx.url(url),
+        modifiers => format!(
+            "{}\0{}\0{}",
+            cx.url(url),
+            text(modifiers),
+            text(cx.base_url)
+        )
+        .into(),
+    }
+}
+
 pub(crate) fn write_url(url: &str, out: &mut Out) {
+    let mut parts = bun_core::strings::split(url.as_bytes(), b"\0");
     out.extend_from_slice(b"url(");
-    write_string(url.as_bytes(), out);
+    write_string(parts.next().unwrap_or_default(), out);
+    out.extend(parts.next().into_iter().flat_map(|it| [b" ", it].concat()));
     out.push(b')');
 }

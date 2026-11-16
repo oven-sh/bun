@@ -8,7 +8,7 @@ use bun_css::css_parser::{Delimiters, nth::parse_nth};
 use smallvec::{SmallVec, smallvec};
 
 use crate::grammar::is_reserved;
-use crate::name::Name;
+use crate::name::{Name, name};
 use crate::selector::*;
 use crate::tree::{Flags, State};
 use crate::values::*;
@@ -32,6 +32,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) namespaces: &'a [(Box<[u8]>, Str)],
     /// For `@supports`.
     pub(crate) is_strict: bool,
+    pub(crate) is_quirky: bool,
 }
 
 /// What can follow a pseudo-element.
@@ -127,7 +128,7 @@ impl After {
 }
 
 fn pseudo_class(name: &[u8]) -> Option<Simple> {
-    const STATES: [(&str, State); 27] = [
+    const STATES: [(&str, State); 26] = [
         ("hover", State::HOVER),
         ("active", State::ACTIVE),
         ("focus", State::FOCUS),
@@ -137,7 +138,6 @@ fn pseudo_class(name: &[u8]) -> Option<Simple> {
         ("enabled", State::ENABLED),
         ("checked", State::CHECKED),
         ("open", State::OPEN),
-        ("modal", State::MODAL),
         ("popover-open", State::POPOVER_OPEN),
         ("link any-link -webkit-any-link", State::LINK),
         ("target", State::TARGET),
@@ -171,6 +171,12 @@ fn pseudo_class(name: &[u8]) -> Option<Simple> {
         b"first-of-type" => edge(NthKind::OfType),
         b"last-of-type" => edge(NthKind::LastOfType),
         b"only-of-type" => edge(NthKind::OnlyOfType),
+        b"modal" => Simple::Is(
+            [State::MODAL, State::FULLSCREEN]
+                .into_iter()
+                .map(|it| lone(Simple::State(it)))
+                .collect(),
+        ),
         b"defined" => Simple::NotState(State::UNDEFINED),
         b"read-only" => Simple::NotState(State::READ_WRITE),
         b"horizontal" => Simple::State(State::HORIZONTAL),
@@ -194,6 +200,15 @@ fn pseudo_class(name: &[u8]) -> Option<Simple> {
 /// The custom state that stands for a pseudo-class that few elements are in.
 fn internal_state(name: &[u8]) -> Name {
     Name::new(&[b":", name].concat())
+}
+
+fn lone(simple: Simple) -> Selector {
+    Selector {
+        compounds: smallvec![compound(smallvec![simple], Combinator::None)],
+        specificity: 0,
+        pseudo: Pseudo::None,
+        pseudo_state: State::empty(),
+    }
 }
 
 fn max_specificity(list: &[Selector]) -> u32 {
@@ -259,6 +274,9 @@ impl Parser<'_> {
     };
 
     fn read(self, source: &[u8], out: Option<Out>, within: Within) -> Option<(List, Option<Out>)> {
+        let is_declaration = source.starts_with(b"--")
+            && with_parser(source, |p| ident(p).is_some() && p.expect_colon().is_ok());
+        (!is_declaration).then_some(())?;
         let mut reader = Reader {
             parser: self,
             out,
@@ -604,7 +622,19 @@ impl Reader<'_> {
                 Ok(Token::IdHash(name)) if after == After::Nothing => {
                     self.text(&[b"#"]);
                     self.write(|out| write_ident(name, out));
-                    (ID, Simple::Id(Name::new(name)))
+                    match self.parser.is_quirky {
+                        true => (
+                            ID,
+                            Simple::Attribute(Rc::new(AttributeTest {
+                                names: (name!("id"), name!("id")),
+                                operator: Operator::Equal,
+                                value: name.into(),
+                                case: Case::Ignored,
+                                key: Name::NONE,
+                            })),
+                        ),
+                        false => (ID, Simple::Id(Name::new(name))),
+                    }
                 }
                 Ok(Token::Delim(0x2e)) if after == After::Nothing => {
                     let Token::Ident(name) = *p.next_including_whitespace().ok()? else {
@@ -612,7 +642,14 @@ impl Reader<'_> {
                     };
                     self.text(&[b"."]);
                     self.write(|out| write_ident(name, out));
-                    (CLASS, Simple::Class(Name::new(name)))
+                    (
+                        CLASS,
+                        Simple::Class(if self.parser.is_quirky {
+                            Name::lowercase(name)
+                        } else {
+                            Name::new(name)
+                        }),
+                    )
                 }
                 Ok(Token::OpenSquare) if after == After::Nothing => {
                     (CLASS, nested(p, |p| self.attribute(p))?)
@@ -921,7 +958,7 @@ impl Reader<'_> {
                     _ => NthKind::LastOfType,
                 };
                 let of = match name.ends_with(b"child")
-                    && attempt(p, |p| ident(p).filter(|it| *it == b"of")).is_some()
+                    && attempt(p, |p| ident(p).filter(|it| eq(it, "of"))).is_some()
                 {
                     true => {
                         self.text(&[b" of "]);
@@ -955,15 +992,9 @@ impl Reader<'_> {
             b"active-view-transition-type" => {
                 let types = self.each(p, false, &mut word)?;
                 let one = |name: Out| {
-                    let simple =
-                        Simple::CustomState(internal_state(&[b"type ", &name[..]].concat()));
-                    let compounds = smallvec![compound(smallvec![simple], Combinator::None)];
-                    Selector {
-                        compounds,
-                        specificity: 0,
-                        pseudo: Pseudo::None,
-                        pseudo_state: State::empty(),
-                    }
+                    lone(Simple::CustomState(internal_state(
+                        &[b"type ", &name[..]].concat(),
+                    )))
                 };
                 (CLASS, Simple::Is(types.into_iter().map(one).collect()))
             }

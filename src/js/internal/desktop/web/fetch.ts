@@ -841,15 +841,15 @@ function start(options: Options, list: HeaderList, body: unknown, length = 0, on
 }
 
 /** The chunks become arrays of this realm. */
-function ownReader(load: Load, reader: Reader, failure: () => unknown): Reader {
-  const convert = ({ done, value }: any) => ({
-    done,
-    value: done || value instanceof Uint8Array ? value : new Uint8Array(value),
-  });
+function ownReader(load: Load, reader: Reader, failure: () => unknown, ended: () => void): Reader {
+  const convert = ({ done, value }: any) => {
+    if (done) ended();
+    return { done, value: done || value instanceof Uint8Array ? value : new Uint8Array(value) };
+  };
   return {
     read: () => idl.adopt(reader.read(), convert, failure),
-    readAll: reader.readAll && (() => idl.adopt(reader.readAll!(), bytes => bytes, failure)),
-    cancel: () => load.abort(),
+    readAll: reader.readAll && (() => idl.adopt(reader.readAll!(), bytes => (ended(), bytes), failure)),
+    cancel: () => (ended(), load.abort()),
   };
 }
 
@@ -876,21 +876,20 @@ function send(request: Request, initiator: string): Promise<Response> {
     body && (body.source ?? body.stream.pipeThrough(checkedChunks())),
     body?.length ?? 0,
   );
-  const failure = () => (signal?.aborted ? signal.reason : new TypeError("Failed to fetch"));
   let received: Body | undefined;
   const { promise, resolve, reject } = Promise.withResolvers<Response>();
-  signal?.addEventListener(
-    "abort",
-    () => {
-      reject(signal.reason);
-      received?.fail(signal.reason);
-      load.abort();
-    },
-    { once: true },
-  );
+  const abort = () => {
+    reject(signal!.reason);
+    received?.fail(signal!.reason);
+    load.abort();
+  };
+  const ended = () => signal?.removeEventListener("abort", abort);
+  const failure = () => (ended(), signal?.aborted ? signal.reason : new TypeError("Failed to fetch"));
+  signal?.addEventListener("abort", abort, { once: true });
   load.promise.then(
     loaded => {
-      if (loaded.reader) (received = new Body(null)).incoming = ownReader(load, loaded.reader, failure);
+      if (loaded.reader) (received = new Body(null)).incoming = ownReader(load, loaded.reader, failure, ended);
+      else ended();
       resolve(makeResponse(loaded, received ?? null));
     },
     () => reject(failure()),

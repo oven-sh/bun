@@ -236,6 +236,15 @@ class ContentSecurityPolicy {
     );
   }
 
+  /** Without anything to report. */
+  allowsInlineImages() {
+    const url = new URL("data:,");
+    return this.#policies.every(policy => {
+      const sources = sourcesFor(policy, "img-src");
+      return sources === undefined || this.#lists(sources, url, false);
+    });
+  }
+
   /** `kind` is "script" or "style", `place` "element", "attribute" or "navigation". */
   allowsInline(kind: string, text: string, place: string, { nonce = "", byScript = false, element }: Fetched = {}) {
     return this.#check(

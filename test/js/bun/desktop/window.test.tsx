@@ -19,7 +19,7 @@ import {
   Window,
 } from "bun:desktop";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 app.on("window-all-closed", () => {});
@@ -402,6 +402,40 @@ describe.skipIf(!hasLibrary)("garbage collection", () => {
     expect(await run(script, env)).toEqual({ stdout: "collected\n", exitCode: 0 });
   });
 });
+
+test.skipIf(!hasLibrary || isWindows || isASAN)(
+  "objects keep their identity when the heap is compacted",
+  async () => {
+    using dir = tempDir("desktop-compaction", {
+      "package.json": JSON.stringify({ name: "compacted" }),
+      "app.js": await Bun.file(import.meta.dir + "/compaction.fixture.js").text(),
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "compile", "--desktop", "app.js", "--outfile=compacted"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await build.exited).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [`${dir}/${isMacOS ? "compacted.app/Contents/MacOS/compacted" : "compacted.AppDir/AppRun"}`],
+      env: {
+        ...bunEnv,
+        BUN_DESKTOP_HEADLESS: "1",
+        BUN_DESKTOP_JSC_useHeapCompaction: "1",
+        BUN_DESKTOP_JSC_verboseHeapCompaction: "1",
+        BUN_DESKTOP_JSC_secondsBetweenForcedHeapCompactions: "0.0001",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("mismatches: 0\n");
+    expect(stderr).toMatch(/compaction: done, emptied [1-9]/);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 describe.skipIf(!hasLibrary || isWindows)("node:fs lookups", () => {
   async function run(script: string) {

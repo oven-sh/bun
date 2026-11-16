@@ -164,7 +164,7 @@ function show(page: Page, directives: string, scrolls: boolean): boolean {
   const engine = core.sync(doc);
   engine.revealPoint(startNode.id, startOffset, false);
   const [, top, , height] = engine.rangeRects(startNode.id, startOffset, startNode.id, startOffset + 1);
-  html.scroll(doc, 1, { top: top + height / 2 - page.height / 2, behavior: "instant" }, undefined, true);
+  html.scroll(doc, 1, undefined, top + height / 2 - page.height / 2, true, 1);
   return true;
 }
 

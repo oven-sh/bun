@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::time::Instant;
 
+use parking_lot::Mutex;
 use resvg::tiny_skia::Transform;
 use zeno::PathBuilder as _;
 
@@ -14,11 +15,11 @@ use crate::abi::{
 /// What an item and, for a `Push*`, everything up to its `Pop` cover.
 #[derive(Clone, Copy, Default)]
 struct Extent {
-    /// In the space that the item is in.
+    /// In the space that the item is in. For a `Pop`, of the content, in the space that is inside of the group.
     bounds: Rect,
     /// The index after it.
     end: u32,
-    /// The index of a layer's `Mask`, or 0.
+    /// The index of a layer's `Mask`, or 0. For a `Pop`, the index after the `Push*` of the group around the group.
     mask: u32,
 }
 
@@ -33,6 +34,8 @@ pub struct Scene {
     pub regions: Vec<Region>,
     pub caret: Option<Rect>,
     pub has_backdrops: bool,
+    /// Those that have not been asked for, with their sizes.
+    pub new_images: Mutex<Vec<(u32, [f32; 2])>>,
     extents: Vec<Extent>,
     /// The items as they were before `Motion` changed them.
     submitted: Vec<Item>,
@@ -51,6 +54,7 @@ impl Default for Scene {
             regions: Vec::new(),
             caret: None,
             has_backdrops: false,
+            new_images: Mutex::default(),
             extents: Vec::new(),
             submitted: Vec::new(),
         }
@@ -66,6 +70,8 @@ pub struct Frame {
     pub snaps: bool,
     /// When an animated image next changes.
     pub next_change: Cell<Option<Instant>>,
+    /// Until when it waits for images to be decoded, if it can do without them.
+    pub deadline: Option<Instant>,
 }
 
 impl Frame {
@@ -76,6 +82,7 @@ impl Frame {
             shows_caret,
             snaps: true,
             next_change: Cell::new(None),
+            deadline: None,
         }
     }
 
@@ -357,10 +364,8 @@ impl Scene {
     /// After a change to `items`.
     pub fn index(&mut self) {
         self.caret = None;
-        self.has_backdrops = self
-            .items
-            .iter()
-            .any(|item| matches!(item, Item::Backdrop { .. }));
+        self.has_backdrops = false;
+        self.new_images.get_mut().clear();
         self.extents.clear();
         let mut open: Vec<usize> = Vec::new();
         let mut index = 0;
@@ -375,6 +380,17 @@ impl Scene {
             };
             let mut finished = extent.bounds;
             match self.items[index] {
+                Item::Backdrop { .. } => self.has_backdrops = true,
+                Item::Image {
+                    tile,
+                    image,
+                    pixelated: false,
+                    ..
+                } => {
+                    self.new_images
+                        .get_mut()
+                        .push((image, [tile.rect.width, tile.rect.height]));
+                }
                 Item::PushClip(_)
                 | Item::PushClipPath { .. }
                 | Item::PushTransform(_)
@@ -396,7 +412,11 @@ impl Scene {
                 }
                 Item::Pop => {
                     if let Some(push) = open.pop() {
-                        finished = self.group_bounds(push);
+                        (extent.bounds, extent.mask) = (
+                            self.extents[push].bounds,
+                            open.last().map_or(0, |it| *it as u32 + 1),
+                        );
+                        finished = self.group_bounds(push, extent.bounds);
                         self.extents[push].bounds = finished;
                         self.extents[push].end = index as u32 + 1;
                     }
@@ -415,8 +435,25 @@ impl Scene {
         }
     }
 
-    fn group_bounds(&self, push: usize) -> Rect {
-        let content = self.extents[push].bounds;
+    /// After a change to nothing but the matrix of a `PushTransform`.
+    pub fn index_around(&mut self, mut push: usize) {
+        loop {
+            let Extent {
+                bounds: content,
+                mask: parent,
+                ..
+            } = self.extents[self.end(push) - 1];
+            let bounds = self.group_bounds(push, content);
+            if std::mem::replace(&mut self.extents[push].bounds, bounds) == bounds || parent == 0 {
+                return;
+            }
+            push = parent as usize - 1;
+            let pop = self.end(push) - 1;
+            self.extents[pop].bounds = self.content_bounds(push);
+        }
+    }
+
+    fn group_bounds(&self, push: usize, content: Rect) -> Rect {
         match self.items[push] {
             Item::PushClip(shape) => intersect(content, outset(shape.rect, 1.)),
             Item::PushClipPath { verbs, .. } => {

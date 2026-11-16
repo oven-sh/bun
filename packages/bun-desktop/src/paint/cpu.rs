@@ -8,8 +8,8 @@ use rustc_hash::FxHashMap;
 use super::border::{self, Border};
 use super::gradient::{Geometry, Gradient, Spread};
 use super::raster::{
-    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, average_scale, blur_extent, has_radii,
-    inner_band, map_point, map_rect, premultiply, scale, transform,
+    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, average_scale, blend_row, blur_extent,
+    has_radii, inner_band, map_point, map_rect, premultiply, scale, transform,
 };
 use super::scene::{
     Frame, Scene, erases, filtered_bounds, has_graph, intersect, tile_bounds, union,
@@ -109,6 +109,12 @@ impl GlyphPlacer {
         Some(GlyphPlacer { key, matrix })
     }
 
+    /// The same for all that place glyphs whole pixels apart.
+    pub fn phase(&self) -> u64 {
+        u64::from(self.matrix.sx.to_bits()) << 32
+            | u64::from((self.matrix.tx - self.matrix.tx.floor()).to_bits())
+    }
+
     /// The image, and the pixel that its origin goes to.
     pub fn place(&self, glyph: &crate::abi::Glyph) -> (GlyphKey, i32, i32) {
         let (x, y) = map_point(&self.matrix, glyph.x, glyph.y);
@@ -167,7 +173,7 @@ fn draw_glyph(layer: &mut Layer, image: &GlyphImage, x: i32, y: i32, clip: &Clip
 pub fn blend_mode(mode: BlendMode) -> tiny_skia::BlendMode {
     use tiny_skia::BlendMode as To;
     match mode {
-        BlendMode::Normal => To::SourceOver,
+        BlendMode::Normal | BlendMode::FromBackdrop => To::SourceOver,
         BlendMode::Multiply => To::Multiply,
         BlendMode::Screen => To::Screen,
         BlendMode::Overlay => To::Overlay,
@@ -246,6 +252,34 @@ pub fn draw_pixmap(
         return;
     };
     let (width, height) = (pixmap.width() as f32, pixmap.height() as f32);
+    let (mapped, is_near) = (map_rect(matrix, rect), |a: f32, b: f32| {
+        (a - b).abs() < 0.01
+    });
+    if matrix.kx == 0.
+        && matrix.ky == 0.
+        && matrix.sx > 0.
+        && matrix.sy > 0.
+        && is_near(mapped.width, width)
+        && is_near(mapped.height, height)
+        && is_near(mapped.x, mapped.x.round())
+        && is_near(mapped.y, mapped.y.round())
+    {
+        let all = IntRect::nearest(Rect {
+            width,
+            height,
+            ..mapped
+        });
+        let shown = all.intersect(target.rect);
+        for y in (shown.top..shown.bottom).filter(|_| !shown.is_empty()) {
+            let start = (y - all.top) as usize * all.width() + (shown.left - all.left) as usize;
+            blend_row(
+                target.row_mut(y, shown.left, shown.right),
+                &pixmap.data().as_chunks().0[start..start + shown.width()],
+                255,
+            );
+        }
+        return;
+    }
     let placement = Transform::from_row(
         rect.width / width,
         0.,
@@ -466,6 +500,21 @@ impl Painter<'_> {
                         self.paint(scene.content(index), flat, matrix, &Clip::new(flat.rect));
                     },
                 );
+            }
+            Item::PushLayer {
+                blend: BlendMode::FromBackdrop,
+                ..
+            } => {
+                let Some(mut group) = layer.copy(
+                    area.outset(self.reach_of_backdrops(index, matrix))
+                        .intersect(layer.rect),
+                ) else {
+                    return;
+                };
+                self.paint(scene.content(index), &mut group, matrix, &Clip::new(area));
+                if self.mask(&mut group, index, matrix, area).is_some() {
+                    layer.draw(&group, None, clip);
+                }
             }
             Item::PushLayer { opacity, blend, .. } => {
                 let group = self.render_layer(index, matrix, area).map(|mut group| {
@@ -821,18 +870,20 @@ impl Painter<'_> {
                     return;
                 };
                 let tile = snap_tile(frame, tile);
-                images::with(*image, frame, |content, version| {
-                    let (scale_x, scale_y) = matrix.get_scale();
-                    let (width, height) = (tile.rect.width * scale_x, tile.rect.height * scale_y);
-                    let reduced = match content {
-                        Content::Pixels(pixmap) if !pixelated => {
-                            images::reduced(*image, version, pixmap, width, height)
-                        }
-                        _ => None,
-                    };
-                    let content = reduced.as_deref().map_or(content, Content::Pixels);
+                let (scale_x, scale_y) = matrix.get_scale();
+                let mut draw = |content: Content| {
                     self.draw_tiles(&mut drawn, content, &tile, &shape, matrix, !pixelated)
-                });
+                };
+                match pixelated {
+                    true => images::with(*image, frame, |content, _| draw(content)),
+                    false => images::with_size(
+                        *image,
+                        frame,
+                        tile.rect.width * scale_x,
+                        tile.rect.height * scale_y,
+                        draw,
+                    ),
+                };
                 layer.draw(&drawn, None, &clip);
             }
             Item::Svg {
@@ -951,6 +1002,17 @@ impl Painter<'_> {
             group = Layer::new(everything.intersect(area.outset(GRAPH_REACH)).union(area))?;
             render(&mut group, matrix);
         }
+        self.mask(&mut group, index, matrix, area)?;
+        Some(group)
+    }
+
+    fn mask(
+        &self,
+        group: &mut Layer,
+        index: usize,
+        matrix: &Transform,
+        area: IntRect,
+    ) -> Option<()> {
         if let Some((range, luminance)) = self
             .scene
             .mask(index)
@@ -960,7 +1022,7 @@ impl Painter<'_> {
             self.paint(range, &mut mask, matrix, &Clip::new(area));
             group.keep(&mask, luminance);
         }
-        Some(group)
+        Some(())
     }
 
     pub fn reach_of_backdrops(&self, index: usize, matrix: &Transform) -> i32 {

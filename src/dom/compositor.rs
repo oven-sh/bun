@@ -128,7 +128,7 @@ impl Document {
     /// How far beyond the scrollport the contents are painted.
     pub(crate) fn overscan(&self, id: BoxId) -> [f32; 2] {
         let client = self.client_box(id);
-        [client.width, client.height].map(|it| it.min(1200.0))
+        [client.width, client.height].map(|it| it.clamp(500.0, 1200.0))
     }
 
     /// With the axes that scroll and the ones that contain the scrolling.

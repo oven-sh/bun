@@ -17,6 +17,7 @@ use crate::values::Size;
 
 struct Smooth {
     by_user: bool,
+    request: u32,
     node: NodeId,
     from: [f32; 2],
     to: [f32; 2],
@@ -39,6 +40,11 @@ pub(crate) enum Part {
 pub(crate) struct Scrolling {
     viewport: [f32; 2],
     smooth: Vec<Smooth>,
+    /// What a script is asking for, or 0.
+    request: u32,
+    last_request: u32,
+    /// Those that scripts wait for, each with how many scrollers have not arrived.
+    awaited: Vec<(u32, usize)>,
     /// Those that are not at the origin.
     scrolled: Set<NodeId>,
     moved: Vec<NodeId>,
@@ -605,6 +611,7 @@ impl Document {
             let duration = f64::from(distance.sqrt() / 60.0 * 1000.0).min(700.0);
             self.scrolling.smooth.push(Smooth {
                 by_user: false,
+                request: self.scrolling.request,
                 node,
                 from,
                 to,
@@ -623,6 +630,46 @@ impl Document {
         }
     }
 
+    pub(crate) fn scroll_for_script(
+        &mut self,
+        is_awaited: bool,
+        scroll: impl FnOnce(&mut Document),
+    ) {
+        self.scrolling.last_request = self.scrolling.last_request % u32::MAX + 1;
+        self.scrolling.request = self.scrolling.last_request;
+        scroll(self);
+        let request = core::mem::take(&mut self.scrolling.request);
+        let count = self
+            .scrolling
+            .smooth
+            .iter()
+            .filter(|it| it.request == request)
+            .count();
+        self.scrolling
+            .awaited
+            .extend((is_awaited && count > 0).then_some((request, count)));
+    }
+
+    /// 0 if it is over.
+    pub(crate) fn last_scroll_request(&self) -> u32 {
+        self.scrolling
+            .awaited
+            .last()
+            .map(|it| it.0)
+            .filter(|it| *it == self.scrolling.last_request)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn report_finished_scrolls(&mut self) {
+        let (awaited, smooth) = (&mut self.scrolling.awaited, &self.scrolling.smooth);
+        let over: Vec<_> = awaited
+            .extract_if(.., |it| !smooth.iter().any(|smooth| smooth.request == it.0))
+            .collect();
+        over.into_iter().for_each(|(request, left)| {
+            self.emit("scrolled", 0, &format!(",{request},{}", left > 0))
+        });
+    }
+
     pub(crate) fn advance_smooth_scrolls(&mut self, now: f64) {
         for mut smooth in core::mem::take(&mut self.scrolling.smooth) {
             let start = *smooth.start.get_or_insert(now - 16.0);
@@ -633,7 +680,14 @@ impl Document {
             self.set_scroll_offset(smooth.node, offset);
             match t < 1.0 {
                 true => self.scrolling.smooth.push(smooth),
-                false => self.end_scroll(smooth.node),
+                false => {
+                    self.scrolling
+                        .awaited
+                        .iter_mut()
+                        .filter(|it| it.0 == smooth.request)
+                        .for_each(|it| it.1 -= 1);
+                    self.end_scroll(smooth.node);
+                }
             }
         }
         self.scrolling
@@ -718,6 +772,7 @@ impl Document {
                         let (from, to) = (self.scroll_offset(node), self.clamp_offset(at, to));
                         self.scrolling.smooth.push(Smooth {
                             by_user: true,
+                            request: 0,
                             node,
                             from,
                             to,

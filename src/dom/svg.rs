@@ -819,11 +819,21 @@ impl Document {
             [rx.or(ry).unwrap_or(0.0), ry.or(rx).unwrap_or(0.0)]
         };
         Some(match element.tag {
-            tag if tag == name!("path") => Path::parse(match &shape.d {
-                PathData::Attribute => element.attribute(name!("d")).unwrap_or_default(),
-                PathData::None => "",
-                PathData::Path(data) => data,
-            }),
+            tag if tag == name!("path") => {
+                let data = match &shape.d {
+                    PathData::Attribute => element.attribute(name!("d")).unwrap_or_default(),
+                    PathData::None => "",
+                    PathData::Path(data) => data,
+                };
+                let mut known = self.paths.borrow_mut();
+                if known.len() >= 256 {
+                    known.clear();
+                }
+                known
+                    .entry(Name::new(data.as_bytes()))
+                    .or_insert_with(|| Path::parse(data))
+                    .clone()
+            }
             tag if is_name!(tag, "polyline" | "polygon") => {
                 let numbers: Vec<_> = Numbers(
                     element

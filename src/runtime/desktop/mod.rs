@@ -18,6 +18,9 @@ use bun_standalone_graph::desktop as bundle;
 #[path = "../../dom/abi.rs"]
 #[allow(dead_code, unreachable_pub)]
 mod abi;
+mod host;
+#[allow(dead_code, unreachable_pub)]
+mod host_abi;
 #[cfg(unix)]
 pub(crate) mod quick_fs;
 
@@ -38,6 +41,7 @@ struct Library {
     init: extern "C" fn(tick: extern "C" fn(), has_main_thread: bool),
     #[cfg(unix)]
     run: extern "C" fn() -> !,
+    #[cfg(unix)]
     call_on_main_thread: main_thread::Door,
     call_on_javascript_thread: main_thread::Door,
     renderer: extern "C" fn() -> *const c_void,
@@ -48,6 +52,7 @@ struct Library {
     drain_numbers: unsafe extern "C" fn(*mut f64, usize) -> usize,
     drain: extern "C" fn() -> RawBytes,
     pump: extern "C" fn(source: isize, timeout_ns: i64, from_tick: bool) -> bool,
+    has_input: extern "C" fn() -> bool,
     present: extern "C" fn(),
     put_blob: unsafe extern "C" fn(*const u8, usize) -> u32,
     take_blob: extern "C" fn(u32) -> RawBytes,
@@ -78,6 +83,11 @@ impl Library {
         if version != Some(abi::ABI_VERSION) {
             return Err(failure(&"it was built for another version of Bun"));
         }
+        if let Some(set_host) = library.lookup::<extern "C" fn(&'static host_abi::Host)>(
+            bun_core::zstr!("bun_desktop_set_host"),
+        ) {
+            set_host(&host::HOST);
+        }
         macro_rules! lookup {
             ($name:literal) => {
                 library
@@ -89,6 +99,7 @@ impl Library {
             init: lookup!("bun_desktop_init"),
             #[cfg(unix)]
             run: lookup!("bun_desktop_run"),
+            #[cfg(unix)]
             call_on_main_thread: lookup!("bun_desktop_call_on_main_thread"),
             call_on_javascript_thread: lookup!("bun_desktop_call_on_javascript_thread"),
             renderer: lookup!("bun_desktop_renderer"),
@@ -99,6 +110,7 @@ impl Library {
             drain_numbers: lookup!("bun_desktop_drain_numbers"),
             drain: lookup!("bun_desktop_drain"),
             pump: lookup!("bun_desktop_pump"),
+            has_input: lookup!("bun_desktop_has_input"),
             present: lookup!("bun_desktop_present"),
             put_blob: lookup!("bun_desktop_put_blob"),
             take_blob: lookup!("bun_desktop_take_blob"),
@@ -147,7 +159,10 @@ unsafe extern "C" {
         wait: Option<extern "C" fn(source: isize, timeout_ns: c_longlong)>,
     );
     fn us_loop_foreign_wait_reenter(loop_: &bun_uws::Loop);
-    safe fn Bun__DesktopIdleWork__create(vm: &bun_jsc::VM) -> *mut c_void;
+    safe fn Bun__DesktopIdleWork__create(
+        vm: &bun_jsc::VM,
+        has_input: extern "C" fn() -> bool,
+    ) -> *mut c_void;
     fn Bun__DesktopIdleWork__beforeWait(work: *mut c_void, timeout_ns: c_longlong) -> c_longlong;
 }
 
@@ -250,7 +265,10 @@ pub(crate) fn load<'a>(cx: &mut JsScope<'a>, on_events: JsLocal<'a, Callable>) -
             unsafe { us_loop_set_foreign_wait(loop_, Some(wait_for_ui)) };
             bun_core::Global::set_before_exit_callback(close_everything);
             if global.bun_vm().hand_over_idle_collections() {
-                IDLE_WORK.set(Bun__DesktopIdleWork__create(global.vm()));
+                IDLE_WORK.set(Bun__DesktopIdleWork__create(
+                    global.vm(),
+                    library().has_input,
+                ));
             }
         }
     }
@@ -315,6 +333,10 @@ pub(crate) fn wait_for(cx: &mut JsScope<'_>, promise: JsLocal<'_>) {
     if let Some(promise) = promise.to_js().as_any_promise() {
         let _ = cx.global().bun_vm().wait_for_promise(promise);
     }
+}
+
+pub(crate) fn is_loading_entry_point() -> bool {
+    VirtualMachine::get().is_loading_entry_point()
 }
 
 pub(crate) fn encode_text<'a>(

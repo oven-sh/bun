@@ -493,6 +493,9 @@ impl Document {
                     &new,
                     !base_changed && flags.contains(Flags::CATCHES_UP),
                 );
+                if !old.customs.has_same_locals(&new.customs) {
+                    below |= Change::NOT_INHERITED;
+                }
                 if Rc::ptr_eq(&old.customs.inherited, &new.customs.inherited) {
                     changed_customs = None;
                 } else {
@@ -810,21 +813,36 @@ impl Document {
             && self.queries.fresh[..self.queries.laid_out]
                 .binary_search(&id)
                 .is_err();
+        let takes_time = new.transition.duration.iter().any(|it| it.0 > 0.0);
+        let inherited = |this: &Self| {
+            if takes_time {
+                this.inherited_after_transitions(id)
+            } else {
+                None
+            }
+        };
+        let after = |this: &Self, parent: &Option<Rc<Style>>| {
+            Some(this.compute_style(id, this.tree.element(id)?.rules.as_ref()?, parent.as_ref()?))
+        };
         match old.filter(|_| was_rendered) {
             Some(_)
                 if change.contains(Change::BY_ANIMATION)
                     && !flags.intersects(Flags::REMATCH | Flags::RECASCADE) => {}
-            Some(old) => self.update_transitions(id, old, new, parent),
-            None if new.display() != Display::None
-                && new.transition.duration.iter().any(|it| it.0 > 0.0) =>
-            {
-                if self.has_starting_styles() {
-                    let rules =
-                        self.match_rules(id, Some(traversal.bloom.update(&self.tree)), true);
-                    let starting = self.compute_style(id, &rules, parent);
-                    if starting.display() != Display::None {
-                        self.update_transitions(id, &starting, new, parent);
-                    }
+            Some(old) => {
+                let after =
+                    after(self, &inherited(self)).filter(|_| !new.deps.contains(Deps::ANCHOR));
+                self.update_transitions(id, old, after.as_deref().unwrap_or(new), parent);
+            }
+            None if new.display() != Display::None && takes_time && self.has_starting_styles() => {
+                let (rules, inherited) = (
+                    self.match_rules(id, Some(traversal.bloom.update(&self.tree)), true),
+                    inherited(self),
+                );
+                let starting = self.compute_style(id, &rules, inherited.as_ref().unwrap_or(parent));
+                if starting.display() != Display::None {
+                    let after =
+                        after(self, &inherited).filter(|_| !new.deps.contains(Deps::ANCHOR));
+                    self.update_transitions(id, &starting, after.as_deref().unwrap_or(new), parent);
                 }
             }
             None => {}

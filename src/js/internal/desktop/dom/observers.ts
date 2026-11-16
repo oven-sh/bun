@@ -409,6 +409,23 @@ function boxSize(inlineSize: number, blockSize: number) {
 }
 
 /** The depth of the shallowest node that was reported. Infinity if none was, and -1 if some had to be skipped. */
+/** In width, among those that were visible and still are. */
+function hasResizedBoxes(page: Page): boolean {
+  const { watched } = page;
+  const { engine } = page.doc;
+  watched.updateSizes(page);
+  const changed = watched.sizes.length === 0 ? null : engine.changedSizes(watched.sizeRecords, page.scale);
+  if (changed == null) return false;
+  for (const index of changed) {
+    const { node, width, box } = watched.sizes[index];
+    const id = idIn(page, node);
+    if (width <= 0 || id === 0 || box === 2) continue;
+    const now = engine.boxSizes(id)[box === 0 ? 2 : 4];
+    if (now > 0 && Math.abs(now - width) > 1) return true;
+  }
+  return false;
+}
+
 function deliverResizes(page: Page, below: number): number {
   const { watched, scale } = page;
   const { engine } = page.doc;
@@ -613,4 +630,4 @@ function updateIntersections(page: Page, time: number) {
   }
 }
 
-export default { MutationObserver, Watched, deliverResizes, make, record, updateIntersections };
+export default { MutationObserver, Watched, deliverResizes, hasResizedBoxes, make, record, updateIntersections };

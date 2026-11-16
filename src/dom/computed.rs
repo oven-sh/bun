@@ -421,7 +421,7 @@ impl Document {
             return style
                 .customs
                 .get(name, &self.styles.registry)
-                .map_or(out, |it| it.to_vec());
+                .map_or(out, |it| crate::custom::untainted(it).to_vec());
         }
         let written = |write: &dyn Fn(&mut Out)| {
             let mut out = Out::new();
@@ -551,6 +551,10 @@ impl Document {
             style.other_if_set(Id::ReadingFlow).is_some(),
             style.dark,
             !style.ink.color_scheme.is_empty() || !self.environment.color_scheme.is_empty(),
+            wanted & 1 << 19 != 0
+                && style.scrolls()
+                && self.own_box(node).is_some()
+                && self.overflow_source() != node,
         ];
         bits.iter()
             .rev()

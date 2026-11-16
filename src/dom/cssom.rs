@@ -192,7 +192,7 @@ pub(crate) fn prelude(
         parent: (parent == b"style").then_some(&nothing),
         in_scope_rule: parent == b"scope",
         namespaces,
-        is_strict: false,
+        ..Parser::default()
     };
     let is_in =
         |all: &str, name: &[u8]| all.split_ascii_whitespace().any(|it| it.as_bytes() == name);

@@ -11,11 +11,11 @@ use crate::calc::scope_random;
 use crate::condition::{Actual, Condition, Feature, Subject};
 use crate::custom::{
     Changed, Customs, Entries, Function, Inherited, Lookup, Recent, Registry, Stack, Syntax, Text,
-    guarded, style_query,
+    guarded, has_tainted_url, style_query, untainted,
 };
 use crate::document::{Document, Environment, Quirks};
 use crate::name::{FastHasher, Map, Name, is_name, name};
-use crate::properties::{Font, Groups, Id, Ink, Prop, Style, Text as TextGroup, Value};
+use crate::properties::{Font, Groups, Id, Ink, Only, Prop, Style, Text as TextGroup, Value};
 use crate::rules::{Dependencies, Found, INLINE, Kind, Level, Matched, Query, RuleSet};
 use crate::selector::{Bloom, HasResults, Pseudo, ScrollPart};
 use crate::sheet::{
@@ -37,6 +37,8 @@ struct Shared {
 /// The same object for all elements that match the same rules.
 pub(crate) struct RuleList {
     matched: Box<[Matched]>,
+    /// The `epoch` of the `Stylist` when an element last matched it.
+    epoch: Cell<u32>,
     shared: RefCell<SmallVec<[Shared; 1]>>,
     plan: OnceCell<Box<Plan>>,
     other_plans: OnceCell<Box<[OnceCell<Box<Plan>>; Flow::COUNT - 1]>>,
@@ -104,6 +106,8 @@ pub(crate) struct Stylist {
     pub(crate) initial: Rc<Style>,
     /// The computed values of a box that no declaration applies to.
     lists: RefCell<Map<u64, Rc<RuleList>>>,
+    /// How often `lists` was cleaned up, and how many it kept the last time.
+    epoch: (u32, usize),
     pub(crate) bloom: Option<Bloom>,
     pub(crate) recent_customs: Recent<Inherited>,
     recent_groups: (Recent<Font>, Recent<TextGroup>, Recent<Ink>),
@@ -145,6 +149,7 @@ impl Stylist {
             answers: Default::default(),
             initial: Rc::new(initial),
             lists: RefCell::default(),
+            epoch: (0, 0),
             bloom: None,
             recent_customs: Recent::default(),
             recent_groups: Default::default(),
@@ -192,10 +197,12 @@ impl Stylist {
 
     pub(crate) fn collect_garbage(&mut self, elements: usize) {
         let lists = self.lists.get_mut();
-        if lists.len() > 2 * elements + 1024 {
-            lists.retain(|_, list| Rc::strong_count(list) > 1);
+        let is_due = lists.len() > self.epoch.1 + 512;
+        if is_due {
+            lists.retain(|_, list| Rc::strong_count(list) > 1 || list.epoch.get() == self.epoch.0);
+            self.epoch = (self.epoch.0.wrapping_add(1), lists.len());
         }
-        if self.blocks.len() > 2 * elements + 1024 {
+        if is_due || self.blocks.len() > 2 * elements + 1024 {
             self.blocks.retain(|_, block| Rc::strong_count(block) > 1);
         }
         if self.substituted.get_mut().len() > 1 << 15 {
@@ -214,21 +221,24 @@ impl Stylist {
     fn intern(&self, found: Found) -> Rc<RuleList> {
         let mut hasher = FastHasher::default();
         for (_, it) in &found {
-            (Rc::as_ptr(&it.block), it.level, it.layer).hash(&mut hasher);
+            (Rc::as_ptr(&it.block), it.level, it.layer, it.only).hash(&mut hasher);
         }
         let same = |list: &RuleList| {
             list.matched.len() == found.len()
                 && (list.matched.iter().zip(&found)).all(|(a, (_, b))| {
-                    Rc::ptr_eq(&a.block, &b.block) && (a.level, a.layer) == (b.level, b.layer)
+                    Rc::ptr_eq(&a.block, &b.block)
+                        && (a.level, a.layer, a.only) == (b.level, b.layer, b.only)
                 })
         };
         let mut lists = self.lists.borrow_mut();
         if let Some(list) = lists.get(&hasher.finish()).filter(|list| same(list)) {
+            list.epoch.set(self.epoch.0);
             return Rc::clone(list);
         }
         let matched = found.into_iter().map(|it| it.1).collect();
         let list = Rc::new(RuleList {
             matched,
+            epoch: Cell::new(self.epoch.0),
             shared: RefCell::default(),
             plan: OnceCell::new(),
             other_plans: OnceCell::new(),
@@ -682,11 +692,18 @@ impl Resolver<'_> {
                         return Outcome::Wide(Wide::Unset);
                     };
                     alias = value;
-                    (&alias, true)
+                    let source = untainted(&alias);
+                    if source.len() < alias.len() && has_tainted_url(source, &[0..source.len()]) {
+                        return Outcome::Wide(Wide::Unset);
+                    }
+                    (source, true)
                 }
                 None => {
                     out = Out::with_capacity(64);
-                    if template.substitute(self, &mut out).is_none() {
+                    let mut tainted = Vec::new();
+                    if template.substitute(self, &mut out, &mut tainted).is_none()
+                        || !tainted.is_empty() && has_tainted_url(&out, &tainted)
+                    {
                         return Outcome::Wide(Wide::Unset);
                     }
                     (out.trim_ascii(), true)
@@ -873,6 +890,7 @@ impl Plan {
                     if seen[id as usize]
                         || is_all && !id.is_in_all()
                         || id == Id::Overlay && matched.level != Level::UserAgent
+                        || !matched.only.allows(id)
                         || reverted.excludes(&id, matched, index)
                     {
                         continue;
@@ -1091,6 +1109,14 @@ impl Document {
             bloom,
             has_results: &self.styles.has_results,
             roots: &Default::default(),
+            signature: bloom
+                .filter(|it| it.is_above(&self.tree, id))
+                .map_or(Name::NONE, |it| {
+                    self.styles
+                        .dependencies
+                        .borrow()
+                        .signature(&self.tree, id, it)
+                }),
             container: &|query| {
                 self.tree[id].set(Flags::QUERIES_CONTAINER);
                 let is_beside = matches!(
@@ -1125,7 +1151,7 @@ impl Document {
             let has = |pseudo| u8::from(self.has_rules_for(element.pseudo.nested(pseudo)));
             return has(Pseudo::Before) << BEFORE | has(Pseudo::After) << AFTER;
         }
-        self.with_query(id, Pseudo::Before, bloom, |query| {
+        let found = self.with_query(id, Pseudo::Before, bloom, |query| {
             let mut found = 0;
             if self.has_default_styles(id) {
                 self.styles
@@ -1137,7 +1163,9 @@ impl Document {
                 rules.generated(&query, kind, host, &mut found)
             });
             found
-        })
+        });
+        debug_assert!(bloom.is_none() || found == self.generated_by_rules(id, None));
+        found
     }
 
     fn has_default_styles(&self, id: NodeId) -> bool {
@@ -1163,6 +1191,7 @@ impl Document {
                     block: Rc::clone(block),
                     level: Level::Hints,
                     layer: 0,
+                    only: Only::default(),
                 },
             )
         }));
@@ -1192,6 +1221,22 @@ impl Document {
                     &mut matched,
                     element.hints.as_ref(),
                 );
+                debug_assert!({
+                    let mut expected = Found::new();
+                    self.collect_rules(
+                        &Query {
+                            with_starting,
+                            signature: Name::NONE,
+                            ..query
+                        },
+                        &mut expected,
+                        element.hints.as_ref(),
+                    );
+                    expected
+                        .iter()
+                        .map(|it| it.0)
+                        .eq(matched.iter().map(|it| it.0))
+                });
             });
         }
         if element.pseudo != Pseudo::None {
@@ -1239,6 +1284,7 @@ impl Document {
         }
         if let Some(block) = &element.inline_style {
             let inline = Matched {
+                only: Only::default(),
                 block: Rc::clone(block),
                 level: Level::Own,
                 layer: INLINE,
@@ -1255,6 +1301,7 @@ impl Document {
                     block: Rc::clone(block),
                     level: Level::Outer(u8::MAX),
                     layer: INLINE,
+                    only: Only::default(),
                 },
             ));
         }
@@ -1610,10 +1657,12 @@ impl Document {
                 block,
                 level: Level::Outer(u8::MAX),
                 layer: INLINE - 1,
+                only: Only::default(),
             }])
             .collect();
         let rules = RuleList {
             matched,
+            epoch: Cell::default(),
             shared: Default::default(),
             plan: OnceCell::new(),
             other_plans: OnceCell::new(),

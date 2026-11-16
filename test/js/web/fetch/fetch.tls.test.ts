@@ -345,7 +345,7 @@ describe.concurrent("fetch-tls", () => {
       tls: {
         ca: key("ca1-cert.pem"),
         checkServerIdentity(_: string, cert: any) {
-          for (; cert; cert = cert.issuerCertificate) chain.push(cert.issuer.CN);
+          for (let last; cert !== last; last = cert, cert = cert.issuerCertificate) chain.push(cert.issuer.CN);
           return undefined;
         },
       },

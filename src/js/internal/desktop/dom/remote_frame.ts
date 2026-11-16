@@ -181,18 +181,20 @@ class RemoteFrame {
     return found!;
   }
 
-  navigate() {
+  navigate(url?: string) {
     const node = this.#node;
     this.#waits = getAttr(node, "loading")?.toLowerCase() === "lazy" && !this.#isNear();
     if (this.#waits) return;
     const attributes = {};
     for (const name of copied) attributes[name] = getAttr(node, name) ?? undefined;
-    attributes["src"] = resolveUrl(node.doc, getAttr(node, "src") || "about:blank");
+    for (const name of core.wrap(node).getAttributeNames())
+      if (name.startsWith("data-")) attributes[name] = getAttr(node, name);
+    attributes["src"] = url ?? resolveUrl(node.doc, getAttr(node, "src") || "about:blank");
     this.#remote.navigate(attributes);
   }
 
   attributeChanged(name: string) {
-    if (copied.includes(name)) this.#remote.attribute(name, getAttr(this.#node, name));
+    if (copied.includes(name) || name.startsWith("data-")) this.#remote.attribute(name, getAttr(this.#node, name));
   }
 
   #isNear(margin = LAZY_MARGIN) {
@@ -225,6 +227,10 @@ class RemoteFrame {
     const { zoom } = this.#page;
     const [left, top] = this.box;
     this.#remote.input({ ...event, x: (event.x / zoom - left) / this.scale, y: (event.y / zoom - top) / this.scale });
+  }
+
+  focusedFrame() {
+    return this.#remote.focusedFrame();
   }
 
   edit(name: string) {

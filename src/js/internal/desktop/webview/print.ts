@@ -1,7 +1,7 @@
-// What `window.print()` does: the web engine lays a copy of the document out on pages, and the user saves those.
-const { app } = require("internal/desktop/app");
+// What `window.print()` does: the web engine lays a copy of the document out on pages, which are downloaded.
 const engine = require("internal/desktop/webview/engine");
 const policy = require("internal/desktop/electron/policy");
+const sessions = require("internal/desktop/electron/session");
 
 /** Stands for the origin of the document. */
 const HOME = "https://print.invalid";
@@ -18,7 +18,7 @@ async function toPdf(page: any, baseUrl: string, markup: string): Promise<Uint8A
     origin + "/",
     HOME + "/",
   );
-  const session = require("internal/desktop/electron/session").fromPartition("print");
+  const session = sessions.fromPartition("print");
   const answer = async ({ url, headers }: Request) => {
     if (url === DOCUMENT)
       return new Response(markup, { headers: { "content-type": "text/html", "content-security-policy": POLICY } });
@@ -51,14 +51,9 @@ async function print(page: any, baseUrl: string, markup: string) {
   try {
     const name = (page.webContents.getTitle().replace(notInNames, " ").trim() || "Untitled") + ".pdf";
     const pdf = await toPdf(page, baseUrl, markup);
-    const { filePath } = await require("internal/desktop/dialog").showSaveDialog(
-      page.webContents.getOwnerBrowserWindow(),
-      {
-        defaultPath: require("node:path").join(app.getPath("downloads"), name),
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      },
-    );
-    if (filePath) await Bun.write(filePath, pdf);
+    const { session } = page.webContents;
+    const loaded = { url: page.url, headers: [["content-type", "application/pdf"]], response: new Response(pdf) };
+    await sessions.DownloadItem.start(session, loaded, new AbortController(), page.webContents, name);
   } catch (error: any) {
     page.log("error", `Failed to print: ${error?.message}`);
   } finally {

@@ -696,6 +696,9 @@ impl<'a> Painter<'a> {
         space: &Space,
         text: &mut dyn FnMut(&mut Self),
     ) {
+        if style.is_bare() {
+            return;
+        }
         let (b, shadows, contour) = (
             &style.background,
             &style.paint.box_shadow.0,

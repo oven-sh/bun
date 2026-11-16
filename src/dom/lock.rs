@@ -65,6 +65,8 @@ pub(crate) struct Locks {
     /// The focus, the selection or the top layer has changed.
     pub(crate) relevance_is_stale: bool,
     pub(crate) wants_leaves: bool,
+    /// The `layout_version`.
+    pub(crate) proximity_is_for: Option<u32>,
 }
 
 #[derive(Default)]
@@ -106,7 +108,10 @@ impl Boxes {
                 core::mem::take(&mut it.hoisted),
             );
             let outside_marker = core::mem::take(&mut it.outside_marker);
-            let size = (it.cache.is_current() && !it.cache.has_escapees() && !it.uses_parent[0])
+            let size = (it.cache.is_current()
+                && !it.cache.has_escapees()
+                && !it.uses_parent[0]
+                && !it.joins_formatting_context)
                 .then(|| it.size());
             it.forget_extents();
             self.parked.insert(

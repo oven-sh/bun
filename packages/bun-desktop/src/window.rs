@@ -181,6 +181,8 @@ fn compositor(id: WindowId) -> Option<Arc<Mutex<Compositor>>> {
     COMPOSITORS.with_borrow(|it| it.get(&id).cloned())
 }
 
+const WAIT_FOR_IMAGES: Duration = Duration::from_millis(24);
+
 pub fn next_redraw() -> Option<Instant> {
     WINDOWS.with_borrow(|windows| {
         windows
@@ -288,6 +290,7 @@ pub mod layers {
                     .for_each(|layers| layers.release_spares(SPARES_LAST))
             });
             let has_spares = LAYERS.with_borrow(|all| all.values().any(Layers::has_spares));
+            crate::allocator::release_memory();
             RELEASE_AT.set(has_spares.then(|| Instant::now() + SPARES_LAST * 2));
         }
     }
@@ -643,13 +646,7 @@ fn release_memory() {
         libc::malloc_trim(0);
     }
     #[cfg(target_os = "macos")]
-    {
-        unsafe extern "C" {
-            fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: usize) -> usize;
-        }
-        // SAFETY: as much as possible, of all zones.
-        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
-    }
+    crate::allocator::release_memory();
 }
 
 fn forget_what_was_drawn(window: &mut Window, cache: &mut gpu::Cache) {
@@ -805,6 +802,7 @@ impl Content {
         })
         .outset(1);
         let mut redraw_at: Option<Instant> = None;
+        let deadline = Instant::now() + WAIT_FOR_IMAGES;
         state.is_stale.set(false);
         state.draw_at.set(None);
         cache.begin(atlas, &*gpu_atlas);
@@ -815,6 +813,11 @@ impl Content {
                 continue;
             }
             let mut frame = Frame::new(metrics.scale * surface.scene.zoom, true);
+            frame.deadline = Some(if surface.is_scrolling() {
+                frame.now
+            } else {
+                deadline
+            });
             if surface.scene.caret.is_some() && state.is_active.get() {
                 let (is_shown, until) = blink(surface.caret_moved_at, frame.now);
                 frame.shows_caret = is_shown;

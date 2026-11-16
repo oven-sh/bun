@@ -239,6 +239,9 @@ function parseComputedKeyframes(parts: string[]): Keyframe[] {
 class Timing {
   delay = 0;
   endDelay = 0;
+  /** In percent, or else NaN. */
+  relativeDelay = NaN;
+  relativeEndDelay = NaN;
   /** Negative for "auto". */
   duration = -1;
   iterations = 1;
@@ -261,9 +264,19 @@ class Timing {
       return 4;
     }
     let { delay, direction, duration, easing, endDelay, fill, iterationStart, iterations } = options;
-    if (delay !== undefined) delay = finite(delay);
+    const relative = (value: any) =>
+      $isObject(value) && typed().isPercentage(value) ? value.to("percent").value : NaN;
+    const absolute = (value: any) =>
+      !$isObject(value) || !typed().isNumeric(value)
+        ? finite(value)
+        : typed().isPercentage(value)
+          ? 0
+          : typed().milliseconds(value);
+    const relativeDelay = delay === undefined ? this.relativeDelay : relative(delay);
+    const relativeEndDelay = endDelay === undefined ? this.relativeEndDelay : relative(endDelay);
+    if (delay !== undefined) delay = absolute(delay);
     if (direction !== undefined) direction = oneOf(direction, directions, "PlaybackDirection");
-    if (endDelay !== undefined) endDelay = finite(endDelay);
+    if (endDelay !== undefined) endDelay = absolute(endDelay);
     if (fill !== undefined) fill = oneOf(fill, [...fills, "auto"], "FillMode");
     if (iterationStart !== undefined) iterationStart = positive(finite(iterationStart), "iterationStart");
     if (iterations !== undefined) iterations = positive(+iterations, "iterations");
@@ -274,6 +287,8 @@ class Timing {
     const exact = easing === undefined ? this.exactEasing : `${easing}`;
     if (easing !== undefined) easing = validEasing(exact);
     this.exactEasing = exact;
+    this.relativeDelay = relativeDelay;
+    this.relativeEndDelay = relativeEndDelay;
     this.delay = delay ?? this.delay;
     this.endDelay = endDelay ?? this.endDelay;
     this.duration = duration ?? this.duration;
@@ -289,7 +304,18 @@ class Timing {
   numbers(): number[] {
     const { delay, endDelay, duration, iterations, iterationStart } = this;
     const fill = Math.max(fills.indexOf(this.fill), 0);
-    return [delay, endDelay, duration, iterations, iterationStart, fill, directions.indexOf(this.direction)];
+    const direction = directions.indexOf(this.direction);
+    return [
+      delay,
+      endDelay,
+      duration,
+      iterations,
+      iterationStart,
+      fill,
+      direction,
+      this.relativeDelay / 100 || 0,
+      this.relativeEndDelay / 100 || 0,
+    ];
   }
 
   setNumbers([delay, endDelay, duration, iterations, iterationStart, fill, direction]: number[]) {
@@ -303,7 +329,9 @@ class Timing {
   }
 
   toObject() {
-    const { delay, direction, duration, easing, endDelay, fill, iterationStart, iterations } = this;
+    const { direction, duration, easing, fill, iterationStart, iterations, relativeDelay, relativeEndDelay } = this;
+    const delay = relativeDelay === relativeDelay ? typed().percent(relativeDelay) : this.delay;
+    const endDelay = relativeEndDelay === relativeEndDelay ? typed().percent(relativeEndDelay) : this.endDelay;
     return {
       delay,
       direction,
@@ -527,7 +555,7 @@ function parseRange(edge: number, value: any): string {
       throw new TypeError("The offset must be a CSSNumericValue.");
     value = `${name === "none" ? "" : name} ${offset ?? (edge === 0 ? "0%" : "100%")}`;
   }
-  const range = canonicalValue("animation-range-start", `${value}`);
+  const range = canonicalValue(edge === 0 ? "animation-range-start" : "animation-range-end", `${value}`);
   if (range === null || !isAbsoluteRange.test(range)) throw new TypeError(`'${value}' is not a valid range.`);
   return range;
 }
@@ -678,7 +706,16 @@ class Player {
     const { engineEvents } = this.doc.page!;
     const currentTime = type === "cancel" ? null : this.time(At.CurrentTime);
     const scheduled = this.followsScroll() || due !== due ? -Infinity : due + (this.timeline?.origin ?? 0);
-    engineEvents.push([type, this.js.$impl, currentTime, this.time(At.TimelineTime), null, this.id, scheduled]);
+    engineEvents.push([
+      type,
+      this.js.$impl,
+      currentTime,
+      this.time(At.TimelineTime),
+      null,
+      this.id,
+      scheduled,
+      this.isCss ? +("animationName" in this.js) : 2,
+    ]);
     invalidate(this.doc);
   }
 
@@ -850,11 +887,13 @@ class Animation extends events.EventTarget {
     return orNull(Math.min(Math.max(state[At.CurrentTime] / state[At.EndTime], 0), 1));
   }
   get finished() {
+    if (!(#player in this)) return Promise.$reject(new TypeError("Illegal invocation"));
     this.#player.state();
     takeEvents(this.#player.doc.page!);
     return this.#player.promise("finished", this.#player.hasNotified);
   }
   get ready() {
+    if (!(#player in this)) return Promise.$reject(new TypeError("Illegal invocation"));
     const it = this.#player;
     const isPending = it.state()[At.Pending] !== 0;
     takeEvents(it.doc.page!);
@@ -868,6 +907,7 @@ class Animation extends events.EventTarget {
     this.#player.control(Op.Pause);
   }
   cancel() {
+    this.#player.trigger?.detach(this.#player);
     if (this.#player.state()[At.PlayState] !== State.Idle) this.#player.control(Op.Cancel);
   }
   finish() {
@@ -972,7 +1012,9 @@ class ScrollTimeline extends AnimationTimeline {
     if (node !== null && !(this instanceof ViewTimeline)) return core.wrap(node);
     sync(page!.doc).updateLayout();
     const id = this.$impl.state()[1];
-    return id === 1 ? core.wrap(page!.doc.node).scrollingElement : wrapOrNull(page!.doc.nodes[id] ?? null);
+    if (id === 1) return core.wrap(page!.doc.node).scrollingElement;
+    const source = page!.doc.nodes[id];
+    return source ? core.wrap(core.outOfControl(source)) : null;
   }
   get axis() {
     return axes[this.$impl.state()[3]];
@@ -983,7 +1025,7 @@ class ViewTimeline extends ScrollTimeline {
     super();
     const { axis = "block", inset = "auto", subject } = options ?? {};
     const isList = $isObject(inset) && inset[Symbol.iterator] != null;
-    const insets = canonicalValue("view-timeline-inset", isList ? Array.from(inset).join(" ") || "auto" : `${inset}`);
+    const insets = canonicalValue("view-timeline-inset", isList ? Array.from(inset).join(" ") : `${inset}`);
     if (insets === null || !isAbsoluteRange.test(insets)) throw new TypeError("Invalid inset");
     watch(this.$impl, elementOrNull(subject), `view(${oneOf(axis, axes, "ScrollAxis")} ${insets})`);
   }
@@ -1006,6 +1048,13 @@ class Trigger {
   edges: string[] = [];
   players: Player[] = [];
   ranges: any = null;
+
+  detach(it: Player) {
+    this.players.splice(this.players.indexOf(it), 1);
+    it.behaviors = "";
+    this.send(it);
+    it.trigger = null;
+  }
 
   send(it: Player) {
     it.doc.engine.setAnimationTrigger(it.id, this.timeline?.id ?? 0, this.edges.join(), it.behaviors);
@@ -1044,10 +1093,7 @@ class AnimationTrigger {
     if ($argumentCount() < 1) core.tooFew(1);
     const it = playerOf(animation);
     if (it.trigger !== this.$impl) return;
-    this.$impl.players.splice(this.$impl.players.indexOf(it), 1);
-    it.behaviors = "";
-    this.$impl.send(it);
-    it.trigger = null;
+    this.$impl.detach(it);
     it.releaseIfOver();
   }
   getAnimations() {
@@ -1214,6 +1260,11 @@ function takeEvents(page: Page) {
   if (!(doc.engine.pending() & 2)) return;
   for (const event of JSON.parse(doc.engine.takeEvents())) {
     const type: string = event[0];
+    if (type === "scrolled") {
+      page.scrollRequests.$get(event[2])?.({ interrupted: event[3] });
+      page.scrollRequests.$delete(event[2]);
+      continue;
+    }
     if (!playbackTypes.$has(type)) {
       if (!events.isListenedTo(type)) continue;
       event[1] = doc.nodes[event[1]];
@@ -1245,6 +1296,8 @@ function takeEvents(page: Page) {
   if (engineEvents.length > 0) invalidate(doc);
 }
 
+const dueAt = (event: any[]) => Math.round((event[6] ?? -Infinity) * 1000);
+
 function dispatchEvents(page: Page) {
   if (page.doc.engine.pending() & 2) {
     takeEvents(page);
@@ -1252,7 +1305,7 @@ function dispatchEvents(page: Page) {
   }
   if (page.engineEvents.length === 0) return;
   const queued = page.engineEvents.splice(0);
-  if (queued.length > 1) queued.sort((a, b) => (a[6] ?? -Infinity) - (b[6] ?? -Infinity) || 0);
+  if (queued.length > 1) queued.sort((a, b) => dueAt(a) - dueAt(b) || (a[7] ?? 3) - (b[7] ?? 3));
   for (const [type, target, first, second, pseudo, animation] of queued) {
     if (type === "scroll" || type === "scrollend") {
       events.fire(

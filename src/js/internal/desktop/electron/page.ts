@@ -413,6 +413,7 @@ class Page extends Client {
         this.#applyPolicy();
       },
       hasPolicyFromHeader: () => this.csp.isFromHeader,
+      allowsInlineImages: () => this.csp.allowsInlineImages(),
       allowsBase: (url: string) => this.csp.allowsFor("base-uri", url),
       allowsForm: (url: string) => this.csp.allowsFor("form-action", url),
       allowsInline: (kind: string, text: string, nonce: string, isAttribute: boolean, element?: object) =>
@@ -583,12 +584,7 @@ class Page extends Client {
       ...about,
       ...require("internal/desktop/electron/worker_thread").ofThread(),
       ...this.services(),
-      loadSync: (options: object, timeout: number) => {
-        const pause = (isPaused: boolean) => {
-          for (const page of started) page.worlds.$forEach(world => world.setPaused(isPaused));
-        };
-        return require("internal/desktop/web/blocking").block(this.loadWhole(options, timeout), pause);
-      },
+      loadSync: (options: object, timeout: number) => Page.block(this.loadWhole(options, timeout)),
       navigationTiming: () =>
         this.#response?.timingRecord ?? { ...timingOf(this.url, "", { internal: { headers: [] } }, 0), start },
       watchCookies: (watcher: Function) => {
@@ -721,6 +717,14 @@ class Page extends Client {
     });
   }
 
+  /** No script of a page runs until `promise` is fulfilled. */
+  static block(promise: Promise<unknown>) {
+    const pause = (isPaused: boolean) => {
+      for (const page of started) page.worlds.$forEach(world => world.setPaused(isPaused));
+    };
+    return require("internal/desktop/web/blocking").block(promise, pause);
+  }
+
   world(id: number) {
     let world = this.worlds.$get(id);
     if (!world && this.#opener) this.worlds.$set(id, (world = this.#borrowedWorld()));
@@ -759,7 +763,16 @@ class Page extends Client {
     const preferences = this.#preferences;
     const dom = this.#domHost();
     if (this.#opener) {
-      this.controller = this.#opener.createPage({ ...dom, reportError: this.#opener.page.world(0).report });
+      const { reportError, messaging, fileFromPath, createPlayer, describeError } =
+        this.#opener.page.controller.page.host;
+      this.controller = this.#opener.createPage({
+        ...dom,
+        reportError,
+        messaging,
+        fileFromPath,
+        createPlayer,
+        describeError,
+      });
       return;
     }
     let window;

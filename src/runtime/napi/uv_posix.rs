@@ -37,6 +37,7 @@ use bun_jsc::{
     LoopKind, Posted, VmHandle,
 };
 
+use crate::desktop::main_thread as lent_main_thread;
 use crate::jsc_hooks::{RuntimeState, timer_all};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -100,6 +101,15 @@ const UV_ASYNC_T_SIZE: usize = 128;
 const UV_WATCHER_T_SIZE: usize = 120;
 const UV_TIMER_T_SIZE: usize = 152;
 const UV_WORK_T_SIZE: usize = 128;
+
+macro_rules! on_js_thread {
+    ($call:expr) => {
+        if lent_main_thread::is_current() {
+            // SAFETY: the contract of the function, which calls itself.
+            return lent_main_thread::leave(move || unsafe { $call });
+        }
+    };
+}
 
 type UvAsyncCb = unsafe extern "C" fn(*mut UvAsync);
 /// `uv_idle_cb`, `uv_prepare_cb` and `uv_check_cb` all have this signature.
@@ -241,7 +251,7 @@ impl WatcherList {
                 let _handles = CallbackScope::open(global);
                 // SAFETY: calls the addon's callback on the loop thread with a
                 // handle it started.
-                unsafe { cb(watcher.as_ptr()) };
+                lent_main_thread::enter(|| unsafe { cb(watcher.as_ptr()) });
             }
             if global.has_exception()
                 && bun_jsc::task::report_error_or_terminate(global, JsError::Thrown).is_err()
@@ -420,7 +430,7 @@ impl UvLoop {
                 let _handles = CallbackScope::open(global);
                 // SAFETY: calls the addon's callback on the loop thread with the
                 // handle it initialized.
-                unsafe { async_cb(async_.as_ptr()) };
+                lent_main_thread::enter(|| unsafe { async_cb(async_.as_ptr()) });
             }
             if global.has_exception()
                 && bun_jsc::task::report_error_or_terminate(global, JsError::Thrown).is_err()
@@ -597,6 +607,7 @@ pub(crate) unsafe extern "C" fn uv_async_init(
     handle: *mut UvAsync,
     async_cb: Option<UvAsyncCb>,
 ) -> c_int {
+    on_js_thread!(uv_async_init(loop_, handle, async_cb));
     let (Some(loop_ref), Some(async_)) = (NonNull::new(loop_), NonNull::new(handle)) else {
         return UV_EINVAL;
     };
@@ -749,6 +760,7 @@ macro_rules! watcher_entry_points {
             handle: *mut UvWatcher,
             cb: Option<UvWatcherCb>,
         ) -> c_int {
+            on_js_thread!($start(handle, cb));
             // SAFETY: fn contract.
             if !unsafe { watcher_has_type(handle, $type_) } {
                 return UV_EINVAL;
@@ -763,6 +775,7 @@ macro_rules! watcher_entry_points {
         /// `handle` was initialized by one of this module's `uv_*_init`.
         #[unsafe(no_mangle)]
         pub(crate) unsafe extern "C" fn $stop(handle: *mut UvWatcher) -> c_int {
+            on_js_thread!($stop(handle));
             // SAFETY: fn contract.
             if !unsafe { watcher_has_type(handle, $type_) } {
                 return UV_EINVAL;
@@ -843,7 +856,7 @@ impl UvTimerNode {
             let _scope = vm.enter_event_loop_scope();
             let _handles = CallbackScope::open(vm.global());
             // SAFETY: calls the addon's callback on the loop thread with its handle.
-            unsafe { cb(timer) };
+            lent_main_thread::enter(|| unsafe { cb(timer) });
         }
         if vm.global().has_exception() {
             return Err(JsError::Thrown);
@@ -948,6 +961,7 @@ pub(crate) unsafe extern "C" fn uv_timer_start(
     timeout_ms: u64,
     repeat_ms: u64,
 ) -> c_int {
+    on_js_thread!(uv_timer_start(handle, cb, timeout_ms, repeat_ms));
     // SAFETY: fn contract.
     if !unsafe { UvTimer::check(handle) } || cb.is_none() {
         return UV_EINVAL;
@@ -970,6 +984,7 @@ pub(crate) unsafe extern "C" fn uv_timer_start(
 /// Same as [`uv_timer_start`].
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_timer_stop(handle: *mut UvTimer) -> c_int {
+    on_js_thread!(uv_timer_stop(handle));
     // SAFETY: fn contract.
     if !unsafe { UvTimer::check(handle) } {
         return UV_EINVAL;
@@ -986,6 +1001,7 @@ pub(crate) unsafe extern "C" fn uv_timer_stop(handle: *mut UvTimer) -> c_int {
 /// Same as [`uv_timer_start`].
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_timer_again(handle: *mut UvTimer) -> c_int {
+    on_js_thread!(uv_timer_again(handle));
     // SAFETY: fn contract.
     if !unsafe { UvTimer::check(handle) } {
         return UV_EINVAL;
@@ -1133,7 +1149,7 @@ impl UvHandle {
         if let Some(close_cb) = close_cb {
             let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
-            unsafe { close_cb(handle) };
+            lent_main_thread::enter(|| unsafe { close_cb(handle) });
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1149,6 +1165,7 @@ impl UvHandle {
 /// `handle` was initialized by one of this module's `uv_*_init`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option<UvCloseCb>) {
+    on_js_thread!(uv_close(handle, close_cb));
     // SAFETY: fn contract.
     let type_ = unsafe { handle_type(handle, b"uv_close") };
     // SAFETY: `handle` is initialized, and only the loop thread uses the plain fields.
@@ -1188,6 +1205,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
 /// Same as [`uv_close`].
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_ref(handle: *mut UvHandle) {
+    on_js_thread!(uv_ref(handle));
     // SAFETY: fn contract.
     unsafe { (*ref_state(handle, b"uv_ref")).set_referenced(true) };
 }
@@ -1198,6 +1216,7 @@ pub(crate) unsafe extern "C" fn uv_ref(handle: *mut UvHandle) {
 /// Same as [`uv_close`].
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_unref(handle: *mut UvHandle) {
+    on_js_thread!(uv_unref(handle));
     // SAFETY: fn contract.
     unsafe { (*ref_state(handle, b"uv_unref")).set_referenced(false) };
 }
@@ -1336,7 +1355,7 @@ impl JobContext for UvWorkJob {
         if let Some(after_work_cb) = after_work_cb {
             let _handles = CallbackScope::open(cx.global());
             // SAFETY: calls the addon's callback on the loop thread.
-            unsafe { after_work_cb(req, status) };
+            lent_main_thread::enter(|| unsafe { after_work_cb(req, status) });
         }
         if cx.global().has_exception() {
             return Err(JsError::Thrown);
@@ -1358,6 +1377,7 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     work_cb: Option<UvWorkCb>,
     after_work_cb: Option<UvAfterWorkCb>,
 ) -> c_int {
+    on_js_thread!(uv_queue_work(loop_, req, work_cb, after_work_cb));
     let (Some(loop_ref), Some(req_ref), Some(_)) = (
         NonNull::new(loop_),
         NonNull::new(req),

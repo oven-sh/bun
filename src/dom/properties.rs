@@ -7,6 +7,7 @@ use crate::abi::FontMetrics;
 use crate::custom::Customs;
 use crate::grammar::{Definition, Mode, definition, split_list};
 use crate::name::{Map, Name};
+use crate::selector::Pseudo;
 use crate::shorthand::{self, Part};
 use crate::svg_values::*;
 use crate::types::*;
@@ -189,6 +190,65 @@ macro_rules! longhands {
             }
         }
     };
+}
+
+/// Which properties apply to a pseudo-element.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub(crate) enum Only {
+    #[default]
+    All,
+    Marker,
+    FirstLine,
+    FirstLetter,
+}
+
+impl Only {
+    pub(crate) fn of(pseudo: Pseudo) -> Only {
+        match pseudo {
+            Pseudo::Marker => Only::Marker,
+            Pseudo::FirstLine => Only::FirstLine,
+            Pseudo::FirstLetter => Only::FirstLetter,
+            _ => Only::All,
+        }
+    }
+
+    pub(crate) fn allows(self, id: Id) -> bool {
+        let is_in = |all: &str| {
+            all.split_ascii_whitespace().any(|it| {
+                if it.ends_with('-') {
+                    id.name().starts_with(it)
+                } else {
+                    id.name() == it
+                }
+            })
+        };
+        let of_text = || {
+            is_in(
+                "animation- color font- letter-spacing line-height text-autospace text-shadow text-transform word-spacing",
+            )
+        };
+        let of_fragments = || {
+            is_in(
+                "background- box-shadow opacity text-decoration- text-justify text-underline- vertical-align visibility -webkit-font-smoothing",
+            )
+        };
+        match self {
+            Only::All => true,
+            Only::Marker => {
+                of_text()
+                    || is_in(
+                        "content cursor direction hyphens line-break overflow-wrap tab-size text-combine-upright text-decoration-skip-ink \
+                text-emphasis- text-orientation text-wrap- timeline-trigger- transition- unicode-bidi white-space-collapse word-break",
+                    )
+            }
+            Only::FirstLine => of_text() || of_fragments() || id == Id::RubyPosition,
+            Only::FirstLetter => {
+                of_text()
+                    || of_fragments()
+                    || is_in("border- corner- float initial-letter margin- padding-")
+            }
+        }
+    }
 }
 
 impl Groups {
@@ -1239,9 +1299,12 @@ pub(crate) struct Style {
     pub(crate) plainness: Plainness,
 }
 
-/// What `Style::is_plain` has found. A copy is made to be changed.
+/// What `Style::is_plain` and `Style::is_bare` have found. A copy is made to be changed.
 #[derive(Default)]
-pub(crate) struct Plainness(core::cell::Cell<Option<bool>>);
+pub(crate) struct Plainness(
+    core::cell::Cell<Option<bool>>,
+    core::cell::Cell<Option<bool>>,
+);
 
 impl Clone for Plainness {
     fn clone(&self) -> Plainness {
@@ -1457,6 +1520,26 @@ impl Style {
                 && !self.contain().contains(Contain::PAINT);
             self.plainness.0.set(Some(is_plain));
             is_plain
+        })
+    }
+
+    /// A rectangle that has no decorations.
+    pub(crate) fn is_bare(&self) -> bool {
+        self.plainness.1.get().unwrap_or_else(|| {
+            let p = &self.paint;
+            let is_bare = !self.has_background()
+                && p.box_shadow.0.is_empty()
+                && self.border() == [0.0; 4]
+                && self.outline_width() + p.outline_offset.0 <= 0.0
+                && [&p.top_left, &p.top_right, &p.bottom_right, &p.bottom_left]
+                    .iter()
+                    .all(|it| matches!(it.0.0, Lp::Px(0.0)))
+                && self.background.border_image.0.is_none()
+                && [Id::BorderShape, Id::BorderImageOutset]
+                    .iter()
+                    .all(|it| self.other_if_set(*it).is_none());
+            self.plainness.1.set(Some(is_bare));
+            is_bare
         })
     }
 

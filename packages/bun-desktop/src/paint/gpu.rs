@@ -625,6 +625,9 @@ pub fn paint(
         layer_start: None,
     };
     flattener.range(0..scene.items.len(), &root, placement.clip);
+    for (image, [width, height]) in scene.new_images.lock().drain(..) {
+        images::expect(image, width * frame.scale, height * frame.scale);
+    }
 }
 
 impl Flattener<'_> {
@@ -720,9 +723,14 @@ impl Flattener<'_> {
         };
         let mut digest = Digest::new(IntRect::default());
         digest.value(key.bits());
-        placed().for_each(|(key, x, y)| {
-            digest.value((key.bits() >> 40) as u64 ^ ((x ^ y << 12) as u64) << 8)
-        });
+        digest.value(placer.phase());
+        for glyph in glyphs {
+            digest.value(
+                u64::from(glyph.id) << 32
+                    ^ u64::from(glyph.x.to_bits())
+                    ^ u64::from(glyph.y.to_bits()) << 29,
+            );
+        }
         let (key, draw, atlas) = (digest.finish(), self.cache.draw, self.atlas);
         let raster = self.cache.rasters.entry(key).or_insert_with(|| {
             let images = placed().filter_map(|(key, x, y)| Some((cpu::cached_glyph(key)?, x, y)));
@@ -1314,16 +1322,14 @@ impl Flattener<'_> {
         let mut digest = Digest::new(area);
         digest.value((image, info.version));
         let sprite = self.raster(digest.finish(), area, false, |_| {
-            images::with(image, frame, |content, _| match content {
-                Content::Pixels(pixmap) => padded(
-                    images::reduce(pixmap, width, height)
-                        .as_ref()
-                        .unwrap_or(pixmap),
-                ),
+            images::with_size(image, frame, width, height, |content| match content {
+                Content::Pixels(pixmap) => padded(pixmap),
                 Content::Svg(_) => None,
             })?
         });
-        let Some(sprite) = sprite else { return false };
+        let Some(sprite) = sprite else {
+            return info.is_deferred;
+        };
         let (mut bounds, mut part) = (bounds, area.offset(1, 1));
         if is_unscaled((columns, rows)) {
             let (all, shown) = (
@@ -1673,7 +1679,15 @@ impl Flattener<'_> {
             self.device_bounds(index, matrix).intersect(clip),
             self.painter.scene.end(index),
         );
-        if area.area() <= WHOLE_AREA {
+        if area.area() <= WHOLE_AREA
+            && !matches!(
+                self.painter.scene.items[index],
+                Item::PushLayer {
+                    blend: BlendMode::FromBackdrop,
+                    ..
+                }
+            )
+        {
             let mut digest = Digest::new(area);
             digest.matrix(matrix);
             digest.range(&self.painter, index..end, matrix, area);

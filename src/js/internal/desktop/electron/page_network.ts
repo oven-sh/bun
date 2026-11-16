@@ -349,13 +349,20 @@ class Client {
 
   load = ({ headers, keepalive, ...rest }: any) => {
     const controller = new AbortController();
-    const stop = () => controller.abort();
+    let fail: ((error: unknown) => void) | undefined;
+    const stop = () => (controller.abort(), fail?.(controller.signal.reason));
     if (!keepalive) this.cleanups.$add(stop);
     const ownHeaders = Array.from(headers, (header: string[]) => [header[0], header[1]]);
     const preloaded = this.#preloaded.$size > 0 ? this.#takePreloaded(rest) : undefined;
     const promise = (preloaded ?? this.request({ ...rest, headers: ownHeaders, signal: controller.signal })).then(
-      ({ response, done, completed, internal, timing, ...loaded }) => {
-        const finish = (size: number) => void (this.cleanups.$delete(stop), done(size));
+      ({ response, done, completed, failed, internal, timing, ...loaded }) => {
+        const end = () => void (this.cleanups.$delete(stop), (fail = undefined));
+        const finish = (size: number) => fail && (end(), done(size));
+        fail = error => (end(), failed?.(error));
+        const rethrow = (error: unknown) => {
+          fail?.(error);
+          throw error;
+        };
         if (!response) return (finish(0), loaded);
         let reader;
         let size = 0;
@@ -366,11 +373,11 @@ class Client {
         };
         const ahead: Promise<any>[] = [];
         let isWanted = false;
-        const next = () => (reader ??= (response.body ?? new Blob().stream()).getReader()).read().then(count);
+        const next = () => (reader ??= (response.body ?? new Blob().stream()).getReader()).read().then(count, rethrow);
         const read = () => ((isWanted = true), ahead.shift() ?? next());
         const readAll = async () => {
           isWanted = true;
-          if (!reader) return response.bytes().then(bytes => (finish(bytes.length), bytes));
+          if (!reader) return response.bytes().then(bytes => (finish(bytes.length), bytes), rethrow);
           const chunks: Uint8Array[] = [];
           for (let chunk; !(chunk = await read()).done;) chunks.push(chunk.value);
           return Bun.concatArrayBuffers(chunks, Infinity, true);

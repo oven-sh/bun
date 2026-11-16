@@ -72,9 +72,9 @@ async function build(directory: string, outfile: string, order?: string, flags: 
   return { executable: join(directory, outfile), warnings };
 }
 
-async function record(directory: string, name: string) {
+async function record(directory: string, name: string, env: Record<string, string> = {}) {
   const { executable } = await build(directory, "recorder", undefined, ["--aot-record-order"]);
-  const { exitCode, stderr } = await run([executable], { BUN_AOT_ORDER_OUT: join(directory, name) });
+  const { exitCode, stderr } = await run([executable], { BUN_AOT_ORDER_OUT: join(directory, name), ...env });
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
   return readFileSync(join(directory, name), "utf8");
 }
@@ -143,7 +143,9 @@ console.log(JSON.stringify(patterns.map(([source, flags]) => new RegExp(source, 
     ]);
     for (const name of ["recorder", "again"]) writeFileSync(join(String(dir), name + ".json"), input);
     const patternsIn = (order: string) => order.split("\n").filter(line => line.startsWith("R "));
-    expect(patternsIn(await record(String(dir), "first")).map(line => line.split(" ").slice(2).join(" "))).toEqual([
+    expect(patternsIn(await record(String(dir), "private"))).toEqual([]);
+    const first = await record(String(dir), "first", { BUN_AOT_ORDER_DYNAMIC_REGEXPS: "1" });
+    expect(patternsIn(first).map(line => line.split(" ").slice(2).join(" "))).toEqual([
       "(?<=a) (b+)%0025\\d",
       "[%00E9%D83D%DE00]+%000A(?<x>z)",
       "q|%D83D",
@@ -180,6 +182,24 @@ if (process.argv[2]) console.log(JSON.stringify([text.match(${large("rare")}g), 
       exitCode: 0,
     });
     expect(readFileSync(env.BUN_JSC_aotCountsPath, "utf8")).toMatch(/^1\tcounter:RegExpLiteralsCompiledToBytecode$/m);
+
+    writeFileSync(join(String(dir), "old"), "aot-order v1\n");
+    const old = await build(String(dir), "silent", "old", ["--aot-assume=complete-order"]);
+    expect(await run([old.executable, "rare59yy1"], env)).toMatchObject({ exitCode: 0 });
+    expect(readFileSync(env.BUN_JSC_aotCountsPath, "utf8")).toMatch(/^0\tcounter:RegExpLiteralsCompiledToBytecode$/m);
+  },
+  240_000,
+);
+
+test.skipIf(!isSupported)(
+  "a module that is asked for is listed, though none of its functions runs",
+  async () => {
+    using dir = tempDir("aot-order-file-modules", {
+      "program.ts": `console.log(typeof (await import("./asked")).idle, process.argv[2] && (await import("./never")).idle);`,
+      "asked.ts": `export function idle() {}`,
+      "never.ts": `export function idle() {}`,
+    });
+    expect((await record(String(dir), "first")).match(/(asked|never)\.ts$/gm)).toEqual(["asked.ts"]);
   },
   240_000,
 );

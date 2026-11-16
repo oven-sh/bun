@@ -427,19 +427,33 @@ impl Document {
 
     /// Whether `content-visibility: auto` has changed its mind.
     pub(crate) fn update_auto_visibility(&mut self) -> bool {
-        if self.auto_visible.is_empty() {
+        let is_current =
+            self.locks.proximity_is_for.replace(self.layout_version) == Some(self.layout_version);
+        if is_current && self.auto_visible.values().all(Option::is_some)
+            || self.auto_visible.is_empty()
+        {
             return false;
         }
         let [width, height] = self.environment.viewport;
         let margin = [-height * 1.5, -width * 1.5, -height * 1.5, -width * 1.5];
         let mut root = self.observed_root(DOCUMENT).shrunk(margin, margin);
-        let (relevant, mut found, mut changed) = (self.relevant_nodes(), Vec::new(), Vec::new());
+        let (mut relevant, mut found, mut changed) = (None, Vec::new(), Vec::new());
         for (id, known) in self.auto_visible.iter().map(|it| (*it.0, *it.1)) {
             if self.own_box(id).is_none_or(|it| self.boxes.is_parked(it)) {
                 continue;
             }
             let is_near = self.intersect(id, &mut root).is_some();
-            let skips = !is_near && !relevant.contains(&id) && !self.has_focus_within(id);
+            if known == Some(is_near)
+                && is_near != self.tree[id].has(Flags::SKIPPED)
+                && self.anchored.is_empty()
+            {
+                continue;
+            }
+            let skips = !is_near
+                && !self.has_focus_within(id)
+                && !relevant
+                    .get_or_insert_with(|| self.relevant_nodes())
+                    .contains(&id);
             if known != Some(is_near) {
                 found.push((
                     id,
@@ -589,7 +603,7 @@ impl Document {
         let Some(style) = self.tree.style(node) else {
             return 0;
         };
-        if node == self.tree.body() || self.tree.is_root(node) {
+        if self.tree.html_tag(node) == name!("body") || self.tree.is_root(node) {
             return 0;
         }
         let is_fixed = style.layout.position == PositionKind::Fixed;
@@ -598,6 +612,7 @@ impl Document {
             self.tree[*ancestor].layout_box != 0
                 && self.tree.style(*ancestor).is_some_and(|it| {
                     it.contains_fixed()
+                        || it.zoom != style.zoom
                         || !is_fixed
                             && (it.is_positioned()
                                 || tag == name!("body")
@@ -613,6 +628,11 @@ impl Document {
         inside
             .map(|it| self.unscrolled_offset(it, None))
             .fold([0.0; 2], |sum, it| [sum[0] + it[0], sum[1] + it[1]])
+    }
+
+    pub(crate) fn position_in_document(&self, node: NodeId) -> [f32; 2] {
+        self.own_box(node)
+            .map_or([0.0; 2], |it| self.layout_position(it).map(f32::trunc))
     }
 
     pub(crate) fn offset_metrics(&self, node: NodeId) -> [f32; 5] {

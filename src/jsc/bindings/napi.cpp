@@ -811,6 +811,10 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
 
 extern "C" void napi_module_register(napi_module* mod)
 {
+    if (Bun::isOnLentMainThread()) [[unlikely]] {
+        Bun::onJSThread([&] { return (napi_module_register(mod), true); });
+        return;
+    }
     Zig::GlobalObject* globalObject = defaultGlobalObject();
     // Increment this one even if the module is invalid so that functionDlopen
     // knows that napi_module_register was attempted

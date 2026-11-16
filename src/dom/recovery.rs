@@ -1,5 +1,6 @@
 //! A bug in the engine takes down what it has computed, then the page, and not the process.
 
+#[cfg(unix)]
 use core::ffi::c_void;
 
 use crate::boxes::{Boxes, VIEWPORT};
@@ -87,6 +88,7 @@ impl Document {
         self.svg_size_in_layout.set(None);
         self.svg_ids = Default::default();
         self.referenced_svgs.undo_leak();
+        self.paths = Default::default();
         self.requests.undo_leak();
         self.images.undo_leak();
         self.styles.start_over();

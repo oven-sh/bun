@@ -86,8 +86,12 @@ class Frame extends Remote {
     const head = policies.map(it => meta("http-equiv=Content-Security-Policy", it));
     if (page.referrerPolicy) head.push(meta("name=referrer", page.referrerPolicy));
     const html = encodeURIComponent(`<!doctype html>${head.join("")}<body>`);
-    const hasOrigin = page.origin !== "null" && !page.url.startsWith("about:");
-    this.tell("loadURL", `data:text/html,${html}`, { baseURLForDataURL: hasOrigin ? page.url : undefined });
+    const base = page.url.startsWith("about:") ? page.origin + "/" : page.url;
+    this.tell("loadURL", `data:text/html,${html}`, { baseURLForDataURL: page.origin === "null" ? undefined : base });
+  }
+
+  get focusedFrame() {
+    return this.engine.objects.get(this.mirrored.focusedFrame) ?? this.frames[0];
   }
 
   /** In the surface of the page. */
@@ -268,6 +272,7 @@ function create(page: any, state: any, element: Element) {
     input: (event: object) => frame?.input({ ...event }),
     exitFullscreen: () => frame?.exitFullscreen(),
     edit: (name: string) => frame?.view.edit(name),
+    focusedFrame: () => frame?.focusedFrame,
     dispose,
   };
 }

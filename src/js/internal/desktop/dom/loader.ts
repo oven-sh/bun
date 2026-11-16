@@ -60,6 +60,19 @@ async function load(
   }
 }
 
+const modifier = new RegExp('([a-z-]+)\\(\\s*"?([^")]*?)"?\\s*\\)', "gi");
+
+/** What a style sheet says about how to request a URL. */
+function requestOptions(modifiers: string | undefined, referrer: string | undefined = undefined) {
+  if (modifiers === undefined) return undefined;
+  const found = new Map<string, string>();
+  for (const [, name, value] of modifiers.matchAll(modifier)) found.$set(asciiLower(name), value);
+  const options: any = { crossOrigin: found.$get("cross-origin"), integrity: found.$get("integrity") };
+  if (found.$has("referrer-policy")) options.referrerPolicy = asciiLower(found.$get("referrer-policy")!);
+  if (referrer) options.referrer = referrer;
+  return options;
+}
+
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
 function fireLater(page: Page, node: N, type: string) {
@@ -98,19 +111,39 @@ class Picture {
   recorded = 0;
   fontScope = 0;
 
-  constructor(page: Page, url: string, element?: N) {
+  constructor(page: Page, url: string, element?: N, density?: number) {
     this.page = page;
     this.url = url;
     this.key = pictureKey(url, element);
-    this.done = this.load(element);
+    this.done = density === undefined ? this.load(element) : this.open(density);
+  }
+
+  /** Has settled when it returns. */
+  async open(density: number) {
+    const { page, url } = this;
+    const { native } = page;
+    const start = url.indexOf(",") + 1;
+    try {
+      const bytes = Uint8Array.fromBase64(url.slice(start));
+      if (Math.ceil(bytes.length / 3) * 4 !== url.length - start) return;
+      const image = native.ask("image.open", { blob: native.putBlob(bytes), density, scale: page.scale });
+      if (image === null) return;
+      this.id = image.id;
+      this.bytes = bytes.length;
+      this.ratio = (this.width = image.width) / (this.height = image.height);
+      this.isSettled = true;
+      this.loadedAt = performance.now();
+      if (bytes[0] === 0xff) this.correctDensity(bytes, true);
+    } catch {}
   }
 
   async load(element?: N) {
     const { page } = this;
     const { native } = page;
     const isOriented = !this.url.startsWith(UNORIENTED);
-    const url = isOriented ? this.url : this.url.slice(UNORIENTED.length);
-    const resource = page.host.loadsImages === false ? null : await load(page, url, "image", element);
+    const [url, modifiers, base] = (isOriented ? this.url : this.url.slice(UNORIENTED.length)).split("\0");
+    const options = requestOptions(modifiers, base === page.doc.baseUrl ? "" : base);
+    const resource = page.host.loadsImages === false ? null : await load(page, url, "image", element, options);
     try {
       if (resource === null || native === null) return;
       this.bytes = resource.bytes.length;
@@ -296,6 +329,8 @@ const isCount = /^\d+$/;
 const candidateUrl = /[\t\n\f\r ,]*([^\t\n\f\r ]*)/y;
 const descriptorList = /((?:[^,(]|\([^)]*(?:\)|$))*),?/y;
 const descriptor = /(?:[^\t\n\f\r (]|\([^)]*(?:\)|$))+/g;
+const inlinePrefix = /^data:image\/(?:png|jpeg|webp);base64,/;
+const isInline = (url: string | null) => url !== null && url.length > 8192 && inlinePrefix.test(url);
 const startsWithAuto = /^auto(?:,|$)/i;
 const isSupportedImage = /^(?:|image\/(?:png|apng|jpeg|gif|webp|svg\+xml|bmp|x-icon|vnd\.microsoft\.icon))$/;
 
@@ -317,9 +352,16 @@ function parseDescriptors(url: string, descriptors: string[]): Candidate | null 
 function parseSourceSet(text: string): Candidate[] {
   const candidates: Candidate[] = [];
   for (let at = 0; ;) {
-    candidateUrl.lastIndex = at;
-    const url = candidateUrl.exec(text)![1];
-    at = candidateUrl.lastIndex;
+    let url: string;
+    if (at === 0 && isInline(text)) {
+      at = text.length;
+      for (const space of " \t\n\f\r") if (text.lastIndexOf(space, at) >= 0) at = text.indexOf(space);
+      url = text.slice(0, at);
+    } else {
+      candidateUrl.lastIndex = at;
+      url = candidateUrl.exec(text)![1];
+      at = candidateUrl.lastIndex;
+    }
     if (url === "") return candidates;
     let descriptors: string[] = [];
     let end = url.length;
@@ -558,6 +600,22 @@ const useHooks = {
   attribute: (node: N, name: string) => name === "href" && updateUse(node),
 };
 
+/** A large image in a `data:` URL is available at once, so that it is decoded while the page gets ready to show it. */
+function openInline(page: Page, node: N): Candidate | null {
+  const set = getAttr(node, "srcset");
+  if (!isInline(set ?? getAttr(node, "src")) || isHtml(node.parent, "picture")) return null;
+  if (set !== null && parseSourceSet(set).some(it => it.width !== undefined)) return null;
+  const source = pickSource(page, node);
+  if (source === null || !isInline(source.url)) return null;
+  if (page.pictures.$has(pictureKey(source.url, node))) return source;
+  if (page.native === null || page.host.loadsImages === false || page.host.allowsInlineImages?.() === false)
+    return null;
+  const picture = new Picture(page, source.url, node, source.density);
+  if (picture.id === 0) return null;
+  page.pictures.$set(picture.key, picture);
+  return source;
+}
+
 function queueImageUpdate(node: N) {
   const it: Img = node.x;
   const page = node.doc.page;
@@ -565,15 +623,18 @@ function queueImageUpdate(node: N) {
     endDecoding(it, false);
     return dropRequest(it);
   }
-  const src = isResponsive(node) ? null : getAttr(node, "src");
-  const known = src ? page.pictures.$get(pictureKey(resolveUrl(node.doc, src)!, node)) : undefined;
+  const inline = openInline(page, node);
+  const src = inline !== null || isResponsive(node) ? null : getAttr(node, "src");
+  const url = inline?.url ?? (src && resolveUrl(node.doc, src));
+  const known = url ? page.pictures.$get(pictureKey(url, node)) : undefined;
   if (known?.id) {
+    if (isResponsive(node) && it.watchedBy !== page) (it.watchedBy = page).responsiveImages.push(new WeakRef(node));
     const serial = ++it.serial;
     it.isQueued = false;
     const picture = usePicture(page, known.url, node);
     if (picture !== it.picture) endDecoding(it, false);
     dropRequest(it);
-    settleImage(node, picture, known.url, 1);
+    settleImage(node, picture, known.url, inline?.density ?? 1);
     page.delayLoad();
     return page.queueTask(() => {
       if (serial === it.serial) events.fire(node, "load");
@@ -764,10 +825,10 @@ const HTMLImageElement = define(
       return (this as any).$impl.x.url;
     },
     get x() {
-      return Math.round(html.boundingRect((this as any).$impl)[0]);
+      return html.metric((this as any).$impl, (this as any).$impl.id, 15);
     },
     get y() {
-      return Math.round(html.boundingRect((this as any).$impl)[1]);
+      return html.metric((this as any).$impl, (this as any).$impl.id, 16);
     },
     decode(this: any) {
       const node: N = this.$impl;
@@ -1098,6 +1159,8 @@ class Face {
   values: Descriptors;
   sources: FontSource[];
   status = "unloaded";
+  /** The descriptors that are up to the font. */
+  autos: string[] = [];
   loaded = Promise.withResolvers<object>();
   /** The one that loaded. */
   source: FontSource | null = null;
@@ -1118,9 +1181,9 @@ class Face {
       scope,
       family: unquote(it.family),
       ...(bytes ? { blob: native.putBlob(bytes) } : { local }),
-      weight: pair(it.weight, 400),
-      stretch: pair(it.stretch, 100),
-      style: it.style.split(" ")[0],
+      weight: this.autos.includes("weight") ? undefined : pair(it.weight, 400),
+      stretch: this.autos.includes("stretch") ? undefined : pair(it.stretch, 100),
+      style: this.autos.includes("style") ? undefined : it.style.split(" ")[0],
       unicodeRange: it.unicodeRange === descriptors.unicodeRange ? undefined : parseRanges(it.unicodeRange),
       sizeAdjust: fraction(it.sizeAdjust),
       ascentOverride: fraction(it.ascentOverride),
@@ -1129,6 +1192,26 @@ class Face {
       features: settings(it.featureSettings),
       variations: settings(it.variationSettings),
     });
+  }
+
+  distance(weight: number, isItalic: boolean): number {
+    const range = pair(this.values.weight, 400);
+    const lighter = Math.max(weight - Math.max(...range), 0);
+    const heavier = Math.max(Math.min(...range) - weight, 0);
+    const against = weight > 500 ? lighter : weight < 400 || weight + heavier > 500 ? heavier : 0;
+    const slants = !/^(?:normal|auto)$/.test(this.values.style);
+    return (
+      +(slants !== isItalic) * 4000 +
+      +(against > 0) * 1000 +
+      +(weight >= 400 && weight <= 500 && lighter > 0) * 500 +
+      lighter +
+      heavier
+    );
+  }
+
+  covers(points: number[]): boolean {
+    const ranges = parseRanges(this.values.unicodeRange);
+    return points.length === 0 || points.some(it => ranges.some(([from, to]) => from <= it && it <= to));
   }
 
   /** Tells the library which of the pages have it. */
@@ -1271,6 +1354,8 @@ class Fonts {
   js: FontFaceSet;
   faces = new Set<object>();
   fromCss = new Map<string, Face>();
+  /** The rules, until a script wants to see them. */
+  rules: string | null = null;
   loading = new Set<Face>();
   done: Face[] = [];
   ready = Promise.withResolvers<object>();
@@ -1287,7 +1372,34 @@ class Fonts {
     face.registered.$set(this.page, 0);
     if (face.status === "loading") this.started(face);
     else if (face.status === "loaded") face.publish();
-    else face.load(this.page);
+    else if (!face.isFromCss) face.load(this.page);
+  }
+
+  setRules(rules: string) {
+    this.rules = rules;
+    for (const [rule, face] of this.fromCss) if (!rules.includes(rule) && this.fromCss.$delete(rule)) this.remove(face);
+  }
+
+  faceFor(rule: string): Face {
+    let face = this.fromCss.$get(rule);
+    if (face === undefined) {
+      this.fromCss.$set(rule, (face = faceFromRule(rule)));
+      this.add(face);
+    }
+    return face;
+  }
+
+  /** Those of style sheets come first. */
+  all(): Set<object> {
+    takeRequests(this.page);
+    if (this.rules === null) return this.faces;
+    const rules = this.rules === "" ? [] : this.rules.split("\n");
+    this.rules = null;
+    const ordered = rules.map(it => this.faceFor(it).js);
+    for (const face of this.faces) if (!(face as FontFace).$impl.isFromCss) ordered.push(face);
+    this.faces.clear();
+    for (const face of ordered) this.faces.$add(face);
+    return this.faces;
   }
 
   remove(face: Face): boolean {
@@ -1333,28 +1445,18 @@ class Fonts {
     if (this.loading.size === 0) this.ready.resolve(this.js);
   }
 
-  matching(text: string): Face[] {
-    const parts = fontShorthand.exec(`${text}`);
-    if (parts === null) throw domError("SyntaxError", `Could not resolve '${text}' as a font.`);
-    const before = splitTokens(asciiLower(parts[1]));
-    const wanted = parts[2].split(",").map(it => unquote(it).toLowerCase());
-    const weight = before.includes("bold") || before.includes("bolder") ? 700 : +before.find(it => +it > 0)! || 400;
-    const isSlanted = before.includes("italic") || before.includes("oblique");
-    useFont(this.page, { families: wanted.map(it => [it, false]), weight, style: +isSlanted });
-    const distance = ({ values }: Face) => {
-      const [min, max] = pair(values.weight, 400);
-      return ((values.style !== "normal") !== isSlanted ? 4000 : 0) + Math.max(0, min - weight, weight - max);
-    };
-    const all = Array.from(this.faces, (face: any): Face => face.$impl);
-    return wanted.flatMap(family => {
-      const faces = all.filter(face => unquote(face.values.family).toLowerCase() === family);
-      const best = Math.min(...faces.map(distance));
-      return faces.filter(face => distance(face) === best);
+  matching(font: unknown, text: unknown): Face[] {
+    const parsed = cssom.parseFont(`${font}`);
+    if (parsed === null) throw domError("SyntaxError", `Could not resolve '${font}' as a font.`);
+    const points = Array.from(`${text}`, it => it.codePointAt(0)!);
+    const all = Array.from(this.all(), (face: any): Face => face.$impl);
+    return parsed.families.flatMap(family => {
+      const faces = all.filter(it => asciiLower(unquote(it.values.family)) === asciiLower(unquote(family)));
+      const best = Math.min(...faces.map(it => it.distance(parsed.weight, parsed.isItalic)));
+      return faces.filter(it => it.distance(parsed.weight, parsed.isItalic) === best && it.covers(points));
     });
   }
 }
-
-const fontShorthand = /^(.*?)(?:[\d.]+(?:[a-z]+|%)|(?:x+-)?(?:small|large)r?|medium)(?:\s*[/]\s*\S+)?\s+(.+)$/is;
 
 function useFont(page: Page, { families, weight, style }: any) {
   if (page.doc.page === null) return;
@@ -1373,12 +1475,13 @@ class FontFaceSet extends events.EventTarget {
     this.$impl.x = fonts.page;
   }
   get size() {
-    return this.#fonts.faces.size;
+    return this.#fonts.all().size;
   }
   get status() {
     return this.#fonts.loading.size > 0 ? "loading" : "loaded";
   }
   get ready() {
+    if (!(#fonts in this)) return Promise.$reject(new TypeError("Illegal invocation"));
     if (this.#fonts.page.doc.page !== null) sync(this.#fonts.page.doc).updateLayout();
     takeRequests(this.#fonts.page);
     return this.#fonts.ready.promise;
@@ -1396,32 +1499,36 @@ class FontFaceSet extends events.EventTarget {
     for (const face of this.#fonts.faces) this.delete(face as FontFace);
   }
   has(face: FontFace) {
-    return this.#fonts.faces.$has(face);
+    return this.#fonts.all().$has(face);
   }
-  check(font: string) {
+  check(font: string, text = " ") {
     if ($argumentCount() < 1) core.tooFew(1);
-    return this.#fonts.matching(font).every(face => face.status !== "loading");
+    return this.#fonts.matching(font, text).every(face => face.status === "loaded" || face.status === "error");
   }
-  async load(font: string) {
+  async load(font: string, text = " ") {
     if ($argumentCount() < 1) core.tooFew(1);
-    return Promise.all(this.#fonts.matching(font).map(face => face.loaded.promise));
+    const faces = this.#fonts.matching(font, text);
+    for (const face of faces) face.load(this.#fonts.page);
+    return Promise.all(faces.map(face => face.loaded.promise));
   }
   forEach(callback: Function, self: unknown = undefined) {
-    for (const face of this.#fonts.faces) callback.$call(self, face, face, this);
+    for (const face of this.#fonts.all()) callback.$call(self, face, face, this);
   }
   entries() {
-    return this.#fonts.faces.entries();
+    return this.#fonts.all().entries();
   }
   keys() {
-    return this.#fonts.faces.keys();
+    return this.#fonts.all().keys();
   }
   values() {
-    return this.#fonts.faces.values();
-  }
-  [Symbol.iterator]() {
-    return this.values();
+    return this.#fonts.all().values();
   }
 }
+Object.defineProperty(FontFaceSet.prototype, Symbol.iterator, {
+  value: FontFaceSet.prototype.values,
+  writable: true,
+  configurable: true,
+});
 events.defineHandlers(FontFaceSet.prototype, ["loading", "loadingdone", "loadingerror"]);
 expose(FontFaceSet);
 
@@ -1439,6 +1546,7 @@ function faceFromRule(json: string): Face {
   const face = new Face(js, { ...descriptors, ...given, family }, src.filter(Boolean));
   $putByIdDirectPrivate(js, "impl", face);
   face.isFromCss = true;
+  face.autos = ["weight", "stretch", "style"].filter(it => (given[it] ?? "auto") === "auto");
   return face;
 }
 
@@ -1474,14 +1582,8 @@ function takeRequests(page: Page) {
       continue;
     }
     const fonts = fontsOf(page);
-    const known = fonts.fromCss.$get(value);
-    if (requests[i] === "unfont") {
-      if (fonts.fromCss.$delete(value)) fonts.remove(known!);
-    } else if (known === undefined) {
-      const face = faceFromRule(value);
-      fonts.fromCss.$set(value, face);
-      fonts.add(face);
-    }
+    if (requests[i] === "font") fonts.faceFor(value).load(page);
+    else fonts.setRules(value);
   }
 }
 
@@ -1560,7 +1662,7 @@ async function loadImports(
     ? { referrer: sheet.baseUrl, referrerPolicy: sheet.referrerPolicy || "strict-origin-when-cross-origin" }
     : {};
   for (let i = 0; i < imports.length; i += 2) {
-    const url = imports[i];
+    const [url, modifiers] = imports[i].split("\0");
     if (ancestors.includes(url) || budget.left-- <= 0) continue;
     const prelude = sheet.prelude + imports[i + 1];
     const known = old.findIndex(it => it.href === url);
@@ -1579,7 +1681,7 @@ async function loadImports(
     imported.prelude = prelude;
     sheet.imports.push(imported);
     loading.push(
-      load(page, url, "style", undefined, from).then(resource => {
+      load(page, url, "style", undefined, { ...from, ...requestOptions(modifiers) }).then(resource => {
         if (resource === null) return false;
         imported.baseUrl = resource.url;
         imported.isTainted = resource.isReadable === false;
@@ -2230,16 +2332,23 @@ function openFrame(node: N) {
   if (isLocal) return openLocalFrame(node, page);
   const isBlank =
     !hasAttr(node, "srcdoc") && resolveUrl(node.doc, getAttr(node, "src") || "about:blank") === "about:blank";
-  if (isBlank) node.x = page.createBlankFrame(node);
-  else if (page.host.createRemoteFrame) node.x = new (remoteFrames().RemoteFrame)(node, page);
-  else return;
+  if (!isBlank) return openRemoteFrame(node, page);
+  node.x = page.createBlankFrame(node);
   page.frames.$add(node);
   framesChanged(page);
-  if (isBlank) return events.fire(node, "load");
+  events.fire(node, "load");
+}
+
+function openRemoteFrame(node: N, page: Page, url?: string) {
+  closeFrame(node);
+  if (!page.host.createRemoteFrame) return;
+  node.x = new (remoteFrames().RemoteFrame)(node, page);
+  page.frames.$add(node);
+  framesChanged(page);
   page.hasRemoteFrames = true;
   page.layoutVersion = -1;
   invalidate(node.doc);
-  node.x.navigate();
+  node.x.navigate(url);
 }
 
 function openLocalFrame(node: N, page: Page) {
@@ -2519,6 +2628,10 @@ class Media {
   frames: number[] = [];
   frameCallbacks = new Map<number, Function>();
   presented = 0;
+  /** What has the `src`. */
+  holder: N | null = null;
+  isWaiting = false;
+  selected: Promise<void> | undefined;
   serial = 0;
   #player: any;
 
@@ -2537,9 +2650,10 @@ class Media {
   }
   isSeen() {
     const { node } = this;
-    return (
-      this.frameCallbacks.$size > 0 || !(node.flags & CONNECTED) || wrap(node.doc.node).visibilityState === "visible"
-    );
+    if (this.frameCallbacks.$size > 0 || !(node.flags & CONNECTED)) return true;
+    const { top, right, bottom, left } = wrap(node).getBoundingClientRect();
+    const { innerWidth, innerHeight, document } = node.doc.page!.window;
+    return document.visibilityState === "visible" && right > 0 && bottom > 0 && left < innerWidth && top < innerHeight;
   }
   /** The part of the border box that has the picture. */
   fitted() {
@@ -2583,9 +2697,28 @@ class Media {
       for (const callback of callbacks) events.callBack(page!, () => callback(now, about));
     });
   }
+  /** False if that is up to a `<source>` to tell. */
   fail(code: number) {
-    this.error = Object.assign(new MediaError(), { $impl: code });
-    this.networkState = code === 4 ? 3 : 1;
+    const { node, holder, serial } = this;
+    if (holder === node || holder === null || code !== 4) {
+      this.error = Object.assign(new MediaError(), { $impl: code });
+      this.networkState = code === 4 ? 3 : 1;
+      return true;
+    }
+    this.#player?.unload();
+    this.networkState = 3;
+    node.doc.page?.queueTask(() => {
+      if (serial !== this.serial) return;
+      events.fire(holder, "error");
+      if (serial === this.serial) this.tryNextSource();
+    });
+    return false;
+  }
+  tryNextSource() {
+    const next = nextSource(this.node, this.holder);
+    if ((this.isWaiting = next === null)) return;
+    this.currentSrc = urlOfSource((this.holder = next!));
+    trySource(this.node);
   }
 }
 
@@ -2593,11 +2726,19 @@ const releaseFrames = (frames: number[]) =>
   frames.splice(0).forEach(id => core.realm.page.native?.send("image.release", { id }));
 const videos = new FinalizationRegistry(releaseFrames);
 
-function sourceOf(node: N) {
-  const isUsable = (it: N) =>
-    isHtml(it, "source") && hasAttr(it, "src") && playable.test(getAttr(it, "type") || "audio/wav");
-  const holder = hasAttr(node, "src") ? node : core.findDescendant(node, it => it.parent === node && isUsable(it));
-  return holder && (resolveUrl(node.doc, getAttr(holder, "src") || "//") ?? "");
+/** The next child to try. */
+function nextSource(node: N, after: N | null) {
+  let at = after === null ? node.first : after.next;
+  while (at !== null && !isHtml(at, "source")) at = at.next;
+  return at;
+}
+
+/** Empty if it cannot be played. */
+function urlOfSource(holder: N) {
+  const isSource = holder.name === "source";
+  if (isSource && !playable.test(getAttr(holder, "type") || "audio/wav")) return "";
+  if (isSource && !holder.doc.engine.matchMedia(getAttr(holder, "media") ?? "")) return "";
+  return resolveUrl(holder.doc, getAttr(holder, "src") || "//") ?? "";
 }
 
 /** https://html.spec.whatwg.org/#media-element-load-algorithm. Nothing is fetched until something waits for it. */
@@ -2606,9 +2747,9 @@ function loadMedia(node: N) {
   const serial = ++it.serial;
   const later = (type: string) => node.doc.page?.queueTask(() => events.fire(node, type));
   it.player(false)?.unload();
+  it.isWaiting = false;
   if (it.networkState === 1 || it.networkState === 2) later("abort");
   if (it.networkState !== 0) later("emptied");
-  const source = it.srcObject ? "" : sourceOf(node);
   Object.assign(it, {
     currentTime: 0,
     duration: NaN,
@@ -2616,30 +2757,47 @@ function loadMedia(node: N) {
     paused: true,
     seeking: false,
     error: null,
-    currentSrc: source ?? "",
+    currentSrc: "",
   });
   it.videoWidth = it.videoHeight = 0;
   it.showsPoster = true;
   if (it.frames.length > 0) (releaseFrames(it.frames), showPoster(node));
   it.playbackRate = it.defaultPlaybackRate;
-  it.networkState = source === null ? 0 : 3;
-  if (source === null) return;
+  it.networkState = 3;
+  it.selected = new Promise<void>(resolve =>
+    queueMicrotask(() => {
+      if (serial === it.serial) selectSource(node, serial);
+      resolve();
+    }),
+  );
+}
+
+function selectSource(node: N, serial: number) {
+  const it: Media = node.x;
+  it.holder = it.srcObject || hasAttr(node, "src") ? node : nextSource(node, null);
+  if (it.holder === null) return void (it.networkState = 0);
+  it.networkState = 2;
+  it.currentSrc = it.srcObject ? "" : urlOfSource(it.holder);
   node.doc.page?.queueTask(() => {
     if (serial !== it.serial) return;
-    it.networkState = 2;
     events.fire(node, "loadstart");
-    if (serial !== it.serial) return;
-    if (!node.doc.page?.host.createPlayer || (source === "" && !it.srcObject)) {
-      it.fail(4);
-      return events.fire(node, "error");
-    }
-    it.networkState = 1;
-    const isBlank = node.name === "video" && node.flags & CONNECTED && it.poster === null;
-    if (hasAttr(node, "autoplay")) play(node).then(undefined, () => {});
-    else if (getAttr(node, "preload") !== "none" && (isBlank || needData.some(type => events.hasListeners(node, type))))
-      it.player().load();
-    else events.fire(node, "suspend");
+    if (serial === it.serial) trySource(node);
   });
+}
+
+function trySource(node: N) {
+  const it: Media = node.x;
+  if (!node.doc.page?.host.createPlayer || (it.currentSrc === "" && !it.srcObject)) {
+    return void (it.fail(4) && events.fire(node, "error"));
+  }
+  it.networkState = 1;
+  const isBlank = node.name === "video" && node.flags & CONNECTED && it.poster === null;
+  const isAwaited =
+    getAttr(node, "preload") !== "none" && (isBlank || needData.some(type => events.hasListeners(node, type)));
+  if (isLazy(node) && it.paused && !(node.flags & CONNECTED && it.isSeen())) return;
+  if (hasAttr(node, "autoplay") || !it.paused) play(node).then(undefined, () => {});
+  else if (isAwaited) it.player().load();
+  else events.fire(node, "suspend");
 }
 
 const hasEnded = (it: Media) => it.readyState > 0 && !it.loop && it.player().time() >= it.duration;
@@ -2654,7 +2812,8 @@ async function play(node: N) {
     it.paused = false;
     node.doc.page?.queueTask(() => events.fire(node, "play"));
   }
-  if (it.networkState === 0) return new Promise<void>(() => {});
+  await it.selected;
+  if (it.networkState === 0 || (it.holder !== node && it.currentSrc === "")) return new Promise<void>(() => {});
   await player.play();
 }
 
@@ -2770,7 +2929,10 @@ function showPoster(node: N) {
 
 const mediaHooks = {
   created: (node: N) => (node.x = new Media(node)),
-  children: (node: N) => node.x.networkState === 0 && loadMedia(node),
+  children(node: N) {
+    if (node.x.networkState === 0) nextSource(node, null) === null || loadMedia(node);
+    else if (node.x.isWaiting) queueMicrotask(() => node.x.isWaiting && node.x.tryNextSource());
+  },
   removed: (node: N, _: N, isMove: boolean) =>
     isMove || node.x.paused || node.doc.page?.queueTask(() => node.flags & CONNECTED || wrap(node).pause()),
   mirrored: showPoster,
@@ -2846,6 +3008,7 @@ export default {
   fontsOf,
   hasSheet,
   isRenderBlocked,
+  openRemoteFrame,
   loadLazyImages,
   failPlugin,
   frameMembers,

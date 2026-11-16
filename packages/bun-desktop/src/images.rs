@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::Cursor;
+use std::panic::catch_unwind;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -10,26 +11,33 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
+use image::metadata::Orientation;
 use image::{
     AnimationDecoder, DynamicImage, ImageDecoder as _, ImageFormat, ImageReader, RgbaImage,
 };
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use resvg::tiny_skia::{IntSize, Pixmap, Transform};
 use resvg::usvg::{self, fontdb, roxmltree};
 use rustc_hash::FxHashMap;
 use serde_json::{Value, json};
+use smallvec::SmallVec;
 
 use crate::abi::{self, Rect};
 use crate::paint::cpu::Painter;
 use crate::paint::raster::{Clip, IntRect, Layer, demultiply, multiply};
 use crate::paint::scene::{Frame, Scene};
-use crate::{bridge, canvas, svg_limits, text, webview};
+use crate::{bridge, canvas, png_rows, svg_limits, text, webview};
 
 const MAX_SIDE: u32 = 32768;
 const MAX_BYTES: usize = 512 << 20;
 const MAX_ANIMATION_BYTES: usize = 64 << 20;
 /// The GPU has what is on screen.
 const DECODED_BYTES: usize = 16 << 20;
+/// From there on, an image is decoded once it is known how large it is drawn.
+const DEFERRED_PIXELS: u64 = 1 << 18;
+const POLL: Duration = Duration::from_millis(3);
+
+type Size = (u32, u32);
 
 pub enum Svg {
     Tree {
@@ -97,14 +105,30 @@ pub fn record(mut list: Scene, size: [f32; 2]) -> u32 {
 /// Each with the time at which it ends.
 type Frames = Vec<(Pixmap, Duration)>;
 
+/// A deferred image at the size that it was last drawn at.
+#[derive(Default)]
+struct Fitted {
+    pixels: Option<Arc<Pixmap>>,
+    is_pending: bool,
+    /// Something else was drawn in its place.
+    was_missed: bool,
+    was_drawn: bool,
+    is_broken: bool,
+    other_sizes: u32,
+}
+
 struct Bitmap {
-    size: (u32, u32),
+    size: Size,
     ends: Vec<Duration>,
     start: Instant,
     /// What `frames` are decoded from again after they were dropped. Without it, they are kept.
     encoded: Option<Vec<u8>>,
     frames: Mutex<Option<Arc<Frames>>>,
     last_used: AtomicU32,
+    is_deferred: bool,
+    fitted: Mutex<Fitted>,
+    was_fitted: Condvar,
+    generation: AtomicU32,
 }
 
 enum Image {
@@ -123,11 +147,14 @@ pub struct Info {
     pub size: Option<(u32, u32)>,
     /// Changes with the content.
     pub version: u32,
+    pub is_deferred: bool,
 }
 
 static IMAGES: LazyLock<Mutex<FxHashMap<u32, Arc<Image>>>> = LazyLock::new(Mutex::default);
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static USES: AtomicU32 = AtomicU32::new(1);
+/// The sizes of the last deferred images, and what they were drawn at first.
+static DRAWN: Mutex<VecDeque<(Size, Size)>> = Mutex::new(VecDeque::new());
 
 pub fn next_id() -> u32 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
@@ -142,6 +169,70 @@ impl Bitmap {
             encoded,
             frames: Mutex::new(Some(Arc::new(frames))),
             last_used: AtomicU32::new(USES.fetch_add(1, Ordering::Relaxed)),
+            is_deferred: false,
+            fitted: Mutex::default(),
+            was_fitted: Condvar::new(),
+            generation: AtomicU32::new(0),
+        }
+    }
+
+    fn deferred(size: Size, encoded: Vec<u8>) -> Option<Bitmap> {
+        let bitmap = Bitmap::new(vec![(Pixmap::new(1, 1)?, Duration::ZERO)], Some(encoded));
+        Some(Bitmap {
+            size,
+            frames: Mutex::new(None),
+            is_deferred: true,
+            ..bitmap
+        })
+    }
+
+    fn fit(&self, size: Size) -> Option<Arc<Pixmap>> {
+        let whole = self.frames.lock().clone();
+        match whole {
+            Some(frames) => resample(&frames[0].0, size),
+            None => decode_at(self.encoded.as_ref()?, self.size, size),
+        }
+        .map(Arc::new)
+    }
+
+    /// Of the given size, unless the frame cannot wait.
+    fn fitted(&self, image: &Arc<Image>, frame: &Frame, size: Size) -> Option<Arc<Pixmap>> {
+        self.last_used
+            .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+        let mut fitted = self.fitted.lock();
+        if !std::mem::replace(&mut fitted.was_drawn, true) {
+            let mut drawn = DRAWN.lock();
+            drawn.retain(|it| it.0 != self.size);
+            drawn.truncate(7);
+            drawn.push_front((self.size, size));
+        }
+        loop {
+            let fits = |it: &Arc<Pixmap>| {
+                size_of(it) == size
+                    || frame.deadline.is_some() && is_rounded_differently(size_of(it), size)
+            };
+            if fitted.is_broken || fitted.pixels.as_ref().is_some_and(fits) {
+                return fitted.pixels.clone();
+            }
+            let deadline = frame.deadline.filter(|_| self.frames.lock().is_none());
+            let Some(deadline) = deadline else {
+                drop(fitted);
+                let pixels = self.fit(size);
+                self.fitted.lock().pixels.clone_from(&pixels);
+                drop_pixels(DECODED_BYTES);
+                return pixels;
+            };
+            start_fitting(image, &mut fitted, size);
+            if fitted.pixels.is_some()
+                || self
+                    .was_fitted
+                    .wait_until(&mut fitted, deadline)
+                    .timed_out()
+            {
+                fitted.was_missed = true;
+                frame.changes_at(frame.now + POLL);
+                return fitted.pixels.clone();
+            }
         }
     }
 
@@ -174,24 +265,89 @@ impl Bitmap {
     }
 }
 
+fn start_fitting(image: &Arc<Image>, fitted: &mut Fitted, size: Size) {
+    if std::mem::replace(&mut fitted.is_pending, true) {
+        return;
+    }
+    fitted.other_sizes = if fitted.pixels.is_some() {
+        fitted.other_sizes + 1
+    } else {
+        0
+    };
+    // It is being resized.
+    let (keeps_whole, image) = (fitted.other_sizes > 1, image.clone());
+    bridge::spawn(move || {
+        let Image::Bitmap(bitmap) = &*image else {
+            return;
+        };
+        let fit = std::panic::AssertUnwindSafe(|| {
+            if keeps_whole {
+                bitmap.frames();
+            }
+            bitmap.fit(size)
+        });
+        let pixels = if Arc::strong_count(&image) > 1 {
+            catch_unwind(fit).ok().flatten()
+        } else {
+            None
+        };
+        let mut fitted = bitmap.fitted.lock();
+        (fitted.is_pending, fitted.is_broken, fitted.pixels) = (false, pixels.is_none(), pixels);
+        if std::mem::take(&mut fitted.was_missed) {
+            bitmap.generation.fetch_add(1, Ordering::Relaxed);
+        }
+        drop(fitted);
+        bitmap.was_fitted.notify_all();
+        drop_pixels(DECODED_BYTES);
+    });
+}
+
+/// It is about to be drawn, that many device pixels large.
+pub fn expect(id: u32, width: f32, height: f32) {
+    let Some(image) = IMAGES.lock().get(&id).cloned() else {
+        return;
+    };
+    if let Image::Bitmap(bitmap) = &*image
+        && bitmap.is_deferred
+    {
+        bitmap
+            .last_used
+            .store(USES.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+        let (size, mut fitted) = (
+            reduced_size(bitmap.size, width, height),
+            bitmap.fitted.lock(),
+        );
+        if !fitted.is_broken && fitted.pixels.is_none() {
+            start_fitting(&image, &mut fitted, size);
+        }
+    }
+}
+
 /// Of the images that were used least recently, until `kept` bytes are left.
 fn drop_pixels(kept: usize) {
     let images = IMAGES.lock();
     let mut decoded: Vec<_> = (images.values())
         .filter_map(|image| match &**image {
-            Image::Bitmap(bitmap) if bitmap.encoded.is_some() && bitmap.frames.lock().is_some() => {
-                Some(bitmap)
-            }
+            Image::Bitmap(bitmap) if bitmap.encoded.is_some() => Some(bitmap),
             _ => None,
         })
         .collect();
     decoded
         .sort_unstable_by_key(|bitmap| std::cmp::Reverse(bitmap.last_used.load(Ordering::Relaxed)));
-    let mut total = 0;
+    let (mut total, mut small) = (0, 0);
     for (index, bitmap) in decoded.into_iter().enumerate() {
-        total += bitmap.size.0 as usize * bitmap.size.1 as usize * 4 * bitmap.ends.len();
+        let (mut fitted, mut frames) = (bitmap.fitted.lock(), bitmap.frames.lock());
+        total += frames
+            .iter()
+            .flat_map(|it| it.iter())
+            .map(|it| it.0.data().len())
+            .sum::<usize>();
         if total > kept && (index > 0 || kept == 0) {
-            bitmap.frames.lock().take();
+            frames.take();
+        }
+        small += fitted.pixels.as_ref().map_or(0, |it| it.data().len());
+        if small > kept && (index > 0 || kept == 0) {
+            fitted.pixels.take();
         }
     }
 }
@@ -214,16 +370,83 @@ pub fn info(id: u32, frame: &Frame) -> Option<Info> {
         Some(Image::Svg(_)) => Some(Info {
             size: None,
             version: 0,
+            is_deferred: false,
         }),
+        Some(Image::Bitmap(bitmap)) if bitmap.is_deferred => {
+            if bitmap.fitted.lock().was_missed {
+                frame.changes_at(frame.now + POLL);
+            }
+            Some(Info {
+                size: Some(bitmap.size),
+                version: bitmap.generation.load(Ordering::Relaxed),
+                is_deferred: true,
+            })
+        }
         Some(Image::Bitmap(bitmap)) => Some(Info {
             size: Some(bitmap.size),
             version: bitmap.index_at(frame) as u32,
+            is_deferred: false,
         }),
         None => with_changing(id, |pixmap, version| Info {
-            size: Some((pixmap.width(), pixmap.height())),
+            size: Some(size_of(pixmap)),
             version,
+            is_deferred: false,
         }),
     }
+}
+
+/// With pixels of the `reduced_size`.
+pub fn with_size<R>(
+    id: u32,
+    frame: &Frame,
+    width: f32,
+    height: f32,
+    f: impl FnOnce(Content) -> R,
+) -> Option<R> {
+    let reduce = |content: Content, version: u32, whole: Option<Size>| match content {
+        Content::Pixels(pixmap) => {
+            match reduced_size(whole.unwrap_or(size_of(pixmap)), width, height) {
+                size if size == size_of(pixmap) => Some(f(content)),
+                size => Some(f(Content::Pixels(&*resampled(id, version, pixmap, size)?))),
+            }
+        }
+        Content::Svg(_) => Some(f(content)),
+    };
+    let image = IMAGES.lock().get(&id).cloned();
+    match image.as_ref().map(|image| (image, &**image)) {
+        Some((image, Image::Bitmap(bitmap))) if bitmap.is_deferred => {
+            let (size, version) = (
+                reduced_size(bitmap.size, width, height),
+                bitmap.generation.load(Ordering::Relaxed),
+            );
+            reduce(
+                Content::Pixels(&*bitmap.fitted(image, frame, size)?),
+                version,
+                Some(bitmap.size),
+            )
+        }
+        _ => with(id, frame, |content, version| reduce(content, version, None))?,
+    }
+}
+
+fn likely_size(whole: Size, density: f32, scale: f32) -> Size {
+    const THUMBNAIL: [f32; 2] = [480., 320.];
+    let drawn = DRAWN.lock();
+    drawn
+        .iter()
+        .find(|it| it.0 == whole)
+        .map(|it| it.1)
+        .unwrap_or_else(|| {
+            let width = drawn
+                .iter()
+                .map(|it| it.1.0)
+                .max()
+                .map_or(THUMBNAIL[0] * scale, |it| it as f32);
+            let factor = (width / whole.0 as f32)
+                .min(THUMBNAIL[1] * scale / whole.1 as f32)
+                .min(scale / density);
+            reduced_size(whole, whole.0 as f32 * factor, whole.1 as f32 * factor)
+        })
 }
 
 /// `f` also gets `Info::version`.
@@ -540,8 +763,84 @@ fn decode_bitmap(bytes: &[u8], is_oriented: bool) -> Result<Frames> {
     )])
 }
 
+/// The size of a large still image.
+fn size_to_defer(bytes: &[u8]) -> Option<Size> {
+    let format = image::guess_format(bytes).ok()?;
+    let is_still = match format {
+        ImageFormat::Jpeg => true,
+        ImageFormat::Png => !PngDecoder::with_limits(Cursor::new(bytes), limits())
+            .ok()?
+            .is_apng()
+            .ok()?,
+        ImageFormat::WebP => !WebPDecoder::new(Cursor::new(bytes)).ok()?.has_animation(),
+        _ => false,
+    };
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), is_still.then_some(format)?);
+    reader.limits(limits());
+    let mut decoder = reader.into_decoder().ok()?;
+    let (width, height) = decoder.dimensions();
+    (DEFERRED_PIXELS..=MAX_BYTES as u64 / 4)
+        .contains(&(u64::from(width) * u64::from(height)))
+        .then_some(())?;
+    Some(match decoder.orientation().ok()? {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => (height, width),
+        _ => (width, height),
+    })
+}
+
+/// Never has all of the pixels. What comes after an error stays transparent.
+fn decode_png_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
+    match png_rows::channels(bytes)? {
+        3 => {
+            let mut resampler = Resampler::<3>::new(whole, size)?;
+            png_rows::read::<3>(bytes, whole, |row| resampler.take(row));
+            Some(resampler.result)
+        }
+        _ => {
+            let (mut resampler, mut premultiplied) =
+                (Resampler::<4>::new(whole, size)?, Vec::new());
+            png_rows::read::<4>(bytes, whole, |row| {
+                let pixels = row.as_chunks::<4>().0;
+                if pixels.iter().fold(255, |all, pixel| all & pixel[3]) == 255 {
+                    return resampler.take(row);
+                }
+                premultiplied.clear();
+                premultiplied.extend(
+                    pixels.iter().flat_map(|&[r, g, b, a]| {
+                        [multiply(r, a), multiply(g, a), multiply(b, a), a]
+                    }),
+                );
+                resampler.take(&premultiplied);
+            });
+            Some(resampler.result)
+        }
+    }
+}
+
+fn decode_at(bytes: &[u8], whole: Size, size: Size) -> Option<Pixmap> {
+    decode_png_at(bytes, whole, size).or_else(|| match decode_still(bytes).ok()? {
+        DynamicImage::ImageRgb8(image) => Resampler::<3>::all(whole, size, &image),
+        image => pixmap_from(image.into_rgba8()).and_then(|it| {
+            if size == whole {
+                Some(it)
+            } else {
+                resample(&it, size)
+            }
+        }),
+    })
+}
+
 fn decode(bytes: Vec<u8>, is_oriented: bool) -> Result<Value> {
-    let (image, mut info) = if image::guess_format(&bytes).is_err() {
+    let (image, mut info) = if let Some(size) = size_to_defer(&bytes).filter(|_| is_oriented) {
+        let info = json!({ "width": size.0, "height": size.1, "svg": false });
+        (
+            Image::Bitmap(Bitmap::deferred(size, bytes).context("out of memory")?),
+            info,
+        )
+    } else if image::guess_format(&bytes).is_err() {
         decode_svg(&bytes).context("the image could not be decoded")?
     } else {
         let bitmap = Bitmap::new(
@@ -569,6 +868,24 @@ pub fn command(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Valu
             bridge::in_background(reply, move || decode(bytes, is_oriented));
         }
         "decodeSync" => return decode(bridge::blob(&arguments["blob"])?, true),
+        "open" => {
+            let bytes = bridge::blob(&arguments["blob"])?;
+            let Some((width, height)) = size_to_defer(&bytes) else {
+                return Ok(Value::Null);
+            };
+            let (id, number) = (next_id(), |name: &str| {
+                arguments[name].as_f64().unwrap_or(1.) as f32
+            });
+            IMAGES.lock().insert(
+                id,
+                Arc::new(Image::Bitmap(
+                    Bitmap::deferred((width, height), bytes).context("out of memory")?,
+                )),
+            );
+            let likely = likely_size((width, height), number("density"), number("scale"));
+            expect(id, likely.0 as f32, likely.1 as f32);
+            return Ok(json!({ "id": id, "width": width, "height": height }));
+        }
         "release" => drop(
             IMAGES
                 .lock()
@@ -608,49 +925,157 @@ pub fn svg_bounds(tree: &usvg::Tree) -> Rect {
     }
 }
 
-type ReducedKey = (u32, u32, u32, u32);
+type ReducedKey = (u32, u32, Size);
 
 thread_local! {
     static REDUCED: RefCell<VecDeque<(ReducedKey, Rc<Pixmap>)>> = RefCell::default();
 }
 
-/// `reduce` for an image that is drawn piece by piece.
-pub fn reduced(
-    id: u32,
-    version: u32,
-    source: &Pixmap,
-    width: f32,
-    height: f32,
-) -> Option<Rc<Pixmap>> {
-    let key = (id, version, width.round() as u32, height.round() as u32);
+/// `resample` for an image that is drawn piece by piece.
+fn resampled(id: u32, version: u32, source: &Pixmap, size: Size) -> Option<Rc<Pixmap>> {
+    let key = (id, version, size);
     REDUCED.with_borrow_mut(|recent| {
         if let Some((_, known)) = recent.iter().find(|(known, _)| *known == key) {
             return Some(known.clone());
         }
-        let result = Rc::new(reduce(source, width, height)?);
+        let result = Rc::new(resample(source, size)?);
         recent.push_front((key, result.clone()));
         let mut bytes = 0;
         recent.retain(|(kept, pixmap)| {
             bytes += pixmap.data().len();
-            bytes <= DECODED_BYTES / 2 || *kept == key
+            bytes <= DECODED_BYTES / 4 || *kept == key
         });
         Some(result)
     })
 }
 
-/// For each pixel of the result: the first source pixel that it covers, and the weights from there on.
-fn area_weights(from: usize, to: usize) -> Vec<(usize, Vec<f32>)> {
-    let ratio = from as f32 / to as f32;
+/// For each pixel of the result: the first source pixel that it covers, and the weights from there on, 256 in all.
+fn area_weights(from: u32, to: u32) -> Vec<(usize, SmallVec<[u16; 8]>)> {
+    let (from, to) = (u64::from(from), u64::from(to));
     let weights = (0..to).map(|index| {
-        let (start, end) = (index as f32 * ratio, (index + 1) as f32 * ratio);
-        let covered = start as usize..(end.ceil() as usize).min(from);
-        let weight = |at: usize| (end.min(at as f32 + 1.) - start.max(at as f32)) / ratio;
-        (covered.start, covered.map(weight).collect())
+        let (start, end) = (index * from, (index + 1) * from);
+        let up_to = |at: u64| (((at * to).clamp(start, end) - start) * 256 + from / 2) / from;
+        (
+            ((start / to) as usize),
+            (start / to..end.div_ceil(to))
+                .map(|at| (up_to(at + 1) - up_to(at)) as u16)
+                .collect(),
+        )
     });
     weights.collect()
 }
 
-pub fn reduced_size(source: (u32, u32), width: f32, height: f32) -> (u32, u32) {
+/// Averages rows of RGB or premultiplied RGBA as they come.
+struct Resampler<const CHANNELS: usize> {
+    columns: Vec<(usize, SmallVec<[u16; 8]>)>,
+    rows: Vec<(usize, SmallVec<[u16; 8]>)>,
+    sums: Vec<u16>,
+    taken: usize,
+    finished: usize,
+    result: Pixmap,
+}
+
+impl<const CHANNELS: usize> Resampler<CHANNELS> {
+    fn new(from: Size, to: Size) -> Option<Self> {
+        Some(Resampler {
+            columns: area_weights(from.0, to.0),
+            rows: area_weights(from.1, to.1),
+            sums: vec![0; from.0 as usize * CHANNELS + 1],
+            taken: 0,
+            finished: 0,
+            result: Pixmap::new(to.0, to.1)?,
+        })
+    }
+
+    fn take(&mut self, row: &[u8]) {
+        while let Some((first, weights)) = self.rows.get(self.finished)
+            && let Some(&weight) = weights.get(self.taken.wrapping_sub(*first))
+        {
+            let pairs = self.sums.iter_mut().zip(row);
+            match self.taken == *first {
+                true => pairs.for_each(|(sum, value)| *sum = u16::from(*value) * weight),
+                false => pairs.for_each(|(sum, value)| *sum += u16::from(*value) * weight),
+            }
+            if self.taken + 1 < first + weights.len() {
+                break;
+            }
+            let width = self.columns.len();
+            let output = &mut self.result.data_mut().as_chunks_mut::<4>().0
+                [self.finished * width..][..width];
+            for (pixel, (first, weights)) in output.iter_mut().zip(&self.columns) {
+                let mut total = [1u32 << 15; 4];
+                for (sum, weight) in self.sums[first * CHANNELS..]
+                    .array_windows::<4>()
+                    .step_by(CHANNELS)
+                    .zip(weights)
+                {
+                    (0..4).for_each(|channel| {
+                        total[channel] += u32::from(sum[channel]) * u32::from(*weight)
+                    });
+                }
+                let alpha = if CHANNELS == 3 {
+                    255
+                } else {
+                    (total[3] >> 16) as u8
+                };
+                *pixel = [
+                    (total[0] >> 16) as u8,
+                    (total[1] >> 16) as u8,
+                    (total[2] >> 16) as u8,
+                    alpha,
+                ];
+            }
+            self.finished += 1;
+        }
+        self.taken += 1;
+    }
+
+    fn all(from: Size, to: Size, pixels: &[u8]) -> Option<Pixmap> {
+        let mut resampler = Self::new(from, to)?;
+        pixels
+            .chunks(from.0 as usize * CHANNELS)
+            .for_each(|row| resampler.take(row));
+        Some(resampler.result)
+    }
+}
+
+fn size_of(pixmap: &Pixmap) -> Size {
+    (pixmap.width(), pixmap.height())
+}
+
+/// Where a box is decides which pixels its edges snap to.
+fn is_rounded_differently(a: Size, b: Size) -> bool {
+    a.0.abs_diff(b.0) <= 1 && a.1.abs_diff(b.1) <= 1 && a.0.min(a.1) >= 64
+}
+
+fn resample(source: &Pixmap, size: Size) -> Option<Pixmap> {
+    if is_rounded_differently(size_of(source), size) {
+        let (mut result, rows) = (
+            Pixmap::new(size.0, size.1)?,
+            source
+                .data()
+                .as_chunks::<4>()
+                .0
+                .chunks(source.width() as usize),
+        );
+        let rows = rows.clone().chain(rows.last());
+        for (to, from) in result
+            .data_mut()
+            .as_chunks_mut::<4>()
+            .0
+            .chunks_mut(size.0 as usize)
+            .zip(rows)
+        {
+            let shared = to.len().min(from.len());
+            to[..shared].copy_from_slice(&from[..shared]);
+            to[shared..].fill(from[shared - 1]);
+        }
+        return Some(result);
+    }
+    Resampler::<4>::all(size_of(source), size, source.data())
+}
+
+pub fn reduced_size(source: Size, width: f32, height: f32) -> Size {
     const THRESHOLD: f32 = 1.25;
     let target = |from: u32, to: f32| match from as f32 > to * THRESHOLD {
         true => (to.round() as u32).clamp(1, from),
@@ -661,38 +1086,6 @@ pub fn reduced_size(source: (u32, u32), width: f32, height: f32) -> (u32, u32) {
 
 /// Averages `source` down along the axes on which bilinear sampling would skip pixels.
 pub fn reduce(source: &Pixmap, width: f32, height: f32) -> Option<Pixmap> {
-    let (from_width, from_height) = (source.width() as usize, source.height() as usize);
-    let (width, height) = reduced_size((source.width(), source.height()), width, height);
-    let (width, height) = (width as usize, height as usize);
-    if (width, height) == (from_width, from_height) {
-        return None;
-    }
-    let mut result = Pixmap::new(width as u32, height as u32)?;
-    let (columns, rows) = (
-        area_weights(from_width, width),
-        area_weights(from_height, height),
-    );
-    let mut sums = vec![0f32; from_width * 4];
-    for (output, (first, weights)) in result.data_mut().chunks_mut(width * 4).zip(rows) {
-        sums.fill(0.);
-        for (row, weight) in source
-            .data()
-            .chunks(from_width * 4)
-            .skip(first)
-            .zip(weights)
-        {
-            sums.iter_mut()
-                .zip(row)
-                .for_each(|(sum, value)| *sum += f32::from(*value) * weight);
-        }
-        for (pixel, (first, weights)) in output.as_chunks_mut::<4>().0.iter_mut().zip(&columns) {
-            let mut total = [0.5f32; 4];
-            for (sum, weight) in sums.as_chunks::<4>().0[*first..].iter().zip(weights) {
-                (0..4).for_each(|channel| total[channel] += sum[channel] * weight);
-            }
-            let alpha = total[3] as u8;
-            *pixel = total.map(|channel| (channel as u8).min(alpha));
-        }
-    }
-    Some(result)
+    let size = reduced_size(size_of(source), width, height);
+    (size != size_of(source)).then(|| resample(source, size))?
 }

@@ -4685,15 +4685,6 @@ static bool isObjectFastPathCandidate(Structure* structure)
     return true;
 }
 
-// The structure that copies get. It is only known to be alive until the collector has stopped the mutator.
-struct KnownShape {
-    Structure* from;
-    Structure* to;
-    JSGlobalObject* realm;
-    uint64_t version;
-};
-static thread_local std::array<KnownShape, 128> knownShapes;
-
 class PlainDataCopier {
 public:
     explicit PlainDataCopier(JSGlobalObject& globalObject)
@@ -4707,7 +4698,7 @@ public:
     {
         if (!value.isCell() || value.isString() || value.isHeapBigInt())
             return value;
-        if (!value.isObject() || depth == maximumDepth)
+        if (!value.isObject() || depth == maximumDepth || !m_vm.isSafeToRecurse())
             return {};
         auto* object = asObject(value);
         if (auto* known = m_copies.get(object))
@@ -4723,6 +4714,13 @@ private:
         unsigned length = array->length();
         if (array->structure()->maxOffset() != invalidOffset || hasAnyArrayStorage(array->indexingType()))
             return {};
+        if (hasInt32(array->indexingType()) || hasDouble(array->indexingType())) {
+            auto* numbers = JSArray::fastSlice(&m_globalObject, array, 0, length);
+            if (!numbers)
+                return {};
+            m_copies.add(array, numbers);
+            return numbers;
+        }
         auto* result = JSArray::tryCreate(m_vm, m_globalObject.arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), 0, length);
         if (!result)
             return {};
@@ -4742,9 +4740,9 @@ private:
         auto* realm = structure->realm();
         if (!realm || structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype())
             return {};
-        auto& known = knownShapes[(std::bit_cast<uintptr_t>(structure) >> 4) % knownShapes.size()];
-        if (known.from == structure && known.realm == &m_globalObject && known.version == m_vm.heap.mutatorExecutionVersion())
-            return copySlots(object, known.to, depth);
+        auto& known = m_knownShapes[(std::bit_cast<uintptr_t>(structure) >> 4) % m_knownShapes.size()];
+        if (known.first == structure)
+            return copySlots(object, known.second, depth);
 
         Vector<std::pair<UniquedStringImpl*, JSValue>, 16> properties;
         bool isInOrder = false;
@@ -4771,7 +4769,7 @@ private:
             result->putDirect(m_vm, name, copied);
         }
         if (isInOrder && !result->structure()->isDictionary() && !result->butterfly())
-            known = { structure, result->structure(), &m_globalObject, m_vm.heap.mutatorExecutionVersion() };
+            known = { structure, result->structure() };
         return result;
     }
 
@@ -4810,6 +4808,7 @@ private:
     VM& m_vm;
     DeferGC m_deferGC;
     UncheckedKeyHashMap<JSObject*, JSObject*> m_copies;
+    std::array<std::pair<Structure*, Structure*>, 32> m_knownShapes {};
 };
 
 JSValue SerializedScriptValue::tryCopyPlainData(JSGlobalObject& globalObject, JSValue value)

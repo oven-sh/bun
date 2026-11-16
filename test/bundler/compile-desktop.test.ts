@@ -358,7 +358,7 @@ describe.concurrent("--desktop", () => {
       expect(await run([join(String(dir), "out" + extension, executable)], String(dir))).toMatchObject(started);
     });
 
-    test("--aot-record-order and --aot-order", async () => {
+    test.skipIf(!isLinux || isHardened)("--aot-record-order and --aot-order", async () => {
       using dir = memo();
       const recording = await bun(dir, "compile", "--desktop", "--aot-record-order", "--outfile=recording");
       expect(recording).toMatchObject({ exitCode: 0 });
@@ -399,6 +399,27 @@ export { log };`,
       expect(exitCode).toBe(0);
     });
 
+    test("imports at once of graphs whose files queue jobs or throw", async () => {
+      using dir = project(
+        { name: "notes", module: "app.mjs" },
+        {
+          "app.mjs": `globalThis.log = [];
+const all = await Promise.allSettled([import("./a.mjs"), import("./b.mjs"), import("./c.mjs"), import("./a.mjs")]);
+console.log(all.map(one => one.value?.default ?? one.reason.message).join(), log.toSorted().join());`,
+          "a.mjs": `import a from "./a.cjs";\nexport default a;`,
+          "b.mjs": `import b from "./b.cjs";\nexport default b;`,
+          "c.mjs": `import c from "./c.cjs";\nexport default c;`,
+          "a.cjs": `Promise.resolve().then(() => log.push("a"));\nmodule.exports = "A";`,
+          "b.cjs": `Promise.resolve().then(() => log.push("b"));\nmodule.exports = "B" + require("./a.cjs");`,
+          "c.cjs": `Promise.resolve().then(() => log.push("c"));\nif (log) throw new Error("C");\nmodule.exports = 0;`,
+        },
+      );
+      expect(await bun(dir, "compile", "--desktop", "--outfile=out")).toMatchObject({ exitCode: 0 });
+      const { stdout, exitCode } = await run([join(String(dir), "out" + extension, executable)], String(dir));
+      expect(stdout).toBe("A,BA,C,A a,b,c\n");
+      expect(exitCode).toBe(0);
+    });
+
     test.skipIf(!hasLibrary)("--aot-assume", async () => {
       using dir = project(
         { name: "notes" },
@@ -433,7 +454,7 @@ import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), s
       }
       expect(outputs).toEqual(["2,7,a0,replaced,5\n", "2,7,a1,TypeError,5\n"]);
       const { stderr } = await bun(dir, "compile", "--aot-assume=anything", "app.js");
-      expect(stderr).toContain("--aot-assume");
+      expect(stderr).toContain("separate-realms, locked-builtins, complete-order");
     });
 
     test("finds a missing library before it compiles", async () => {

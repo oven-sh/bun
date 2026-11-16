@@ -54,7 +54,7 @@ class Client {
     for (const type of ["ended", "mute", "unmute"]) track.addEventListener(type, () => this.tell(id, type));
   }
   element(id, name) {
-    const it = document.createElement(name);
+    const it = Object.assign(document.createElement(name), { preload: "auto" });
     this.objects.set(id, it);
     const state = ({ type }) => this.tell(id, type, it.currentTime, String(it.duration), it.readyState, it.error?.code, it.videoWidth, it.videoHeight);
     for (const type of ofElements.split(" ")) it.addEventListener(type, state);
@@ -68,11 +68,16 @@ class Client {
   async picture(it, width, scale) {
     if (!it.paused) await new Promise(done => setTimeout(done, it.due - performance.now()));
     it.due = performance.now() + 33;
-    if (it.readyState < 2) return null;
+    let frame;
+    for (let tries = 0; !frame; tries++) {
+      if (it.readyState < 2 || tries === 50) return null;
+      try { frame = new VideoFrame(it); } catch { await new Promise(done => setTimeout(done, 10)); }
+    }
     const height = Math.ceil(width * it.videoHeight / it.videoWidth);
     const context = (it.context ??= new OffscreenCanvas(1, 1).getContext("2d", { alpha: false }));
     Object.assign(context.canvas, { width, height });
-    context.drawImage(it, 0, 0, width, height);
+    context.drawImage(frame, 0, 0, width, height);
+    frame.close();
     if (scale > 0) {
       const [w, h] = [width / scale, height / scale];
       context.scale(scale, scale);

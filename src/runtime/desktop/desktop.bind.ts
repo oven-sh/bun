@@ -31,6 +31,7 @@ export const encodeText = b.fn({
   capability: "heap",
   throws: true,
 });
+export const isLoadingEntryPoint = b.fn({ returns: b.bool });
 export const wait = b.fn({ returns: b.undefined });
 export const present = b.fn({ returns: b.undefined });
 export const putBlob = b.fn({ args: { bytes: b.bytes({ from: ["buffer"] }) }, returns: b.u32 });

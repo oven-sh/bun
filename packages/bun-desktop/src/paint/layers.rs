@@ -423,7 +423,7 @@ impl<T: Target> Layers<T> {
             columns: (window.right / TILE_WIDTH) as usize,
         };
         let summaries: Vec<_> = compositor.primitives.iter().map(Summary::of).collect();
-        let tiles = survey(&summaries, grid, 0, window);
+        let tiles = compositor.survey(&summaries, grid);
         let before = std::mem::replace(&mut compositor.window, window);
 
         let (columns, rows) = (
@@ -667,6 +667,7 @@ impl<T: Target> Layers<T> {
             self.spare.truncate(3 * self.shown.len());
         }
         compositor.shown = if is_complete { summaries } else { Vec::new() };
+        compositor.tiles = tiles;
     }
 }
 

@@ -199,9 +199,17 @@ function cached(root: N, compute: () => N[], readsAttributes = true): () => N[] 
   let doc: Doc;
   let version = -1;
   let items: N[];
+  const forget = (evenIfCurrent: boolean) => {
+    if (!evenIfCurrent && doc === root.doc && version === doc.version + (readsAttributes ? doc.attributeVersion : 0))
+      return false;
+    items = [];
+    version = -1;
+    return true;
+  };
   return () => {
     const now = root.doc.version + (readsAttributes ? root.doc.attributeVersion : 0);
     if (now !== version || doc !== root.doc) {
+      if (version === -1 && root.doc.page !== null) root.doc.cachedLists.push(forget);
       items = compute();
       version = now;
       doc = root.doc;
@@ -838,19 +846,93 @@ function invalidSelector(selector: string) {
   return domError("SyntaxError", `'${selector}' is not a valid selector.`);
 }
 
+/** A tag name or "", then pairs of an attribute's name and the value it must have. Null is any value, and a class is a token. */
+type Compound = (string | null)[];
+
+const NAME = "[a-z_][\\w-]*";
+const COMPOUND = new RegExp(
+  `^(\\*|[a-z][a-z0-9-]*)?((?:[.#]-?${NAME}|\\[[a-z][a-z-]*(?:=(?:"[^"\\\\\\n]*"|${NAME}))?\\])*)$`,
+);
+const PART = /([.#])([\w-]+)|\[([a-z-]+)(?:=(?:"([^"]*)"|([\w-]+)))?\]/g;
+const CASE_SENSITIVE_VALUE = /^(?:data-|aria-|role$|id$|name$|href$|src$)/;
+const compoundLists = new Map<string, Compound[] | null>();
+
+function parseCompounds(selector: string): Compound[] | null {
+  if (selector.includes('"') && selector.includes(",")) return null;
+  const list: Compound[] = [];
+  for (const text of selector.split(",")) {
+    const found = COMPOUND.exec(text.replace(/^ +| +$/g, ""));
+    if (found === null || found[0] === "") return null;
+    const compound: Compound = [found[1] === undefined || found[1] === "*" ? "" : found[1]];
+    for (const part of found[2].matchAll(PART)) {
+      if (part[1] !== undefined) compound.push(part[1] === "." ? "." : "id", part[2]);
+      else {
+        const value = part[4] ?? part[5] ?? null;
+        if (value !== null && !CASE_SENSITIVE_VALUE.test(part[3])) return null;
+        compound.push(part[3], value);
+      }
+    }
+    list.push(compound);
+  }
+  return list;
+}
+
+/** For a node that the engine does not know: it would have to be told of the node's whole tree to answer. */
+function compoundsFor(node: N, selector: string): Compound[] | null {
+  if (node.id !== 0 || node.doc.quirks) return null;
+  let list = compoundLists.$get(selector);
+  if (list === undefined) {
+    if (compoundLists.$size > 500) compoundLists.$clear();
+    compoundLists.$set(selector, (list = parseCompounds(selector)));
+  }
+  return list;
+}
+
+function matchesCompounds(node: N, list: Compound[]): boolean {
+  next: for (let i = 0; i < list.length; i++) {
+    const compound = list[i];
+    if (compound[0] !== "" && compound[0] !== node.name) continue;
+    for (let at = 1; at < compound.length; at += 2) {
+      const isClass = compound[at] === ".";
+      const value = getAttr(node, isClass ? "class" : compound[at]!);
+      const wanted = compound[at + 1];
+      if (value === null) continue next;
+      if (wanted === null || value === wanted) continue;
+      if (!isClass || !value.includes(wanted) || !splitTokens(value).includes(wanted)) continue next;
+    }
+    return true;
+  }
+  return false;
+}
+
 function matches(node: N, selector: string): boolean {
+  const list = compoundsFor(node, selector);
+  if (list !== null) return matchesCompounds(node, list);
   const result = engineFor(node).matches(node.id, selector);
   if (result < 0) throw invalidSelector(selector);
   return result === 1;
 }
 
 function querySelector(root: N, selector: string): N | null {
+  const list = compoundsFor(root, selector);
+  if (list !== null) {
+    let at = following(root, root);
+    while (at !== null && !(at.type === ELEMENT && matchesCompounds(at, list))) at = following(at, root);
+    return at;
+  }
   const id = engineFor(root).querySelector(root.id, selector);
   if (id < 0) throw invalidSelector(selector);
   return id === 0 ? null : (root.doc.nodes[id] ?? null);
 }
 
 function querySelectorAll(root: N, selector: string): N[] {
+  const list = compoundsFor(root, selector);
+  if (list !== null) {
+    const all: N[] = [];
+    for (let at = following(root, root); at !== null; at = following(at, root))
+      if (at.type === ELEMENT && matchesCompounds(at, list)) all.push(at);
+    return all;
+  }
   const found = engineFor(root).querySelectorAll(root.id, selector);
   if (found === null) throw invalidSelector(selector);
   const nodes = root.doc.nodes;
@@ -1566,7 +1648,13 @@ class Element extends Node {
   closest(selector: string) {
     if ($argumentCount() < 1) core.tooFew(1);
     const node = this.$impl;
-    const id = engineFor(node).closest(node.id, String(selector));
+    const list = compoundsFor(node, (selector = String(selector)));
+    if (list !== null) {
+      let at: N | null = node;
+      while (at !== null && at.type === ELEMENT && !matchesCompounds(at, list)) at = at.parent;
+      return at !== null && at.type === ELEMENT ? wrap(at) : null;
+    }
+    const id = engineFor(node).closest(node.id, selector);
     if (id < 0) throw invalidSelector(selector);
     return id === 0 ? null : wrap(node.doc.nodes[id]!);
   }
@@ -1777,7 +1865,6 @@ export default {
   parentNode,
   querySelector,
   querySelectorAll,
-  pseudoAttributes,
   referenced: referenceTargets,
   sanitizerFor,
   setIndexes,

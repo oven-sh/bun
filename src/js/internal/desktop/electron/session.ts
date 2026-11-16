@@ -211,14 +211,20 @@ function isOnline() {
   if (addresses === undefined) {
     addresses = readAddresses();
     setInterval(networkMayHaveChanged, 3000).unref();
-    app.whenReady().then(() => require("internal/desktop/system").api.powerMonitor.prependListener("resume", resumed));
+    const watch = () => require("internal/desktop/system").api.powerMonitor.prependListener("resume", resumed);
+    if (app.isReady()) watch();
+    else app.once("will-finish-launching", watch);
   }
   return addresses.length > 0;
 }
 
+/** A root is its own issuer. */
+const issuerOf = (certificate: any) =>
+  certificate.issuerCertificate === certificate ? undefined : certificate.issuerCertificate;
+
 let bundled: Set<string> | undefined;
 function isBundled(certificate: any) {
-  while (certificate.issuerCertificate) certificate = certificate.issuerCertificate;
+  while (issuerOf(certificate)) certificate = issuerOf(certificate);
   bundled ??= new Set(require("node:tls").rootCertificates.map(it => it.replace(/-----.*?-----|\s/g, "")));
   return bundled.$has(certificate.raw.toString("base64"));
 }
@@ -233,7 +239,7 @@ function describeCertificate(certificate: any) {
     country: C,
   });
   const base64 = certificate.raw.toString("base64").replace(/.{64}(?=.)/g, "$&\n");
-  const issuer = certificate.issuerCertificate;
+  const issuer = issuerOf(certificate);
   return {
     data: `-----BEGIN CERTIFICATE-----\n${base64}\n-----END CERTIFICATE-----\n`,
     fingerprint: "sha256/" + Bun.CryptoHasher.hash("sha256", certificate.raw, "base64"),
@@ -554,7 +560,11 @@ class Session extends EventEmitter {
     const canRepeat = !(options.body instanceof ReadableStream);
     for (let i = 0; ;) {
       const trusted = authorities;
-      const proxy = route[i] !== null && { url: route[i], respectNoProxy: false };
+      const proxy = route[i] !== null && {
+        url: route[i],
+        respectNoProxy: false,
+        headers: { "user-agent": this.getUserAgent() },
+      };
       this.#pool ??= new Bun.FetchSession({
         tls: this.#tls(),
         http2: !app.commandLine.hasSwitch("disable-http2"),
@@ -774,9 +784,10 @@ class Session extends EventEmitter {
 
   addWordToSpellCheckerDictionary(word: string) {
     if (process.platform !== "darwin") return false;
-    require("internal/desktop/native").send("spelling.learn", String(word));
     const { kPrivate, webContents } = require("internal/desktop/electron/web_contents");
-    for (const contents of webContents.getAllWebContents()) contents[kPrivate].dictionaryChanged();
+    require("internal/desktop/native")
+      .request("spelling.learn", String(word))
+      .then(() => webContents.getAllWebContents().forEach(contents => contents[kPrivate].dictionaryChanged()));
     return true;
   }
 

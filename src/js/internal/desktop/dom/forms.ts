@@ -291,7 +291,7 @@ const controlInserted = dirty;
 
 function controlAttribute(node: N, name: string) {
   if (name === "form" && node.rare !== null) node.rare.parserForm = null;
-  if (node.flags & CONNECTED) dirty(node);
+  if (node.flags & CONNECTED || node.id !== 0) dirty(node);
 }
 
 function controlRemoved(node: N, scope: N) {

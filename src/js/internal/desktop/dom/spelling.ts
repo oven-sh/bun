@@ -13,9 +13,12 @@ type Checked = { text: string; words: number[]; isCurrent: boolean };
 const EDITABLE = 4;
 const AFTER_WORD = 60;
 const IN_WORD = 1000;
+/** The first use keeps the UI busy for a moment. */
+const BEFORE_FIRST_USE = 2000;
 const MAX_NODES = 64;
-const MAX_LENGTH = 8192;
+const MAX_WORD_LENGTH = 8192;
 const endsInWord = /[\p{L}\p{M}\p{N}'’]$/u;
+let isInUse = false;
 
 class Spelling {
   nodes = new Map<N, Checked>();
@@ -64,12 +67,13 @@ function beforeFrame(page: Page) {
 function caretOrTextChanged(page: Page) {
   const { enabled, text, end } = page.inputMethodState;
   clearTimeout(page.spelling.timer);
-  if (enabled)
-    page.spelling.timer = setTimeout(
-      check,
-      endsInWord.test(text.slice(Math.max(end - 2, 0), end)) ? IN_WORD : AFTER_WORD,
-      page,
-    );
+  if (!enabled) return;
+  const delay = !isInUse
+    ? BEFORE_FIRST_USE
+    : endsInWord.test(text.slice(Math.max(end - 2, 0), end))
+      ? IN_WORD
+      : AFTER_WORD;
+  page.spelling.timer = setTimeout(check, delay, page);
 }
 
 function check(page: Page) {
@@ -78,6 +82,8 @@ function check(page: Page) {
   if (target === null || !page.host.checksSpelling()) return;
   const control = textControl(target);
   if (control !== null && !/^(?:textarea|text|search)$/.test(control.type)) return;
+  if (!isInUse) page.native.request("spelling.check", "").then(ignore, ignore);
+  isInUse = true;
   const nodes: Map<N, Checked> = page.spelling.nodes;
   let left = MAX_NODES;
   const visit = (node: N) => {
@@ -86,7 +92,7 @@ function check(page: Page) {
       for (let child = node.first; child !== null; child = child.next) visit(child);
       return;
     }
-    if (!core.isText(node) || node.id === 0 || node.data.length > MAX_LENGTH) return;
+    if (!core.isText(node) || node.id === 0 || node.data.length > MAX_WORD_LENGTH || node.data.trim() === "") return;
     if (control === null && !(styleBits(node.parent!) & EDITABLE)) return;
     if (!inherited(node.parent, "spellcheck", "true", "false", true)) return;
     left--;

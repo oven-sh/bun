@@ -12,7 +12,7 @@ use crate::custom::{Text, spelling};
 use crate::document::Document;
 use crate::name::{Map, Name, Set};
 use crate::paint::Picture;
-use crate::properties::{Id, Style, TransitionProperty, Value, WillChange};
+use crate::properties::{Id, Only, Style, TransitionProperty, Value, WillChange};
 use crate::selector::Pseudo;
 use crate::sheet::{AtKind, Defined, Keyframe};
 use crate::timeline::{Snapshot, Watched, trigger_ranges};
@@ -87,6 +87,8 @@ struct Track {
 pub(crate) struct Timing {
     pub(crate) delay: f64,
     pub(crate) end_delay: f64,
+    /// The two as fractions of the range of a timeline that follows progress.
+    pub(crate) relative_delays: [f64; 2],
     /// Negative for `auto`.
     pub(crate) duration: f64,
     pub(crate) iterations: f64,
@@ -135,15 +137,18 @@ impl Timing {
         };
         let Some(length) = length else { return known };
         let [delay, duration, end_delay] = match known.end() {
-            _ if self.duration < 0.0 => [
-                0.0,
-                if self.iterations > 0.0 {
-                    length / self.iterations
-                } else {
-                    0.0
-                },
-                0.0,
-            ],
+            _ if self.duration < 0.0 => {
+                let [delay, end_delay] = self.relative_delays.map(|it| it * length);
+                [
+                    delay,
+                    if self.iterations > 0.0 {
+                        (length - delay - end_delay).max(0.0) / self.iterations
+                    } else {
+                        0.0
+                    },
+                    end_delay,
+                ]
+            }
             0.0 => [0.0, 0.0, length],
             f64::INFINITY => [0.0, 0.0, 0.0],
             end => [self.delay, self.duration, self.end_delay].map(|it| it / end * length),
@@ -177,6 +182,7 @@ impl Timing {
             .zip(numbers.into_iter().zip(new))
             .filter(|it| has(it.0))
             .for_each(|(_, (number, new))| *number = new);
+        self.relative_delays = [0, 1].map(|it| if has(it) { from.relative_delays } else { self.relative_delays }[usize::from(it)]);
         self.fill = if has(5) { from.fill } else { self.fill };
         self.direction = if has(6) {
             from.direction
@@ -705,7 +711,8 @@ impl Animation {
 
     fn reverse(&mut self, now: f64) -> bool {
         let original = self.pending_rate.replace(0.0 - self.effective_rate());
-        let plays = !matches!(self.clock, Clock::None) && self.play(now, true);
+        let plays =
+            !matches!(self.clock, Clock::None | Clock::Progress(_, None)) && self.play(now, true);
         self.pending_rate = if plays { self.pending_rate } else { original };
         plays
     }
@@ -806,18 +813,18 @@ impl Animation {
             self.unheld_time(now)
         };
         if let Some(time) = time.filter(|_| self.start.is_some() && self.pending == Pending::None) {
-            let end = self.timing.end();
+            let (end, previous) = (self.timing.end(), self.previous.filter(|_| !self.aligns));
             if self.rate > 0.0 && time >= end {
                 self.hold = Some(if did_seek {
                     time
                 } else {
-                    self.previous.map_or(end, |it| it.max(end))
+                    previous.map_or(end, |it| it.max(end))
                 });
             } else if self.rate < 0.0 && time <= 0.0 {
                 self.hold = Some(if did_seek {
                     time
                 } else {
-                    self.previous.map_or(0.0, |it| it.min(0.0))
+                    previous.map_or(0.0, |it| it.min(0.0))
                 });
             } else if self.rate != 0.0 && self.timeline_time(now).is_some() {
                 if let Some(hold) = self.hold.take().filter(|_| did_seek) {
@@ -1087,6 +1094,10 @@ impl Document {
         parent: &Style,
     ) -> (Vec<Track>, Deps) {
         let (mut tracks, mut all_deps): (Vec<Track>, _) = (Vec::new(), Deps::empty());
+        let only = self
+            .tree
+            .element(animation.node)
+            .map_or(Only::All, |it| Only::of(it.pseudo));
         let mut frames: Vec<_> = (0..)
             .zip(&*animation.keyframes)
             .filter_map(|(at, it)| Some((animation.offset_of(it)?, at, it)))
@@ -1098,7 +1109,7 @@ impl Document {
             all_deps |= deps;
             let values = values
                 .into_iter()
-                .filter(|it| it.id().is_animatable())
+                .filter(|it| it.id().is_animatable() && only.allows(it.id()))
                 .map(Animated::Property);
             for value in values.chain(customs.into_iter().map(|it| Animated::Custom(it.0, it.1))) {
                 let target = value.target();
@@ -1518,7 +1529,7 @@ impl Document {
         }
         self.update_style();
         for node in nodes {
-            let mut covered = Vec::new();
+            let (mut covered, mut removed) = (Vec::new(), Vec::new());
             for id in self.stack_of(node, is_replaceable).into_iter().rev() {
                 let Some(animation) = self.animations.all.get_mut(&id) else {
                     continue;
@@ -1532,11 +1543,15 @@ impl Document {
                 {
                     animation.replace_state = 1;
                     self.tree.mark_style(node, Flags::REANIMATE);
-                    self.emit("remove", 0, &format!(",{id}"));
+                    removed.push(id);
                 } else {
                     covered.extend(animation.tracks.iter().map(|it| it.target));
                 }
             }
+            removed
+                .into_iter()
+                .rev()
+                .for_each(|id| self.emit("remove", 0, &format!(",{id}")));
         }
     }
 
@@ -2356,6 +2371,7 @@ impl Document {
             let timing = Timing {
                 delay: a.delay.at(index).0.into(),
                 end_delay: 0.0,
+                relative_delays: [0.0; 2],
                 duration: a.duration.at(index).0.into(),
                 iterations: a.iterations.at(index).0.into(),
                 iteration_start: 0.0,
@@ -2436,6 +2452,26 @@ impl Document {
             self.cancel(id);
             self.disown(id);
         }
+    }
+
+    /// If an ancestor is in a transition: what `node` inherits when they are over.
+    pub(crate) fn inherited_after_transitions(&self, node: NodeId) -> Option<Rc<Style>> {
+        let is_in_transition = |id| {
+            self.effective_animations(id)
+                .iter()
+                .any(|it| self.animations.all[it].order() == 0)
+        };
+        let ancestors: SmallVec<[NodeId; 32]> = self.tree.flat_ancestors(node).collect();
+        let outermost = ancestors.iter().rposition(|it| is_in_transition(*it))?;
+        let base = Rc::clone(
+            self.tree
+                .element(ancestors[outermost])?
+                .base_style
+                .as_ref()?,
+        );
+        ancestors[..outermost].iter().try_rfold(base, |parent, it| {
+            Some(self.compute_style(*it, self.tree.element(*it)?.rules.as_ref()?, &parent))
+        })
     }
 
     pub(crate) fn update_transitions(
@@ -2594,6 +2630,7 @@ impl Document {
                     delay
                 },
                 end_delay: 0.0,
+                relative_delays: [0.0; 2],
                 duration: f64::from(t.duration.at(index).0.max(0.0)) * shortening,
                 iterations: 1.0,
                 iteration_start: 0.0,
@@ -2822,10 +2859,12 @@ impl Document {
         });
         let is_view = matches!(it.watched.how, Watch::View(_));
         let time = it.snapshot.map_or(f64::NAN, |it| it.time());
+        let [source, subject] = [self.timeline_source(&it.watched).0, it.watched.node]
+            .map(|it| f64::from(self.event_target(it).0));
         vec![
             time,
-            self.timeline_source(&it.watched).into(),
-            it.watched.node.into(),
+            source,
+            subject,
             (it.watched.axis as u8).into(),
             is_view.into(),
             start,
@@ -2913,10 +2952,6 @@ impl Document {
         [it.hold, it.start] = [time, start].map(|it| Some(it).filter(|it| !it.is_nan()));
         (it.previous, it.rate, it.replace_state, it.is_finished) =
             (it.hold, rate, replace_state as u8, play_state == 3.0);
-        if play_state != 0.0 {
-            self.animations.last_id += 1;
-            it.sequence = self.animations.last_id;
-        }
         self.update_animation(id, false);
     }
 
@@ -3045,6 +3080,11 @@ impl Document {
                 frames.push((range, offset, easing.clone(), adds, Vec::new(), computed));
                 frames.len() - 1
             });
+            frames[at].4.retain(|it| {
+                value
+                    .as_ref()
+                    .is_none_or(|value| value.target() != it.target())
+            });
             frames[at].4.extend(value);
         };
         let computed;
@@ -3054,23 +3094,24 @@ impl Document {
             computed = self.compute_tracks(animation, style, parent).0;
             &computed
         };
-        for (at, frame) in animation.keyframes.iter().enumerate() {
+        for frame in &*animation.keyframes {
             let (easing, offset) = (
                 frame.easing.as_ref().unwrap_or(&animation.default_easing),
                 animation.offset_of(frame),
             );
             add(frame.range, frame.offset, easing, frame.adds, None, offset);
-            let stops = tracks
-                .iter()
-                .flat_map(|it| &it.stops)
-                .filter(|it| it.frame == at);
-            stops.for_each(|it| {
+            let values = self
+                .compute_block(animation.node, &frame.block, style, parent)
+                .0
+                .into_iter()
+                .filter(|it| it.id().is_animatable());
+            values.for_each(|it| {
                 add(
                     frame.range,
                     frame.offset,
                     easing,
                     frame.adds,
-                    Some(it.value.clone()),
+                    Some(Animated::Property(it)),
                     offset,
                 )
             });
@@ -3124,7 +3165,7 @@ impl Document {
                 adds.map_or("auto", Composite::name).into(),
             ]);
             let is_listed = |it: &&Animated| {
-                !matches!((&animation.kind, it), (Kind::Css(..), Animated::Custom(..)))
+                animation.keyframes.is_empty() || !matches!(it, Animated::Custom(..))
             };
             values
                 .iter()
@@ -3142,9 +3183,10 @@ impl Document {
                 crate::values::with_zoom(style.zoom, || value.write(&mut text));
                 out.extend([value.id().name().into(), text]);
             }
-            Animated::Custom(name, Some(value)) => {
-                out.extend([spelling(*name).as_bytes().to_vec(), value.to_vec()])
-            }
+            Animated::Custom(name, Some(value)) => out.extend([
+                spelling(*name).as_bytes().to_vec(),
+                crate::custom::untainted(value).to_vec(),
+            ]),
             Animated::Custom(..) => {}
         }
     }

@@ -8,6 +8,7 @@ use smallvec::SmallVec;
 use crate::carousel::{BUTTON_RULES, COLUMN_MARKER_RULES, COLUMN_RULES, MARKER_RULES};
 use crate::condition::Subject;
 use crate::name::{Map, Name, Set, name};
+use crate::properties::Only;
 use crate::selector::{
     Bloom, Combinator, HasResult, HasResults, List, Matcher, Pseudo, Relation, ScrollPart, Simple,
     key,
@@ -26,6 +27,22 @@ struct Entry {
     slot: u16,
     /// For an element that has the key.
     always_matches: bool,
+    follows_from_signature: bool,
+}
+
+/// What a rule set has for the elements with the same signature.
+#[derive(Default)]
+struct Memo {
+    matched: Vec<(u128, Matched)>,
+    /// `RuleSet::generated`
+    generated: u8,
+    undecided: Vec<Entry>,
+}
+
+impl Entry {
+    fn is_decided(&self) -> bool {
+        self.follows_from_signature && self.rule.context.container.is_none()
+    }
 }
 
 /// By `Kind`: for elements, for pseudo-elements, and for `@starting-style`.
@@ -100,6 +117,7 @@ struct Candidates {
 #[derive(Default)]
 pub(crate) struct Classes {
     pub(crate) source: Str,
+    hash: Name,
     names: Box<[Name]>,
     pub(crate) filter: u64,
     /// The version of the rule set that has last seen them.
@@ -108,14 +126,20 @@ pub(crate) struct Classes {
 }
 
 impl Classes {
-    pub(crate) fn new(source: &str) -> Classes {
+    pub(crate) fn new(source: &str, ignores_case: bool) -> Classes {
+        let name = if ignores_case {
+            Name::lowercase
+        } else {
+            Name::new
+        };
         let names: Box<[_]> = source
             .split_ascii_whitespace()
-            .map(|it| Name::new(it.as_bytes()))
+            .map(|it| name(it.as_bytes()))
             .collect();
         let filter = crate::selector::filter(names.iter().map(|it| key::class(*it)));
         Classes {
             source: source.into(),
+            hash: Name::new(source.as_bytes()),
             names,
             filter,
             ..Classes::default()
@@ -233,6 +257,7 @@ pub(crate) struct RuleSet {
     host: Vec<Entry>,
     slotted: Vec<Entry>,
     parts: Vec<Entry>,
+    memos: RefCell<Map<Name, Rc<Memo>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -251,6 +276,7 @@ pub(crate) struct Matched {
     pub(crate) block: Rc<Block>,
     pub(crate) level: Level,
     pub(crate) layer: u16,
+    pub(crate) only: Only,
 }
 
 /// For each `@scope` rule, the roots of the scopes that the element is in, with how far away they are.
@@ -272,6 +298,8 @@ pub(crate) struct Query<'a> {
     pub(crate) has_results: &'a HasResults,
     pub(crate) roots: &'a ScopeRoots,
     pub(crate) container: &'a dyn Fn(&ContainerQuery) -> bool,
+    /// `Dependencies::signature`, or `Name::NONE`.
+    pub(crate) signature: Name,
 }
 
 #[derive(Clone, Copy)]
@@ -340,6 +368,7 @@ impl RuleSet {
         }
         let layers_are_in_order = self.rank_layers();
         (self.sheets_version, self.version) = (next_version(), next_version());
+        self.memos.get_mut().clear();
         subjects.filter(|_| is_in_order && layers_are_in_order)
     }
 
@@ -501,12 +530,24 @@ impl RuleSet {
         {
             self.version = next_version();
         }
+        let mut scopes =
+            core::iter::successors(rule.context.scope.as_ref(), |it| it.outer.as_ref());
+        let follows_from_signature = selector.follows_from_signature()
+            && scopes.all(|it| {
+                it.start.is_some()
+                    && it
+                        .start
+                        .iter()
+                        .chain(&it.end)
+                        .all(|it| it.iter().all(|it| it.follows_from_signature()))
+            });
         let entry = Entry {
             ancestors: selector.ancestor_hashes(),
             states: selector.states(),
             rule,
             slot,
             always_matches: false,
+            follows_from_signature,
         };
         if !is_host
             && combinator == Combinator::None
@@ -686,6 +727,7 @@ impl RuleSet {
         {
             return;
         }
+        self.memos.get_mut().clear();
         self.version = next_version();
         if self
             .slots
@@ -783,6 +825,48 @@ impl RuleSet {
     }
 
     /// The proximity of the scope, if it matches.
+    /// `decide` is given the candidates that can match, with the proximity if they do.
+    fn memo(
+        &self,
+        key: Name,
+        query: &Query,
+        part: usize,
+        host: NodeId,
+        decide: impl Fn(&Entry, &mut Memo, &dyn Fn(&Query) -> Option<u16>),
+    ) -> Rc<Memo> {
+        if let Some(known) = self.memos.borrow().get(&key) {
+            return Rc::clone(known);
+        }
+        let mut memo = Memo::default();
+        self.visit_candidates(query, part, |entry| {
+            let container = &|_: &ContainerQuery| true;
+            decide(
+                entry,
+                &mut memo,
+                &|query| match entry.follows_from_signature {
+                    true => self.matches(
+                        entry,
+                        &Query {
+                            container,
+                            ..*query
+                        },
+                        host,
+                    ),
+                    false => query
+                        .bloom
+                        .is_none_or(|it| it.may_have(&entry.ancestors))
+                        .then_some(0),
+                },
+            );
+        });
+        let (memo, mut memos) = (Rc::new(memo), self.memos.borrow_mut());
+        if memos.len() >= 2048 {
+            memos.clear();
+        }
+        memos.insert(key, Rc::clone(&memo));
+        memo
+    }
+
     fn matches(&self, entry: &Entry, query: &Query, host: NodeId) -> Option<u16> {
         if query
             .bloom
@@ -824,9 +908,8 @@ impl RuleSet {
 
     /// Adds `BEFORE`, `AFTER` and `MARKER`, as bits, if a rule gives them content.
     pub(crate) fn generated(&self, query: &Query, kind: Kind, host: NodeId, found: &mut u8) {
-        let visit = |entry: &Entry| {
-            let pseudo = entry.rule.selector.pseudo;
-            let bit = match pseudo {
+        let bit_of = |entry: &Entry| {
+            let bit = match entry.rule.selector.pseudo {
                 Pseudo::Before => 1 << BEFORE,
                 Pseudo::After => 1 << AFTER,
                 Pseudo::Marker => 1 << MARKER,
@@ -834,29 +917,46 @@ impl RuleSet {
                 Pseudo::Scroll(ScrollPart::Button(..)) => BUTTON_RULES,
                 Pseudo::Scroll(ScrollPart::Column) => COLUMN_RULES,
                 Pseudo::Scroll(ScrollPart::ColumnMarker) => COLUMN_MARKER_RULES,
-                _ => return,
+                _ => return None,
             };
-            if *found & bit == 0
-                && (entry.rule.block.declarations().sets_content || bit == COLUMN_RULES)
-                && self
-                    .matches(
-                        entry,
-                        &Query {
-                            pseudo,
-                            pseudo_state: if bit >= MARKER_RULES {
-                                State::all()
-                            } else {
-                                query.pseudo_state
-                            },
-                            ..*query
-                        },
-                        host,
-                    )
-                    .is_some()
+            let pseudo_state = if bit >= MARKER_RULES {
+                State::all()
+            } else {
+                query.pseudo_state
+            };
+            (entry.rule.block.declarations().sets_content || bit == COLUMN_RULES).then_some((
+                bit,
+                Query {
+                    pseudo: entry.rule.selector.pseudo,
+                    pseudo_state,
+                    ..*query
+                },
+            ))
+        };
+        let memo = (matches!(kind, Kind::Normal) && query.signature != Name::NONE).then(|| {
+            self.memo(
+                query.signature.salted(4),
+                query,
+                PSEUDOS,
+                host,
+                |entry, memo, matches| match bit_of(entry).filter(|it| matches(&it.1).is_some()) {
+                    Some((bit, _)) if entry.is_decided() => memo.generated |= bit,
+                    Some(_) => memo.undecided.push(entry.clone()),
+                    None => {}
+                },
+            )
+        });
+        *found |= memo.as_ref().map_or(0, |it| it.generated);
+        let visit = |entry: &Entry| {
+            if let Some((bit, query)) = bit_of(entry).filter(|it| *found & it.0 == 0)
+                && self.matches(entry, &query, host).is_some()
             {
                 *found |= bit;
             }
         };
+        if let Some(memo) = memo {
+            return memo.undecided.iter().for_each(visit);
+        }
         let list = match kind {
             Kind::Normal => return self.visit_candidates(query, PSEUDOS, visit),
             Kind::Host => &self.host,
@@ -875,25 +975,68 @@ impl RuleSet {
         level: Level,
         out: &mut Found,
     ) {
-        let start = out.len();
+        let (start, only) = (
+            out.len(),
+            if level == Level::UserAgent {
+                Only::default()
+            } else {
+                Only::of(query.pseudo)
+            },
+        );
+        let matched = |entry: &Entry, proximity: u16| {
+            let (slot, rule) = (&self.slots[usize::from(entry.slot)], &entry.rule);
+            let layer = slot.layer_ranks[usize::from(rule.context.layer)];
+            let priority = u128::from(layer) << 96
+                | u128::from(rule.selector.specificity) << 64
+                | u128::from(!proximity) << 48
+                | u128::from(slot.rank) << 32
+                | u128::from(rule.order);
+            (
+                priority,
+                Matched {
+                    block: Rc::clone(&rule.block),
+                    level,
+                    layer,
+                    only,
+                },
+            )
+        };
+        let part = if query.pseudo == Pseudo::None {
+            ELEMENTS
+        } else {
+            PSEUDOS
+        };
+        let salt = [Pseudo::None, Pseudo::Before, Pseudo::After, Pseudo::Marker]
+            .iter()
+            .position(|it| *it == query.pseudo);
+        let salt = salt.filter(|_| {
+            matches!(kind, Kind::Normal)
+                && query.signature != Name::NONE
+                && query.pseudo_state.is_empty()
+        });
+        let memo = salt.map(|salt| {
+            self.memo(
+                query.signature.salted(salt as u64),
+                query,
+                part,
+                host,
+                |entry, memo, matches| match matches(query) {
+                    Some(proximity) if entry.is_decided() => {
+                        memo.matched.push(matched(entry, proximity))
+                    }
+                    Some(_) if entry.rule.selector.pseudo.selects(query.pseudo) => {
+                        memo.undecided.push(entry.clone())
+                    }
+                    _ => {}
+                },
+            )
+        });
+        out.extend(memo.iter().flat_map(|it| &it.matched).cloned());
         let mut visit = |entry: &Entry| {
-            if let Some(proximity) = self.matches(entry, query, host) {
-                let (slot, rule) = (&self.slots[usize::from(entry.slot)], &entry.rule);
-                let layer = slot.layer_ranks[usize::from(rule.context.layer)];
-                let priority = u128::from(layer) << 96
-                    | u128::from(rule.selector.specificity) << 64
-                    | u128::from(!proximity) << 48
-                    | u128::from(slot.rank) << 32
-                    | u128::from(rule.order);
-                out.push((
-                    priority,
-                    Matched {
-                        block: Rc::clone(&rule.block),
-                        level,
-                        layer,
-                    },
-                ));
-            }
+            out.extend(
+                self.matches(entry, query, host)
+                    .map(|it| matched(entry, it)),
+            )
         };
         let applies = |it: &&Entry| {
             self.is_active(it) && (query.with_starting || !it.rule.context.is_starting)
@@ -903,15 +1046,10 @@ impl RuleSet {
             Kind::Slotted => self.slotted.iter().filter(applies).for_each(visit),
             Kind::Part => self.parts.iter().filter(applies).for_each(visit),
             Kind::Normal => {
-                self.visit_candidates(
-                    query,
-                    if query.pseudo == Pseudo::None {
-                        ELEMENTS
-                    } else {
-                        PSEUDOS
-                    },
-                    &mut visit,
-                );
+                match &memo {
+                    Some(memo) => memo.undecided.iter().for_each(&mut visit),
+                    None => self.visit_candidates(query, part, &mut visit),
+                }
                 if query.with_starting {
                     self.visit_candidates(query, STARTING, &mut visit);
                 }
@@ -992,6 +1130,7 @@ pub(crate) struct Dependencies {
     of_others: Set<Name>,
     in_has: Set<Name>,
     outside_has: Set<Name>,
+    compared_attributes: Set<Name>,
     has_looks_at_siblings: bool,
     by_pair: Map<(Name, Name), u32>,
     affected: Vec<Affected>,
@@ -1053,6 +1192,7 @@ impl Dependencies {
             (rule.selector.pseudo_state.iter())
                 .for_each(|bit| _ = self.of_pseudo_elements.insert(key::state(bit)));
             for selector in limits.chain([&rule.selector]) {
+                selector.compared_attributes(&mut self.compared_attributes);
                 selector.visit_has(&mut |has| {
                     self.in_has.extend(has.keys.iter().copied());
                     self.outside_has.extend(has.outer_keys.iter().copied());
@@ -1060,6 +1200,69 @@ impl Dependencies {
                 });
             }
         }
+    }
+
+    /// Of what selectors can see of the element and of its ancestors, but not of their siblings and descendants.
+    pub(crate) fn signature(&self, tree: &Tree, id: NodeId, bloom: &Bloom) -> Name {
+        let version = self.of_others.len() + self.compared_attributes.len();
+        let (last, this) = (
+            bloom.last_signature.get(),
+            (id, version + self.of_subject.len()),
+        );
+        if last.0 == this {
+            return last.1;
+        }
+        let sign = |outer: Name, id: NodeId, matters: &dyn Fn(Name) -> bool| {
+            let Some(element) = tree.element(id) else {
+                return outer;
+            };
+            let place = u64::from(tree[id].slot != 0)
+                | u64::from(tree.element(tree[id].parent).is_some()) << 1
+                | (element.namespace as u64) << 2;
+            let mut features = element.custom_states.iter().fold(0_u64, |all, it| {
+                all.wrapping_add(key::custom_state(*it).bits())
+            });
+            for it in &element.attributes {
+                if matters(key::attribute(it.name)) {
+                    let has_value = !crate::name::is_name!(it.name, "style" | "id" | "class")
+                        && self.compared_attributes.contains(&it.name);
+                    features = features.wrapping_add(
+                        if has_value {
+                            it.name.paired(Name::new(it.value.as_bytes()))
+                        } else {
+                            it.name
+                        }
+                        .bits(),
+                    );
+                }
+                if it.key != Name::NONE && matters(it.key) {
+                    features = features.wrapping_add(it.key.bits());
+                }
+            }
+            if element.id != Name::NONE && matters(key::id(element.id)) {
+                features = features.wrapping_add(key::id(element.id).bits());
+            }
+            if element.namespace == crate::tree::Namespace::Other {
+                features =
+                    features.wrapping_add(Name::new(element.namespace_uri().as_bytes()).bits());
+            }
+            let classes = element.classes.as_ref().map_or(0, |it| it.hash.bits());
+            let words = [
+                outer.bits(),
+                element.tag.bits(),
+                classes,
+                features,
+                u64::from(element.state.bits()),
+                place,
+            ];
+            Name::new(bun_core::slice_as_bytes(&words))
+        };
+        let outer = bloom.signature_of_path(version, |outer, id| {
+            sign(outer, id, &|key| self.of_others.contains(&key))
+        });
+        let own = sign(outer, id, &|key| self.of_subject.contains_key(&key));
+        bloom.last_signature.set((this, own));
+        own
     }
 
     pub(crate) fn feature_changed(&mut self, tree: &Tree, id: NodeId, feature: Name) {
@@ -1142,7 +1345,7 @@ impl Dependencies {
                 self.changed_in_has
                     .extend(keys.filter(|key| self.in_has.contains(key)));
             }
-            self.has_origins.push(parent);
+            self.has_origins.push(tree.parent_or_host(child));
             self.has_origins.extend(previous);
         }
     }
@@ -1154,15 +1357,16 @@ impl Dependencies {
     /// Marks the elements that the changes so far can affect.
     pub(crate) fn flush(&mut self, tree: &Tree, has_results: &HasResults) {
         self.flush_has(tree, has_results);
-        for (id, index) in self.pending.drain() {
+        let (mut later, mut earlier) = (Set::default(), Set::default());
+        let pending = core::mem::take(&mut self.pending);
+        for &(id, index) in &pending {
             if !tree.contains(id) {
                 continue;
             }
             let (affected, mut known) = (&self.affected[index as usize], Map::default());
-            let mut visit = |id| {
+            let mut visit = |id, element: &Element| {
                 if tree[id].keys & affected.filter != 0
-                    && let (Some(element), Some(subjects)) = (tree.element(id), &affected.subjects)
-                    && element.rules.is_some()
+                    && let Some(subjects) = &affected.subjects
                     && (element.classes.as_ref().is_some_and(|it| {
                         *known.entry(Rc::as_ptr(it)).or_insert_with(|| {
                             it.names
@@ -1175,17 +1379,31 @@ impl Dependencies {
                 }
             };
             let mut subtree = |root| match affected.subjects {
-                Some(_) => tree.visit_subtree(root, &mut visit),
+                Some(_) => tree.visit_styled(root, &mut visit),
                 None => tree.mark_style(root, Flags::REMATCH_SUBTREE),
             };
-            if affected.relation.contains(Relation::DESCENDANT) {
+            if affected.relation.contains(Relation::DESCENDANT)
+                && !pending.contains(&(tree[id].parent, index))
+            {
                 subtree(id);
             }
             if affected.relation.contains(Relation::SIBLING) {
-                tree.next_elements(id).for_each(&mut subtree);
+                tree.next_elements(id)
+                    .take_while(|it| later.insert((*it, index)))
+                    .for_each(&mut subtree);
             }
             if affected.relation.contains(Relation::EARLIER_SIBLING) {
-                tree.previous_elements(id).for_each(subtree);
+                tree.previous_elements(id)
+                    .take_while(|it| earlier.insert((*it, index)))
+                    .for_each(subtree);
+            }
+            let host = if affected.relation.contains(Relation::SLOTTED) {
+                tree.host_of(tree[id].scope)
+            } else {
+                0
+            };
+            if host != 0 {
+                tree.mark_style(host, Flags::REMATCH_SUBTREE);
             }
         }
     }
@@ -1218,11 +1436,13 @@ impl Dependencies {
                 }
             }
         };
+        let mut earlier = Set::default();
         for id in visited {
             tree[id].unset(Flags::VISITED);
             check(id, false);
             if self.has_looks_at_siblings {
                 tree.previous_elements(id)
+                    .take_while(|it| earlier.insert(*it))
                     .for_each(|sibling| check(sibling, true));
             }
         }

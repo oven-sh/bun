@@ -388,7 +388,12 @@ pub fn blend_row(row: &mut [Pixel], colors: &[Pixel], by: u8) {
         .zip(color_runs)
         .filter(|(_, colors)| **colors != [[0; 4]; 4]);
     match by {
-        255 => shown.for_each(|(pixels, colors)| over_four(pixels, colors)),
+        255 => shown.for_each(|(pixels, colors)| {
+            match colors.iter().fold(255, |all, it| all & it[3]) {
+                255 => *pixels = *colors,
+                _ => over_four(pixels, colors),
+            }
+        }),
         _ => shown.for_each(|(pixels, colors)| over_four(pixels, &scale_four(colors, [by; 4]))),
     }
     rest.iter_mut()

@@ -172,6 +172,13 @@ class WebContentsView extends View {
     this[kView].changed = state.environmentChanged;
     if (state.type !== "window" && !state.preferences.transparent) this.setBackgroundColor("#fff");
   }
+
+  setBackgroundColor(color: string) {
+    super.setBackgroundColor(color);
+    const state = this.#webContents[kPrivate];
+    state.background = parseColor(color);
+    state.guest?.backgroundChanged();
+  }
 }
 
 class ImageView extends View {

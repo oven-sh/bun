@@ -680,7 +680,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConstant, (JSGlobalObject * globalObject, EncodedJSV
     JSValue value = RealmGlobal::accessorOfConstant(realm, name, attributes)->callGetter(globalObject, realm->globalThis());
     RETURN_IF_EXCEPTION(scope, {});
     if (RealmGlobal::accessorOfConstant(realm, name, attributes))
-        replaceLazyProperty(vm, realm, name, value, PropertyAttribute::ReadOnly | (attributes & PropertyAttribute::DontEnum));
+        replaceLazyProperty(vm, realm, name, value, PropertyAttribute::ReadOnly | (attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete)));
     return JSValue::encode(value);
 }
 
@@ -709,7 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDesktopRealmCacheAccessors, (JSGlobalObject *
                 continue;
             asObject(constants)->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(accessor), attributes);
         }
-        realm->putDirectCustomAccessor(vm, name, lazy, PropertyAttribute::CustomValue | (attributes & PropertyAttribute::DontEnum));
+        realm->putDirectCustomAccessor(vm, name, lazy, PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | (attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete)));
     }
     return JSValue::encode(jsUndefined());
 }

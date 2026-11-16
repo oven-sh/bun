@@ -512,6 +512,9 @@ impl JSBundleCompletionTask {
         if !compile_options.autoload_package_json {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
+        if compile_options.desktop.is_some() {
+            flags |= StandaloneFlags::LOADS_GRAPHICS_DRIVERS;
+        }
 
         let trim_plan = match compile_ahead_of_time::plan_bundle_trimming(
             compile_options,
@@ -1075,7 +1078,11 @@ impl JSBundleCompletionTask {
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
         transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
             config.react_compiler_output_mode.unwrap_or_else(|| {
-                if config.target.is_server_side() {
+                let is_desktop = config
+                    .compile
+                    .as_ref()
+                    .is_some_and(|it| it.desktop.is_some());
+                if config.target.is_server_side() && !is_desktop {
                     bun_ast::runtime::ReactCompilerMode::Ssr
                 } else {
                     bun_ast::runtime::ReactCompilerMode::Client

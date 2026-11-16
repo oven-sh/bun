@@ -262,11 +262,12 @@ const preferencesFor = ({ session: id, preferences, scale, isFrame }) => ({
 });
 
 function createView(options, webContents) {
-  const { id, width, height, file, isFrame } = options;
+  const { id, width, height, file, isFrame, background } = options;
   const window = new BrowserWindow({
     show: false,
     frame: false,
-    transparent: true,
+    transparent: !background?.startsWith("#ff"),
+    backgroundColor: background,
     skipTaskbar: true,
     fullscreenable: false,
     enableLargerThanScreen: true,

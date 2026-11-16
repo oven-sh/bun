@@ -1,6 +1,7 @@
 //! The part of the DOM that styles and layout need. JavaScript has the whole of it, and mirrors what is connected.
 
 use core::cell::Cell;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::rc::Rc;
 
 use crate::boxes::BoxId;
@@ -284,6 +285,13 @@ pub(crate) struct Node {
     pub(crate) data: Data,
 }
 
+static FREED_NODES: AtomicU32 = AtomicU32::new(0);
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__DOM__freedNodes() -> u32 {
+    FREED_NODES.load(Ordering::Relaxed)
+}
+
 impl Node {
     fn new(data: Data) -> Node {
         Node {
@@ -389,6 +397,7 @@ impl Tree {
 
     pub(crate) fn free(&mut self, id: NodeId) {
         self[id] = Node::new(Data::Free);
+        FREED_NODES.fetch_add(1, Ordering::Relaxed);
         self.free.push(id);
         if self.unskipped(id).get() == id {
             self.unskipped(id).set(0);
@@ -542,6 +551,34 @@ impl Tree {
                             .filter(|it| *it != 0),
                     );
                 }
+            }
+            next = roots.pop();
+        }
+    }
+
+    /// There are none in an element that has no style.
+    pub(crate) fn visit_styled(&self, root: NodeId, mut visit: impl FnMut(NodeId, &Element)) {
+        let (mut roots, mut next) = (Vec::new(), Some(root));
+        while let Some(root) = next {
+            let mut at = root;
+            loop {
+                let node = &self[at];
+                let element = node.element().filter(|it| it.rules.is_some());
+                if let Some(element) = element {
+                    visit(at, element);
+                    roots.extend((element.shadow_root != 0).then_some(element.shadow_root));
+                }
+                if node.first_child != 0 && (element.is_some() || node.element().is_none()) {
+                    at = node.first_child;
+                    continue;
+                }
+                while at != root && self[at].next == 0 {
+                    at = self[at].parent;
+                }
+                if at == root {
+                    break;
+                }
+                at = self[at].next;
             }
             next = roots.pop();
         }

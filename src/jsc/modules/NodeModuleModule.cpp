@@ -71,8 +71,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "async_hooks"_s,
     "buffer"_s,
     "bun:desktop"_s,
-    "bun:desktop/electron"_s,
-    "bun:desktop/dom"_s,
     "bun:desktop/jsx-dev-runtime"_s,
     "bun:desktop/jsx-runtime"_s,
     "bun:ffi"_s,

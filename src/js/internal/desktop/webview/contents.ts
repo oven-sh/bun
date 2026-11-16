@@ -276,6 +276,17 @@ class Guest extends Remote {
     else this.engine.send("create", this.describe());
     this.view.mayRest = state.preferences.backgroundThrottling !== false;
     state.settings.forEach((args: unknown[], method: string) => this.set(method, args));
+    this.backgroundChanged();
+  }
+
+  /** It is in captures, and a dark page only gets its dark canvas if it is opaque. */
+  get #background() {
+    const rgba = (this.state.background ?? 0).toString(16).padStart(8, "0");
+    return `#${rgba.slice(6)}${rgba.slice(0, 6)}`;
+  }
+
+  backgroundChanged() {
+    this.engine.tell("window", this.view.id, "setBackgroundColor", [this.#background]);
   }
 
   set(method: string, args: any[]) {
@@ -304,7 +315,11 @@ class Guest extends Remote {
 
   describe() {
     const { session: _, partition: __, preload, ...rest } = this.state.preferences;
-    return this.view.describe(this.session, { ...rest, preload: preload && sessions.readable(this.engine, preload) });
+    const described = this.view.describe(this.session, {
+      ...rest,
+      preload: preload && sessions.readable(this.engine, preload),
+    });
+    return { ...described, background: this.#background };
   }
 
   get mainFrame() {

@@ -151,6 +151,8 @@ pub(crate) struct Document {
     /// With what refers to each.
     pub(crate) referenced_svgs: RefCell<Map<NodeId, Set<NodeId>>>,
     pub(crate) svg_generation: u32,
+    /// By their data.
+    pub(crate) paths: RefCell<Map<Name, crate::path::Path>>,
     /// Something outside of an `svg` has been looked for.
     pub(crate) svg_references: Cell<bool>,
     pub(crate) svg_ids: RefCell<Map<(NodeId, Name), Option<NodeId>>>,
@@ -309,6 +311,7 @@ impl Document {
             implicit_anchors: Default::default(),
             referenced_svgs: Default::default(),
             svg_generation: 0,
+            paths: Default::default(),
             svg_references: Cell::new(false),
             svg_ids: Default::default(),
             svg_budget: Cell::new(0),
@@ -386,6 +389,7 @@ impl Document {
 
     fn children_changed(&mut self, child: NodeId) {
         let parent = self.tree[child].parent;
+        self.text_changed_in(parent);
         if self.tree[parent].scope == 0 {
             return;
         }
@@ -394,13 +398,18 @@ impl Document {
             .get_mut()
             .children_changed(&self.tree, child);
         if self.tree[parent].has(Flags::COUNTED_CHILDREN) {
-            self.tree.element_children(parent).for_each(|it| {
+            for it in self.tree.element_children(parent) {
                 self.tree
-                    .mark_style(it, Flags::REMATCH_SUBTREE | Flags::RECASCADE)
-            });
+                    .mark_style(it, Flags::REMATCH_SUBTREE | Flags::RECASCADE);
+                let generated = self.tree.element(it).map_or([0; 4], |it| it.generated);
+                generated
+                    .into_iter()
+                    .filter(|it| *it != 0)
+                    .for_each(|it| self.tree.mark_style(it, Flags::RECASCADE));
+                self.container_changed(it, false);
+            }
         }
         (self.counters_are_stale, self.marks.are_stale) = (true, true);
-        self.text_changed_in(parent);
         self.svg_changed(parent);
     }
 
@@ -646,7 +655,10 @@ impl Document {
     }
 
     pub(crate) fn set_attribute(&mut self, id: NodeId, qualified: &str, value: Option<&str>) {
-        let name = Name::new(qualified.as_bytes());
+        let (name, ignores_case) = (
+            Name::new(qualified.as_bytes()),
+            self.environment.quirks == Quirks::All,
+        );
         let Some(element) = self.tree.element_mut(id) else {
             return;
         };
@@ -656,7 +668,7 @@ impl Document {
         }
         let classes = value.filter(|_| name == name!("class")).map(|value| {
             let known = self.class_lists.entry(Name::new(value.as_bytes()));
-            Rc::clone(known.or_insert_with(|| Rc::new(Classes::new(value))))
+            Rc::clone(known.or_insert_with(|| Rc::new(Classes::new(value, ignores_case))))
         });
         let shared = |value: &str| {
             classes
@@ -1379,6 +1391,7 @@ impl Document {
         if (old.quirks, old.has_math) != (new.quirks, new.has_math) {
             self.styles.set_user_agent_sheets(new);
             affected.is_everything |= old.quirks != new.quirks;
+            self.class_lists.clear();
         }
         let root = self.tree.root_element();
         if affected.is_everything {
@@ -1463,7 +1476,7 @@ impl Document {
         self.request_fonts();
     }
 
-    fn request_fonts(&mut self) {
+    pub(crate) fn request_fonts(&mut self) {
         let newly_used = core::mem::take(self.fonts.newly_used.get_mut());
         let changed = core::mem::take(&mut self.font_faces_changed);
         if newly_used.is_empty() && !changed {
@@ -1473,13 +1486,16 @@ impl Document {
             return;
         };
         let (faces, requests) = (rules.borrow().font_faces(), self.requests.get_mut());
-        self.requested_fonts.retain(|face| {
-            let is_kept = faces.iter().any(|it| Rc::ptr_eq(it, face));
-            if !is_kept {
-                requests.extend(["unfont".into(), Rc::clone(&face.json)]);
-            }
-            is_kept
-        });
+        self.requested_fonts
+            .retain(|face| faces.iter().any(|it| Rc::ptr_eq(it, face)));
+        if changed {
+            let all = faces
+                .iter()
+                .map(|it| &*it.json)
+                .collect::<Vec<_>>()
+                .join("\n");
+            requests.extend(["faces".into(), all.into()]);
+        }
         let used = if changed {
             self.fonts.used.get_mut().iter().copied().collect()
         } else {

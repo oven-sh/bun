@@ -27,6 +27,7 @@ const { validateInteger } = require("internal/validators");
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
 const kReader = Symbol("reader");
+const kBlocks = Symbol("blocks");
 
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
@@ -40,6 +41,7 @@ declare global {
       $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
       $start(): void;
       [kRawModeState]?: Uint8Array;
+      [kBlocks]?: boolean;
       [kReader]?: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array>;
       ref(): this;
       unref(): this;
@@ -154,8 +156,10 @@ const prototypeOfReadStream = {
 
     if (process.platform !== "win32") {
       // The descriptor may be non-blocking, as the master of a pty from node-pty is, so it has to be polled.
+      // One that blocks is taken for a file by the stream, which fails with ESPIPE before it has read anything.
       Prototype._read = function (this: $Node.TTYReadStream, size: number) {
-        if (!this.isTTY) return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
+        if (!this.isTTY || this[kBlocks])
+          return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
         let reader = this[kReader];
         if (!reader) {
           const native = Bun.file(this.fd!).stream();
@@ -164,7 +168,12 @@ const prototypeOfReadStream = {
         }
         reader.read().then(
           ({ value }) => this.push(value ?? null),
-          error => this.destroy(error),
+          error => {
+            if (error?.code !== "ESPIPE") return this.destroy(error);
+            this[kBlocks] = true;
+            this[kReader] = this.$bunNativePtr = undefined;
+            this._read(size);
+          },
         );
       };
     }

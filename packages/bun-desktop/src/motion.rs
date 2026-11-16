@@ -86,6 +86,7 @@ impl Glide {
 struct Scrolled {
     total: [f64; 2],
     reported: [f64; 2],
+    reported_at: f64,
     generation: u32,
     glide: Option<Glide>,
     is_scrolling: bool,
@@ -126,6 +127,34 @@ impl Next {
     }
 }
 
+const TIME_UNREPORTED: f64 = 45.;
+
+fn release_wheel(wheel: &mut Option<[f64; 10]>) -> bool {
+    wheel
+        .take()
+        .inspect(|fields| bridge::emit_numbers(Kind::Wheel, fields, false))
+        .is_some()
+}
+
+impl Scrolled {
+    fn report(&mut self, surface: u32, id: u32) {
+        let ([x, y], has_ended) = (self.total, !self.is_scrolling);
+        self.reported = self.total;
+        bridge::emit_numbers(
+            Kind::Scroll,
+            &[
+                surface.into(),
+                id.into(),
+                x,
+                y,
+                has_ended.into(),
+                self.generation.into(),
+            ],
+            !has_ended,
+        );
+    }
+}
+
 #[derive(Default)]
 pub struct Motion {
     pub tables: Tables,
@@ -136,6 +165,11 @@ pub struct Motion {
     scrolled: FxHashMap<u32, Scrolled>,
     latch: Option<Latch>,
     drag: Option<Drag>,
+    /// Rises if the engine answers most of the reports of a scroll with something else to show.
+    reactions: u8,
+    /// The turns that were followed since `wheel_reported_at`.
+    wheel: Option<[f64; 10]>,
+    wheel_reported_at: f64,
     pub next: Next,
 }
 
@@ -237,6 +271,9 @@ impl Motion {
     /// After `scene` and `tables` were replaced.
     pub fn adopt(&mut self, scene: &Scene, first_item: usize) {
         self.first_item = first_item;
+        if self.is_scrolling() {
+            self.reactions = (self.reactions + 3).min(12);
+        }
         let scrollers = &self.tables.scrollers;
         self.scrolled
             .retain(|id, _| scrollers.iter().any(|scroller| scroller.id == *id));
@@ -250,6 +287,7 @@ impl Motion {
             let at_rest = || Scrolled {
                 total: applied,
                 reported: applied,
+                reported_at: 0.,
                 generation,
                 glide: None,
                 is_scrolling: false,
@@ -285,6 +323,7 @@ impl Motion {
     }
 
     fn advance_scrolls(&mut self, surface: u32, now: f64) -> Next {
+        const DISTANCE_UNREPORTED: f64 = 200.;
         let mut next = Next::Never;
         let latch = self.latch.filter(|latch| latch.until > now);
         for scroller in &self.tables.scrollers {
@@ -312,21 +351,60 @@ impl Motion {
             } else {
                 held_until.map_or(Next::Never, Next::At)
             });
-            if scrolled.total != scrolled.reported || !scrolled.is_scrolling {
-                let ([x, y], has_ended) = (scrolled.total, !scrolled.is_scrolling);
-                scrolled.reported = scrolled.total;
-                let fields = [
-                    surface.into(),
-                    scroller.id.into(),
-                    x,
-                    y,
-                    has_ended.into(),
-                    scrolled.generation.into(),
-                ];
-                bridge::emit_numbers(Kind::Scroll, &fields, !has_ended);
+            let due = scrolled.reported_at + TIME_UNREPORTED;
+            let is_far = (0..2).any(|axis| {
+                (scrolled.total[axis] - scrolled.reported[axis]).abs() >= DISTANCE_UNREPORTED
+            });
+            if !scrolled.is_scrolling
+                || is_far
+                || scrolled.total != scrolled.reported
+                    && (now >= due || is_dragged || self.reactions >= 8)
+            {
+                scrolled.reported_at = now;
+                self.reactions = self.reactions.saturating_sub(2);
+                if release_wheel(&mut self.wheel) {
+                    self.wheel_reported_at = now;
+                }
+                scrolled.report(surface, scroller.id);
+            } else if scrolled.total != scrolled.reported {
+                next = next.or(Next::At(due));
             }
         }
-        next
+        match self.wheel_reported_at + TIME_UNREPORTED {
+            due if now < due && self.wheel.is_some() => next.or(Next::At(due)),
+            _ => {
+                release_wheel(&mut self.wheel);
+                next
+            }
+        }
+    }
+
+    /// Of a turn that was followed.
+    pub fn report_wheel(&mut self, mut fields: [f64; 10], now: f64) {
+        let continues = |it: &mut [f64; 10]| {
+            [5, 8, 9].iter().all(|at| it[*at] == fields[*at])
+                && [6, 7].iter().all(|at| it[*at] * fields[*at] >= 0.)
+        };
+        if let Some(held) = self.wheel.take_if(continues) {
+            (6..8).for_each(|at| fields[at] += held[at]);
+        }
+        release_wheel(&mut self.wheel);
+        self.wheel = Some(fields);
+        if now >= self.wheel_reported_at + TIME_UNREPORTED {
+            self.wheel_reported_at = now;
+            release_wheel(&mut self.wheel);
+        }
+    }
+
+    pub fn release_wheel(&mut self) {
+        release_wheel(&mut self.wheel);
+    }
+
+    pub fn report_scrolls(&mut self, surface: u32) {
+        self.scrolled
+            .iter_mut()
+            .filter(|(_, it)| it.total != it.reported)
+            .for_each(|(id, it)| it.report(surface, *id));
     }
 
     pub fn is_scrolling(&self) -> bool {
@@ -424,6 +502,9 @@ impl Motion {
                 continue;
             };
             let differs = std::mem::replace(item, driven) != driven;
+            if differs && matches!(driven, Item::PushTransform(_)) {
+                scene.index_around(index);
+            }
             match driver.source {
                 Source::Time { .. } => drop(moving.insert(index, (*reach, next, differs))),
                 _ => has_changed |= differs,
@@ -439,9 +520,6 @@ impl Motion {
                     (self.next, has_changed) = (self.next.or(*next), has_changed | differs);
                 }
             });
-        }
-        if has_changed {
-            scene.index();
         }
         has_changed
     }

@@ -161,12 +161,18 @@ function selectAll(doc: Doc, fromScript: boolean) {
   if (
     root !== doc.node &&
     !fromScript &&
-    selection.r!.collapsed &&
+    selection.r?.collapsed &&
     (doc.focused === null || !core.contains(root, doc.focused))
   )
     root = doc.node;
+  else if (root === doc.node && selection.span !== null && !isInIdleControl(selection.span.startNode))
+    root = core.rootOf(selection.span.startNode);
   if (root === doc.node) root = hooks.topModal(doc) ?? core.bodyOf(doc) ?? root;
-  if (!events.fire(root, "selectstart", true, true)) return;
+  if (
+    !events.fire(root.type === core.ELEMENT || root === doc.node ? root : core.hostOf(root), "selectstart", true, true)
+  )
+    return;
+  if (root.type !== core.ELEMENT) return selection.select(root, 0, root, lengthOf(root));
   const start = movePoint(root, [root, 0], false, Direction.Forward, By.Nearest).point;
   const end = movePoint(root, [root, lengthOf(root)], false, Direction.Backward, By.Nearest).point;
   selection.select(start[0], start[1], end[0], end[1]);

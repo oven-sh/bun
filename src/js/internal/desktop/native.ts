@@ -339,7 +339,7 @@ function destroySurface(surface: number) {
 
 // In the order of `set_cursor` in packages/bun-desktop/src/surface.rs
 const cursors = new Map<string, number>();
-"default pointer text vertical-text crosshair|cell grab grabbing|move|all-scroll not-allowed|no-drop alias copy context-menu col-resize row-resize w-resize e-resize n-resize s-resize ew-resize ns-resize nwse-resize|nw-resize|se-resize nesw-resize|ne-resize|sw-resize"
+"default pointer text vertical-text crosshair|cell grab grabbing|move|all-scroll not-allowed|no-drop alias copy context-menu col-resize row-resize w-resize e-resize n-resize s-resize ew-resize ns-resize nwse-resize|nw-resize|se-resize nesw-resize|ne-resize|sw-resize none"
   .split(" ")
   .forEach((aliases, index) => aliases.split("|").forEach(alias => cursors.$set(alias, index)));
 
@@ -386,20 +386,18 @@ function waitUntil(
   if (head < tail && !dispatching) setImmediate(onEvents);
 }
 
-/** Moves of the mouse, and turns of the wheel that the UI has followed already, are reported about once a frame. */
+/** Moves of the mouse are reported about once a frame. */
 const held = new Float64Array(12);
 let isHolding = false;
 let lastContinuous = -Infinity;
 let holdTimer: ReturnType<typeof setTimeout> | undefined;
 
 function isContinuous(at: number): boolean {
-  return queue[at] === Kind.Mouse ? queue[at + 8] === 0 : queue[at] === Kind.Wheel && queue[at + 7] >= 256;
+  return queue[at] === Kind.Mouse && queue[at + 8] === 0;
 }
 
 function continuesHeld(at: number): boolean {
-  if (queue[at] !== held[0] || queue[at + 2] !== held[2] || queue[at + 7] !== held[7] || queue[at + 10] !== held[10])
-    return false;
-  return isContinuous(at) && (held[0] === Kind.Mouse || queue[at + 11] === held[11]);
+  return isContinuous(at) && queue[at + 2] === held[2] && queue[at + 7] === held[7] && queue[at + 10] === held[10];
 }
 
 /** Puts it in front of what has not been handled. */
@@ -431,24 +429,18 @@ function defers(): boolean {
       stopHolding();
       return defers();
     }
-    if (held[0] === Kind.Wheel) {
-      queue[at + 8] += held[8];
-      queue[at + 9] += held[9];
-    }
-    isHolding = false;
-    clearTimeout(holdTimer);
   } else if (!isContinuous(at)) return false;
   const now = performance.now();
   const left = lastContinuous + display.frameInterval * 0.75 - now;
   if (left <= 0) {
     lastContinuous = now;
-    return false;
+    if (isHolding) clearTimeout(holdTimer);
+    return (isHolding = false);
   }
   for (let i = 0; i < queue[at + 1]; i++) held[i] = queue[at + i];
   head += held[1];
-  isHolding = true;
-  holdTimer = setTimeout(releaseHeld, left + display.frameInterval * 0.5).unref();
-  return true;
+  if (!isHolding) holdTimer = setTimeout(releaseHeld, left + display.frameInterval * 0.5).unref();
+  return (isHolding = true);
 }
 
 function onEvents(insideScript?: boolean) {

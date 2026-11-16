@@ -1007,8 +1007,9 @@ function scrollOf({ target }: E, axis: number): number {
   return ((target?.type ? target.doc.page : target?.x) ?? core.realm.page).doc.engine.lastViewportScroll(axis);
 }
 
-function offsetOf({ target }: E, x: number, y: number): number[] {
-  if (target === null || target.id === 0) return [x, y];
+function offsetOf(event: E, x: number, y: number): number[] {
+  const { target } = event;
+  if (target === null || target.id === 0) return [x + scrollOf(event, 0), y + scrollOf(event, 1)];
   const engine = core.sync(target.doc);
   const [left, top] = engine.toLocal(target.id, x, y);
   return [left - engine.metric(target.id, 0), top - engine.metric(target.id, 1)];

@@ -53,6 +53,47 @@ async function run(main: string, files: Record<string, string> = {}, args: strin
 }
 
 describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
+  test.each([
+    ["is slow to load", `app.once("ready", done);`],
+    ["waits for it", `await app.whenReady(); done();`],
+  ])("ready comes after a main module that %s", async (_, end) => {
+    expect(
+      await run("", {
+        "package.json": JSON.stringify({ name: "fixture", main: "main.mjs" }),
+        "slow.mjs": `for (let i = 0; i < 50; i++) await new Promise(setImmediate); await Bun.file(import.meta.path).text();`,
+        "main.mjs": `
+          import "./slow.mjs";
+          import { app } from "electron";
+          const wasReady = app.isReady();
+          const done = () => (console.log(JSON.stringify([wasReady, app.isReady()])), app.quit());
+          ${end}`,
+      }),
+    ).toEqual([[false, true]]);
+  });
+
+  test("the app outlives errors that nothing handles", async () => {
+    expect(
+      await run(`
+        const contents = await open("about:blank");
+        Promise.reject(new Error("rejected"));
+        print((await once(process, "warning"))[0].name);
+        electron.dialog.showErrorBox = (title, content) => process.emit("shown", content);
+        setImmediate(() => { throw new Error("thrown"); });
+        print((await once(process, "shown"))[0].split("\\n").slice(0, 2));
+        print(await contents.executeJavaScript("1 + 1"));`),
+    ).toEqual(["UnhandledPromiseRejectionWarning", ["Uncaught Exception:", "Error: thrown"], 2]);
+  });
+
+  test("zoom levels are kept", async () => {
+    expect(
+      await run(
+        `serve({ "/": "" });
+        print((await open()).getZoomLevel());`,
+        { "data/Zoom Levels": JSON.stringify({ trusted: 2 }) },
+      ),
+    ).toEqual([2]);
+  });
+
   test("the main process", async () => {
     expect(
       await run(
@@ -85,6 +126,36 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
       "DataCloneError",
       "Script failed to execute",
     ]);
+  });
+
+  test("the history forgets its oldest entries", async () => {
+    expect(
+      await run(`
+        serve({ "/": "a" });
+        const page = new BrowserWindow().webContents;
+        await page.loadURL("app://trusted/");
+        await page.executeJavaScript(\`new Promise(resolve => {
+          navigation.currentEntry.ondispose = () => resolve();
+          for (let i = 1; i <= 60; i++) history.pushState(i, "", "/" + i);
+        })\`);
+        print(await page.executeJavaScript("[history.length, navigation.entries().length, navigation.currentEntry.index, navigation.entries()[0].url]"));
+        page.navigationHistory.goBack();
+        print(await page.executeJavaScript("new Promise(resolve => history.state === 59 ? resolve(59) : (onpopstate = event => resolve(event.state)))"));
+        print([page.navigationHistory.length(), page.navigationHistory.getActiveIndex()]);`),
+    ).toEqual([[50, 50, 49, "app://trusted/11"], 59, [50, 48]]);
+  });
+
+  test("a request that is canceled while its body arrives is reported", async () => {
+    expect(
+      await run(`
+        serve({ "/": "a", "/endless": () => new Response(new ReadableStream({ start: it => it.enqueue(new Uint8Array(1)) })) });
+        const page = new BrowserWindow().webContents;
+        await page.loadURL("app://trusted/");
+        const reported = new Promise(resolve => page.session.webRequest.onErrorOccurred(resolve));
+        await page.executeJavaScript("fetch('/endless').then(it => it.body.cancel())");
+        const { url, error } = await reported;
+        print([url, error]);`),
+    ).toEqual([["app://trusted/endless", "net::ERR_ABORTED"]]);
   });
 
   test("navigation events and history", async () => {
@@ -202,6 +273,47 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         "renderer",
       ],
     ]);
+  });
+
+  test("sendSync waits for an answer that comes later, and the page does nothing meanwhile", async () => {
+    expect(
+      await run(
+        `serve({ "/": "" });
+         ipcMain.on("job", async event => { event.returnValue = await Promise.resolve("job"); });
+         ipcMain.on("timer", event => { setTimeout(() => { event.returnValue = "timer"; }, 1); });
+         const page = await open(undefined, preload);
+         print(await page.executeJavaScript(\`(async () => {
+           const order = [];
+           queueMicrotask(() => order.push("microtask"));
+           order.push(sync("job"), sync("timer"));
+           await 0;
+           try { sync("nobody"); } catch { order.push("threw"); }
+           return order;
+         })()\`));`,
+        {
+          "preload.js": `
+            const { contextBridge, ipcRenderer } = require("electron");
+            contextBridge.exposeInMainWorld("sync", channel => ipcRenderer.sendSync(channel));`,
+        },
+      ),
+    ).toEqual([["job", "timer", "microtask", "threw"]]);
+  });
+
+  test("what a page sends while it is unloaded has a senderFrame", async () => {
+    expect(
+      await run(
+        `serve({ "/": "", "/next": "" });
+         const seen = new Promise(resolve => ipcMain.handle("last", async event => {
+           const { url, detached } = event.senderFrame;
+           await 0;
+           resolve([url, detached, event.senderFrame]);
+         }));
+         const page = await open(undefined, preload);
+         await page.loadURL("app://trusted/next");
+         print(await seen);`,
+        { "preload.js": `addEventListener("pagehide", () => require("electron").ipcRenderer.invoke("last"));` },
+      ),
+    ).toEqual([["app://trusted/", true, null]]);
   });
 
   test("a preload script does not see what the page did to its globals", async () => {
@@ -448,6 +560,14 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
           found.push(typeof it.constructor, typeof it.__defineGetter__);
         });
         return found.every(function (it) { return it == "undefined" }) ? "confined" : "escaped"`]: "confined",
+      [`var escaped = 0;
+        ["concat", "slice", "reverse", "sort", "map", "filter"].forEach(function (name) {
+          ["a", 1, true, /a/].forEach(function (self) {
+            try { [][name].call(self, function (it) { return it }); escaped++ } catch (e) {}
+          });
+        });
+        try { "".valueOf.call([]); escaped++ } catch (e) {}
+        return escaped ? "escaped" : "confined"`]: "confined",
       [`function f() { f() } try { f() } catch (e) {} finally { return "caught" }`]: null,
       [`var s = "a"; while (true) s += s`]: null,
       [`return (`]: null,

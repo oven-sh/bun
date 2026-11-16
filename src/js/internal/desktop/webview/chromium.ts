@@ -390,6 +390,10 @@ class Page {
       this.tell("Emulation.setUserAgentOverride", { userAgent: (this.userAgent = userAgent) }),
     setZoomLevel: (level: number) => ((this.state.zoomLevel = level), this.resize()),
     setZoomFactor: (factor: number) => this.methods.setZoomLevel(Math.log(factor) / Math.log(1.2)),
+    setBackgroundColor: (argb: string) => {
+      const [a, r, g, b] = Buffer.from(argb.slice(1), "hex");
+      this.tell("Emulation.setDefaultBackgroundColorOverride", { color: { r, g, b, a: a / 255 } });
+    },
     setContentSize: (width: number, height: number) => (Object.assign(this.options, { width, height }), this.resize()),
     startPainting: () => this.tell("Page.startScreencast", { format: "png" }),
     stopPainting: () => this.tell("Page.stopScreencast"),

@@ -13,8 +13,8 @@ use objc2::{AnyThread as _, MainThreadMarker, MainThreadOnly as _, class, msg_se
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions as Resizing,
     NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSColorSpace, NSCursor, NSPasteboard,
-    NSResponder, NSRunningApplication, NSScroller, NSScrollerStyle, NSView,
-    NSVisualEffectBlendingMode, NSVisualEffectMaterial as Material, NSVisualEffectState,
+    NSRequestUserAttentionType, NSResponder, NSRunningApplication, NSScroller, NSScrollerStyle,
+    NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial as Material, NSVisualEffectState,
     NSVisualEffectView, NSWindow, NSWindowButton, NSWindowCollectionBehavior as Behavior,
     NSWindowOrderingMode, NSWindowStyleMask, NSWorkspace,
 };
@@ -78,10 +78,41 @@ fn application() -> *mut AnyObject {
 
 /// Quit in the Dock, and logging out, ask JavaScript, which may refuse and otherwise exits the process itself.
 extern "C-unwind" fn should_terminate(_: &AnyObject, _: Sel, _: *mut AnyObject) -> usize {
+    const QUIT_REASON: u32 = u32::from_be_bytes(*b"why?");
     crate::host::leave_next_event();
-    IS_TERMINATING.set(true);
     bridge::emit(json!({ "t": "app", "e": "quit" }));
-    NS_TERMINATE_LATER
+    // SAFETY: descriptors, or nil.
+    let is_logout = unsafe {
+        let manager: *mut AnyObject =
+            msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+        let event: Option<Retained<AnyObject>> = msg_send![manager, currentAppleEvent];
+        event.is_some_and(|event| {
+            let attribute: *mut AnyObject =
+                msg_send![&event, attributeDescriptorForKeyword: QUIT_REASON];
+            let parameter: *mut AnyObject =
+                msg_send![&event, paramDescriptorForKeyword: QUIT_REASON];
+            !attribute.is_null() || !parameter.is_null()
+        })
+    };
+    IS_TERMINATING.set(is_logout);
+    if is_logout { NS_TERMINATE_LATER } else { 0 }
+}
+
+pub fn scale_factor_of(display: u64) -> Option<f32> {
+    // SAFETY: an array of `NSScreen`, whose number is an `NSNumber`.
+    is_launched().then(|| unsafe {
+        let screens: Retained<NSArray<AnyObject>> = msg_send![class!(NSScreen), screens];
+        screens.iter().find_map(|screen| {
+            let description: *mut AnyObject = msg_send![&screen, deviceDescription];
+            let number: *mut AnyObject =
+                msg_send![description, objectForKey: &*NSString::from_str("NSScreenNumber")];
+            let (number, scale): (u32, f64) = (
+                msg_send![number, unsignedIntValue],
+                msg_send![&screen, backingScaleFactor],
+            );
+            (u64::from(number) == display).then_some(scale as f32)
+        })
+    })?
 }
 
 pub fn cancel_quit() {
@@ -145,20 +176,40 @@ extern "C-unwind" fn was_notified(_: &AnyObject, _: Sel, notification: *mut AnyO
     bridge::emit(json!({ "t": "app", "e": "notification", "v": name.to_string() }));
 }
 
-extern "C-unwind" fn full_screen_changed(_: &AnyObject, _: Sel, notification: *mut AnyObject) {
+const WINDOW_EVENTS: [(&str, &str, bool); 7] = [
+    ("NSWindowDidEnterFullScreenNotification", "fullscreen", true),
+    ("NSWindowDidExitFullScreenNotification", "fullscreen", false),
+    ("NSWindowDidMiniaturizeNotification", "minimized", true),
+    ("NSWindowDidDeminiaturizeNotification", "minimized", false),
+    ("NSWindowWillStartLiveResizeNotification", "resizing", true),
+    ("NSWindowDidEndLiveResizeNotification", "resizing", false),
+    ("NSWindowWillMoveNotification", "moving", true),
+];
+
+extern "C-unwind" fn window_changed(_: &AnyObject, _: Sel, notification: *mut AnyObject) {
     // SAFETY: as above.
-    let window = unsafe { &*notification.cast::<NSNotification>() }
+    let notification = unsafe { &*notification.cast::<NSNotification>() };
+    let Some(window) = notification
         .object()
-        .and_then(|it| it.downcast::<NSWindow>().ok());
-    let Some(window) = window else { return };
-    if let Some(id) = IDS.with_borrow(|ids| ids.get(&window.windowNumber()).copied()) {
-        let is_on = window.styleMask().contains(NSWindowStyleMask::FullScreen);
-        bridge::emit(json!({ "t": "window", "w": id, "e": "fullscreen", "v": is_on }));
+        .and_then(|it| it.downcast::<NSWindow>().ok())
+    else {
+        return;
+    };
+    let (id, name) = (
+        IDS.with_borrow(|ids| ids.get(&window.windowNumber()).copied()),
+        notification.name().to_string(),
+    );
+    if let (Some(id), Some((_, event, is_on))) = (id, WINDOW_EVENTS.iter().find(|it| it.0 == name))
+    {
+        bridge::emit(json!({ "t": "window", "w": id, "e": event, "v": is_on }));
     }
 }
 
 pub fn spelling(command: &str, text: &str, reply: u64) {
     const SPELLING: u64 = 1 << 1;
+    if std::env::var_os("BUN_DESKTOP_SPELLING").is_some_and(|it| it == "0") {
+        return bridge::reply(reply, Ok(json!([])));
+    }
     let text = NSString::from_str(text);
     let (all, none) = (
         NSRange::new(0, text.length()),
@@ -167,7 +218,7 @@ pub fn spelling(command: &str, text: &str, reply: u64) {
     // SAFETY: a method of the class.
     let checker: Option<Retained<AnyObject>> =
         unsafe { msg_send![class!(NSSpellChecker), sharedSpellChecker] };
-    let Some(checker) = checker else {
+    let Some(checker) = checker.filter(|_| all.length > 0) else {
         return bridge::reply(reply, Ok(json!([])));
     };
     match command {
@@ -206,8 +257,11 @@ pub fn spelling(command: &str, text: &str, reply: u64) {
                 .collect();
             bridge::reply(reply, Ok(json!(guesses)));
         }
-        // SAFETY: it takes a string.
-        _ => unsafe { msg_send![&checker, learnWord: &*text] },
+        _ => {
+            // SAFETY: it takes a string.
+            let () = unsafe { msg_send![&checker, learnWord: &*text] };
+            bridge::reply(reply, Ok(Value::Null));
+        }
     }
 }
 
@@ -237,6 +291,21 @@ pub fn send_action(action: &str) -> Result<()> {
     // SAFETY: actions take their sender, which may be nil.
     unsafe { application.sendAction_to_from(Sel::register(&CString::new(action)?), None, None) };
     Ok(())
+}
+
+/// With a number, the request that has it is cancelled.
+pub fn bounce(how: &Value) -> Result<isize> {
+    let app = NSApplication::sharedApplication(
+        MainThreadMarker::new().context("not on the main thread")?,
+    );
+    Ok(match how.as_i64() {
+        Some(request) => (app.cancelUserAttentionRequest(request as isize), -1).1,
+        None if app.isActive() => -1,
+        None if how == "critical" => {
+            app.requestUserAttention(NSRequestUserAttentionType::CriticalRequest)
+        }
+        None => app.requestUserAttention(NSRequestUserAttentionType::InformationalRequest),
+    })
 }
 
 pub fn is_hidden() -> bool {
@@ -282,7 +351,7 @@ fn prepare_delegate() {
         c"c@:@c"
     };
     let observers: [(Sel, Observer); 5] = [
-        (sel!(fullScreenChanged:), full_screen_changed),
+        (sel!(windowChanged:), window_changed),
         (sel!(wasNotified:), was_notified),
         (sel!(applicationDidBecomeActive:), became_active),
         (sel!(applicationDidResignActive:), resigned_active),
@@ -318,24 +387,15 @@ pub fn launched() {
     unsafe {
         let center: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
         let delegate: *mut AnyObject = msg_send![application(), delegate];
-        for (name, selector) in [
-            (
-                "NSPreferredScrollerStyleDidChangeNotification",
-                sel!(systemSettingsChanged:),
-            ),
-            (
-                "NSSystemColorsDidChangeNotification",
-                sel!(systemSettingsChanged:),
-            ),
-            (
-                "NSWindowDidEnterFullScreenNotification",
-                sel!(fullScreenChanged:),
-            ),
-            (
-                "NSWindowDidExitFullScreenNotification",
-                sel!(fullScreenChanged:),
-            ),
-        ] {
+        let settings = [
+            "NSPreferredScrollerStyleDidChangeNotification",
+            "NSSystemColorsDidChangeNotification",
+        ];
+        let settings = settings.map(|name| (name, sel!(systemSettingsChanged:)));
+        for (name, selector) in settings
+            .into_iter()
+            .chain(WINDOW_EVENTS.map(|it| (it.0, sel!(windowChanged:))))
+        {
             let (name, any) = (NSString::from_str(name), std::ptr::null::<AnyObject>());
             let () = msg_send![center, addObserver: delegate, selector: selector, name: &*name, object: any];
         }
@@ -699,7 +759,15 @@ impl NativeWindow {
                 activate_for(&window, false);
                 window.makeKeyAndOrderFront(None);
             }
+            "sheet" => {
+                let parent = parent.context("the parent is not open")?.typed()?;
+                activate_for(&parent, true);
+                parent.beginSheet_completionHandler(&window, None);
+            }
             "parent" => {
+                window
+                    .sheetParent()
+                    .inspect(|parent| parent.endSheet(&window));
                 window
                     .parentWindow()
                     .inspect(|parent| parent.removeChildWindow(&window));
@@ -735,8 +803,17 @@ impl NativeWindow {
                 };
                 set("fullScreenable", Behavior::FullScreenPrimary, false);
                 set("fullScreenable", Behavior::FullScreenAuxiliary, true);
-                set("visibleOnFullScreen", Behavior::FullScreenPrimary, true);
-                set("visibleOnFullScreen", Behavior::FullScreenAuxiliary, false);
+                if flag("visibleOnFullScreen") == Some(true) {
+                    set("visibleOnFullScreen", Behavior::FullScreenPrimary, true);
+                    set("visibleOnFullScreen", Behavior::FullScreenAuxiliary, false);
+                }
+                if flag("hiddenInMissionControl") == Some(true) {
+                    set(
+                        "hiddenInMissionControl",
+                        Behavior::Managed | Behavior::Stationary,
+                        true,
+                    );
+                }
                 set("hiddenInMissionControl", Behavior::Transient, false);
                 window.setCollectionBehavior(behavior);
                 if let (Some(on), Some(button)) = (

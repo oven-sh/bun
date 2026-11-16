@@ -994,12 +994,23 @@ class ContentsSession {
     this.#restore(session);
   }
 
-  handle(method: string, params: object, reply: Reply) {
+  #changeEngine({ url, referrer }: any, { resolve, reject }: Reply) {
+    const frameId = targetIdOf(this.contents);
+    const answer = ({ frameTree }: any) => resolve({ frameId, loaderId: frameTree.frame.loaderId });
+    this.contents.loadURL(url, { httpReferrer: referrer }).then(
+      () => this.handle("Page.getFrameTree", {}, { resolve: answer, reject }),
+      error => resolve({ frameId, errorText: "net::" + error.code }),
+    );
+  }
+
+  handle(method: string, params: any, reply: Reply) {
     if (method === "Target.getTargetInfo") return reply.resolve({ targetInfo: targetInfo(this.contents) });
     if (method === "Page.close") {
       setImmediate(() => this.contents.close());
       return reply.resolve({});
     }
+    if (method === "Page.navigate" && !!this.#guest !== this.contents[kPrivate].isForGuest(params.url))
+      return this.#changeEngine(params, reply);
     const input =
       this.#guest && !method.includes("Touch") && (this.#input ??= new Input(this.contents)).commands[method];
     if (input) {
@@ -1061,8 +1072,10 @@ class Connection {
     const { target } = socket.data;
     if (!target) return;
     this.#only = new ContentsSession(this, target, this.emitter(undefined));
-    target.once("destroyed", () => socket.close());
+    target.once("destroyed", this.#closeSocket);
   }
+
+  #closeSocket = () => this.#socket.close();
 
   #send(message: object) {
     this.#socket.send(JSON.stringify(message));
@@ -1176,6 +1189,7 @@ class Connection {
   close() {
     this.#autoAttaches = false;
     app.off("web-contents-created", this.#created);
+    this.#socket.data.target?.off("destroyed", this.#closeSocket);
     this.#only?.close();
     this.sessions.$forEach(session => session.close());
   }

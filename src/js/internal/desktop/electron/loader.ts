@@ -447,7 +447,8 @@ async function load(session: any, request: Load) {
     }
     if (own) return own;
     if (!isActive.test(destination!)) return network();
-    if (destination !== "document") throw netError("BLOCKED_BY_CLIENT");
+    if (destination !== "document")
+      throw Object.assign(netError("BLOCKED_BY_CLIENT"), { needsWebEngine: destination === "iframe" });
     const response = method === "GET" ? await network() : undefined;
     if (
       response?.headers.has("location") ||
@@ -789,6 +790,9 @@ async function load(session: any, request: Load) {
         redirected: redirects > 0,
         type: tainting,
         completed,
+        /** In place of `completed`. */
+        failed: (caught: unknown) =>
+          webRequest.tell("onErrorOccurred", url, () => answered({ error: toNetError(caught, signal).message })),
         /** Only for its body. */
         response: !hasBody
           ? null

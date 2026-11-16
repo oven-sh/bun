@@ -190,6 +190,7 @@ class LocalFrame {
         if (this.local.document() === null) this.#fit(false);
         core.hooks.framesChanged(page);
       },
+      useWebEngine: (url: string) => page.queueTask(() => node.x === this && loader().openRemoteFrame(node, page, url)),
       showImage: (url: string) => node.x === this && loader().showPluginImage(node, url),
       schedule() {
         page.hasDirtyFrames = true;
@@ -346,6 +347,10 @@ class LocalFrame {
     const moved = (it: any) => ({ ...it, x: (it.x - left * zoom) / this.scale, y: (it.y - top * zoom) / this.scale });
     if (event.points) return this.local.input({ ...event, points: event.points.map(moved) });
     this.local.input("x" in event ? moved(event) : event);
+  }
+
+  focusedFrame() {
+    return this.local.focusedFrame();
   }
 
   edit(name: string) {

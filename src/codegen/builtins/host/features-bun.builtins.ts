@@ -223,6 +223,7 @@ export default b.declarations(
       "encodeText",
       "draw",
       "findChrome",
+      "isLoadingEntryPoint",
       "keepAlive",
       "load",
       "measure",

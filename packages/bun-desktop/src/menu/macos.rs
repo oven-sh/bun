@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Imp, NSObjectProtocol, Sel};
-use objc2::{AnyThread, ClassType, MainThreadMarker, MainThreadOnly, sel};
+use objc2::{AnyThread, ClassType, MainThreadMarker, MainThreadOnly, class, sel};
 use objc2_app_kit::{
     NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSImage, NSMenu, NSMenuItem,
     NSStatusItem, NSView,
@@ -63,9 +63,9 @@ extern "C-unwind" fn chose(_: &AnyObject, _: Sel, sender: Option<&AnyObject>) {
     }
     let application = NSApplication::sharedApplication(item.mtm());
     let action = WINDOW_ACTIONS.with_borrow(|actions| actions.get(&item.tag()).copied());
-    let is_foreign = application
-        .keyWindow()
-        .is_some_and(|it| !it.class().name().to_bytes().starts_with(b"GPUI"));
+    let is_foreign = application.keyWindow().is_some_and(|it| {
+        !it.isKindOfClass(class!(GPUIWindow)) && !it.isKindOfClass(class!(GPUIPanel))
+    });
     match action.filter(|_| is_foreign) {
         // SAFETY: an action of windows, for the responder chain.
         Some(action) => drop(unsafe { application.sendAction_to_from(action, None, Some(item)) }),

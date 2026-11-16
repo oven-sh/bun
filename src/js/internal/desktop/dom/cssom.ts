@@ -24,6 +24,9 @@ class Parsed {
 }
 const INVALID = new Parsed([], false);
 
+const systemFont =
+  /^\s*(?:caption|icon|menu|message-box|small-caption|status-bar|-webkit-(?:small-|mini-)?control)\s*$/i;
+
 class Property {
   /** What an alias stands for. */
   name: string;
@@ -48,7 +51,13 @@ class Property {
     let parsed = rule === "" ? this.known.$get(value) : undefined;
     if (parsed === undefined) {
       const values: string[] = engine.expandDeclaration(rule, this.name, value, priority !== "");
-      parsed = values.length === 0 ? INVALID : new Parsed(values, this.isShorthand && values[0] !== "");
+      parsed =
+        values.length === 0
+          ? INVALID
+          : new Parsed(
+              values,
+              this.isShorthand && (values[0] !== "" || (this.name === "font" && systemFont.test(value))),
+            );
       if (this.known.size >= MAX_KNOWN) this.known.$clear();
       if (rule === "") this.known.$set(value, parsed);
     }
@@ -163,11 +172,13 @@ class Declarations {
   join(it: Property, found: number[]): string {
     const { origins } = this;
     const origin = origins === null ? null : origins[found[0] / At.Next];
-    if (origins !== null && found.some(index => origins[index / At.Next]?.isPending)) {
+    const isSystem = (index: number) =>
+      it.name === "font-variant" && systemFont.test(origins![index / At.Next]?.source ?? "");
+    if (origins !== null && found.some(index => origins[index / At.Next]?.isPending && !isSystem(index))) {
       const isWhole = found.every(index => origins[index / At.Next] === origin);
       return isWhole && String(origin!.property.longhands) === String(it.longhands) ? origin!.source : "";
     }
-    const values = found.map(index => this.list![index + At.Value]);
+    const values = found.map(index => this.list![index + At.Value] || "normal");
     if (values.some(value => wideKeywords.includes(value)))
       return values.every(value => value === values[0]) ? values[0] : "";
     return engine.joinShorthand(it.name, values.join("\0"));
@@ -249,7 +260,13 @@ class Declarations {
     const list = this.items();
     if (!it.isShorthand) {
       const index = this.find(it.name);
-      if (index >= 0 && list[index + At.Source] === value && list[index + At.Priority] === priority && it.group === "")
+      if (
+        index >= 0 &&
+        list[index + At.Source] === value &&
+        list[index + At.Value] !== "" &&
+        list[index + At.Priority] === priority &&
+        it.group === ""
+      )
         return;
     }
     const parsed = it.parse(value, this.context, priority);
@@ -614,6 +631,20 @@ function canonicalValue(name: string, value: string): string | null {
   return scratch.get(it);
 }
 
+function parseFont(value: string) {
+  const { values, isPending } = property("font").parse(value, "", "");
+  if (systemFont.test(value)) return { families: [], weight: 400, isItalic: false };
+  if (values.length === 0 || isPending || wideKeywords.includes(values[2])) return null;
+  const scratch = new Declarations();
+  scratch.set(property("font"), value, "");
+  const weight = scratch.get(property("font-weight"));
+  return {
+    families: engine.splitValue(scratch.get(property("font-family")), true),
+    weight: parseFloat(weight) || (weight.startsWith("bold") ? 700 : weight === "lighter" ? 100 : 400),
+    isItalic: scratch.get(property("font-style")) !== "normal",
+  };
+}
+
 class CSSPseudoElement {
   declare $impl: { element: N; parent: object; type: string; inner: Map<string, object> };
 
@@ -751,7 +782,7 @@ class Rule {
       if (parts[i + 1] !== "") {
         const rule = makeRule(this.sheet, this, parts[i], parts[i + 1] === "{" ? parts[i + 2] : null);
         if (rule !== null && rank(rule) === 2) children.push(rule);
-        if (owner !== this || this.keyword === "") owner = null;
+        if (rule !== null && (owner !== this || this.keyword === "")) owner = null;
       } else if (context !== "" && context !== "keyframes") {
         if (owner === null) children.push((owner = makeDeclarations(this, "")));
         owner.declarations += parts[i];
@@ -1494,8 +1525,7 @@ class Sheet {
 
   release() {
     if (this.wrapper !== null || !this.isDisposed) this.load();
-    for (const [engine, ids] of this.compiled) for (const id of ids) released.push(engine, id);
-    this.compiled.clear();
+    releaseCompiled(this.compiled);
   }
 
   compile(engine: any): number[] {
@@ -1547,6 +1577,12 @@ class Sheet {
 }
 
 let released: any[] = [];
+
+function releaseCompiled(compiled: Map<any, number[]>) {
+  for (const [engine, ids] of compiled) for (const id of ids) released.push(engine, id);
+  compiled.clear();
+}
+const collectedSheets = new FinalizationRegistry(releaseCompiled);
 
 function sheetsOf(scope: N): Sheet[] {
   const nodes: N[] = core.scopeOf(scope).styleNodes;
@@ -1629,6 +1665,7 @@ class CSSStyleSheet extends StyleSheet {
     const sheet = new Sheet("", core.resolveUrl(doc, options?.baseURL ?? "") ?? doc.baseUrl);
     sheet.wrapper = this;
     sheet.isConstructed = true;
+    collectedSheets.register(sheet, sheet.compiled);
     sheet.doc = doc;
     sheet.mediaText = String(options?.media ?? "");
     sheet.disabled = !!options?.disabled;
@@ -1710,7 +1747,9 @@ function checkAdoptable(scope: N, value: any) {
   const sheet: Sheet | undefined = value?.$impl;
   if (sheet?.isConstructed === undefined) throw new TypeError("Failed to convert value to 'CSSStyleSheet'.");
   if (!sheet.isConstructed) throw domError("NotAllowedError", "Can't adopt non-constructed stylesheets.");
-  if (sheet.doc !== scope.doc)
+  // Windows that have the same constructor cannot say which of them a sheet is for.
+  const isAnyWindow = scope.doc.page !== null && scope.doc.mirror === sheet.doc!.mirror;
+  if (sheet.doc !== scope.doc && !isAnyWindow)
     throw domError("NotAllowedError", "Sharing constructed stylesheets in multiple documents is not allowed");
 }
 
@@ -1987,6 +2026,7 @@ export default {
   flushHighlights,
   hasSheets,
   longhandsOf: (name: string) => property(name).longhands,
+  parseFont,
   propertyNamed,
   setMedia,
   styleMap,

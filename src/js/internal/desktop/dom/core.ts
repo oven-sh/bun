@@ -396,6 +396,8 @@ class Doc {
   checksStyleAttributes = false;
   version = 0;
   attributeVersion = 0;
+  /** Each lets go of the nodes of a live collection, which may have been removed since. */
+  cachedLists: ((evenIfCurrent: boolean) => boolean)[] = [];
   ranges = 0;
   iterators = new Set<$Dom.Traversal>();
   /** 1 childList, 2 attributes, 4 characterData */

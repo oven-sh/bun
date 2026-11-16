@@ -171,3 +171,26 @@ describe.skipIf(!hasLibrary).concurrent("paint", () => {
     expect(heights.some((it: number) => it % 2 === 1)).toBe(true);
   });
 });
+
+test.skipIf(!hasLibrary)("a large inline image is complete at once, and is averaged down", async () => {
+  const noise = Array.from({ length: 600 * 600 }, (_, i) =>
+    i % 600 < 300 ? [255, (i * i * 7919) % 11, 0] : [0, (i * i * 7919) % 11, 255],
+  );
+  const png = await new Bun.Image(bmp(600, 600, noise)).png().bytes();
+  const src = `data:image/png;base64,${png.toBase64()}`;
+  const script = `const it = new Image(60, 60); it.loading = "lazy"; it.src = "${src}"; document.body.append(it); return [it.complete, it.naturalWidth];`;
+  const [state, left, right] = await render("<body>", script, [
+    [10, 10],
+    [50, 50],
+  ]);
+  expect(state).toEqual([true, 600]);
+  expect([left.slice(0, 2), left.slice(4, 6), right.slice(0, 2), right.slice(4, 6)]).toEqual(["ff", "00", "00", "ff"]);
+});
+
+function bmp(width: number, height: number, pixels: number[][]) {
+  const bytes = Buffer.alloc(54 + width * height * 3);
+  bytes.write("BM");
+  [bytes.length, 0, 54, 40, width, height, 1 | (24 << 16)].forEach((it, i) => bytes.writeUInt32LE(it, 2 + i * 4));
+  pixels.forEach(([r, g, b], i) => bytes.set([b, g, r], 54 + i * 3));
+  return bytes;
+}

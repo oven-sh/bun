@@ -3,7 +3,7 @@
 //! Lengths are CSS pixels, y grows down, and colors are `0xRRGGBBAA` in sRGB, not premultiplied.
 
 /// Bumped with every change to this file, to the library's exports, or to its JSON messages.
-pub const ABI_VERSION: u32 = 8;
+pub const ABI_VERSION: u32 = 9;
 
 #[repr(C)]
 pub struct Slice<T> {
@@ -471,6 +471,8 @@ pub enum BlendMode {
     SourceIn,
     SourceOut,
     Xor,
+    /// Normal, for a group that starts as a copy of what is under it.
+    FromBackdrop,
 }
 
 #[repr(C, u8)]

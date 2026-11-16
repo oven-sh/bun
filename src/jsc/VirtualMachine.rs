@@ -4419,6 +4419,13 @@ impl VirtualMachine {
         Some(self.pending_internal_promise.get().get()?.to_cell()?.cast())
     }
 
+    pub fn is_loading_entry_point(&self) -> bool {
+        self.is_in_preload.get()
+            || self.pending_internal_promise().is_some_and(|promise| {
+                crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending
+            })
+    }
+
     pub fn set_pending_internal_promise(&self, promise: Option<*mut JSInternalPromise>) {
         self.pending_internal_promise
             .with_mut(|slot| match promise {

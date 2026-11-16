@@ -53,7 +53,7 @@ fn without_overlap(RoundedRect { rect, radii }: RoundedRect, shapes: [f32; 4]) -
     let reach = |corner: usize, [x, y]: [f32; 2]| {
         let ([rx, ry], bulge) = (
             radii[corner],
-            2.0 * 0.5f32.powf(shapes[corner].min(0.0).exp2()) - 1.0,
+            2.0 * (-f64::from(shapes[corner].min(0.0)).exp2()).exp2() as f32 - 1.0,
         );
         (rx * x + bulge * ry * y).max(bulge * rx * x + ry * y)
     };
@@ -98,11 +98,15 @@ fn corner(
     {
         return out.push(clip_outer);
     }
-    let (is_concave, is_notch, curvature) = (shape < 0.0, shape < -8.0, shape.abs().exp2());
+    let (is_concave, is_notch, curvature) = (
+        shape < 0.0,
+        shape < -8.0,
+        f64::from(shape.abs()).exp2() as f32,
+    );
     let convex_half = if is_notch {
         0.75
     } else {
-        0.5f32.powf(1.0 / curvature.min(2.0))
+        f64::from(-1.0 / curvature.min(2.0)).exp2() as f32
     };
     let half = if is_concave {
         1.0 - convex_half

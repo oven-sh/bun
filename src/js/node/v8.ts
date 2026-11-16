@@ -208,7 +208,7 @@ const { memoryUsage } = process;
 // jsc.heapStats() visits every object.
 function heapSizes() {
   const { heapUsed, heapTotal, external } = memoryUsage();
-  return { heapSize: heapUsed, heapCapacity: heapTotal, extraMemorySize: external };
+  return { heapSize: heapUsed, heapCapacity: Math.max(heapUsed, heapTotal + external), extraMemorySize: external };
 }
 
 function getHeapStatistics() {

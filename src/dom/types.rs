@@ -1512,8 +1512,8 @@ impl Image {
 
 impl Css for Image {
     fn parse(p: &mut P, cx: &Ctx) -> Option<Image> {
-        if let Some(url) = url(p, cx) {
-            return Some(Image::Url(url));
+        if let Some((url, modifiers)) = link(p) {
+            return Some(Image::Url(request(url, modifiers, cx)));
         }
         attempt(p, |p| {
             let name = function(p)?;

@@ -363,7 +363,7 @@ declare module "bun:desktop" {
   interface Dock {
     setBadge(text: string): void;
     getBadge(): string;
-    bounce(): number;
+    bounce(type?: "informational" | "critical"): number;
     cancelBounce(id?: number): void;
     hide(): void;
     show(): Promise<void>;

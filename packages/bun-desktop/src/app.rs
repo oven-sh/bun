@@ -158,6 +158,10 @@ fn run(name: &str, arguments: &Value, reply: Option<u64>) -> Result<Value> {
 }
 
 pub fn is_headless(cx: &App) -> bool {
+    #[cfg(target_os = "macos")]
+    if !native::is_launched() {
+        return true;
+    }
     cx.compositor_name() == "headless"
 }
 
@@ -295,11 +299,7 @@ fn command(name: &str, arguments: &Value, reply: Option<u64>, cx: &mut App) -> R
         "closePopUpMenu" => menu::close_popup(),
         #[cfg(target_os = "macos")]
         "spelling.check" | "spelling.guess" | "spelling.learn" => {
-            let (command, text, reply) = (
-                command.to_owned(),
-                string(arguments).to_owned(),
-                reply().unwrap_or(0),
-            );
+            let (command, text, reply) = (name.to_owned(), string(arguments).to_owned(), reply()?);
             after_update(move || {
                 native::spelling(&command, &text, reply);
                 Ok(())
@@ -322,7 +322,14 @@ fn command(name: &str, arguments: &Value, reply: Option<u64>, cx: &mut App) -> R
         "trash" => {
             let path = PathBuf::from(string(arguments));
             bridge::in_background(reply()?, move || {
-                trash::delete(path).map_err(|error| anyhow!("{error}"))?;
+                #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]
+                let mut context = trash::TrashContext::default();
+                #[cfg(target_os = "macos")]
+                trash::macos::TrashContextExtMacos::set_delete_method(
+                    &mut context,
+                    trash::macos::DeleteMethod::NsFileManager,
+                );
+                context.delete(path).map_err(|error| anyhow!("{error}"))?;
                 Ok(Value::Null)
             });
         }
@@ -431,6 +438,8 @@ fn command(name: &str, arguments: &Value, reply: Option<u64>, cx: &mut App) -> R
         #[cfg(target_os = "macos")]
         "observe" => native::observe(string(&arguments[0]), string(&arguments[1])),
         #[cfg(target_os = "macos")]
+        "bounce" => return Ok(native::bounce(arguments)?.into()),
+        #[cfg(target_os = "macos")]
         "isHidden" => return Ok(native::is_hidden().into()),
         #[cfg(target_os = "macos")]
         "sendAction" => {
@@ -505,6 +514,10 @@ fn convert_image(arguments: &Value) -> Result<Value> {
 
 /// GPUI knows scale factors per window.
 fn any_scale_factor(display: Option<gpui::DisplayId>, cx: &mut App) -> f32 {
+    #[cfg(target_os = "macos")]
+    if let Some(scale) = display.and_then(|id| native::scale_factor_of(id.into())) {
+        return scale;
+    }
     let scales = window::ids().into_iter().filter_map(|id| {
         window::update(id, cx, |window, cx| {
             (
@@ -692,12 +705,20 @@ fn platform_window_command(
         #[cfg(target_os = "macos")]
         "backgroundColor" => native.set_background(&state.options.borrow())?,
         #[cfg(target_os = "macos")]
-        "size" | "bounds" | "style" | "parent" | "moveTop" | "focus" if !is_headless(cx) => {
+        "size" | "bounds" | "style" | "parent" | "sheet" | "moveTop" | "focus"
+            if !is_headless(cx) =>
+        {
             let parent = value.as_u64().and_then(|id| window::handle(id as u32));
             let parent =
                 parent.and_then(|it| it.update(cx, |_, window, _| NativeWindow::of(window)).ok());
             let (name, value) = (name.to_owned(), value.clone());
-            after_update(move || native.command(&name, &value, parent));
+            let id = state.options.borrow().id;
+            after_update(move || {
+                if name == "sheet" {
+                    window::draw_before_showing(id);
+                }
+                native.command(&name, &value, parent)
+            });
         }
         "size" => {
             let (width, height) = pair(value).context("expected two numbers")?;

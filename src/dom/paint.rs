@@ -243,6 +243,9 @@ pub(crate) fn with_corners(rect: Rect, basis: [f32; 2], corners: [&Corner; 4]) -
 }
 
 pub(crate) fn rounded(rect: Rect, style: &Style) -> RoundedRect {
+    if style.is_bare() {
+        return square(rect);
+    }
     let p = &style.paint;
     with_corners(
         rect,
@@ -337,6 +340,9 @@ fn filter_extent(style: &Style) -> f32 {
 }
 
 fn decoration_extent(style: &Style) -> f32 {
+    if style.is_bare() {
+        return 1.0;
+    }
     let outline = (style.outline_width() + style.paint.outline_offset.0).max(0.0);
     let outsets = crate::nine_pieces::outsets(style, Id::BorderImageOutset, style.border());
     outsets.into_iter().fold(
@@ -1846,6 +1852,15 @@ impl<'a> Painter<'a> {
                 document.frame_of(id, subject.area(BoxArea::BorderBox).rect),
                 space,
             );
+            let masked = style.has_mask().then(|| {
+                self.begin_group(
+                    frame.shape.rect,
+                    1.0,
+                    BlendMode::FromBackdrop,
+                    Span::default(),
+                    &space,
+                )
+            });
             let contour = Contour::of(style, &frame)
                 .inspect(|it| self.clip_inside(it, &frame, Edge::Outer(0.0), &mut inside));
             self.emit(
@@ -1867,6 +1882,11 @@ impl<'a> Painter<'a> {
                     source,
                     samples,
                 });
+            }
+            if let Some(base) = masked {
+                self.marker(Item::Mask { luminance: false });
+                self.mask_layers(&subject, &space, &space);
+                self.end_group(base);
             }
         }
         let (clipped, mut outer, mut layers) = (space, space, LayerList::new());
@@ -2592,7 +2612,19 @@ impl<'a> Painter<'a> {
         }
         self.painted_node = it.node;
         let shape = rounded(self.snap_rect(rect), &it.style);
-        if !matches!(it.kind, Kind::Row | Kind::RowGroup) {
+        if matches!(it.kind, Kind::Row | Kind::RowGroup) {
+        } else if [
+            Id::BorderShape,
+            Id::CornerTopLeftShape,
+            Id::CornerTopRightShape,
+            Id::CornerBottomRightShape,
+            Id::CornerBottomLeftShape,
+        ]
+        .iter()
+        .all(|id| it.style.other_if_set(*id).is_none())
+        {
+            self.hit(it.node, &it.style, shape, space);
+        } else {
             let (frame, mut inside) = (document.frame_of(id, shape.rect), *space);
             match Contour::of(&it.style, &frame) {
                 Some(contour) => {
@@ -2824,6 +2856,9 @@ impl<'a> Painter<'a> {
     }
 
     pub(crate) fn border(&mut self, style: &Style, frame: &Frame, space: &Space) {
+        if style.is_bare() && frame.border == [0.0; 4] {
+            return;
+        }
         let p = &style.paint;
         let (l, is_table) = (
             &style.layout,

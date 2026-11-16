@@ -73,6 +73,7 @@ function userDirectory(variable: string, fallback: string) {
       const match = new RegExp(`^XDG_${variable}_DIR="(.*)"$`, "m").exec(config);
       if (match) return match[1].replace(/^\$HOME/, () => os.homedir());
     } catch {}
+    if (variable !== "DESKTOP") return os.homedir();
   }
   return path.join(os.homedir(), fallback);
 }
@@ -549,11 +550,8 @@ const dock = {
     native.send("badge", { text: (dockBadge = String(text)), appId: identifier() });
   },
   getBadge: () => dockBadge,
-  bounce() {
-    require("internal/desktop/window").Window.getAllWindows()[0]?.flashFrame(true);
-    return 0;
-  },
-  cancelBounce() {},
+  bounce: (type = "informational"): number => native.ask("bounce", type),
+  cancelBounce: (id: number) => void native.send("bounce", id | 0),
   hide: () => app.setActivationPolicy("accessory"),
   show: async () => app.setActivationPolicy("regular"),
   isVisible: () => dockVisible,

@@ -143,11 +143,22 @@ function layout(node: N) {
 
 /** The root element stands for the viewport. */
 function scrollerId(node: N): number {
+  if (node.doc.quirks) {
+    if (node.parent === node.doc.node) return 0;
+    if (node === core.bodyOf(node.doc) && !isScrollableBody(node)) return 1;
+  }
   return node.parent === node.doc.node
     ? 1
     : node.name === "input" && node.x?.editor && layout(node)
       ? node.x.editor.id
       : node.id;
+}
+
+const isScrollableBody = (body: N) => styleBits(body, 1 | (1 << 19)) > 1;
+
+function clientSize(node: N, which: number): number {
+  const isViewport = node.doc.quirks ? node === core.bodyOf(node.doc) : node.parent === node.doc.node;
+  return metric(node, isViewport ? 1 : scrollerId(node) || node.id, which);
 }
 
 function metric(node: N, id: number, which: number): number {
@@ -156,24 +167,59 @@ function metric(node: N, id: number, which: number): number {
 }
 const scrollerMetric = (node: N, which: number) => metric(node, scrollerId(node), which);
 
-const behaviors = { __proto__: null, instant: 1, smooth: 2 };
+const behaviors = { __proto__: null, auto: 0, instant: 1, smooth: 2 };
+const AWAITED = 8;
+
+function member(options: any, name: string, values: any, missing: number): number {
+  const given = options[name];
+  const value = given === undefined ? missing : values[`${given}`];
+  if (value === undefined)
+    throw new TypeError(`The provided value '${given}' is not a valid enum value for '${name}'.`);
+  return value;
+}
+
+/** Of what was last asked for with `AWAITED`. */
+function scrollResult(doc: Doc): Promise<object> {
+  const request = doc.engine.metric(1, 13);
+  if (request === 0) return Promise.$resolve({ interrupted: false });
+  const { promise, resolve } = Promise.withResolvers<object>();
+  doc.page!.scrollRequests.$set(request, resolve);
+  return promise;
+}
+
+function scrollFromScript(target: N | Page, count: number, first: any, second: any, isRelative: boolean) {
+  try {
+    const { doc } = target;
+    const node = target === doc.page ? null : (target as N);
+    if (count === 1 && first != null && !$isObject(first))
+      throw new TypeError("The provided value is not of type 'ScrollToOptions'.");
+    const behavior = count < 2 && first != null ? member(first, "behavior", behaviors, 0) : 0;
+    if (node !== null && !layout(node)) return Promise.$resolve({ interrupted: false });
+    if (count < 2) scroll(doc, node ? scrollerId(node) : 1, first?.left, first?.top, isRelative, behavior | AWAITED);
+    else scroll(doc, node ? scrollerId(node) : 1, +first || 0, +second || 0, isRelative, AWAITED);
+    return scrollResult(doc);
+  } catch (error) {
+    return Promise.$reject(error);
+  }
+}
+
 const finite = (value: any) => (value === undefined ? NaN : Number.isFinite((value = +value)) ? value : 0);
 
-function scroll(doc: Doc, id: number, first: any, second: any, isRelative: boolean) {
-  const options = $isObject(first) ? first : { left: first, top: second };
-  let x = finite(options.left);
-  let y = finite(options.top);
+function scroll(doc: Doc, id: number, left: any, top: any, isRelative: boolean, behavior = 0) {
+  let x = finite(left);
+  let y = finite(top);
   const engine = sync(doc);
   if (isRelative) {
-    const [left, top] = engine.scrollMetrics(id);
-    x += left;
-    y += top;
+    const from = engine.scrollMetrics(id);
+    x += from[0];
+    y += from[1];
   }
-  engine.scrollTo(id, x, y, (behaviors[options.behavior] ?? 0) | (isRelative ? 4 : 0));
+  engine.scrollTo(id, x, y, behavior | (isRelative ? 4 : 0));
   core.invalidate(doc);
 }
 
 const alignments = { __proto__: null, start: 0, center: 1, end: 2, nearest: 3 };
+const containers = { __proto__: null, all: 0, nearest: 1 };
 
 function scrollIntoView(node: N, block: number, inline: number, behavior = 0, onlyNearest = false) {
   layout(node)?.scrollIntoView(node.id, block, inline, behavior, onlyNearest);
@@ -216,19 +262,28 @@ core.mixin(
       if (layout(node)) scroll(node.doc, scrollerId(node), undefined, +top || 0, false);
     },
     scroll(this: any, first: any = undefined, second?: any) {
-      if (layout(this.$impl)) scroll(this.$impl.doc, scrollerId(this.$impl), first, second, false);
+      return scrollFromScript(this?.$impl, $argumentCount(), first, second, false);
     },
     scrollTo(this: any, first: any = undefined, second?: any) {
-      if (layout(this.$impl)) scroll(this.$impl.doc, scrollerId(this.$impl), first, second, false);
+      return scrollFromScript(this?.$impl, $argumentCount(), first, second, false);
     },
     scrollBy(this: any, first: any = undefined, second?: any) {
-      if (layout(this.$impl)) scroll(this.$impl.doc, scrollerId(this.$impl), first, second, true);
+      return scrollFromScript(this?.$impl, $argumentCount(), first, second, true);
     },
     scrollIntoView(this: any, argument: any = undefined) {
-      const options = $isObject(argument) ? argument : { block: argument === undefined || argument ? "start" : "end" };
-      const { block, inline, behavior, container } = options;
-      const [blockAt, inlineAt] = [alignments[block] ?? 0, alignments[inline] ?? 3];
-      scrollIntoView(this.$impl, blockAt, inlineAt, behaviors[behavior] ?? 0, container === "nearest");
+      const options = $isObject(argument) ? argument : { block: argument == null || argument ? "start" : "end" };
+      try {
+        const node: N = this.$impl;
+        const behavior = member(options, "behavior", behaviors, 0);
+        const block = member(options, "block", alignments, 0);
+        const container = member(options, "container", containers, 0);
+        const inline = member(options, "inline", alignments, 3);
+        if (!layout(node)) return Promise.$resolve({ interrupted: false });
+        scrollIntoView(node, block, inline, behavior | AWAITED, container === 1);
+        return scrollResult(node.doc);
+      } catch (error) {
+        return Promise.$reject(error);
+      }
     },
     scrollIntoViewIfNeeded(this: any, center = true) {
       scrollIntoView(this.$impl, center ? 4 : 3, center ? 4 : 3);
@@ -247,10 +302,10 @@ core.mixin(
       return cssom.styleMap(cssom.computedStyle(this.$impl, ""), false);
     },
     get scrollWidth() {
-      return scrollerMetric((this as any).$impl, 6);
+      return metric((this as any).$impl, scrollerId((this as any).$impl) || 1, 6);
     },
     get scrollHeight() {
-      return scrollerMetric((this as any).$impl, 7);
+      return metric((this as any).$impl, scrollerId((this as any).$impl) || 1, 7);
     },
     get clientLeft() {
       return metric((this as any).$impl, (this as any).$impl.id, 0);
@@ -259,13 +314,13 @@ core.mixin(
       return metric((this as any).$impl, (this as any).$impl.id, 1);
     },
     get clientWidth() {
-      return scrollerMetric((this as any).$impl, 2);
+      return clientSize((this as any).$impl, 2);
     },
     get clientHeight() {
-      return scrollerMetric((this as any).$impl, 3);
+      return clientSize((this as any).$impl, 3);
     },
     get currentCSSZoom() {
-      return 1;
+      return metric((this as any).$impl, (this as any).$impl.id, 14) || 1;
     },
   },
   Element,
@@ -1060,7 +1115,10 @@ export default {
   layout,
   parseInteger,
   reflectAll,
+  isScrollableBody,
+  metric,
   scroll,
+  scrollFromScript,
   scrollIntoView,
   styleBits,
 };

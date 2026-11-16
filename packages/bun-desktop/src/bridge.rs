@@ -87,6 +87,10 @@ pub fn has_events() -> bool {
     !EVENTS.lock().is_empty()
 }
 
+pub fn has_events_but_frames() -> bool {
+    EVENTS.lock().iter().any(|event| event.kind != Kind::Frame)
+}
+
 /// Writes records of `[kind, length, ...fields]`, and returns how many numbers that is.
 pub fn drain_numbers(buffer: &mut [f64]) -> usize {
     let (mut events, mut taken, mut length) = (EVENTS.lock(), TAKEN.lock(), 0);
@@ -271,15 +275,20 @@ fn next_job() -> Option<Job> {
 
 /// Works without GPUI, and so without a display.
 pub fn in_background(id: u64, work: impl FnOnce() -> Result<Value> + Send + 'static) {
-    const MAX_THREADS: usize = 4;
-    let mut pool = POOL.lock();
-    pool.jobs.push(Box::new(move || {
+    spawn(move || {
         let result = catch_unwind(AssertUnwindSafe(work));
         reply(
             id,
             result.unwrap_or_else(|panic| Err(anyhow!(panic_message(panic)))),
         );
-    }));
+    });
+}
+
+/// `job` does not panic.
+pub fn spawn(job: impl FnOnce() + Send + 'static) {
+    const MAX_THREADS: usize = 4;
+    let mut pool = POOL.lock();
+    pool.jobs.push(Box::new(job));
     if pool.threads == MAX_THREADS {
         return;
     }

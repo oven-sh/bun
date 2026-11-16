@@ -708,6 +708,7 @@ fn pair(a: impl Into<i64>, b: impl Into<i64>) -> u64 {
 }
 
 /// What is needed of a primitive to tell whether a tile has changed.
+#[derive(PartialEq)]
 pub(super) struct Summary {
     pub area: IntRect,
     y: f32,
@@ -858,7 +859,7 @@ impl Grid {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct Tile {
     pub hash: u64,
     /// The primitives before this one amount to `base`.
@@ -880,13 +881,30 @@ impl Tile {
 
 /// What is in each tile if everything is `down` pixels lower. Only right for those in `wanted`.
 pub(super) fn survey(summaries: &[Summary], grid: &Grid, down: i32, wanted: IntRect) -> Vec<Tile> {
+    let mut tiles = vec![Tile::default(); grid.columns * grid.rows_of(grid.window).len()];
+    survey_again(&mut tiles, summaries, grid, down, wanted);
+    tiles
+}
+
+/// `wanted` is made of whole tiles.
+fn survey_again(
+    tiles: &mut [Tile],
+    summaries: &[Summary],
+    grid: &Grid,
+    down: i32,
+    wanted: IntRect,
+) {
     let hides_all =
         |it: &Summary| it.color[3] == 255 && it.uniform.offset(0, down).contains(wanted);
     let backdrop = summaries.iter().rposition(hides_all);
     let empty = backdrop.map_or(Tile::flat([0; 4], 0), |index| {
         Tile::flat(summaries[index].color, index + 1)
     });
-    let mut tiles = vec![empty; grid.columns * grid.rows_of(grid.window).len()];
+    let columns = grid.columns_of(wanted);
+    for row in grid.rows_of(wanted) {
+        tiles[row as usize * grid.columns..][columns.start as usize..columns.end as usize]
+            .fill(empty);
+    }
     for (index, summary) in summaries.iter().enumerate().skip(empty.first as usize) {
         let area = summary.area.offset(0, down).intersect(grid.window);
         let visited = area.intersect(wanted);
@@ -942,12 +960,32 @@ pub(super) fn survey(summaries: &[Summary], grid: &Grid, down: i32, wanted: IntR
             }
         }
     }
-    tiles
+}
+
+/// How many are the same at the start, and what is left without them and those that are the same at the end.
+fn differing<'a>(
+    before: &'a [Summary],
+    after: &'a [Summary],
+) -> (usize, &'a [Summary], &'a [Summary]) {
+    let start = before.iter().zip(after).take_while(|(a, b)| a == b).count();
+    let (before, after) = (&before[start..], &after[start..]);
+    let end = before
+        .iter()
+        .rev()
+        .zip(after.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (
+        start,
+        &before[..before.len() - end],
+        &after[..after.len() - end],
+    )
 }
 
 /// How far down most of what moved did.
 pub(super) fn movement(before: &[Summary], after: &[Summary]) -> Option<i32> {
-    const SAMPLES: usize = 24;
+    const SAMPLES: usize = 12;
+    let (_, before, after) = differing(before, after);
     let mut votes: SmallVec<[(i32, u32); 32]> = SmallVec::new();
     for sample in after
         .iter()
@@ -1052,6 +1090,8 @@ pub struct Compositor {
     pub atlas: Atlas,
     pub primitives: Vec<Primitive>,
     pub(super) shown: Vec<Summary>,
+    /// The survey of `shown`.
+    pub(super) tiles: Vec<Tile>,
     pub(super) window: IntRect,
     capacity: (usize, usize),
     /// For each tile, a hash of what is in it. The one that is shown comes first.
@@ -1059,6 +1099,43 @@ pub struct Compositor {
 }
 
 impl Compositor {
+    /// While `window` is that of `shown`.
+    pub(super) fn survey(&mut self, summaries: &[Summary], grid: &Grid) -> Vec<Tile> {
+        let mut tiles = std::mem::take(&mut self.tiles);
+        if self.shown.is_empty()
+            || self.window != grid.window
+            || tiles.len() != grid.columns * grid.rows_of(grid.window).len()
+        {
+            return survey(summaries, grid, 0, grid.window);
+        }
+        let (start, before, after) = differing(&self.shown, summaries);
+        let cover = |all: IntRect, it: &Summary| all.union(it.area);
+        let changed = match before.len() == after.len() {
+            true => before
+                .iter()
+                .zip(after)
+                .filter(|(a, b)| a != b)
+                .fold(IntRect::default(), |all, (a, b)| cover(cover(all, a), b)),
+            false => before.iter().chain(after).fold(IntRect::default(), cover),
+        };
+        if before.len() != after.len() {
+            let more = (after.len() as u32).wrapping_sub(before.len() as u32);
+            tiles
+                .iter_mut()
+                .filter(|it| it.first as usize > start)
+                .for_each(|it| it.first = it.first.wrapping_add(more));
+        }
+        let changed = changed.intersect(grid.window);
+        if !changed.is_empty() {
+            let (columns, rows) = (grid.columns_of(changed), grid.rows_of(changed));
+            let changed = grid
+                .rect(rows.start, columns.clone())
+                .union(grid.rect(rows.end - 1, columns));
+            survey_again(&mut tiles, summaries, grid, 0, changed);
+        }
+        tiles
+    }
+
     pub fn paint(&mut self, pixels: Pixels) -> Painted {
         const TILES_PER_THREAD: usize = 2400;
         const MAX_THREADS: usize = 4;
@@ -1080,7 +1157,7 @@ impl Compositor {
             columns: width.div_ceil(TILE_WIDTH as usize),
         };
         let summaries: Vec<_> = self.primitives.iter().map(Summary::of).collect();
-        let tiles = survey(&summaries, grid, 0, window);
+        let tiles = self.survey(&summaries, grid);
         let mut hashes: Vec<_> = tiles.iter().map(|tile| tile.hash).collect();
         let hidden = grid.columns_of(window).end as usize..;
         hashes
@@ -1117,15 +1194,19 @@ impl Compositor {
             let changed = grid.areas(|tile| actions[tile] == Action::Paint);
             let changed = changed.into_iter().fold(IntRect::default(), IntRect::union);
             let moved = survey(&self.shown, grid, down, changed);
-            for (tile, action) in actions.iter_mut().enumerate() {
-                let (row, column) = ((tile / grid.columns) as i32, (tile % grid.columns) as i32);
-                let source = || grid.rect(row, column..column + 1).offset(0, -down);
-                if *action == Action::Paint
-                    && !tiles[tile].is_flat
+            for (row, column) in grid
+                .rows_of(changed)
+                .flat_map(|row| grid.columns_of(changed).map(move |column| (row, column)))
+            {
+                let tile = row as usize * grid.columns + column as usize;
+                // Few large areas are less work for the platform than many small ones.
+                let is_worth_it =
+                    pixels.platform_moves || actions[tile] == Action::Paint && !tiles[tile].is_flat;
+                if is_worth_it
                     && moved[tile].hash == hashes[tile]
-                    && before.contains(source())
+                    && before.contains(grid.rect(row, column..column + 1).offset(0, -down))
                 {
-                    *action = Action::Move;
+                    actions[tile] = Action::Move;
                 }
             }
         }
@@ -1204,7 +1285,7 @@ impl Compositor {
         self.buffers.retain(|(id, _)| *id != pixels.id);
         self.buffers.truncate(2);
         self.buffers.insert(0, (pixels.id, hashes));
-        self.shown = summaries;
+        (self.shown, self.tiles) = (summaries, tiles);
         Painted {
             moved: moved.iter().map(bounds).collect(),
             moved_by: down,

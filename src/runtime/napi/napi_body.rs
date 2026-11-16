@@ -2617,7 +2617,7 @@ impl Finalizer {
         let env = env_ref.as_mut_ptr();
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
-        (self.fun)(env, self.data, self.hint);
+        lent_main_thread::enter(|| (self.fun)(env, self.data, self.hint));
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
         unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 

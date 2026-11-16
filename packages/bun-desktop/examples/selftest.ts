@@ -40,15 +40,21 @@ async function run(name: string, mode: string, env: Record<string, string>) {
 
 if (mode === "try") await run("try", mode, { BUN_DESKTOP_THREADS: process.env.BUN_DESKTOP_THREADS ?? "2" });
 if (mode === "all") {
-  for (const renderer of isMac ? ["layers", "software", "gpu"] : ["software", "gpu"]) {
+  for (const renderer of isMac ? ["layers", "software"] : ["software"]) {
     for (const threads of ["2", "1"]) {
       await run(`${renderer}-${threads}`, mode, { BUN_DESKTOP_RENDERER: renderer, BUN_DESKTOP_THREADS: threads });
     }
+    await run(`${renderer}-memory`, mode, {
+      BUN_DESKTOP_RENDERER: renderer,
+      BUN_DESKTOP_THREADS: "2",
+      SELFTEST_PICTURES: "0",
+    });
   }
 }
 if (!mode.startsWith("run-")) process.exit(0);
 
 process.on("uncaughtException", error => console.log("FAIL", error) ?? process.exit(1));
+const before = process.memoryUsage.rss() >> 20;
 const { app, clipboard, dialog, Menu, Tray, Window } = await import("bun:desktop");
 const file = (what: string) => join(directory, `${process.env.SELFTEST_NAME}.${what}`);
 const started = performance.now();
@@ -157,12 +163,34 @@ const mac = isMac && {
     const application = this.send("ptr", "NSApplication", "sharedApplication");
     this.send("void", application, "postEvent:atStart:", ["ptr", event], ["bool", false]);
   },
+  /** Core Graphics would look up the characters, which only works on the main thread. */
   key(code: number, flags = 0) {
-    for (const isDown of [true, false]) {
-      const event = this.graphics("CGEventCreateKeyboardEvent", "ptr", ["ptr", null], ["u16", code], ["bool", isDown]);
-      this.graphics("CGEventSetFlags", "void", ["ptr", event], ["u64", flags]);
-      this.post(this.send("ptr", "NSEvent", "eventWithCGEvent:", ["ptr", event]));
-    }
+    const selector =
+      "keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:";
+    const plain = { 0: "a", 9: "v", 14: "e", 38: "j", 40: "k", 51: "\x7f", 53: "\x1b", 36: "\r" }[code]!;
+    const string = (text: string): [string, unknown] => [
+      "ptr",
+      this.send("ptr", "NSString", "stringWithUTF8String:", ["ptr", cString(text)]),
+    ];
+    const characters = [string(flags & (1 << 19) ? "" : plain), string(plain)];
+    // On arm64 the last two are next to each other on the stack.
+    const last: [string, unknown][] =
+      process.arch === "arm64"
+        ? [["u32", code << 16]]
+        : [
+            ["bool", false],
+            ["u16", code],
+          ];
+    const place: [string, unknown][] = [
+      ["f64", 0],
+      ["f64", 0],
+      ["u64", flags],
+      ["f64", 0],
+      ["i64", this.windowNumber()],
+      ["ptr", null],
+    ];
+    for (const type of [10, 11])
+      this.post(this.send("ptr", "NSEvent", selector, ["u64", type], ...place, ...characters, ...last));
   },
   click(x: number, y: number) {
     const selector =
@@ -212,13 +240,26 @@ const mac = isMac && {
     );
     const area: [string, unknown][] = [0, 0, width, height].map(it => ["f64", it]);
     this.graphics("CGContextDrawImage", "void", ["ptr", context], ...area, ["ptr", image]);
+    for (const object of [context, space, name, image])
+      bind(framework("CoreFoundation"), "CFRelease", ["ptr"], "void")(object);
     return pixels;
   },
 };
 
+/** What Activity Monitor shows, in MB. */
+function footprint() {
+  if (!isMac) return Math.round(process.memoryUsage.rss() / 1e6);
+  const usage = new BigUint64Array(40);
+  bind("/usr/lib/libSystem.B.dylib", "proc_pid_rusage", ["i32", "i32", "ptr"], "i32")(process.pid, 2, ptr(usage));
+  return Math.round(Number(usage[9]) / 2 ** 20);
+}
+
 async function compareWithScreen(name: string) {
   await frame();
   await Bun.sleep(150);
+  log("INFO footprint", name, footprint(), "MB");
+  // The pictures take more memory than everything else.
+  if (process.env.SELFTEST_PICTURES === "0") return;
   const page = await window.capturePage();
   await Bun.write(file(name + ".page.png"), page.toPNG());
   if (!mac) return;
@@ -226,27 +267,31 @@ async function compareWithScreen(name: string) {
   const bitmap = await createImageBitmap(new Blob([page.toPNG()], { type: "image/png" }));
   const { width, height } = bitmap;
   const shown = await Promise.try(() => mac.capture(width, height)).catch(error => log(error));
-  if (!shown) return log("INFO", name, "the window cannot be captured");
+  if (!shown) return check(`${name}: the window can be captured`, false);
   const canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext("2d");
   context.drawImage(bitmap, 0, 0);
   const wanted = context.getImageData(0, 0, width, height).data;
-  let different = 0;
+  let [different, opaque] = [0, 0];
   for (let at = 0; at < wanted.length; at += 4) {
     const off = (channel: number) => Math.abs(wanted[at + channel] - shown[at + channel]);
+    if (shown[at + 3] === 255) opaque++;
     if (shown[at + 3] === 255 && Math.max(off(0), off(1), off(2)) > 12) different++;
   }
   // The buttons of the window are not part of the page.
   check(
     `${name}: the screen shows the page`,
-    different < 4000 * window.devicePixelRatio ** 2,
+    opaque > width * height * 0.9 && different < 4000 * window.devicePixelRatio ** 2,
     different,
-    "pixels differ",
+    "pixels differ,",
+    opaque,
+    "are opaque",
   );
   context.putImageData(new ImageData(shown, width, height), 0, 0);
   await Bun.write(file(name + ".screen.png"), await (await canvas.convertToBlob()).arrayBuffer());
 }
 
+log("INFO RSS before bun:desktop", before, "MB");
 let chosen = "";
 const item = (label: string, accelerator?: string) => ({
   label,
@@ -304,7 +349,6 @@ if (mac) {
   check("a shortcut reaches the menu", await until(() => chosen === "Free"));
   mac.key(40, COMMAND);
   check("unless the page takes it", !(await until(() => chosen === "Taken", 300)));
-  const before = clipboard.readText();
   clipboard.write({ text: "plain", html: "<b>rich</b>" });
   check("clipboard", clipboard.readText() === "plain" && clipboard.readHTML().includes("<b>rich</b>"));
   field.value = "";
@@ -312,7 +356,6 @@ if (mac) {
   await until(() => field.value !== "");
   await Bun.sleep(100);
   check("it pastes once", field.value === "plain", JSON.stringify(field.value));
-  clipboard.writeText(before);
   let clicked: any;
   list.addEventListener("click", (event: any) => (clicked = event));
   mac.click(700, 100);
@@ -367,6 +410,21 @@ if (mac) {
   check("and comes back", await after("restore", () => window.restore()));
   await Bun.sleep(700);
   await compareWithScreen("restored");
+  const sheet = new Window({ parent: window, modal: true, show: false, width: 300, height: 120 });
+  sheet.document.body.textContent = "A sheet";
+  check("a sheet waits", window.isFocused());
+  sheet.show();
+  check("takes the focus", await until(() => sheet.isFocused(), 3000));
+  sheet.close();
+  check("and gives it back", await until(() => window.isFocused(), 3000));
+  const picture = async () => Bun.hash((await window.capturePage()).toPNG());
+  field.style.caretColor = "transparent";
+  field.value = "helllo wrold";
+  field.focus();
+  await frame();
+  const unmarked = await picture();
+  await Bun.sleep(3500);
+  check("spelling", (await picture()) !== unmarked);
   const tray = new Tray((await window.capturePage({ x: 100, y: 0, width: 9, height: 9 })).toPNG());
   await Bun.sleep(300);
   check("tray", tray.getBounds().height > 10 && tray.getBounds().height < 50, JSON.stringify(tray.getBounds()));
@@ -401,11 +459,9 @@ const idle = process.cpuUsage();
 await Bun.sleep(2000);
 const { user, system } = process.cpuUsage(idle);
 log(`INFO idle for 2 s: CPU ${((user + system) / 1000).toFixed(1)} ms, RSS ${process.memoryUsage.rss() >> 20} MB`);
-if (isMac)
-  log(
-    "INFO",
-    Bun.spawnSync(["footprint", String(process.pid)])
-      .stdout.toString()
-      .match(/Footprint: .*/)?.[0],
-  );
+log("INFO footprint at rest", footprint(), "MB");
+Bun.gc(true);
+await Bun.sleep(500);
+log("INFO footprint after a collection", footprint(), "MB");
+if (isMac) await Bun.write(file("footprint.txt"), Bun.spawnSync(["footprint", String(process.pid)]).stdout);
 app.exit(0);

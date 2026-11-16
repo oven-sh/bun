@@ -2,6 +2,7 @@
 
 use core::cell::RefCell;
 use core::cmp::Ordering;
+use core::ops::Range;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -219,6 +220,10 @@ impl Customs {
         Rc::ptr_eq(&self.inherited, &other.inherited) && self.local == other.local
     }
 
+    pub(crate) fn has_same_locals(&self, other: &Customs) -> bool {
+        self.local == other.local
+    }
+
     /// The same declarations, under another parent.
     pub(crate) fn reparented(&self, parent: &Customs, recent: &Recent<Inherited>) -> Customs {
         let extend = |own: &Rc<Entries>| Inherited::extend(&parent.inherited, own, recent);
@@ -402,11 +407,14 @@ impl Syntax {
 
     pub(crate) fn compute(&self, value: &Text, cx: &Ctx) -> Option<Text> {
         if self.0.is_empty() {
-            Some(Rc::clone(value))
-        } else {
-            self.matching(value, Mode::Computed(cx))
-                .map(|it| it.1.into())
+            return Some(Rc::clone(value));
         }
+        let (computed, is_tainted) = (
+            self.matching(value, Mode::Computed(cx))?.1,
+            value.ends_with(TAINT),
+        );
+        (!is_tainted || !has_tainted_url(&computed, &[0..computed.len()]))
+            .then(|| tainted_if(is_tainted, &computed))
     }
 }
 
@@ -509,6 +517,12 @@ impl Registered {
 
     /// Of two computed values.
     pub(crate) fn lerp(&self, from: &[u8], to: &[u8], t: Mixing) -> Option<Text> {
+        if from.ends_with(TAINT) || to.ends_with(TAINT) {
+            return Some(tainted_if(
+                true,
+                &self.lerp(untainted(from), untainted(to), t)?,
+            ));
+        }
         let (kind, other) = (
             self.syntax.matching(from, Mode::Check)?.0,
             self.syntax.matching(to, Mode::Check)?.0,
@@ -891,6 +905,7 @@ pub(crate) struct Template(Vec<Part>);
 pub(crate) struct Stack {
     keys: smallvec::SmallVec<[Name; 8]>,
     cycle: Option<usize>,
+    has_queried_tainted: bool,
 }
 
 /// `None` if what `key` stands for depends on itself.
@@ -962,26 +977,34 @@ pub(crate) fn style_query(condition: &Condition, lookup: &mut dyn Lookup) -> Opt
         Declared::Text(text) => Some(Rc::clone(text)),
         Declared::Template(template) => template.value(lookup),
     };
+    let clean = |value: Option<Text>, lookup: &mut dyn Lookup| match value {
+        Some(value) if value.ends_with(TAINT) => {
+            lookup.stack().has_queried_tainted = true;
+            Some(untainted(&value).into())
+        }
+        value => value,
+    };
     match condition {
         Condition::Media(query) => Some(lookup.matches_media(query)),
         Condition::Style(name, None) => {
-            Some(lookup.var(*name) != lookup.wide(*name, Wide::Initial))
+            Some(clean(lookup.var(*name), lookup) != lookup.wide(*name, Wide::Initial))
         }
         Condition::Style(name, Some(declared)) => {
-            let (actual, expected) = (lookup.var(*name), value(declared, lookup));
+            let [actual, expected] =
+                [lookup.var(*name), value(declared, lookup)].map(|it| clean(it, lookup));
             Some(
                 match (
                     expected.as_deref().and_then(Wide::of),
                     lookup.syntax_of(*name),
                 ) {
                     (Some(wide @ (Wide::Initial | Wide::Inherit | Wide::Unset)), _) => {
-                        actual == lookup.wide(*name, wide)
+                        actual == clean(lookup.wide(*name, wide), lookup)
                     }
                     (Some(_), _) => false,
                     (None, Some(syntax)) => expected
                         .and_then(|it| lookup.compute(&syntax, &it, b""))
                         .is_some_and(|it| Some(it) == actual),
-                    (None, None) => expected == actual,
+                    (None, None) => expected.is_some() && expected == actual,
                 },
             )
         }
@@ -996,8 +1019,8 @@ pub(crate) fn style_query(condition: &Condition, lookup: &mut dyn Lookup) -> Opt
                 Kind::Resolution,
             ];
             let source = |it: &Result<Name, Declared>| match it {
-                Ok(name) => lookup.var(*name),
-                Err(declared) => value(declared, lookup),
+                Ok(name) => clean(lookup.var(*name), lookup),
+                Err(declared) => clean(value(declared, lookup), lookup),
             };
             let sources: Vec<_> = operands.iter().map(source).collect();
             let numbers = KINDS.iter().find_map(|kind| {
@@ -1019,6 +1042,51 @@ pub(crate) fn style_query(condition: &Condition, lookup: &mut dyn Lookup) -> Opt
 }
 
 const MAX_SUBSTITUTED: usize = 1 << 21;
+
+/// At the end of a value that depends on `attr()`. https://drafts.csswg.org/css-values-5/#attr-security
+const TAINT: &[u8] = b"/*\0*/";
+
+pub(crate) fn untainted(value: &[u8]) -> &[u8] {
+    value.strip_suffix(TAINT).unwrap_or(value)
+}
+
+fn tainted_if(is_tainted: bool, value: &[u8]) -> Text {
+    if is_tainted {
+        [value, TAINT].concat().into()
+    } else {
+        value.into()
+    }
+}
+
+pub(crate) fn has_tainted_url(source: &[u8], tainted: &[Range<usize>]) -> bool {
+    fn find(p: &mut P, tainted: &[Range<usize>], takes_strings: bool, depth: u8) -> bool {
+        let mut found = false;
+        loop {
+            p.skip_whitespace();
+            let start = p.position();
+            let Ok(token) = p.next().copied() else {
+                return found;
+            };
+            let is_url = match token {
+                Token::Function(name) if depth < 64 => {
+                    let takes_strings = ["url", "src", "image", "image-set", "-webkit-image-set"]
+                        .iter()
+                        .any(|it| eq(name, it));
+                    found |= nested(p, |p| Some(find(p, tainted, takes_strings, depth + 1)))
+                        .unwrap_or(true);
+                    false
+                }
+                Token::QuotedString(_) => takes_strings,
+                token => matches!(token, Token::UnquotedUrl(_)),
+            };
+            found |= is_url
+                && tainted
+                    .iter()
+                    .any(|it| it.start < p.position() && start < it.end);
+        }
+    }
+    with_parser(source, |p| find(p, tainted, false, 0))
+}
 
 /// Up to one of the delimiters.
 fn template(p: &mut P, depth: u8, until: Delimiters) -> Option<Template> {
@@ -1256,14 +1324,21 @@ impl Template {
             return lookup.var(name);
         }
         let mut out = Out::with_capacity(64);
-        self.substitute(lookup, &mut out)
-            .map(|()| out.trim_ascii().into())
+        let mut tainted = Vec::new();
+        self.substitute(lookup, &mut out, &mut tainted)
+            .map(|()| tainted_if(!tainted.is_empty(), out.trim_ascii()))
     }
 
     /// `None` if the result is invalid.
-    pub(crate) fn substitute(&self, lookup: &mut dyn Lookup, out: &mut Out) -> Option<()> {
+    pub(crate) fn substitute(
+        &self,
+        lookup: &mut dyn Lookup,
+        out: &mut Out,
+        tainted: &mut Vec<Range<usize>>,
+    ) -> Option<()> {
         let mut is_valid = true;
         for part in &self.0 {
+            let (start, known, mut is_tainted) = (out.len(), tainted.len(), false);
             let (value, fallback) = match part {
                 Part::Text(text) => {
                     append(out, text);
@@ -1275,7 +1350,11 @@ impl Template {
                     fallback.as_ref(),
                 ),
                 Part::Attr(name, kind, has_type, fallback) => match lookup.attr(name) {
-                    Some(value) => (kind.parse(name, &value, lookup), fallback.as_ref()),
+                    Some(value) => (
+                        kind.parse(name, &value, lookup)
+                            .inspect(|_| is_tainted = true),
+                        fallback.as_ref(),
+                    ),
                     None => (
                         (!has_type && fallback.is_none()).then(|| b"\"\""[..].into()),
                         fallback.as_ref(),
@@ -1283,19 +1362,26 @@ impl Template {
                 },
                 Part::Call(name, arguments) => (call(lookup, name, arguments), None),
                 Part::If(branches) => {
-                    let holds = |it: &&(Condition, Template)| {
+                    let outer = core::mem::take(&mut lookup.stack().has_queried_tainted);
+                    let found = branches.iter().find(|it| {
                         it.0.evaluate(&Queried(RefCell::new(&mut *lookup))) == Some(true)
-                    };
-                    let found = branches.iter().find(holds);
+                    });
+                    is_tainted = core::mem::replace(&mut lookup.stack().has_queried_tainted, outer);
                     (found.is_none().then(Text::default), found.map(|it| &it.1))
                 }
             };
             match value {
-                Some(value) => append(out, &value),
+                Some(value) => {
+                    is_tainted |= value.ends_with(TAINT);
+                    append(out, untainted(&value));
+                }
                 None => {
                     is_valid &= lookup.stack().cycle.is_none()
-                        && fallback.is_some_and(|it| it.substitute(lookup, out).is_some())
+                        && fallback.is_some_and(|it| it.substitute(lookup, out, tainted).is_some())
                 }
+            }
+            if is_tainted || tainted.len() > known {
+                tainted.push(start..out.len());
             }
             (out.len() <= MAX_SUBSTITUTED).then_some(())?;
         }

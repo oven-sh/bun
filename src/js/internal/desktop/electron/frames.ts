@@ -264,6 +264,11 @@ class LocalFrame {
     this.#state.input(event);
   }
 
+  focusedFrame() {
+    const { controller, handle } = this.context.page;
+    return controller?.focusedFrame() ?? handle;
+  }
+
   edit(name: string) {
     return this.context.page.controller?.edit(name);
   }

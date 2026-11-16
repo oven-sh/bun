@@ -3,6 +3,7 @@
 //! Native addons take JavaScript's thread for the main thread. They run on the latter while the former waits, and the
 //! other way around for the Node-API functions that they call.
 
+#[cfg(unix)]
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -18,15 +19,15 @@ static IS_LENT: AtomicBool = AtomicBool::new(false);
 /// What the main thread opens without waiting for JavaScript to ask.
 static KNOWN_LIBRARY: OnceLock<Option<Library>> = OnceLock::new();
 
+#[cfg(unix)]
 #[derive(Clone, Copy, PartialEq)]
 enum Role {
     Other,
-    #[cfg(unix)]
     Main,
-    #[cfg(unix)]
     JavaScript,
 }
 
+#[cfg(unix)]
 #[thread_local]
 static ROLE: Cell<Role> = Cell::new(Role::Other);
 
@@ -99,14 +100,6 @@ pub(crate) fn leave<R>(function: impl FnOnce() -> R) -> R {
 }
 
 #[cfg(unix)]
-fn library_of_app() -> Option<Vec<u8>> {
-    if bun_standalone_graph::Graph::is_in_executable() {
-        return bun_standalone_graph::desktop::library_in_bundle();
-    }
-    None
-}
-
-#[cfg(unix)]
 fn shows_nothing() -> bool {
     use bun_core::env_var;
     #[cfg(target_os = "macos")]
@@ -130,14 +123,20 @@ pub(crate) fn lend_if_needed(run: fn() -> !) {
         None if cfg!(target_os = "macos") => false,
         _ => return,
     };
-    let mut path = library_of_app();
-    if (path.is_none() && !is_asked_for) || shows_nothing() {
-        return;
-    }
-    if !bun_standalone_graph::Graph::is_in_executable() {
-        path = env_var::BUN_DESKTOP_LIBRARY
+    let path = if bun_standalone_graph::Graph::is_desktop_program() {
+        let Some(path) = bun_standalone_graph::desktop::library_in_bundle() else {
+            return;
+        };
+        Some(path)
+    } else if is_asked_for && !bun_standalone_graph::Graph::is_in_executable() {
+        env_var::BUN_DESKTOP_LIBRARY
             .get_not_empty()
-            .map(<[u8]>::to_vec);
+            .map(<[u8]>::to_vec)
+    } else {
+        return;
+    };
+    if shows_nothing() {
+        return;
     }
     IS_LENT.store(true, Ordering::Relaxed);
     let thread = std::thread::Builder::new()

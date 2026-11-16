@@ -56,9 +56,9 @@ const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
 ];
 /// What `--aot-assume` takes: promises about the program that the compiler cannot prove.
 const ASSUMPTIONS: &[&[u8]] = &[
-    // An object that a file of the program makes never reaches, in another realm, a file under the same top directory.
+    // An object that the files of the program make in one realm never reaches them in another. Copies do.
     b"separate-realms",
-    // No write under a computed name replaces a function of the language. One that tries throws.
+    // No write under a computed name, or by code that is handed a built-in object, replaces a function of the language. One that tries throws.
     b"locked-builtins",
     // What the files of `--aot-order` don't list is rarely run, and is better small than fast.
     b"complete-order",

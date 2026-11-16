@@ -250,6 +250,10 @@ impl Surface {
         }
     }
 
+    pub fn is_scrolling(&self) -> bool {
+        self.motion.is_scrolling()
+    }
+
     pub fn next_motion(&self) -> Option<Instant> {
         match self.motion.next {
             Next::Never => None,
@@ -457,6 +461,12 @@ pub fn with_motion(
         surface.window.map(window::request_frame);
     }
     was_used
+}
+
+pub fn change_motion(id: u32, f: impl FnOnce(&mut Motion)) {
+    if let Some(surface) = get(id) {
+        f(&mut surface.borrow_mut().motion);
+    }
 }
 
 /// In place of a display list, until the next one. 0 is no image.

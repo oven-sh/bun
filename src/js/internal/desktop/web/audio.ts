@@ -1207,13 +1207,13 @@ class Player extends Copied {
   ) {
     const { media } = this;
     if (/^(?:abort|emptied|play|ratechange)$/.test(type) || (type === "pause" && media.paused)) return;
+    if (type === "error" && !media.fail(code! | 0)) return;
     if (type === "pause" || type === "error") media.paused = true;
     this.#base = +time;
     this.#at = !media.paused && (type === "playing" || type === "timeupdate") ? now() : NaN;
     media.duration = +duration;
     media.readyState = readyState | 0;
     media.seeking = type === "seeking";
-    if (type === "error") media.fail(code! | 0);
     if (media.paused) this.setBusy(false);
     media.videoWidth = width! | 0;
     media.videoHeight = height! | 0;

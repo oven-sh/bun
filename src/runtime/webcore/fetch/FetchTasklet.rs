@@ -1051,6 +1051,16 @@ impl FetchTasklet {
                 .map_err(|e| Some(global_object.take_exception(e)))?;
             subject.put(&global_object, b"issuerCertificate", js_issuer);
             subject = js_issuer;
+            x509 = issuer;
+        }
+        unsafe extern "C" {
+            safe fn X509_check_issued(
+                issuer: &boringssl::c::X509,
+                subject: &boringssl::c::X509,
+            ) -> core::ffi::c_int;
+        }
+        if X509_check_issued(&x509, &x509) == 0 {
+            subject.put(&global_object, b"issuerCertificate", subject);
         }
         let js_hostname: JSValue =
             bun_string_jsc::create_utf8_for_js(&global_object, &certificate_info.hostname)

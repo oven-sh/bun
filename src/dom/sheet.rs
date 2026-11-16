@@ -26,6 +26,7 @@ keywords! {
 
 impl Wide {
     pub(crate) fn of(source: &[u8]) -> Option<Wide> {
+        let source = crate::custom::untainted(source);
         let is_escaped = || source.len() < 128 && bun_core::strings::contains_char(source, b'\\');
         Wide::from_name(source)
             .or_else(|| is_escaped().then(|| parse_all(source, |p| Wide::from_name(ident(p)?)))?)
@@ -567,7 +568,7 @@ struct Outline {
 }
 
 impl Outline {
-    fn new(source: &[u8]) -> Outline {
+    fn new(source: &[u8], defers: bool) -> Outline {
         let (mut outline, mut at, mut depth) = (Outline::default(), 0, 0);
         let (mut unescaped, mut required) = (Vec::new(), Vec::new());
         loop {
@@ -603,7 +604,8 @@ impl Outline {
             let (end, has_blocks) = scan::end_of_block(source, brace);
             at = (end + 1).min(source.len());
             let range = [start, brace, end].map(|it| it as u32);
-            match name.is_none()
+            match defers
+                && name.is_none()
                 && !has_blocks
                 && end > brace + 1
                 && scan::requirements(prelude, &mut unescaped, &mut required)
@@ -683,7 +685,7 @@ impl Prepared {
         Prepared {
             source,
             thread: thread
-                .spawn(move || crate::recovery::attempt(|| Outline::new(bytes)))
+                .spawn(move || crate::recovery::attempt(|| Outline::new(bytes, true)))
                 .ok(),
         }
     }
@@ -771,7 +773,10 @@ impl Sheet {
             raw,
             deferred,
             keys,
-        } = prepared.join().unwrap_or_else(|| Outline::new(&source));
+        } = prepared
+            .join()
+            .filter(|_| within != Within::Quirks)
+            .unwrap_or_else(|| Outline::new(&source, within != Within::Quirks));
         let sheet = Sheet {
             source: source.clone(),
             base_url: base_url.into(),
@@ -805,6 +810,7 @@ impl Sheet {
         let raw = &self.raw[rule as usize];
         let parser = Parser {
             namespaces: &self.namespaces,
+            is_quirky: self.within == Within::Quirks,
             ..Parser::default()
         };
         let list = || parser.parse(slice(&self.source, &(raw.start..raw.brace)));
@@ -948,10 +954,12 @@ impl Sheet {
                 Some(url) => ("url", url),
                 None => (
                     "local",
-                    function(p)
-                        .and_then(|_| nested(p, string))
-                        .map_or("", text)
-                        .into(),
+                    text(
+                        &function(p)
+                            .and_then(|_| nested(p, crate::hooks::family_name))
+                            .unwrap_or_default(),
+                    )
+                    .into(),
                 ),
             });
             json.extend(format!("{{\"{kind}\":").bytes());
@@ -1148,6 +1156,7 @@ pub(crate) fn scope_limits(prelude: &[u8], parser: Parser) -> Option<[Option<(Li
 
 pub(crate) struct ImportRule {
     pub(crate) url: Out,
+    pub(crate) modifiers: Out,
     /// Empty for an anonymous one.
     pub(crate) layer: Option<Vec<Out>>,
     pub(crate) supports: Option<Out>,
@@ -1156,7 +1165,10 @@ pub(crate) struct ImportRule {
 
 pub(crate) fn import_rule(prelude: &[u8]) -> Option<ImportRule> {
     parse_all(prelude, |p| {
-        let url = string(p).or_else(|| Some(link(p)?.0))?.to_vec();
+        let (url, modifiers) = string(p)
+            .map(|it| (it, &b""[..]))
+            .or_else(|| link(p))
+            .map(|it| (it.0.to_vec(), it.1.to_vec()))?;
         let argument = |p: &mut P, name: &str| {
             attempt(p, |p| p.expect_function_matching(name.as_bytes()).ok()).is_some()
         };
@@ -1175,6 +1187,7 @@ pub(crate) fn import_rule(prelude: &[u8]) -> Option<ImportRule> {
         };
         Some(ImportRule {
             url,
+            modifiers,
             layer,
             supports,
             media: raw(p).unwrap_or_default(),
@@ -1329,6 +1342,7 @@ impl Builder {
             in_scope_rule: cx.scope.is_some(),
             namespaces: &self.sheet.namespaces,
             is_strict: false,
+            is_quirky: self.sheet.within == Within::Quirks,
         };
         Some(match name {
             b"media" => {
@@ -1472,11 +1486,14 @@ impl Builder {
             write_list(path, ".", &mut prelude, |it, out| write_ident(it, out));
             prelude.push(b'{');
         }
-        let url = Ctx {
-            base_url: &self.sheet.base_url,
-            ..Ctx::dummy()
-        }
-        .url(&rule.url);
+        let url = request(
+            &rule.url,
+            &rule.modifiers,
+            &Ctx {
+                base_url: &self.sheet.base_url,
+                ..Ctx::dummy()
+            },
+        );
         self.sheet.imports.push(Import { url, prelude });
     }
 
@@ -1517,6 +1534,7 @@ impl Builder {
                 in_scope_rule: cx.scope.is_some(),
                 namespaces: &self.sheet.namespaces,
                 is_strict: false,
+                is_quirky: self.sheet.within == Within::Quirks,
             };
             if let Some(selectors) = parser
                 .parse(prelude)

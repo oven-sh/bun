@@ -248,9 +248,18 @@ impl Document {
         )
     }
 
-    pub(crate) fn timeline_source(&self, watched: &Watched) -> NodeId {
+    /// And the axis, which is relative to the nearest scroll container.
+    pub(crate) fn timeline_source(&self, watched: &Watched) -> (NodeId, usize) {
         let node = watched.node;
-        match watched.how {
+        let axis = |scroller: Option<BoxId>| match watched.axis {
+            Axis::X => 0,
+            Axis::Y => 1,
+            axis => usize::from(
+                (axis == Axis::Block)
+                    != self.boxes[scroller.unwrap_or(VIEWPORT)].mode.is_vertical(),
+            ),
+        };
+        let source = match watched.how {
             _ if node == 0 => 0,
             Watch::Scroller(Scroller::Root) => DOCUMENT,
             Watch::Scroller(Scroller::Itself) => {
@@ -260,15 +269,22 @@ impl Document {
                     node
                 }
             }
-            _ => self.subject(node).map_or(0, |(own, _)| {
+            _ => {
+                let Some((own, _)) = self.subject(node) else {
+                    return (0, 0);
+                };
                 let first = Some(own).filter(|it| self.boxes[*it].node != node);
-                let found = first
+                let mut scrollers = first
                     .into_iter()
                     .chain(self.boxes.containers(own))
-                    .find(|it| self.boxes[*it].scrolls());
-                found.map_or(DOCUMENT, |it| self.boxes[it].node)
-            }),
-        }
+                    .filter(|it| self.boxes[*it].scrolls())
+                    .peekable();
+                let axis = axis(scrollers.peek().copied());
+                let found = scrollers.find(|it| self.boxes[*it].overflow[axis] != Overflow::Clip);
+                return (found.map_or(DOCUMENT, |it| self.boxes[it].node), axis);
+            }
+        };
+        (source, axis(self.own_box(source)))
     }
 
     /// The box that it is or is in, and where it is in that.
@@ -285,15 +301,10 @@ impl Document {
     }
 
     pub(crate) fn snapshot(&self, watched: &Watched) -> Option<Snapshot> {
-        let source = self.timeline_source(watched);
+        let (source, axis) = self.timeline_source(watched);
         let scroller = self
             .own_box(source)
             .filter(|it| source != 0 && (*it == VIEWPORT || self.boxes[*it].scrolls()))?;
-        let axis = match watched.axis {
-            Axis::X => 0,
-            Axis::Y => 1,
-            axis => usize::from((axis == Axis::Block) != self.boxes[scroller].mode.is_vertical()),
-        };
         let [min, max] = self.scroll_range(scroller)[axis];
         let (offset, extent, zoom) = (
             self.scroll_offset(source)[axis].abs(),

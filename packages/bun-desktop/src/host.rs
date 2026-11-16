@@ -385,6 +385,10 @@ fn has_work() -> bool {
         || DEFERRED_FRAMES.with_borrow(|frames| !frames.is_empty())
 }
 
+pub fn has_input() -> bool {
+    bridge::has_events_but_frames() || thread::has_calls()
+}
+
 pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
     // An event loop that is busy asks after every task.
     const MIN_INTERVAL: Duration = Duration::from_millis(1);

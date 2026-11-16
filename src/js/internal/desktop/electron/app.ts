@@ -38,9 +38,16 @@ const loadKey = (): Promise<unknown> =>
   switches.$get("password-store") !== "basic" && !native.options.headless
     ? require("internal/desktop/electron/os_crypt").load()
     : Promise.$resolve();
+const isLoadingEntryPoint = $bindgen("desktop.bind.ts", "isLoadingEntryPoint");
+// The main script may be waiting for it at its top level.
+let isAwaited = false;
 const { emit } = EventEmitter.prototype;
 app.emit = function (name: string, ...args: unknown[]) {
   if (name !== "ready" || isReady) return emit.$call(this, name, ...args);
+  if (!isAwaited && isLoadingEntryPoint()) {
+    setTimeout(() => this.emit(name, ...args), 1);
+    return true;
+  }
   const { nativeTheme } = require("internal/desktop/system").api;
   loadKey().then(() => {
     isReady = true;
@@ -59,7 +66,10 @@ app.emit = function (name: string, ...args: unknown[]) {
   return true;
 };
 const startSoon = app.whenReady.bind(app);
-app.whenReady = () => ready.promise;
+app.whenReady = () => {
+  isAwaited = true;
+  return ready.promise;
+};
 app.isReady = () => isReady;
 
 const { hide, show, getLocale, getSystemLocale } = app;

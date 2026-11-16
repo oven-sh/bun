@@ -1037,8 +1037,10 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
             // Round-trip through DER so the WebCrypto import performs the same
             // validation as importKey.
             auto der = marshalAsymmetricKey(asymmetricKey(), isPublic);
-            if (!der)
+            if (!der) {
+                ERR_clear_error();
                 return throwDOMException(WebCore::OperationError, ""_s);
+            }
             auto importAlgorithm = WebCore::CryptoAlgorithmRegistry::singleton().create(identifier);
             importAlgorithm->importKey(isPublic ? WebCore::CryptoKeyFormat::Spki : WebCore::CryptoKeyFormat::Pkcs8, WebCore::KeyData { WTF::move(*der) }, *params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
             break;

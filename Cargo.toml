@@ -69,6 +69,7 @@ members = [
   "src/trim/removable_features",
   "src/highway",
   "src/histogram",
+  "src/http1",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -81,7 +82,6 @@ members = [
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/picohttp",
   "src/png",
   "src/s3_signing",
   "src/sql_jsc",
@@ -274,7 +274,7 @@ map_clone = "deny"
 trivially_copy_pass_by_ref = "deny"
 large_types_passed_by_value = "deny"
 large_enum_variant = "deny"
-large_stack_frames = "deny"
+large_unopt_stack_frames = "deny"
 vec_init_then_push = "deny"
 format_collect = "deny"
 manual_memcpy = "deny"
@@ -352,6 +352,8 @@ only_used_in_recursion = "allow"
 unnecessary_cast = "allow"
 new_ret_no_self = "allow"
 map_identity = "allow"
+# `v = Vec::new()` is how a buffer over its retention cap is freed; `clear()` keeps it
+new_instead_of_clear = "allow"
 
 [workspace.dependencies]
 rust-argon2 = { path = "vendor/rust-argon2" }
@@ -362,9 +364,7 @@ strum = { version = "0.26", features = ["derive"] }
 # implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
 # would bind `A` to `core::alloc::Allocator` directly) because it also enables
 # `min_specialization` on `T: Copy`, which our pinned nightly rejects with
-# "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
-# `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
-# without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
+# "cannot specialize on trait `Copy`". So: use the polyfill trait, and bridge
 # `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
@@ -448,6 +448,7 @@ bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
+bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -460,7 +461,6 @@ bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_picohttp = { path = "src/picohttp" }
 bun_png = { path = "src/png" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
@@ -515,6 +515,10 @@ bun_which = { path = "src/which" }
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
 # checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
 [profile.dev.package.bun_png]
+opt-level = 3
+
+# Runs for every line of a response head and every chunk of a body.
+[profile.dev.package.bun_http1]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

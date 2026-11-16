@@ -10,22 +10,10 @@ struct DhKeyPairJobCtx : KeyPairJobCtx {
     WTF_MAKE_TZONE_ALLOCATED(DhKeyPairJobCtx);
 
 public:
-    DhKeyPairJobCtx(ncrypto::DHPointer&& group, const KeyEncodingConfig& config)
-        : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
-        , m_prime(WTF::move(group))
-    {
-    }
-
-    DhKeyPairJobCtx(int primeLength, uint32_t generator, const KeyEncodingConfig& config)
-        : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
-        , m_prime(primeLength)
-        , m_generator(generator)
-    {
-    }
-
-    DhKeyPairJobCtx(ncrypto::BignumPointer&& prime, const KeyEncodingConfig& config)
+    DhKeyPairJobCtx(WTF::Variant<ncrypto::BignumPointer, int>&& prime, uint32_t generator, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
         , m_prime(WTF::move(prime))
+        , m_generator(generator)
     {
     }
 

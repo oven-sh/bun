@@ -480,6 +480,9 @@ unsafe impl Allocator for AstAlloc {
     }
 }
 
+// `Vec::{drain, splice, extract_if}` require it of any allocator but `Global`.
+impl core::alloc::AllocatorNightly for AstAlloc {}
+
 // ── AstVec construction helpers ──────────────────────────────────────────
 // `Vec<T, A>` has no `Default` / `From<&[T]>` for non-`Global` `A`, so the
 // 81 `DeclList::default()` / `::from_slice()` etc. call sites need these.

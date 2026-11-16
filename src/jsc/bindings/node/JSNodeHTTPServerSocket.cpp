@@ -240,25 +240,22 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
-/* Move the connection's captured trailer section out, returning its (ptr, length)
- * through a thread-local buffer that stays valid until the next call on this
- * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
+/* Copied and cleared by NodeHTTPResponse at the request's body fin, still inside the
  * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
-extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
+extern "C" size_t Bun__NodeHTTP__requestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
 {
     *out = nullptr;
     if (!socket || us_socket_is_closed(socket)) {
         return 0;
     }
     std::string* trailers = is_ssl ? requestTrailersFor<true>(socket) : requestTrailersFor<false>(socket);
-    if (trailers->empty()) {
-        return 0;
-    }
-    static thread_local std::string taken;
-    taken = std::move(*trailers);
-    trailers->clear();
-    *out = taken.data();
-    return taken.size();
+    *out = trailers->data();
+    return trailers->size();
+}
+
+extern "C" void Bun__NodeHTTP__clearRequestTrailerBytes(bool is_ssl, us_socket_t* socket)
+{
+    std::string().swap(is_ssl ? *requestTrailersFor<true>(socket) : *requestTrailersFor<false>(socket));
 }
 
 /* Parse a raw trailer section into a flat [name, value, ...] JSArray, or

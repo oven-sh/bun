@@ -2263,7 +2263,8 @@ impl VirtualMachine {
                 _ => break,
             };
             for hook in hooks {
-                (hook.func)(hook.ctx);
+                // SAFETY: `push_cleanup_hook`'s contract, and the list no longer has it.
+                unsafe { (hook.func)(hook.ctx) };
                 // A hook's C signature returns nothing, so one that entered JS
                 // (an addon finalizer) leaves what it threw pending: fold it here,
                 // this loop being its dispatcher.
@@ -3004,11 +3005,8 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
-    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
-    // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
-    // args are by-value scalars.
+    // safe: `worker_ptr` is C++'s own pointer handed back; remaining args are by-value scalars.
     safe fn Zig__GlobalObject__create(
-        console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
@@ -3247,16 +3245,8 @@ impl VirtualMachine {
                 crate::compiled_program::use_image(graph);
             }
         }
-        // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
-        // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
-        // the main thread).
-        let global = Zig__GlobalObject__create(
-            vm.console.as_client_ptr(),
-            context_id,
-            opts.mini_mode,
-            opts.eval_mode,
-            opts.worker_ptr,
-        );
+        let global =
+            Zig__GlobalObject__create(context_id, opts.mini_mode, opts.eval_mode, opts.worker_ptr);
         // Sets the bound for a thread that skipped it at start (`configure_thread_no_js`).
         bun_core::StackCheck::configure_thread();
         vm.global.set(global);
@@ -4008,9 +3998,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 }
 
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
-// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
-// `console_ptr` is an opaque round-trip pointer C++ stores into the new global
-// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
+// `&T` is ABI-identical to a non-null `T*`.
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
     safe fn Bun__promises__emitUnhandledRejectionWarning(
@@ -4023,7 +4011,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> JSValue;
-    safe fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
+    safe fn BakeCreateProdGlobal() -> *mut JSGlobalObject;
 }
 
 impl VirtualMachine {
@@ -4758,8 +4746,7 @@ impl VirtualMachine {
         // instead of `ZigGlobalObject__create`. Route through `init` then
         // swap the global.
         let vm = Self::init(log, init_opts)?;
-        // `console` is the opaque round-trip pointer C++ stores into the new global.
-        let new_global = BakeCreateProdGlobal(vm.console.as_client_ptr());
+        let new_global = BakeCreateProdGlobal();
         vm.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
         vm.regular_event_loop.global.set(NonNull::new(new_global));
@@ -5906,12 +5893,9 @@ impl VirtualMachine {
         self.module_loader.macro_load_states.clear();
 
         let old_global = self.global.get();
-        // `old_global` valid for VM lifetime (safe ZST-handle deref);
-        // `console` is the live per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
-            JSGlobalObject::opaque_ref(old_global),
-            self.console.as_client_ptr(),
-        );
+        // `old_global` valid for VM lifetime (safe ZST-handle deref).
+        let new_global: *mut JSGlobalObject =
+            JSGlobalObject::create_for_test_isolation(JSGlobalObject::opaque_ref(old_global));
         self.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global.set(NonNull::new(new_global));
@@ -7327,11 +7311,7 @@ impl VirtualMachine {
                             } else {
                                 let msg_chars = message.latin1();
                                 msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(
-                                        &msg_chars[..code.len()],
-                                        code,
-                                        false,
-                                    )
+                                    && bun_core::strings::eql_long(&msg_chars[..code.len()], code)
                                     && msg_chars[code.len()] == b':'
                                     && msg_chars[code.len() + 1] == b' '
                             };

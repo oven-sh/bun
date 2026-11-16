@@ -242,6 +242,11 @@ void us_nq_loop_drain(struct us_loop_t *loop);
 void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
 void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
 
+/* lsquic_engine_new after the one lsquic_global_init of the process: a second one breaks handshakes in flight. */
+struct lsquic_engine;
+struct lsquic_engine_api;
+struct lsquic_engine *us_quic_engine_new(unsigned flags, const struct lsquic_engine_api *api);
+
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,

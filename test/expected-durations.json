@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-match-that-failed-asks-the-matchers-beside-a-private-field-that-differs.test.ts": {
+    "default": 1500,
+    "asan": 6000
+  },
   "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts": {
     "default": 6200,
     "asan": 24800

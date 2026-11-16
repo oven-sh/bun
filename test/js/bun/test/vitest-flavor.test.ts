@@ -2600,6 +2600,49 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("a toMatchObject() that fails asks the matchers after the first mismatch, for its diff", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        let asked = 0;
+        const matchers = {
+          toBeAskedHere() {
+            asked++;
+            return { pass: true, message: () => "" };
+          },
+        };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          expect.extend(matchers);
+          test(name, async () => {
+            asked = 0;
+            let flagged;
+            try {
+              expect({ a: 1, b: 1 }).toMatchObject({ a: 2, b: expect.toBeAskedHere() });
+            } catch (error) {
+              flagged = Bun.stripANSI(error.message).split("\\n").filter(line => /^[-+] {3}/.test(line));
+            }
+            console.log(name, "caught:", asked, JSON.stringify(flagged));
+            // Each attempt that fails makes its message. Vitest itself asks the matcher only for the error that it reports.
+            asked = 0;
+            let attempts = 0;
+            await expect.poll(() => ({ ready: ++attempts >= 3, b: 1 }), { interval: 1 }).toMatchObject({ ready: true, b: expect.toBeAskedHere() });
+            console.log(name, "poll:", attempts, asked);
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        'bun caught: 1 ["-   \\"a\\": 2,","+   \\"a\\": 1,"]',
+        "bun poll: 3 3",
+        'vitest caught: 1 ["-   \\"a\\": 2,","+   \\"a\\": 1,"]',
+        "vitest poll: 3 3",
+      ],
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() with an own key that is spelled like a path", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

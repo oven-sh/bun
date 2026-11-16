@@ -1329,6 +1329,8 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       }
       const cases = {
         "toMatchObject": () => expect({ a: 1, b: 1 }).toMatchObject({ a: expect.any(Number), b: expect.toBeOdd() }),
+        "toMatchObject, a mismatch after the wait": () =>
+          expect({ a: 1, b: 1, c: 1 }).toMatchObject({ a: expect.toBeOdd(), b: 2, c: expect.toBeCalledFirst() }),
         "not.toMatchObject": () => expect({ a: 1, b: 1 }).not.toMatchObject({ a: expect.any(Number), b: expect.toBeOdd() }),
         "not.toMatchObject, resolvesTo": () =>
           expect({ a: 1, b: later("x") }).not.toMatchObject({ a: expect.any(Number), b: expect.resolvesTo.any(String) }),
@@ -1363,6 +1365,7 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     `);
     expect(stdout).toEqual([
       'toMatchObject: passes {"toBeOdd":1}',
+      'toMatchObject, a mismatch after the wait: fails {"toBeOdd":1,"toBeCalledFirst":1}',
       'not.toMatchObject: fails {"toBeOdd":1}',
       "not.toMatchObject, resolvesTo: fails {}",
       'toContainEqual, generator: passes {"generator":1,"toBeOdd":2}',
@@ -1463,6 +1466,22 @@ describe.concurrent("matchers that have to wait for a promise", () => {
           received.a = 2;
           return matcher;
         },
+        // The second pass fails at \`a\`. The diff of that failure asks the matcher of \`b\`, where the first pass waited.
+        // That is not the second pass at that place.
+        "toMatchObject() that differs before where it waited": () => {
+          let reads = 0;
+          return expect({ get a() { return reads++ ? 2 : 1; }, b: later(1) }).toMatchObject({ a: 1, b: expect.resolvesTo.any(Number) });
+        },
+        // The first pass asks the matcher of \`b\` and then waits at \`c\`. The diff of the second pass asks it again.
+        "the same with a matcher of expect.extend()": () => {
+          let reads = 0;
+          return expect({ get a() { return reads++ ? 2 : 1; }, b: 1, c: later(1) }).toMatchObject({ a: 1, b: expect.toBeAnything(), c: expect.resolvesTo.any(Number) });
+        },
+        // The diff does not start a matcher that would have to wait again: nothing would wait for it.
+        "the same with a matcher of expect.extend() that waits": () => {
+          let reads = 0;
+          return expect({ get a() { return reads++ ? 2 : 1; }, b: 1 }).toMatchObject({ a: 1, b: expect.toBeOdd() });
+        },
         // The same question, though not the same bits.
         "NaN": () => expect([NaN, 1]).toEqual([expect.toBeThis(NaN), expect.toBeOdd()]),
         "-0": () => expect([-0, 1]).toEqual([expect.toBeThis(-0), expect.toBeOdd()]),
@@ -1500,6 +1519,9 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       "another call of a mock: values changed | toBeOdd 1",
       "-0 that becomes 0: values changed | toBeThis",
       "what differs before the matcher comes to where it waited: values changed | toBeAnything,toBeOdd 1",
+      "toMatchObject() that differs before where it waited: values changed | ",
+      "the same with a matcher of expect.extend(): values changed | toBeAnything,toBeAnything",
+      "the same with a matcher of expect.extend() that waits: values changed | toBeOdd 1",
       "NaN: passes | toBeThis,toBeOdd 1",
       "-0: passes | toBeThis,toBeOdd 1",
       "a getter that returns another string with the same text: passes | toBeThis,toBeOdd 1",

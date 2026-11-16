@@ -609,6 +609,7 @@ test("the queue drains", async () => {
 
 - `interval` and `timeout` are measured in real time, even with [fake timers](/test/dates-times). Each attempt also advances the fake clock by `interval`.
 - `expect.poll()` doesn't support `.resolves`, `.rejects`, `toThrow()`, or the snapshot matchers. Use `vi.waitFor()` for those.
+- Each attempt that fails builds its failure message. For `toMatchObject()`, that also calls the asymmetric matchers after the first mismatch on each attempt, except a matcher that would have to wait for a promise.
 
 ## Assertion Counting
 

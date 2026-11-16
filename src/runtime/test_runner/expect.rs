@@ -363,16 +363,22 @@ impl Expect {
         false
     }
 
-    /// Called by C++ when matching with asymmetric matchers
+    /// Called by C++ for the message of a failed match: runs `run(context)` under a barrier, so no asymmetric matcher in it waits for a promise. `context` must be what `run` takes.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
-        instance_value: JSValue,
-        global_this: &JSGlobalObject,
-        out_flags: &mut FlagsCppType,
-        value: &mut JSValue,
-        any_constructor_type: &mut u8,
-    ) -> bool {
-        let flags: Flags = if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
+    pub(crate) unsafe extern "C" fn Expect__underBarrier(
+        context: *mut core::ffi::c_void,
+        run: unsafe extern "C" fn(*mut core::ffi::c_void),
+    ) {
+        let barrier = Pass::barrier();
+        let _entered = barrier.enter();
+        // SAFETY: the caller's contract.
+        unsafe { run(context) };
+    }
+
+    /// The flags of an asymmetric matcher, and for `expect.any()` the kind of its constructor. `None` for any other value.
+    #[inline(always)]
+    fn asymmetric_matcher_flags(instance_value: JSValue, any_constructor_type: &mut u8) -> Option<Flags> {
+        Some(if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectAny>() {
             *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8;
@@ -387,11 +393,27 @@ impl Expect {
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectStringContaining>() {
             instance.flags
-        } else if let Some(instance) = instance_value.as_class_ref::<ExpectArrayContaining>() {
-            instance.flags
         } else {
-            Flags::default()
-        };
+            instance_value.as_class_ref::<ExpectArrayContaining>()?.flags
+        })
+    }
+
+    /// Called by C++ for the message of a failed match. -1 if `value` is no asymmetric matcher. Else 1 if it is of `expect.resolvesTo` or `expect.rejectsTo`, which ask about what a promise settles to, and 0 if not.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect__asymmetricMatcherReadsPromise(value: JSValue) -> i8 {
+        Self::asymmetric_matcher_flags(value, &mut 0).map_or(-1, |flags| i8::from(flags.promise() != Promise::None))
+    }
+
+    /// Called by C++ when matching with asymmetric matchers
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
+        instance_value: JSValue,
+        global_this: &JSGlobalObject,
+        out_flags: &mut FlagsCppType,
+        value: &mut JSValue,
+        any_constructor_type: &mut u8,
+    ) -> bool {
+        let flags = Self::asymmetric_matcher_flags(instance_value, any_constructor_type).unwrap_or_default();
 
         *out_flags = flags.encode();
 
@@ -2462,7 +2484,7 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute, Expect__underBarrier, Expect__asymmetricMatcherReadsPromise
 
 #[cfg(test)]
 mod tests {

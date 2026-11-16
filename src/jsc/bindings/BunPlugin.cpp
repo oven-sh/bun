@@ -8854,33 +8854,37 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
 }
 
-static bool hasUncalledAsyncFactory(Zig::JSModuleMock* mock)
+bool isAsyncFunctionWithOwnAwait(JSC::VM& vm, JSC::JSValue value)
 {
-    if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)
-        return false;
-    // Empty for an automock.
-    JSValue value = mock->factory.get();
 #if ENABLE(AOT)
     // Compiled functions have no executable. The build reports what the parser below reports.
-    if (JSObject* compiled = value ? value.getObject() : nullptr; compiled && compiled->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(compiled))
+    if (JSObject* compiled = value ? value.getObject() : nullptr; compiled && vm.hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(compiled))
         return JSC::AOT::hasOwnAwait(compiled) || JSC::AOT::declaredAs(compiled) == JSC::AOT::DeclaredAs::AsyncGeneratorFunction;
 #endif
-    auto* factory = value ? dynamicDowncast<JSC::JSFunction>(value) : nullptr;
-    if (!factory || factory->isHostOrBuiltinFunction())
+    auto* function = value ? dynamicDowncast<JSC::JSFunction>(value) : nullptr;
+    if (!function || function->isHostOrBuiltinFunction())
         return false;
-    auto* executable = factory->jsExecutable();
+    auto* executable = function->jsExecutable();
     if (!JSC::isAsyncFunctionParseMode(executable->parseMode()))
         return false;
-    // The parser says so once the body is compiled. Without an `await` of its own it settles during the call, so require() gets the mock.
-    auto& vm = mock->vm();
+    // The parser says so once the body is compiled. Without an `await` of its own the function settles during the call.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::CodeBlock* codeBlock = nullptr;
-    executable->prepareForExecution<JSC::FunctionExecutable>(vm, factory, factory->scope(), JSC::CodeSpecializationKind::CodeForCall, codeBlock);
+    executable->prepareForExecution<JSC::FunctionExecutable>(vm, function, function->scope(), JSC::CodeSpecializationKind::CodeForCall, codeBlock);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         return false;
     }
     return !(executable->features() & JSC::AsyncFunctionWithoutAwaitFeature);
+}
+
+// Without an `await` of its own the factory settles during the call, so require() gets the mock.
+static bool hasUncalledAsyncFactory(Zig::JSModuleMock* mock)
+{
+    if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)
+        return false;
+    // Empty for an automock.
+    return isAsyncFunctionWithOwnAwait(mock->vm(), mock->factory.get());
 }
 
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock)

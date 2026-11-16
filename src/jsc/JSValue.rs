@@ -2830,6 +2830,7 @@ impl JSValue {
         })
     }
     /// `expect(a).toMatchObject(b)` and snapshot property matchers. With `rows_when: Some(result)`, also the matchers that passed if the comparison gives `result`.
+    /// The rows of a comparison that failed are for its diff. They also have the matchers that pass after the first mismatch, where the comparison stopped.
     pub fn jest_deep_match(
         self,
         subset: JSValue,

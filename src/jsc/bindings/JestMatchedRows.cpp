@@ -1,6 +1,8 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "GeneratedExpect.h"
+#include "JSDOMWrapper.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include "headers.h"
@@ -13,6 +15,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace Bun {
 
@@ -433,6 +436,259 @@ JSC::JSValue JestMatchedRows::forSerializers(JSC::JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     }
     return merged;
+}
+
+} // namespace Bun
+
+// expect.rs. -1 if `value` is no asymmetric matcher. Else whether it is of expect.resolvesTo or expect.rejectsTo.
+extern "C" int8_t Expect__asymmetricMatcherReadsPromise(JSC::EncodedJSValue value);
+
+namespace Bun {
+
+// The printer has an arm of its own for each of these types, and that arm reads no row at a key.
+bool printsNoRowAtKeysOf(JSC::JSType type)
+{
+    switch (type) {
+    case JSC::ErrorInstanceType:
+    case JSC::ProxyObjectType:
+    case JSC::JSMapType:
+    case JSC::JSSetType:
+    case JSC::JSWeakMapType:
+    case JSC::JSWeakSetType:
+    case JSC::JSDateType:
+    case JSC::JSPromiseType:
+    case JSC::RegExpObjectType:
+    case JSC::StringObjectType:
+    case JSC::DerivedStringObjectType:
+    case JSC::ArrayBufferType:
+    case JSC::DirectArgumentsType:
+    case JSC::ScopedArgumentsType:
+    case JSC::ClonedArgumentsType:
+        return true;
+    default:
+        return JSC::isFunctionType(type) || JSC::isTypedArrayTypeIncludingDataView(type);
+    }
+}
+
+// Whether `object` is a plain object or array with no getter, so that a read of what it holds runs no user code.
+static bool isPlainWithNoGetter(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    JSC::JSType type = object->type();
+#if ENABLE(AOT)
+    // The structure of a compiled object does not say what it holds. The engine says that when it lists them.
+    if (type == JSC::CompiledObjectType)
+        return object->getPrototypeDirect() == globalObject->objectPrototype();
+#endif
+    if (type == JSC::ArrayType ? object->getPrototypeDirect() != globalObject->arrayPrototype() : type != JSC::FinalObjectType || object->getPrototypeDirect() != globalObject->objectPrototype())
+        return false;
+    return !object->structure()->hasAnyKindOfGetterSetterProperties();
+}
+
+// Calls `visit` with each value that such an object holds. False, before any call, if it cannot list them with no user code. `visit` must allocate nothing in the heap of the VM.
+template<typename Visit>
+static bool visitValuesOfPlain(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const Visit& visit)
+{
+    using namespace JSC;
+    VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    if (object->type() == CompiledObjectType) {
+        // A compiled object stands in the place of a plain one. The engine lists what it holds, and runs no code for that.
+        MarkedArgumentBuffer values;
+        bool hasAccessor = false;
+        auto listed = AOT::PropertyWalk::forEachOwnProperty(vm, object, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+            hasAccessor |= !!(own.attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue));
+            values.append(own.value);
+            return IterationStatus::Continue;
+        });
+        if (listed != AOT::PropertyWalk::Result::Completed || hasAccessor || values.hasOverflowed())
+            return false;
+        for (size_t index = 0; index < values.size(); index++)
+            visit(values.at(index));
+        return true;
+    }
+#endif
+    switch (object->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_DOUBLE_INDEXING_TYPES:
+        break;
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        Butterfly* butterfly = object->butterfly();
+        for (unsigned index = 0, length = butterfly->publicLength(); index < length; index++)
+            visit(butterfly->contiguous().at(object, index).get());
+        break;
+    }
+    default:
+        return false;
+    }
+    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        visit(object->getDirect(entry.offset()));
+        return true;
+    });
+    return true;
+}
+
+// Whether `value` can lead to a matcher. Runs no user code: it reads plain objects and arrays as they are, and says yes for any other kind of object. `scanned` gets the answer for each object that it read all of.
+static bool leadsToMatcher(JSC::JSGlobalObject* globalObject, JSC::JSValue value, UncheckedKeyHashMap<JSC::JSObject*, bool>& scanned)
+{
+    // An array has an empty value where it has a hole.
+    if (!value || !value.isObject())
+        return false;
+    JSC::JSObject* object = asObject(value);
+    // The elements of a typed array are numbers.
+    if (JSC::isTypedArrayType(object->type())) {
+        scanned.add(object, false);
+        return false;
+    }
+    if (!isPlainWithNoGetter(globalObject, object) || !globalObject->vm().isSafeToRecurse())
+        return true;
+    // An object that the scan is still inside of counts as one that leads to a matcher.
+    auto added = scanned.add(object, true);
+    if (!added.isNewEntry)
+        return added.iterator->value;
+
+    bool leads = false;
+    bool listed = visitValuesOfPlain(globalObject, object, [&](JSC::JSValue held) {
+        leads |= leadsToMatcher(globalObject, held, scanned);
+    });
+    if (!listed) {
+        scanned.remove(object);
+        return true;
+    }
+    scanned.set(object, leads);
+    return leads;
+}
+
+bool scanPatternForMatchers(JSC::JSGlobalObject* globalObject, JSC::JSValue received, JSC::JSValue pattern, DeepMatchStateOfCollector& state)
+{
+    // The diff shows no row at a key of such a received value, whatever the pattern holds.
+    if (!received.isObject() || printsNoRowAtKeysOf(asObject(received)->type()))
+        return false;
+    if (!leadsToMatcher(globalObject, pattern, state.patternLeadsToMatcher))
+        return false;
+    // A matcher that the walk asks can take an object out of the pattern. Kept alive, no other object gets the address of one that the scan read.
+    for (JSC::JSObject* object : state.patternLeadsToMatcher.keys())
+        state.gcBuffer.append(object);
+    if (state.gcBuffer.hasOverflowed()) [[unlikely]]
+        state.patternLeadsToMatcher.clear();
+    return true;
+}
+
+// Adds to `matchers` each asymmetric matcher that `held` holds in plain objects and arrays. True if one is of expect.resolvesTo or expect.rejectsTo, or if the stack is too short to look.
+static bool findMatchersIn(JSC::JSGlobalObject* globalObject, JSC::JSValue held, WTF::HashSet<JSC::JSObject*>& visited, WTF::Vector<JSC::JSObject*, 8>& matchers)
+{
+    if (!held || !held.isObject())
+        return false;
+    JSC::JSObject* object = asObject(held);
+    if (object->type() == JSC::JSType(WebCore::JSDOMWrapperType)) {
+        int8_t readsPromise = Expect__asymmetricMatcherReadsPromise(JSC::JSValue::encode(object));
+        if (!readsPromise)
+            matchers.append(object);
+        return readsPromise > 0;
+    }
+    if (!isPlainWithNoGetter(globalObject, object) || !visited.add(object).isNewEntry)
+        return false;
+    if (!globalObject->vm().isSafeToRecurse())
+        return true;
+    bool found = false;
+    visitValuesOfPlain(globalObject, object, [&](JSC::JSValue value) {
+        found = found || findMatchersIn(globalObject, value, visited, matchers);
+    });
+    return found;
+}
+
+// One of expect.extend() whose function has an `await` of its own gives a promise that is pending. expect.objectContaining() and expect.arrayContaining() ask the matchers that they hold, and those of expect.resolvesTo and expect.rejectsTo can meet a pending promise.
+bool answerCanNeedAWait(JSC::JSGlobalObject* globalObject, JSC::JSObject* matcher)
+{
+    using namespace Bun::Bindgen::Generated;
+    WTF::HashSet<JSC::JSObject*> visited;
+    WTF::Vector<JSC::JSObject*, 8> matchers;
+    matchers.append(matcher);
+    while (!matchers.isEmpty()) {
+        JSC::JSObject* next = matchers.takeLast();
+        JSC::JSValue held;
+        if (auto* custom = dynamicDowncast<JSExpectCustomAsymmetricMatcher>(next)) {
+            if (isAsyncFunctionWithOwnAwait(globalObject->vm(), custom->m_matcherFn.get()))
+                return true;
+        } else if (auto* containing = dynamicDowncast<JSExpectObjectContaining>(next))
+            held = containing->m_objectValue.get();
+        else if (auto* containing = dynamicDowncast<JSExpectArrayContaining>(next))
+            held = containing->m_arrayValue.get();
+        if (findMatchersIn(globalObject, held, visited, matchers))
+            return true;
+    }
+    return false;
+}
+
+} // namespace Bun
+
+// Rust enters a barrier (expect_deferred.rs) and calls `run(context)` under it, so no asymmetric matcher in there waits for a promise.
+extern "C" void Expect__underBarrier(void* context, void (*run)(void*));
+
+namespace {
+struct CollectingWalk {
+    JSC::JSGlobalObject* globalObject;
+    JSC::ThrowScope& scope;
+    Bun::DeepMatchStateOfCollector& state;
+    JSC::JSValue received;
+    JSC::JSValue pattern;
+
+    static void run(void* context)
+    {
+        auto& walk = *static_cast<CollectingWalk*>(context);
+        Bun::collectMatchersAfterMismatch(walk.globalObject, walk.scope, walk.state, walk.received, walk.pattern);
+    }
+};
+}
+
+namespace Bun {
+
+// The second walk is for the message alone: whatever it throws, the match has failed. Out of line: its one caller is the entry of every toMatchObject().
+NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalObject, DeepMatchState& comparison, JSC::JSValue received, JSC::JSValue pattern)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    DeepMatchStateOfCollector state;
+    // Most patterns are plain objects and arrays with no matcher. The walk has none to ask then.
+    if (comparison.recorded.hasOverflowed() || !scanPatternForMatchers(globalObject, received, pattern, state))
+        RELEASE_AND_RETURN(scope, matchedRowsFrom(globalObject, comparison, received, pattern));
+
+    state.records = true;
+    state.comparison = &comparison;
+    // The walk needs a record only at two values that it goes into: the roots, and the two values of such a record whose pattern can lead to a matcher. The comparison records two values before the records at them.
+    using TwoValues = std::pair<JSC::JSCell*, JSC::JSCell*>;
+    WTF::HashSet<TwoValues> entered;
+    entered.add(TwoValues { received.asCell(), pattern.asCell() });
+    bool needsEachRecord = false;
+#if ENABLE(AOT)
+    // Not so for the two values of a private field of a compiled class: the comparison goes into them and leaves no record that leads there.
+    needsEachRecord = globalObject->vm().aotState().someClassHasPrivateNames;
+#endif
+    for (unsigned record = 0, count = comparison.recordedNames.size(); record < count; record++) {
+        TwoValues holder { comparison.recorded.at(record * 4).asCell(), comparison.recorded.at(record * 4 + 1).asCell() };
+        if (!needsEachRecord && !entered.contains(holder))
+            continue;
+        if (JSC::JSValue patternOfValue = comparison.recorded.at(record * 4 + 3); patternOfValue.isObject()) {
+            auto scanned = state.patternLeadsToMatcher.find(asObject(patternOfValue));
+            if (scanned != state.patternLeadsToMatcher.end() && !scanned->value)
+                continue;
+            entered.add(TwoValues { comparison.recorded.at(record * 4 + 2).asCell(), patternOfValue.asCell() });
+        }
+        state.recordOfComparison.set(DeepMatchStateOfCollector::RecordKey { holder.first, holder.second, comparison.recordedNames[record].impl() }, record);
+    }
+
+    CollectingWalk walk { globalObject, scope, state, received, pattern };
+    Expect__underBarrier(&walk, CollectingWalk::run);
+    JSC::JSValue completed;
+    if (!scope.exception()) [[likely]]
+        completed = matchedRowsFrom(globalObject, state, received, pattern);
+    if (scope.exception()) [[unlikely]] {
+        // The walk gave up (the stack ran out, or the two roots threw): the message gets the rows of the comparison. A termination stays.
+        if (!scope.tryClearException())
+            return {};
+        RELEASE_AND_RETURN(scope, matchedRowsFrom(globalObject, comparison, received, pattern));
+    }
+    return completed;
 }
 
 } // namespace Bun

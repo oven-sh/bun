@@ -5,6 +5,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSType.h"
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
@@ -513,6 +514,8 @@ struct DeepMatchState {
     bool records { false };
     // Set by the first record of a matched asymmetric matcher. Without one there is no row to show.
     bool recordedMatcher { false };
+    // Set when the comparison ended at a matcher of the pattern that said no. The last record is then of that matcher beside itself, which gives no row.
+    bool endedAtMatcherThatSaidNo { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
 
@@ -529,6 +532,40 @@ struct DeepMatchState {
     }
 };
 
+// What a walk of Bun__deepMatch does at a mismatch.
+enum class DeepMatchWalk : uint8_t {
+    // It returns false.
+    Stops,
+    // It goes on, and gives no result. It records the matchers of the pattern that pass, for the message of a comparison that failed.
+    Collects,
+};
+
+// The state of a walk that collects.
+struct DeepMatchStateOfCollector : DeepMatchState {
+    using RecordKey = std::tuple<JSC::JSCell*, JSC::JSCell*, UniquedStringImpl*>;
+    // The comparison that failed, and the number of its record for a holder, the pattern of that holder and a name. At such a key the walk takes what the comparison found, and reads neither value again.
+    DeepMatchState* comparison { nullptr };
+    HashMap<RecordKey, unsigned> recordOfComparison;
+    // The two values that the walk starts in.
+    std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue> roots {};
+    // For each object of the pattern that scanPatternForMatchers read all of: whether it leads to a matcher. The walk does not go into one that does not.
+    UncheckedKeyHashMap<JSC::JSObject*, bool> patternLeadsToMatcher;
+};
+
+template<DeepMatchWalk walk>
+using DeepMatchStateOf = std::conditional_t<walk == DeepMatchWalk::Collects, DeepMatchStateOfCollector, DeepMatchState>;
+
+// JestMatchedRows.cpp. Whether the diff shows no row at a key of an object of this type. A walk that collects asks nothing there.
+bool printsNoRowAtKeysOf(JSC::JSType);
+// JestMatchedRows.cpp. Whether a walk that collects can come to a matcher in `pattern` whose row the diff of `received` shows. Runs no user code.
+bool scanPatternForMatchers(JSC::JSGlobalObject*, JSC::JSValue received, JSC::JSValue pattern, DeepMatchStateOfCollector&);
+// JestMatchedRows.cpp. Whether an answer of the asymmetric matcher `matcher` can need a wait, whatever it is asked about. Runs no user code.
+bool answerCanNeedAWait(JSC::JSGlobalObject*, JSC::JSObject* matcher);
+// BunPlugin.cpp. Whether `function` is an async function with an `await` of its own, so that a call of it gives a promise that is pending. Runs no user code.
+bool isAsyncFunctionWithOwnAwait(JSC::VM&, JSC::JSValue function);
+// bindings.cpp. The walk that collects, over the two values of a comparison that failed.
+void collectMatchersAfterMismatch(JSC::JSGlobalObject*, JSC::ThrowScope&, DeepMatchStateOfCollector&, JSC::JSValue received, JSC::JSValue pattern);
+
 // JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
 struct MatchedRow {
     JSC::JSValue value;
@@ -537,6 +574,8 @@ struct MatchedRow {
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
 // The rows cell for what `state` recorded (one cell per call), or empty if the root gets no row. Takes the names out of `state`. Enters no JavaScript.
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
+// The same for a comparison that failed, together with the matchers of the pattern that pass after the first mismatch. It asks those, so it enters JavaScript.
+JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject*, DeepMatchState& comparison, JSC::JSValue root, JSC::JSValue rootPattern);
 // `value` is empty if the place has no row of that name or index: the printer then reads the property from the object.
 MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName);
 MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index);
@@ -556,13 +595,13 @@ void appendMissingMatchedRowNames(JSC::JSCell* rows, uint32_t place, std::span<c
  *
  * `object` and `subset` must be objects. Neither is changed.
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk = Bun::DeepMatchWalk::Stops>
 bool Bun__deepMatch(
     JSC::JSValue object,
     JSC::JSValue subset,
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
-    Bun::DeepMatchState& state,
+    Bun::DeepMatchStateOf<walk>& state,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

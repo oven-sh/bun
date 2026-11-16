@@ -1840,6 +1840,78 @@ describe("bundler", () => {
     },
   });
 
+  // All `case` bodies share the switch's block scope: a `let` in one case is
+  // visible (in TDZ or not) from closures and hoisted functions in the other
+  // cases, so it must not be inlined away before those have been counted.
+  itBundled("minify/SingleUseSubstitutionSeesAllSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        export function later(n, g) { switch (n) { case 0: let a = g(); throw a; case 1: return () => a; } }
+        export function earlier(n, g) { switch (n) { case 1: return () => a; case 0: let a = g(); throw a; } }
+        export function hoisted(n, g) { switch (n) { case 0: let a = g(); throw a; case 1: return h; function h() { return a; } } }
+        export function alone(n, g) { switch (n) { case 0: let a = g(); throw a; default: return null; } }
+      `,
+      "/test.js": /* js */ `
+        import { later, earlier, hoisted, alone } from "./entry.js";
+        globalThis.keep = [earlier, hoisted, alone];
+        const read = later(1, null);
+        // TDZ error from the switch-scoped \`a\`, not "a is not defined" from a dangling global reference
+        try { read(); console.log("unreachable"); } catch (e) { console.log(e.constructor.name, /initiali[sz]/.test(e.message)); }
+      `,
+    },
+    entryPoints: ["/test.js"],
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code.match(/let a = g\(\);\s*throw a;/g)).toHaveLength(3);
+      expect(code).toContain("throw g();");
+    },
+    run: { file: "/out.js", stdout: "ReferenceError true" },
+  });
+  // The same pass deletes a leading literal `const` whose use count is zero,
+  // which means that every read was inlined. `--no-bundle` for a browser
+  // target inlines no read, so a read in a later case still needs the
+  // declaration.
+  itBundled("minify/InlinedConstRemovalSeesAllSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        export function f(k) {
+          switch (k) {
+            case 0:
+              const early = 2;
+            case 1:
+              const read = () => [early, early];
+              return read();
+          }
+        }
+        console.log(JSON.stringify(f(0)));
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("const early = 2");
+    },
+    run: { stdout: "[2,2]" },
+  });
+  // The removal keeps the `const` when the scope has a direct eval, which can
+  // read it by name. A direct eval in a later case marks the scope only when
+  // that case is visited.
+  itBundled("minify/InlinedConstRemovalSeesDirectEvalInAllSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        function f(v) { switch (v) { case 1: const n = "C"; case 2: return eval("n"); } }
+        console.log(f(1));
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('const n = "C"');
+    },
+    run: { stdout: "C" },
+  });
   // A single-use `let` is substituted into whichever child of the next
   // expression reads it. `a` is used where the substitution must happen;
   // `keep` where a side effect in between must block it.

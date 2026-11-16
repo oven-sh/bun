@@ -2419,6 +2419,13 @@ impl Pollable {
 // pulling `bun_sys::syslog!` (tier inversion). Same `[sys]` tag at runtime.
 crate::declare_scope!(SYS, visible);
 
+/// One `poll(2)` call — libc-convention return.
+#[cfg(not(windows))]
+pub fn poll_once(fds: &mut [libc::pollfd], timeout_ms: core::ffi::c_int) -> core::ffi::c_int {
+    // SAFETY: the kernel reads and writes `fds.len()` entries.
+    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, timeout_ms) }
+}
+
 /// Non-blocking poll for readability. POSIX-only.
 #[cfg(not(windows))]
 pub fn is_readable(fd: Fd) -> Pollable {
@@ -2428,8 +2435,7 @@ pub fn is_readable(fd: Fd) -> Pollable {
         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -2467,8 +2473,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup

@@ -4,9 +4,6 @@ use core::ptr;
 use crate::{
     ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
 };
-use bun_alloc::mimalloc;
-
-bun_core::declare_scope!(ArrayBuffer, visible);
 
 /// `void (*)(void* bytes, void* deallocatorContext)` called on the JS thread
 /// when a zero-copy ArrayBuffer/typed array backing store is collected.
@@ -363,13 +360,13 @@ impl ArrayBuffer {
     /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it as an
     /// `ArrayBuffer` without copying. The buffer is released via
     /// [`MarkedArrayBuffer_deallocator`] when the resulting JS object is
-    /// collected (see [`ArrayBuffer::to_js`] / [`ArrayBuffer::to_js_unchecked`]).
+    /// collected (see [`ArrayBuffer::to_js_unchecked`]).
     ///
     /// Prefer this over `Box::leak` + [`ArrayBuffer::from_bytes`] at call sites
     /// so the ownership transfer is explicit.
     pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> ArrayBuffer {
         let len = bytes.len();
-        // Ownership transfers to JSC; `to_js` installs a deallocator that
+        // Ownership transfers to JSC; `to_js_unchecked` installs a deallocator that
         // `mi_free`s the pointer on GC. `into_raw` (not `leak`) expresses that
         // this is an FFI hand-off, not a leak.
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
@@ -430,53 +427,6 @@ impl ArrayBuffer {
                 self.ptr.cast(),
             )
         }
-    }
-
-    pub fn to_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        if !self.value.is_empty() {
-            return Ok(self.value);
-        }
-
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator.
-        // Only meaningful when mimalloc is the global allocator; otherwise the
-        // probe always returns false and we'd drop the deallocator for buffers we own.
-        if self.len > 0
-            && bun_alloc::USE_MIMALLOC
-            && !mimalloc::mi_is_in_heap_region(self.ptr.cast())
-        {
-            bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
-
-            if self.typed_array_type == JSType::ArrayBuffer {
-                // SAFETY: the descriptor's `ptr` is the live backing
-                // allocation of `byte_len` bytes. It is not mimalloc-owned
-                // (probe above), so no deallocator is installed: JSC never
-                // frees it and the bytes stay live for the object's lifetime
-                // (static/extern-owned data, per the log line above).
-                return unsafe {
-                    make_array_buffer_with_bytes_no_copy(
-                        ctx,
-                        self.ptr.cast(),
-                        self.byte_len,
-                        None,
-                        ptr::null_mut(),
-                    )
-                };
-            }
-
-            // SAFETY: same as the ArrayBuffer arm above.
-            return unsafe {
-                make_typed_array_with_bytes_no_copy(
-                    ctx,
-                    self.typed_array_type.to_typed_array_type(),
-                    self.ptr.cast(),
-                    self.byte_len,
-                    None,
-                    ptr::null_mut(),
-                )
-            };
-        }
-
-        self.to_js_unchecked(ctx)
     }
 
     /// Hand this descriptor's bytes to JSC with a caller-supplied finalizer:

@@ -265,7 +265,7 @@ impl AnyRequestContext {
 
     pub fn write_chunk(
         self,
-        data: &crate::webcore::streams::Result,
+        data: &crate::webcore::streams::Result<'_>,
     ) -> crate::webcore::streams::Writable {
         dispatch!(self, crate::webcore::streams::Writable::Done, |_T, ctx| ctx
             .write_chunk(data))

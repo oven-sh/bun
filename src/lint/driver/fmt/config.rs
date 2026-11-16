@@ -1006,6 +1006,15 @@ struct Listed {
     is_project_root: bool,
 }
 
+/// What finding the options for a file may do. Each includes those before.
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
+pub(crate) enum May {
+    Nothing,
+    /// Not during the search for files, when a configuration file may yet write them.
+    ReadFiles,
+    Warn,
+}
+
 pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
@@ -1921,27 +1930,28 @@ impl<'c> Configs<'c> {
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path` in `scope`.
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
-        self.options_of(scope, Some(path), true)
+        self.options_of(scope, Some(path), May::Warn)
     }
 
-    /// Like [`Configs::options_for`]. `None` if that fails or warns.
-    pub(crate) fn sound_options_for(&self, scope: &Scope, path: &[u8]) -> Option<Resolved> {
-        self.options_of(scope, Some(path), false).ok()
+    /// Like [`Configs::options_for`]. `None` if that fails, or does what it may not.
+    pub(crate) fn sound_options_for(
+        &self,
+        scope: &Scope,
+        path: &[u8],
+        may: May,
+    ) -> Option<Resolved> {
+        self.options_of(scope, Some(path), may).ok()
     }
 
     /// Same for text without a file name, like `prettier --parser x < file`. `scope` is the working directory's.
     /// Overrides and `.editorconfig` sections match on a name, so they don't apply.
     pub(crate) fn options_without_name(&self, scope: &Scope) -> Result<Resolved, Fatal> {
-        self.options_of(scope, None, true)
+        self.options_of(scope, None, May::Warn)
     }
 
-    fn options_of(
-        &self,
-        scope: &Scope,
-        path: Option<&[u8]>,
-        may_warn: bool,
-    ) -> Result<Resolved, Fatal> {
-        let before_warning = || may_warn.then_some(()).ok_or(Fatal(Vec::new()));
+    fn options_of(&self, scope: &Scope, path: Option<&[u8]>, may: May) -> Result<Resolved, Fatal> {
+        let before = |what: May| (may >= what).then_some(()).ok_or(Fatal(Vec::new()));
+        let before_warning = || before(May::Warn);
         let directory = path.map_or(&self.environment.cwd[..], paths::dirname);
         let config = self.config_of(scope)?;
         let is_oxfmt = self.is_oxfmt_for(scope);
@@ -2194,6 +2204,7 @@ impl<'c> Configs<'c> {
             ]);
         }
         if sort.organizes_imports() {
+            before(May::ReadFiles)?;
             for (name, value) in self.tsconfig_of(directory).iter() {
                 sort.set(name, value);
             }
@@ -2204,6 +2215,7 @@ impl<'c> Configs<'c> {
             && !sets_package_json_sorting
             && path.is_some_and(|it| paths::basename(it) == b"package.json")
         {
+            before(May::ReadFiles)?;
             plugin.has_yarn_or_pnpm_files = self.has_yarn_or_pnpm_files();
             resolved.options.sort_package_json = Some(SortPackageJson {
                 plugin: Some(Arc::new(plugin)),

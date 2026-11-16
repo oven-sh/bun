@@ -5837,7 +5837,7 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       "a getter that another module replaces",
       {
         "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
-        "a.js": `exports.nested = { get value() { return 1; } };`,
+        "a.js": `let one = 1; exports.nested = { get value() { return one + 0; } }; one = 1;`,
         "b.js": `Object.defineProperty(require("./a").nested, "value", { value: 2 });`,
       },
       1,
@@ -5932,6 +5932,25 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
       },
       mode ? "TypeError" : "undefined",
     ]),
+    [
+      "a getter that reads a getter before it loads",
+      {
+        "index.js": `let reads = 0; const state = { get ready() { reads++; return false; } }; let a;
+          module.exports = { get a() { return a ??= state.ready || require("./a"); }, f() { return this.a + reads; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a1",
+    ],
+    [
+      "an argument that is filled later",
+      {
+        "index.js": `const debug = require("debug"); const values = [1];
+          const it = { log: debug("a"), set: new Set(values) }; const log = debug(values);
+          values.push(2); exports.f = () => it.set.size + log;`,
+        "node_modules/debug/index.js": `module.exports = it => it.length;`,
+      },
+      2,
+    ],
     [
       "an extension that's added just before a require",
       {

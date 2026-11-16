@@ -71,12 +71,12 @@ let $Bun_defer, $Bun_lazy;
   const lazy = new WeakMap();
   const refusal = Symbol();
   let refuses = false;
-  // To leave a function by an exception leaves nothing half done if it only loads, and remembers by `??=`.
+  // To leave a function by an exception leaves nothing half done if it only loads, remembers by `??=`, and reads one property last.
   const loads = /\([\w$]+\?\.\(\)\)|\brequire\("[^"\\]*"\)/g;
-  const onlyRemembers = /^[^(]*\(\)(?!.*(?:[(`]|\+\+|--|\b(?:delete|new)\b))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
+  const onlyRemembers = /^[^(]*\(\)(?!.*(?:[(`]|\+\+|--|\b(?:delete|new)\b|[.[].*[.[\0]))(?:[^=]|=>|\?\?=|\|\|=)*$/s;
   // @typescript-eslint/eslint-plugin, where `load` is `() => require("./rule")`
   const lazyRule = /^\(\) => \{\s*rule \?\?= load\(\)\.default;\s*return rule;\s*\}$/;
-  const canBeLeft = text => lazyRule.test(text) || onlyRemembers.test(text.replace(loads, ""));
+  const canBeLeft = text => lazyRule.test(text) || onlyRemembers.test(text.replace(loads, "\0"));
   function refuse() {
     if (!refuses) return;
     if (!isLoadingChanged() && !isCaught() && textsOfCallees($Bun_lazy.ifLoaded).every(canBeLeft)) throw refusal;
@@ -99,7 +99,7 @@ let $Bun_defer, $Bun_lazy;
   // By file. They are read as soon as the module is loaded, by whomever, before anything can change them.
   const membersOf = new Map();
   const { toString: sourceOf } = Function.prototype;
-  const onlyReturns = /^[^{=]*(?:\{\s*return\s+[\w$]+;?\s*\}|=>\s*[\w$]+)$/;
+  const onlyReturns = /^[^(]*\(\)(?!.*(?:\+\+|--|\bnew\b))\s*(?:\{\s*return\s[^(.[=`;{}]+;?\s*\}|=>[^(.[=`;{}]+)$/s;
   function isThere(object, keys) {
     for (const key of keys) {
       if (Object(object) !== object || isLazy(object, key)) return false;

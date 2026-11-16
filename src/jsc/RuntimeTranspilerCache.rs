@@ -7,6 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
+use bun_js_parser::lower::defer_requires::has_react_compiler;
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -942,7 +943,9 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
         }
 
         // The hash names the file. `bun lint` and `bun run` would take turns to overwrite it.
-        let variant = u64::from(parser_options.features.lists_loads);
+        let features = &parser_options.features;
+        let defers_more = features.defers_requires && has_react_compiler(source.path.text);
+        let variant = u64::from(features.lists_loads) + u64::from(defers_more);
         let input_hash = hash(&source.contents).wrapping_add(variant);
 
         let mut features_hasher = Wyhash::init(SEED);

@@ -253,6 +253,11 @@ struct Names {
 /// (`p`), which is often soon, and what it requires once a function is called (`f`).
 pub const LOADS: &[u8] = b"//#bun-loads ";
 
+/// More is deferred in the module at `path`.
+pub fn has_react_compiler(path: &[u8]) -> bool {
+    bun_paths::package_of(path).is_some_and(|it| it == b"eslint-plugin-react-hooks")
+}
+
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Returns how many functions that are called in place most of the module is in.
     pub(crate) fn defer_requires(&mut self, parts: &[js_ast::Part]) -> u32 {
@@ -263,8 +268,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             is_declared_again: vec![false; self.symbols.len()],
             is_handed_on: vec![false; self.symbols.len()],
             loads_bundled_module: self.loaders_of_bundled_modules(),
-            has_react_compiler: bun_paths::package_of(self.source.path.text)
-                .is_some_and(|it| it == b"eslint-plugin-react-hooks"),
+            has_react_compiler: has_react_compiler(self.source.path.text),
             longest_body: parts.iter().map(|it| it.stmts.len()).sum(),
             depth: 0,
         };
@@ -747,7 +751,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 let symbol = &self.symbols[it.ref_.inner_index() as usize];
                 let varies = symbol.has_been_assigned_to()
                     || found.is_declared_again[it.ref_.inner_index() as usize];
-                symbol.kind != Kind::Arguments && (found.has_react_compiler || !varies)
+                // What is in an array or an object can change.
+                let has_no_contents = matches!(symbol.kind, Kind::HoistedFunction | Kind::Class)
+                    || found.origins[it.ref_.inner_index() as usize] == Origin::MakerOfValues;
+                symbol.kind != Kind::Arguments
+                    && (found.has_react_compiler || !varies && has_no_contents)
             }
             ExprData::EDot(it) => {
                 found.has_react_compiler && self.is_mere_value(it.target, found, into)

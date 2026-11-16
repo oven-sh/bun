@@ -45,7 +45,7 @@ use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 pub(crate) use config::duplicated_mapping_key;
-use config::{Configs, Flavor, Resolved};
+use config::{Configs, Flavor, May, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target, When};
 pub use for_rules::ForRules;
 use std::borrow::Cow;
@@ -1869,7 +1869,7 @@ impl Run<'_> {
                 }
                 let (scope, path) = (&*target.scope, &target.path[..]);
                 let language = match configs.may_set_parser(scope) {
-                    true => (configs.sound_options_for(scope, path))
+                    true => (configs.sound_options_for(scope, path, May::Nothing))
                         .map_or(Language::Other, |it| {
                             language_with(it.options.parser, configs, scope, path)
                         }),
@@ -1894,7 +1894,11 @@ impl Run<'_> {
                 let format_target = &format_target;
                 let size = &size_meanwhile;
                 Box::new(move |target, has_search_succeeded| {
-                    let options = configs.sound_options_for(&target.scope, &target.path);
+                    let may = match has_search_succeeded {
+                        true => May::ReadFiles,
+                        false => May::Nothing,
+                    };
+                    let options = configs.sound_options_for(&target.scope, &target.path, may);
                     let (Some(options), Some(scratch)) = (options, &mut borrowed.scratch) else {
                         return true;
                     };

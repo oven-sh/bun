@@ -6378,6 +6378,19 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(exitCode);
   });
 
+  test("a tsconfig.json that is saved while the search goes on", async () => {
+    const files = {
+      ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }\n`,
+      "a.tsx": `import React from "react";\nexport const a = <a />;\n`,
+      "z/prettier.config.cjs": `require("fs").writeFileSync(\n  __dirname + "/../tsconfig.json",\n  '{ "compilerOptions": { "jsx": "react" } }\\n',\n);\nmodule.exports = {};\n`,
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}/b.js`, "b;\n"])),
+    };
+    const result = await format(files, ["."], { reads: ["a.tsx"] });
+    expect(result.files["a.tsx"]).toBe(files["a.tsx"]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each([
     ["arrays", (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString()],
     [

@@ -88,7 +88,7 @@ RefPtr<CryptoKeyAES> CryptoKeyAES::importJwk(CryptoAlgorithmIdentifier algorithm
         return nullptr;
     if (usages && !keyData.use.isNull() && keyData.use != "enc"_s)
         return nullptr;
-    if (keyData.key_ops && ((keyData.usages & usages) != usages))
+    if (!jwkKeyOpsAllow(keyData, usages))
         return nullptr;
     if (keyData.ext && !keyData.ext.value() && extractable)
         return nullptr;

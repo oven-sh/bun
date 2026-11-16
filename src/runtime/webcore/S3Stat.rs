@@ -1,4 +1,4 @@
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_jsc::{JSGlobalObject, JsResult, bun_string_jsc};
 
 pub(crate) struct S3Stat {
@@ -17,7 +17,7 @@ impl S3Stat {
         global: &JSGlobalObject,
     ) -> JsResult<Self> {
         let last_modified =
-            bun_string_jsc::parse_date(&BunString::from_bytes(last_modified), global)?;
+            bun_string_jsc::parse_date(&StringView::from_bytes(last_modified), global)?;
 
         Ok(S3Stat {
             size,

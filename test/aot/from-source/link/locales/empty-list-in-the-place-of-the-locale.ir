@@ -1,0 +1,11 @@
+# a list without elements leaves the locale to the host
+# -- source: empty-list-in-the-place-of-the-locale.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# new Intl.NumberFormat([]);
+# -- end of source
+# RUN: locales
+# CHECK: locale host-default IntlNumberFormat at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: locale unknown

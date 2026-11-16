@@ -60,13 +60,15 @@ leak:cli.pack_command.bindings.jsReadTarball
 leak:JSC::moduleLoaderModuleDeclarationInstantiation
 leak:JSC::arrayProtoFuncSort
 leak:bindgen_Fmt_jsFmtString
-leak:runtime.dns_jsc.dns.GetAddrInfoRequest.run
 leak:runtime.webcore.Body.Value.fromJS
 leak:sys_jsc.error_jsc.errorToSystemError
 leak:runtime.webcore.Blob.getNameString
 leak:JSC::callIntlDateTimeFormat
 leak:functionRunProfiler
 leak:JSC::JSModuleLoader::evaluateNonVirtual
+# Under --aot it serves the default export of an entry point, which plain Bun does from the evaluation of its entry
+# wrapper (the line above).
+leak:Bun::startServerFromNamespace
 leak:patch.patch.PatchFile.apply
 leak:jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
 leak:runtime.webcore.blob.Store.initS3WithReferencedCredentials
@@ -78,7 +80,6 @@ leak:sys_jsc.error_jsc.errorToShellSystemError
 leak:lazyLoadSQLite
 leak:JSC::intlAvailableLocales
 leak:getaddrinfo
-leak:runtime.api.filesystem_router.FileSystemRouter.constructor
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
@@ -102,7 +103,6 @@ leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
-leak:libarchive_sys.bindings.Archive.readNew
 leak:Zig::SourceProvider::create
 
 leak:fromErrorInstance

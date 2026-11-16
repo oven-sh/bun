@@ -1,0 +1,46 @@
+// The executable spawns itself, or Bun.
+//// BUN_BE_BUN-eval
+if (process.env.IS_CHILD) process.exit(9);
+const child = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log(Bun.color('red', 'hex'))"], env: { ...process.env, BUN_BE_BUN: "1", IS_CHILD: "1" } });
+console.log(child.exitCode, child.stdout.toString(), child.stderr.toString());
+//// BUN_BE_BUN-version
+if (process.env.IS_CHILD) process.exit(9);
+const child = Bun.spawnSync({ cmd: [process.execPath, "--version"], env: { ...process.env, BUN_BE_BUN: "1", IS_CHILD: "1" } });
+console.log(child.exitCode, child.stdout.toString().length > 0, child.stderr.toString());
+//// BUN_BE_BUN-run-file
+//@ file cwd/s.js "console.log(Bun.color('red', 'hex'), typeof HTMLRewriter)"
+if (process.env.IS_CHILD) process.exit(9);
+const child = Bun.spawnSync({ cmd: [process.execPath, "run", "s.js"], env: { ...process.env, BUN_BE_BUN: "1", IS_CHILD: "1" } });
+console.log(child.exitCode, child.stdout.toString(), child.stderr.toString());
+//// fork-self
+import { fork } from "node:child_process";
+if (process.env.IS_CHILD) { process.send({ hello: "from child" }); process.disconnect(); }
+else { const child = fork(process.execPath, [], { env: { ...process.env, IS_CHILD: "1" } }); child.on("message", message => console.log(message)); child.on("exit", code => console.log("exit", code)); }
+//// fork-script
+//@ file cwd/s.js "process.send(Bun.color('red', 'hex') + typeof HTMLRewriter); process.disconnect()"
+import { fork } from "node:child_process";
+if (process.env.IS_CHILD) { console.log("the entry point again", process.argv.length); process.exit(0); }
+const child = fork("./s.js", [], { env: { ...process.env, IS_CHILD: "1" } });
+child.on("message", message => console.log(message)); child.on("exit", code => console.log("exit", code)); child.on("error", error => console.log("error", error.message));
+//// spawn-self-ipc-json
+if (process.env.IS_CHILD) { process.send({ a: 1 }); process.disconnect?.(); }
+else { const child = Bun.spawn({ cmd: [process.execPath], env: { ...process.env, IS_CHILD: "1" }, ipc(message) { console.log(message); }, serialization: "json", stdout: "inherit" }); console.log(await child.exited); }
+//// spawn-self-ipc-advanced
+if (process.env.IS_CHILD) { process.send({ a: new Float32Array([1.5]), b: 10n, c: new Date(0), d: new Map([[1, 2]]), e: /x/g, f: new Error("boom") }); process.disconnect?.(); }
+else { const child = Bun.spawn({ cmd: [process.execPath], env: { ...process.env, IS_CHILD: "1" }, ipc(message) { console.log(message); }, serialization: "advanced", stdout: "inherit" }); console.log(await child.exited); }
+//// child-receives-advanced
+if (process.env.IS_CHILD) { process.on("message", message => { console.log(message); process.disconnect(); }); }
+else { const child = Bun.spawn({ cmd: [process.execPath], env: { ...process.env, IS_CHILD: "1" }, ipc() {}, serialization: "advanced", stdout: "inherit" }); child.send({ a: new Float16Array([1.5]), b: new BigInt64Array([1n]), c: new Blob(["x"]) }); console.log(await child.exited); }
+//// execPath-argv0
+console.log(process.execPath === process.argv[0], process.argv0.length > 0, process.execArgv);
+//// exec-shell
+import { execSync } from "node:child_process";
+console.log(execSync("echo hi").toString());
+//// spawnSync-node
+import { spawnSync } from "node:child_process";
+console.log(spawnSync("echo", ["hi"]).stdout.toString());
+//// bun-dollar
+import { $ } from "bun";
+console.log(await $`echo hi`.text());
+//// bun-dollar-computed
+console.log(await Bun["$"]`echo hi`.text());

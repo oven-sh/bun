@@ -9,13 +9,11 @@
 //!
 //! So `IOWriter` is essentially a writer queue to a file descriptor.
 //!
-//! We also make `IOWriter` reference counted (via `Arc` in the Rust port),
-//! this simplifies management of the file descriptor.
+//! `IOWriter` is also reference counted (`Rc`), which simplifies management of
+//! the file descriptor.
 
 use bun_collections::VecExt;
 use core::cell::UnsafeCell;
-#[cfg(not(windows))]
-use core::ffi::c_void;
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -131,7 +129,7 @@ impl Writer {
     /// Tee `chunk` into the optional capture buffer.
     ///
     /// `bytelist` (when set) points into a live `ShellExecEnv` `Bufio`
-    /// (`OutFd::captured` — see its doc); the env outlives every queued
+    /// (`OutFd::captured` — see its doc); the root env outlives every queued
     /// `Writer`. Localises the per-callsite raw deref in
     /// `do_file_write` / `on_write_pollable`.
     #[inline]
@@ -163,22 +161,21 @@ pub(crate) type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter
 #[cfg(not(windows))]
 pub(crate) type Poll = WriterImpl;
 
-/// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
+/// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Rc strong
 /// ref across `on_poll` so child `onIOWriterChunk` callbacks (via `bump()`)
 /// can drop the last external ref without freeing `self` while PipeWriter is
 /// still on the stack.
 #[cfg(not(windows))]
-pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
-    use bun_io::pipe_writer::PosixPipeWriter;
+pub(crate) fn on_poll(writer: &mut Poll, event: bun_io::IoEvent) {
     let parent = writer.parent.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
     // `writer` is a field of `*parent`, so the pointee is live. Re-enter via
     // `&self` (UnsafeCell aliasing model). `ParentRef::Deref → &IOWriter`.
     let _keepalive = parent.keepalive();
-    writer.on_poll(size_hint, hup);
+    writer.on_poll(event);
 }
 
-/// Mutable state. Wrapped in `UnsafeCell` so `Arc<IOWriter>`-shared callers can
+/// Mutable state. Wrapped in `UnsafeCell` so `Rc<IOWriter>`-shared callers can
 /// mutate via `&self` (single-threaded shell).
 struct State {
     writer: WriterImpl,
@@ -202,9 +199,9 @@ struct State {
     started: bool,
     flags: Flags,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
-    /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
+    /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
     /// `init()` (the sole constructor).
-    self_weak: std::sync::Weak<IOWriter>,
+    self_weak: std::rc::Weak<IOWriter>,
     /// Backref to the owning interpreter for async-poll callbacks (which must
     /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; `None`
     /// until then.
@@ -214,13 +211,6 @@ struct State {
 pub(crate) struct IOWriter {
     state: UnsafeCell<State>,
 }
-
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-// No cross-thread access.
-unsafe impl Send for IOWriter {}
-// SAFETY: see `Send` — single-threaded, `Arc` is used only for refcounting; no
-// concurrent `&IOWriter` access occurs.
-unsafe impl Sync for IOWriter {}
 
 impl IOWriter {
     /// SAFETY: single-threaded; no overlapping `&mut State` may be live across
@@ -234,15 +224,15 @@ impl IOWriter {
         unsafe { &mut *self.state.get() }
     }
 
-    /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
+    /// Bump our own Rc strong count. Held across re-entrant `run_yield` calls
     /// whose child callback may drop the last external ref and free us
     /// mid-method; the stack-held strong ref prevents that.
     #[inline]
-    fn keepalive(&self) -> std::sync::Arc<IOWriter> {
+    fn keepalive(&self) -> std::rc::Rc<IOWriter> {
         self.state()
             .self_weak
             .upgrade()
-            .expect("IOWriter::keepalive after last Arc dropped")
+            .expect("IOWriter::keepalive after last Rc dropped")
     }
 
     /// Read-only accessor for the `is_socket` flag (used by
@@ -253,7 +243,7 @@ impl IOWriter {
         self.state().flags.is_socket
     }
 
-    pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
+    pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::rc::Rc<IOWriter> {
         let mut writer = WriterImpl::default();
         // Tell the PipeWriter impl to *not* close the file descriptor.
         #[cfg(not(windows))]
@@ -264,7 +254,7 @@ impl IOWriter {
         {
             writer.owns_fd = false;
         }
-        let this = std::sync::Arc::new_cyclic(|w| IOWriter {
+        let this = std::rc::Rc::new_cyclic(|w| IOWriter {
             state: UnsafeCell::new(State {
                 writer,
                 fd,
@@ -279,18 +269,18 @@ impl IOWriter {
                 is_writing: false,
                 started: false,
                 flags,
-                self_weak: std::sync::Weak::clone(w),
+                self_weak: std::rc::Weak::clone(w),
                 interp: None,
             }),
         });
-        // Set the parent backref after Arc allocation so the address is stable.
-        // SAFETY: `Arc::as_ptr` yields `*const IOWriter`; cast to `*mut` only
+        // Set the parent backref after Rc allocation so the address is stable.
+        // SAFETY: `Rc::as_ptr` yields `*const IOWriter`; cast to `*mut` only
         // because the `BufferedWriterParent` callback ABI is `*mut Self`. The
         // pointer is never used to materialize `&mut IOWriter` — every callback
         // (`on_write`/`on_error`/`get_buffer`/…) re-enters via `&*this` and
         // mutates solely through `UnsafeCell<State>` (`state()`), which carries
         // its own write provenance. No const→mut UB.
-        let parent: *mut IOWriter = std::sync::Arc::as_ptr(&this).cast_mut();
+        let parent: *mut IOWriter = std::rc::Rc::as_ptr(&this).cast_mut();
         this.state().writer.set_parent(parent);
         crate::shell_log!("IOWriter(0x{:x}, fd={}) init", parent as usize, fd);
         this
@@ -298,14 +288,10 @@ impl IOWriter {
 
     /// Stash the interpreter backref so async poll callbacks can drive
     /// `Yield::run`. Idempotent.
-    ///
-    /// # Safety
-    /// `interp` must be null or point to the live owning `Interpreter` (which
-    /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
+    /// `interp` must outlive this writer (it owns the IO struct that holds this `Rc`).
     #[inline]
-    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
+    pub(crate) fn set_interp(&self, interp: &Interpreter) {
+        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
     }
 
     #[inline]
@@ -421,18 +407,16 @@ impl IOWriter {
             // above re-enter `__start()` and mutate `writer.handle`, which
             // invalidates `s` under Stacked Borrows.
             let s = self.state();
-            if let Some(poll) = s.writer.get_poll() {
-                if s.flags.nonblock {
-                    poll.set_flag(FilePollFlag::Nonblocking);
-                }
-                // On macOS `sendto` with MSG_DONTWAIT can still block, so
-                // only mark as socket there if the fd is already O_NONBLOCK.
-                let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
-                if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
-                    poll.set_flag(FilePollFlag::Socket);
-                } else if s.flags.pollable {
-                    poll.set_flag(FilePollFlag::Fifo);
-                }
+            let handle = s.writer.handle();
+            if s.flags.nonblock {
+                handle.set_poll_flag(FilePollFlag::Nonblocking);
+            }
+            // On macOS `sendto` with MSG_DONTWAIT can still block, unless the fd is O_NONBLOCK.
+            let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
+            if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
+                handle.set_poll_flag(FilePollFlag::Socket);
+            } else if s.flags.pollable {
+                handle.set_poll_flag(FilePollFlag::Fifo);
             }
         }
         Ok(())
@@ -463,9 +447,9 @@ impl IOWriter {
                 // `writer.handle` on the EINVAL/EPERM fallback paths), which
                 // invalidates the `s` borrow under Stacked Borrows. Re-derive.
                 let s = self.state();
-                // if `handle == .fd` it means it's a file which does not
+                // no poll means it's a file which does not
                 // support polling for writeability and we should just write to it
-                if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Fd(_)) {
+                if !s.writer.handle().has_poll() {
                     debug_assert!(!s.flags.pollable);
                     return WriteOutcome::IsActuallyFile;
                 }
@@ -490,16 +474,10 @@ impl IOWriter {
 
         #[cfg(not(windows))]
         {
-            debug_assert!(matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)));
-            if let Some(poll) = s.writer.get_poll() {
-                // `is_watching()` = `is_registered() && !needs_rearm`.
-                // NOT `is_registered()`: after a one-shot fire that drains
-                // everything (no `register_poll()`), `PollWritable` stays set
-                // but `NeedsRearm` is set → `is_registered()` would return
-                // Suspended without re-arming and stall the queue forever.
-                if poll.is_watching() {
-                    return WriteOutcome::Suspended;
-                }
+            debug_assert!(s.writer.handle().has_poll());
+            // A one-shot poll that fired has to be re-armed.
+            if s.writer.handle().is_watching() {
+                return WriteOutcome::Suspended;
             }
             if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
                 return WriteOutcome::Failed(e);
@@ -780,7 +758,7 @@ impl IOWriter {
             }
             #[cfg(not(windows))]
             {
-                debug_assert!(matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)));
+                debug_assert!(s.writer.handle().has_poll());
                 s.writer.register_poll();
             }
         }
@@ -792,7 +770,7 @@ impl IOWriter {
     /// `cancel_chunks` there. The first chunk of `withhold` is returned
     /// instead of run (see `on_sync_error`).
     fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
-        // A completion may drop the last external `Arc` to this writer.
+        // A completion may drop the last external `Rc` to this writer.
         let _keepalive = self.keepalive();
         self.set_writing(false);
         let s = self.state();
@@ -881,7 +859,7 @@ impl IOWriter {
             return;
         };
         // SAFETY: interp outlives every IOWriter (it owns the IO struct that
-        // holds the Arc). Single-threaded; R-2: `Interpreter::run` takes
+        // holds the Rc). Single-threaded; R-2: `Interpreter::run` takes
         // `&self` now — `ParentRef: Deref<Target=Interpreter>` yields the
         // shared borrow without `assume_mut()`.
         y.run(&interp);
@@ -1040,7 +1018,7 @@ enum WriteOutcome {
 
 bun_io::impl_buffered_writer_parent! {
     IOWriter;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER,
+    poll_tag   = bun_io::PollTag::ShellBufferedWriter,
     // UnsafeCell aliasing model — child callbacks may re-enter `enqueue(&self)`.
     borrow     = shared,
     on_write   = on_write_pollable,
@@ -1048,17 +1026,18 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
-    // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
-    // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
-    ref_       = |this| std::sync::Arc::increment_strong_count(this.cast_const()),
-    deref      = |this| std::sync::Arc::decrement_strong_count(this.cast_const()),
+    uws_loop   = |this| (*this).evtloop().loop_(),
+    // INVARIANT: `this` is `Rc::as_ptr` stashed via `writer.set_parent` in
+    // `IOWriter::init` (sole constructor); passing a non-Rc ptr is UB.
+    ref_       = |this| std::rc::Rc::increment_strong_count(this.cast_const()),
+    deref      = |this| std::rc::Rc::decrement_strong_count(this.cast_const()),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // drainBufferedData / tryWrite (POSIX file path)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// TODO: This function is a copy of PipeWriter's.
 #[cfg(not(windows))]
 fn try_write_with_write_fn(
     fd: Fd,
@@ -1086,8 +1065,6 @@ fn try_write_with_write_fn(
     bun_io::WriteResult::Wrote(offset)
 }
 
-/// TODO: This function and `try_write_with_write_fn` are copy-pastes from
-/// PipeWriter; it would be nice to not have to do that.
 #[cfg(not(windows))]
 fn drain_buffered_data(
     parent: &IOWriter,
@@ -1130,21 +1107,18 @@ fn drain_buffered_data(
 
 impl Drop for IOWriter {
     fn drop(&mut self) {
-        // With `Arc` the last ref drops *after* the callback returns, so the
+        // With `Rc` the last ref drops *after* the callback returns, so the
         // synchronous path is safe (PipeWriter cannot touch us after free).
         // TODO: if a PipeWriter callback is on the stack when the last
-        // Arc drops (possible via re-entrant child deinit), we need the async
+        // Rc drops (possible via re-entrant child deinit), we need the async
         // hop. Revisit once `bun_event_loop::EventLoopTask` is wired to the
         // shell's `EventLoopHandle` shim.
         let s = self.state.get_mut();
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
         {
-            if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                s.writer
-                    .handle
-                    .close_impl(None, None::<fn(*mut c_void)>, false);
-            }
+            // The poll goes before its fd.
+            s.writer.handle().set_fd(Fd::INVALID);
         }
         #[cfg(windows)]
         {
@@ -1153,8 +1127,7 @@ impl Drop for IOWriter {
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }
-        s.writer
-            .disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());
+        s.writer.update_ref(false);
     }
 }
 
@@ -1189,7 +1162,7 @@ pub(crate) fn on_io_writer_chunk(
             debug_assert!(!child.raw.is_null());
             // SAFETY: `raw` was set from `&mut CapturedWriter` in
             // `CapturedWriter::do_write`; the PipeReader (and the embedded
-            // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
+            // CapturedWriter) is kept alive by the `Readable::Pipe` Rc on
             // the owning ShellSubprocess until `on_close_io` runs, which only
             // happens after the writer has finished draining. Single-threaded.
             let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };

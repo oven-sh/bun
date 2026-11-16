@@ -1,0 +1,42 @@
+# -- source: a-part-of-a-view-is-of-one-family-with-the-view.ts
+# declare function sink(value: unknown): void;
+# const bytes = new Uint8Array(16); for (let i = 0; i < 16; i++) bytes[i] = i * 3;
+# const emptied = new Uint8Array(8); emptied[5] = 7;
+# const named = new Uint8Array(8);
+# const seen = new Uint8Array(8);
+# function sumOfPart(): number { const part = bytes.subarray(2, 6); let sum = 0; for (let i = 0; i < part.length; i++) sum += part[i]!; return sum; }
+# function copyOfPart(): number { const part = bytes.slice(2, 6); let sum = 0; for (let i = 0; i < part.length; i++) sum += part[i]!; return sum; }
+# function throughPart(): number { const part = bytes.subarray(2, 6); part[0] = 100; const read = bytes[2]!; part[0] = 6; return read; }
+# function sixthOfEmptied(): string { return emptied[5] + " of " + emptied.length; }
+# function handAwayMemoryOfPart(): number { const part = emptied.subarray(0, 4); return (part.buffer as ArrayBuffer).transfer().byteLength; }
+# function nameOnPart(): void { const part: any = named.subarray(0, 4); part.slice = () => "own"; sink(part.slice(0, 1)); }
+# function copyOfNamed(): number { return named.slice(0, 3).length; }
+# function showPart(): void { sink(seen.subarray(0, 4)); }
+# function copyOfSeen(): number { return seen.slice(0, 3).length; }
+# const said: unknown[] = [sumOfPart(), copyOfPart(), throughPart(), sixthOfEmptied(), handAwayMemoryOfPart(), sixthOfEmptied()];
+# nameOnPart(); showPart();
+# said.push(copyOfNamed(), copyOfSeen());
+# sink(said.join(" | "));
+# -- end of source
+# `bytes.subarray(2, 6)` let the view go in Link: the row says that the receiver is retained and no record said where, so it went to memory that nobody sees, and from then on no method of that view was
+# found anywhere in the program: not subarray, not slice, and what they gave was anything. The row does say where: the result is a RANGE OF the receiver. What the part keeps is the view's memory,
+# never the view: no name and no prototype of the view can be reached through it. What can be reached is the memory: `part.buffer.transfer()` empties the view too. So the part and the view are one family
+# of sites in Link: what is done to the part is done to the family.
+# sixthOfEmptied: Link knows the written length 8 of `emptied` and would call [5] inside; the memory is handed away THROUGH A PART: the family has let its memory go and the read asks.
+# f1 = sumOfPart, f2 = copyOfPart, f3 = throughPart, f4 = sixthOfEmptied
+# RUN: walk f1:Body f2:Body f3:Body f4:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: PropGet {{*}} key="subarray"
+# CHECK: Uint8Array @JSValue = CallBuiltin {{*}} overload=TypedArrayPrototypeSubarray/0
+# CHECK: GetTypedArrayLength
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: PropGet {{*}} key="slice"
+# CHECK: Uint8Array @JSValue = CallBuiltin {{*}} overload=TypedArrayPrototypeSlice/0
+# CHECK-LABEL: code f3:Body
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: isInsideView
+# RUN(SHELL): run-in-shell globalThis.sink = value => { print(typeof value === "string" ? value : "a part of " + value.length); };
+# SHELL: own
+# SHELL: a part of 4
+# SHELL: 42 | 42 | 100 | 7 of 8 | 8 | undefined of 0 | 3 | 3

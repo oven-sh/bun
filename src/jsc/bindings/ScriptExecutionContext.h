@@ -4,6 +4,7 @@
 
 struct BunVmHandleRef;
 #include "BunLoopKind.h"
+#include "EventLoopKeepAlive.h"
 #include "SharedEnvStore.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -70,8 +71,8 @@ public:
     JSC::JSGlobalObject* jsGlobalObject();
 
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
-    void refEventLoop();
-    void unrefEventLoop();
+    // For an ActiveDOMObject that is collected while it keeps the event loop alive until it is closed.
+    void keepEventLoopAliveUntilStopped() { m_keepAliveOfCollectedObjects.setActive(true); }
     using RefCounted::deref;
     using RefCounted::ref;
 
@@ -153,8 +154,6 @@ public:
     void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
-    // Executes the task on context's thread asynchronously.
-    void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
     JSC::VM& vm() { return *realm().m_vm; }
@@ -216,6 +215,7 @@ private:
     // A graph's context: stop() ran (its ActiveDOMObjects are stopped one task later).
     bool m_isStopped { false };
     mutable bool m_activeDOMObjectAdditionForbidden { false };
+    Bun::EventLoopKeepAlive m_keepAliveOfCollectedObjects;
 
 public:
 #if ASSERT_ENABLED

@@ -217,8 +217,8 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     }
 }
 
-/// Creates a VM for this thread.
-fn start_vm() -> Result<(), Vec<u8>> {
+/// Creates a VM for this thread. `log` outlives it.
+fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
     bun_core::scoped_log!(lint_js, "a VM begins");
     let failed = |what: &str| {
         [
@@ -228,26 +228,29 @@ fn start_vm() -> Result<(), Vec<u8>> {
         .concat()
     };
     bun_ast::initialize_store();
-    let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+    static ARGV: std::sync::LazyLock<Vec<Box<[u8]>>> =
+        std::sync::LazyLock::new(|| bun_core::argv().iter().skip(1).map(Box::from).collect());
+    let options = jsc::VirtualMachineInitOptions {
+        argv: &ARGV,
         is_main_thread: false,
         ..Default::default()
-    })
-    .map_err(|error| failed(error.name()))?;
-    debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
-    let vm = VirtualMachine::get().as_mut();
+    };
+    let vm = VirtualMachine::init(log, options).map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
-    vm.transpiler_store.enabled = false;
-    vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
-    vm.transpiler.options.env.behavior =
-        bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
-    // Same as for config files: see `run_script` in `lint_command.rs`.
-    vm.transpiler.options.env.disable_default_env_files = true;
+    vm.transpiler_store.enabled.set(false);
     vm.transpiler
-        .configure_defines()
+        .with_mut(|t| {
+            t.resolver.env_loader = NonNull::new(t.env);
+            t.options.env.behavior =
+                bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
+            // Same as for config files: see `run_script` in `lint_command.rs`.
+            t.options.env.disable_default_env_files = true;
+            t.resolver.opts.packages_require_like_node();
+            t.configure_defines()
+        })
         .map_err(|error| failed(error.name()))?;
     vm.load_extra_env_and_source_code_printer();
-    vm.argv = bun_core::argv().iter().skip(1).map(Box::from).collect();
-    vm.event_loop_mut().ensure_waker();
+    vm.event_loop().ensure_waker();
     Ok(())
 }
 
@@ -284,19 +287,19 @@ impl Vm for ThreadVm {
                 // Like `wait_for_promise`, but gives up on a promise that nothing can settle anymore. Node.js exits in
                 // that case.
                 while promise.status() == jsc::js_promise::Status::Pending {
-                    vm.as_mut().event_loop_mut().tick();
+                    vm.event_loop().tick();
                     if promise.status() != jsc::js_promise::Status::Pending {
                         break;
                     }
                     // An unhandled rejection is printed and counted, and the loop doesn't count as alive while that
                     // count isn't 0.
-                    vm.as_mut().unhandled_error_counter = 0;
+                    vm.unhandled_error_counter.set(0);
                     if !vm.is_event_loop_alive() {
                         return Err(
                             b"A promise never settled, and nothing is left to wait for.".to_vec()
                         );
                     }
-                    vm.as_mut().auto_tick();
+                    vm.auto_tick();
                 }
                 returned = promise.result(global.vm());
                 if promise.status() == jsc::js_promise::Status::Rejected {
@@ -396,12 +399,11 @@ fn end_vm(frees: bool) {
     let vm = VirtualMachine::get();
     if !frees && !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
         let _lock = vm.global().vm().get_api_lock();
-        return vm.as_mut().on_exit();
+        return vm.on_exit();
     }
     // Never released: `exit_and_free` frees the VM, and the lock with it.
     let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
     drop(crate::jsc_hooks::take_lint_vm());
-    drop(core::mem::take(&mut vm.as_mut().argv));
     // SAFETY: `start_vm` created it on this thread, which holds its lock. No other thread has a pointer to it.
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
 }
@@ -421,8 +423,8 @@ impl Start {
         *self.memory.get_or_init(memory_for_engines)
     }
 
-    /// Creates a VM for this thread.
-    fn start_vm(&self) -> Result<(), Vec<u8>> {
+    /// As [`start_vm`].
+    fn start_vm(&self, log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
@@ -432,12 +434,12 @@ impl Start {
             }
             // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from
             // several threads at once. So the others wait here until it's up.
-            first = Some(start_vm().and_then(|()| {
+            first = Some(start_vm(log).and_then(|()| {
                 let vm = VirtualMachine::get();
                 vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
             }));
         });
-        first.unwrap_or_else(start_vm)
+        first.unwrap_or_else(|| start_vm(log))
     }
 
     /// [`Engine::expect`]
@@ -814,7 +816,8 @@ impl Crew {
     fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
-        let failure = crew.start.start_vm().err();
+        let mut log = bun_ast::Log::default();
+        let failure = crew.start.start_vm(&raw mut log).err();
         {
             let mut state = crew.state.lock();
             state.all[at].thread = Some(std::thread::current().id());
@@ -849,6 +852,10 @@ impl Crew {
                     break;
                 }
             }
+        }
+        // This frame never returns, and a VM that `end_vm` kept still points at `log`.
+        if !VirtualMachine::is_loaded() {
+            drop(log);
         }
         let (nothing, never) = (Guarded::new(()), Condition::new());
         let mut nothing = nothing.lock();

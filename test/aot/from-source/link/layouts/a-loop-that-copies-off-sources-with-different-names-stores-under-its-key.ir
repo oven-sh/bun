@@ -1,0 +1,19 @@
+# One helper copies what it is handed, name by name. Where all that it is handed list the same names, in whatever order, the copy is followed: each name is appended to the target and lies in its cell. Where they differ, a name that
+# some source lacks would lie out of line in every target and be created there at each copy, at several times the price of a store under a key: there the store under the key speaks, and the target is filled under computed keys.
+# RUN: link fields mechanisms=all
+# CHECK: "pad" appended
+# CHECK: "shade" appended
+# RUN(OTHER): link fields mechanisms=all
+# OTHER: field
+# OTHER-NOT: "row" appended
+# OTHER-NOT: "words" appended
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 10 undefined undefined
+# RUN(CHECKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: 10 undefined undefined
+# -- source: main.js
+# function same(from) { const to = {}; for (const name in from) to[name] = from[name]; return to; }
+# function other(from) { const to = {}; for (const name in from) to[name] = from[name]; return to; }
+# function all(t) { const a = same({ pad: t, shade: 2 }), b = same({ shade: 3, pad: t }), c = other({ row: t, at: 1 }), d = other({ words: t }); return (a.pad + b.shade + c.row + d.words + c.at) + " " + c.words + " " + d.row; }
+# print(all(2));
+# -- end of source

@@ -6,7 +6,8 @@ const [url] = process.argv.slice(2);
 // Every COM_STMT_EXECUTE response repeats one definition per column. 64 bytes is MySQL's limit for a name.
 const COLUMNS = 500;
 const columns = Array.from({ length: COLUMNS }, (_, i) => `col_${i}_`.padEnd(64, "x"));
-const WARMUP_QUERIES = 100;
+// The memory of the process grows by some 5 MiB before it can hold a batch without growing.
+const WARMUP_QUERIES = 400;
 const MEASURED_QUERIES = 300;
 const BATCH = 50;
 

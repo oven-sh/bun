@@ -6,8 +6,8 @@ use bun_lint_oxlint::text::best_match;
 /// Detects common typos in Next.js data fetching function names.
 pub struct NoTypos;
 
-const NO_TYPOS: Message = Message::new("", "`{{typo}}` may be a typo. Did you mean `{{suggestion}}`?");
-const CHANGE: Message = Message::new("", "Change `{{typo}}` to `{{suggestion}}`");
+const NO_TYPOS: &Message = &Message::new("", "`{{typo}}` may be a typo. Did you mean `{{suggestion}}`?");
+const CHANGE: &Message = &Message::new("", "Change `{{typo}}` to `{{suggestion}}`");
 
 const NEXTJS_DATA_FETCHING_FUNCTIONS: [&str; 3] = ["getStaticProps", "getStaticPaths", "getServerSideProps"];
 const THRESHOLD: usize = 1;

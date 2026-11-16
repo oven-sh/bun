@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
@@ -29,7 +30,7 @@ extern crate alloc;
 // inside this crate.
 extern crate self as bun_jsc;
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_call]` is implemented in the `bun_jsc_macros` crate
@@ -131,8 +132,6 @@ pub mod console_object;
 pub mod counters;
 #[path = "DecodedJSValue.rs"]
 pub mod decoded_js_value;
-#[path = "DeprecatedStrong.rs"]
-pub mod deprecated_strong;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -158,6 +157,8 @@ pub mod js_type;
 pub mod js_value;
 #[path = "rare_data.rs"]
 pub mod rare_data;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod spawn_sync_event_loop;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]
@@ -343,7 +344,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
-pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
@@ -351,7 +351,7 @@ pub use self::uuid::{UUID, UUID5, UUID7};
 
 pub use self::js_function::JSFunction;
 pub use self::js_module_loader::JSModuleLoader;
-pub use self::strong::{Optional as StrongOptional, Strong};
+pub use self::strong::{Optional as StrongOptional, Strong, StrongCell};
 pub use self::weak::{Weak, WeakRefType};
 
 pub use self::exception::Exception;
@@ -431,6 +431,7 @@ pub mod any_promise;
 pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
+pub mod compiled_program;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
 #[path = "JSArrayIterator.rs"]
@@ -454,8 +455,6 @@ pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
 
-#[path = "AsyncModule.rs"]
-pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]
@@ -470,6 +469,8 @@ pub mod bun_string_jsc;
 pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
+#[path = "declared_results_testing.rs"]
+pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]
@@ -490,6 +491,10 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+    pub runs_compiled_code: bool,
+    pub locks_builtins: bool,
+    /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
+    pub is_compiler: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -497,18 +502,23 @@ pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
-    // it is handed. JSCInitialize is called exactly once at startup.
+    if options.runs_compiled_code {
+        bindgen::hold_results_to_declared_types();
+    }
+    // SAFETY: nothing changes the environment during the call, which is made once at startup;
+    // `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
     unsafe {
+        let env = bun_sys::environ();
         JSCInitialize(
-            env.as_ptr(),
+            env.as_ptr().cast(),
             env.len(),
             on_jsc_invalid_env_var,
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            options.runs_compiled_code,
+            options.locks_builtins,
+            options.is_compiler,
         )
     };
 }
@@ -516,9 +526,11 @@ pub fn initialize(options: InitializeOptions) {
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
-    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+    }
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -686,7 +698,7 @@ pub use self::dom_form_data::DOMFormData;
 pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
-pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
     AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
     StopReason,
@@ -755,11 +767,22 @@ pub mod resolved_source_tag {
         pub const ExportDefaultObject: Self = Self(9);
         /// Signal upwards that the matching value in `require.extensions` should be used.
         pub const CommonJsCustomExtension: Self = Self(10);
+        pub const ExportDefaultOnly: Self = Self(11);
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
         pub(crate) fn try_from_name(name: &[u8]) -> Option<Self> {
             INTERNAL_MODULE_TAG.get(name).copied()
+        }
+
+        pub fn feature(self) -> Option<bun_removable_features::Feature> {
+            if self.0 & (1 << 9) == 0 {
+                return None;
+            }
+            INTERNAL_MODULE_FEATURE
+                .get((self.0 & !(1 << 9)) as usize)
+                .copied()
+                .flatten()
         }
 
         /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
@@ -796,6 +819,30 @@ pub mod resolved_source_tag {
         env!("BUN_CODEGEN_DIR"),
         "/generated_resolved_source_tag.rs"
     ));
+}
+
+#[cfg(test)]
+mod resolved_source_tag_tests {
+    use super::resolved_source_tag::ResolvedSourceTag;
+    use bun_removable_features::Feature;
+
+    #[test]
+    fn tag_feature() {
+        assert_eq!(ResolvedSourceTag::Esm.feature(), None);
+        assert_eq!(ResolvedSourceTag(u32::MAX).feature(), None);
+        assert_eq!(
+            ResolvedSourceTag::try_from_name(b"bun:sqlite")
+                .unwrap()
+                .feature(),
+            Some(Feature::Sqlite)
+        );
+        assert_eq!(
+            ResolvedSourceTag::try_from_name(b"node:path")
+                .unwrap()
+                .feature(),
+            None
+        );
+    }
 }
 
 /// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
@@ -839,9 +886,6 @@ pub enum BuiltinName {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -870,9 +914,6 @@ impl BuiltinName {
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
     pub(crate) const InspectCustom: Self = Self::inspectCustom;
-    pub const HighWaterMark: Self = Self::highWaterMark;
-    pub const Path: Self = Self::path;
-    pub const Stream: Self = Self::stream;
     pub const Message: Self = Self::message;
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
@@ -886,7 +927,63 @@ pub struct EnsureStillAlive(pub JSValue);
 impl Drop for EnsureStillAlive {
     #[inline]
     fn drop(&mut self) {
-        self.0.ensure_still_alive();
+        // SAFETY: the template is only a comment. As in `JSC::ensureStillAliveHere`, the value is an input and memory is clobbered.
+        unsafe {
+            core::arch::asm!("/* {0} */", in(reg) self.0.encoded(), options(nostack, preserves_flags))
+        };
+    }
+}
+
+/// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
+pub struct WrapperGuard<'a, T> {
+    native: core::ptr::NonNull<T>,
+    wrapper: EnsureStillAlive,
+    /// Borrows the value that was cast.
+    _value: core::marker::PhantomData<&'a JSValue>,
+}
+impl<'a, T> WrapperGuard<'a, T> {
+    /// # Safety
+    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
+    #[doc(hidden)]
+    pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
+        Some(Self {
+            native: core::ptr::NonNull::new(native)?,
+            wrapper: EnsureStillAlive(*wrapper),
+            _value: core::marker::PhantomData,
+        })
+    }
+
+    /// As [`core::cell::Ref::map`].
+    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U>
+    where
+        T: 'a,
+    {
+        WrapperGuard {
+            native: core::ptr::NonNull::from(f(&this)),
+            wrapper: this.wrapper,
+            _value: core::marker::PhantomData,
+        }
+    }
+
+    pub fn to_js(&self) -> JSValue {
+        self.wrapper.0
+    }
+
+    /// The pointer that the wrapper holds. After [`map`](Self::map), and for the `Blob` of a `BuildArtifact`, the address of the part.
+    pub fn as_ptr(&self) -> *mut T {
+        self.native.as_ptr()
+    }
+
+    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
+    pub fn as_ctx_ptr(&self) -> *mut T {
+        self.as_ptr()
+    }
+}
+impl<T> core::ops::Deref for WrapperGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the contract of `new`. `map` keeps a borrow of such a struct.
+        unsafe { self.native.as_ref() }
     }
 }
 
@@ -903,7 +1000,7 @@ pub use self::js_promise::Status as PromiseStatus;
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+/// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
@@ -981,7 +1078,7 @@ pub struct ValidateObjectOpts {
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
-pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
+pub use self::js_object::{ExternColumnIdentifier, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CallFrame / ArgumentsSlice (real module in CallFrame.rs).
@@ -1087,10 +1184,6 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 pub mod js_string;
 pub use self::js_string::{JSString, JSStringView};
 
-#[path = "RefString.rs"]
-pub mod ref_string;
-pub use self::ref_string as RefString;
-
 pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
@@ -1111,7 +1204,7 @@ pub mod virtual_machine;
 pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmHandle};
+pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmBound, VmHandle};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1122,7 +1215,6 @@ pub type ErrorableString = Errorable<bun_core::String>;
 
 #[path = "hot_reloader.rs"]
 pub mod hot_reloader;
-pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;
@@ -1154,7 +1246,7 @@ pub use self::event_loop::{
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
     PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1237,12 +1329,18 @@ pub trait SysErrorJsc {
     fn throw(&self, global: &JSGlobalObject) -> JsError;
 }
 impl SysErrorJsc for bun_sys::Error {
+    #[cold]
+    #[inline(never)]
     fn to_system_error(&self) -> SystemError {
         SystemError::from(bun_sys::Error::to_system_error(self))
     }
+    #[cold]
+    #[inline(never)]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
     }
+    #[cold]
+    #[inline(never)]
     fn throw(&self, global: &JSGlobalObject) -> JsError {
         global.throw_value(<Self as SysErrorJsc>::to_js(self, global))
     }
@@ -1344,36 +1442,40 @@ pub use self::zig_exception::ZigException;
 /// What bindgen implements for the struct of a class (`docs/project/bindgen.mdx`).
 pub trait JsClass: Sized {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
-    fn from_js(value: JSValue) -> Option<*mut Self>;
+    fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>>;
     /// Only an instance with the structure of the class: no subclass, no own property.
-    fn from_js_direct(value: JSValue) -> Option<*mut Self>;
+    fn from_js_direct(value: &JSValue) -> Option<WrapperGuard<'_, Self>>;
 }
 
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]
 pub struct Ref {
-    pub has: bool,
+    pub has: core::cell::Cell<bool>,
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if !self.has {
+    pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
+        if !self.has.get() {
             return;
         }
-        self.has = false;
-        vm.active_tasks -= 1;
+        self.has.set(false);
+        vm.active_tasks.update(|n| n - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if self.has {
+    pub fn r#ref(&self, vm: &virtual_machine::VirtualMachine) {
+        if self.has.get() {
             return;
         }
-        self.has = true;
-        vm.active_tasks += 1;
+        self.has.set(true);
+        vm.active_tasks.update(|n| n + 1);
     }
 }
 
-pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
+impl Drop for Ref {
+    fn drop(&mut self) {
+        self.unref(virtual_machine::VirtualMachine::get());
+    }
+}
 
 /// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type
 /// under both names.
@@ -1404,6 +1506,9 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        runs_compiled_code: bool,
+        locks_builtins: bool,
+        is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

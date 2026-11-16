@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# "use strict";
+# const data = JSON.parse("[1,2,3]");
+# class Scale { static twice(x) { return x * 2; } }
+# const made = data.map(() => new Scale());
+# function sum(n) { let s = 0; for (let i = 0; i < n; i++) s += Scale.twice(i); return s; }
+# function make(k) { return class Other { static twice(x) { return x * k; } }; }
+# const first = make(2), second = make(3);
+# function sumOf(which, n) { let s = 0; for (let i = 0; i < n; i++) s += which.twice(i); return s; }
+# console.log(sum(40), made.length, sumOf(first, 40), sumOf(second, 40));
+# -- end of source
+# f1 = sum, f3 = sumOf
+# The class is constructed in a callback that is handed to a method of a value from outside: its objects reach code that nobody has read, and from an object the class object is one read away. So Link does not
+# say that the class stays as written, and the read of the static method went by name through a stub in every turn: nine times what a plain function costs. What constructor functions have had, classes written
+# with `class` have now: what the records expect under the name, behind the guard of the name on the static side, which the run time ends when anybody stores, defines or deletes there.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = AreMembersUnchanged conditions=[{layout=L{{*}} side=Static key="twice"}]
+# CHECK: = Mul {{*}} form=Integers
+# CHECK: frequency=Rare
+# CHECK: = PropGet {{*}} key="twice"
+# A class that is evaluated several times has several class objects: the loop has a version for each.
+# RUN(SEVERAL): walk f3 mechanisms=all
+# SEVERAL: = AreMembersUnchanged conditions=[{layout=L{{*}} side=Static key="twice"}]
+# SEVERAL: = Mul {{*}} form=Integers
+# SEVERAL: = AreMembersUnchanged conditions=[{layout=L{{*}} side=Static key="twice"}]
+# SEVERAL: = Mul {{*}} form=Integers

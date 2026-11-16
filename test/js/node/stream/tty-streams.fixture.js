@@ -84,8 +84,8 @@ describe("TTY", () => {
   it("process.stdio tty", () => {
     // this isnt run in a tty, so stdin will not appear to be a tty
     expect(process.stdin instanceof fs.ReadStream).toBe(true);
-    expect(process.stdout instanceof tty.WriteStream).toBe(true);
-    expect(process.stderr instanceof tty.WriteStream).toBe(true);
+    expect(process.stdout instanceof tty.WriteStream).toBe(tty.isatty(1));
+    expect(process.stderr instanceof tty.WriteStream).toBe(tty.isatty(2));
     expect(process.stdin.isTTY).toBeUndefined();
 
     if (tty.isatty(1)) {

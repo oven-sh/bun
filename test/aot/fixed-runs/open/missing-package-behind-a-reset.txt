@@ -1,0 +1,8 @@
+A package that is not there, asked for behind vi.resetModules().
+#### b.test.ts
+import { test, vi } from "bun:test";
+test("n1", async () => { try { await import("./next"); } catch (e) { console.log("| CASE n1", e.constructor.name, String(e.message).replace(/ from .*/, "")); } vi.resetModules(); });
+test("n2", async () => { try { await import("./next"); } catch (e) { console.log("| CASE n2", e.constructor.name, String(e.message).replace(/ from .*/, "")); } vi.resetModules(); });
+
+#### next.ts
+import api from "not-there"; export const next = api;

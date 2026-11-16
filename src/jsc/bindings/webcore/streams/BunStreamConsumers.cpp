@@ -9,6 +9,7 @@
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "GeneratedBlob.h"
+#include "GeneratedSink.h"
 #include "helpers.h"
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
@@ -1095,7 +1096,7 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
 
     MarkedArgumentBuffer noArguments;
-    JSObject* arrayBufferSink = JSC::construct(globalObject, domGlobalObject->ArrayBufferSink(), noArguments, "ArrayBufferSink is not constructible"_s);
+    JSObject* arrayBufferSink = JSC::construct(globalObject, Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSArrayBufferSink>(globalObject), noArguments, "ArrayBufferSink is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->m_directSource.clear();

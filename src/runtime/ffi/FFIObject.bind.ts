@@ -12,6 +12,7 @@ const view = {
     deallocator: b.any.ifPassed,
   },
   returns: b.any,
+  feature: "Ffi",
   capability: "js",
   throws: true,
 } as const;

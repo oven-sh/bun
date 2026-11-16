@@ -1,0 +1,20 @@
+# The counter of a loop is compared with what a variable of the module holds, and views are stored into under it: the preheader rounds and checks the number and compares it with the room of the views, so that the iterations compare the counter once.
+# LIBRARY: own
+# -- source: main.ts
+# let width = 0;
+# const pixels = new Uint8Array(6);
+# function clear(value: number): void { for (let i = 0; i < width; i++) pixels[i] = value; }
+# publish((n: number) => { width = n; clear(n); return pixels.join(); });
+# declare function publish(run: (n: number) => string): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: GetModuleVariable
+# CHECK: PutTypedArrayElement {{*}}isInsideView
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(4)); print(run(9)); print(run(2.5)); print(run(-1)); print(run("3")); };
+# SHELL: 4,4,4,4,0,0
+# SHELL-NEXT: 9,9,9,9,9,9
+# SHELL-NEXT: 2,2,2,9,9,9
+# SHELL-NEXT: 2,2,2,9,9,9
+# SHELL-NEXT: 3,3,3,9,9,9

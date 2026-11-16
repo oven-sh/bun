@@ -75,6 +75,13 @@ impl Strong {
         Self::Held(bun_jsc::Strong::create(this.value, global))
     }
 
+    pub(crate) fn set(&mut self, this: ReadableStream, global: &JSGlobalObject) {
+        match self {
+            Self::Held(s) => s.set(global, this.value),
+            Self::Weak(_) | Self::Empty => *self = Self::init(this, global),
+        }
+    }
+
     /// Release the GC root while keeping the stream readable via `Weak`. The
     /// owning wrapper's `m_stream` `WriteBarrier` keeps the stream alive from
     /// here.
@@ -84,30 +91,10 @@ impl Strong {
         }
     }
 
-    pub(crate) fn deinit(&mut self) {
-        *self = Self::Empty;
-    }
-
     /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
     /// [`ReadableStream::from_js`], which converts arbitrary values).
     pub(crate) fn get(&self) -> Option<ReadableStream> {
         self.value().and_then(ReadableStream::from_js_direct)
-    }
-
-    pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        if let Some(stream) = self.get() {
-            let Some((first, second)) = stream.tee(global)? else {
-                return Ok(None);
-            };
-            match self {
-                Self::Held(s) => s.set(global, first.value),
-                Self::Weak(_) | Self::Empty => {
-                    *self = Self::Weak(bun_jsc::Weak::create_passive(first.value, global))
-                }
-            }
-            return Ok(Some(second));
-        }
-        Ok(None)
     }
 }
 
@@ -555,7 +542,7 @@ impl ReadableStream {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            cx.vm().as_mut().event_loop().cast(),
+                            cx.vm().event_loop_ptr(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
@@ -589,35 +576,30 @@ impl ReadableStream {
         }
     }
 
-    pub fn from_pipe<P>(
+    pub fn from_pipe(
         cx: &bun_jsc::JsThread<'_>,
-        _parent: P,
-        buffered_reader: &mut bun_io::BufferedReader,
+        buffered_reader: &bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 ..Default::default()
             },
             ..Default::default()
         });
-        let ctx_ptr: *mut FileReader = &raw mut source.context;
-        source
-            .context
-            .reader()
-            .from(buffered_reader, ctx_ptr.cast::<c_void>());
+        source.context.set_reader_owner();
+        source.context.reader.from(buffered_reader);
 
         let stream = source.to_readable_stream(cx)?;
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
-        // same `waiting_for_on_reader_done` flag; `on_reader_done` releases.
-        if !source.context.reader().is_done() {
-            source.context.waiting_for_on_reader_done.set(true);
-            source.increment_count();
+        // same `io_ref`; `on_reader_done` releases.
+        if !source.context.reader.is_done() {
+            source.context.io_ref.set(Some(source.context.ref_guard()));
         }
 
         Ok(stream)
@@ -633,7 +615,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 buffered: bun_jsc::JsCell::new(bytes),
                 read_error: bun_jsc::JsCell::new(Some(err)),
@@ -807,7 +789,7 @@ pub trait SourceContext: Sized {
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
     /// here would deallocate the storage backing the live `&self` borrow (UAF).
-    fn deinit_fn(&self);
+    fn deinit_fn(&self) {}
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
     /// sweep: no JS. `ByteStream` tells its producer nobody can read it now.
@@ -858,7 +840,7 @@ pub struct NewSource<C: SourceContext> {
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
-    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
+    /// native I/O ref is held (FileReader `io_ref`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
@@ -875,7 +857,9 @@ pub struct NewSource<C: SourceContext> {
     /// stream settles every read its script is waiting on.
     pub reader_context: Cell<Option<jsc::ContextId>>,
     /// Armed while this is the source of a stream script of a `Bun.ModuleGraph` was given: what it
-    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph.
+    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph. The same
+    /// for a test file under `bun test --isolate`: a read that never ends would keep its buffer,
+    /// and with it the file's whole realm, for the rest of the run.
     pub abort_handle: jsc::AbortHandle,
 }
 
@@ -1033,18 +1017,6 @@ impl<C: SourceContext> NewSource<C> {
         )
     }
 
-    /// Heap-allocate and hand back the raw pointer.
-    ///
-    /// Ownership is **not** retained by Rust: the returned pointer is intended to
-    /// be handed to the JS wrapper via [`Self::to_readable_stream`],
-    /// after which the GC finalizer drives
-    /// teardown through [`Self::decrement_count`] → context `deinit_fn` →
-    /// [`Self::deinit`]. Dropping a `Box` here would free the allocation while
-    /// the JS cell still points at it (UAF), so this returns `*mut Self`.
-    pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
     /// Inverse of the `*mut Self as *mut C` cast [`ReadableStream::from_js`]
     /// performs: `ctx` must be that pointer (whole-allocation provenance), not
     /// one derived from a `&C`/`&mut C` — use the context's
@@ -1055,21 +1027,13 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { bun_core::from_field_ptr!(Self, context, ctx) }
     }
 
-    /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.
+    /// Heap-allocate and hand back the leaked allocation as an unbounded `&mut`.
     ///
-    /// Every call site of `new()` immediately did `unsafe { &mut *p }` to set
-    /// up the context and then handed ownership to the JS wrapper via
-    /// [`Self::to_readable_stream`]. Centralising that deref here (one
-    /// audited `unsafe`, N safe callers) — the allocation is fresh, non-null,
-    /// uniquely owned, and outlives the returned borrow because the JS GC
-    /// finalizer (not Rust `Drop`) reclaims it via [`Self::decrement_count`].
+    /// The GC finalizer frees it via [`Self::decrement_count`]: do not use the borrow once the
+    /// wrapper from [`Self::to_readable_stream`] can be collected.
     #[inline]
     pub fn new_mut<'a>(init: Self) -> &'a mut Self {
-        // SAFETY: `heap::into_raw(Box::new(..))` is non-null, aligned, and the
-        // sole pointer to a fresh allocation; forming `&mut` is unique.
-        // Ownership transfers to the JS wrapper, so the unbounded
-        // lifetime is correct (no Rust owner will drop underneath the borrow).
-        unsafe { &mut *Self::new(init) }
+        bun_core::heap::release(Box::new(init))
     }
 
     pub fn update_ref(&self, enable: bool) {
@@ -1132,7 +1096,7 @@ impl<C: SourceContext> NewSource<C> {
     pub fn increment_count(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
-        // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
+        // `io_ref`). Root the wrapper so
         // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
@@ -1171,7 +1135,7 @@ impl<C: SourceContext> NewSource<C> {
     /// a dangling-reference UAF (Stacked Borrows: protected tag on freed memory).
     ///
     /// SAFETY: `this` must point at a live `NewSource<C>` produced by
-    /// [`Self::new`] (i.e. `Box::into_raw`). Caller must not dereference `this`
+    /// [`Self::new_mut`] (i.e. `Box::leak`). Caller must not dereference `this`
     /// — nor any interior pointer such as `&context` — after this returns.
     pub unsafe fn decrement_count(this: *mut Self) {
         // SAFETY: caller contract — `this` is live for the duration of this block.
@@ -1195,7 +1159,7 @@ impl<C: SourceContext> NewSource<C> {
             unsafe {
                 (*this).context.deinit_fn();
             }
-            // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
+            // SAFETY: `this` originated from `Box::leak` in `Self::new_mut`. No
             // `&mut` borrow of `*this` is live at this point — reclaim and drop,
             // which runs `Drop` on `context` and all other fields, then frees.
             drop(unsafe { bun_core::heap::take(this) });
@@ -1210,13 +1174,13 @@ impl<C: SourceContext> NewSource<C> {
         let out_value = if let Some(v) = self.this_jsvalue.try_get() {
             v
         } else {
-            // The wrapper adopts the ref [`Self::new`] left on this allocation.
+            // The wrapper adopts the ref [`Self::new_mut`] left on this allocation.
             C::js_create(core::ptr::from_mut(self).cast::<c_void>(), cx.global())
         };
         out_value.ensure_still_alive();
         if self.this_jsvalue.get().is_empty() {
             self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
-            if let Some(context) = cx.vm().as_graph_context(cx.context()) {
+            if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
                 unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };

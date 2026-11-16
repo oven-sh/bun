@@ -1,0 +1,20 @@
+# A throw stands where what it throws ends: the `)` of a call or of `new`, the name of a member, the last operand. That is the place that `bun test` prints for the frame of a throw,
+# and over lines it is another line than the one where the expression begins. The lowering laid no place on the Throw: it bore whatever the expression had set last.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const held = { error: new RangeError("held") };
+# function overLines() {
+#   throw new Error(
+#     "over lines",
+#   );
+# }
+# function aMember(flag: unknown) {
+#   throw flag && (held.error as Error);
+# }
+# for (const thrower of [overLines, aMember]) { try { thrower(1); } catch (error) { print((error as Error).message); } }
+# -- end of source
+# RUN: walk f1 f2 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: ThrowNewError message="over lines" throwPosition=162
+# CHECK: code f2:Body
+# CHECK: Throw {{*}} @223

@@ -9,7 +9,7 @@ use bun_lint_oxlint::ast_util::get_inner_expression;
 /// The lang prop on the `<html>` element must be a valid IETF BCP 47 language tag.
 pub struct Lang;
 
-const LANG: Message = Message::new("", "`lang` attribute must have a valid value.");
+const LANG: &Message = &Message::new("", "`lang` attribute must have a valid value.");
 
 impl Rule for Lang {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "lang", Kind::Problem);

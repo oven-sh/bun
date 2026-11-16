@@ -151,7 +151,6 @@ mod _impl {
                         // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
                         // pre-creates hostCpuCount lazy proxies, so return that many stub
                         // entries (zeroed times / unknown model / speed 0) — matches Node.
-                        // SAFETY: pure FFI getter
                         let count: u32 =
                             u32::try_from(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN())).unwrap();
                         let stubs = JSValue::create_empty_array(global_this, count as usize)?;
@@ -348,7 +347,6 @@ mod _impl {
         bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
             .map_err(|_| OsError::Any)?;
 
-        // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
         let mult: u64 = if ticks > 0 {
             1000 / u64::try_from(ticks).expect("int cast")
@@ -384,6 +382,15 @@ mod _impl {
 
     #[cfg(target_os = "macos")]
     fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
+        /// What `host_processor_info` maps into this task.
+        struct LoadInfo(*mut c::processor_cpu_load_info, c::mach_msg_type_number_t);
+        impl Drop for LoadInfo {
+            fn drop(&mut self) {
+                // SAFETY: nothing borrows the mapping any more.
+                unsafe { c::vm_deallocate(c::mach_task_self(), self.0 as usize, self.1 as usize) };
+            }
+        }
+
         // Fetch the CPU info structure
         let mut num_cpus: c::natural_t = 0;
         let mut info: *mut c::processor_cpu_load_info = core::ptr::null_mut();
@@ -401,10 +408,7 @@ mod _impl {
         {
             return Err(OsError::Any);
         }
-        scopeguard::defer! {
-            // SAFETY: info/info_size returned by host_processor_info
-            unsafe { let _ = c::vm_deallocate(c::mach_task_self(), info as usize, info_size as usize); }
-        };
+        let info = LoadInfo(info, info_size);
 
         // Ensure we got the amount of data we expected to guard against buffer overruns
         if info_size != c::PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus {
@@ -442,7 +446,6 @@ mod _impl {
         }
 
         // Get the multiplier; this is the number of ms/tick
-        // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
         let multiplier: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
@@ -450,7 +453,7 @@ mod _impl {
         let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
         let mut cpu_index: u32 = 0;
         // SAFETY: info points to num_cpus entries per host_processor_info contract
-        let info_slice = unsafe { bun_core::ffi::slice(info, num_cpus as usize) };
+        let info_slice = unsafe { bun_core::ffi::slice(info.0, num_cpus as usize) };
         while cpu_index < num_cpus {
             let ticks = &info_slice[cpu_index as usize].cpu_ticks;
             let times = CPUTimes {
@@ -478,24 +481,8 @@ mod _impl {
 
     #[cfg(windows)]
     fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
-        if err != 0 {
-            return Err(OsError::Any);
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_cpu_info
-            unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
-        };
-
-        let values =
-            JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
-
-        // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-        let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
+        let infos = libuv::List::<libuv::uv_cpu_info_t>::get().map_err(|_| OsError::Any)?;
+        let values = JSValue::create_empty_array(global_this, infos.len())?;
         for (i, cpu_info) in infos.iter().enumerate() {
             let times = CPUTimes {
                 user: cpu_info.cpu_times.user,
@@ -570,7 +557,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::from_bytes(home));
+                    return Ok(BunString::clone_utf8(home));
                 }
             }
 
@@ -585,7 +572,6 @@ mod _impl {
             let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
             let mut using_heap = false;
 
-            // SAFETY: zeroed POD
             let mut pw: libc::passwd = bun_core::ffi::zeroed();
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
@@ -658,8 +644,7 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            // SAFETY: idempotent Winsock init (libuv defers it to first use).
-            unsafe { windows::libuv::uv__winsock_ensure() };
+            windows::libuv::uv__winsock_ensure();
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
@@ -737,6 +722,28 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) use network_interfaces_windows as network_interfaces;
 
+    /// The list that `getifaddrs` returns.
+    #[cfg(unix)]
+    struct Interfaces(*mut libc::ifaddrs);
+
+    #[cfg(unix)]
+    impl Interfaces {
+        fn iter(&self) -> impl Iterator<Item = &libc::ifaddrs> {
+            // SAFETY: each link is null or an entry that lives until `drop`.
+            core::iter::successors(unsafe { self.0.as_ref() }, |it| unsafe {
+                it.ifa_next.as_ref()
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Interfaces {
+        fn drop(&mut self) {
+            // SAFETY: returned by getifaddrs
+            unsafe { libc::freeifaddrs(self.0) };
+        }
+    }
+
     #[cfg(unix)]
     pub(crate) fn network_interfaces_posix(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -768,10 +775,7 @@ mod _impl {
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
         }
-        scopeguard::defer! {
-            // SAFETY: returned by getifaddrs
-            unsafe { libc::freeifaddrs(interface_start) };
-        };
+        let interfaces = Interfaces(interface_start);
 
         // We'll skip interfaces that aren't actually available
         fn skip(iface: &libc::ifaddrs) -> bool {
@@ -809,30 +813,11 @@ mod _impl {
         // The list currently contains entries for link-layer interfaces
         //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
         //  but need the link-layer entries to determine MAC address.
-        // So, on our first pass through the linked list we'll count the number of
-        //  INET interfaces only.
-        let mut num_inet_interfaces: usize = 0;
-        let mut it = interface_start;
-        while !it.is_null() {
-            // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
-            if !(skip(iface) || is_link_layer(iface)) {
-                num_inet_interfaces += 1;
-            }
-            it = iface.ifa_next;
-        }
-        let _ = num_inet_interfaces;
-
         let ret = JSValue::create_empty_object(global_this, 0);
 
-        // Second pass through, populate each interface object
-        let mut it = interface_start;
-        while !it.is_null() {
-            // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
-            let next = iface.ifa_next;
+        // Populate each interface object
+        for iface in interfaces.iter() {
             if skip(iface) || is_link_layer(iface) {
-                it = next;
                 continue;
             }
 
@@ -928,27 +913,20 @@ mod _impl {
             // mac <string> The MAC address of the network interface
             {
                 // We need to search for the link-layer interface whose name matches this one
-                let mut ll_it = interface_start;
                 let maybe_ll_addr: Option<*const c_void> = 'search: {
-                    while !ll_it.is_null() {
-                        // SAFETY: ll_it is a valid pointer in the linked list
-                        let ll_iface = unsafe { &*ll_it };
-                        let ll_next = ll_iface.ifa_next;
+                    for ll_iface in interfaces.iter() {
                         if skip(ll_iface) || !is_link_layer(ll_iface) {
-                            ll_it = ll_next;
                             continue;
                         }
 
                         // SAFETY: ifa_name is a NUL-terminated C string
                         let ll_name = unsafe { bun_core::ffi::cstr(ll_iface.ifa_name) }.to_bytes();
                         if !strings::has_prefix(ll_name, interface_name) {
-                            ll_it = ll_next;
                             continue;
                         }
                         if ll_name.len() > interface_name.len()
                             && ll_name[interface_name.len()] != b':'
                         {
-                            ll_it = ll_next;
                             continue;
                         }
 
@@ -970,9 +948,7 @@ mod _impl {
                         // `sdl_data` is `[c_char; N]` (signedness varies by platform);
                         // reinterpret as bytes — same width, same provenance.
                         let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
-                        let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
-                        // c_char and u8 are both Pod; bytemuck statically checks the layout.
-                        bytemuck::cast_slice::<_, u8>(raw)
+                        bun_core::slice_as_bytes(&dl.sdl_data[dl.sdl_nlen as usize..])
                     };
                     if addr_data.len() < 6 {
                         let mac = b"00:00:00:00:00:00";
@@ -1014,7 +990,7 @@ mod _impl {
 
             // Does this entry already exist?
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1026,8 +1002,6 @@ mod _impl {
                 array.put_index(global_this, 0, interface)?;
                 ret.put_may_be_index(global_this, &key, array)?;
             }
-
-            it = next;
         }
 
         Ok(ret)
@@ -1036,11 +1010,7 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) fn network_interfaces_windows(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
-        if err != 0 {
+        let iface_slice = libuv::List::<libuv::uv_interface_address_t>::get().map_err(|err| {
             let sys_err = SystemError {
                 message: BunString::static_("uv_interface_addresses failed").into(),
                 code: BunString::static_("ERR_SYSTEM_ERROR").into(),
@@ -1049,22 +1019,15 @@ mod _impl {
                 syscall: BunString::static_("uv_interface_addresses").into(),
                 ..Default::default()
             };
-            return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_interface_addresses
-            unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
-        };
+            global_this.throw_value(sys_err.to_error_instance(global_this))
+        })?;
 
         let ret = JSValue::create_empty_object(global_this, 8);
 
         // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
         let mut ip_buf = [0u8; 65];
 
-        // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-        let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
-        for iface in iface_slice {
+        for iface in iface_slice.iter() {
             let interface = JSValue::create_empty_object(global_this, 7);
 
             // address <string> The assigned IPv4 or IPv6 address
@@ -1197,7 +1160,7 @@ mod _impl {
             // SAFETY: iface.name is a NUL-terminated C string from libuv
             let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1234,8 +1197,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let value: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {
@@ -1317,8 +1279,7 @@ mod _impl {
         }
         #[cfg(windows)]
         {
-            // SAFETY: pure FFI getter
-            return unsafe { libuv::uv_get_total_memory() };
+            return libuv::uv_get_total_memory();
         }
     }
 
@@ -1428,8 +1389,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let slice: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {

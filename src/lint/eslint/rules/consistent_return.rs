@@ -7,13 +7,13 @@ pub struct ConsistentReturn {
     treat_undefined_as_unspecified: bool,
 }
 
-const MISSING_RETURN: Message = Message::new(
+const MISSING_RETURN: &Message = &Message::new(
     "missingReturn",
     "Expected to return a value at the end of {{name}}.",
 );
-pub const MISSING_RETURN_VALUE: Message = Message::new("missingReturnValue", "{{name}} expected a return value.");
-pub const UNEXPECTED_RETURN_VALUE: Message =
-    Message::new("unexpectedReturnValue", "{{name}} expected no return value.");
+pub const MISSING_RETURN_VALUE: &Message = &Message::new("missingReturnValue", "{{name}} expected a return value.");
+pub const UNEXPECTED_RETURN_VALUE: &Message =
+    &Message::new("unexpectedReturnValue", "{{name}} expected no return value.");
 
 /// True if `file` could have anything to report.
 pub fn is_relevant(file: &File<'_>) -> bool {

@@ -1,0 +1,20 @@
+# f1 = turn
+# -- source: array-of-integers-store-in-place.ts
+# const marks: number[] = [];
+# for (let k = 0; k < 512; k++) marks.push(k);
+# function turn(i: number): number {
+#   for (let k = 0; k < marks.length; k++) marks[k] = (marks[k]! + i) & 1023;
+#   return marks[i & 511]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 10 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 26, patches 2, moves 1, unlikely 0.
+# A store of a number into a list stands in turns laid out in a row: eight turns in 59 for int32s (7.4 a turn against 25); the written loop stands behind them for the rest.
+# RUN(X64): loops most:68,12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 68
+# X64-NEXT: loop: at most 12

@@ -1,0 +1,1 @@
+delete module.parent.exports;

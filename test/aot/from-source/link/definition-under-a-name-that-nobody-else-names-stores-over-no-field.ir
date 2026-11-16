@@ -1,0 +1,20 @@
+# `Object.defineProperty(scanner, "shownToDebuggers", { get() { .. } })`: the key is written and nothing else in the program names it, so it is the name of no field. What the fields are expected to hold stays what was stored there.
+# RUN: summary f0
+# CHECK: change {{*}}DefinesByDescriptor {{*}}under-a-name-that-nobody-else-names
+# RUN(ACCESS): summary f0
+# ACCESS-NOT: Define {{*}}[Unknown]
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "position" proven=i32 writers-known
+# HELD: "scan" proven=f1 writers-known written-at-construction-alone
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 1 0
+# ALL-NEXT: 5
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# const scanner = (0, { scan: () => 1, position: 0 });
+# Object.defineProperty(scanner, "shownToDebuggers", { get() { return 5; }, enumerable: true });
+# print(scanner.scan() + " " + scanner.position);
+# let last;
+# for (const key in scanner) last = scanner[key];
+# print(last);
+# -- end of source

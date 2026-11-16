@@ -1,14 +1,14 @@
 const { validateAbortSignal, validateFunction } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 
-function addAbortListener(signal: AbortSignal, listener: (event?: Event) => void): Disposable {
+function addAbortListener(signal: AbortSignal, listener: (event?: object) => void): Disposable {
   if (signal === undefined) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }
   validateAbortSignal(signal, "signal");
   validateFunction(listener, "listener");
 
-  let removeEventListener;
+  let removeEventListener: (() => void) | undefined;
   if (signal.aborted) {
     queueMicrotask(() => listener());
   } else {

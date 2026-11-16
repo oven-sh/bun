@@ -1,0 +1,42 @@
+# Object.getPrototypeOf(hidden).removeListener = (type, target) => target(); process.removeListener("tick", second)
+# As member-above-a-built-in-read-as-a-value-and-called-on-another-receiver-leads-to-the-prototype.ir: whatever `hidden` is, the member lies in a locked place.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+layout L0 fields=[]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hidden" [isFreeName]
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectGetPrototypeOf
+    v5 = Call v4, v3, v2 calleeName="Object.getPrototypeOf"
+    v6 = NewClosure function=f1
+    PropSet v5, v6 key="removeListener"
+    v8 = PropGet v0 key="removeListener"
+    v9 = Convert v8 declared={type=builtin(EventEmitterPrototypeRemoveListener) flags=[IsExpected]}
+    v10 = String string="tick"
+    v11 = NewClosure function=f2
+    v12 = Call v9, v0, v10, v11 calleeKey="removeListener" calleeName="process.removeListener"
+    v13 = Undefined
+    Return v13
+}
+function f1 module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, -
+    Return v2
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

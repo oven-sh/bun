@@ -7,29 +7,29 @@ pub struct UseIsnan {
     enforce_for_index_of: bool,
 }
 
-const COMPARISON_WITH_NAN: Message =
-    Message::new("comparisonWithNaN", "Use the isNaN function to compare with NaN.");
+const COMPARISON_WITH_NAN: &Message =
+    &Message::new("comparisonWithNaN", "Use the isNaN function to compare with NaN.");
 /// oxlint's messages.
-const INEQUALITY_WITH_NAN: Message =
-    Message::new("comparisonWithNaN", "Checking inequality with NaN will always return true");
-const EQUALITY_WITH_NAN: Message =
-    Message::new("comparisonWithNaN", "Checking equality with NaN will always return false");
-const ORDER_WITH_NAN: Message = Message::new("comparisonWithNaN", "Comparison with NaN will always return false");
-const SWITCH_NAN: Message = Message::new(
+const INEQUALITY_WITH_NAN: &Message =
+    &Message::new("comparisonWithNaN", "Checking inequality with NaN will always return true");
+const EQUALITY_WITH_NAN: &Message =
+    &Message::new("comparisonWithNaN", "Checking equality with NaN will always return false");
+const ORDER_WITH_NAN: &Message = &Message::new("comparisonWithNaN", "Comparison with NaN will always return false");
+const SWITCH_NAN: &Message = &Message::new(
     "switchNaN",
     "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.",
 );
-const CASE_NAN: Message =
-    Message::new("caseNaN", "'case NaN' can never match. Use Number.isNaN before the switch.");
-const INDEX_OF_NAN: Message =
-    Message::new("indexOfNaN", "Array prototype method '{{ methodName }}' cannot find NaN.");
-const REPLACE_WITH_IS_NAN: Message = Message::new("replaceWithIsNaN", "Replace with Number.isNaN.");
-const REPLACE_WITH_CASTING_AND_IS_NAN: Message = Message::new(
+const CASE_NAN: &Message =
+    &Message::new("caseNaN", "'case NaN' can never match. Use Number.isNaN before the switch.");
+const INDEX_OF_NAN: &Message =
+    &Message::new("indexOfNaN", "Array prototype method '{{ methodName }}' cannot find NaN.");
+const REPLACE_WITH_IS_NAN: &Message = &Message::new("replaceWithIsNaN", "Replace with Number.isNaN.");
+const REPLACE_WITH_CASTING_AND_IS_NAN: &Message = &Message::new(
     "replaceWithCastingAndIsNaN",
     "Replace with Number.isNaN and cast to a Number.",
 );
-const REPLACE_WITH_FIND_INDEX: Message =
-    Message::new("replaceWithFindIndex", "Replace with Array.prototype.{{ methodName }}.");
+const REPLACE_WITH_FIND_INDEX: &Message =
+    &Message::new("replaceWithFindIndex", "Replace with Array.prototype.{{ methodName }}.");
 
 fn is_sequence(e: Expr) -> bool {
     e.binary_op() == Some(BinOp::Comma)
@@ -93,7 +93,7 @@ impl UseIsnan {
     fn report_comparison<'a>(e: Expr<'a>, op: BinOp, nan: Expr<'a>, compared: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // oxlint points at the `NaN`, with its parentheses.
         let report = match (cx.language().is_oxlint, op) {
-            (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing is equal to NaN, not even NaN itself."),
+            (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing equals NaN, not even NaN."),
             (true, BinOp::NotEq | BinOp::NotEqEq) => cx.report(nan.outer_span(), INEQUALITY_WITH_NAN),
             (true, BinOp::EqEq | BinOp::EqEqEq) => cx.report(nan.outer_span(), EQUALITY_WITH_NAN),
             (true, _) => cx.report(nan.outer_span(), ORDER_WITH_NAN),

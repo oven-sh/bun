@@ -1,0 +1,25 @@
+# -- source: main.js
+# function called(n) { let read = null; if (n > 3) { const size = (n + 1) | 0; read = () => size * 2; } return read !== null ? read() : -1; }
+# function nested(n) { let make = null; if (n > 3) { const size = (n + 1) | 0; make = () => () => size * 3; } return make !== null ? make()() : -1; }
+# function counted(n) { let bump = null; if (n > 3) { var count = n; bump = () => { count = (count + 1) | 0; return count; }; } return bump !== null ? bump() : -1; }
+# function early(n) { const peek = () => late; let late = (n + 2) | 0; late = (late + 1) | 0; return peek(); }
+# const five = JSON.parse("5");
+# print(called(five), nested(five), counted(five), early(five));
+# -- end of source
+# Each function runs once and stores behind the definition, in one branch. The call stands behind a test of the closure, and ways on which nothing was stored lead to that test.
+# The test goes with the way that stored, and the code does not say so: the verifier asks the closure that is made in the branch, not the read, the call, or the closure that a copy of the reader makes.
+# The scope of counted() lists a value where it is made and is asked at its closure. The scope of early() lists none: its one variable has a dead zone, and the closure stands in front of every store.
+# RUN(CALLED): walk f1 mechanisms=all
+# CALLED-LABEL: code f1:Body
+# CALLED: PutModuleVariable
+# CALLED: NewClosure
+# RUN(COUNTED): walk f3 mechanisms=all
+# COUNTED-LABEL: code f3:Body
+# COUNTED: PutEnvironmentField
+# COUNTED: NewClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 18 6 8
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 12 18 6 8
+# RUN(CALLS): run-in-shell mechanisms=all-Inlining
+# CALLS: 12 18 6 8

@@ -1,0 +1,21 @@
+A CommonJS file that was mocked before it ever ran is whole again in the next test file.
+#### a.test.js
+import { filler1 } from "./filler.mjs"; void filler1;
+import { test, vi } from "bun:test";
+test("a", async () => { vi.doMock("./dep.cjs", () => ({ who: "one" })); const held = await import("./held.js"); console.log("| CASE a " + held.read()); });
+#### b.test.js
+import { filler1 } from "./filler.mjs"; void filler1;
+import { test } from "bun:test";
+import { read } from "./held.js";
+test("b", () => console.log("| CASE b " + read()));
+#### dep.cjs
+exports.who = "real";
+#### filler.mjs
+export function filler0(x) { return x + 0; }
+export function filler1(x) { return x + 1; }
+#### held.js
+import { who } from "./dep.cjs";
+import * as ns from "./dep.cjs";
+export const read = () => who + " " + ns.who;
+#### package.json
+{ "type": "module" }

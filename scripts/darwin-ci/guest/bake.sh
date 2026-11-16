@@ -14,6 +14,7 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 brew uninstall --force --ignore-dependencies node node@24 node@22 >/dev/null 2>&1 || true
 rm -f /opt/homebrew/bin/node /opt/homebrew/bin/npm /opt/homebrew/bin/npx
 
+brew update --quiet
 sh /tmp/bootstrap.sh
 
 missing=0

@@ -1,0 +1,56 @@
+# Both factors are exact as numbers, so the product of the numbers is the exact product rounded once. Where the exact product fits 64 bits, its conversion is that same rounding: one multiplication of integers and one conversion.
+# over: the product may pass 2 ** 63 . signed: zero times a negative number is negative zero: both stay products of numbers . beside: the left side is never zero and the right side alone may be negative: no negative zero.
+# -- source: the-product-of-integers-that-fits-64-bits-is-made-in-integers.ts
+# declare function hidden(): number[];
+# declare function say(x: number): void;
+# function below(a: number, b: number): number { return (a & 0x7fffffff) * (b & 0x7fffffff); }
+# function over(a: number, b: number): number { return (a >>> 0) * (b >>> 0); }
+# function signed(a: number, b: number): number { return (a | 0) * (b | 0); }
+# function beside(a: number, b: number): number { return ((a & 255) + 1) * (b | 0); }
+# const all = hidden();
+# for (let i = 0; i + 1 < all.length; i += 2) { say(below(all[i], all[i + 1])); say(over(all[i], all[i + 1])); say(signed(all[i], all[i + 1])); say(beside(all[i], all[i + 1])); }
+# -- end of source
+# RUN: emit f1:Body f2:Body f3:Body f4:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Int64 {{*}} = Mul(
+# CHECK-NEXT: = IToD(
+# CHECK-NOT: Double {{*}} = Mul(
+# CHECK-LABEL: unit f2:Body
+# CHECK-NOT: Int64 {{*}} = Mul(
+# CHECK: Double {{*}} = Mul(
+# CHECK-LABEL: unit f3:Body
+# CHECK-NOT: Int64 {{*}} = Mul(
+# CHECK: Double {{*}} = Mul(
+# CHECK-LABEL: unit f4:Body
+# CHECK: Int64 {{*}} = Mul(
+# CHECK-NEXT: = IToD(
+# CHECK-NOT: Double {{*}} = Mul(
+# RUN(SHELL): run-in-shell globalThis.hidden = () => [2147483647, 2147483647, 134217730, 134217729, -1, -1, 0, -5, -5, 0, -2147483648, -2147483648, 255, -2147483648]; globalThis.say = (x) => print(Object.is(x, -0) ? "-0" : String(x));
+# SHELL: 4611686014132420600
+# SHELL-NEXT: 4611686014132420600
+# SHELL-NEXT: 4611686014132420600
+# SHELL-NEXT: 549755813632
+# SHELL-NEXT: 18014398912135170
+# SHELL-NEXT: 18014398912135170
+# SHELL-NEXT: 18014398912135170
+# SHELL-NEXT: 402653187
+# SHELL-NEXT: 4611686014132420600
+# SHELL-NEXT: 18446744065119617000
+# SHELL-NEXT: 1
+# SHELL-NEXT: -256
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: -0
+# SHELL-NEXT: -5
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: -0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 4611686018427388000
+# SHELL-NEXT: 4611686018427388000
+# SHELL-NEXT: -2147483648
+# SHELL-NEXT: 0
+# SHELL-NEXT: 547608330240
+# SHELL-NEXT: -547608330240
+# SHELL-NEXT: -549755813888

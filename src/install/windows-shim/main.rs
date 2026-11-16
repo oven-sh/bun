@@ -4,7 +4,7 @@
 //! returns `!`, so it can't be the bin root directly. This file:
 //!
 //!   - Mirrors `bun_install/lib.rs`'s `_bin_linking_shim` / `_bun_shim_impl`
-//!     module layout so the shared source's `use super::_bin_linking_shim::Flags`
+//!     module layout so the shared source's `use crate::_bin_linking_shim::Flags`
 //!     resolves unmodified.
 //!   - Provides local stand-ins for the `bun_core` / `bun_sys::windows` /
 //!     `bun_str` items the shared source reaches for, so this crate's only
@@ -27,13 +27,8 @@
 // with `panic_immediate_abort` so the panic/fmt machinery is dead code.
 #![no_std]
 #![no_main]
-#![allow(
-    nonstandard_style,
-    ambiguous_glob_reexports,
-    incomplete_features,
-    dead_code
-)]
-#![feature(adt_const_params)]
+#![allow(nonstandard_style, ambiguous_glob_reexports, dead_code)]
+#![feature(core_io, core_io_borrowed_buf)]
 
 // `unreachable_pub`: these files are shared with `bun_install`, where their
 // `pub` items are cross-crate API (`bun_install::windows_shim::*`). Compiled
@@ -198,74 +193,12 @@ macro_rules! w_lit {
 pub mod bun_core {
     // Re-export under the path the shared source uses (`bun_core::w!`).
     pub use crate::w_lit as w;
-    /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
-    /// interior-mutability cell with no synchronization. The shim is
-    /// single-threaded (it never spawns a thread), so the
-    /// unconditional `Sync` is trivially upheld.
-    ///
-    /// Internally backed by `Cell<T>` (not `UnsafeCell<T>`): `Cell` is
-    /// `#[repr(transparent)]` over `UnsafeCell` with identical `Send`/`!Sync`
-    /// auto-traits, but gives `.get()/.set()` for `T: Copy` without a raw
-    /// deref. The only remaining `unsafe` is the `impl Sync` below — the
-    /// irreducible single-thread invariant.
-    #[repr(transparent)]
-    pub(crate) struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
-    // SAFETY: standalone shim is single-threaded.
-    unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
-    impl<T> RacyCell<T> {
-        #[inline]
-        pub(crate) const fn new(value: T) -> Self {
-            Self(core::cell::Cell::new(value))
-        }
-        #[inline]
-        pub(crate) const fn get(&self) -> *mut T {
-            self.0.as_ptr()
-        }
-        /// Body is safe `Cell::get()`; the single-thread invariant is
-        /// discharged by the `Sync` impl above, not by the caller.
-        /// `bun_shim_impl.rs` only uses `.new()`/`.get()`, so signature
-        /// parity with `bun_core::RacyCell::read` is unneeded here.
-        #[inline]
-        pub(crate) fn read(&self) -> T
-        where
-            T: Copy,
-        {
-            self.0.get()
-        }
-        /// Body is safe `Cell::set()`; see [`Self::read`].
-        #[inline]
-        pub(crate) fn write(&self, value: T) {
-            self.0.set(value)
-        }
-    }
 
     /// Mirrors the subset of `bun_core::ffi` the shim calls.
     pub mod ffi {
-        // `core`-only slice/wstr primitives — single audited copy lives in
-        // `bun_opaque::ffi` (zero-dep, zero `#[no_mangle]`, safe for this
-        // freestanding PE to depend on). `Zeroable`/`zeroed` stay local: the
-        // orphan rule blocks `bun_opaque` from `impl Zeroable for
-        // bun_windows_sys::*`, and `bun_core`'s impls drag in link roots.
-        pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
-
-        /// Marker: all-zero bit pattern is a valid `Self`. Local re-spelling
-        /// of `bun_core::ffi::Zeroable`; impl'd below for the two
-        /// `bun_windows_sys` POD types the shim zero-inits.
-        ///
-        /// # Safety
-        /// `Self` must be inhabited at the all-zero bit pattern.
-        pub(crate) unsafe trait Zeroable: Sized {}
-        // SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
-        unsafe impl Zeroable for bun_windows_sys::IO_STATUS_BLOCK {}
-        // SAFETY: two raw-pointer HANDLEs (null-valid) + two u32.
-        unsafe impl Zeroable for crate::compat::PROCESS_INFORMATION {}
-
-        /// Mirrors `bun_core::ffi::zeroed`.
-        #[inline(always)]
-        pub(crate) const fn zeroed<T: Zeroable>() -> T {
-            // SAFETY: `T: Zeroable` asserts all-zero is valid for `T`.
-            unsafe { core::mem::zeroed() }
-        }
+        // Single audited copies, in `#![no_std]` crates with no `#[no_mangle]`.
+        pub use bun_opaque::ffi::slice;
+        pub use bun_pod::zeroed;
     }
 }
 
@@ -288,7 +221,7 @@ pub mod compat {
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──
     pub mod kernel32 {
-        pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess, SetConsoleMode};
+        pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess};
         pub use bun_windows_sys::kernel32::*;
     }
 }

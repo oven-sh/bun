@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Checks whether the radix or precision arguments of number-related functions exceed the limit.
 pub struct NumberArgOutOfRange;
 
-const NUMBER_ARG_OUT_OF_RANGE: Message =
-    Message::new("", "Radix or precision arguments of number-related functions should not exceed the limit");
+const NUMBER_ARG_OUT_OF_RANGE: &Message =
+    &Message::new("", "Radix or precision arguments of number-related functions should not exceed the limit");
 
 const METHODS: [&str; 4] = ["toString", "toFixed", "toExponential", "toPrecision"];
 

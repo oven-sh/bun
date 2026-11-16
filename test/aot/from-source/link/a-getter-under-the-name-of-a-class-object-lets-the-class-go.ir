@@ -1,0 +1,10 @@
+# The control of the-name-of-a-class-object-is-defined-and-the-class-stays-in-sight.ir: the descriptor lays an accessor: the class goes out of sight as before.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: a-getter-under-the-name-of-a-class-object-lets-the-class-go.js
+# class Base { constructor() { this.n = 1; } get() { return this.n; } }
+# const Named = class Inner extends Base { constructor() { super(); this.m = 2; } };
+# Object.defineProperty(Named, "name", { get() { return "Got"; } });
+# const made = new Named();
+# console.log(Named.name, made.get(), made.m);
+# -- end of source

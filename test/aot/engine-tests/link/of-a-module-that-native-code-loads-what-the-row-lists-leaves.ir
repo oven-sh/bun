@@ -1,0 +1,80 @@
+# process.nextTick(() => {});  require("node:http")        node:http:  const { queueTick1, ring } = require("internal/process/next_tick_queue");
+# Native code loads internal/process/next_tick_queue where process.nextTick is read. The row says what it reads off the record that the body returns: `nextTick` and `whileHooked`. These two leave.
+# The record and what lies under its other names stay with compiled code. If the whole record left because native code loads the module, as it did, `queueTick1` would be anything in every module that takes it
+# out of the record, each call of it would go by value, and `ring` would be an object that nobody describes.
+# The control: of-a-module-that-native-code-loads-a-name-that-is-no-field-takes-the-record-along.ir.
+# Of `whileHooked` the row says more than that it is read: native code takes `push` off it and keeps that in a cell which rows alone call. Link follows that cell to what lies under `push`, so `whileHooked` and its record stay.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link layouts fields variables functions modules mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+# CHECK-NOT: field L0.0 "nextTick" proven
+# CHECK: field L0.1 "queueTick1" proven=f4 writers-known written-at-construction-alone filled
+# CHECK: field L0.2 "ring" proven=L1 writers-known written-at-construction-alone filled
+# CHECK: field L0.3 "whileHooked" proven=L2 writers-known written-at-construction-alone filled
+# CHECK: variable g0 proven=f4 writers-known written-at-construction-alone filled
+# CHECK: variable g1 proven=L1 writers-known written-at-construction-alone filled
+# CHECK-NOT: function f3 {{*}}callers-known
+# CHECK: function f4 {{*}}callers-known
+# CHECK: module m2 value-stays-with-compiled-code
+
+layout L0 module=m2 fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="queueTick1" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}, {key="whileHooked" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m2 fields=[{key="made" declared={type=number} flags=[IsRequired]}]
+layout L2 module=m2 fields=[{key="push" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="queueTick1" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="ring" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+module m2 path="internal:process/next_tick_queue" displayPath="internal:process/next_tick_queue" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    v2 = NewClosure function=f5
+    v3 = Call v1, v0, v2 calleeKey="nextTick" calleeName="process.nextTick"
+    v4 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m1 specifier="internal/process/next_tick_queue"
+    v1 = PropGet v0 key="queueTick1"
+    PutModuleVariable v1 variable=g0
+    v3 = PropGet v0 key="ring"
+    PutModuleVariable v3 variable=g1
+    v5 = Integer integer=1
+    v6 = Call v1, -, v5 calleeName="queueTick1"
+    v7 = Undefined
+    Return v7
+}
+function f2 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f4
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Undefined
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v1, v4, v7 layout=L0 fields=[0, 1, 2, 3]
+    v9 = FinishObject v8
+    Return v9
+}
+function f3 name="nextTick" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="queueTick1" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

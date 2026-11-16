@@ -8,7 +8,7 @@ pub struct NoUseBeforeDefine {
     config: Config,
 }
 
-const USED_BEFORE_DEFINED: Message = Message::new(
+const USED_BEFORE_DEFINED: &Message = &Message::new(
     "usedBeforeDefined",
     "'{{name}}' was used before it was defined.",
 );

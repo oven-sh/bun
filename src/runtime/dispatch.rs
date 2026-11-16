@@ -610,6 +610,24 @@ pub(crate) fn run_task(
             #[cfg(not(unix))]
             unreachable!("posix-only");
         }
+        task_tag::UvWorkDone => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvWork;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        uv_work: *mut UvWork = cast_ptr!(UvWork),
+                        vm: &VirtualMachine = vm,
+                    ) -> JsResult<()> {
+                        // SAFETY: the pool posted this request.
+                        unsafe { UvWork::run_done(uv_work, vm) }
+                    }
+                )?;
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
+        }
 
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
@@ -818,7 +836,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1727,6 +1745,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::UvHandleClose => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvHandle);
+            #[cfg(not(unix))]
+            unreachable!("posix-only tag");
+        }
+        task_tag::UvWorkDone => {
+            #[cfg(unix)]
+            release_in!([NativeAddons], crate::napi::uv_posix::UvWork);
             #[cfg(not(unix))]
             unreachable!("posix-only tag");
         }

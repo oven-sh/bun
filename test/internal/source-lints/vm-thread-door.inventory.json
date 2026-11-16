@@ -139,6 +139,7 @@
     ]
   },
   "src/runtime/napi/uv_posix.rs": {
+    "WorkPool::schedule*": 1,
     "unsafe impl Send": [
       "WorkRef"
     ]

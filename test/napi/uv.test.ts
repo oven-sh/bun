@@ -436,12 +436,12 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("uv_queue_work returns UV_EINVAL on an addon thread", async () => {
+  test.concurrent("uv_queue_work from an addon thread calls back on the loop's thread", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       console.log(JSON.stringify(addon.testQueueWorkFromThread()));
     `);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([-constants.errno.EINVAL]);
+    expect(stdout).toBe("[0]\non the calling thread: 1\n");
     expect(exitCode).toBe(0);
   });
 

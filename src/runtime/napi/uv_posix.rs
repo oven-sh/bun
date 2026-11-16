@@ -8,7 +8,7 @@
 //!
 //! - The addon allocates each handle or request and reads `data`, `loop` and
 //!   `type` from it ([`UvHandle`], [`UvReq`]). Bun owns the fields after those.
-//! - Only `uv_async_send` may be called off the loop's JS thread. A handle is valid
+//! - Only `uv_async_send` and `uv_queue_work` work off the loop's JS thread. A handle is valid
 //!   until its `close_cb` has run, and a request until its `after_work_cb` has run.
 //! - A `uv_loop_t*` points to a [`UvLoop`]. Each VM has one. Only its `data` word is ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
@@ -38,6 +38,7 @@ use bun_jsc::{
     VmHandle,
 };
 use bun_ptr::{AliasableBox, CellExt};
+use bun_threading::work_pool::WorkPool;
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -1199,7 +1200,7 @@ enum WorkState {
 }
 
 /// Matches `struct uv_work_s`.
-type UvWork = UvReq<WorkFields>;
+pub(crate) type UvWork = UvReq<WorkFields>;
 
 /// Addons also read the first three fields. `state` replaces libuv's `struct uv__work`.
 #[repr(C)]
@@ -1224,8 +1225,84 @@ unsafe impl Send for WorkRef {}
 
 impl WorkRef {
     fn work(&self) -> &WorkFields {
-        // SAFETY: `then` gives up `self` to call `after_work_cb`. Until then only `state` changes.
+        // SAFETY: `complete` gives up `self` to call `after_work_cb`. Until then only `state` changes.
         unsafe { &(*self.0.as_ptr()).fields.body }
+    }
+
+    fn run(&self) {
+        let started = self
+            .work()
+            .state
+            .compare_exchange(
+                WorkState::Queued as u32,
+                WorkState::Running as u32,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok();
+        if started && let Some(work_cb) = self.work().work_cb {
+            // SAFETY: calls the addon's callback on a pool thread, as libuv documents.
+            unsafe { work_cb(self.0.as_ptr()) };
+        }
+    }
+
+    fn complete(self, global: &JSGlobalObject) -> JsResult<()> {
+        let status = if self.work().state.load(Ordering::SeqCst) == WorkState::Cancelled as u32 {
+            UV_ECANCELED
+        } else {
+            0
+        };
+        let (after_work_cb, req) = (self.work().after_work_cb, self.0.as_ptr());
+        bun_output::scoped_log!(uv, "uv_work_t {:?}: after_work_cb({})", req, status);
+        // The callback usually frees the request.
+        if let Some(after_work_cb) = after_work_cb {
+            let _handles = CallbackScope::open(global);
+            // SAFETY: calls the addon's callback on the JS thread that queued the request, or else on the loop's.
+            unsafe { after_work_cb(req, status) };
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        Ok(())
+    }
+
+    /// For a thread without a VM, which cannot make a [`Job`].
+    fn schedule_for(self, vm: &VmHandle) -> c_int {
+        let Some(ticket) = vm.try_ticket(LoopKind::Regular) else {
+            return UV_ECANCELED;
+        };
+        vm.add_keep_alive(LoopKind::Regular, 1);
+        bun_core::handle_oom(WorkPool::go((self, ticket), |(req, ticket)| {
+            req.run();
+            ticket.post(ConcurrentTask::create_from(req.0.as_ptr()));
+        }));
+        0
+    }
+}
+
+/// [`WorkRef::schedule_for`] posts the request as a task.
+impl Taskable for UvWork {
+    const TAG: TaskTag = task_tag::UvWorkDone;
+    /// Calls nothing, like [`UvWorkJob`].
+    unsafe fn release_unrun(_: *mut Self) {
+        VirtualMachine::get().event_loop().unref_keep_alive();
+    }
+    /// Not tied to one context, like [`UvLoop`]'s task.
+    unsafe fn context(_: *const Self) -> ContextId {
+        ContextId::NONE
+    }
+}
+
+impl UvWork {
+    /// # Safety
+    /// [`WorkRef::schedule_for`] posted the task for `req` to `vm`.
+    pub(crate) unsafe fn run_done(req: *mut UvWork, vm: &VirtualMachine) -> JsResult<()> {
+        vm.event_loop().unref_keep_alive();
+        if !vm.script_allowed() {
+            return Ok(());
+        }
+        // SAFETY: fn contract.
+        WorkRef(unsafe { NonNull::new_unchecked(req) }).complete(vm.global())
     }
 }
 
@@ -1241,49 +1318,20 @@ impl JobContext for UvWorkJob {
     type Js = ();
 
     fn run(req: &mut WorkRef, done: Completion<Self>) -> Option<Completion<Self>> {
-        let started = req
-            .work()
-            .state
-            .compare_exchange(
-                WorkState::Queued as u32,
-                WorkState::Running as u32,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_ok();
-        if started && let Some(work_cb) = req.work().work_cb {
-            // SAFETY: calls the addon's callback on a pool thread, as libuv documents.
-            unsafe { work_cb(req.0.as_ptr()) };
-        }
+        req.run();
         Some(done)
     }
 
     fn then(req: WorkRef, _: (), cx: &JsThread<'_>) -> JsResult<()> {
-        let status = if req.work().state.load(Ordering::SeqCst) == WorkState::Cancelled as u32 {
-            UV_ECANCELED
-        } else {
-            0
-        };
-        let (after_work_cb, req) = (req.work().after_work_cb, req.0.as_ptr());
-        bun_output::scoped_log!(uv, "uv_work_t {:?}: after_work_cb({})", req, status);
-        // The callback usually frees the request.
-        if let Some(after_work_cb) = after_work_cb {
-            let _handles = CallbackScope::open(cx.global());
-            // SAFETY: calls the addon's callback on the thread that queued the request.
-            unsafe { after_work_cb(req, status) };
-        }
-        if cx.global().has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(())
+        req.complete(cx.global())
     }
 }
 
 /// Implements `int uv_queue_work(uv_loop_t*, uv_work_t*, uv_work_cb, uv_after_work_cb)`.
-/// The request keeps the process alive, like an active request in libuv. `UV_ECANCELED` once the VM is closed.
+/// The request keeps the process alive, like an active request in libuv. `UV_ECANCELED` once the VM takes no more work.
 ///
 /// # Safety
-/// `loop_` is null or one of this module's loops. `req` points to `sizeof(uv_work_t)`
+/// `loop_` is null or one of this module's live loops. `req` points to `sizeof(uv_work_t)`
 /// bytes that the addon keeps alive until its `after_work_cb` has run.
 /// Both callbacks take `req`.
 #[unsafe(no_mangle)]
@@ -1293,16 +1341,16 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     work_cb: Option<UvWorkCb>,
     after_work_cb: Option<UvAfterWorkCb>,
 ) -> c_int {
-    let (Some(loop_), Some(req), Some(_), Some(vm)) = (
+    let (Some(loop_), Some(req), Some(_)) = (
         NonNull::new(loop_),
         NonNull::new(req),
         work_cb, // libuv also returns UV_EINVAL
-        VirtualMachine::get_or_null(),
     ) else {
         return UV_EINVAL;
     };
+    let vm = VirtualMachine::get_or_null();
     // A finalizer can call this during the GC that destroys the heap.
-    if vm.closed() {
+    if vm.is_some_and(VirtualMachine::closed) {
         return UV_ECANCELED;
     }
     bun_output::scoped_log!(uv, "uv_work_t {:?}: uv_queue_work", req);
@@ -1318,12 +1366,16 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     };
     // SAFETY: fn contract.
     unsafe { (&raw mut (*req.as_ptr()).fields).write(fields) };
+    let Some(vm) = vm else {
+        // SAFETY: fn contract.
+        return WorkRef(req).schedule_for(unsafe { &(*loop_.as_ptr()).shared.handle });
+    };
     Job::<UvWorkJob>::schedule(&vm.global().js_thread_of_caller(), WorkRef(req), ());
     0
 }
 
-/// Implements `int uv_cancel(uv_req_t*)`. Like in libuv, it runs on the thread that queued the request,
-/// so it can't race `after_work_cb`. Returns the same codes as libuv:
+/// Implements `int uv_cancel(uv_req_t*)`. Like in libuv, it runs on the thread of `after_work_cb`,
+/// so it can't race it. Returns the same codes as libuv:
 /// - `0` if the work was canceled. `after_work_cb` then gets `UV_ECANCELED`.
 /// - `UV_EBUSY` if the work already started.
 /// - `UV_EINVAL` for any request type other than `uv_work_t`.

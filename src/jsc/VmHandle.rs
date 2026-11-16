@@ -199,7 +199,7 @@ impl Shared {
 
 /// One unit of "something of this VM's is on another thread". See the module
 /// doc. `Send + Sync`; obtain on the JS thread with [`VirtualMachine::ticket`]
-/// (or by cloning one you hold, on any thread), keep it in the in-flight
+/// (or on any thread by cloning one, or with [`VmHandle::try_ticket`]), keep it in the in-flight
 /// operation — never in a JS-owned or VM-owned object — and drop it when the
 /// operation's last touch of the VM's memory from another thread is done
 /// (normally: right after posting the completion).
@@ -398,6 +398,14 @@ impl VmHandle {
             // SAFETY: refused ⇒ `task` is still ours (fn contract).
             unsafe { Bun__deleteEventLoopTask(task) };
         }
+    }
+
+    /// A ticket for work that another thread starts, or `None` once the VM has begun its final wait.
+    #[track_caller]
+    pub fn try_ticket(&self, kind: LoopKind) -> Option<Ticket> {
+        // Counted first: `close_and_wait` stores the state before it reads the count.
+        let ticket = Ticket::issue(&self.0, kind);
+        (!ticket.cancelled()).then_some(ticket)
     }
 
     /// Adjust the VM's keep-alive from another thread (no-op once closed).

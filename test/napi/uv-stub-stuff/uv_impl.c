@@ -1,6 +1,7 @@
 #include <node_api.h>
 
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -841,10 +842,21 @@ static napi_value test_default_loop_timer(napi_env env,
   return NULL;
 }
 
+static atomic_bool thread_work_ran;
+
+static void thread_work_cb(uv_work_t *req) {
+  (void)req;
+  atomic_store(&thread_work_ran, true);
+}
+
+// Returns once the work has run, which it does without the JS thread.
 static void *queue_work_thread(void *out) {
   int32_t *result = out;
-  *result = uv_queue_work(uv_default_loop(), &default_loop_work,
-                          default_loop_work_cb, NULL);
+  *result = uv_queue_work(uv_default_loop(), &default_loop_work, thread_work_cb,
+                          default_loop_after_work_cb);
+  while (*result == 0 && !atomic_load(&thread_work_ran)) {
+    sched_yield();
+  }
   return NULL;
 }
 
@@ -852,6 +864,7 @@ static napi_value test_queue_work_from_thread(napi_env env,
                                               napi_callback_info info) {
   int32_t result;
   pthread_t thread;
+  default_loop_caller = pthread_self();
   if (pthread_create(&thread, NULL, queue_work_thread, &result) != 0) {
     napi_throw_error(env, NULL, "pthread_create failed");
     return NULL;

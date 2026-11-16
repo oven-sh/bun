@@ -20,12 +20,13 @@ mod unix {
         libc::stat,
         libc::rusage,
         libc::timespec,
-        libc::timeval,
+        libc::termios,
         libc::pollfd,
         libc::sockaddr,
         libc::sockaddr_storage,
         libc::sockaddr_un,
     );
+    crate::impl_any_bit_pattern!(libc::timeval);
     impl_pod!(libc::sockaddr_in, libc::sockaddr_in6);
     // A `u32` on Darwin, which the primitive impl covers.
     #[cfg(not(target_vendor = "apple"))]
@@ -42,7 +43,7 @@ mod unix {
     #[cfg(target_os = "macos")]
     impl_zeroable!(libc::kevent64_s, libc::rusage_info_v4);
     #[cfg(target_os = "freebsd")]
-    impl_zeroable!(libc::_umtx_time);
+    impl_zeroable!(libc::_umtx_time, libc::kinfo_file);
 
     has_pointers!(
         libc::sigaction,

@@ -451,6 +451,31 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
   });
 
+  // macOS gave clonefile() what an earlier copy had left in the thread's path buffer.
+  it.skipIf(isWindows)("Bun.write('', Bun.file(path)) does not write to an earlier destination", async () => {
+    using dir = tempDir("bun-write-empty-destination", { "source.txt": "source" });
+    const script = `
+      const fs = require("fs");
+      const source = Bun.file("source.txt");
+      const copies = Array.from({ length: 64 }, (_, i) => "copy-" + i);
+      await Promise.all(copies.map(copy => Bun.write(copy, source)));
+      for (const copy of copies) fs.unlinkSync(copy);
+      const results = await Promise.allSettled(copies.map(() => Bun.write("", source)));
+      console.log(JSON.stringify({
+        results: [...new Set(results.map(result => result.reason?.code ?? result.status))],
+        files: fs.readdirSync("."),
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ results: ["ENOENT"], files: ["source.txt"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // macOS fcopyfile(COPYFILE_DATA) rewrites dst from offset 0, and the
   // slice trim on macOS/FreeBSD (and the Linux read/write fallback) was
   // ftruncate(dst, N); both destroy bytes in a file the caller already had

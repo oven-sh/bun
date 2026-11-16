@@ -6,7 +6,7 @@
 #![cfg(windows)]
 #![allow(non_snake_case, non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr;
 use std::os::windows::io::{
@@ -45,9 +45,8 @@ pub mod kernel32 {
         // safe: by-value DWORD write to the TEB; cannot fault.
         pub safe fn SetLastError(dwErrCode: DWORD);
         // ── IOCP / async directory watching ──
-        // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
-        // a bad handle yields NULL + GetLastError, no UB.
-        pub safe fn CreateIoCompletionPort(
+        /// Whoever waits on `ExistingCompletionPort` gets the requests on `FileHandle` from then on.
+        pub(super) fn CreateIoCompletionPort(
             FileHandle: HANDLE,
             ExistingCompletionPort: HANDLE,
             CompletionKey: ULONG_PTR,
@@ -74,6 +73,12 @@ pub mod kernel32 {
         // safe: by-value `HANDLE` + `DWORD`; a bad handle yields
         // `WAIT_FAILED` + GetLastError, no UB.
         pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+        pub(super) fn CreateEventW(
+            lpEventAttributes: *mut c_void,
+            bManualReset: BOOL,
+            bInitialState: BOOL,
+            lpName: LPCWSTR,
+        ) -> std::os::windows::io::HandleOrNull;
 
         // ── file moves ──
         pub fn MoveFileExW(
@@ -247,9 +252,8 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 // Win32 defines both as `struct { PVOID Ptr; }`; static-init is all-zero
 // (`SRWLOCK_INIT` / `CONDITION_VARIABLE_INIT`).
 #[repr(transparent)]
-#[derive(Copy, Clone)]
 pub struct SRWLOCK {
-    pub ptr: *mut c_void,
+    ptr: *mut c_void,
 }
 pub const SRWLOCK_INIT: SRWLOCK = SRWLOCK {
     ptr: ptr::null_mut(),
@@ -261,9 +265,8 @@ impl Default for SRWLOCK {
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone)]
 pub struct CONDITION_VARIABLE {
-    pub ptr: *mut c_void,
+    ptr: *mut c_void,
 }
 pub const CONDITION_VARIABLE_INIT: CONDITION_VARIABLE = CONDITION_VARIABLE {
     ptr: ptr::null_mut(),
@@ -337,20 +340,21 @@ pub type LPOVERLAPPED_COMPLETION_ROUTINE =
 
 pub use bun_windows_sys::{PROCESS_INFORMATION, STARTUPINFOEXW, STARTUPINFOW};
 
-/// Wraps the kernel32 `CreateIoCompletionPort` call and returns `Err` on
-/// `NULL`.
+/// A new port for the requests on `file_handle`.
 pub fn CreateIoCompletionPort(
     file_handle: HANDLE,
-    existing_completion_port: HANDLE,
     completion_key: ULONG_PTR,
     concurrent_threads: DWORD,
 ) -> core::result::Result<HANDLE, bun_errno::SystemErrno> {
-    let h = kernel32::CreateIoCompletionPort(
-        file_handle,
-        existing_completion_port,
-        completion_key,
-        concurrent_threads,
-    );
+    // SAFETY: nobody waits on the port yet.
+    let h = unsafe {
+        kernel32::CreateIoCompletionPort(
+            file_handle,
+            ptr::null_mut(),
+            completion_key,
+            concurrent_threads,
+        )
+    };
     if h.is_null() {
         return Err(bun_errno::SystemErrno::EIO);
     }
@@ -376,6 +380,13 @@ fn check_len(rc: DWORD, capacity: usize) -> Result<usize, Win32Error> {
         len if len >= capacity => Err(Win32Error::FILENAME_EXCED_RANGE),
         len => Ok(len),
     }
+}
+
+/// Manual-reset, not signalled, and without a name.
+pub fn CreateEventW() -> Result<OwnedHandle, Win32Error> {
+    // SAFETY: both pointers are optional.
+    let event = unsafe { kernel32::CreateEventW(ptr::null_mut(), TRUE, FALSE, ptr::null()) };
+    OwnedHandle::try_from(event).map_err(|_| Win32Error::get())
 }
 
 pub fn CreateFileW(
@@ -579,21 +590,6 @@ pub fn is_app_container() -> bool {
 }
 
 pub use bun_errno::translate_uv_error_to_e;
-
-pub use bun_windows_sys::externs::GetProcAddress;
-
-pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Option<*mut c_void> {
-    let module = ptr.unwrap_or(core::ptr::null_mut());
-    // Win32 `GetProcAddress` takes `LPCSTR` (narrow ANSI, NUL-terminated). The
-    // symbol name is already a NUL-terminated byte string — pass it through
-    // directly. (Widening to UTF-16 would terminate after the first WCHAR's
-    // 0x00 high byte and resolve nothing.)
-    // SAFETY: `utf8` is NUL-terminated; `module` may be null (yields null sym).
-    let sym = unsafe { GetProcAddress(module, utf8.as_ptr().cast::<c_char>()) };
-    if sym.is_null() { None } else { Some(sym) }
-}
-
-pub use bun_windows_sys::externs::LoadLibraryA;
 
 unsafe extern "system" {
     #[link_name = "CreateHardLinkW"]
@@ -1267,16 +1263,15 @@ pub fn detect_runtime_version() -> &'static str {
         szCSDVersion: [u16; 128],
     }
     unsafe extern "system" {
-        // safe: out-param is `&mut OSVERSIONINFOW` (non-null, valid for write);
-        // ntdll only writes the struct and returns NTSTATUS — no preconditions.
-        safe fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
+        fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
     }
     static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
     bun_core::impl_zeroable!(OSVERSIONINFOW);
     CACHE.get_or_init(|| {
         let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
         info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
-        if RtlGetVersion(&mut info) != 0 {
+        // SAFETY: `info` is as large as it says.
+        if unsafe { RtlGetVersion(&mut info) } != 0 {
             return std::string::String::from("unknown");
         }
         std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
@@ -1547,9 +1542,7 @@ pub struct PROCESS_MEMORY_COUNTERS {
 /// (kernel32 hosts the K32* shims since Windows 7, no separate psapi.lib).
 pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, Win32Error> {
     unsafe extern "system" {
-        // safe: `HANDLE` is a by-value opaque (bad handle → BOOL 0, no UB);
-        // out-param is `&mut PROCESS_MEMORY_COUNTERS` sized by `cb`.
-        safe fn K32GetProcessMemoryInfo(
+        fn K32GetProcessMemoryInfo(
             hProcess: HANDLE,
             ppsmemCounters: &mut PROCESS_MEMORY_COUNTERS,
             cb: DWORD,
@@ -1560,9 +1553,8 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
         cb,
         ..Default::default()
     };
-    if K32GetProcessMemoryInfo(process, &mut out, cb) == 0 {
-        return Err(Win32Error::get());
-    }
+    // SAFETY: `out` holds `cb` bytes.
+    check(unsafe { K32GetProcessMemoryInfo(process, &mut out, cb) })?;
     Ok(out)
 }
 pub use bun_windows_sys::externs::GetConsoleMode;
@@ -2088,6 +2080,7 @@ pub fn SetEnvironmentVariableW(name: &WStr, value: Option<&WStr>) -> Result<(), 
 
 pub mod env;
 pub mod private_folder;
+pub(crate) mod sync_io;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Additional surface unblocked for dependents.

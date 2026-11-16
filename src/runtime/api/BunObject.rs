@@ -1204,8 +1204,6 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
 
     #[cfg(not(windows))]
     {
-        use core::ffi::c_void;
-
         if path.len() > MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }
@@ -1279,8 +1277,8 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return jsc::ArrayBuffer::create_uint8_array(global_this, view);
         }
 
-        let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
-            Ok(result) => result,
+        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+            Ok(map) => map.into_raw(),
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
                 let err = node::fs::error_for_caller([None, None], err);
@@ -1288,32 +1286,15 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             }
         };
 
-        extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
-            // `delta < page_size`, so rounding down recovers the mmap base.
-            let page = bun_sys::page_size();
-            let addr = ptr as usize;
-            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
-        }
-
-        let map_len = map.len();
-        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
-        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
-        let view_ptr = unsafe { map.as_ptr().add(delta) };
-        let view_len = map_len - delta;
-
-        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
-        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the full mapping
-        // length stuffed into the ctx pointer.
+        // SAFETY: the pages move to JSC, and only the deallocator unmaps them.
         unsafe {
             jsc::array_buffer::make_typed_array_with_bytes_no_copy(
                 global_this,
                 jsc::TypedArrayType::TypeUint8,
-                view_ptr.cast_mut().cast::<c_void>(),
-                view_len,
-                Some(munmap_dealloc),
-                map_len as *mut c_void,
+                map.as_ptr().cast(),
+                map.len(),
+                Some(sys::Mmap::unmap_raw),
+                core::ptr::without_provenance_mut(map.len()),
             )
         }
     }

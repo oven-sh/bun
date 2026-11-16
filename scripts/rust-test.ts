@@ -60,6 +60,7 @@ const crates = [
   "bun_sort_by_number",
   "bun_sql_jsc",
   "bun_standalone_graph",
+  "bun_sys",
   "bun_threading",
   "bun_trim",
   "bun_wyhash",

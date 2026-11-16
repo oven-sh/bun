@@ -38,51 +38,30 @@ impl ZStr {
     }
     /// Wrap a `&'static [u8]` literal that already includes the trailing
     /// `\0` (e.g. `b".\0"`). The returned `&ZStr` excludes the NUL from
-    /// `len()` per the type invariant. Panics in debug if no trailing NUL.
+    /// `len()` per the type invariant. Panics if no trailing NUL.
     #[inline]
     pub const fn from_static(s: &'static [u8]) -> &'static ZStr {
-        debug_assert!(!s.is_empty() && s[s.len() - 1] == 0);
-        // SAFETY: caller-supplied literal ends in NUL; lifetime is 'static.
-        unsafe { Self::from_raw(s.as_ptr(), s.len() - 1) }
+        Self::from_slice_with_nul(s)
     }
-    /// Borrow `buf[..len]` as a `&ZStr`, where `buf[len] == 0`. This is the
-    /// safe-surface form of [`from_raw`] for the dominant call shape in the
-    /// install pipeline: a stack `PathBuffer` filled to `len` with a NUL
-    /// written at `buf[len]`. The slice bound proves `buf[..=len]` is in the
-    /// same allocation; the NUL is debug-asserted.
+    /// Borrow `buf[..len]` as a `&ZStr`. Panics unless `buf[len]` is a NUL.
     #[inline]
     pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
-        debug_assert!(len < buf.len(), "ZStr::from_buf: NUL must lie within buf");
-        debug_assert_eq!(buf[len], 0, "ZStr::from_buf: missing NUL at buf[len]");
-        // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; release
-        // relies on caller upholding the documented `buf[len] == 0`
-        // precondition).
+        assert!(buf[len] == 0);
+        // SAFETY: `buf[len]` is in bounds and a NUL.
         unsafe { Self::from_raw(buf.as_ptr(), len) }
     }
-    /// Borrow `buf[..buf.len()-1]` as a `&ZStr`, where the last byte of `buf`
-    /// is the NUL terminator. This is [`from_buf`] specialized for the second
-    /// most common call shape: a slice that already includes its trailing NUL
-    /// (e.g. a `Vec<u8>` with `0` pushed, or `CStr::to_bytes_with_nul`).
-    /// Debug-asserts the trailing NUL; release relies on the documented
-    /// precondition.
+    /// Borrow `buf[..buf.len()-1]` as a `&ZStr`. Panics unless the last byte is a NUL.
     #[inline]
-    pub fn from_slice_with_nul(buf: &[u8]) -> &ZStr {
-        debug_assert!(!buf.is_empty(), "ZStr::from_slice_with_nul: empty slice");
-        debug_assert_eq!(
-            buf[buf.len() - 1],
-            0,
-            "ZStr::from_slice_with_nul: missing trailing NUL"
-        );
-        // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
-        // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
+    pub const fn from_slice_with_nul(buf: &[u8]) -> &ZStr {
+        assert!(matches!(buf.last(), Some(0)));
+        // SAFETY: `buf` is not empty, and its last byte is a NUL.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     /// Mutable variant of [`from_buf`].
     #[inline]
     pub fn from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr {
-        debug_assert!(len < buf.len());
-        debug_assert_eq!(buf[len], 0);
-        // SAFETY: see `from_buf`.
+        assert!(buf[len] == 0);
+        // SAFETY: `buf[len]` is in bounds and a NUL.
         unsafe { Self::from_raw_mut(buf.as_mut_ptr(), len) }
     }
     #[inline]
@@ -107,21 +86,15 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
-    /// View as `&CStr`. Safe-surface bridge for FFI sites that need a
-    /// `*const c_char` via `CStr` — funnels the ~dozen open-coded
-    /// `CStr::from_bytes_with_nul_unchecked` call sites through one audited
-    /// `unsafe`. Debug-asserts no interior NUL (CStr's extra invariant over
-    /// ZStr); release relies on the construction-site contract (path/host
-    /// bytes never embed NUL).
+    /// View as `&CStr`, which ends at the first NUL. The `strlen` is optimized out where only the pointer is read.
     #[inline]
     pub fn as_cstr(&self) -> &core::ffi::CStr {
         debug_assert!(
             !crate::strings::contains_char(&self.0, 0),
             "ZStr::as_cstr: interior NUL would truncate the C view",
         );
-        // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
-        // no interior NUL is debug-asserted above (caller contract in release).
-        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(self.as_bytes_with_nul()) }
+        // SAFETY: a NUL follows the bytes, and `&self` borrows them.
+        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
     }
     /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
     #[inline]
@@ -1080,17 +1053,15 @@ impl Stdio {
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
 /// `fcntl(F_KINFO)` on FreeBSD), so it lives at T0 — moved down from
 /// `bun_sys::fd` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable bytes.
-pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+pub fn fd_path_raw(fd: Fd, buf: &mut [u8]) -> isize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
         let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
-        // SAFETY: proc is NUL-terminated above; buf has cap bytes.
-        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
+        // SAFETY: proc is NUL-terminated above; `readlink` writes at most `buf.len()` bytes.
+        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.as_mut_ptr().cast(), buf.len()) };
         if n < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1103,10 +1074,9 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = cap;
-        // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
-        // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
+        let buf = &mut buf[..libc::MAXPATHLEN as usize];
+        // SAFETY: F_GETPATH writes at most MAXPATHLEN bytes.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf.as_mut_ptr()) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1115,20 +1085,14 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
                 0
             };
         }
-        // SAFETY: kernel wrote a NUL-terminated path.
-        return unsafe { libc::strlen(buf.cast()) as isize };
+        return crate::slice_to_nul(buf).len() as isize;
     }
     #[cfg(target_os = "freebsd")]
     {
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
-        }
-        // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
+        let mut kif: libc::kinfo_file = crate::ffi::zeroed();
+        kif.kf_structsize = core::mem::size_of::<libc::kinfo_file>() as libc::c_int;
+        // SAFETY: F_KINFO writes one `kinfo_file`.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, &raw mut kif) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1137,12 +1101,9 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
                 0
             };
         }
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path.cast()) };
-        let n = len.min(cap);
-        // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
-        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
+        let path = crate::ffi::c_field_bytes(&kif.kf_path);
+        let n = path.len().min(buf.len());
+        buf[..n].copy_from_slice(&path[..n]);
         return n as isize;
     }
     #[cfg(not(any(
@@ -1152,7 +1113,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         target_os = "freebsd"
     )))]
     {
-        let _ = (fd, buf, cap);
+        let _ = (fd, buf);
         0
     }
 }
@@ -1234,8 +1195,7 @@ impl core::fmt::Display for Fd {
             #[cfg(debug_assertions)]
             if fd.0 >= 3 {
                 let mut buf = [0u8; 1024];
-                // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = fd_path_raw(fd, &mut buf);
                 if n > 0 {
                     write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
                 } else if n == -1 {
@@ -4092,26 +4052,10 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
         && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
 }
 
-/// Terminate the current OS thread without unwinding.
-/// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
-pub(crate) fn exit_thread() -> ! {
-    #[cfg(unix)]
-    {
-        // `retval` is stored opaquely for `pthread_join` and never
-        // dereferenced by libc itself; thread termination leaks but cannot
-        // violate memory safety (same rationale as `std::process::exit`
-        // being safe), so `safe fn` discharges the link-time proof.
-        unsafe extern "C" {
-            safe fn pthread_exit(retval: *mut core::ffi::c_void) -> !;
-        }
-        pthread_exit(core::ptr::null_mut());
-    }
-    #[cfg(windows)]
-    // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
-    crate::windows_sys::kernel32::ExitThread(0);
-    #[cfg(not(any(unix, windows)))]
+/// Not `pthread_exit`: it frees a stack that other threads may borrow from, and runs TLS destructors while the reload prepares `execve`.
+fn park_until_reloaded() -> ! {
     loop {
-        core::hint::spin_loop();
+        std::thread::sleep(std::time::Duration::from_secs(3600));
     }
 }
 
@@ -4122,33 +4066,7 @@ pub fn maybe_handle_panic_during_process_reload() {
         crate::output::flush();
         #[cfg(debug_assertions)]
         crate::output::debug_warn("panic() called during process reload, ignoring\n");
-        // POSIX `pthread_exit`; Windows `ExitThread`.
-        exit_thread();
-    }
-    // Spin if pthread_exit was a no-op (pathological).
-    while is_process_reload_in_progress_on_another_thread() {
-        core::hint::spin_loop();
-        #[cfg(unix)]
-        {
-            // `&libc::timespec` / `Option<&mut libc::timespec>` are
-            // ABI-identical to libc's `const struct timespec *` / nullable
-            // `struct timespec *`; the types encode the only pointer-validity
-            // preconditions, so `safe fn` discharges the link-time proof.
-            unsafe extern "C" {
-                #[link_name = "nanosleep"]
-                safe fn libc_nanosleep(
-                    req: &libc::timespec,
-                    rem: Option<&mut libc::timespec>,
-                ) -> core::ffi::c_int;
-            }
-            let _ = libc_nanosleep(
-                &libc::timespec {
-                    tv_sec: 1,
-                    tv_nsec: 0,
-                },
-                None,
-            );
-        }
+        park_until_reloaded();
     }
 }
 
@@ -4176,12 +4094,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         if may_return {
             return;
         }
-        // Park (not pthread_exit): the loser may be the JS main thread, and
-        // running its TLS destructors concurrently with the winner's execve
-        // preparation is the same hazard class the swap exists to avoid.
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(3600));
-        }
+        park_until_reloaded();
     }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
@@ -5313,3 +5226,47 @@ pub mod form_data {
 }
 /// `bun.FormData` — capitalized namespace alias.
 pub use form_data as FormData;
+
+#[cfg(test)]
+mod zstr_tests {
+    use super::ZStr;
+
+    #[test]
+    fn the_nul_is_behind_the_bytes() {
+        let mut buf = *b"ab\0c";
+        assert_eq!(ZStr::from_buf(&buf, 2).as_cstr(), c"ab");
+        assert_eq!(ZStr::from_buf_mut(&mut buf, 2).as_cstr(), c"ab");
+        assert_eq!(ZStr::from_slice_with_nul(&buf[..3]).as_cstr(), c"ab");
+        assert_eq!(ZStr::EMPTY.as_cstr(), c"");
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_buf_refuses_another_byte() {
+        ZStr::from_buf(b"ab\0", 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_buf_refuses_the_end_of_the_buffer() {
+        ZStr::from_buf(&b"ab\0"[..2], 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_buf_mut_refuses_another_byte() {
+        ZStr::from_buf_mut(&mut [1, 0], 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_slice_with_nul_refuses_a_string_without_an_end() {
+        ZStr::from_slice_with_nul(b"a\0b");
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_slice_with_nul_refuses_nothing() {
+        ZStr::from_slice_with_nul(b"");
+    }
+}

@@ -1080,7 +1080,7 @@ impl Kqueue {
         subpath: &[u8],
         is_file: bool,
     ) -> sys::Result<()> {
-        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
+        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE};
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
         let file = match sys::File::open(
@@ -1114,24 +1114,12 @@ impl Kqueue {
             | NOTE::LINK
             | NOTE::REVOKE;
         kev.udata = generation as _;
-        let mut changes = [kev];
-        // SAFETY: thin wrapper over libc::kevent.
-        let krc = unsafe {
-            kevent(
-                self.fd.native(),
-                changes.as_ptr(),
-                1,
-                changes.as_mut_ptr(),
-                0,
-                core::ptr::null(),
-            )
-        };
-        if krc < 0 {
+        // SAFETY: only `thread_main` waits on this kqueue, and it reads `udata` as a number.
+        if let Err(err) = unsafe { sys::kevent(self.fd, &[kev], &mut [], None) } {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
-            let errno = sys::get_errno(krc);
             return Err(sys::Error {
-                errno: errno as u16,
+                errno: err.errno,
                 syscall: Tag::watch,
                 ..Default::default()
             }
@@ -1159,33 +1147,22 @@ impl Kqueue {
     }
 
     fn thread_main(kq: Fd) {
-        use bun_sys::freebsd::{Kevent, NOTE, kevent};
+        use bun_sys::freebsd::{Kevent, NOTE};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let manager = DEFAULT_MANAGER.wait();
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         loop {
-            // SAFETY: thin wrapper over libc::kevent.
-            let count = unsafe {
-                kevent(
-                    kq.native(),
-                    events.as_ptr(),
-                    0,
-                    events.as_mut_ptr(),
-                    events.len() as _,
-                    core::ptr::null(),
-                )
-            };
-            if count <= 0 {
+            let Ok(count @ 1..) = sys::kevent_wait(kq, &mut events, None) else {
                 continue;
-            }
+            };
 
             let locked = manager.lock();
             let watchers = &locked.watchers;
             let entries = &locked.platform.entries;
             let mut touched: ArrayHashMap<WatcherId, ()> = ArrayHashMap::default();
 
-            for kev in &events[..count as usize] {
+            for kev in &events[..count] {
                 // Validate via the map — the entry may have been freed by a racing
                 // removeWatch between kevent() returning and us taking the lock. POSIX
                 // recycles the lowest fd on open(), so the ident could also now belong

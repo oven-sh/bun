@@ -204,7 +204,7 @@ impl WindowsWatcher {
         .into_raw_handle();
         self.watcher.dir_handle = handle;
 
-        self.iocp = w::CreateIoCompletionPort(handle, ptr::null_mut(), 0, 1)
+        self.iocp = w::CreateIoCompletionPort(handle, 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
 
         self.buf[..root.len()].copy_from_slice(root);

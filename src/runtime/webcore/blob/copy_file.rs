@@ -489,18 +489,13 @@ impl CopyFile {
         let mut dest_buf = bun_paths::path_buffer_pool::get();
 
         loop {
-            // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
-            // ties the returned `&ZStr` to `self`, which would conflict with
-            // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
-            // bytes live in `dest_buf`, so capture the length and re-borrow
-            // from the buffer (not `self`) after dropping the first borrow.
+            // In the buffer: `dest` must not borrow `self`.
             let dest_len = self
                 .destination_file_store
                 .pathlike
                 .path()
-                .slice_z(&mut dest_buf)
+                .slice_z_with_force_copy::<true>(&mut dest_buf)
                 .len();
-            // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
             let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
             match bun_sys::clonefile(
                 self.source_file_store
@@ -1081,7 +1076,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv.
     let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
-    let buf_len = this.read_write_loop.read_buf.len();
+    let buf_len = this.read_write_loop.uv_buf.len as usize;
 
     let destination_fd = this.read_write_loop.destination_fd.get();
 
@@ -1110,8 +1105,9 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             return;
         }
 
-        let prev = this.read_write_loop.uv_buf.slice();
-        this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
+        let read_buf = &this.read_write_loop.read_buf;
+        let unwritten = &read_buf[read_buf.len() - (buf_len - wrote as usize)..];
+        this.read_write_loop.uv_buf = libuv::uv_buf_t::init(unwritten);
         this.read_write_loop_write();
         return;
     }

@@ -2866,8 +2866,7 @@ mod spawn_process_body {
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
             loop {
-                // SAFETY: an empty changelist registers nothing.
-                let got = match unsafe { bun_sys::kevent(kq_fd, &[], &mut events[..], None) } {
+                let got = match bun_sys::kevent_wait(kq_fd, &mut events[..], None) {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
                 };

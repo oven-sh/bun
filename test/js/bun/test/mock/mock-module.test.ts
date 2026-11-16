@@ -4651,10 +4651,22 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             "#os": { import: "./os.mjs", require: "node:os" },
             // The resolver answers with the key of the builtin module. Of this one the key, "internal:cluster/RoundRobinHandle", is none of its names.
             "#handle": { import: "./handle.mjs", require: "internal/cluster/round_robin_handle" },
+            "#dep": { import: "./dep.mjs", require: "./dep.cjs" },
           },
         }),
         "os.mjs": esm("#os"),
         "handle.mjs": esm("#handle"),
+        "dep.mjs": esm("#dep"),
+        "dep.cjs": cjs("#dep"),
+        "beside.test.js": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("#dep", () => ({ which: "mock" }));
+          mock.module("#os", () => ({ which: "mock" }));
+          test("a name with two files beside it still gets its mock from require()", async () => {
+            expect([require("#dep").which, (await import("#dep")).which]).toEqual(["mock", "mock"]);
+            expect(require("#os")).toBe(require("node:os"));
+          });
+        `,
         "helper.cjs": `module.exports = { read: () => require("os"), viaName: () => require("#os"), viaModule: () => module.require("#os") };`,
         // The functions whose mock answers require() of a name with two files.
         ...Object.fromEntries(
@@ -4719,11 +4731,72 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
         `,
       },
-      8,
+      9,
     );
   });
 
   // Test files wrote the second mock to reach require(). It still works, and it is no longer needed.
+  test("a mock of the name that ends, loses the path of require(), or waits for a factory while its module loads", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "node_modules/dual-k/package.json": JSON.stringify({
+          name: "dual-k",
+          exports: { ".": { import: "./esm.mjs", require: "./cjs.cjs" } },
+        }),
+        "node_modules/dual-k/esm.mjs": `import { x } from "../../k.mjs"; export const which = "real esm"; export const viaK = x;`,
+        "node_modules/dual-k/cjs.cjs": `module.exports = { which: "real cjs" };`,
+        "k.mjs": `export const x = "real k";`,
+        "slow.mjs": `globalThis.started.resolve(); await globalThis.gate.promise;`,
+        "user.mjs": `import "./slow.mjs"; import * as dual from "dual"; export const seen = [dual.which, dual.extra];`,
+        "reaches.test.js": `
+          import { expect, jest, test } from "bun:test";
+          jest.doMock("dual", () => ({ which: "mock" }));
+          test("require() of the name gets the mock", () => expect(require("dual").which).toBe("mock"));
+        `,
+        "ends.test.js": `
+          import { expect, jest, test } from "bun:test";
+          // The module of the mock is fetched while the mock stands and evaluated after it has ended: slow.mjs, which user.mjs imports first, waits meanwhile.
+          test("the mock ends while its module loads", async () => {
+            globalThis.started = Promise.withResolvers();
+            globalThis.gate = Promise.withResolvers();
+            jest.doMock("dual", () => ({ ...jest.requireActual("dual"), extra: "mock" }));
+            const user = import("./user.mjs");
+            await globalThis.started.promise;
+            jest.unmock("dual");
+            globalThis.gate.resolve();
+            expect((await user).seen).toEqual(["real esm", undefined]);
+          });
+        `,
+        "path-came-and-went.test.js": `
+          import { expect, jest, test } from "bun:test";
+          // By the time the module of the mock is made, no mock answers require() of the path of the CommonJS file: a mock of that path took it and has ended.
+          test("a factory that takes jest.requireActual() of the name, after a mock of the path of require()", async () => {
+            jest.doMock("dual", () => ({ ...jest.requireActual("dual"), extra: "mock" }));
+            const path = require.resolve("dual");
+            jest.doMock(path, () => ({ which: "by path" }));
+            jest.unmock(path);
+            const imported = await import("dual");
+            expect([imported.which, imported.extra]).toEqual(["real esm", "mock"]);
+            expect(globalThis.loaded).toEqual(["dual esm"]);
+          });
+        `,
+        "waits.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          // The ES module of dual-k imports ./k.mjs, so the module of its mock waits for the mock of ./k.mjs, whose factory imports the path that require() resolves dual-k to.
+          test("a factory imports the path of require() of a name whose mock waits for that factory", async () => {
+            const path = require.resolve("dual-k");
+            jest.doMock("dual-k", async importOriginal => ({ ...(await importOriginal()), which: "mock of dual-k" }));
+            mock.module("./k.mjs", async () => ({ x: "k with " + (await import(path)).which }));
+            expect((await import("dual-k")).which).toBe("mock of dual-k");
+          });
+        `,
+      },
+      4,
+      ["--isolate"],
+    );
+  });
+
   test("a mock of the name with a mock of the path of require() beside it, in both orders", async () => {
     const head = `
       import { expect, jest, mock, test } from "bun:test";

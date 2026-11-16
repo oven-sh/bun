@@ -48,13 +48,6 @@ fn from_duplex<const SSL: bool>(duplex: &UpgradedDuplex) -> uws::NewSocketHandle
     )
 }
 
-/// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
-/// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
-#[inline]
-fn js_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
-}
-
 /// The error behind a close that the event loop initiated: the `recv()`
 /// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
 /// `on_close`). uSockets reports it in the platform's own numbering: an errno
@@ -1054,7 +1047,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         let vm = handlers.vm;
-        this.poll_ref.unref_on_next_tick(js_loop_ctx());
+        this.poll_ref.unref_on_next_tick(bun_io::js_vm_ctx());
 
         // The deferred `mark_inactive()` is gated on the `Handlers` captured
         // before the user callback runs: `onConnectError` can synchronously
@@ -1287,7 +1280,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.buffered_data_for_node_net.set(None);
         self.detach_native_callback();
-        self.poll_ref.unref(js_loop_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {
@@ -1348,7 +1341,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     self.handlers.set(None);
                 }
             }
-            self.poll_ref.unref(js_loop_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1401,7 +1394,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Stale if node:net reconnected through this wrapper while it was paused.
         this.update_flags(|f| f.remove(Flags::IS_PAUSED));
         if !this.ref_pollref_on_connect.replace(true) {
-            this.poll_ref.unref(js_loop_ctx());
+            this.poll_ref.unref(bun_io::js_vm_ctx());
         }
         if !SSL {
             this.pause_on_connect_once();
@@ -1658,7 +1651,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
-            this.poll_ref.unref(js_loop_ctx());
+            this.poll_ref.unref(bun_io::js_vm_ctx());
 
             // If you don't handle TCP fin, we assume you're done.
             this.mark_inactive();
@@ -2124,7 +2117,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.poll_ref.unref(js_loop_ctx());
+        this.poll_ref.unref(bun_io::js_vm_ctx());
 
         let callback = handlers.on_close();
 
@@ -3043,7 +3036,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // defer behind its ciphertext write spill (`ssl_close_after_spill`).
         socket.close(uws::CloseCode::FastShutdown);
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.poll_ref.unref(js_loop_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn end(
@@ -3084,7 +3077,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn js_ref(&self) {
         if self.socket.get().is_established() {
-            self.poll_ref.ref_(js_loop_ctx());
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             // `connect_finish` holds the loop until then; `on_open` applies this.
             self.ref_pollref_on_connect.set(true);
@@ -3093,7 +3086,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn js_unref(&self) {
         if self.socket.get().is_established() {
-            self.poll_ref.unref(js_loop_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         } else {
             self.ref_pollref_on_connect.set(false);
         }
@@ -3482,7 +3475,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         tls.mark_active();
         if was_reffed {
-            tls.poll_ref.ref_(js_loop_ctx());
+            tls.poll_ref.ref_(bun_io::js_vm_ctx());
         }
 
         // A server-side adopted socket has no listen socket to hang an

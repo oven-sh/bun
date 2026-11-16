@@ -375,29 +375,29 @@ fn planes_that_do_not_fit() {
         let ycc = [&mut *y, &mut *cb, &mut *cr];
         kernels::jpeg_rgba_to_ycc420(&rgba, rgba_stride, width, row_pairs, ycc, chroma_stride)
     };
-    let lens = [5 * 50 + 32, 5 * 40 + 32, 2 * 20 + 16, 2 * 20 + 16];
+    let lens = [5 * 70 + 32, 5 * 40 + 32, 2 * 20 + 16, 2 * 20 + 16];
     for it in [
-        [50, 32, 3, 20],
+        [70, 32, 3, 20],
         [0, 32, 3, 20],
-        [50, 0, 3, 20],
-        [50, 32, 0, 20],
+        [70, 0, 3, 20],
+        [70, 32, 0, 20],
     ] {
         check(Some(()), || fits(lens, it));
     }
     for nth in 0..4 {
         let mut lens = lens;
         lens[nth] -= 1;
-        check(None, || fits(lens, [50, 32, 3, 20]));
+        check(None, || fits(lens, [70, 32, 3, 20]));
     }
     for misfit in [
         [HUGE, 32, 1, 20],
         [0, 32, HUGE, 20],
-        [50, 32, 1, HUGE],
-        [50, 32, 1, 15],
+        [70, 32, 1, HUGE],
+        [70, 32, 1, 15],
     ] {
         check(None, || fits(lens, misfit));
     }
     for width in [16, 30, 34] {
-        check(None, || fits(lens, [50, width, 1, 20]));
+        check(None, || fits(lens, [70, width, 1, 20]));
     }
 }

@@ -141,14 +141,18 @@ fn searches() {
 #[test]
 #[cfg_attr(miri, ignore = "reads only a slice")]
 fn searches_in_both_encodings() {
-    let is_escape = |unit: &u16| [0x1B, 0x90, 0x98, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F].contains(unit);
+    let escapes = *b"\x1B\x90\x98\x9B\x9C\x9D\x9E\x9F";
+    let is_escape = |unit: &u16| escapes.map(u16::from).contains(unit);
     let extra = |&unit: &u16| match u8::try_from(unit) {
         Ok(b'<' | b'>') => 3,
         Ok(b'&') => 4,
         Ok(b'"' | b'\'') => 5,
         _ => 0,
     };
-    for t in texts_to_search() {
+    // Far from the start, a cheaper test comes first. It holds for none or all of the others.
+    let among = |it| [b'a', 0x11].map(|other| [&[other; 600][..], &[it], &[other; 300]].concat());
+    let far = escapes.into_iter().flat_map(among);
+    for t in texts_to_search().chain(far).chain([vec![b'"'; 1100]]) {
         let latin1: Vec<u16> = t.iter().map(|&b| b.into()).collect();
         check(latin1.iter().position(is_escape), || {
             kernels::index_of_escape_char8(&t)
@@ -495,6 +499,7 @@ fn paths() {
         });
         for len in [t.len(), t.len() / 2, t.len() / 7] {
             check(len, || kernels::common_prefix_length(&t, &t[..len]));
+            check(len, || kernels::common_prefix_length(&t[..len], &t));
             check(len, || {
                 let other = t.get(len).map_or(0, |byte| byte ^ 1 << (len % 8));
                 kernels::common_prefix_length(&[&t[..len], &[other], &t].concat(), &t)
@@ -653,6 +658,10 @@ fn each_byte_far_from_escapes() {
         let t = [&[0x1B, start][..], &vec![b'0'; len], b"\x91", &[b'0'; 40]].concat();
         check(0, || kernels::visible_latin1_width_exclude_ansi(&t));
     }
+    for len in 500..756 {
+        let t = [vec![b'a'; len], vec![1; 600]].concat();
+        check(len, || kernels::visible_latin1_width_exclude_ansi(&t));
+    }
     // Four in one lane.
     for (start, last) in [(0x1B, 50), (0x1B, 52), (0x9B, 50), (0x9B, 52)] {
         let mut t = [b'a'; 62];
@@ -691,6 +700,13 @@ fn lines_and_runs() {
             planes
         });
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn long_line() {
+    let t = [vec![b'a'; 1 << 22], vec![b'\n']].concat();
+    check(vec![0, t.len() as u32], || kernels::line_starts(&t));
 }
 
 #[test]
@@ -869,18 +885,15 @@ fn conversions() {
             filled(len, |out| kernels::lower_ascii(&t, out))
         });
         let ascii: Vec<u8> = t.iter().map(|b| b & 0x7F).collect();
-        for prefix in sample([len, len / 9, len / 2], 2) {
-            let from = [&ascii[..prefix], b"\x80", &ascii[prefix..]].concat();
-            check_shared_prefix(
-                &ascii[..prefix],
-                &from,
-                kernels::copy_ascii_prefix_to_shared,
-            );
-            check_shared_prefix(
-                &ascii[..prefix],
-                &from,
-                kernels::copy_short_ascii_prefix_to_shared,
-            );
+        for kernel in [
+            kernels::copy_ascii_prefix_to_shared,
+            kernels::copy_short_ascii_prefix_to_shared,
+        ] {
+            check_shared_prefix(&ascii, &ascii, kernel);
+            for prefix in sample([len, len / 9, len / 2], 2) {
+                let from = [&ascii[..prefix], b"\x80", &ascii[prefix..]].concat();
+                check_shared_prefix(&ascii[..prefix], &from, kernel);
+            }
         }
 
         let wide: Vec<u16> = (0..len)
@@ -1108,12 +1121,12 @@ fn json_structure(text: &[u8], base: usize, state: [u64; 3]) -> Option<Json> {
 }
 
 fn check_json(text: &[u8], before: [u64; 3]) {
-    check(json_structure(text, 4096, before), || {
+    check(json_structure(text, 1 << 31, before), || {
         let (mut dirty, mut state, mut flags) = (vec![7; text.len().div_ceil(4096)], before, 0);
         let index = filled(text.len() + 64, |out| {
             let index;
             (index, flags) =
-                kernels::json_structural_index_chunk(text, 4096, out, &mut dirty, &mut state);
+                kernels::json_structural_index_chunk(text, 1 << 31, out, &mut dirty, &mut state);
             index
         });
         assert!(flags != 8 || index.is_empty() && state == before);
@@ -1277,6 +1290,7 @@ fn xml_of_each_unit() {
             xml_index(&latin1, kernels::xml_structural_index16_chunk)
         });
     };
+    check_bytes(&[&[b'a'; 70_000][..], b"<"].concat());
     for byte in 0..=255 {
         check_bytes(&[byte, b'=', b'>', b'<', byte, b'=']);
         for before in (60..65).chain(124..129) {
@@ -1329,7 +1343,7 @@ fn surrogates_at_the_end_of_a_block() {
 #[test]
 #[cfg_attr(miri, ignore = "reads only a slice")]
 fn xxhash() {
-    let counting: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let counting: Vec<u8> = (0..70001).map(|i| (i % 251) as u8).collect();
     for (len, seed, xxh32, xxh64, xxh3) in [
         (0, 0, 0x02cc5d05, 0xef46db3751d8e999, 0x2d06800538d394c2),
         (0, 7, 0xd7adaff8, 0x95f0626f6f0a4409, 0x913ae0873e9b7eb8),
@@ -1349,9 +1363,15 @@ fn xxhash() {
         (241, 7, 0x50c41e2f, 0xafa3a124a71ae685, 0xd8f2ad256b03a316),
         (2048, 0, 0x64a8e425, 0xa69e05a7eff57800, 0x25339063db861586),
         (2048, 7, 0x97aaf2a5, 0xb59eb111a307393c, 0x8d1c0283d793714b),
+        (70001, 7, 0xba005a56, 0xd3fd5fd660c364a3, 0xdf6c27417bcf0879),
     ] {
         check(xxh32, || kernels::xxhash32(seed, &counting[..len]));
         check(xxh64, || kernels::xxhash64(seed.into(), &counting[..len]));
+        check(xxh64, || {
+            let mut state = kernels::XxHash64State::new(seed.into());
+            state.update(&counting[..len]);
+            state.digest()
+        });
         from_shared(&counting[..len], |t| {
             check(xxh32, || kernels::xxhash32_shared(seed, t));
             check(xxh64, || kernels::xxhash64_shared(seed.into(), t));
@@ -1414,7 +1434,7 @@ fn png_prediction(filter_type: u8, [a, b, c]: [u8; 3]) -> u8 {
 #[test]
 fn png() {
     for row in texts(MIXED) {
-        let flat = (0..row.len()).map(|i| (i / 128) as u8).collect();
+        let flat = (0..row.len() + 9).map(|i| (i / 128 * 99) as u8).collect();
         let falling = (0..row.len()).map(|i| 2 >> (i / 4).min(2)).collect();
         let reversed: Vec<u8> = row.iter().rev().copied().collect();
         for above in sample([reversed, falling, flat], 3) {
@@ -1526,7 +1546,7 @@ fn mappings() {
                     name_idx: Some(name_idx.as_mut().into()),
                 };
                 let state = &mut Default::default();
-                let (rows, resume_at) = kernels::parse_mappings(&text, columns, 2, state);
+                let (rows, resume_at) = kernels::parse_mappings(&text, columns, 1, state);
                 let left = count - rows.src_idx.len();
                 assert!(text.len() - resume_at < 64 || left < 16, "{target:?}");
                 let pairs = rows.generated.iter().zip(rows.original);
@@ -1765,6 +1785,8 @@ fn check_odd_mappings(start: i32, step: i32) {
         for odd in &odd {
             mappings.check(&[odd, &b"AAAA,".repeat(14)[..]].concat(), 80);
         }
+        mappings.push_segment(&[0; 4], 1);
+        mappings.check(&b",AAAA".repeat(14), 80);
     }
 }
 
@@ -1971,6 +1993,13 @@ fn resized_lines() {
             }
         }
     }
+    let mut long = vec![[255; 4]; 140_001];
+    long[70_000 - 127..=70_000 + 127].fill([7; 4]);
+    check(vec![[7; 4]], || {
+        filled(1, |out| {
+            kernels::resize(Filter::Box, &long, long.len(), out, 1).unwrap()
+        })
+    });
 }
 
 #[test]
@@ -1981,8 +2010,8 @@ fn resized_images() {
         .map(|_| [(); 4].map(|()| below(256) as u8))
         .collect();
     let want = [
-        15105532, 847692500, 1945672243, 4154694450, 2818858936, 1911627675, 3170945029,
-        1585760049, 537216212,
+        4277632343, 3629949458, 1543785201, 3287213300, 1079276594, 3212018015, 2368773617,
+        3102709088, 1063204064,
     ];
     check(want, || {
         Filter::ALL.map(|filter| {
@@ -1997,6 +2026,10 @@ fn resized_images() {
                 [37, 5, 61],
                 [1073, 3, 1],
                 [1, 2, 4],
+                // Weights half way between two, near where a filter changes, and cut off.
+                [123, 1, 256],
+                [213, 369, 2],
+                [884, 2, 1],
             ]
             .map(resize)
             .concat();
@@ -2016,27 +2049,28 @@ fn resized_without_memory() {
 fn moved_pixels() {
     let sizes = [1, 2, 3, 4, 5, 15, 16, 17, 64, 65, 67, 68, 70, 135];
     let all = sizes.iter().flat_map(|&w| sizes.map(|h| (w, h)));
-    for (w, h) in sample(all.chain([(41, 9001), (5, 70_000)]), 57) {
+    for (w, h) in sample(all.chain([(41, 9001), (5, 70_000), (5, 0)]), 57) {
         // What follows the last whole row does not count.
         let src: Vec<_> = (0..(w * h + w / 2) as u32).map(u32::to_le_bytes).collect();
+        let room = w * h + (w + h) % 2 * 9;
         let image = |width: usize, from: &dyn Fn(usize, usize) -> [usize; 2]| -> Vec<_> {
             let places = (0..w * h).map(|i| from(i % width, i / width));
             places.map(|[x, y]| src[y * w + x]).collect()
         };
         check(image(h, &|x, y| [y, h - 1 - x]), || {
-            filled(w * h, |out| kernels::rotate_90(&src, w, out))
+            filled(room, |out| kernels::rotate_90(&src, w, out))
         });
         check(image(w, &|x, y| [w - 1 - x, h - 1 - y]), || {
-            filled(w * h, |out| kernels::rotate_180(&src[..w * h], out))
+            filled(room, |out| kernels::rotate_180(&src[..w * h], out))
         });
         check(image(h, &|x, y| [w - 1 - y, x]), || {
-            filled(w * h, |out| kernels::rotate_270(&src, w, out))
+            filled(room, |out| kernels::rotate_270(&src, w, out))
         });
         check(image(w, &|x, y| [w - 1 - x, y]), || {
-            filled(w * h, |out| kernels::flip_horizontally(&src, w, out))
+            filled(room, |out| kernels::flip_horizontally(&src, w, out))
         });
         check(image(w, &|x, y| [x, h - 1 - y]), || {
-            filled(w * h, |out| kernels::flip_vertically(&src, w, out))
+            filled(room, |out| kernels::flip_vertically(&src, w, out))
         });
     }
 }
@@ -2044,7 +2078,7 @@ fn moved_pixels() {
 #[test]
 #[should_panic]
 fn moved_pixels_without_room() {
-    kernels::rotate_180(&[[0; 4]; 6], [[0; 4]; 3][..].as_mut().into());
+    kernels::rotate_180(&[[0; 4]; 8], [[0; 4]; 7][..].as_mut().into());
 }
 
 #[test]

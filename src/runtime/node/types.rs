@@ -1297,10 +1297,7 @@ const IOV_MAX: usize = libc::IOV_MAX as usize;
 const IOV_MAX: usize = core::ffi::c_uint::MAX as usize;
 
 pub(crate) struct VectorArrayBuffer {
-    #[cfg(unix)]
     buffers: Vec<PlatformIoVec>,
-    #[cfg(windows)]
-    pub(crate) buffers: Vec<PlatformIoVec>,
     _pins: jsc::ArrayBufferViewPins,
     /// The pinned elements over a non-shared `WebAssembly.Memory`. A pin doesn't stop `grow()`
     /// from freeing the memory's block.
@@ -1375,14 +1372,11 @@ impl VectorArrayBuffer {
     /// libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
     pub(crate) fn read_from(&self, fd: Fd, position: Option<i64>) -> bun_sys::Maybe<usize> {
         let bufs = &self.buffers[..self.buffers.len().min(IOV_MAX)];
-        #[cfg(windows)]
-        return match position {
-            Some(position) => bun_sys::sys_uv::preadv(fd, bufs, position),
-            None => bun_sys::sys_uv::readv(fd, bufs),
-        };
-        #[cfg(unix)]
         // SAFETY: the spans are pinned, or no JavaScript has run since they were collected.
         unsafe {
+            #[cfg(windows)]
+            return bun_sys::sys_uv::preadv(fd, bufs, position.unwrap_or(-1));
+            #[cfg(unix)]
             match position {
                 Some(position) => bun_sys::preadv(fd, bufs, position),
                 None => bun_sys::readv(fd, bufs),
@@ -1390,20 +1384,26 @@ impl VectorArrayBuffer {
         }
     }
 
+    #[cfg(windows)]
+    pub(crate) fn buffers(&self) -> &[PlatformIoVec] {
+        &self.buffers
+    }
+
+    pub(crate) fn io_slices(&self) -> &[IoSlice<'_>] {
+        // SAFETY: `IoSlice` has the layout of `PlatformIoVec`; the spans live as in `read_from`.
+        unsafe { core::slice::from_raw_parts(self.buffers.as_ptr().cast(), self.buffers.len()) }
+    }
+
     /// libuv `uv__fs_write_all`: IOV_MAX-sized batches. An error after some bytes returns their count.
     pub(crate) fn write_to(&self, fd: Fd, mut position: Option<i64>) -> bun_sys::Maybe<u64> {
         let mut total: u64 = 0;
-        for chunk in self.buffers.chunks(IOV_MAX) {
-            // SAFETY: `IoSlice` has the layout of `PlatformIoVec`; the spans live as in `read_from`.
-            let vecs = unsafe {
-                core::slice::from_raw_parts(chunk.as_ptr().cast::<IoSlice<'_>>(), chunk.len())
-            };
+        for vecs in self.io_slices().chunks(IOV_MAX) {
             let written = match position {
                 Some(position) => bun_sys::pwritev(fd, vecs, position),
                 #[cfg(unix)]
                 None => bun_sys::writev(fd, vecs),
                 #[cfg(windows)]
-                None => bun_sys::sys_uv::writev(fd, chunk),
+                None => bun_sys::sys_uv::writev(fd, vecs),
             };
             match written {
                 Err(err) if total == 0 => return Err(err),
@@ -1411,7 +1411,7 @@ impl VectorArrayBuffer {
                 Ok(amt) => {
                     total += amt as u64;
                     position = position.map(|position| position.wrapping_add(amt as i64));
-                    if amt < chunk.iter().map(bun_sys::platform_iovec_len).sum() {
+                    if amt < vecs.iter().map(|vec| vec.len()).sum() {
                         break;
                     }
                 }

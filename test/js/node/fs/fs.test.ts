@@ -314,6 +314,21 @@ it("fs.writev returns object", async done => {
   });
 });
 
+describe.if(isWindows)("a request that libuv refuses to start", () => {
+  const invalidUtf8 = Buffer.from([0xff]);
+
+  it("fs.readv with no buffers fails with EINVAL", async () => {
+    await using file = await promises.open(import.meta.path);
+    await expect(promisify(fs.readv)(file.fd, [])).rejects.toMatchObject({ code: "EINVAL" });
+    await expect(file.readv([])).rejects.toMatchObject({ code: "EINVAL" });
+  });
+
+  it.each(["open", "statfs"] as const)("fs.%s of a path that it cannot decode fails with ENOENT", async name => {
+    await expect(promisify(fs[name])(invalidUtf8)).rejects.toMatchObject({ code: "ENOENT", syscall: name });
+    await expect(promises[name](invalidUtf8)).rejects.toMatchObject({ code: "ENOENT", syscall: name });
+  });
+});
+
 describe("FileHandle", () => {
   it("FileHandle#read returns object", async () => {
     await using fd = await fs.promises.open(__filename);

@@ -126,13 +126,11 @@ fn split_callback<'a>(
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
-    this: &Binding,
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
     arm: AsyncArm,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
-        &Binding,
         ThreadIsolated<A>,
         &VirtualMachine,
         Option<JSValue>,
@@ -147,7 +145,7 @@ fn run_async<A: FsArgument>(
     };
     let vm: &VirtualMachine = global.bun_vm();
     move_waiting_descriptors();
-    Ok(create_task(&cx, this, args, vm, callback))
+    Ok(create_task(&cx, args, vm, callback))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -223,7 +221,7 @@ impl Binding {
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
         let vm: &VirtualMachine = global.bun_vm();
-        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
+        Ok(AsyncCpTask::create(&cx, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -245,7 +243,7 @@ impl Binding {
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub(crate) fn readdir(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        self.run_readdir(cx, args, AsyncArm::Promise)
+        Self::run_readdir(cx, args, AsyncArm::Promise)
     }
 
     pub(crate) fn readdir_cb(
@@ -253,15 +251,10 @@ impl Binding {
         cx: &mut JsScope<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.run_readdir(cx, args, AsyncArm::Callback)
+        Self::run_readdir(cx, args, AsyncArm::Callback)
     }
 
-    fn run_readdir(
-        &self,
-        cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-        arm: AsyncArm,
-    ) -> JsResult<JSValue> {
+    fn run_readdir(cx: &mut JsScope<'_>, args: &[JsLocal<'_>], arm: AsyncArm) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
         let (callback, arguments) = split_callback(global, args, arm)?;
@@ -280,7 +273,7 @@ impl Binding {
                 &cx, &rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
+        Ok(async_::Readdir::create(&cx, rd_args, vm, callback))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -343,14 +336,14 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Promise, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Callback, async_::$F::create)
                 }
             )*
         }

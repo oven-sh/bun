@@ -144,17 +144,6 @@ impl uv_buf_t {
             base: input.as_ptr().cast_mut(),
         }
     }
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        // `from_raw_parts` requires non-null, aligned even for len==0.
-        // libuv routinely hands back `{len:0, base:NULL}` (declined alloc_cb,
-        // `uv_buf_init(NULL,0)`), so guard the empty/null case explicitly.
-        if self.len == 0 || self.base.is_null() {
-            return &[];
-        }
-        // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
-        unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1419,7 +1408,7 @@ pub struct fs_t {
     pub reserved: [*mut c_void; 6],
     pub u: req_u,
     pub next_req: *mut uv_req_t,
-    pub fs_type: uv_fs_type,
+    fs_type: uv_fs_type,
     pub loop_: *mut Loop,
     pub cb: uv_fs_cb,
     pub result: ReturnCodeI64,
@@ -1473,7 +1462,7 @@ impl fs_t {
         }
     }
     #[inline]
-    pub fn assert_cleaned_up(&self) {
+    fn assert_cleaned_up(&self) {
         #[cfg(debug_assertions)]
         {
             if self.loop_ as usize == 0xAAAA_AAAA_AAAA_0000usize {
@@ -1488,17 +1477,9 @@ impl fs_t {
         }
     }
     #[inline]
-    pub unsafe fn ptr_as<T>(&self) -> *const T {
+    pub fn ptr_as<T>(&self) -> *const T {
         self.assert_initialized();
         self.ptr.cast::<T>()
-    }
-    /// `req.file.fd` union arm. The union is private
-    /// because the active variant is path-dependent (`uv_fs_open` writes `fd`;
-    /// path-taking ops write `pathw`); callers reading the wrong arm get UB.
-    /// SAFETY: only valid after a `uv_fs_*` call that populated the `fd` arm.
-    #[inline]
-    pub unsafe fn file_fd(&self) -> uv_file {
-        unsafe { self.file.fd }
     }
 }
 
@@ -1560,7 +1541,8 @@ pub struct uv_statfs_t {
     pub f_bavail: u64,
     pub f_files: u64,
     pub f_ffree: u64,
-    pub f_spare: [u64; 4],
+    /// `uv_fs_statfs` does not write it.
+    pub f_spare: [MaybeUninit<u64>; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1865,6 +1847,18 @@ impl ReturnCodeI64 {
     pub fn to_fd(self) -> uv_file {
         debug_assert!(self.0 >= 0);
         self.0 as uv_file
+    }
+    #[inline]
+    pub(crate) const fn into_result(self) -> Result<(), ReturnCode> {
+        match self.0 {
+            0.. => Ok(()),
+            code => Err(ReturnCode(code as c_int)),
+        }
+    }
+}
+impl From<ReturnCode> for ReturnCodeI64 {
+    fn from(rc: ReturnCode) -> Self {
+        Self(rc.int().into())
     }
 }
 impl fmt::Display for ReturnCodeI64 {
@@ -2314,7 +2308,7 @@ unsafe extern "C" {
     pub safe fn uv_get_total_memory() -> u64;
 
     // fs
-    pub fn uv_fs_req_cleanup(req: *mut fs_t);
+    pub(crate) fn uv_fs_req_cleanup(req: *mut fs_t);
     pub fn uv_fs_close(
         loop_: *const Loop,
         req: *mut fs_t,
@@ -2353,7 +2347,7 @@ unsafe extern "C" {
         offset: i64,
         cb: uv_fs_cb,
     ) -> ReturnCode;
-    pub fn uv_fs_copyfile(
+    pub(crate) fn uv_fs_copyfile(
         loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,

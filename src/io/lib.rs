@@ -821,45 +821,6 @@ impl Changelist {
     }
 }
 
-/// For types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
-/// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
-///
-/// Implement via [`intrusive_uv_fs!`].
-///
-/// # Safety
-/// `UV_FS_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request field>)`.
-#[cfg(windows)]
-pub unsafe trait IntrusiveUvFs: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const UV_FS_OFFSET: usize;
-
-    /// Take back the `Box<Self>` that was left to libuv, from the `*mut uv::fs_t` it passes back.
-    ///
-    /// # Safety
-    /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// leaked `Box<Self>` that nothing else takes back, and the pointer's provenance must cover the
-    /// whole allocation.
-    #[inline(always)]
-    unsafe fn take_from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> Box<Self> {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::heap::take(bun_core::container_of(req, Self::UV_FS_OFFSET)) }
-    }
-}
-
-/// Implements [`IntrusiveUvFs`] for a struct that embeds an intrusive
-/// `io_request: uv::fs_t` field.
-#[cfg(windows)]
-#[macro_export]
-macro_rules! intrusive_uv_fs {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `UV_FS_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveUvFs for $ty {
-            const UV_FS_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
 // ─── Pollable ─────────────────────────────────────────────────────────────────
 
 #[cfg(not(windows))]
@@ -1444,33 +1405,31 @@ pub mod closer {
     use bun_sys::windows::libuv as uv;
 
     #[cfg(windows)]
-    pub struct Closer;
+    pub struct Closer {
+        req: uv::fs::Request,
+    }
+
+    #[cfg(windows)]
+    bun_core::intrusive_field!(Closer, req: uv::fs::Request);
 
     #[cfg(windows)]
     impl Closer {
         pub fn close(fd: Fd, loop_: &uv::Loop) {
-            let req = bun_ptr::AliasableBox::from(bun_core::boxed_zeroed::<uv::fs_t>());
-            // SAFETY: `req` stays put until `on_close` takes it.
-            let rc = unsafe { uv::uv_fs_close(loop_, req.as_ptr(), fd.uv(), Some(Self::on_close)) };
-            if let Some(err) = rc.errno() {
-                bun_core::debug_warn!("libuv close() failed = {:?}", err);
-                return;
+            bun_sys::syslog!("uv_fs_close({}) = scheduled", fd);
+            let this = Box::new(Closer {
+                req: Default::default(),
+            });
+            if let Err((this, rc)) = uv::fs::close(this, loop_, fd.uv(), Self::on_close) {
+                this.on_close(rc.into());
             }
-            let _ = req.into_raw();
         }
 
-        extern "C" fn on_close(req: *mut uv::fs_t) {
-            // SAFETY: the box `close` gave up.
-            let req = unsafe { bun_core::heap::take(req) };
-            bun_sys::syslog!(
-                "uv_fs_close({}) = {}",
-                // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                Fd::from_uv(unsafe { req.file_fd() }),
-                req.result
-            );
+        fn on_close(self: Box<Self>, result: uv::ReturnCodeI64) {
+            bun_sys::syslog!("uv_fs_close() = {}", result);
 
-            #[cfg(debug_assertions)]
-            if let Some(err) = req.result.errno() {
+            if cfg!(debug_assertions)
+                && let Some(err) = result.errno()
+            {
                 bun_core::debug_warn!("libuv close() failed = {:?}", err);
             }
         }

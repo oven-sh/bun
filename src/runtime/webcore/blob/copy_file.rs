@@ -8,7 +8,7 @@ use crate::webcore::blob::{self, MkdirpTarget, Retry};
 use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
-use bun_io::{self as aio, IntrusiveUvFs as _};
+use bun_io as aio;
 use bun_jsc::{self as jsc, JSValue};
 #[cfg(not(windows))]
 use bun_jsc::{JSGlobalObject, JSPromise};
@@ -852,7 +852,7 @@ pub(crate) struct CopyFileWindows {
     pub(crate) destination_file_store: RefPtr<Store>,
     pub(crate) source_file_store: RefPtr<Store>,
 
-    pub(crate) io_request: libuv::fs_t,
+    io_request: libuv::fs::Request,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
@@ -871,10 +871,13 @@ pub(crate) struct CopyFileWindows {
 
     /// When we are unable to get the original file path, we do a read-write loop that uses libuv.
     pub(crate) read_write_loop: ReadWriteLoop,
+    read_buf: Vec<u8>,
 }
 
 #[cfg(windows)]
-bun_io::intrusive_uv_fs!(CopyFileWindows, io_request);
+bun_core::intrusive_field!(CopyFileWindows, io_request: libuv::fs::Request);
+#[cfg(windows)]
+bun_core::intrusive_field!(CopyFileWindows, read_buf: Vec<u8>);
 
 #[cfg(windows)]
 pub(crate) struct ReadWriteLoop {
@@ -883,8 +886,8 @@ pub(crate) struct ReadWriteLoop {
     pub(crate) destination_fd: Fd,
     pub(crate) must_close_destination_fd: bool,
     pub(crate) written: usize,
-    pub(crate) read_buf: Vec<u8>,
-    pub(crate) uv_buf: libuv::uv_buf_t,
+    /// Where in `read_buf` the next write starts.
+    write_offset: usize,
 }
 
 #[cfg(windows)]
@@ -896,11 +899,7 @@ impl Default for ReadWriteLoop {
             destination_fd: Fd::INVALID,
             must_close_destination_fd: false,
             written: 0,
-            read_buf: Vec::new(),
-            uv_buf: libuv::uv_buf_t {
-                len: 0,
-                base: core::ptr::null_mut(),
-            },
+            write_offset: 0,
         }
     }
 }
@@ -908,62 +907,29 @@ impl Default for ReadWriteLoop {
 #[cfg(windows)]
 impl CopyFileWindows {
     fn read_write_loop_read(mut self: Box<Self>) {
-        self.read_write_loop.read_buf.clear();
-        // reshaped for borrowck — use the full capacity slice.
-        let cap = self.read_write_loop.read_buf.capacity();
-        self.read_write_loop.uv_buf = libuv::uv_buf_t {
-            len: cap as libuv::ULONG,
-            base: self.read_write_loop.read_buf.as_mut_ptr(),
-        };
-        let source_fd = self.read_write_loop.source_fd;
+        self.read_buf.clear();
+        let source_fd = self.read_write_loop.source_fd.uv();
         let loop_ = self.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
         // For now, we don't start reading the next chunk until
         // we've finished writing all the previous chunks.
-        let this = bun_core::heap::into_raw(self);
-        // SAFETY: the VM's loop outlives the request, which is zeroed or cleaned up. libuv has
-        // `this`, whose `uv_buf` is the capacity of its `read_buf`, until `on_read`.
-        let rc = unsafe {
-            libuv::uv_fs_read(
-                loop_,
-                &raw mut (*this).io_request,
-                source_fd.uv(),
-                &raw const (*this).read_write_loop.uv_buf,
-                1,
-                -1,
-                Some(on_read),
-            )
-        };
-        if let Some(err) = rc.to_error(bun_sys::Tag::read) {
-            // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.on_read_write_loop_complete(Err(err));
+        if let Err((this, rc)) = libuv::fs::read(self, loop_, source_fd, usize::MAX, -1, on_read) {
+            on_read(this, rc.into());
         }
     }
 
-    fn read_write_loop_write(mut self: Box<Self>) {
-        let destination_fd = self.read_write_loop.destination_fd;
+    fn unwritten(&self) -> &[u8] {
+        &self.read_buf[self.read_write_loop.write_offset..]
+    }
+
+    fn read_write_loop_write(self: Box<Self>) {
+        let destination_fd = self.read_write_loop.destination_fd.uv();
         let loop_ = self.event_loop.uv_loop();
 
-        // Re-use the fs request.
-        self.io_request.deinit();
-        let this = bun_core::heap::into_raw(self);
-        // SAFETY: the VM's loop outlives the request. libuv has `this`, whose `uv_buf` points into
-        // its `read_buf`, until `on_write`.
-        let rc = unsafe {
-            libuv::uv_fs_write(
-                loop_,
-                &raw mut (*this).io_request,
-                destination_fd.uv(),
-                &raw const (*this).read_write_loop.uv_buf,
-                1,
-                -1,
-                Some(on_write),
-            )
-        };
-        if let Some(err) = rc.to_error(bun_sys::Tag::write) {
-            // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.on_read_write_loop_complete(Err(err));
+        let started = libuv::fs::write(self, loop_, destination_fd, Self::unwritten, -1, on_write);
+        if let Err((this, rc)) = started {
+            on_write(this, rc.into());
         }
     }
 }
@@ -996,37 +962,20 @@ impl ReadWriteLoop {
             self.must_close_destination_fd = false;
             self.destination_fd = Fd::INVALID;
         }
-
-        self.read_buf = Vec::new(); // clearAndFree()
     }
 }
 
 #[cfg(windows)]
-extern "C" fn on_read(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv.
-    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
-
+fn on_read(mut this: Box<CopyFileWindows>, rc: libuv::ReturnCodeI64) {
     let source_fd = this.read_write_loop.source_fd;
-    // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
-    let read_buf = &mut this.read_write_loop.read_buf;
 
-    let rc = this.io_request.result;
-
-    bun_sys::syslog!(
-        "uv_fs_read({}, {}) = {}",
-        source_fd,
-        read_buf.len(),
-        rc.int()
-    );
+    bun_sys::syslog!("uv_fs_read({}) = {}", source_fd, rc.int());
     if let Some(err) = rc.to_error(bun_sys::Tag::read) {
         this.on_read_write_loop_complete(Err(err));
         return;
     }
 
-    let n = usize::try_from(rc.int()).expect("int cast");
-    // SAFETY: libuv wrote `n` bytes into the buffer's capacity.
-    unsafe { read_buf.set_len(n) };
-    this.read_write_loop.uv_buf = libuv::uv_buf_t::init(read_buf.as_slice());
+    this.read_write_loop.write_offset = 0;
 
     if rc.int() == 0 {
         // Handle EOF. We can't read any more.
@@ -1038,14 +987,10 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-extern "C" fn on_write(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv.
-    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
-    let buf_len = this.read_write_loop.read_buf.len();
+fn on_write(mut this: Box<CopyFileWindows>, rc: libuv::ReturnCodeI64) {
+    let buf_len = this.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd;
-
-    let rc = this.io_request.result;
 
     bun_sys::syslog!(
         "uv_fs_write({}, {}) = {}",
@@ -1070,13 +1015,11 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             return;
         }
 
-        let prev = this.read_write_loop.uv_buf.slice();
-        this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
+        this.read_write_loop.write_offset += wrote as usize;
         this.read_write_loop_write();
         return;
     }
 
-    this.io_request.deinit();
     this.read_write_loop_read();
 }
 
@@ -1107,8 +1050,7 @@ impl CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
-            // SAFETY: all-zero is a valid libuv::fs_t
-            io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
+            io_request: Default::default(),
             event_loop,
             _keep_alive: aio::JsKeepAlive::active(),
             context: context.id(),
@@ -1118,6 +1060,7 @@ impl CopyFileWindows {
             written_bytes: 0,
             err: None,
             read_write_loop: ReadWriteLoop::default(),
+            read_buf: Vec::new(),
         });
         let promise = result.promise.value();
 
@@ -1199,7 +1142,7 @@ impl CopyFileWindows {
             }
         };
 
-        self.read_write_loop.read_buf.reserve_exact(64 * 1024);
+        self.read_buf.reserve_exact(64 * 1024);
 
         self.read_write_loop_read();
     }
@@ -1306,29 +1249,16 @@ impl CopyFileWindows {
                 }
             }
         };
-        let new_path = new_path.as_ptr();
-        let event_loop = self.event_loop;
-        let this = bun_core::heap::into_raw(self);
-        // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated paths before
-        // it returns, and it has `this` until `on_copy_file`.
-        let rc = unsafe {
-            libuv::uv_fs_copyfile(
-                event_loop.uv_loop(),
-                &raw mut (*this).io_request,
-                old_path.as_ptr(),
-                new_path,
-                0,
-                Some(on_copy_file),
-            )
-        };
+        let loop_ = self.event_loop.uv_loop();
+        let started = libuv::fs::copyfile(self, loop_, old_path, new_path, 0, on_copy_file);
 
-        if let Some(mut err) = rc.to_error(bun_sys::Tag::copyfile) {
+        if let Err((this, rc)) = started {
+            let mut err = bun_sys::Error::from_uv(rc, bun_sys::Tag::copyfile);
             // https://github.com/oven-sh/bun/issues/6336
             if err.get_errno() == bun_sys::E::EPERM {
                 err = bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile);
             }
-            // SAFETY: libuv keeps nothing of a request that it refuses.
-            unsafe { bun_core::heap::take(this) }.throw(err.with_path(old_path.as_bytes()));
+            this.throw(err.with_path(old_path.as_bytes()));
         }
     }
 
@@ -1356,40 +1286,18 @@ impl CopyFileWindows {
             if self.destination_file_store.data.as_file().path().is_some() {
                 self.written_bytes = written;
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
-                let path_ptr = self
+                let path = self
                     .destination_file_store
                     .data
                     .as_file()
                     .pathlike()
                     .path()
-                    .slice_z(&mut pathbuf)
-                    .as_ptr();
-                let event_loop = self.event_loop;
-                // SAFETY: all-zero is a valid libuv::fs_t
-                self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
+                    .slice_z(&mut pathbuf);
+                let loop_ = self.event_loop.uv_loop();
+                let mode = i32::try_from(mode).expect("int cast");
 
-                let this = bun_core::heap::into_raw(self);
-                // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated path
-                // before it returns, and it has `this` until `on_chmod`.
-                let rc = unsafe {
-                    libuv::uv_fs_chmod(
-                        event_loop.uv_loop(),
-                        &raw mut (*this).io_request,
-                        path_ptr,
-                        i32::try_from(mode).expect("int cast"),
-                        Some(on_chmod),
-                    )
-                };
-
-                // chmod failed to start - reject the promise to report the error.
-                if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
-                    // SAFETY: libuv keeps nothing of a request that it refuses.
-                    let this = unsafe { bun_core::heap::take(this) };
-                    let destination = &this.destination_file_store.data.as_file();
-                    if let PathOrFileDescriptor::Path(p) = &destination.pathlike() {
-                        err = err.with_path(p.slice());
-                    }
-                    this.throw(err);
+                if let Err((this, rc)) = libuv::fs::chmod(self, loop_, path, mode, on_chmod) {
+                    on_chmod(this, rc.into());
                 }
                 return;
             }
@@ -1463,12 +1371,7 @@ impl Drop for CopyFileWindows {
 }
 
 #[cfg(windows)]
-extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv.
-    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
-
-    let rc = this.io_request.result;
-
+fn on_copy_file(this: Box<CopyFileWindows>, rc: libuv::ReturnCodeI64) {
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
     if let Some(errno) = rc.errno() {
         // ENOENT from uv_fs_copyfile can mean either the source file or the
@@ -1489,7 +1392,6 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
             };
 
         if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT && !source_missing {
-            this.io_request.deinit();
             this.mkdirp();
             return;
         }
@@ -1540,11 +1442,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-extern "C" fn on_chmod(req: *mut libuv::fs_t) {
-    // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv.
-    let this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
-
-    let rc = this.io_request.result;
+fn on_chmod(this: Box<CopyFileWindows>, rc: libuv::ReturnCodeI64) {
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
         let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike() {

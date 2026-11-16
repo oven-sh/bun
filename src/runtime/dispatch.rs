@@ -661,10 +661,8 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                    $(task_tag::$tag => feature_arm!([NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                        unsafe { fs_async::$ty::run_from_js_thread(request) }?;
-                        Ok(())
+                    $(task_tag::$tag => boxed_arm!(task, [NodeFs], |request: fs_async::$ty| -> JsResult<()> {
+                        request.run_from_js_thread()
                     })?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
@@ -1713,7 +1711,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             {
                 macro_rules! __fs_release {
                     ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                        $(task_tag::$tag => release_in!([NodeFs], fs_async::$ty),)*
+                        $(task_tag::$tag => release_boxed_in!([NodeFs], fs_async::$ty),)*
                         // SAFETY: the outer arm proves one of the table tags matched.
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     }};

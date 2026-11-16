@@ -3593,8 +3593,8 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     if (!clientData->idleCollectionDidFinish) {
         clientData->idleCollectionDidFinish = createSharedTask<void()>([vm, clientData] {
             clientData->idleCollectionsPending.fetch_sub(1);
-            if (!vm->currentThreadIsHoldingAPILock() && clientData->vmHandle)
-                Bun__VmHandle__wake(clientData->vmHandle);
+            if (!vm->currentThreadIsHoldingAPILock())
+                Bun__VmHandle__wake(clientData->vmHandle.get());
         });
     }
     request.didFinishEndPhase = clientData->idleCollectionDidFinish;

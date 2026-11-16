@@ -732,9 +732,9 @@ pub extern "C" fn Bun__VmHandle__retain(vm: &VirtualMachine) -> *const Shared {
 /// # Safety
 /// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__retainRef(r: *const Shared) -> *const Shared {
+pub unsafe extern "C" fn Bun__VmHandle__retainRef(r: *const Shared) {
     // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.clone().into_ref()
+    unsafe { Arc::increment_strong_count(r) };
 }
 
 /// Any thread: give a reference up.
@@ -747,31 +747,34 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
     drop(unsafe { VmHandle::from_ref(r) });
 }
 
-/// Any thread: post a C++ task to the VM's `kind` loop through a reference and
-/// give the reference up (queued, or deleted unrun if the VM is closed).
+/// Any thread: see [`VmHandle::post_cpp_task`].
 ///
 /// # Safety
-/// `r` came from `Bun__VmHandle__retain*` and is not used afterwards; `task` is
-/// a live heap `WebCore::EventLoopTask` handed over.
+/// `r` is a live reference its holder keeps for the duration of the call; `task` is a live heap `WebCore::EventLoopTask` handed over.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
+pub unsafe extern "C" fn Bun__VmHandle__post(
     r: *const Shared,
     task: *mut crate::cpp_task::CppTask,
     kind: LoopKind,
 ) {
     // SAFETY: fn contract.
-    let handle = unsafe { VmHandle::from_ref(r) };
-    // SAFETY: fn contract.
-    unsafe { handle.post_cpp_task(kind, task) };
+    unsafe { VmHandle::borrow_ref(r).post_cpp_task(kind, task) };
 }
 
-/// JS thread: adjust this VM's keep-alive directly.
+/// The JS thread, or the collector's while the JS thread is stopped.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
-    if delta > 0 {
-        vm.event_loop().ref_keep_alive();
+pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine) {
+    vm.event_loop().ref_keep_alive();
+}
+
+/// `Bun::EventLoopKeepAlive`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__eventLoop__setKeptAlive(kept_alive: bool) {
+    let event_loop = VirtualMachine::get().event_loop();
+    if kept_alive {
+        event_loop.ref_keep_alive();
     } else {
-        vm.event_loop().unref_keep_alive();
+        event_loop.unref_keep_alive();
     }
 }
 

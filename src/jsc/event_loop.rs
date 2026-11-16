@@ -1209,7 +1209,7 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: count one more thing keeping this loop alive (the same
+    /// JS thread (or with it stopped): count one more thing keeping this loop alive (the same
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);

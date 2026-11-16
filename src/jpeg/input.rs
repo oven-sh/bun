@@ -92,11 +92,6 @@ impl<'a> Input<'a> {
         self.bytes.len().saturating_sub(self.at)
     }
 
-    /// Whether more has been read than the file has.
-    pub(crate) fn is_truncated(&self) -> bool {
-        self.at > self.bytes.len()
-    }
-
     pub(crate) fn pending_marker(&self) -> Option<u8> {
         self.marker
     }

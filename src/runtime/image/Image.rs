@@ -236,7 +236,7 @@ macro_rules! coerce_int {
     }};
 }
 
-/// Size cap for `.path` sources, applied at fstat time before reading
+/// Size cap for files. `.path` sources check it at fstat time, before reading
 /// anything. This is the *encoded* file, not the decoded RGBA — `maxPixels`
 /// covers the latter once we have a header. 256 MiB comfortably fits any
 /// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
@@ -1224,6 +1224,7 @@ struct BlobReadChain {
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
+    is_file: bool,
 }
 
 impl BlobReadChain {
@@ -1247,6 +1248,11 @@ impl BlobReadChain {
                 .global()
                 .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
+        let (is_file, blob) = (blob.needs_to_read_file(), blob.dupe());
+        if is_file {
+            // One byte more than the cap tells that the file is over it.
+            blob.size.set(blob.size.get().min(MAX_INPUT_FILE_BYTES + 1));
+        }
 
         let chain = Box::new(BlobReadChain {
             image: PendingTask::new(image, this_value, cx.global()),
@@ -1255,6 +1261,7 @@ impl BlobReadChain {
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
+            is_file,
         });
         let promise = chain.outer.value();
         // `on_read_bytes` runs on the JS thread: in this call for in-memory bytes, else later.
@@ -1270,6 +1277,13 @@ impl BlobReadChain {
         let deliver = self.deliver;
 
         match r {
+            ReadBytesResult::Ok(bytes)
+                if self.is_file && bytes.len() as u64 > MAX_INPUT_FILE_BYTES =>
+            {
+                drop(deliver);
+                let error = reject_error(global, codecs::Error::TooManyPixels);
+                outer.reject(global, Ok(error))
+            }
             ReadBytesResult::Ok(bytes) => {
                 let cx = global.js_thread(global.bun_vm().context_of(self.context));
                 let image = self.image.image(&cx);

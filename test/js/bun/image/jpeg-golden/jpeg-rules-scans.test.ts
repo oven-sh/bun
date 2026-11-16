@@ -17,12 +17,12 @@ import {
   headerOf,
   jpeg,
   noise,
+  progressiveTypes,
   rst,
   scanOf,
   scanWithoutTables,
   simpleProgression,
   SOF10,
-  SOF2,
   SOF9,
   typical,
   withoutEoi,
@@ -102,16 +102,14 @@ test.each([
   await expectPictures([{ name, file: withoutEoi(headerOf(read), ...parts), expected: pictureOf(read) }]);
 });
 
-describe.each([
-  ["Huffman", SOF2, 2],
-  ["arithmetic", SOF10, 4],
-])("long sequences of scans: %s", (_, type, count) => {
-  const bands = (c: number) => range(1, 63).map(k => scanOf([c], k, k));
+describe.each(progressiveTypes)("long sequences of scans: %s", (_, type) => {
+  const bands = (c: number, al: number) => range(0, 31).map(i => bitByBit(al, [c], 2 * i + 1, Math.min(2 * i + 2, 63)));
+  const ends = [0, 1, 2, 9, 30, 62, 63];
   const scripts: [string, string, Scan[]][] = [
     ["from Al = 10", "2x2,1x1,1x1", [...bitByBit(10, [0, 1, 2], 0, 0), ...forThree(c => bitByBit(10, [c], 1, 63))]],
-    ["63 bands", "1x1,1x1,1x1", [scanOf([0, 1, 2], 0, 0), ...forThree(bands)]],
-    ["63 bands, from the last, each refined", "1x1", range(0, 63).flatMap(k => bitByBit(2, [0], 63 - k, 63 - k))],
-    ["every bit of every coefficient", "1x1", range(0, 63).flatMap(k => bitByBit(13, [0], k, k))],
+    ["32 bands", "1x1,1x1,1x1", [scanOf([0, 1, 2], 0, 0), ...forThree(c => bands(c, 0).flat())]],
+    ["32 bands, from the last, each refined", "1x1", [bitByBit(2, [0], 0, 0), ...bands(0, 2)].reverse().flat()],
+    ["every bit of 7 bands", "1x1", ends.flatMap((se, i) => bitByBit(13, [0], i && ends[i - 1] + 1, se))],
   ];
 
   /** With a coefficient of up to 10 bits in each block. */
@@ -126,13 +124,13 @@ describe.each([
 
   const tables = { 0: typical[0], 1: typical[0], [AC]: everySymbol, [AC + 1]: everySymbol };
 
-  test.each(scripts.slice(0, count))("%s", async (name, sampling, scans) => {
+  test.each(scripts)("%s", async (name, sampling, scans) => {
     const frame = frameFor(35, 19, sampling);
     const file = jpeg(headerOf(frame), ...dhts(tables), ...scans.map(scan => scanWithoutTables(frame, scan, tables)));
     await expectPictures([{ name, file, expected: pictureOf(frame) }]);
   });
 
-  test.each(scripts.slice(0, count))("%s, with a restart marker after each row", async (name, sampling, scans) => {
+  test.each(scripts)("%s, with a restart marker after each row", async (name, sampling, scans) => {
     const [wide, high] = [12, 64];
     const row = frameFor(wide * 8, 8, sampling.replace("2x2", "1x1"));
     const parts = scans.flatMap(scan => {

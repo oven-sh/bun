@@ -1,8 +1,8 @@
-// The largest numbers of blocks in a row, of bits and of components.
-import { describe, test } from "bun:test";
+// The largest numbers of blocks in a row, of bits, of scans and of components.
+import { describe, expect, test } from "bun:test";
 import { randomBytes } from "../png-golden/write";
 import { ArithmeticCoder } from "./arithmetic";
-import { colorMarkers, expectPictures, range } from "./decode";
+import { colorMarkers, expectPictures, headerOnly, outcome, range } from "./decode";
 import { known, pictureOf, scaled } from "./model";
 import {
   all,
@@ -112,12 +112,12 @@ test("arithmetic coding: coefficients after thousands of empty blocks", async ()
   await expectPictures([{ name: "64 scans", file, expected: { width: wide * 8, height: high * 8, rgba } }]);
 });
 
-test("arithmetic coding: a scan for every bit of every coefficient of 128 by 128 blocks", async () => {
+test("arithmetic coding: a scan for every bit of seven coefficients of 128 by 128 blocks", async () => {
   const side = 128;
   const [frame, lastRow] = [side, 1].map(high => frameOf(side * 8, high * 8, "1x1", { type: SOF10 }));
-  // All coefficients of a block are equal, so all AC bands have the same data.
+  // These coefficients of a block are equal, so their AC bands have the same data.
   const [{ data }] = lastRow.components;
-  for (let x = 0; x < side; x++) data.fill((x % 19) - 9, x * 64, (x + 1) * 64);
+  for (let x = 0; x < side; x++) data.fill((x % 19) - 9, x * 64, x * 64 + 7);
   frame.components[0].data.set(data, (side - 1) * data.length);
   const dc = bitByBit(13, [0], 0, 0).map(scan => coded(frame, scan).data);
   const ac = bitByBit(13, [0], 1, 1).map(({ ah, al }) => {
@@ -126,21 +126,43 @@ test("arithmetic coding: a scan for every bit of every coefficient of 128 by 128
     for (let x = 0; x < side; x++) coder.band(0, data.subarray(x * 64), 1, 1, ah, al);
     return stuffed(coder.finish());
   });
-  const scans = range(0, 63).flatMap(k =>
+  const scans = range(0, 6).flatMap(k =>
     bitByBit(13, [0], k, k).flatMap((scan, i) => [sos(frame, scan), (k ? ac : dc)[i]]),
   );
+  // With Al = 13, the first of the bands is empty.
+  const file = jpeg(headerOf(frame), ...scans, sos(frame, scanOf([0], 7, 63)), ac[0]);
   const above = Buffer.alloc(side * (side - 1) * 64 * 4, Buffer.from([128, 128, 128, 255]));
   const expected = { ...frame, rgba: Buffer.concat([above, pictureOf(lastRow).rgba]) };
-  await expectPictures([{ name: "896 scans", file: jpeg(headerOf(frame), ...scans), expected }]);
+  await expectPictures([{ name: "99 scans", file, expected }]);
 });
 
-test.each([
+const kinds = [
   ["sequential", SOF0],
   ["progressive", SOF2],
   ["lossless", SOF3],
   ["sequential, arithmetic", SOF9],
   ["progressive, arithmetic", SOF10],
-])("each of four components has its own tables and sampling factors: %s", async (_, type) => {
+] as const;
+
+test.each(kinds)("100 scans are decoded, 101 are refused: %s", async (name, type) => {
+  const frame = noise(frameOf(16, 8, "1x1,1x1,1x1", { type }), randomBytes(4), { ac: 20 });
+  const whole = (c: number) => (isLossless(frame) ? scanOf([c], 1, 0) : scanOf([c]));
+  // The image is not complete before the last scan.
+  const scans = (count: number) =>
+    isProgressive(frame)
+      ? [
+          ...bitByBit(1, [0, 1, 2], 0, 0),
+          ...[1, 2].map(c => scanOf([c], 1, 63)),
+          ...range(1, 63).flatMap(k => bitByBit(k <= count - 67 ? 1 : 0, [0], k, k)),
+        ]
+      : [...range(2, count).map(i => whole(i & 1)), whole(2)];
+  const [most, more] = [scans(100), scans(101)];
+  expect([most.length, more.length]).toEqual([100, 101]);
+  await expectPictures([{ name, file: write(frame, most), expected: pictureOf(frame) }]);
+  expect(await outcome(write(frame, more))).toBe(headerOnly);
+});
+
+test.each(kinds)("each of four components has its own tables and sampling factors: %s", async (_, type) => {
   const random = randomBytes(9);
   const tables = range(1, 4).map(n => range(0, 63).map(k => n + (k % (n + 1))));
   const samplings = ["1x1,1x1,1x1,2x2", "2x1,2x1,2x1,1x1", "1x2,1x1,2x1,2x2", "2x2,1x1,2x1,1x2", "1x1,1x1,1x1,1x4"];

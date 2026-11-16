@@ -6,7 +6,7 @@ use crate::block::{self, Block, Zigzag};
 use crate::header::{ColorSpace, Frame, Grid, Header, Process, Scan, Segments, Tables};
 use crate::output::Output;
 use crate::progressive::{self, Progressive};
-use crate::scan::{Allowance, EntropyDecoder, Layout, Region, Regions, Restarts};
+use crate::scan::{EntropyDecoder, Layout, Region, Regions, Restarts};
 use crate::sequential::{BATCH_ROOM, Sequential, StepTables};
 use crate::smoothing::{self, Accuracy, Progress};
 use crate::{
@@ -28,7 +28,6 @@ pub struct Decoder<'a> {
     segments: Segments<'a>,
     frame: Frame,
     first_scan: Scan,
-    allowance: Allowance,
 }
 
 /// The position of a block in the image.
@@ -174,7 +173,6 @@ impl<'a> Decoder<'a> {
             segments,
             frame,
             first_scan,
-            allowance: Allowance::new(&frame, bytes.len()),
         })
     }
 
@@ -222,19 +220,13 @@ impl<'a> Decoder<'a> {
         })
     }
 
-    fn start_scan(&mut self, scan: &Scan) -> Result<Layout> {
-        let layout = Layout::new(&self.frame, scan)?;
-        self.allowance.spend_on(&self.frame, scan, &layout)?;
-        Ok(layout)
-    }
-
     // This and the next two are not inlined, so that only one at a time has its buffers on the stack.
     #[inline(never)]
     fn decode_lossless(&mut self, output: &mut Output, is_only_scan: bool) -> Result<()> {
         let mut missing = (1 << self.frame.components().len()) - 1;
         let mut scan = self.first_scan;
         loop {
-            let layout = self.start_scan(&scan)?;
+            let layout = Layout::new(&self.frame, &scan)?;
             let (segments, precision) = (&mut self.segments, self.frame.precision);
             lossless::decode_scan(segments, precision, &scan, &layout, output, is_only_scan)?;
             if is_only_scan {
@@ -253,7 +245,7 @@ impl<'a> Decoder<'a> {
 
     #[inline(never)]
     fn decode_sequential(&mut self, scan: &Scan, mut target: Target<'_>) -> Result<()> {
-        let layout = self.start_scan(scan)?;
+        let layout = Layout::new(&self.frame, scan)?;
         let batch = (BATCH_LEN / layout.blocks_in_mcu).min(layout.mcus.wide);
         let parts = layout.parts().iter();
         let regions = Regions::new(parts.map(|it| [it.index, batch * it.h, it.v]));
@@ -274,7 +266,7 @@ impl<'a> Decoder<'a> {
             huffman = Sequential::new(window, tables, slots.as_slice(), regions.len);
             &mut huffman
         } else {
-            arithmetic = Arithmetic::new(window, tables, scan, &mut [], &mut self.allowance);
+            arithmetic = Arithmetic::new(window, tables, scan, &mut []);
             &mut arithmetic
         };
         if let Target::Coefficients(all) = &mut target {
@@ -283,6 +275,12 @@ impl<'a> Decoder<'a> {
 
         for mcu_row in 0..layout.mcus.high {
             for [first, count] in batches(layout.mcus.wide, batch) {
+                if matches!(target, Target::Coefficients(_))
+                    && !decoder.has_data()
+                    && (decoder.is_over() || restarts.skip(count))
+                {
+                    continue;
+                }
                 let rows = || {
                     layout.parts().iter().flat_map(|part| {
                         let Region { start, stride } = regions.of(part.index);
@@ -328,7 +326,7 @@ impl<'a> Decoder<'a> {
     /// Returns the last strip that the scan had data for.
     #[inline(never)]
     fn decode_progressive(&mut self, scan: &Scan, all: &mut Coefficients) -> Result<usize> {
-        let layout = self.start_scan(scan)?;
+        let layout = Layout::new(&self.frame, scan)?;
         let Segments { input, tables, .. } = &mut self.segments;
         let mut restarts = Restarts::new(tables.restart_interval.into());
         let huffman_tables = if self.frame.is_arithmetic {
@@ -339,14 +337,13 @@ impl<'a> Decoder<'a> {
         fill_up(&mut all.blocks, all.regions.len, block::ZERO)?;
         fill_up(&mut all.nonzero, all.regions.len, 0)?;
 
-        let (nonzero, allowance) = (&mut all.nonzero, &mut self.allowance);
         let window = &mut Window::new(input);
         let (mut huffman, mut arithmetic);
         let decoder: &mut dyn EntropyDecoder = if let Some(tables) = huffman_tables {
-            huffman = Progressive::new(window, tables, scan, nonzero, allowance);
+            huffman = Progressive::new(window, tables, scan, &mut all.nonzero);
             &mut huffman
         } else {
-            arithmetic = Arithmetic::new(window, tables, scan, nonzero, allowance);
+            arithmetic = Arithmetic::new(window, tables, scan, &mut all.nonzero);
             &mut arithmetic
         };
 

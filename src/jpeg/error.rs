@@ -22,8 +22,8 @@ pub enum Error {
     InvalidCoefficient,
     #[error("component without a scan")]
     MissingScan,
-    #[error("allowance spent")]
-    AllowanceSpent,
+    #[error("too many scans")]
+    TooManyScans,
     #[error("unsupported kind of JPEG")]
     Unsupported,
     #[error("invalid image size")]

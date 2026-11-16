@@ -343,6 +343,10 @@ impl EntropyDecoder for Sequential<'_, '_> {
         self.predictions = [0; MAX_COMPONENTS];
     }
 
+    fn has_data(&self) -> bool {
+        self.window.has_data(self.bits)
+    }
+
     fn is_over(&self) -> bool {
         self.window.is_over(self.bits)
     }

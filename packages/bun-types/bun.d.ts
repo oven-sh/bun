@@ -9758,14 +9758,15 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
-     *   path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a path or
+     *   `Bun.file()` input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A JPEG with stray bytes, a missing end marker or truncated scan data
      *   usually does not reject. If it is Huffman-coded, blocks with no data
-     *   come back flat grey. A PNG with a wrong CRC or Adler-32 does not
-     *   reject: Bun verifies neither. A PNG that ends before its last row, or
-     *   inside the data of the `IDAT` chunk that holds it, rejects.
+     *   come back flat grey, but for some color at their edges. A JPEG with
+     *   more than 100 scans rejects. A PNG with a wrong CRC or Adler-32 does
+     *   not reject: Bun verifies neither. A PNG that ends before its last row,
+     *   or inside the data of the `IDAT` chunk that holds it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
      *   that its decode or encode needs.

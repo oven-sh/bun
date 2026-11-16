@@ -1766,10 +1766,11 @@ mod jpeg_tests {
     #[test]
     fn ycc_to_rgba() {
         let fits = |y, chroma, width, room| {
-            let mut out = Vec::with_capacity(1 + room);
-            out.push([0; 4]);
+            // The stubs write nothing, so the spare capacity has to be initialized.
+            let mut out = vec![[0; 4]; 1 + room];
+            out.truncate(1);
             let fits = jpeg_ycc_to_rgba(y, chroma, width, &mut out).is_ok();
-            assert_eq!(out.len(), if fits { 1 + width } else { 1 });
+            assert_eq!(out, vec![[0; 4]; if fits { 1 + width } else { 1 }]);
             fits
         };
         let (width, padded) = (GROUP + 1, 2 * GROUP);

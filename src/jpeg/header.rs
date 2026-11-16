@@ -7,6 +7,8 @@ use crate::marker::*;
 use crate::{Error, MAX_COMPONENTS, Result};
 
 const MAX_DIMENSION: u32 = 65500;
+/// As many as `cjpeg -scans` can write. Chromium, Skia and libtiff stop at about as many.
+const MAX_SCANS: u8 = 100;
 
 pub(crate) fn check_size(width: u32, height: u32) -> Result<()> {
     if width.min(height) == 0 || width.max(height) > MAX_DIMENSION {
@@ -169,6 +171,7 @@ struct IccSegment<'a> {
 pub(crate) struct Segments<'a> {
     pub(crate) input: Input<'a>,
     pub(crate) tables: Tables,
+    scans: u8,
     has_jfif: bool,
     adobe_transform: Option<u8>,
     icc: Vec<IccSegment<'a>>,
@@ -192,6 +195,7 @@ impl<'a> Segments<'a> {
                 ),
                 restart_interval: 0,
             },
+            scans: 0,
             has_jfif: false,
             adobe_transform: None,
             icc: Vec::new(),
@@ -280,7 +284,11 @@ impl<'a> Segments<'a> {
     /// Reads as far as the data of the next scan. There is none after EOI.
     pub(crate) fn next_scan(&mut self, frame: &Frame) -> Result<Option<Scan>> {
         match self.next_header()? {
-            SOS => self.read_scan(frame).map(Some),
+            SOS if self.scans == MAX_SCANS => Err(Error::TooManyScans),
+            SOS => {
+                self.scans += 1;
+                self.read_scan(frame).map(Some)
+            }
             EOI => Ok(None),
             _ => Err(Error::MarkerOutOfPlace),
         }

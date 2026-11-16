@@ -119,6 +119,8 @@ mod tests {
             let file = encode(&[0; 20][..len], 2, 2, 80, false, None);
             assert_eq!(file, Err(Error::InvalidBufferSize));
         }
+        let size_of_32_bits = encode(&[], 1 << 15, 1 << 15, 80, false, None);
+        assert_eq!(size_of_32_bits, Err(Error::InvalidBufferSize));
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { S3Client } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
+import { closeSync, openSync, truncateSync } from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -194,15 +195,47 @@ describe("Bun.Image", () => {
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
   });
 
+  test("Bun.file() input can have up to 256 MiB, like a path", async () => {
+    using dir = tempDir("image-file-size", { "src.png": cornersPng });
+    const path = join(String(dir), "src.png");
+    const outcome = (image: Bun.Image) =>
+      image.metadata().then(
+        ({ format }) => format,
+        error => error.code,
+      );
+    const limit = 256 * 1024 * 1024;
+
+    truncateSync(path, limit);
+    const file = Bun.file(path);
+    expect(await outcome(file.image())).toBe("png");
+
+    truncateSync(path, limit + 1);
+    expect(await outcome(new Bun.Image(path))).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await outcome(file.image())).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await outcome(file.slice(0, cornersPng.length).image())).toBe("png");
+    const fd = openSync(path, "r");
+    try {
+      expect(await outcome(Bun.file(fd).image())).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    } finally {
+      closeSync(fd);
+    }
+
+    truncateSync(path, cornersPng.length);
+    expect(await outcome(file.image())).toBe("png");
+    expect(file.size).toBe(cornersPng.length);
+  });
+
   // Store-backed Blob sources are read at terminal time through the Blob's
   // own store dispatch. The Bun.file() test above covers the file store; this
   // covers the S3 download callback (bytes and error arm) and the synchronous
   // in-memory delivery.
   test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    const ranges: (string | null)[] = [];
     using server = Bun.serve({
       port: 0,
       fetch(req) {
         const { pathname } = new URL(req.url);
+        ranges.push(req.headers.get("range"));
         if (req.method === "GET" && pathname.endsWith("/src.png")) {
           return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
         }
@@ -230,6 +263,7 @@ describe("Bun.Image", () => {
       // Second terminal reuses the downloaded bytes.
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
       expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(ranges).toEqual([null, null]);
 
       // Download failure rejects the terminal with the S3 error.
       expect(

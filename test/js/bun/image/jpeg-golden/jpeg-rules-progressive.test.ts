@@ -26,7 +26,6 @@ import {
   rst,
   RST0,
   scanOf,
-  scanWithoutTables,
   scanWithTables,
   simpleProgression,
   SOF2,
@@ -121,15 +120,6 @@ describe.each(progressiveTypes)("%s", (_, type) => {
         );
       }),
     );
-  });
-
-  test("a scan for every bit of every coefficient", async () => {
-    const frame = noise(frameOf(16, 8, "1x1", { type }), randomBytes(2));
-    frame.components[0].data[0] = -123;
-    const tables = { 0: typical[0], [AC]: everySymbol };
-    const scans = range(0, 63).flatMap(k => bitByBit(13, [0], k, k));
-    const file = jpeg(headerOf(frame), ...dhts(tables), ...scans.map(scan => scanWithoutTables(frame, scan, tables)));
-    await expectPictures([{ name: "896 scans", file, expected: pictureOf(frame) }]);
   });
 
   test("the bits below Al are 0", async () => {

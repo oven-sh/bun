@@ -1,7 +1,7 @@
 //! What all scans have in common: the order of their blocks, and restarts.
 
 use crate::block::Block;
-use crate::header::{Frame, Grid, Process, Scan, ScanKind};
+use crate::header::{Frame, Grid, Process, Scan};
 use crate::{Error, MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::ops::Range;
 
@@ -123,77 +123,6 @@ impl Layout {
     }
 }
 
-/// How many more steps the scans of a file may take. A step is what one arithmetic decision takes.
-pub(crate) struct Allowance(usize);
-
-impl Allowance {
-    /// Enough for each of 14 bits of 64 coefficients to have a Huffman-coded scan of its own.
-    const SCANS: usize = 1024;
-    /// Enough for the same with arithmetic coding, if the image is small.
-    const PER_FILE: usize = 1 << 29;
-    /// What each bit of an arithmetic-coded file adds, and each bit that is read past its data costs.
-    const PER_BIT: usize = 4;
-    /// To start a scan, a row of MCUs and an arithmetic-coded restart interval.
-    const SCAN_COST: usize = 1 << 15;
-    const ROW_COST: usize = 12;
-    pub(crate) const INTERVAL_COST: usize = 48;
-    /// To skip a block of a progressive scan, as Huffman coding can, and to load it.
-    const SKIP_COST: usize = 1;
-    const LOAD_COST: usize = 14;
-    /// The least that a block costs in [`ScanKind::Whole`].
-    const WHOLE_BLOCK_COST: usize = Self::SCANS * Self::SKIP_COST / 2;
-    /// [`Self::WHOLE_BLOCK_COST`] covers a restart interval until it has read this many bits past its data.
-    const FREE_OVERRUN: usize = 256;
-
-    /// It goes by the size in whole MCUs, whatever the components and their sampling.
-    pub(crate) fn new(frame: &Frame, file_len: usize) -> Self {
-        let mcus = frame.size_in_mcus();
-        let (wide, high) = (mcus.wide * frame.max_h(), mcus.high * frame.max_v());
-        let scan = MAX_COMPONENTS * (Self::ROW_COST + Self::SKIP_COST * wide) * high;
-        let bits = if frame.is_arithmetic { 8 * file_len } else { 0 };
-        Self(Self::SCANS * scan + Self::PER_BIT * bits + Self::PER_FILE)
-    }
-
-    /// Pays for the part of a scan that does not depend on its data.
-    pub(crate) fn spend_on(&mut self, frame: &Frame, scan: &Scan, layout: &Layout) -> Result<()> {
-        let block_cost = match (scan.kind, frame.is_arithmetic) {
-            (ScanKind::Whole, _) => Self::WHOLE_BLOCK_COST,
-            (_, false) => Self::SKIP_COST,
-            (_, true) => Self::LOAD_COST,
-        };
-        let row_cost = Self::ROW_COST + block_cost * layout.mcus.wide * layout.blocks_in_mcu;
-        self.spend(Self::SCAN_COST + row_cost * layout.mcus.high)
-    }
-
-    /// Pays for arithmetic-coded `blocks` that took `steps`, and `overrun` of the bits past the data.
-    pub(crate) fn spend_on_decisions(
-        &mut self,
-        kind: ScanKind,
-        blocks: usize,
-        steps: usize,
-        overrun: Range<usize>,
-    ) -> Result<()> {
-        let steps = steps + Self::PER_BIT * overrun.len();
-        match kind {
-            ScanKind::Whole if overrun.end < Self::FREE_OVERRUN => Ok(()),
-            ScanKind::Whole => self.spend(steps.saturating_sub(Self::WHOLE_BLOCK_COST * blocks)),
-            _ => self.spend(steps),
-        }
-    }
-
-    pub(crate) fn spend(&mut self, steps: usize) -> Result<()> {
-        self.0 = self.0.saturating_sub(steps);
-        if self.is_spent() {
-            return Err(Error::AllowanceSpent);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn is_spent(&self) -> bool {
-        self.0 == 0
-    }
-}
-
 pub(crate) struct Slots([Slot; MAX_BLOCKS_IN_MCU], usize);
 
 impl Slots {
@@ -244,12 +173,14 @@ pub(crate) trait EntropyDecoder {
     /// `mcus` are within one restart interval. Returns whether any but the first began while [`Self::has_data`].
     fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool>;
     fn restart(&mut self, number: u8);
-    /// Only smoothing asks, and only Huffman coding can tell.
+    /// Only Huffman coding can tell.
     fn has_data(&self) -> bool {
         true
     }
     /// Whether the rest of the scan leaves all blocks as they are.
-    fn is_over(&self) -> bool;
+    fn is_over(&self) -> bool {
+        false
+    }
 
     /// Returns whether any of `mcus` began with data left. As in jdcoefct.c, that is judged before its restart.
     fn decode_with_restarts(
@@ -298,6 +229,11 @@ impl Restarts {
         let number = self.next_number;
         (self.left, self.next_number) = (self.interval, (number + 1) % 8);
         Some(number)
+    }
+
+    /// Counts off `count` MCUs, unless a marker comes before the last.
+    pub(crate) fn skip(&mut self, count: usize) -> bool {
+        count <= self.left && self.advance(count) == count
     }
 
     /// Counts off up to `count` MCUs, as far as the next marker.

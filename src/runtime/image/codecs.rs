@@ -663,6 +663,13 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
+fn try_with_capacity(capacity: usize) -> Result<Vec<u8>, Error> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity)
+        .map_err(|_| Error::OutOfMemory)?;
+    Ok(vec)
+}
+
 pub(crate) fn resize(
     src: &[u8],
     sw: u32,
@@ -693,7 +700,7 @@ pub(crate) fn resize(
         i32::try_from(dh).expect("int cast"),
         f as i32,
     );
-    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
+    let mut block = try_with_capacity(out_sz + scratch_sz)?;
     // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
@@ -714,7 +721,7 @@ pub(crate) fn resize(
     unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
     // Drop the scratch tail; mimalloc's shrink is in-place when the new size
     // fits the same block, so this is free.
-    block.shrink_to_fit();
+    let _ = block.try_shrink_to_fit();
     // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
@@ -741,7 +748,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
         }
     }
     let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = try_with_capacity(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
@@ -772,7 +779,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
         }
     }
     let out_len = (w as usize) * (h as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = try_with_capacity(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(

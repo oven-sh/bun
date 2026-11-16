@@ -102,6 +102,7 @@ export function read(file: Uint8Array) {
       codes[body[0]] = { counts, symbols: [...body.subarray(17)] };
       return [];
     }
+    if (body[0] < 1 || body[0] > 4 || body.length !== 4 + body[0] * 2) fail("SOS");
     const named = Array.from({ length: body[0] }, (_, i) => body.subarray(1 + i * 2, 3 + i * 2));
     const [ss, se, both] = body.subarray(1 + body[0] * 2);
     const [dc, ac] = [named.map(([, numbers]) => numbers >> 4), named.map(([, numbers]) => numbers & 15)];

@@ -3,7 +3,7 @@
 use crate::bit_reader::Window;
 use crate::block::{Block, Zigzag, prefetch_after};
 use crate::header::{ARITHMETIC_TABLES, Scan, ScanKind, Tables};
-use crate::scan::{Allowance, EntropyDecoder, Slot};
+use crate::scan::{EntropyDecoder, Slot};
 use crate::{MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::hint::select_unpredictable;
 use core::ops::Range;
@@ -77,8 +77,6 @@ struct Coder {
     spare_bits: u32,
     /// In the window.
     position: usize,
-    /// Not yet charged to the [`Allowance`].
-    steps: usize,
 }
 
 impl Coder {
@@ -89,20 +87,12 @@ impl Coder {
             code: window.take_u32(&mut position).into(),
             spare_bits: 16,
             position,
-            steps: Allowance::INTERVAL_COST,
         }
-    }
-
-    /// How many bits past the data have been used up. Encoders drop trailing zeros, so valid files have some.
-    fn overrun(&self, window: &Window<'_, '_>) -> usize {
-        let ahead = 16 + self.spare_bits as usize;
-        window.overrun_at(self.position).saturating_sub(ahead)
     }
 
     /// `bin` has the MPS in its top bit, and an index into [`STATES`] below.
     #[inline(always)]
     fn decide(&mut self, window: &mut Window<'_, '_>, bin: &mut u8) -> bool {
-        self.steps += 1;
         let entry = *wrapped(&STATES, (*bin & 0x7F).into());
         let qe = entry >> 16;
         let mps = *bin & 0x80;
@@ -209,7 +199,6 @@ pub(crate) struct Arithmetic<'i, 'a> {
     window: &'i mut Window<'i, 'a>,
     /// For each block of a progressive file: bit `k` is set if AC coefficient `k`, in zigzag order, is not zero.
     nonzero: &'i mut [u64],
-    allowance: &'i mut Allowance,
 }
 
 impl<'i, 'a> Arithmetic<'i, 'a> {
@@ -218,7 +207,6 @@ impl<'i, 'a> Arithmetic<'i, 'a> {
         tables: &Tables,
         scan: &Scan,
         nonzero: &'i mut [u64],
-        allowance: &'i mut Allowance,
     ) -> Self {
         let mut numbers = [(0, 0); MAX_COMPONENTS];
         for (to, component) in numbers.iter_mut().zip(scan.components()) {
@@ -234,7 +222,6 @@ impl<'i, 'a> Arithmetic<'i, 'a> {
             coder: Some(Coder::new(window)),
             window,
             nonzero,
-            allowance,
         }
     }
 
@@ -316,7 +303,6 @@ impl<'i, 'a> Arithmetic<'i, 'a> {
         let nonzero = self.nonzero.get_mut(index)?;
         let known = *nonzero & u64::MAX >> (63 - last);
         let last_known = (known | 1).ilog2() as usize;
-        coder.steps += (known >> k).count_ones() as usize;
         // There is no EOB decision up to `last_known`. What is known is unpredictable, so nothing branches on it.
         let (mut ahead, mut ones) = (known >> k, 0);
         let triples = bins.as_chunks_mut().0.get_mut(k - 1..last_known);
@@ -412,25 +398,14 @@ impl EntropyDecoder for Arithmetic<'_, '_> {
         let Some(mut coder) = self.coder.take() else {
             return Ok(true);
         };
-        let (kind, count) = (self.scan.kind, mcus.len() * slots.len());
-        let overrun_so_far = coder.overrun(self.window);
-        let is_valid = match kind {
+        let is_valid = match self.scan.kind {
             ScanKind::DcRefine | ScanKind::AcRefine => {
                 self.refine_mcus(&mut coder, blocks, slots, mcus)
             }
             _ => self.decode_mcus(&mut coder, blocks, slots, mcus),
         }?;
-        let (steps, overrun) = (
-            core::mem::take(&mut coder.steps),
-            coder.overrun(self.window),
-        );
         self.coder = is_valid.then_some(coder);
-        let allowance = &mut self.allowance;
-        match allowance.spend_on_decisions(kind, count, steps, overrun_so_far..overrun) {
-            // A truncated file keeps what has been decoded.
-            Err(_) if overrun != 0 && self.window.is_truncated() => Ok(true),
-            spent => spent.map(|()| true),
-        }
+        Ok(true)
     }
 
     fn restart(&mut self, number: u8) {
@@ -445,9 +420,5 @@ impl EntropyDecoder for Arithmetic<'_, '_> {
         }
         self.dc_states = Default::default();
         self.coder = Some(Coder::new(self.window));
-    }
-
-    fn is_over(&self) -> bool {
-        self.allowance.is_spent()
     }
 }

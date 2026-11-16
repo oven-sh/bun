@@ -62,6 +62,7 @@ import {
   typical,
   walk,
   withoutEoi,
+  withRestarts,
   write,
   ZRL,
   type Frame,
@@ -720,8 +721,25 @@ describe("several scans", () => {
     );
   });
 
+  const next = (c: number) => sos(rgb, scanOf([c], 0, 63, 0, 0, { dc: [0], ac: [0] }));
+
+  test.each([
+    [4, 6, range(1, 13)],
+    [200, 3, [96, 192, 200, 296].flatMap(blocks => range(blocks - 1, blocks + 1))],
+  ])("decoding resumes after long intervals that lack data: %i by %i blocks", async (wide, high, intervals) => {
+    const frame = { ...rgb, width: wide * 8, height: high * 8 };
+    await expectPictures(
+      intervals.map(interval => {
+        const data = withRestarts<Buffer>(Array(Math.ceil((wide * high) / interval)).fill(step(20)));
+        const file = Buffer.concat([startOf(frame, interval), ...data, next(1), ...data, next(2), ...data]);
+        const level = (block: number) => [20, 19][block % interval] ?? 0;
+        const shown = flat(range(0, high - 1).map(y => range(y * wide, (y + 1) * wide - 1).map(level)));
+        return { name: `${interval}`, file, expected: pictureOf(shown) };
+      }),
+    );
+  });
+
   test("the scan after a truncated one is decoded", async () => {
-    const next = (c: number) => sos(rgb, scanOf([c], 0, 63, 0, 0, { dc: [0], ac: [0] }));
     const up = step(20);
     const file = Buffer.concat([startOf(rgb), up, next(1), next(2), up, up, up, next(2), step(16)]);
     expect(await outcome(file)).toBe(fine);

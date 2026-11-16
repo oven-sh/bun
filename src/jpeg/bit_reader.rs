@@ -18,8 +18,6 @@ pub(crate) struct Window<'i, 'a> {
     limit: usize,
     /// 64 bits before `end`.
     low_mark: usize,
-    /// How far [`Self::slide`] has moved positions back since the data ended.
-    overrun: usize,
 }
 
 /// The read state, separate from [`Window`] so that loops keep it in registers.
@@ -38,7 +36,6 @@ impl<'i, 'a> Window<'i, 'a> {
             end: 0,
             limit: 0,
             low_mark: 0,
-            overrun: 0,
         }
     }
 
@@ -48,7 +45,6 @@ impl<'i, 'a> Window<'i, 'a> {
     fn slide(&mut self, position: usize) -> usize {
         // The data has ended. All positions after it read zeros, so any will do.
         if self.limit > self.end {
-            self.overrun += position - self.end - 8;
             return self.end + 8;
         }
         let (start, old_end) = (position.min(self.end) / 8, self.end / 8);
@@ -88,11 +84,6 @@ impl<'i, 'a> Window<'i, 'a> {
         word as u32
     }
 
-    /// How many bits past the end of the data come before `position`.
-    pub(crate) fn overrun_at(&self, position: usize) -> usize {
-        self.overrun + position.saturating_sub(self.end)
-    }
-
     /// Whether `bits` has not gone past the end of the data.
     #[inline(always)]
     pub(crate) fn has_data(&self, bits: Bits) -> bool {
@@ -109,7 +100,7 @@ impl<'i, 'a> Window<'i, 'a> {
         self.input.restart(number);
         let stale = self.bytes.get_mut(..self.end / 8);
         stale.unwrap_or_default().fill(0);
-        (self.end, self.limit, self.low_mark, self.overrun) = (0, 0, 0, 0);
+        (self.end, self.limit, self.low_mark) = (0, 0, 0);
         self.input.pending_marker().is_none()
     }
 
@@ -129,17 +120,9 @@ impl<'i, 'a> Window<'i, 'a> {
         bits
     }
 
-    /// Whether the data ends with a marker that no restart gets past.
-    pub(crate) fn is_last_segment(&self) -> bool {
-        matches!(self.input.pending_marker(), Some(SOF0..RST0 | SOI..))
-    }
-
-    pub(crate) fn is_truncated(&self) -> bool {
-        self.input.is_truncated()
-    }
-
+    /// Whether the data is used up, and ends with a marker that no restart gets past.
     pub(crate) fn is_over(&self, bits: Bits) -> bool {
-        !self.has_data(bits) && self.is_last_segment()
+        !self.has_data(bits) && matches!(self.input.pending_marker(), Some(SOF0..RST0 | SOI..))
     }
 }
 
@@ -156,10 +139,6 @@ impl Bits {
     #[inline(always)]
     pub(crate) fn refill(&mut self, window: &Window<'_, '_>) {
         self.buffer = window.load(self.position) << (self.position % 8);
-    }
-
-    pub(crate) fn position(self) -> usize {
-        self.position
     }
 
     #[inline(always)]

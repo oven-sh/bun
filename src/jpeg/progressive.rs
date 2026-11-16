@@ -6,7 +6,7 @@ use crate::header::{Scan, ScanKind, Tables};
 use crate::huffman::{
     Alphabet, DecodeTables, MAX_BITS_AFTER_CODE, QUICK_CODES_IN_REFILL, RUN_OF_EOB, RUN_OF_ZRL,
 };
-use crate::scan::{Allowance, EntropyDecoder, Slot};
+use crate::scan::{EntropyDecoder, Slot};
 use crate::{Error, MAX_COMPONENTS, Result, wrapped_mut};
 use core::hint::{cold_path, select_unpredictable};
 use core::ops::Range;
@@ -21,7 +21,6 @@ pub(crate) struct Progressive<'i, 'a> {
     eob_run: usize,
     window: &'i mut Window<'i, 'a>,
     bits: Bits,
-    allowance: &'i mut Allowance,
 }
 
 pub(crate) fn tables_for(scan: &Scan, tables: &Tables) -> Result<DecodeTables> {
@@ -44,7 +43,6 @@ impl<'i, 'a> Progressive<'i, 'a> {
         tables: DecodeTables,
         scan: &Scan,
         nonzero: &'i mut [u64],
-        allowance: &'i mut Allowance,
     ) -> Self {
         Self {
             scan: *scan,
@@ -54,7 +52,6 @@ impl<'i, 'a> Progressive<'i, 'a> {
             eob_run: 0,
             bits: window.bits_from(0),
             window,
-            allowance,
         }
     }
 
@@ -287,17 +284,12 @@ impl<'i, 'a> Progressive<'i, 'a> {
 impl EntropyDecoder for Progressive<'_, '_> {
     fn decode(&mut self, blocks: &mut [Block], slots: &[Slot], mcus: Range<usize>) -> Result<bool> {
         let start = slots.first().map_or(0, |slot| slot.start);
-        let overrun_so_far = self.window.overrun_at(self.bits.position());
         let begun = match self.scan.kind {
             ScanKind::DcFirst => self.dc_first(blocks, slots, mcus),
             ScanKind::DcRefine => self.dc_refine(blocks, slots, mcus),
             ScanKind::AcFirst => self.ac_first(blocks, start + mcus.start..start + mcus.end),
             _ => self.ac_refine(blocks, start + mcus.start..start + mcus.end),
         }?;
-        if !self.window.is_last_segment() {
-            let overrun = self.window.overrun_at(self.bits.position());
-            self.allowance.spend(overrun - overrun_so_far)?;
-        }
         Ok(begun > 1)
     }
 

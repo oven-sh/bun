@@ -157,6 +157,10 @@ struct udp_sendbuf {
 #endif
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
@@ -257,6 +261,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
 int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
+
+#ifdef __cplusplus
+}
+#endif
 
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0

@@ -117,7 +117,7 @@ static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
 static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
-/// Referenced from `openssl.c` so the new-session callback's per-SSL marker is
+/// Referenced from `openssl.cpp` so the new-session callback's per-SSL marker is
 /// only set for the sockets that actually surface the `'session'` event.
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_BUN_SOCKET_TLS: u8 = SocketKind::BunSocketTls as u8;

@@ -260,7 +260,7 @@ pub(crate) extern "C" fn us_dispatch_bun_socket_identity(
     bun_socket: *mut c_void,
     ssl: *mut bun_boringssl_sys::SSL,
 ) -> c_int {
-    // SAFETY: openssl.c passes the live `TLSSocket` whose `on_open` called `us_ssl_set_bun_socket`.
+    // SAFETY: openssl.cpp passes the live `TLSSocket` whose `on_open` called `us_ssl_set_bun_socket`.
     let tls = unsafe { &*bun_socket.cast::<super::NewSocket<true>>() };
     tls.server_identity(bun_boringssl_sys::SSL::opaque_mut(ssl)) as c_int
 }

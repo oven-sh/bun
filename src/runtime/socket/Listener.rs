@@ -1372,7 +1372,7 @@ impl ServerNameAnswer {
         }
     }
 
-    /// Converts the answer to what a `ListenSocket::on_server_name` callback returns to openssl.c.
+    /// Converts the answer to what a `ListenSocket::on_server_name` callback returns to openssl.cpp.
     pub(crate) fn into_raw(
         self,
         abort_handshake: Option<&mut core::ffi::c_int>,
@@ -1391,7 +1391,7 @@ impl ServerNameAnswer {
     }
 }
 
-/// `us_select_cert_cb` (openssl.c) calls this for a ClientHello with a server name, on an `SSL` of either engine that `on_open` gave a resolver.
+/// `us_select_cert_cb` (openssl.cpp) calls this for a ClientHello with a server name, on an `SSL` of either engine that `on_open` gave a resolver.
 ///
 /// # Safety
 /// `bun_socket` is the live `TLSSocket` that owns the `SSL`, and `hostname` is NUL-terminated for the call. JS-thread only.

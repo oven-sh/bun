@@ -185,7 +185,7 @@ pub mod ssl_wrapper {
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 
-    // Mimics the behavior of openssl.c in uSockets, wrapping data that can be
+    // Mimics the behavior of openssl.cpp in uSockets, wrapping data that can be
     // received from anywhere (network, DuplexStream, etc).
     //
     // receive_data() is called when we receive data from the network
@@ -284,7 +284,7 @@ pub mod ssl_wrapper {
         static METHOD: OnceLock<AtomicPtr<boring_sys::BIO_METHOD>> = OnceLock::new();
         METHOD
             .get_or_init(|| {
-                // A type of its own: see `us_ssl_is_socket` in openssl.c.
+                // A type of its own: see `us_ssl_is_socket` in openssl.cpp.
                 let r#type = boring_sys::BIO_get_new_index() | boring_sys::BIO_TYPE_SOURCE_SINK;
                 // SAFETY: the name is static, and a null `method` does not get past the check.
                 unsafe {
@@ -301,7 +301,7 @@ pub mod ssl_wrapper {
             .load(Ordering::Relaxed)
     }
 
-    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c.
+    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.cpp.
     const FATAL_ERROR_REASON_MAX: usize = 256;
 
     /// Boxed: the `SSL` and its BIO hold pointers into the state, so the state must not move.
@@ -550,7 +550,7 @@ pub mod ssl_wrapper {
         }
 
         extern "C" fn server_identity(inner: *mut c_void, ssl: *mut boring_sys::SSL) -> c_int {
-            // SAFETY: openssl.c passes the box `set_server_identity_check` gave it, and its live `ssl`.
+            // SAFETY: openssl.cpp passes the box `set_server_identity_check` gave it, and its live `ssl`.
             let (this, ssl) = unsafe { (&*inner.cast::<Inner<T>>(), &mut *ssl) };
             this.identity_check
                 .get()

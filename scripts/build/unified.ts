@@ -57,6 +57,7 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/JSBuffer.cpp",
   "src/jsc/bindings/napi.cpp",
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
+  "packages/bun-usockets/src/crypto/openssl.cpp",
 
   // Defines malloc and operator new; nothing else belongs in that translation unit.
   "src/jsc/bindings/MimallocOverrideDarwin.cpp",

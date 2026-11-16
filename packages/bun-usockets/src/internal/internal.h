@@ -98,6 +98,14 @@ static inline void *us_xcalloc(size_t count, size_t size) {
     return p;
 }
 
+#ifdef __cplusplus
+/* The global `new` is not us_malloc on Windows. */
+struct us_allocated_t {
+    static void *operator new(size_t size) { return us_xmalloc(size); }
+    static void operator delete(void *p) { us_free(p); }
+};
+#endif
+
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
  * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The
@@ -187,14 +195,12 @@ extern int us_dispatch_alpn_offer(struct ssl_st *ssl, const unsigned char *proto
 /* BoringSSL's ALPN select callback, for a server-side SSL whose listen socket has no us_listen_socket_set_alpn list. */
 extern int us_dispatch_alpn_select(struct ssl_st *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
-/* crypto/sni_tree.cpp: the one place server names are compared. */
-void *sni_new();
-void sni_free(void *sni, void (*cb)(void *));
-void *sni_add(void *sni, const char *hostname, void *user);
-void *sni_find(void *sni, const char *hostname);
-#ifdef __cplusplus
-}
-#endif
+/* crypto/sni_tree.h, the one place server names are compared, as a tree that owns contexts. */
+struct us_sni_tree_t;
+struct us_sni_tree_t *sni_new();
+void sni_free(struct us_sni_tree_t *sni);
+void sni_add(struct us_sni_tree_t *sni, const char *hostname, struct ssl_ctx_st *owned_ctx);
+struct ssl_ctx_st *sni_find(struct us_sni_tree_t *sni, const char *hostname);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
@@ -412,7 +418,7 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
-  /* Sealed ciphertext of this socket waits for the kernel (openssl.c us_ssl_spill_t). */
+  /* Sealed ciphertext of this socket waits for the kernel (openssl.cpp us_ssl_spill_t). */
   unsigned char ssl_spilled : 1;
   /* Some of that ciphertext was thrown away before the kernel took it. */
   unsigned char ssl_spill_dropped : 1;
@@ -615,7 +621,7 @@ struct us_listen_socket_t {
    * close. NULL → plain TCP. */
   struct ssl_ctx_st *ssl_ctx;
   /* SNI tree + dynamic resolver, shared with every SSL this listener accepted
-   * (crypto/openssl.c). NULL until the first name, resolver or TLS accept. */
+   * (crypto/openssl.cpp). NULL until the first name, resolver or TLS accept. */
   struct us_server_names_t *server_names;
   /* On a clock that stands still during accept batches: us_internal_monotonic_ns() less loop->data.accept_batches_ns. */
   uint64_t last_batch_ns;
@@ -635,7 +641,7 @@ void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, 
 
 
 /* Save/restore the per-loop BIO routing state around in-handshake JS
- * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.cpp. The snapshot is an
  * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
  * size their array from us_internal_ssl_loop_state_slots() in a debug
  * assertion so growth cannot silently corrupt a caller's stack. */
@@ -643,5 +649,9 @@ void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, 
 int us_internal_ssl_loop_state_slots(void);
 void us_internal_ssl_loop_state_save(void *ssl, void **out);
 void us_internal_ssl_loop_state_restore(void **saved);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // INTERNAL_H

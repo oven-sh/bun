@@ -212,7 +212,7 @@ impl UpgradedDuplex {
                 ssl_error,
             ));
         }
-        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
+        // Retry writes parked during the handshake, like openssl.cpp's `ssl_write_wants_read`.
         if handshake_success
             && !this.is_shutdown()
             && let Some(tls) = this.listener()

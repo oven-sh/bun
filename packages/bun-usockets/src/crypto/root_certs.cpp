@@ -37,7 +37,6 @@ struct us_cert_file_bio {
   us_unique_ptr<BIO, BIO_free> bio;
 };
 
-static void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
 static void us_x509_crl_stack_free(STACK_OF(X509_CRL) *crls) { sk_X509_CRL_pop_free(crls, X509_CRL_free); }
 
 static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
@@ -74,7 +73,7 @@ extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u)
 
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
   BIO *in = NULL;
-  us_unique_ptr<STACK_OF(X509), us_x509_stack_free> certs;
+  us_x509_stack_ptr certs;
   unsigned long last_err;
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
@@ -224,7 +223,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     }
 
     us_crypto_buffers certs;
-    us_unique_ptr<STACK_OF(X509), us_x509_stack_free> trusted{sk_X509_new_null()};
+    us_x509_stack_ptr trusted{sk_X509_new_null()};
     us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free> crls{sk_X509_CRL_new_null()};
     bool ok = trusted != nullptr && crls != nullptr;
     while (ok) {
@@ -359,8 +358,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   return us_add_openssl_default_cert_dir(us_new_store_of_loaded_roots());
 }
 
-static void us_free_certs(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
-
 // What lookups in the default store find in the hashed directory, as of the first call. The files only say which
 // subjects to ask for: BoringSSL's own lookup decides which of them it opens.
 static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
@@ -384,7 +381,7 @@ static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
       us_unique_ptr<BIO, BIO_free> in(BIO_new_mem_buf(data, len));
       while (us_unique_ptr<X509, X509_free> cert{PEM_read_bio_X509_AUX(in.get(), nullptr, us_no_password_callback, nullptr)}) {
         const auto *subject = X509_get_subject_name(cert.get());
-        us_unique_ptr<STACK_OF(X509), us_free_certs> found(X509_STORE_CTX_get1_certs(lookups->in_loaded.get(), subject));
+        us_x509_stack_ptr found(X509_STORE_CTX_get1_certs(lookups->in_loaded.get(), subject));
         if (found) continue;
         found.reset(X509_STORE_CTX_get1_certs(lookups->in_hashed.get(), subject));
         for (size_t i = 0; i < sk_X509_num(found.get()); i++) {

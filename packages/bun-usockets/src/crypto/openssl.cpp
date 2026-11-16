@@ -22,8 +22,12 @@
 #include "libusockets.h"
 #include <string.h>
 #include <limits.h>
-#include <stdatomic.h>
 #include <time.h>
+#include <atomic>
+#include <utility>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
@@ -43,6 +47,23 @@
 
 #include "./root_certs_header.h"
 #include "./default_ciphers.h"
+#include "./sni_tree.h"
+
+using us_bio_ptr = us_unique_ptr<BIO, BIO_free>;
+using us_crypto_buffer_ptr = us_unique_ptr<CRYPTO_BUFFER, CRYPTO_BUFFER_free>;
+using us_ssl_ctx_ptr = us_unique_ptr<SSL_CTX, SSL_CTX_free>;
+using us_x509_ptr = us_unique_ptr<X509, X509_free>;
+
+/* Leaves `buffer` as it was when there is no memory. */
+template <typename T> static bool us_grow(us_unique_ptr<T, us_free> &buffer, size_t size) {
+  T *grown = (T *)us_realloc(buffer.get(), size);
+  if (!grown) return false;
+  buffer.release();
+  buffer.reset(grown);
+  return true;
+}
+
+extern "C" {
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Per-socket SSL model.
@@ -63,15 +84,16 @@
  * longer is truncated by ERR_error_string_n itself (always NUL-terminated). */
 #define US_SSL_FATAL_ERROR_REASON_MAX 256
 
-struct loop_ssl_data {
-  char *ssl_read_input, *ssl_read_output;
+struct loop_ssl_data : us_allocated_t {
+  char *ssl_read_input;
+  us_unique_ptr<char, us_free> ssl_read_output;
   unsigned int ssl_read_input_length;
   unsigned int ssl_read_input_offset;
 
   struct us_socket_t *ssl_socket;
-  BIO *shared_rbio;
-  BIO *shared_wbio;
-  BIO_METHOD *shared_biom;
+  us_unique_ptr<BIO_METHOD, BIO_meth_free> shared_biom;
+  us_bio_ptr shared_rbio;
+  us_bio_ptr shared_wbio;
   /* The OpenSSL error string of the fatal SSL error that is about to close
    * the current socket (set in the SSL_ERROR_SSL branch immediately before
    * ssl_close, consumed by the handshake-failure dispatch inside that
@@ -91,7 +113,7 @@ struct loop_ssl_data {
    * raw socket write per 16 KB record; the whole batch reaches the kernel in
    * a single write afterwards (node reaches the same shape via its memory
    * BIO drained with writev). Lazily allocated, reused across writes. */
-  char *ssl_write_batch;
+  us_unique_ptr<char, us_free> ssl_write_batch;
   unsigned int ssl_write_batch_len;
   unsigned int ssl_write_batch_cap;
   int ssl_write_batching;
@@ -119,17 +141,10 @@ enum {
  * bits live in `us_socket_t`'s pointer-alignment padding (see internal.h). */
 #define s_ssl(s) ((SSL *)(s)->ssl)
 
-/* SNI tree leaf — stored as the void* user in sni_tree.cpp. */
-struct sni_node_t {
-  SSL_CTX *ctx;
-  /* See us_listen_socket_add_server_name. */
-  int own_client_auth;
-};
-
-static _Atomic long ssl_ctx_live = 0;
+static std::atomic<long> ssl_ctx_live = 0;
 
 long us_ssl_ctx_live_count(void) {
-  return atomic_load(&ssl_ctx_live);
+  return ssl_ctx_live;
 }
 
 /* ex_data indices, registered once at first SSL_CTX/SSL touch:
@@ -159,7 +174,6 @@ extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
-#include <pthread.h>
 static pthread_once_t us_ex_idx_once = PTHREAD_ONCE_INIT;
 #endif
 
@@ -184,6 +198,13 @@ struct us_ssl_pending_event_t {
   unsigned char data[];
 };
 
+/* Events parked by this thread's SSLs and not freed yet. Nearly always 0, and then a read event doesn't walk from its SSL to its us_ssl_rare_t. */
+static thread_local unsigned int ssl_parked_events;
+
+static void us_ssl_pending_events_free(struct us_ssl_pending_event_t *events) {
+  for (; events; ssl_parked_events--) us_free(std::exchange(events, events->next));
+}
+
 /* Sealed ciphertext the kernel refused. SSL counts it as written, so it reaches this connection's
  * fd, in order, before any later record. Drained from the writable event, then freed. */
 struct us_ssl_spill_t {
@@ -203,29 +224,35 @@ struct us_ssl_held_t {
 /* A ChangeCipherSpec record, then as much rejected early data as BoringSSL skips (kMaxEarlyDataSkipped in tls_record.cc). */
 #define US_SSL_SNI_HELD_MAX (6 + 16384)
 
+static void us_server_names_unref(struct us_server_names_t *names);
+using us_server_names_ptr = us_unique_ptr<struct us_server_names_t, us_server_names_unref>;
+static us_server_names_ptr us_server_names_ref(struct us_listen_socket_t *ls);
+
+using us_session_sink_ptr = std::unique_ptr<void, void (*)(void *sink)>;
+
 /* What BoringSSL's callbacks read and write, for an SSL of either engine (a us_socket_t here, an SSLWrapper in src/uws/lib.rs).
  * Allocated for an accepted socket, a Bun socket, a verify step, a client's first renegotiation, fetch's session sink, and a first spill. */
-struct us_ssl_rare_t {
+struct us_ssl_rare_t : us_allocated_t {
   /* us_ssl_set_bun_socket: the Bun.connect / Bun.listen socket this SSL belongs to. NULL for every other owner. */
   void *bun_socket;
   /* us_ssl_set_identity_check: the name check of an SSLWrapper's owner. */
   int (*identity_check)(void *owner, SSL *ssl);
   void *identity_owner;
   /* Non-NULL exactly while us_socket_t::ssl_spilled is set. */
-  struct us_ssl_spill_t *spill;
-  /* One reference to the accepting listen socket's names. */
-  struct us_server_names_t *server_names;
+  us_unique_ptr<struct us_ssl_spill_t, us_free> spill;
+  /* The accepting listen socket's names. */
+  us_server_names_ptr server_names;
   /* us_socket_sni_resolve feeds it to BoringSSL after the answer. */
-  struct us_ssl_held_t *sni_held;
-  /* us_ssl_sni_resolve's answer, one reference. us_select_cert_sni takes it when the handshake is driven again. */
-  SSL_CTX *sni_resolved_ctx;
+  us_unique_ptr<struct us_ssl_held_t, us_free> sni_held;
+  /* us_ssl_sni_resolve's answer. us_select_cert_sni takes it when the handshake is driven again. */
+  us_ssl_ctx_ptr sni_resolved_ctx;
   /* Sessions and keylog lines parked inside SSL_read/SSL_do_handshake, in arrival order. */
-  struct us_ssl_pending_event_t *pending_head, *pending_tail;
-  /* One reference to the session the new-session callback delivered last: TLS 1.3 never stores it on the SSL. */
-  SSL_SESSION *latest_session;
-  void *session_sink;
+  us_unique_ptr<struct us_ssl_pending_event_t, us_ssl_pending_events_free> pending_head;
+  struct us_ssl_pending_event_t *pending_tail;
+  /* The session the new-session callback delivered last: TLS 1.3 never stores it on the SSL. */
+  us_unique_ptr<SSL_SESSION, SSL_SESSION_free> latest_session;
+  us_session_sink_ptr session_sink{nullptr, nullptr};
   void (*session_sink_on_session)(void *sink, SSL_SESSION *session);
-  void (*session_sink_free)(void *sink);
   uint64_t reneg_window_start_ms;
   uint32_t reneg_count;
   /* Set by us_ssl_on_alpn_offer, until us_select_cert_cb has dispatched the offer. */
@@ -249,37 +276,15 @@ struct us_ssl_rare_t {
 static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                            int index, long argl, void *argp) {
   (void)parent; (void)ptr; (void)ad; (void)index; (void)argl; (void)argp;
-  atomic_fetch_sub(&ssl_ctx_live, 1);
+  ssl_ctx_live--;
 }
-static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *ls);
-static void us_server_names_unref(struct us_server_names_t *names);
 static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
                              const unsigned char *in, unsigned int inlen, void *arg);
-
-/* Events parked by this thread's SSLs and not freed yet. Nearly always 0, and then a read event doesn't walk from its SSL to its us_ssl_rare_t. */
-static _Thread_local unsigned int ssl_parked_events;
-
-static void ssl_free_events(struct us_ssl_pending_event_t *events) {
-  while (events) {
-    struct us_ssl_pending_event_t *next = events->next;
-    us_free(events);
-    ssl_parked_events--;
-    events = next;
-  }
-}
 
 static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                              int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
-  struct us_ssl_rare_t *rare = ptr;
-  if (!rare) return;
-  ssl_free_events(rare->pending_head);
-  SSL_SESSION_free(rare->latest_session);
-  if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
-  if (rare->server_names) us_server_names_unref(rare->server_names);
-  us_free(rare->sni_held);
-  SSL_CTX_free(rare->sni_resolved_ctx);
-  us_free(rare);
+  delete (struct us_ssl_rare_t *)ptr;
 }
 
 /* Upper bounds for parked payloads: a serialized SSL_SESSION (i2d) and a
@@ -304,7 +309,7 @@ static struct us_ssl_rare_t *us_ssl_rare_ensure(SSL *ssl);
 
 static struct us_ssl_pending_event_t *ssl_park_event(struct us_ssl_rare_t *rare, int is_keylog,
                                                      size_t length) {
-  struct us_ssl_pending_event_t *event = us_malloc(sizeof(*event) + length);
+  struct us_ssl_pending_event_t *event = (struct us_ssl_pending_event_t *)us_malloc(sizeof(*event) + length);
   if (!event) return NULL;
   event->next = NULL;
   event->length = (uint32_t)length;
@@ -312,7 +317,7 @@ static struct us_ssl_pending_event_t *ssl_park_event(struct us_ssl_rare_t *rare,
   if (rare->pending_tail) {
     rare->pending_tail->next = event;
   } else {
-    rare->pending_head = event;
+    rare->pending_head.reset(event);
   }
   rare->pending_tail = event;
   ssl_parked_events++;
@@ -343,13 +348,12 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
     return 0;
   }
   /* The sink takes its own reference if it keeps the session. */
-  if (rare->session_sink) rare->session_sink_on_session(rare->session_sink, session);
+  if (rare->session_sink) rare->session_sink_on_session(rare->session_sink.get(), session);
   if (!rare->bun_socket) {
     return 0;
   }
   SSL_SESSION_up_ref(session);
-  SSL_SESSION_free(rare->latest_session);
-  rare->latest_session = session;
+  rare->latest_session.reset(session);
   int length = i2d_SSL_SESSION(session, NULL);
   if (length <= 0 || length > US_SSL_PENDING_SESSION_MAX) {
     return 0;
@@ -369,17 +373,16 @@ static void ssl_hand_over_events(SSL *ssl) {
     return;
   }
   void *bun_socket = rare->bun_socket;
-  struct us_ssl_pending_event_t *events = rare->pending_head;
-  rare->pending_head = rare->pending_tail = NULL;
+  auto events = std::move(rare->pending_head);
+  rare->pending_tail = NULL;
   int is_open = bun_socket != NULL;
   /* Sessions first, then keylog lines. */
   for (int is_keylog = 0; is_keylog <= 1; is_keylog++) {
-    for (struct us_ssl_pending_event_t *event = events; event && is_open; event = event->next) {
+    for (struct us_ssl_pending_event_t *event = events.get(); event && is_open; event = event->next) {
       if (event->is_keylog != is_keylog) continue;
       is_open = us_dispatch_tls_event(bun_socket, is_keylog, event->data, event->length);
     }
   }
-  ssl_free_events(events);
 }
 
 /* Runs JS, which may close the connection and free `ssl`: call it after the SSL_* call returned, then check that the SSL is still there. */
@@ -439,15 +442,15 @@ static inline void us_reneg_policy(SSL *ssl, uint32_t *limit, uint32_t *window) 
 }
 
 static inline struct us_ssl_rare_t *us_ssl_rare(const SSL *ssl) {
-  return us_ssl_rare_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_rare_ex_idx) : NULL;
+  return us_ssl_rare_ex_idx >= 0 ? (struct us_ssl_rare_t *)SSL_get_ex_data(ssl, us_ssl_rare_ex_idx) : NULL;
 }
 
 static struct us_ssl_rare_t *us_ssl_rare_ensure(SSL *ssl) {
   us_ex_idx_ensure();
-  struct us_ssl_rare_t *rare = SSL_get_ex_data(ssl, us_ssl_rare_ex_idx);
+  struct us_ssl_rare_t *rare = (struct us_ssl_rare_t *)SSL_get_ex_data(ssl, us_ssl_rare_ex_idx);
   if (rare) return rare;
-  rare = us_calloc(1, sizeof(*rare));
-  if (!rare || !SSL_set_ex_data(ssl, us_ssl_rare_ex_idx, rare)) Bun__outOfMemory();
+  rare = new us_ssl_rare_t();
+  if (!SSL_set_ex_data(ssl, us_ssl_rare_ex_idx, rare)) Bun__outOfMemory();
   return rare;
 }
 
@@ -468,25 +471,21 @@ void *us_ssl_bun_socket(const SSL *ssl) {
 
 SSL_SESSION *us_ssl_latest_session(const SSL *ssl) {
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
-  return rare ? rare->latest_session : NULL;
+  return rare ? rare->latest_session.get() : NULL;
 }
 
 /* `sink` lives until SSL_free, then `on_free(sink)` runs. Replaces the sink set before. */
 void us_socket_set_session_sink(struct us_socket_t *s, void *sink, void (*on_session)(void *, SSL_SESSION *), void (*on_free)(void *)) {
-  if (!s->ssl) {
-    if (on_free) on_free(sink);
-    return;
-  }
+  us_session_sink_ptr session_sink{sink, on_free};
+  if (!s->ssl) return;
   struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
-  if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
-  rare->session_sink = sink;
+  rare->session_sink = std::move(session_sink);
   rare->session_sink_on_session = on_session;
-  rare->session_sink_free = on_free;
 }
 
 void *us_socket_session_sink(struct us_socket_t *s) {
   struct us_ssl_rare_t *rare = s->ssl ? us_ssl_rare(s_ssl(s)) : NULL;
-  return rare ? rare->session_sink : NULL;
+  return rare ? rare->session_sink.get() : NULL;
 }
 
 /* socket.c — raw TCP FIN that does NOT re-enter the SSL layer. */
@@ -606,8 +605,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     if (needed > loop_ssl_data->ssl_write_batch_cap) {
       unsigned int new_cap = loop_ssl_data->ssl_write_batch_cap ? loop_ssl_data->ssl_write_batch_cap : 65536;
       while (new_cap < needed) new_cap *= 2;
-      char *grown = us_realloc(loop_ssl_data->ssl_write_batch, new_cap);
-      if (!grown) {
+      if (!us_grow(loop_ssl_data->ssl_write_batch, new_cap)) {
         /* Earlier sealed records sit in the batch and SSL's sequence numbers have
          * already advanced past them; writing the current record first would break
          * wire order (bad_record_mac at the peer). Same as the spill OOM path: the
@@ -617,10 +615,9 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
         BIO_clear_retry_flags(bio);
         return length;
       }
-      loop_ssl_data->ssl_write_batch = grown;
       loop_ssl_data->ssl_write_batch_cap = new_cap;
     }
-    memcpy(loop_ssl_data->ssl_write_batch + loop_ssl_data->ssl_write_batch_len, data, (size_t)length);
+    memcpy(loop_ssl_data->ssl_write_batch.get() + loop_ssl_data->ssl_write_batch_len, data, (size_t)length);
     loop_ssl_data->ssl_write_batch_len = needed;
     loop_ssl_data->ssl_write_batch_owner = loop_ssl_data->ssl_socket;
     /* Record by record, but this one leaves with the flight that was held for it: https://github.com/oven-sh/bun/issues/40653 */
@@ -642,7 +639,6 @@ static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_soc
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
   loop_ssl_data->ssl_batch_spills -= rare->spill->is_batch;
   if (rare->spill->offset != rare->spill->length && !ssl_sent_close_notify(s)) s->ssl_spill_dropped = 1;
-  us_free(rare->spill);
   rare->spill = NULL;
   s->ssl_spilled = 0;
 }
@@ -659,13 +655,13 @@ static void ssl_emit(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s,
   }
   struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
   unsigned int held = rare->spill ? rare->spill->length : 0;
-  struct us_ssl_spill_t *spill = us_realloc(rare->spill, sizeof(*spill) + held + length);
-  if (!spill) {
+  if (!us_grow(rare->spill, sizeof(struct us_ssl_spill_t) + held + length)) {
     /* Out of memory with ciphertext in flight: the connection cannot stay
      * coherent (SSL already advanced its sequence numbers). Drop it. */
     s->ssl_fatal_error = 1;
     return;
   }
+  struct us_ssl_spill_t *spill = rare->spill.get();
   if (!held) {
     spill->offset = 0;
     spill->is_batch = 0;
@@ -676,7 +672,6 @@ static void ssl_emit(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s,
     spill->is_batch = 1;
     loop_ssl_data->ssl_batch_spills++;
   }
-  rare->spill = spill;
   s->ssl_spilled = 1;
 }
 
@@ -694,7 +689,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   }
   loop_ssl_data->ssl_write_batch_len = 0;
   loop_ssl_data->ssl_write_batch_owner = NULL;
-  ssl_emit(loop_ssl_data, s, loop_ssl_data->ssl_write_batch, len, 1);
+  ssl_emit(loop_ssl_data, s, loop_ssl_data->ssl_write_batch.get(), len, 1);
   return !s->ssl_spilled && us_internal_socket_can_raw_write(s);
 }
 
@@ -713,7 +708,7 @@ static void ssl_release_batch(struct us_loop_t *loop, struct us_socket_t *s) {
  * with the write side), 0 while ciphertext is still pending for this socket. */
 static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   if (!s->ssl_spilled) return 1;
-  struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill;
+  struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill.get();
   spill->offset += (unsigned int)ssl_raw_write(s, spill->data + spill->offset, (int)(spill->length - spill->offset));
   if (spill->offset != spill->length && us_internal_socket_can_raw_write(s)) return 0;
   ssl_discard_spill(loop_ssl_data, s);
@@ -778,85 +773,70 @@ static char *ssl_alloc_read_output(void) {
   int unused = 0;
   if (US_FAULT_CHECK(US_FAULT_SSL_LOOP_BUFFER, -1, injected, unused)) return NULL;
 #endif
-  return us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+  return (char *)us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
 }
 
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
-    struct loop_ssl_data *loop_ssl_data = us_calloc(1, sizeof(struct loop_ssl_data));
-    if (!loop_ssl_data) Bun__outOfMemory();
-    loop_ssl_data->ssl_read_output = ssl_alloc_read_output();
+    struct loop_ssl_data *loop_ssl_data = new struct loop_ssl_data();
+    loop_ssl_data->ssl_read_output.reset(ssl_alloc_read_output());
     if (!loop_ssl_data->ssl_read_output) Bun__outOfMemory();
 
     OPENSSL_init_ssl(0, NULL);
 
     us_ex_idx_ensure();
-    loop_ssl_data->shared_biom = BIO_meth_new(us_ssl_bio_type, "µS BIO");
+    loop_ssl_data->shared_biom.reset(BIO_meth_new(us_ssl_bio_type, "µS BIO"));
     if (!loop_ssl_data->shared_biom) Bun__outOfMemory();
-    BIO_meth_set_create(loop_ssl_data->shared_biom, BIO_s_custom_create);
-    BIO_meth_set_write(loop_ssl_data->shared_biom, BIO_s_custom_write);
-    BIO_meth_set_read(loop_ssl_data->shared_biom, BIO_s_custom_read);
-    BIO_meth_set_ctrl(loop_ssl_data->shared_biom, BIO_s_custom_ctrl);
+    BIO_meth_set_create(loop_ssl_data->shared_biom.get(), BIO_s_custom_create);
+    BIO_meth_set_write(loop_ssl_data->shared_biom.get(), BIO_s_custom_write);
+    BIO_meth_set_read(loop_ssl_data->shared_biom.get(), BIO_s_custom_read);
+    BIO_meth_set_ctrl(loop_ssl_data->shared_biom.get(), BIO_s_custom_ctrl);
 
-    loop_ssl_data->shared_rbio = BIO_new(loop_ssl_data->shared_biom);
-    loop_ssl_data->shared_wbio = BIO_new(loop_ssl_data->shared_biom);
+    loop_ssl_data->shared_rbio.reset(BIO_new(loop_ssl_data->shared_biom.get()));
+    loop_ssl_data->shared_wbio.reset(BIO_new(loop_ssl_data->shared_biom.get()));
     if (!loop_ssl_data->shared_rbio || !loop_ssl_data->shared_wbio) Bun__outOfMemory();
-    BIO_set_data(loop_ssl_data->shared_rbio, loop_ssl_data);
-    BIO_set_data(loop_ssl_data->shared_wbio, loop_ssl_data);
+    BIO_set_data(loop_ssl_data->shared_rbio.get(), loop_ssl_data);
+    BIO_set_data(loop_ssl_data->shared_wbio.get(), loop_ssl_data);
 
     loop->data.ssl_data = loop_ssl_data;
   }
 }
 
 void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
-  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
-  if (loop_ssl_data) {
-    us_free(loop_ssl_data->ssl_read_output);
-    us_free(loop_ssl_data->ssl_write_batch);
-    BIO_free(loop_ssl_data->shared_rbio);
-    BIO_free(loop_ssl_data->shared_wbio);
-    BIO_meth_free(loop_ssl_data->shared_biom);
-    us_free(loop_ssl_data);
-    /* us_internal_init_loop_ssl_data's guard reads this: leaving it dangling
-     * would hand a freed loop_ssl_data back to the next TLS socket. */
-    loop->data.ssl_data = NULL;
-  }
+  /* us_internal_init_loop_ssl_data's guard reads this: leaving it dangling
+   * would hand a freed loop_ssl_data back to the next TLS socket. */
+  delete (struct loop_ssl_data *)std::exchange(loop->data.ssl_data, nullptr);
 }
 
 /* ── SSL_CTX construction ────────────────────────────────────────────────── */
 
 static int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content, int type) {
-  int reason_code, ret = 0;
-  BIO *in;
-  EVP_PKEY *pkey = NULL;
+  int reason_code;
+  us_unique_ptr<EVP_PKEY, EVP_PKEY_free> pkey;
   if (content == NULL) return 0;
-  in = BIO_new_mem_buf(content, strlen(content));
+  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    goto end;
+    return 0;
   }
 
   if (type == SSL_FILETYPE_PEM) {
     reason_code = ERR_R_PEM_LIB;
-    pkey = PEM_read_bio_PrivateKey(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                                   SSL_CTX_get_default_passwd_cb_userdata(ctx));
+    pkey.reset(PEM_read_bio_PrivateKey(in.get(), NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                       SSL_CTX_get_default_passwd_cb_userdata(ctx)));
   } else if (type == SSL_FILETYPE_ASN1) {
     reason_code = ERR_R_ASN1_LIB;
-    pkey = d2i_PrivateKey_bio(in, NULL);
+    pkey.reset(d2i_PrivateKey_bio(in.get(), NULL));
   } else {
     OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SSL_FILETYPE);
-    goto end;
+    return 0;
   }
 
   if (pkey == NULL) {
     OPENSSL_PUT_ERROR(SSL, reason_code);
-    goto end;
+    return 0;
   }
-  ret = SSL_CTX_use_PrivateKey(ctx, pkey);
-  EVP_PKEY_free(pkey);
-end:
-  BIO_free(in);
-  return ret;
+  return SSL_CTX_use_PrivateKey(ctx, pkey.get());
 }
 
 /* The context's own cert store for mutation: the process-shared root store and
@@ -865,11 +845,8 @@ end:
  * it. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
 static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  /* us_get_shared_default_ca_store() up-refs before returning, so release
-   * the reference taken just for this comparison. */
-  X509_STORE *shared = us_get_shared_default_ca_store();
-  int store_is_shared = store != NULL && store == shared;
-  X509_STORE_free(shared);
+  us_unique_ptr<X509_STORE, X509_STORE_free> shared{us_get_shared_default_ca_store()};
+  int store_is_shared = store != NULL && store == shared.get();
   us_ex_idx_ensure();
   int store_is_empty = 0;
   if (store != NULL && !store_is_shared) {
@@ -902,34 +879,25 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
 static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
   if (content == NULL) return 0;
   ERR_clear_error();
-  BIO *in = BIO_new_mem_buf(content, strlen(content));
+  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
   if (in == NULL) return -1;
   int count = 0;
   for (;;) {
-    uint8_t *der = NULL;
+    uint8_t *out = NULL;
     long der_len = 0;
-    char *name = NULL;
-    if (!PEM_bytes_read_bio(&der, &der_len, &name, PEM_STRING_X509, in, SSL_CTX_get_default_passwd_cb(ctx),
+    if (!PEM_bytes_read_bio(&out, &der_len, NULL, PEM_STRING_X509, in.get(), SSL_CTX_get_default_passwd_cb(ctx),
                             SSL_CTX_get_default_passwd_cb_userdata(ctx))) {
       break;
     }
-    OPENSSL_free(name);
-    CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(der, der_len, NULL);
-    OPENSSL_free(der);
-    X509 *parsed = buf != NULL ? X509_parse_from_buffer(buf) : NULL;
-    if (parsed == NULL) {
-      CRYPTO_BUFFER_free(buf);
-      buf = NULL;
-    }
-    X509_free(parsed);
-    if (buf == NULL || !sk_CRYPTO_BUFFER_push(certs, buf)) {
-      CRYPTO_BUFFER_free(buf);
+    us_unique_ptr<uint8_t, OPENSSL_free> der{out};
+    us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der.get(), der_len, NULL)};
+    if (buf == NULL || !us_x509_ptr{X509_parse_from_buffer(buf.get())} || !sk_CRYPTO_BUFFER_push(certs, buf.get())) {
       if (count == 0) count = -1;
       break;
     }
+    buf.release();
     count++;
   }
-  BIO_free(in);
   if (count == 0) {
     unsigned long pem_err = ERR_peek_last_error();
     if (!((pem_err == 0 || (ERR_GET_LIB(pem_err) == ERR_LIB_PEM && ERR_GET_REASON(pem_err) == PEM_R_NO_START_LINE)) &&
@@ -941,6 +909,11 @@ static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_
   return count;
 }
 
+static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
+  sk_CRYPTO_BUFFER_pop_free(buffers, CRYPTO_BUFFER_free);
+}
+using us_crypto_buffer_stack_ptr = us_unique_ptr<STACK_OF(CRYPTO_BUFFER), us_crypto_buffer_stack_free>;
+
 static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFFER *const *b) {
   size_t al = CRYPTO_BUFFER_len(*a), bl = CRYPTO_BUFFER_len(*b);
   if (al != bl) return al < bl ? -1 : 1;
@@ -949,76 +922,48 @@ static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFF
 
 /* Trusts the DER certificates in `certs` (duplicates dropped) through one lazily-parsed set on `store`, and makes their
  * subjects the context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did.
- * Consumes `certs`. Without `announce` it leaves the client-CA list alone. */
+ * Without `announce` it leaves the client-CA list alone. */
 static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs, int announce) {
-  int ok = 1;
+  sk_CRYPTO_BUFFER_set_cmp_func(certs, us_crypto_buffer_cmp);
+  sk_CRYPTO_BUFFER_sort_and_dedup(certs, CRYPTO_BUFFER_free);
   size_t n = sk_CRYPTO_BUFFER_num(certs);
-  if (n > 1) {
-    sk_CRYPTO_BUFFER_set_cmp_func(certs, us_crypto_buffer_cmp);
-    sk_CRYPTO_BUFFER_sort(certs);
-    size_t kept = 0;
-    for (size_t i = 0; i < n; i++) {
-      CRYPTO_BUFFER *buf = sk_CRYPTO_BUFFER_value(certs, i);
-      const CRYPTO_BUFFER *prev = kept > 0 ? sk_CRYPTO_BUFFER_value(certs, kept - 1) : NULL;
-      if (prev != NULL && us_crypto_buffer_cmp((const CRYPTO_BUFFER *const *)&buf, &prev) == 0) {
-        CRYPTO_BUFFER_free(buf);
-        continue;
-      }
-      sk_CRYPTO_BUFFER_set(certs, kept++, buf);
-    }
-    while (sk_CRYPTO_BUFFER_num(certs) > kept) sk_CRYPTO_BUFFER_pop(certs);
-    n = kept;
+  if (n == 0) return 1;
+  us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *))};
+  if (bufs == NULL) return 0;
+  for (size_t i = 0; i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
+  us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> set{X509_LAZY_CERT_SET_new(bufs.get(), n)};
+  if (set == NULL || !X509_STORE_add_lazy_cert_set(store, set.get())) return 0;
+  if (!announce) return 1;
+  us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_new_null()};
+  if (names == NULL) return 0;
+  for (size_t i = 0; i < n; i++) {
+    const uint8_t *subject;
+    size_t subject_len;
+    if (!X509_LAZY_CERT_SET_get0_subject(set.get(), i, &subject, &subject_len)) return 0;
+    us_crypto_buffer_ptr name{CRYPTO_BUFFER_new(subject, subject_len, NULL)};
+    if (name == NULL || !sk_CRYPTO_BUFFER_push(names.get(), name.get())) return 0;
+    name.release();
   }
-  if (n > 0) {
-    CRYPTO_BUFFER **bufs = (CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *));
-    for (size_t i = 0; bufs != NULL && i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
-    X509_LAZY_CERT_SET *set = bufs != NULL ? X509_LAZY_CERT_SET_new(bufs, n) : NULL;
-    free(bufs);
-    STACK_OF(CRYPTO_BUFFER) *names = announce ? sk_CRYPTO_BUFFER_new_null() : NULL;
-    ok = set != NULL && (names != NULL || !announce) && X509_STORE_add_lazy_cert_set(store, set);
-    for (size_t i = 0; ok && announce && i < n; i++) {
-      const uint8_t *subject;
-      size_t subject_len;
-      CRYPTO_BUFFER *name = NULL;
-      ok = X509_LAZY_CERT_SET_get0_subject(set, i, &subject, &subject_len) &&
-           (name = CRYPTO_BUFFER_new(subject, subject_len, NULL)) != NULL && sk_CRYPTO_BUFFER_push(names, name);
-      if (!ok) CRYPTO_BUFFER_free(name);
-    }
-    if (ok && announce) {
-      SSL_CTX_set0_client_CAs(ctx, names);
-    } else {
-      sk_CRYPTO_BUFFER_pop_free(names, CRYPTO_BUFFER_free);
-    }
-    X509_LAZY_CERT_SET_free(set);
-  }
-  sk_CRYPTO_BUFFER_pop_free(certs, CRYPTO_BUFFER_free);
-  return ok;
+  SSL_CTX_set0_client_CAs(ctx, names.release());
+  return 1;
 }
 
 static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
-  X509 *x = NULL;
   ERR_clear_error();
   int count = 0;
   if (content == NULL) return 0;
-  BIO *in = BIO_new_mem_buf(content, strlen(content));
+  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    goto end;
+    return 0;
   }
 
-  while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                                SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {
-    X509_STORE_add_cert(store, x);
-    if (!SSL_CTX_add_client_CA(ctx, x)) {
-      X509_free(x);
-      BIO_free(in);
-      return 0;
-    }
+  while (us_x509_ptr x{PEM_read_bio_X509(in.get(), NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                         SSL_CTX_get_default_passwd_cb_userdata(ctx))}) {
+    X509_STORE_add_cert(store, x.get());
+    if (!SSL_CTX_add_client_CA(ctx, x.get())) return 0;
     count++;
-    X509_free(x);
   }
-end:
-  BIO_free(in);
   if (count == 0) {
     /* The PEM loop terminates with PEM_R_NO_START_LINE once there are no
      * (more) CERTIFICATE blocks. A PEM document that contains no
@@ -1040,45 +985,33 @@ end:
 }
 
 static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
-  BIO *in;
-  int ret = 0;
-  X509 *x = NULL;
-
   ERR_clear_error();
   if (content == NULL) return 0;
-  in = BIO_new_mem_buf(content, strlen(content));
+  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    goto end;
+    return 0;
   }
 
-  x = PEM_read_bio_X509_AUX(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                            SSL_CTX_get_default_passwd_cb_userdata(ctx));
+  us_x509_ptr x{PEM_read_bio_X509_AUX(in.get(), NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                      SSL_CTX_get_default_passwd_cb_userdata(ctx))};
   if (x == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
-    goto end;
+    return 0;
   }
 
-  ret = SSL_CTX_use_certificate(ctx, x);
+  int ret = SSL_CTX_use_certificate(ctx, x.get());
   if (ERR_peek_error() != 0) ret = 0;
 
   if (ret) {
-    X509 *ca;
-    int r;
-    uint32_t err;
-
     SSL_CTX_clear_chain_certs(ctx);
-    while ((ca = PEM_read_bio_X509(
-                in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
-      r = SSL_CTX_add0_chain_cert(ctx, ca);
-      if (!r) {
-        X509_free(ca);
-        ret = 0;
-        goto end;
-      }
+    while (us_x509_ptr ca{PEM_read_bio_X509(
+                in.get(), NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                SSL_CTX_get_default_passwd_cb_userdata(ctx))}) {
+      if (!SSL_CTX_add0_chain_cert(ctx, ca.get())) return 0;
+      ca.release();
     }
-    err = ERR_peek_last_error();
+    uint32_t err = ERR_peek_last_error();
     if (ERR_GET_LIB(err) == ERR_LIB_PEM &&
         ERR_GET_REASON(err) == PEM_R_NO_START_LINE) {
       ERR_clear_error();
@@ -1086,44 +1019,38 @@ static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
       ret = 0;
     }
   }
-end:
-  X509_free(x);
-  BIO_free(in);
   return ret;
 }
 
 /* BoringSSL's ssl_auto_chain_if_needed, which at handshake time completes the legacy slot but no credential. */
 static int us_ssl_ctx_auto_chain(SSL_CTX *ctx) {
   if (sk_CRYPTO_BUFFER_num(SSL_CTX_get0_chain(ctx)) != 1) return 1;
-  X509_STORE_CTX *walk = X509_STORE_CTX_new();
-  if (walk == NULL || !X509_STORE_CTX_init(walk, SSL_CTX_get_cert_store(ctx), SSL_CTX_get0_certificate(ctx), NULL)) {
-    X509_STORE_CTX_free(walk);
+  us_unique_ptr<X509_STORE_CTX, X509_STORE_CTX_free> walk{X509_STORE_CTX_new()};
+  if (walk == NULL ||
+      !X509_STORE_CTX_init(walk.get(), SSL_CTX_get_cert_store(ctx), SSL_CTX_get0_certificate(ctx), NULL)) {
     return 0;
   }
-  X509_verify_cert(walk);
+  X509_verify_cert(walk.get());
   ERR_clear_error();
-  STACK_OF(X509) *chain = X509_STORE_CTX_get1_chain(walk);
-  X509_STORE_CTX_free(walk);
+  us_x509_stack_ptr chain{X509_STORE_CTX_get1_chain(walk.get())};
   if (chain == NULL) return 0;
-  X509_free(sk_X509_shift(chain));
-  int ok = SSL_CTX_set1_chain(ctx, chain);
-  sk_X509_pop_free(chain, X509_free);
-  return ok;
+  us_x509_ptr leaf{sk_X509_shift(chain.get())};
+  return SSL_CTX_set1_chain(ctx, chain.get());
 }
 
-static SSL_CREDENTIAL *us_ssl_ctx_copy_legacy_identity(SSL_CTX *ctx) {
+using us_ssl_credential_ptr = us_unique_ptr<SSL_CREDENTIAL, SSL_CREDENTIAL_free>;
+
+static us_ssl_credential_ptr us_ssl_ctx_copy_legacy_identity(SSL_CTX *ctx) {
   const STACK_OF(CRYPTO_BUFFER) *chain = SSL_CTX_get0_chain(ctx);
   size_t count = sk_CRYPTO_BUFFER_num(chain);
-  CRYPTO_BUFFER **certs = us_calloc(count, sizeof(*certs));
+  us_unique_ptr<CRYPTO_BUFFER *[], us_free> certs{(CRYPTO_BUFFER **)us_calloc(count, sizeof(CRYPTO_BUFFER *))};
   if (certs == NULL) return NULL;
   for (size_t i = 0; i < count; i++) certs[i] = sk_CRYPTO_BUFFER_value(chain, i);
-  SSL_CREDENTIAL *identity = SSL_CREDENTIAL_new_x509();
-  if (identity != NULL && (!SSL_CREDENTIAL_set1_cert_chain(identity, certs, count) ||
-                           !SSL_CREDENTIAL_set1_private_key(identity, SSL_CTX_get0_privatekey(ctx)))) {
-    SSL_CREDENTIAL_free(identity);
-    identity = NULL;
+  us_ssl_credential_ptr identity{SSL_CREDENTIAL_new_x509()};
+  if (identity != NULL && (!SSL_CREDENTIAL_set1_cert_chain(identity.get(), certs.get(), count) ||
+                           !SSL_CREDENTIAL_set1_private_key(identity.get(), SSL_CTX_get0_privatekey(ctx)))) {
+    return NULL;
   }
-  us_free(certs);
   return identity;
 }
 
@@ -1133,7 +1060,7 @@ static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsi
   /* In OpenSSL's order of preference: BoringSSL serves the first usable credential. */
   enum { TYPE_ECDSA, TYPE_EDDSA, TYPE_RSA, KEY_TYPES };
   const char *leaf[KEY_TYPES] = {NULL};
-  SSL_CREDENTIAL *identity[KEY_TYPES] = {NULL};
+  us_ssl_credential_ptr identity[KEY_TYPES];
   int ok = 1;
   for (unsigned int i = 0; i < cert_count; i++) {
     if (us_ssl_ctx_use_certificate_chain(ctx, cert[i]) != 1) return 0;
@@ -1163,9 +1090,8 @@ static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsi
       ok = 0;
     }
   }
-  for (int type = 0; type < KEY_TYPES; type++) {
-    if (ok && identity[type] != NULL) ok = SSL_CTX_add1_credential(ctx, identity[type]);
-    SSL_CREDENTIAL_free(identity[type]);
+  for (int type = 0; ok && type < KEY_TYPES; type++) {
+    if (identity[type] != NULL) ok = SSL_CTX_add1_credential(ctx, identity[type].get());
   }
   return ok;
 }
@@ -1181,7 +1107,7 @@ static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
  * handshake drive then keep the Finished off the wire and fail the socket. */
 static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   if (!preverify_ok) {
-    SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
     if (ssl) us_ssl_rare_ensure(ssl)->verify_failed = 1;
   }
   return 1;
@@ -1255,29 +1181,29 @@ static int us_name_constraints_check_cn(X509 *leaf, const NAME_CONSTRAINTS *nc) 
   const X509_NAME *subject = X509_get_subject_name(leaf);
   int error = X509_V_OK;
   for (int i = -1; error == X509_V_OK && (i = X509_NAME_get_index_by_NID(subject, NID_commonName, i)) >= 0;) {
-    unsigned char *common_name = NULL;
-    int len = ASN1_STRING_to_UTF8(&common_name, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, i)));
+    unsigned char *out = NULL;
+    int len = ASN1_STRING_to_UTF8(&out, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, i)));
     /* OpenSSL's check_name_constraints gives up here, which its X509_verify_cert reports as unspecified. */
     if (len < 0) return X509_V_ERR_UNSPECIFIED;
+    us_unique_ptr<unsigned char[], OPENSSL_free> common_name{out};
     while (len > 0 && common_name[len - 1] == '\0') len--;
-    if (len > 0 && memchr(common_name, 0, len)) {
+    if (len > 0 && memchr(common_name.get(), 0, len)) {
       error = X509_V_ERR_UNSUPPORTED_NAME_SYNTAX;
-    } else if (us_looks_like_dns_name(common_name, len)) {
-      error = us_name_constraints_check_dns_name(nc, common_name, len);
+    } else if (us_looks_like_dns_name(common_name.get(), len)) {
+      error = us_name_constraints_check_dns_name(nc, common_name.get(), len);
     }
-    OPENSSL_free(common_name);
   }
   return error;
 }
 
 /* OpenSSL's has_san_id(cert, GEN_DNS). */
 static int us_x509_has_dns_name(X509 *cert) {
-  GENERAL_NAMES *names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+  us_unique_ptr<GENERAL_NAMES, GENERAL_NAMES_free> names{
+      (GENERAL_NAMES *)X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL)};
   int has_dns_name = 0;
-  for (size_t i = 0; i < sk_GENERAL_NAME_num(names) && !has_dns_name; i++) {
-    has_dns_name = sk_GENERAL_NAME_value(names, i)->type == GEN_DNS;
+  for (size_t i = 0; i < sk_GENERAL_NAME_num(names.get()) && !has_dns_name; i++) {
+    has_dns_name = sk_GENERAL_NAME_value(names.get(), i)->type == GEN_DNS;
   }
-  GENERAL_NAMES_free(names);
   return has_dns_name;
 }
 
@@ -1288,9 +1214,9 @@ static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
   X509 *leaf = sk_X509_value(chain, 0);
   int error = X509_V_OK;
   for (size_t i = 1; i < sk_X509_num(chain) && error == X509_V_OK; i++) {
-    NAME_CONSTRAINTS *nc = X509_get_ext_d2i(sk_X509_value(chain, i), NID_name_constraints, NULL, NULL);
-    if (nc && !us_x509_has_dns_name(leaf)) error = us_name_constraints_check_cn(leaf, nc);
-    NAME_CONSTRAINTS_free(nc);
+    us_unique_ptr<NAME_CONSTRAINTS, NAME_CONSTRAINTS_free> nc{
+        (NAME_CONSTRAINTS *)X509_get_ext_d2i(sk_X509_value(chain, i), NID_name_constraints, NULL, NULL)};
+    if (nc && !us_x509_has_dns_name(leaf)) error = us_name_constraints_check_cn(leaf, nc.get());
   }
   return error;
 }
@@ -1304,7 +1230,7 @@ static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   if (error == X509_V_OK && ok) error = us_x509_store_ctx_common_name_error(ctx);
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
-  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
   int (*verify_callback)(int, X509_STORE_CTX *) = ssl ? SSL_get_verify_callback(ssl) : NULL;
   return verify_callback ? verify_callback(0, ctx) : 0;
 }
@@ -1314,14 +1240,13 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
   X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
   uint32_t flags = X509_get_extension_flags(leaf);
   if ((flags & EXFLAG_SI) && !(flags & EXFLAG_SS) && X509_check_purpose(leaf, purpose, 0) == 1) {
-    STACK_OF(X509) *same_subject = X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf));
-    for (size_t i = 0; i < sk_X509_num(same_subject); i++) {
-      if (X509_cmp(sk_X509_value(same_subject, i), leaf) == 0) {
+    us_x509_stack_ptr same_subject{X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf))};
+    for (size_t i = 0; i < sk_X509_num(same_subject.get()); i++) {
+      if (X509_cmp(sk_X509_value(same_subject.get(), i), leaf) == 0) {
         X509_VERIFY_PARAM_set_flags(X509_STORE_CTX_get0_param(ctx), X509_V_FLAG_PARTIAL_CHAIN);
         break;
       }
     }
-    sk_X509_pop_free(same_subject, X509_free);
   }
   return us_x509_verify_chain(ctx);
 }
@@ -1329,7 +1254,7 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */
 static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
-  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
   int ok = us_x509_verify_cert(ctx, ssl && SSL_is_server(ssl) ? X509_PURPOSE_SSL_CLIENT : X509_PURPOSE_SSL_SERVER);
   if (!ssl) return ok;
   struct us_ssl_rare_t *rare = us_ssl_rare_ensure(ssl);
@@ -1421,67 +1346,63 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                               enum create_bun_socket_error_t *err) {
   ERR_clear_error();
 
-  SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
-  atomic_fetch_add(&ssl_ctx_live, 1);
+  us_ssl_ctx_ptr ssl_context{SSL_CTX_new(TLS_method())};
+  ssl_ctx_live++;
   /* An expired CA in a trust source (the OS store caches stale intermediates; a bundled root can outlive its notAfter in
    * an old binary; a user bundle can carry both generations) is treated as absent rather than left to shadow the
    * currently-valid certificate for the same issuer. */
-  X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl_context), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+  X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl_context.get()), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
   /* Register the live-count free_func first thing so every exit balances.
    * The packed reneg policy reuses the same slot. */
-  SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
+  SSL_CTX_set_ex_data(ssl_context.get(), us_ssl_ctx_ex_idx(), NULL);
 
-  SSL_CTX_set_alpn_select_cb(ssl_context, us_alpn_select_cb, NULL);
+  SSL_CTX_set_alpn_select_cb(ssl_context.get(), us_alpn_select_cb, NULL);
 
   /* Default options we rely on — changing these breaks the BIO logic. */
-  SSL_CTX_set_read_ahead(ssl_context, 1);
-  SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  SSL_CTX_set_read_ahead(ssl_context.get(), 1);
+  SSL_CTX_set_mode(ssl_context.get(), SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
   /* BoringSSL ships with SSL_MODE_NO_AUTO_CHAIN set; Node clears it so a
    * leaf-only `cert` presents the intermediates found in the context's store
    * (crypto_context.cc#L1640). It only runs when the configured chain is 1. */
-  SSL_CTX_clear_mode(ssl_context, SSL_MODE_NO_AUTO_CHAIN);
+  SSL_CTX_clear_mode(ssl_context.get(), SSL_MODE_NO_AUTO_CHAIN);
   /* Honor explicit minVersion/maxVersion (Node's secureProtocol/min/maxVersion);
    * default to a TLS1.2 floor when no minimum is requested. */
-  SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);
+  SSL_CTX_set_min_proto_version(ssl_context.get(), options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);
   if (options.ssl_max_version) {
-    SSL_CTX_set_max_proto_version(ssl_context, options.ssl_max_version);
+    SSL_CTX_set_max_proto_version(ssl_context.get(), options.ssl_max_version);
   }
 
   if (options.ssl_prefer_low_memory_usage) {
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
+    SSL_CTX_set_mode(ssl_context.get(), SSL_MODE_RELEASE_BUFFERS);
   }
 
-  SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)options.passphrase);
+  SSL_CTX_set_default_passwd_cb_userdata(ssl_context.get(), (void *)options.passphrase);
   /* Installed unconditionally: with no userdata it supplies an empty password
    * (see passphrase_cb), matching Node's key-decryption error shape. */
-  SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+  SSL_CTX_set_default_passwd_cb(ssl_context.get(), passphrase_cb);
 
   int several_identities = !options.cert_file_name && !options.key_file_name && options.cert && options.key &&
                            (options.cert_count > 1 || options.key_count > 1);
   if (!several_identities) {
     if (options.cert_file_name) {
-      if (SSL_CTX_use_certificate_chain_file(ssl_context, options.cert_file_name) != 1) {
-        SSL_CTX_free(ssl_context);
+      if (SSL_CTX_use_certificate_chain_file(ssl_context.get(), options.cert_file_name) != 1) {
         return NULL;
       }
     } else if (options.cert && options.cert_count > 0) {
       for (unsigned int i = 0; i < options.cert_count; i++) {
-        if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
-          SSL_CTX_free(ssl_context);
+        if (us_ssl_ctx_use_certificate_chain(ssl_context.get(), options.cert[i]) != 1) {
           return NULL;
         }
       }
     }
 
     if (options.key_file_name) {
-      if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name, SSL_FILETYPE_PEM) != 1) {
-        SSL_CTX_free(ssl_context);
+      if (SSL_CTX_use_PrivateKey_file(ssl_context.get(), options.key_file_name, SSL_FILETYPE_PEM) != 1) {
         return NULL;
       }
     } else if (options.key && options.key_count > 0) {
       for (unsigned int i = 0; i < options.key_count; i++) {
-        if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i], SSL_FILETYPE_PEM) != 1) {
-          SSL_CTX_free(ssl_context);
+        if (us_ssl_ctx_use_privatekey_content(ssl_context.get(), options.key[i], SSL_FILETYPE_PEM) != 1) {
           return NULL;
         }
       }
@@ -1496,34 +1417,28 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
-    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
+    SSL_CTX_set_client_CA_list(ssl_context.get(), ca_list);
     us_ex_idx_ensure();
-    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
-    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
+    SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_user_ca_ex_idx, (void *)1);
+    if (SSL_CTX_load_verify_locations(ssl_context.get(), options.ca_file_name, NULL) != 1) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
   } else if (options.ca) { /* A count of 0 is a list that trusts nothing. */
     us_ex_idx_ensure();
-    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
+    SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
      * any client certificate that chains to a public root. */
-    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
-    STACK_OF(CRYPTO_BUFFER) *ca_certs = sk_CRYPTO_BUFFER_new_null();
+    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context.get());
+    us_crypto_buffer_stack_ptr ca_certs{sk_CRYPTO_BUFFER_new_null()};
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
-      if (us_collect_ca_pem(ssl_context, options.ca[i], ca_certs) < 0) {
-        sk_CRYPTO_BUFFER_pop_free(ca_certs, CRYPTO_BUFFER_free);
-        ca_certs = NULL;
-      }
+      if (us_collect_ca_pem(ssl_context.get(), options.ca[i], ca_certs.get()) < 0) ca_certs = NULL;
     }
-    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context, cert_store, ca_certs, !options.ca_is_default)) {
+    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context.get(), cert_store, ca_certs.get(), !options.ca_is_default)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
     ERR_clear_error();
@@ -1532,59 +1447,48 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
      * (for requestCert) client verification both read it. The getter up-refs,
      * so set_cert_store owns exactly one reference per context. */
-    SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
+    SSL_CTX_set_cert_store(ssl_context.get(), us_get_shared_default_ca_store());
   }
 
   /* After the store is filled: it completes their chains. */
   if (several_identities &&
-      !us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key, options.key_count)) {
-    SSL_CTX_free(ssl_context);
+      !us_ssl_ctx_use_identities(ssl_context.get(), options.cert, options.cert_count, options.key, options.key_count)) {
     return NULL;
   }
   /* The passphrase is borrowed for this call, and the context outlives it. */
-  SSL_CTX_set_default_passwd_cb_userdata(ssl_context, NULL);
+  SSL_CTX_set_default_passwd_cb_userdata(ssl_context.get(), NULL);
 
   /* The callback is set at SSL_VERIFY_NONE too: lsquic's SNI switch calls SSL_set_verify(ssl, mode, NULL), which keeps it. */
-  SSL_CTX_set_verify(ssl_context,
+  SSL_CTX_set_verify(ssl_context.get(),
       !options.request_cert         ? SSL_VERIFY_NONE
       : options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,
       us_verify_callback);
 
   if (options.dh_params_file_name) {
-    DH *dh_2048 = NULL;
-    FILE *paramfile = fopen(options.dh_params_file_name, "r");
-    if (paramfile) {
-      dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
-      fclose(paramfile);
-    } else {
-      SSL_CTX_free(ssl_context);
+    us_unique_ptr<FILE, fclose> paramfile{fopen(options.dh_params_file_name, "r")};
+    if (!paramfile) {
       return NULL;
     }
+    us_unique_ptr<DH, DH_free> dh_2048{PEM_read_DHparams(paramfile.get(), NULL, NULL, NULL)};
     if (dh_2048 == NULL) {
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
-    const long set_tmp_dh = SSL_CTX_set_tmp_dh(ssl_context, dh_2048);
-    DH_free(dh_2048);
-    if (set_tmp_dh != 1) {
-      SSL_CTX_free(ssl_context);
+    if (SSL_CTX_set_tmp_dh(ssl_context.get(), dh_2048.get()) != 1) {
       return NULL;
     }
-    if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
-      SSL_CTX_free(ssl_context);
+    if (!SSL_CTX_set_cipher_list(ssl_context.get(), DEFAULT_CIPHER_LIST)) {
       return NULL;
     }
   }
 
   if (options.ssl_ciphers) {
-    if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
+    if (!SSL_CTX_set_cipher_list(ssl_context.get(), options.ssl_ciphers)) {
       /* Peek, don't consume: the caller decomposes the queued reason
        * (NO_CIPHER_MATCH, INVALID_COMMAND) into the JS error. */
       unsigned long ssl_err = ERR_peek_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;
-        SSL_CTX_free(ssl_context);
         return NULL;
       }
       ERR_clear_error();
@@ -1592,38 +1496,31 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.secure_options) {
-    SSL_CTX_set_options(ssl_context, options.secure_options);
+    SSL_CTX_set_options(ssl_context.get(), options.secure_options);
   }
 
   if (options.crl && options.crl_count > 0) {
     /* Mirrors Node's SecureContext::AddCRL: each PEM CRL is added to the
      * context's OWN store (never the process-shared default root store) and
      * CRL checking is enabled for the whole chain. */
-    X509_STORE *crl_store = us_ssl_ctx_get_own_cert_store(ssl_context);
+    X509_STORE *crl_store = us_ssl_ctx_get_own_cert_store(ssl_context.get());
     if (!crl_store) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
     for (unsigned int i = 0; i < options.crl_count; i++) {
-      BIO *crl_bio = BIO_new_mem_buf(options.crl[i], -1);
+      us_bio_ptr crl_bio{BIO_new_mem_buf(options.crl[i], -1)};
       if (!crl_bio) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        SSL_CTX_free(ssl_context);
         return NULL;
       }
-      X509_CRL *crl = PEM_read_bio_X509_CRL(crl_bio, NULL, NULL, NULL);
-      BIO_free(crl_bio);
+      us_unique_ptr<X509_CRL, X509_CRL_free> crl{PEM_read_bio_X509_CRL(crl_bio.get(), NULL, NULL, NULL)};
       if (!crl) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        SSL_CTX_free(ssl_context);
         return NULL;
       }
-      int added = X509_STORE_add_crl(crl_store, crl);
-      X509_CRL_free(crl);
-      if (!added) {
+      if (!X509_STORE_add_crl(crl_store, crl.get())) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        SSL_CTX_free(ssl_context);
         return NULL;
       }
     }
@@ -1632,32 +1529,29 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.session_timeout > 0) {
-    SSL_CTX_set_timeout(ssl_context, options.session_timeout);
-    SSL_CTX_set_session_psk_dhe_timeout(ssl_context, options.session_timeout);
+    SSL_CTX_set_timeout(ssl_context.get(), options.session_timeout);
+    SSL_CTX_set_session_psk_dhe_timeout(ssl_context.get(), options.session_timeout);
   }
 
   if (options.allow_partial_trust_chain) {
     /* Mirrors Node's SecureContext::SetAllowPartialTrustChain, which also
      * flags only the context's own store. A store that cannot be prepared
      * fails context creation: the user explicitly asked for the option. */
-    X509_STORE *partial_store = us_ssl_ctx_get_own_cert_store(ssl_context);
+    X509_STORE *partial_store = us_ssl_ctx_get_own_cert_store(ssl_context.get());
     if (!partial_store) {
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
     X509_STORE_set_flags(partial_store, X509_V_FLAG_PARTIAL_CHAIN);
   }
 
-  if (options.sigalgs ? !SSL_CTX_set1_sigalgs_list(ssl_context, options.sigalgs)
-                      : !us_ssl_ctx_set_verify_signature_algorithms(ssl_context)) {
-    SSL_CTX_free(ssl_context);
+  if (options.sigalgs ? !SSL_CTX_set1_sigalgs_list(ssl_context.get(), options.sigalgs)
+                      : !us_ssl_ctx_set_verify_signature_algorithms(ssl_context.get())) {
     return NULL;
   }
 
   if (options.ecdh_curve) {
-    if (!SSL_CTX_set1_groups_list(ssl_context, options.ecdh_curve)) {
+    if (!SSL_CTX_set1_groups_list(ssl_context.get(), options.ecdh_curve)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE;
-      SSL_CTX_free(ssl_context);
       return NULL;
     }
   }
@@ -1666,14 +1560,14 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * does: for TLS 1.3 the resumable session only exists once the peer's
    * NewSessionTicket arrives, and BoringSSL only exposes it here. NO_INTERNAL
    * keeps BoringSSL from also caching it. */
-  SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT |
+  SSL_CTX_set_session_cache_mode(ssl_context.get(), SSL_SESS_CACHE_CLIENT |
                                                   SSL_SESS_CACHE_SERVER |
                                                   SSL_SESS_CACHE_NO_INTERNAL |
                                                   SSL_SESS_CACHE_NO_AUTO_CLEAR);
-  SSL_CTX_sess_set_new_cb(ssl_context, us_ssl_new_session_cb);
-  SSL_CTX_set_keylog_callback(ssl_context, us_ssl_keylog_cb);
-  SSL_CTX_set_cert_verify_callback(ssl_context, us_cert_verify_cb, NULL);
-  return ssl_context;
+  SSL_CTX_sess_set_new_cb(ssl_context.get(), us_ssl_new_session_cb);
+  SSL_CTX_set_keylog_callback(ssl_context.get(), us_ssl_keylog_cb);
+  SSL_CTX_set_cert_verify_callback(ssl_context.get(), us_cert_verify_cb, NULL);
+  return ssl_context.release();
 }
 
 /* Whether the context's store was configured from user CAs (ca / addCACert / pfx extras) rather than being the
@@ -1706,8 +1600,8 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded
  * key / certificate / extra-chain strings the regular key/cert/ca options can
  * consume. Returns 1 on success; the three out-strings are libc malloc'd (not
- * us_malloc) because the Rust caller releases them with libc free(). On
- * failure returns 0 and sets *err_reason to a static tag: "parse" (not
+ * us_malloc) because the Rust caller releases them with libc free(), also after
+ * a failure, which returns 0 and sets *err_reason to a static tag: "parse" (not
  * PKCS#12), "mac" (bad passphrase / corrupt), "key" (no private key),
  * "cert" (no certificate). */
 static int pem_from_bio(BIO *bio, char **out, size_t *out_len) {
@@ -1731,77 +1625,58 @@ int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
   *out_key = *out_cert = *out_ca = NULL;
   *out_key_len = *out_cert_len = *out_ca_len = 0;
   *err_reason = NULL;
-  int ok = 0;
-  EVP_PKEY *pkey = NULL;
-  X509 *cert = NULL;
-  STACK_OF(X509) *extra = NULL;
-  PKCS12 *p12 = NULL;
-  BIO *kb = NULL, *cb = NULL, *ab = NULL;
   if (len > INT_MAX) {
     /* BIO_new_mem_buf takes an int; a negative value would mean
      * "treat as a NUL-terminated string", silently misparsing the blob. */
     *err_reason = "parse";
     return 0;
   }
-  BIO *in = BIO_new_mem_buf(data, (int)len);
+  us_bio_ptr in{BIO_new_mem_buf(data, (int)len)};
   if (!in) {
     *err_reason = "parse";
     return 0;
   }
-  p12 = d2i_PKCS12_bio(in, NULL);
-  BIO_free(in);
+  us_unique_ptr<PKCS12, PKCS12_free> p12{d2i_PKCS12_bio(in.get(), NULL)};
   if (!p12) {
     *err_reason = "parse";
     ERR_clear_error();
     return 0;
   }
-  if (!PKCS12_parse(p12, pass ? pass : "", &pkey, &cert, &extra)) {
+  EVP_PKEY *parsed_pkey = NULL;
+  X509 *parsed_cert = NULL;
+  STACK_OF(X509) *parsed_extra = NULL;
+  if (!PKCS12_parse(p12.get(), pass ? pass : "", &parsed_pkey, &parsed_cert, &parsed_extra)) {
     *err_reason = "mac";
     ERR_clear_error();
-    goto done;
+    return 0;
   }
-  if (!pkey) {
-    *err_reason = "key";
-    goto done;
+  us_unique_ptr<EVP_PKEY, EVP_PKEY_free> pkey{parsed_pkey};
+  us_x509_ptr cert{parsed_cert};
+  us_x509_stack_ptr extra{parsed_extra};
+  if (!pkey || !cert) {
+    *err_reason = pkey ? "cert" : "key";
+    ERR_clear_error();
+    return 0;
   }
-  if (!cert) {
-    *err_reason = "cert";
-    goto done;
-  }
-  kb = BIO_new(BIO_s_mem());
-  cb = BIO_new(BIO_s_mem());
-  if (!kb || !cb || !PEM_write_bio_PrivateKey(kb, pkey, NULL, NULL, 0, NULL, NULL) ||
-      !PEM_write_bio_X509(cb, cert) || !pem_from_bio(kb, out_key, out_key_len) ||
-      !pem_from_bio(cb, out_cert, out_cert_len)) {
+  us_bio_ptr kb{BIO_new(BIO_s_mem())};
+  us_bio_ptr cb{BIO_new(BIO_s_mem())};
+  if (!kb || !cb || !PEM_write_bio_PrivateKey(kb.get(), pkey.get(), NULL, NULL, 0, NULL, NULL) ||
+      !PEM_write_bio_X509(cb.get(), cert.get()) || !pem_from_bio(kb.get(), out_key, out_key_len) ||
+      !pem_from_bio(cb.get(), out_cert, out_cert_len)) {
     *err_reason = "parse";
-    goto done;
+    ERR_clear_error();
+    return 0;
   }
-  if (extra && sk_X509_num(extra) > 0) {
-    ab = BIO_new(BIO_s_mem());
-    if (ab) {
-      for (size_t i = 0; i < sk_X509_num(extra); i++) {
-        PEM_write_bio_X509(ab, sk_X509_value(extra, i));
+  if (extra && sk_X509_num(extra.get()) > 0) {
+    if (us_bio_ptr ab{BIO_new(BIO_s_mem())}) {
+      for (size_t i = 0; i < sk_X509_num(extra.get()); i++) {
+        PEM_write_bio_X509(ab.get(), sk_X509_value(extra.get(), i));
       }
-      pem_from_bio(ab, out_ca, out_ca_len);
+      pem_from_bio(ab.get(), out_ca, out_ca_len);
     }
   }
-  ok = 1;
-done:
-  if (!ok) {
-    free(*out_key);
-    free(*out_cert);
-    free(*out_ca);
-    *out_key = *out_cert = *out_ca = NULL;
-  }
-  if (kb) BIO_free(kb);
-  if (cb) BIO_free(cb);
-  if (ab) BIO_free(ab);
-  if (pkey) EVP_PKEY_free(pkey);
-  if (cert) X509_free(cert);
-  if (extra) sk_X509_pop_free(extra, X509_free);
-  if (p12) PKCS12_free(p12);
   ERR_clear_error();
-  return ok;
+  return 1;
 }
 
 SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
@@ -1889,9 +1764,9 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   SSL *ssl = us_ssl_new(ctx, is_client);
-  SSL_set_bio(ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
-  BIO_up_ref(loop_ssl_data->shared_rbio);
-  BIO_up_ref(loop_ssl_data->shared_wbio);
+  SSL_set_bio(ssl, loop_ssl_data->shared_rbio.get(), loop_ssl_data->shared_wbio.get());
+  BIO_up_ref(loop_ssl_data->shared_rbio.get());
+  BIO_up_ref(loop_ssl_data->shared_wbio.get());
   if (is_client && sni) SSL_set_tlsext_host_name(ssl, sni);
   /* sni_cb recovers the names per-SSL — never via the shared SSL_CTX. */
   if (!is_client && listener) us_ssl_rare_ensure(ssl)->server_names = us_server_names_ref(listener);
@@ -1982,9 +1857,7 @@ const char *us_X509_error_code(long err) {
 static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
   if (!ssl) return def;
   long err = def;
-  X509 *peer_cert = SSL_get_peer_certificate(ssl);
-  if (peer_cert) {
-    X509_free(peer_cert);
+  if (us_x509_ptr{SSL_get_peer_certificate(ssl)}) {
     err = SSL_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
@@ -2009,7 +1882,7 @@ struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
   }
   const char *reason = X509_verify_cert_error_string(x509_verify_error);
   const char *code = us_X509_error_code(x509_verify_error);
-  return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
+  return (struct us_bun_verify_error_t){.error = (int)x509_verify_error, .code = code, .reason = reason};
 }
 
 /* A sent FIN, a sent close_notify or a fatal error says nothing about the
@@ -2663,7 +2536,7 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
   if (read) {
-    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
     if (!s || ssl_gone(s)) return NULL;
   }
   s->ssl_fatal_error = 1;
@@ -2681,11 +2554,9 @@ static int ssl_hold_input(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_
   struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
   unsigned int held = rare->sni_held ? rare->sni_held->length : 0;
   if (length > US_SSL_SNI_HELD_MAX - held) return 0;
-  struct us_ssl_held_t *grown = us_realloc(rare->sni_held, sizeof(*grown) + held + length);
-  if (!grown) return 0;
-  memcpy(grown->data + held, loop_ssl_data->ssl_read_input + loop_ssl_data->ssl_read_input_offset, length);
-  grown->length = held + length;
-  rare->sni_held = grown;
+  if (!us_grow(rare->sni_held, sizeof(struct us_ssl_held_t) + held + length)) return 0;
+  memcpy(rare->sni_held->data + held, loop_ssl_data->ssl_read_input + loop_ssl_data->ssl_read_input_offset, length);
+  rare->sni_held->length = held + length;
   loop_ssl_data->ssl_read_input_length = 0;
   return 1;
 }
@@ -2751,7 +2622,7 @@ restart:
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
-                             loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
+                             loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
     if (hs_batching) {
@@ -2808,7 +2679,7 @@ restart:
           ssl_flush_pending_events(s);
           if (ssl_gone(s)) return NULL;
           if (read) {
-            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
             if (!s || ssl_gone(s)) return NULL;
           }
           /* close_notify only closed the PEER's write side; when it rides in
@@ -2886,7 +2757,7 @@ restart:
          * clobber pending ciphertext. */
         ssl_flush_pending_events(s);
         if (ssl_gone(s)) return NULL;
-        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
         if (!s || ssl_gone(s)) return NULL;
         break;
       }
@@ -2911,7 +2782,7 @@ restart:
        * JS the session handler runs. */
       ssl_flush_pending_events(s);
       if (ssl_gone(s)) return NULL;
-      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;
@@ -2965,7 +2836,7 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
  * userspace. */
 unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
   if (!s->ssl_spilled || ssl_sent_close_notify(s)) return 0;
-  struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill;
+  struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill.get();
   return spill->length - spill->offset;
 }
 
@@ -3182,36 +3053,32 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
   ssl_send_fin(s);
 }
 
-/* Resume a handshake suspended by an async SNICallback. `ctx` (may be NULL =
+/* Resume a handshake suspended by an async SNICallback. `owned_ctx` (may be NULL =
  * fall through to the default context) carries a reference that this call
  * consumes. `error` != 0 aborts the handshake instead. No-op when the socket
  * already closed/detached (the pending JS resolution outlived it). */
-void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int error) {
+void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *owned_ctx, int error) {
+  us_ssl_ctx_ptr ctx{owned_ctx};
   if (!s || us_socket_is_closed(s) || !s->ssl || !s_ssl(s)) {
-    if (ctx) SSL_CTX_free(ctx);
     return;
   }
-  if (!us_ssl_sni_resolve(s_ssl(s), ctx, error)) return;
+  if (!us_ssl_sni_resolve(s_ssl(s), ctx.release(), error)) return;
   struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
   /* Take it before re-driving the handshake, which can free the SSL and `rare` with it. */
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
-  struct us_ssl_held_t *held = rare ? rare->sni_held : NULL;
-  if (held) rare->sni_held = NULL;
+  auto held = std::move(rare->sni_held);
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
   ssl_update_handshake(s, 1);
   /* If the handshake just failed, close here. No read or writable event is coming to do it. */
   ssl_close_if_fatal(s);
-  if (held) {
-    if (!ssl_gone(s) && s->ssl_handshake_state == HANDSHAKE_PENDING) {
-      /* The raw half of an upgradeTLS() pair saw these bytes when they arrived. */
-      unsigned char raw_tap = s->ssl_raw_tap;
-      s->ssl_raw_tap = 0;
-      struct us_socket_t *fed = us_internal_ssl_on_data(s, held->data, (int)held->length);
-      if (fed && !ssl_gone(fed)) fed->ssl_raw_tap = raw_tap;
-      /* The read window must not outlive `held`. */
-      loop_ssl_data->ssl_read_input_length = 0;
-    }
-    us_free(held);
+  if (held && !ssl_gone(s) && s->ssl_handshake_state == HANDSHAKE_PENDING) {
+    /* The raw half of an upgradeTLS() pair saw these bytes when they arrived. */
+    unsigned char raw_tap = s->ssl_raw_tap;
+    s->ssl_raw_tap = 0;
+    struct us_socket_t *fed = us_internal_ssl_on_data(s, held->data, (int)held->length);
+    if (fed && !ssl_gone(fed)) fed->ssl_raw_tap = raw_tap;
+    /* The read window must not outlive `held`. */
+    loop_ssl_data->ssl_read_input_length = 0;
   }
 }
 
@@ -3258,53 +3125,66 @@ void us_socket_start_tls_handshake(struct us_socket_t *s) {
 
 /* ── SNI on listen sockets ───────────────────────────────────────────────── */
 
-static void sni_node_destructor(void *user) {
-  struct sni_node_t *node = (struct sni_node_t *)user;
-  if (!node) return;
-  SSL_CTX_free(node->ctx);
-  us_free(node);
+struct us_server_name_t {
+  us_ssl_ctx_ptr ctx;
+  /* See us_listen_socket_add_server_name. */
+  int own_client_auth;
+  explicit operator bool() const { return ctx != NULL; }
+};
+
+struct us_sni_tree_t : sni_node<struct us_server_name_t> {};
+
+struct us_sni_tree_t *sni_new() {
+  return new us_sni_tree_t;
+}
+
+void sni_free(struct us_sni_tree_t *sni) {
+  delete sni;
+}
+
+void sni_add(struct us_sni_tree_t *sni, const char *hostname, SSL_CTX *owned_ctx) {
+  sni->add(hostname, {us_ssl_ctx_ptr{owned_ctx}, 0});
+}
+
+SSL_CTX *sni_find(struct us_sni_tree_t *sni, const char *hostname) {
+  const struct us_server_name_t *name = sni->find(hostname);
+  return name ? name->ctx.get() : NULL;
 }
 
 /* A ClientHello can arrive after its listen socket closed: one reference for the listen socket, one per accepted SSL. */
-struct us_server_names_t {
+struct us_server_names_t : us_allocated_t {
   unsigned int refs;
-  /* hostname -> sni_node_t. NULL until the first name is added. */
-  void *tree;
+  /* NULL until the first name is added. */
+  std::unique_ptr<struct us_sni_tree_t> tree;
   /* See us_listen_socket_set_alpn. NULL leaves the selection to us_dispatch_alpn_select. */
-  unsigned char *alpn;
+  us_unique_ptr<unsigned char, us_free> alpn;
   unsigned int alpn_length;
   int alpn_required;
 };
 
 static struct us_server_names_t *us_listen_socket_server_names(struct us_listen_socket_t *ls) {
   if (!ls->server_names) {
-    struct us_server_names_t *names = us_calloc(1, sizeof(*names));
-    if (!names) Bun__outOfMemory();
+    struct us_server_names_t *names = new us_server_names_t();
     names->refs = 1;
     ls->server_names = names;
   }
   return ls->server_names;
 }
 
-static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *ls) {
+static us_server_names_ptr us_server_names_ref(struct us_listen_socket_t *ls) {
   struct us_server_names_t *names = us_listen_socket_server_names(ls);
   names->refs++;
-  return names;
+  return us_server_names_ptr{names};
 }
 
 static void us_server_names_unref(struct us_server_names_t *names) {
-  if (--names->refs) return;
-  if (names->tree) sni_free(names->tree, sni_node_destructor);
-  us_free(names->alpn);
-  us_free(names);
+  if (!--names->refs) delete names;
 }
 
 void us_listen_socket_set_alpn(struct us_listen_socket_t *ls, const unsigned char *protocols, unsigned int length, int required) {
   struct us_server_names_t *names = us_listen_socket_server_names(ls);
-  us_free(names->alpn);
-  names->alpn = us_malloc(length);
-  if (!names->alpn) Bun__outOfMemory();
-  memcpy(names->alpn, protocols, length);
+  names->alpn.reset((unsigned char *)us_xmalloc(length));
+  memcpy(names->alpn.get(), protocols, length);
   names->alpn_length = length;
   names->alpn_required = required;
 }
@@ -3314,23 +3194,23 @@ static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char 
                              const unsigned char *in, unsigned int inlen, void *arg) {
   (void)arg;
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
-  struct us_server_names_t *names = rare ? rare->server_names : NULL;
+  struct us_server_names_t *names = rare ? rare->server_names.get() : NULL;
   if (!names || !names->alpn) return us_dispatch_alpn_select(ssl, out, outlen, in, inlen);
-  if (SSL_select_next_proto((unsigned char **)out, outlen, names->alpn, names->alpn_length, in, inlen) == OPENSSL_NPN_NEGOTIATED) {
+  if (SSL_select_next_proto((unsigned char **)out, outlen, names->alpn.get(), names->alpn_length, in, inlen) == OPENSSL_NPN_NEGOTIATED) {
     return SSL_TLSEXT_ERR_OK;
   }
   return names->alpn_required ? SSL_TLSEXT_ERR_ALERT_FATAL : SSL_TLSEXT_ERR_NOACK;
 }
 
-static struct sni_node_t *us_server_names_find(struct us_server_names_t *names, const char *hostname) {
+static const struct us_server_name_t *us_server_names_find(struct us_server_names_t *names, const char *hostname) {
   if (!names || !names->tree) return NULL;
-  return (struct sni_node_t *)sni_find(names->tree, hostname);
+  return names->tree->find(hostname);
 }
 
 /* A resumed handshake skips client authentication, so a session of any other context must not resume under this one. */
 void us_ssl_ctx_set_own_session_id_context(SSL_CTX *ctx) {
-  static _Atomic uint32_t counter = 0;
-  uint32_t sid = atomic_fetch_add(&counter, 1) + 1;
+  static std::atomic<uint32_t> counter = 0;
+  uint32_t sid = ++counter;
   SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
 }
 
@@ -3354,10 +3234,9 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
     rare->has_key_cert = 0;
     SSL_set0_client_CAs(ssl, NULL);
     /* SSL_set_SSL_CTX does nothing for the SSL_CTX the SSL is already on, so move it off first. */
-    SSL_CTX *blank = SSL_CTX_new(TLS_method());
+    us_ssl_ctx_ptr blank{SSL_CTX_new(TLS_method())};
     if (!blank) Bun__outOfMemory();
-    SSL_set_SSL_CTX(ssl, blank);
-    SSL_CTX_free(blank);
+    SSL_set_SSL_CTX(ssl, blank.get());
   }
   SSL_set_SSL_CTX(ssl, ctx);
   size_t length;
@@ -3421,11 +3300,10 @@ static enum ssl_select_cert_result_t ssl_refuse_server_name(struct us_socket_t *
 /* The SNI stage of us_select_cert_cb: asks the JS resolver (a user SNICallback) for a context. A resolver that
  * can't answer synchronously suspends the handshake (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE)
  * until us_socket_sni_resolve() resumes it. */
-/* Takes the reference `ctx` carries. With no answer, sni_cb serves the listener's entry for the name. */
-static enum ssl_select_cert_result_t ssl_apply_resolved_ctx(SSL *ssl, struct us_ssl_rare_t *rare, SSL_CTX *ctx) {
+/* With no answer, sni_cb serves the listener's entry for the name. */
+static enum ssl_select_cert_result_t ssl_apply_resolved_ctx(SSL *ssl, struct us_ssl_rare_t *rare, us_ssl_ctx_ptr ctx) {
   if (ctx) {
-    us_ssl_apply_selected_ctx(ssl, ctx);
-    SSL_CTX_free(ctx);
+    us_ssl_apply_selected_ctx(ssl, ctx.get());
   } else if (!rare->has_key_cert) {
     rare->sni_resolver = 0;
   }
@@ -3439,9 +3317,7 @@ static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *
   /* A previous suspension being resumed: consume the stored result. */
   if (rare->sni_pending == US_SNI_RESOLVED) {
     rare->sni_pending = US_SNI_NONE;
-    SSL_CTX *resolved_ctx = rare->sni_resolved_ctx;
-    rare->sni_resolved_ctx = NULL;
-    return ssl_apply_resolved_ctx(ssl, rare, resolved_ctx);
+    return ssl_apply_resolved_ctx(ssl, rare, std::move(rare->sni_resolved_ctx));
   }
   if (rare->sni_pending == US_SNI_REFUSED) {
     return ssl_refuse_server_name(s, rare);
@@ -3463,7 +3339,7 @@ static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
-  SSL_CTX *dyn = us_dispatch_server_name(rare->bun_socket, hostname, &abort_handshake);
+  us_ssl_ctx_ptr dyn{us_dispatch_server_name(rare->bun_socket, hostname, &abort_handshake)};
   us_internal_ssl_loop_state_restore(saved_loop_state);
 
   if (abort_handshake == 1) {
@@ -3474,7 +3350,7 @@ static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *
     rare->sni_pending = US_SNI_WAITING;
     return ssl_select_cert_retry;
   }
-  return ssl_apply_resolved_ctx(ssl, rare, dyn);
+  return ssl_apply_resolved_ctx(ssl, rare, std::move(dyn));
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg);
@@ -3532,7 +3408,6 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (result == ssl_select_cert_success && rare && rare->alpn_offer_wanted) {
     sni_cb(ssl, NULL, NULL);
     /* BoringSSL calls sni_cb again later. Dropping the names keeps that call from undoing a us_ssl_set_key_cert. */
-    if (rare->server_names) us_server_names_unref(rare->server_names);
     rare->server_names = NULL;
     us_select_cert_alpn(hello, rare);
   }
@@ -3545,7 +3420,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   /* The names are per-SSL (set at accept), not the CTX-level arg — the
    * SSL_CTX is shared and may outlive any one listener. */
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
-  struct us_server_names_t *names = rare ? rare->server_names : NULL;
+  struct us_server_names_t *names = rare ? rare->server_names.get() : NULL;
   if (!names) return SSL_TLSEXT_ERR_OK;
   if (rare->sni_resolver) {
     /* The resolver made its choice in us_select_cert_cb. */
@@ -3553,11 +3428,11 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
   if (hostname && hostname[0]) {
-    struct sni_node_t *node = us_server_names_find(names, hostname);
+    const struct us_server_name_t *node = us_server_names_find(names, hostname);
     if (node) {
-      us_ssl_apply_selected_ctx(ssl, node->ctx);
+      us_ssl_apply_selected_ctx(ssl, node->ctx.get());
       if (node->own_client_auth) {
-        SSL_set_verify(ssl, SSL_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(node->ctx), us_verify_callback);
+        SSL_set_verify(ssl, SSL_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(node->ctx.get()), us_verify_callback);
       }
     }
   }
@@ -3572,18 +3447,14 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
   struct us_server_names_t *names = us_listen_socket_server_names(ls);
   if (!names->tree) {
-    names->tree = sni_new();
+    names->tree = std::make_unique<us_sni_tree_t>();
     /* Idempotent across listeners sharing this SSL_CTX — the callback reads
      * the names off the SSL, not the arg. */
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
-  struct sni_node_t *node = us_xmalloc(sizeof(struct sni_node_t));
-  node->ctx = ctx;
-  node->own_client_auth = own_client_auth;
   SSL_CTX_up_ref(ctx);
-
-  sni_node_destructor(sni_add(names->tree, hostname_pattern, node));
+  names->tree->add(hostname_pattern, {us_ssl_ctx_ptr{ctx}, own_client_auth});
 }
 
 void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
@@ -3608,13 +3479,13 @@ void us_ssl_on_server_name(SSL *ssl) {
   SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
 }
 
-/* Takes the reference `ctx` carries (NULL: nothing selected). Returns 1 if the handshake waited for this answer: the caller then drives it again. */
-int us_ssl_sni_resolve(SSL *ssl, SSL_CTX *ctx, int error) {
+/* Takes the reference `owned_ctx` carries (NULL: nothing selected). Returns 1 if the handshake waited for this answer: the caller then drives it again. */
+int us_ssl_sni_resolve(SSL *ssl, SSL_CTX *owned_ctx, int error) {
+  us_ssl_ctx_ptr ctx{owned_ctx};
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
-  if (!rare || rare->sni_pending != US_SNI_WAITING || error) SSL_CTX_free(ctx);
   if (!rare || rare->sni_pending != US_SNI_WAITING) return 0;
   rare->sni_pending = error ? US_SNI_REFUSED : US_SNI_RESOLVED;
-  if (!error) rare->sni_resolved_ctx = ctx;
+  if (!error) rare->sni_resolved_ctx = std::move(ctx);
   return 1;
 }
 
@@ -3676,6 +3547,8 @@ void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
     us_server_names_unref(ls->server_names);
     ls->server_names = NULL;
   }
+}
+
 }
 
 #endif

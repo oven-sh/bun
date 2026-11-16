@@ -101,8 +101,8 @@ struct us_quic_socket_context_s {
     us_quic_driver_t *driver;
     lsquic_engine_t *engine;
     SSL_CTX *ssl_ctx;
-    /* serverName -> SSL_CTX*, in the tree TCP listeners use (crypto/sni_tree.cpp). */
-    void *sni;
+    /* serverName -> SSL_CTX*, in the tree TCP listeners use (crypto/sni_tree.h). */
+    struct us_sni_tree_t *sni;
     int closing;
     /* us_quic_socket_context_shutdown ran while the driver was processing. */
     int shutdown_pending;
@@ -582,7 +582,7 @@ static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local
 static SSL_CTX *us_quic_lookup_cert(void *cert_ctx, const struct sockaddr *local, const char *sni) {
     (void) local;
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) cert_ctx;
-    SSL_CTX *match = sni && ctx->sni ? (SSL_CTX *) sni_find(ctx->sni, sni) : NULL;
+    SSL_CTX *match = sni && ctx->sni ? sni_find(ctx->sni, sni) : NULL;
     return match ? match : ctx->ssl_ctx;
 }
 
@@ -1081,10 +1081,6 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     return us_quic_context_create(loop, ssl, ext_size, LSENG_HTTP_SERVER, &settings);
 }
 
-static void us_quic_sni_free(void *ssl_ctx) {
-    SSL_CTX_free((SSL_CTX *) ssl_ctx);
-}
-
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options)
 {
@@ -1095,7 +1091,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
         SSL_CTX_get_verify_callback(ssl));
     if (!ctx->sni) ctx->sni = sni_new();
-    SSL_CTX_free((SSL_CTX *) sni_add(ctx->sni, hostname, ssl));
+    sni_add(ctx->sni, hostname, ssl);
     return 0;
 }
 
@@ -1129,7 +1125,7 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     ctx->on_released = NULL;
     us_quic_driver_free(ctx->driver);
     SSL_CTX_free(ctx->ssl_ctx);
-    if (ctx->sni) sni_free(ctx->sni, us_quic_sni_free);
+    sni_free(ctx->sni);
     us_free(ctx);
 }
 

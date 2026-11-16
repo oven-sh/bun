@@ -16,6 +16,9 @@ template <auto free_fn> struct us_deleter {
 };
 template <typename T, auto free_fn> using us_unique_ptr = std::unique_ptr<T, us_deleter<free_fn>>;
 
+inline void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
+using us_x509_stack_ptr = us_unique_ptr<STACK_OF(X509), us_x509_stack_free>;
+
 STACK_OF(X509) *us_get_root_extra_cert_instances();
 X509_LAZY_CERT_SET *us_get_bundled_root_cert_set();
 

@@ -4,19 +4,17 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "./harness/commands";
+import { built, limitWithASAN, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
-// The report of an error shows lines of the source and a stack, and an executable has other paths.
-// Of a call in the text of its own library plain Bun quotes nothing: "5 is not a function". A compiled program quotes it: "process.on is not a function. (In 'process.on()', 'process.on' is 5)".
+// The report of an error shows lines of the source and a stack, and an executable has other paths. The line that names the error stays.
 const withoutPlaces = (shown: string) =>
   shown
     .replaceAll("\r\n", "\n")
     .split("\n")
     .filter(line => line !== "" && !/^\s*\d+ \| |^\s*\^+$|^\s+at |^Bun v/.test(line))
-    .map(line => line.replace(/^TypeError: .*$/, "TypeError"))
     .join("\n");
 
 async function shownInTerminal(cmd: string[], cwd: string) {
@@ -26,6 +24,11 @@ async function shownInTerminal(cmd: string[], cwd: string) {
     cmd,
     cwd,
     env,
+    // A program that waits for a resize has no limit of its own: it waits for this process, which has the other programs to serve.
+    // A run that outlasts the longer limit of a command is ended, and its signal fails the test. A test that only timed out would
+    // leave the program running.
+    timeout: limitWithASAN,
+    killSignal: "SIGKILL",
     terminal: {
       cols: 80,
       rows: 24,
@@ -41,7 +44,8 @@ async function shownInTerminal(cmd: string[], cwd: string) {
   return { shown: withoutPlaces(shown), exitCode, signal: child.signalCode };
 }
 
-// `underBunRun`: what `bun run` shows where a compiled program is declared to differ (docs/compiler/compatibility.mdx).
+// `underBunRun`: what `bun run` shows where it is not what the compiled program shows. One difference is declared
+// (docs/compiler/compatibility.mdx), the other is the text of a message.
 type Shown = { shown: string; exitCode?: number };
 const programs: Record<string, Shown & { source: string; underBunRun?: Shown }> = {
   "a function that the program has put under process.on is called": {
@@ -73,7 +77,8 @@ process.stdout.write("written\\n");
 };
 process.stderr.write("written\\n");
 `,
-    shown: "TypeError",
+    shown:
+      "TypeError: Cannot assign to %EventEmitter%.prototype.on because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)",
     exitCode: 1,
     underBunRun: { shown: "SIGWINCH function\nwritten" },
   },
@@ -92,13 +97,15 @@ console.log(notes.join("\\n"));
 `,
     shown: "read true\ncount 1",
   },
+  // Of a call in the text of its own library plain Bun quotes nothing. A compiled program quotes the call.
   "what is no function under process.on is reported as a TypeError, and the stream is undefined from then on": {
     source: `process.on = 5 as never;
 const stream = process.stdout;
 console.log(typeof stream, process.listenerCount("SIGWINCH"));
 `,
-    shown: "TypeError\nundefined 0",
+    shown: "TypeError: process.on is not a function. (In 'process.on()', 'process.on' is 5)\nundefined 0",
     exitCode: 1,
+    underBunRun: { shown: "TypeError: 5 is not a function\nundefined 0", exitCode: 1 },
   },
   "a listener for newListener is told, in front of the count": {
     source: `const notes: string[] = [];
@@ -133,7 +140,7 @@ process.on("SIGWINCH", () => {
   console.log(before, process.stdout.columns + "x" + process.stdout.rows);
   process.exit(0);
 });
-setTimeout(() => process.exit(2), 30_000);
+setInterval(() => {}, 1000);
 console.log("ready");
 `,
     shown: "ready\n80x24 90x20",
@@ -143,7 +150,7 @@ console.log("ready");
   console.log("resize", process.stdout.columns + "x" + process.stdout.rows);
   process.exit(0);
 });
-setTimeout(() => process.exit(2), 30_000);
+setInterval(() => {}, 1000);
 console.log("ready");
 `,
     shown: "ready\nresize 90x20",
@@ -152,20 +159,21 @@ console.log("ready");
 
 describe.skipIf(isWindows)("the listener that a standard stream over a terminal lays for SIGWINCH", () => {
   for (const [name, { source, shown, exitCode = 0, underBunRun = { shown, exitCode } }] of Object.entries(programs)) {
-    test(
+    // Each program has its own folder, build and terminals, so the programs run beside one another on every lane.
+    test.concurrent(
       name,
       () =>
         slot(async () => {
           using dir = tempDir("aot-listener-for-size", { "app.ts": source });
           const folder = String(dir);
-          built(await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env));
-          const compiled = await shownInTerminal([join(folder, "app")], folder);
-          expect(compiled).toEqual({ shown, exitCode, signal: null });
-          expect(await shownInTerminal([bunExe(), "app.ts"], folder)).toEqual({
-            exitCode: 0,
-            ...underBunRun,
-            signal: null,
-          });
+          // `bun run` asks nothing of the build, so it runs beside it.
+          const [build, plain] = await Promise.all([
+            spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env),
+            shownInTerminal([bunExe(), "app.ts"], folder),
+          ]);
+          expect(plain).toEqual({ exitCode: 0, ...underBunRun, signal: null });
+          built(build);
+          expect(await shownInTerminal([join(folder, "app")], folder)).toEqual({ shown, exitCode, signal: null });
         }),
       300_000,
     );

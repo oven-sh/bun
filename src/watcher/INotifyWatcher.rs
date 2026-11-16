@@ -161,8 +161,6 @@ impl INotifyWatcher {
         use bun_sys::linux as system;
         use bun_sys::{E, get_errno};
         loop {
-            Futex::wait_forever(&self.watch_count, 0);
-
             let rc = system::read(self.fd.fd().native(), bytes);
             let errno = get_errno(rc);
             match errno {
@@ -255,6 +253,9 @@ impl Watcher {
 }
 
 pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
+    while this.platform.watch_count.load(Ordering::Acquire) == 0 {
+        Futex::wait_forever(&this.platform.watch_count, 0);
+    }
     let mut bytes = vec![0u8; EVENTLIST_BYTES_SIZE].into_boxed_slice();
     let mut eventlist_index_scratch = Vec::new();
     while this.running.load() {

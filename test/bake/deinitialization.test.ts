@@ -276,15 +276,16 @@ test.skipIf(isWindows)("a dev server that fails to start leaves no descriptor op
 });
 
 test.concurrent.each([
-  ["before it has bundled anything", false],
-  ["after it has bundled a page", true],
-])("a dev server that is stopped %s leaves no descriptor open", async (_, bundle) => {
+  ["before it has bundled anything", false, false],
+  ["after it has bundled a page", true, false],
+  ...(isLinux ? [["in a directory that can't be read", false, true]] : []),
+])("a dev server that is stopped %s leaves no descriptor open", async (_, bundle, unreadable) => {
   using dir = tempDir("bake-stopped-descriptors", {
     "index.html": `<!DOCTYPE html><script type="module" src="./index.ts"></script>`,
     "index.ts": `console.log(1);`,
     "fixture.ts": `
       import { dlopen } from "bun:ffi";
-      import { readdirSync } from "node:fs";
+      import { chmodSync, readdirSync } from "node:fs";
       import html from "./index.html";
 
       let openDescriptors = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
@@ -306,13 +307,16 @@ test.concurrent.each([
       }
       await startAndStop();
       Bun.gc(true);
-      // A watcher is one descriptor, or two handles.
-      const limit = openDescriptors() + (process.platform === "win32" ? 16 : 8);
-      for (let i = 0; i < 16; i++) await startAndStop();
+      // On Windows, threads that start later have handles too.
+      const count = process.platform === "win32" ? 32 : 16;
+      const limit = openDescriptors() + count / 2;
+      if (${unreadable}) chmodSync(".", 0o300);
+      for (let i = 0; i < count; i++) await startAndStop();
       for (const deadline = Date.now() + 2000; openDescriptors() > limit && Date.now() < deadline; ) {
         Bun.gc(true);
         await Bun.sleep(1);
       }
+      if (${unreadable}) chmodSync(".", 0o700);
       console.log(openDescriptors() > limit ? "left open" : "closed");
     `,
   });

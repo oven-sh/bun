@@ -39,6 +39,7 @@
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
 #include "JSValueInWrappedObject.h"
+#include "headers-handwritten.h"
 #include <span>
 #include <variant>
 
@@ -47,61 +48,13 @@ class ArgList;
 class Identifier;
 }
 
-extern "C" void Bun__WebSocket__freeSSLConfig(void* sslConfig);
+BUN_DECLARE_FFI_DELETER(WebSocketSSLConfig, Bun__WebSocket__freeSSLConfig);
 
 namespace WebCore {
 
-// Move-only owning handle for the natively heap-allocated SSLConfig returned by
-// Bun__WebSocket__parseSSLConfig. The SSLConfig holds duped cert/key/CA
-// strings, so every exception / early-return path between parsing and the
-// upgrade client taking ownership must free it. Wrapping the raw `void*`
-// in this RAII type lets normal C++ destruction handle all of those paths
-// without ad-hoc scope guards or manual frees at each call site.
-class WebSocketSSLConfigPtr {
-    WTF_MAKE_NONCOPYABLE(WebSocketSSLConfigPtr);
-
-public:
-    WebSocketSSLConfigPtr() = default;
-    explicit WebSocketSSLConfigPtr(void* ptr)
-        : m_ptr(ptr)
-    {
-    }
-    WebSocketSSLConfigPtr(WebSocketSSLConfigPtr&& other)
-        : m_ptr(std::exchange(other.m_ptr, nullptr))
-    {
-    }
-    WebSocketSSLConfigPtr& operator=(WebSocketSSLConfigPtr&& other)
-    {
-        if (this != &other) {
-            reset();
-            m_ptr = std::exchange(other.m_ptr, nullptr);
-        }
-        return *this;
-    }
-    ~WebSocketSSLConfigPtr() { reset(); }
-
-    explicit operator bool() const { return m_ptr != nullptr; }
-
-    // Transfer ownership out to the upgrade client; after this the
-    // destructor is a no-op.
-    void* release() { return std::exchange(m_ptr, nullptr); }
-    const void* get() const { return m_ptr; }
-
-private:
-    void reset()
-    {
-        if (m_ptr) {
-            Bun__WebSocket__freeSSLConfig(m_ptr);
-            m_ptr = nullptr;
-        }
-    }
-
-    void* m_ptr { nullptr };
-};
-
 // A parsed `tls` or `proxy.tls` option.
 struct WebSocketTLSOptions {
-    WebSocketSSLConfigPtr sslConfig;
+    std::unique_ptr<WebSocketSSLConfig> sslConfig;
     std::optional<bool> rejectUnauthorized;
     // create()'s caller stores this on the wrapper. Until then the JS options object keeps it alive.
     JSC::JSValue checkServerIdentity;

@@ -184,7 +184,7 @@ static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocket
     if (rejectUnauthorizedValue.isBoolean())
         result.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
 
-    result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
+    result.sslConfig.reset(Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)));
     RETURN_IF_EXCEPTION(throwScope, );
 
     // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.

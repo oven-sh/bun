@@ -11,37 +11,21 @@ class JSHTTPParser;
 
 // helper class for the Parser
 struct StringPtr {
-    StringPtr()
-    {
-        m_onHeap = false;
-        reset();
-    }
-
-    ~StringPtr()
-    {
-        reset();
-    }
-
     // If str_ does not point to a heap string yet, this function makes it do
     // so. This is called at the end of each http_parser_execute() so as not
     // to leak references. See issue #2438 and test-http-parser-bad-ref.js.
     void save()
     {
-        if (!m_onHeap && m_size > 0) {
-            char* s = new char[m_size];
-            memcpy(s, m_str, m_size);
-            m_str = s;
-            m_onHeap = true;
+        if (!m_heap && m_size > 0) {
+            m_heap = std::make_unique_for_overwrite<char[]>(m_size);
+            memcpy(m_heap.get(), m_str, m_size);
+            m_str = m_heap.get();
         }
     }
 
     void reset()
     {
-        if (m_onHeap) {
-            delete[] m_str;
-            m_onHeap = false;
-        }
-
+        m_heap = nullptr;
         m_str = nullptr;
         m_size = 0;
     }
@@ -50,19 +34,15 @@ struct StringPtr {
     {
         if (m_str == nullptr) {
             m_str = str;
-        } else if (m_onHeap || m_str + m_size != str) {
+        } else if (m_heap || m_str + m_size != str) {
             // Non-consecutive input, make a copy on the heap.
             // TODO(bnoordhuis) Use slab allocation, O(n) allocs is bad.
-            char* s = new char[m_size + size];
-            memcpy(s, m_str, m_size);
-            memcpy(s + m_size, str, size);
+            auto s = std::make_unique_for_overwrite<char[]>(m_size + size);
+            memcpy(s.get(), m_str, m_size);
+            memcpy(s.get() + m_size, str, size);
 
-            if (m_onHeap)
-                delete[] m_str;
-            else
-                m_onHeap = true;
-
-            m_str = s;
+            m_heap = WTF::move(s);
+            m_str = m_heap.get();
         }
         m_size += size;
     }
@@ -92,9 +72,10 @@ struct StringPtr {
         return toString(globalObject);
     }
 
-    const char* m_str;
-    bool m_onHeap;
-    size_t m_size;
+    // Points into m_heap, or into the bytes being parsed.
+    const char* m_str { nullptr };
+    std::unique_ptr<char[]> m_heap;
+    size_t m_size { 0 };
 };
 
 #define HTTP_BOTH 0

@@ -2754,8 +2754,7 @@ bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    return headers;
+    return &WebCore::FetchHeaders::create().leakRef();
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
 {
@@ -2794,17 +2793,14 @@ static std::optional<WebCore::FetchHeaders*> tryCreateFetchHeadersFromCompiledRe
         return nullptr;
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto headers = WebCore::FetchHeaders::create();
     for (auto& [name, string] : record) {
         auto text = string->value(globalObject);
-        if (!scope.exception()) [[likely]]
-            WebCore::propagateException(*globalObject, scope, headers->append(String { name }, text.data));
-        if (scope.exception()) [[unlikely]] {
-            headers->deref();
-            return nullptr;
-        }
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        WebCore::propagateException(*globalObject, scope, headers->append(String { name }, text.data));
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    return headers;
+    return &headers.leakRef();
 }
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue argument0_)
@@ -2846,21 +2842,15 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
         }
     }
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto headers = WebCore::FetchHeaders::create();
 
     // `fill` doesn't set an exception on the VM if it fails, it returns an
     //  ExceptionOr<void>.  So we need to check for the exception and, if set,
     //  translate it to JSValue and throw it.
     WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->fill(WTF::move(init.value())));
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    // If there's an exception, it will be thrown by the above call to fill().
-    // in that case, let's also free the headers to make memory leaks harder.
-    if (throwScope.exception()) {
-        headers->deref();
-        return nullptr;
-    }
-
-    return headers;
+    return &headers.leakRef();
 }
 
 JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
@@ -2883,9 +2873,10 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto clone = WebCore::FetchHeaders::create();
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
-    return clone;
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    return &clone.leakRef();
 }
 
 bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char HTTPHeaderName1)
@@ -2992,7 +2983,7 @@ typedef struct PicoHTTPHeaders {
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto headers = WebCore::FetchHeaders::create();
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -3032,13 +3023,13 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         headers->setInternalHeaders(WTF::move(map));
     }
-    return headers;
+    return &headers.leakRef();
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
     uWS::HttpRequest& req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto headers = WebCore::FetchHeaders::create();
 
     HTTPHeaderMap map = HTTPHeaderMap();
 
@@ -3058,13 +3049,13 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         }
     }
     headers->setInternalHeaders(WTF::move(map));
-    return headers;
+    return &headers.leakRef();
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 {
     auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto headers = WebCore::FetchHeaders::create();
 
     HTTPHeaderMap map = HTTPHeaderMap();
     req->forEachHeader([&](std::string_view name, std::string_view val) {
@@ -3082,7 +3073,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
         }
     });
     headers->setInternalHeaders(WTF::move(map));
-    return headers;
+    return &headers.leakRef();
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {
@@ -3145,7 +3136,7 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
             return BunString { BunStringTag::Dead, nullptr };
         }
 #endif
-        return Bun::toStringRef(url.fileSystemPath());
+        return Bun::toStringRef(url.fileSystemPath()).leak();
     }
     *errorCode = 3;
     return BunString { BunStringTag::Dead, nullptr };
@@ -3496,7 +3487,7 @@ bool JSC__JSFunction__getSourceCode(JSC::EncodedJSValue JSValue0, BunString* out
     if (JSC::JSFunction* func = dynamicDowncast<JSC::JSFunction>(value)) {
         auto* sourceCode = func->sourceCode();
         if (sourceCode != nullptr) { // native functions have no source code
-            *outSourceCode = Bun::toStringRef(sourceCode->view().toString());
+            *outSourceCode = Bun::toStringRef(sourceCode->view().toString()).leak();
             return true;
         }
         return false;
@@ -3514,7 +3505,7 @@ void JSC__JSValue__jsonStringify(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObje
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     WTF::String str = JSC::JSONStringify(arg1, value, (unsigned)arg2);
     RETURN_IF_EXCEPTION(scope, );
-    *arg3 = Bun::toStringRef(str);
+    *arg3 = Bun::toStringRef(str).leak();
 }
 
 // Fast version of JSON.stringify that uses JSC's FastStringifier optimization.
@@ -3530,7 +3521,7 @@ void JSC__JSValue__jsonStringifyFast(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
     // Passing jsUndefined() for space triggers JSC's FastStringifier optimization
     WTF::String str = JSC::JSONStringify(arg1, value, JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, );
-    *arg3 = Bun::toStringRef(str);
+    *arg3 = Bun::toStringRef(str).leak();
 }
 CPP_DECL JSC::JSString* JSC__jsTypeStringForValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
@@ -5535,11 +5526,11 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
             return toStringAdopt(WTF::move(actualName));
         }
 
-        return Bun::toStringRef(function->jsExecutable()->name().string());
+        return Bun::toStringRef(function->jsExecutable()->name().string()).leak();
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
-        return Bun::toStringRef(function->name());
+        return Bun::toStringRef(function->name()).leak();
     }
 
     return BunStringEmpty;
@@ -5569,7 +5560,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
         }
     }
 
-    *arg2 = Bun::toStringRef(displayName);
+    *arg2 = Bun::toStringRef(displayName).leak();
 }
 
 JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
@@ -6696,7 +6687,7 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__jsReason(WebCore::AbortSign
     return JSC::JSValue::encode(signal->jsReason(*globalObject));
 }
 
-extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
+extern "C" AbortSignalTimeout* WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     if (!abortSignal->hasActiveTimeoutTimer()) {
@@ -7328,7 +7319,7 @@ CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* 
     return source.string() == "builtin://bun/main"_s;
 }
 
-CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, Bun::OwnedString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
@@ -7354,13 +7345,12 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
         OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-        Bun::OwnedZigStackFrames remappedFrames(1);
-        ZigStackFrame& remappedFrame = remappedFrames[0];
+        ZigStackFrame remappedFrame;
         remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        remappedFrames.remap(Bun::vm(globalObject));
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
@@ -7372,7 +7362,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outColumn = lineColumn.column;
 }
 
-CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalObject, Bun::OwnedString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
 {
     Bun__CallFrame__getCallerSrcLoc(JSC::getVM(globalObject).topCallFrame, globalObject, outSourceURL, outLine, outColumn);
 }
@@ -7544,13 +7534,12 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLine
     });
 
     if (!sourceURL.isEmpty() && lineColumn.line > 0) {
-        Bun::OwnedZigStackFrames remappedFrames(1);
-        ZigStackFrame& remappedFrame = remappedFrames[0];
+        ZigStackFrame remappedFrame;
         remappedFrame.position.line_zero_based = lineColumn.line - 1;
         remappedFrame.position.column_zero_based = lineColumn.column;
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        remappedFrames.remap(Bun::vm(globalObject));
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         return remappedFrame.position.line_zero_based + 1;
     }

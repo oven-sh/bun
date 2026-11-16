@@ -153,8 +153,6 @@ public:
     void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
-    // Executes the task on context's thread asynchronously.
-    void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
     JSC::VM& vm() { return *realm().m_vm; }

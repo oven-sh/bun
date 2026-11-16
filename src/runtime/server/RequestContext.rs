@@ -588,13 +588,10 @@ where
         resp.on_aborted(|this, resp| Self::on_close(this, resp), self.as_ctx_ptr());
     }
 
-    pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
-        // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+    pub(crate) fn set_cookies(&self, cookie_map: Option<&CookieMap>) {
         // `new_ref` takes a ref for storage. Replacing drops (and so unrefs)
         // the old one.
-        drop(self.cookies.replace(
-            cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const()))),
-        ));
+        drop(self.cookies.replace(cookie_map.map(CookieMapRef::new_ref)));
     }
 
     pub(crate) fn on_resolve(
@@ -1707,14 +1704,14 @@ where
         let Some(if_range) = self.if_range.as_deref() else {
             return true;
         };
-        let Some(headers) = self.response_mut().and_then(|r| r.get_init_headers_mut()) else {
+        let Some(response) = self.response_mut() else {
             return false;
         };
-        let etag = headers
-            .fast_get(jsc::HTTPHeaderName::ETag)
-            .map(|v| v.to_utf8().into_owned());
-        let last_modified_ms = headers
-            .fast_get(jsc::HTTPHeaderName::LastModified)
+        let etag = response
+            .header(jsc::HTTPHeaderName::ETag)
+            .map(BunString::into_utf8);
+        let last_modified_ms = response
+            .header(jsc::HTTPHeaderName::LastModified)
             .and_then(|v| crate::jsc_hooks::parse_http_date(v.to_utf8().slice()));
         RangeRequest::if_range_matches(if_range, etag.as_deref(), last_modified_ms)
     }
@@ -1850,10 +1847,7 @@ where
         // already set Content-Range or a non-200 status — they're
         // managing partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_mut() {
-            r.status_code() != 200
-                || r.get_init_headers_mut()
-                    .map(|h| h.fast_has(jsc::HTTPHeaderName::ContentRange))
-                    .unwrap_or(false)
+            r.status_code() != 200 || r.has_header(jsc::HTTPHeaderName::ContentRange)
         } else {
             false
         };
@@ -1883,11 +1877,8 @@ where
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
                     if let Some(response) = self.response_mut() {
-                        if let Some(mut headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
-                            // call `.deref()` explicitly (would double-free).
-                            drop(headers_);
+                        if let Some(headers_) = response.swap_init_headers() {
+                            self.do_write_headers(&headers_);
                         }
                     }
                     let cr = RangeRequest::format_content_range(
@@ -2282,8 +2273,9 @@ where
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !MUX {
-                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
-                request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
+                // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+                let req = bun_opaque::opaque_deref(req.cast::<uws::Request>());
+                request_object.set_fetch_headers_if_absent(jsc::HeadersRef::create_from_uws(req));
             }
         }
 
@@ -2435,40 +2427,25 @@ where
                 Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
             )
         };
-        // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
-        // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
-        // same `init.headers` field.
         if !body_decides_framing {
-            if let Some(headers) = response.get_init_headers_mut() {
-                // first respect the headers
-                if !MUX {
-                    if let Some(transfer_encoding) =
-                        headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
-                    {
-                        // fastGet() borrows the header map's StringImpl; renderMetadata() ->
-                        // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
-                        // FetchHeaders, freeing that StringImpl before we write it. Clone so
-                        // the bytes outlive renderMetadata().
-                        let transfer_encoding_str = transfer_encoding.to_utf8().into_owned();
-                        this.render_metadata();
-                        resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
-                        this.end_without_body(this.should_close_connection());
-                        return;
-                    }
-                }
-                if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
-                    // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
-                    // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                    let content_length_str = content_length.to_utf8();
-                    let len: usize = HTTP::parse_content_length(content_length_str.slice());
-                    drop(content_length_str);
-
+            // first respect the headers
+            if !MUX {
+                if let Some(transfer_encoding) =
+                    response.header(jsc::HTTPHeaderName::TransferEncoding)
+                {
                     this.render_metadata();
-                    // SAFETY: FFI handle
-                    resp.write_header_int(b"content-length", len as u64);
+                    resp.write_header(b"transfer-encoding", &transfer_encoding.to_utf8());
                     this.end_without_body(this.should_close_connection());
                     return;
                 }
+            }
+            if let Some(content_length) = response.header(jsc::HTTPHeaderName::ContentLength) {
+                let len: usize = HTTP::parse_content_length(&content_length.to_utf8());
+
+                this.render_metadata();
+                resp.write_header_int(b"content-length", len as u64);
+                this.end_without_body(this.should_close_connection());
+                return;
             }
         }
         // the body decides the framing (or there is neither a body nor a
@@ -3254,10 +3231,7 @@ where
             return true;
         }
         let user_handles_range = self.response_mut().is_some_and(|response| {
-            response.status_code() != 200
-                || response
-                    .get_init_headers_mut()
-                    .is_some_and(|headers| headers.fast_has(jsc::HTTPHeaderName::ContentRange))
+            response.status_code() != 200 || response.has_header(jsc::HTTPHeaderName::ContentRange)
         });
         if user_handles_range || !self.if_range_matches_response() {
             return true;
@@ -3281,11 +3255,11 @@ where
                     return true;
                 };
                 self.do_write_status(416);
-                if let Some(mut headers) = self
+                if let Some(headers) = self
                     .response_mut()
                     .and_then(|response| response.swap_init_headers())
                 {
-                    self.do_write_headers(&mut headers);
+                    self.do_write_headers(&headers);
                 }
                 let mut buffer = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                 resp.write_header(
@@ -3353,9 +3327,8 @@ where
             let app_cl = (status == 304)
                 .then(|| {
                     let s = response
-                        .get_init_headers_mut()?
-                        .fast_get(jsc::HTTPHeaderName::ContentLength)?
-                        .to_utf8();
+                        .header(jsc::HTTPHeaderName::ContentLength)?
+                        .into_utf8();
                     bun_core::parse_int::<u64>(s.slice(), 10).ok()
                 })
                 .flatten();
@@ -3655,11 +3628,11 @@ where
             blob.size()
         };
 
-        let (content_type, needs_content_type) =
-            get_content_type(response.get_init_headers_mut(), blob);
+        let headers = response.swap_init_headers();
+        let (content_type, needs_content_type) = get_content_type(headers.as_deref(), blob);
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        if let Some(mut headers_) = response.swap_init_headers() {
+        if let Some(headers_) = headers {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
@@ -3671,12 +3644,7 @@ where
             }
 
             self.do_write_status(status);
-            self.do_write_headers(&mut headers_);
-            // `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
-            drop(headers_);
+            self.do_write_headers(&headers_);
         } else if needs_content_range {
             status = 206;
             self.do_write_status(status);
@@ -3684,14 +3652,13 @@ where
             self.do_write_status(status);
         }
 
-        if let Some(mut cookies) = self.cookies.replace(None) {
+        if let Some(cookies) = self.cookies.replace(None) {
             let server = self.server();
             let global_this = server.global_this();
             let resp = self.resp.get().expect("infallible: resp bound");
             // The status line is already written, so report the error and send the response
             // without that Set-Cookie header.
-            if let Err(err) = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr())
-            {
+            if let Err(err) = cookies.write(global_this, resp) {
                 server
                     .vm()
                     .run_error_handler(global_this.take_exception(err), None);
@@ -3792,12 +3759,12 @@ where
         }
     }
 
-    fn do_write_headers(&self, headers: &mut FetchHeaders) {
+    fn do_write_headers(&self, headers: &FetchHeaders) {
         ctx_log!("writeHeaders");
         headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
         headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
         if let Some(resp) = self.resp.get() {
-            headers.to_uws_response(uws::ResponseKind::of(resp), resp.as_ptr());
+            headers.to_uws_response(resp);
         }
     }
 
@@ -4577,7 +4544,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool) {
+fn get_content_type(headers: Option<&FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool) {
     let mut needs_content_type = true;
 
     let content_type: MimeType = 'brk: {

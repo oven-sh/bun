@@ -502,6 +502,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->hangup_closes_unsent = 0;
     s->send_rejected = 0;
     s->connect_state = NULL;
+    us_internal_socket_clear_ext(s, socket_ext_size);
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);

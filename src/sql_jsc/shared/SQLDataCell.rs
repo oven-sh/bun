@@ -4,12 +4,13 @@ use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue, JsError, JsRes
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::WTFString;
+use bun_core::ffi::FfiSlice;
 use bun_sql::shared::ColumnIdentifier;
 
 /// `DataCell` in SQLClient.cpp, which only reads it.
 #[repr(C)]
-pub struct SQLDataCell {
-    value: Value,
+pub struct SQLDataCell<'a> {
+    value: Value<'a>,
     is_indexed_column: u8,
     index: u32,
 }
@@ -17,7 +18,7 @@ pub struct SQLDataCell {
 /// `DataCellTag` and `DataCellValue`.
 #[repr(C, u8)]
 #[expect(dead_code, reason = "C++ reads the payloads")]
-enum Value {
+enum Value<'a> {
     Null = 0,
     String(Option<WTFString>) = 1,
     Float8(f64) = 2,
@@ -27,20 +28,21 @@ enum Value {
     Date(f64) = 6,
     Bytea(Array<u8>) = 7,
     Json(Option<WTFString>) = 8,
-    Array(Array<SQLDataCell>) = 9,
-    Raw(Raw) = 10,
+    Array(Array<SQLDataCell<'a>>) = 9,
+    Raw(FfiSlice<'a>) = 10,
     Uint4(u32) = 11,
     Uint8(u64) = 12,
     /// Numbers and nulls as JS holds them. None of them is a GC cell.
     Numbers(Array<JSValue>) = 13,
-    Int32Array(Raw) = 14,
-    Float32Array(Raw) = 15,
+    Int32Array(FfiSlice<'a, [u8; 8]>) = 14,
+    Float32Array(FfiSlice<'a, [u8; 8]>) = 15,
 }
 
 /// A `Vec<T>` with a layout that C++ knows.
 #[repr(C)]
 struct Array<T> {
-    ptr: *mut T,
+    /// `*const` keeps a cell covariant in `'a`.
+    ptr: *const T,
     len: u32,
     cap: u32,
 }
@@ -59,32 +61,17 @@ impl<T> Array<T> {
 
 impl<T> Drop for Array<T> {
     fn drop(&mut self) {
+        let ptr = self.ptr.cast_mut();
         // SAFETY: the parts that `new` took from a `Vec<T>`.
-        drop(unsafe { Vec::from_raw_parts(self.ptr, self.len as usize, self.cap as usize) });
-    }
-}
-
-/// Borrowed from the message that is being decoded.
-#[repr(C)]
-struct Raw {
-    ptr: *const u8,
-    len: u64,
-}
-
-impl Raw {
-    fn new<T>(items: &[T]) -> Raw {
-        Raw {
-            ptr: items.as_ptr().cast(),
-            len: items.len() as u64,
-        }
+        drop(unsafe { Vec::from_raw_parts(ptr, self.len as usize, self.cap as usize) });
     }
 }
 
 // SQLClient.cpp asserts the same.
-bun_core::assert_ffi_layout!(SQLDataCell, 32, 8; is_indexed_column @ 24, index @ 28);
+bun_core::assert_ffi_layout!(SQLDataCell<'static>, 32, 8; is_indexed_column @ 24, index @ 28);
 
-impl SQLDataCell {
-    fn new(value: Value) -> SQLDataCell {
+impl<'a> SQLDataCell<'a> {
+    fn new(value: Value<'a>) -> Self {
         SQLDataCell {
             value,
             is_indexed_column: 0,
@@ -93,7 +80,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub(crate) fn null() -> SQLDataCell {
+    pub(crate) fn null() -> Self {
         SQLDataCell::new(Value::Null)
     }
 
@@ -101,7 +88,7 @@ impl SQLDataCell {
     /// so that the cells a short DataRow has left out still carry
     /// the right named/indexed/duplicate flag into `toJS`.
     #[inline]
-    pub(crate) fn null_for_column(position: u32, column: &ColumnIdentifier) -> SQLDataCell {
+    pub(crate) fn null_for_column(position: u32, column: &ColumnIdentifier) -> Self {
         let mut cell = SQLDataCell::null();
         cell.set_column(position, column);
         cell
@@ -126,43 +113,43 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub(crate) fn int4(value: i32) -> SQLDataCell {
+    pub(crate) fn int4(value: i32) -> Self {
         SQLDataCell::new(Value::Int4(value))
     }
 
     #[inline]
-    pub(crate) fn uint4(value: u32) -> SQLDataCell {
+    pub(crate) fn uint4(value: u32) -> Self {
         SQLDataCell::new(Value::Uint4(value))
     }
 
     #[inline]
-    pub(crate) fn int8(value: i64) -> SQLDataCell {
+    pub(crate) fn int8(value: i64) -> Self {
         SQLDataCell::new(Value::Int8(value))
     }
 
     #[inline]
-    pub(crate) fn uint8(value: u64) -> SQLDataCell {
+    pub(crate) fn uint8(value: u64) -> Self {
         SQLDataCell::new(Value::Uint8(value))
     }
 
     #[inline]
-    pub(crate) fn float8(value: f64) -> SQLDataCell {
+    pub(crate) fn float8(value: f64) -> Self {
         SQLDataCell::new(Value::Float8(value))
     }
 
     #[inline]
-    pub(crate) fn bool(value: bool) -> SQLDataCell {
+    pub(crate) fn bool(value: bool) -> Self {
         SQLDataCell::new(Value::Bool(value))
     }
 
     #[inline]
-    pub(crate) fn date(value: f64) -> SQLDataCell {
+    pub(crate) fn date(value: f64) -> Self {
         SQLDataCell::new(Value::Date(value))
     }
 
     /// Empty input has no string, which C++ renders as the empty string.
     #[inline]
-    pub(crate) fn string(bytes: &[u8]) -> SQLDataCell {
+    pub(crate) fn string(bytes: &[u8]) -> Self {
         SQLDataCell::new(Value::String(
             bun_core::String::clone_utf8(bytes).into_wtf(),
         ))
@@ -170,46 +157,44 @@ impl SQLDataCell {
 
     /// Empty input has no string, which C++ renders as `null`.
     #[inline]
-    pub(crate) fn json(bytes: &[u8]) -> SQLDataCell {
+    pub(crate) fn json(bytes: &[u8]) -> Self {
         SQLDataCell::new(Value::Json(bun_core::String::clone_utf8(bytes).into_wtf()))
     }
 
-    pub(crate) fn bytea(bytes: Vec<u8>) -> SQLDataCell {
+    pub(crate) fn bytea(bytes: Vec<u8>) -> Self {
         SQLDataCell::new(Value::Bytea(Array::new(bytes)))
     }
 
-    pub(crate) fn array(cells: Vec<SQLDataCell>) -> SQLDataCell {
+    pub(crate) fn array(cells: Vec<Self>) -> Self {
         SQLDataCell::new(Value::Array(Array::new(cells)))
     }
 
     /// An array of numbers and nulls. A GC cell among them would not be kept alive.
-    pub(crate) fn numbers(values: Vec<JSValue>) -> SQLDataCell {
+    pub(crate) fn numbers(values: Vec<JSValue>) -> Self {
         SQLDataCell::new(Value::Numbers(Array::new(values)))
     }
 
     /// For each element 4 bytes of size and 4 of value, big-endian, as the PostgreSQL server sends them.
-    pub(crate) fn int32_array(elements: &[[u8; 8]]) -> SQLDataCell {
-        SQLDataCell::new(Value::Int32Array(Raw::new(elements)))
+    pub(crate) fn int32_array(elements: &'a [[u8; 8]]) -> Self {
+        SQLDataCell::new(Value::Int32Array(elements.into()))
     }
 
     /// As [`SQLDataCell::int32_array`].
-    pub(crate) fn float32_array(elements: &[[u8; 8]]) -> SQLDataCell {
-        SQLDataCell::new(Value::Float32Array(Raw::new(elements)))
+    pub(crate) fn float32_array(elements: &'a [[u8; 8]]) -> Self {
+        SQLDataCell::new(Value::Float32Array(elements.into()))
     }
 
-    /// `bytes` has to outlive the cell.
-    pub(crate) fn raw(bytes: &[u8]) -> SQLDataCell {
-        SQLDataCell::new(Value::Raw(Raw::new(bytes)))
+    pub(crate) fn raw(bytes: &'a [u8]) -> Self {
+        SQLDataCell::new(Value::Raw(bytes.into()))
     }
 
-    /// Shared wrapper around `construct_object_from_data_cell` used by the
-    /// per-row `to_js` paths (postgres `Putter`, mysql `Row`): extracts the
+    /// Used by the per-row `to_js` paths (postgres `Putter`, mysql `Row`): extracts the
     /// cached-structure column names and forwards the cells.
     pub(crate) fn to_js_object(
         global_object: &JSGlobalObject,
         array: JSValue,
         structure: JSValue,
-        cells: &mut [SQLDataCell],
+        cells: &mut [Self],
         flags: Flags,
         result_mode: u8,
         cached_structure: Option<&crate::shared::CachedStructure>,
@@ -219,34 +204,6 @@ impl SQLDataCell {
             None => (ptr::null_mut(), 0),
         };
 
-        SQLDataCell::construct_object_from_data_cell(
-            global_object,
-            array,
-            structure,
-            cells.as_mut_ptr(),
-            cells.len() as u32,
-            flags,
-            result_mode,
-            names,
-            names_count,
-        )
-    }
-
-    // TODO: cppbind isn't yet able to detect slice parameters when the next is uint32_t
-    pub(crate) fn construct_object_from_data_cell(
-        global_object: &JSGlobalObject,
-        encoded_array_value: JSValue,
-        encoded_structure_value: JSValue,
-        cells: *mut SQLDataCell,
-        count: u32,
-        flags: Flags,
-        result_mode: u8,
-        // Accepts both a raw `*mut` (null == None) and an explicit
-        // `Option<*mut _>`; collapsed to a raw pointer for the FFI call below.
-        names_ptr: impl Into<Option<*mut ExternColumnIdentifier>>,
-        names_count: u32,
-    ) -> JsResult<JSValue> {
-        let names_ptr: *mut ExternColumnIdentifier = names_ptr.into().unwrap_or(ptr::null_mut());
         // Open an `ExceptionValidationScope` so the C++
         // `DECLARE_THROW_SCOPE` inside
         // SQLClient.cpp's `toJS` (depth 0 → depth 1) has its post-call
@@ -255,17 +212,20 @@ impl SQLDataCell {
         // no-op in release and a real C++ scope under debug/ASAN.
         bun_jsc::validation_scope!(scope, global_object);
 
-        let value = JSC__constructObjectFromDataCell(
-            global_object,
-            encoded_array_value,
-            encoded_structure_value,
-            cells,
-            count,
-            flags,
-            result_mode,
-            names_ptr,
-            names_count,
-        );
+        // SAFETY: two slices, which C++ reads during the call and checks against each other.
+        let value = unsafe {
+            JSC__constructObjectFromDataCell(
+                global_object,
+                array,
+                structure,
+                cells.as_mut_ptr(),
+                cells.len() as u32,
+                flags,
+                result_mode,
+                names,
+                names_count,
+            )
+        };
         scope.assert_exception_presence_matches(value.is_empty());
         if value.is_empty() {
             return Err(JsError::Thrown);
@@ -337,17 +297,12 @@ pub(crate) fn dedupe_columns<'a>(
 // Declared inline rather than in a dedicated `*_sys` crate: this is the only
 // extern this crate calls and its sole consumer is the wrapper above.
 unsafe extern "C" {
-    // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
-    // remaining params are by-value scalars + raw (ptr,len) slice pairs that
-    // the C++ side bounds-checks against `count`/`names_count`. The sole call
-    // site is the safe `construct_object_from_data_cell` wrapper above, which
-    // already accepts the same raw-pointer shape from safe code, so the
-    // memory-validity contract is identical → `safe fn`.
-    pub(crate) safe fn JSC__constructObjectFromDataCell(
+    // TODO: cppbind isn't yet able to detect slice parameters when the next is uint32_t
+    fn JSC__constructObjectFromDataCell(
         global: &JSGlobalObject,
         encoded_array_value: JSValue,
         encoded_structure_value: JSValue,
-        cells: *mut SQLDataCell,
+        cells: *mut SQLDataCell<'_>,
         count: u32,
         flags: Flags,
         result_mode: u8,

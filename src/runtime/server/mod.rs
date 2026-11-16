@@ -322,6 +322,29 @@ pub(crate) struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub(crate) route: server_config::RouteDeclaration,
 }
 
+impl<const SSL: bool, const DEBUG: bool> UserRoute<SSL, DEBUG> {
+    /// The server, id and method, copied out because the handler can reload the server and free the route.
+    ///
+    /// # Safety
+    /// `this` is an entry of `user_routes` of a server that lives for `'a`.
+    unsafe fn read_fields<'a>(
+        this: *const Self,
+    ) -> (
+        &'a NewServer<SSL, DEBUG>,
+        u32,
+        Option<bun_http_types::Method::Method>,
+    ) {
+        // SAFETY: caller contract, and `server` points to the server that holds the entry.
+        unsafe {
+            (
+                &*(*this).server,
+                (*this).id,
+                (*this).route.method.specific(),
+            )
+        }
+    }
+}
+
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         httplog!("deinit");
@@ -1134,22 +1157,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         // SAFETY: `user_route` is the live entry in `server.user_routes` whose
         // address was registered as the uws callback userdata.
-        let user_route = unsafe { &*user_route };
-        // SAFETY: `server` is the live backref stored in `user_route`.
-        let server = unsafe { &*user_route.server };
-        let index = user_route.id;
+        let (server, index, method) = unsafe { UserRoute::read_fields(user_route) };
 
         let Some(server_js) = server.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
 
-        let Some(mut prepared) = server.prepare_js_request_context(
-            req,
-            resp,
-            CreateJsRequest::No,
-            user_route.route.method.specific(),
-        ) else {
+        let Some(mut prepared) =
+            server.prepare_js_request_context(req, resp, CreateJsRequest::No, method)
+        else {
             return;
         };
 
@@ -1328,7 +1345,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                         nhr.promise
                             .set(Some((core::mem::take(&mut strong_promise), nhr.clone())));
-                        result.then2(
+                        result.then_with_value(
                             global,
                             strong_self,
                             crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
@@ -3799,7 +3816,7 @@ pub(crate) mod http_server_agent {
 
     use bun_core::StringView;
     use bun_jsc::debugger::DebuggerId;
-    use bun_jsc::http_server_agent::{HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType};
+    use bun_jsc::http_server_agent::{HTTPServerAgent, Route, RouteType};
 
     /// Assign the server a fresh inspector id and tell the C++ inspector
     /// agent (if attached) that it started, passing its URL and start time.
@@ -3812,18 +3829,13 @@ pub(crate) mod http_server_agent {
         instance.set_inspector_server_id(this.next_server_id.get());
         let url = bun_core::handle_oom(instance.get_url_as_string());
 
-        // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
-        // (set via `Bun__HTTPServerAgent__setEnabled`).
-        unsafe {
-            InspectorHTTPServerAgent::notify_server_started(
-                agent.as_ptr(),
-                this.next_server_id.get(),
-                instance.vm().hot_reload_counter.get() as i32,
-                &url,
-                bun_core::time::milli_timestamp() as f64,
-                instance.ptr.cast(),
-            );
-        }
+        agent.notify_server_started(
+            this.next_server_id.get(),
+            instance.vm().hot_reload_counter.get() as i32,
+            &url,
+            bun_core::time::milli_timestamp() as f64,
+            instance.ptr.addr(),
+        );
     }
 
     /// Tell the C++ inspector agent (if attached) that the server stopped,
@@ -3832,8 +3844,7 @@ pub(crate) mod http_server_agent {
         let Some(agent) = this.agent.get() else {
             return;
         };
-        InspectorHTTPServerAgent::notify_server_stopped(
-            agent.as_ptr(),
+        agent.notify_server_stopped(
             server.inspector_server_id(),
             bun_core::time::milli_timestamp() as f64,
         );
@@ -3887,11 +3898,10 @@ pub(crate) mod http_server_agent {
             });
         }
 
-        InspectorHTTPServerAgent::notify_server_routes_updated(
-            agent.as_ptr(),
+        agent.notify_server_routes_updated(
             server.inspector_server_id(),
             server.vm().hot_reload_counter.get() as i32,
-            &mut routes,
+            &routes,
         );
         Ok(())
     }

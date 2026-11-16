@@ -1,5 +1,4 @@
 use core::ptr;
-use core::ptr::NonNull;
 
 use crate::exception_list;
 use bun_core::String as BunString;
@@ -7,8 +6,8 @@ use bun_core::StringOrView;
 use bun_core::Utf8Bytes;
 use bun_url::URL as ZigURL;
 
-use crate::SourceProvider;
 use crate::ZigStackFrame;
+use crate::source_provider::SourceProviderRef;
 
 /// Represents a JavaScript stack trace
 #[repr(C)]
@@ -24,19 +23,7 @@ pub struct ZigStackTrace<'a> {
     pub(crate) frames_cap: u8,
 
     /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
-    /// If so, then .deref must be called on it to release the memory.
-    ///
-    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, so the
-    /// FFI layout is exactly one nullable pointer.
-    pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
-}
-
-impl Drop for ZigStackTrace<'_> {
-    fn drop(&mut self) {
-        if let Some(source) = self.referenced_source_provider.take() {
-            SourceProvider::opaque_mut(source.as_ptr()).deref();
-        }
-    }
+    pub(crate) referenced_source_provider: Option<SourceProviderRef>,
 }
 
 impl<'a> ZigStackTrace<'a> {

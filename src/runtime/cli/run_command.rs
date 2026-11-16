@@ -1603,7 +1603,7 @@ impl Run<'_> {
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
                             PromiseStatus::Pending => {
-                                result.then2(
+                                result.then_with_value(
                                     global,
                                     JSValue::UNDEFINED,
                                     crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,

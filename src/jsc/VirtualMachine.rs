@@ -2806,7 +2806,7 @@ pub struct RuntimeHooks {
     /// `TestReporterAgent::next_test_id` through by value; no-op returns it
     /// unchanged.
     pub retroactively_report_discovered_tests:
-        fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
+        fn(agent: &crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
     /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
@@ -4536,8 +4536,7 @@ impl VirtualMachine {
         VMHolder::set_cached_global_object(Some(new_global));
         vm.regular_event_loop.global.set(NonNull::new(new_global));
         // `new_global` is freshly created and live for VM lifetime; safe
-        // ZST-handle deref. `vm_ptr()` returns the FFI `*mut VM` directly
-        // (no `&VM` reborrow).
+        // ZST-handle deref.
         vm.jsc_vm
             .set(JSGlobalObject::opaque_ref(new_global).vm_ptr());
         uws::Loop::get()
@@ -5758,7 +5757,7 @@ impl VirtualMachine {
                 );
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
+            // pointer + ctx, so thread the captures through a struct.
             struct AggCtx<'c, 'a> {
                 formatter: &'c mut crate::console_object::Formatter<'a>,
                 writer: &'c mut dyn bun_io::Write,
@@ -5768,13 +5767,11 @@ impl VirtualMachine {
                 printed_member: bool,
             }
             extern "C" fn agg_iter(
-                _vm: *mut crate::VM,
+                _vm: &crate::VM,
                 _global: &JSGlobalObject,
-                ctx: *mut c_void,
+                ctx: &mut AggCtx<'_, '_>,
                 next_value: JSValue,
             ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
                 let formatter = &mut *ctx.formatter;
                 let writer = &mut *ctx.writer;
@@ -5826,10 +5823,7 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
+            if errors.for_each(global_ref, &mut ctx, agg_iter).is_err() {
                 global_ref.clear_exception();
             }
             if ctx.printed_member || members_past_cap {

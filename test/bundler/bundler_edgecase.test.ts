@@ -4627,6 +4627,29 @@ describe("bundler", () => {
     format: "cjs",
     run: { stdout: "2,5,false true" },
   });
+  // A file that tree shaking removes is in no output file, so its syntax is no
+  // concern of the output.
+  itBundled("edgecase/SloppyOnlySyntaxInFileThatTreeShakingRemovesESMOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./lib/a.js";
+        import { b } from "./lib/b.js";
+        console.log(a);
+      `,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: false }),
+      "/lib/a.js": `export const a = 1;`,
+      "/lib/b.js": /* js */ `
+        import c from "./c.cjs";
+        export const b = c;
+      `,
+      "/lib/c.cjs": /* js */ `
+        var o = { v: 2 };
+        with (o) module.exports = v;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "1" },
+  });
   // A legacy HTML comment in sloppy mode code is a comment, and the parser warns.
   itBundled("edgecase/LegacyHTMLCommentInCommonJSDependency", {
     files: {

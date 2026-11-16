@@ -3118,12 +3118,12 @@ private:
         return true;
     }
 
-    bool read(BIO** bio, uint64_t length)
+    bool read(ncrypto::BIOPointer& bio, uint64_t length)
     {
         if (static_cast<uint64_t>(m_end - m_ptr) < length)
             return false;
-        *bio = BIO_new_mem_buf(m_ptr, length);
-        if (!*bio)
+        bio.reset(BIO_new_mem_buf(m_ptr, length));
+        if (!bio)
             return false;
         m_ptr += length;
         return true;
@@ -3511,16 +3511,14 @@ private:
         }
 
         ncrypto::ClearErrorOnReturn clear_error_on_return;
-        X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();
 
-        auto cert = d2i_X509(&ptr, &data, buffer.size());
-        if (!cert) {
+        ncrypto::X509Pointer cert_ptr(d2i_X509(nullptr, &data, buffer.size()));
+        if (!cert_ptr) {
             fail();
             return JSValue();
         }
 
-        auto cert_ptr = ncrypto::X509Pointer(cert);
         auto* domGlobalObject = defaultGlobalObject(m_globalObject);
         auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), domGlobalObject->m_JSX509CertificateClassStructure.get(domGlobalObject), m_globalObject, WTF::move(cert_ptr));
         m_gcBuffer.appendWithCrashOnOverflow(cert_obj);
@@ -3563,32 +3561,31 @@ private:
                 return JSValue();
             }
 
-            BIO* rawBio = nullptr;
-            if (!read(&rawBio, pemSize)) {
+            ncrypto::BIOPointer bio;
+            if (!read(bio, pemSize)) {
                 fail();
                 return JSValue();
             }
-            ncrypto::BIOPointer bio(rawBio);
 
             if (keyType == CryptoKeyType::Public) {
-                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
+                ncrypto::EVPKeyPointer pkey(PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr));
                 if (!pkey) {
                     fail();
                     return JSValue();
                 }
-                auto keyObject = KeyObject::create(CryptoKeyType::Public, ncrypto::EVPKeyPointer(pkey));
+                auto keyObject = KeyObject::create(CryptoKeyType::Public, WTF::move(pkey));
                 Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(m_globalObject);
                 auto* obj = JSPublicKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
                 addTerminalToObjectPool(obj);
                 return obj;
             }
 
-            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
+            ncrypto::EVPKeyPointer pkey(PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr));
             if (!pkey) {
                 fail();
                 return JSValue();
             }
-            auto keyObject = KeyObject::create(CryptoKeyType::Private, ncrypto::EVPKeyPointer(pkey));
+            auto keyObject = KeyObject::create(CryptoKeyType::Private, WTF::move(pkey));
             Structure* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(m_globalObject);
             auto* obj = JSPrivateKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
             addTerminalToObjectPool(obj);

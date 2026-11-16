@@ -4987,6 +4987,8 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
         }
         // The body has already run beside the mock, which keeps waiting.
         if (JSC::AOT::hasStartedLoading(globalObject, module)) {
+            if (JSC::AOT::hasIntactOriginal(globalObject, module) && isOriginalLoadedAgain(globalObject, mock, mock->specifier->tryGetValue().data))
+                Bun::recordRepeatedFileRun(globalObject, mock->specifier->tryGetValue().data, "the factory of a mock had not settled when it was required"_s);
             waiting.append({ module.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
             JSC::AOT::deferMockAfterAsyncFailure(globalObject, module);
             return false;

@@ -364,9 +364,13 @@ fn copy_step<P: Pixel>(pixels: &mut [P], from: usize, to: usize) -> Option<()> {
 /// Fills `pixels` with repetitions of the first `period`.
 #[inline(never)]
 fn repeat<P: Pixel>(pixels: &mut [P], period: usize) {
+    // For more, glibc uses `rep movsb`, which is slow on AMD CPUs if `period` is a bit more than a page.
+    const PIECE_BYTES: usize = 2048;
     let mut done = period;
     while let Some((from, to @ [_, ..])) = pixels.split_at_mut_checked(done) {
-        slice::copy(from, to);
+        let len = PIECE_BYTES / size_of::<P>();
+        let pieces = from.chunks(len).zip(to.chunks_mut(len));
+        pieces.for_each(|(from, to)| slice::copy(from, to));
         done *= 2;
     }
 }

@@ -189,10 +189,10 @@ std::optional<uint16_t> URLDecomposition::parsePort(StringView string)
         port = port * 10 + c - '0';
         foundDigit = true;
         if (port > std::numeric_limits<uint16_t>::max())
-            return { };
+            return {};
     }
     if (!foundDigit)
-        return { };
+        return {};
     return static_cast<uint16_t>(port);
 }
 

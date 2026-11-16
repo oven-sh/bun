@@ -8,6 +8,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isMacOS,
   isWindows,
   tempDir,
@@ -18,6 +19,7 @@ import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
+import { drain, fill, openFifo, untilWatched } from "./fifo-helpers";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -1796,5 +1798,57 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+it.skipIf(isWindows).each([
+  ["a Blob", new Blob([Buffer.alloc(2000, "a")]), 2000],
+  ["a large Buffer", Buffer.alloc(300 * 1024, "a"), 300 * 1024],
+])("Bun.write(Bun.file(fd), %s) appends right after the end of a file opened with O_APPEND", async (_, data, size) => {
+  using dir = tempDir("bun-write-append", { log: "first\n" });
+  const log = join(String(dir), "log");
+  const fd = fs.openSync(log, "a");
+  try {
+    expect(await Bun.write(Bun.file(fd), data)).toBe(size);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const written = fs.readFileSync(log);
+  expect({ size: written.length, firstNul: written.indexOf(0) }).toEqual({ size: 6 + size, firstNul: -1 });
+});
+
+describe.skipIf(isWindows).concurrent("Bun.write() to a pipe that is full", () => {
+  const data = new Blob([Buffer.alloc(1 << 20, "a")]);
+  /** `.size` makes the file find out that it is not a regular one. */
+  function knownPipe(fd) {
+    const file = Bun.file(fd);
+    file.size;
+    return file;
+  }
+
+  // EPOLLERR
+  it.skipIf(!isLinux)("rejects with EPIPE when the reader leaves", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = openFifo(String(dir));
+    const write = Bun.write(knownPipe(fifo.writer), data).catch(({ code, syscall }) => ({ code, syscall }));
+    await untilWatched(fifo.writer);
+    fifo.close(fifo.reader);
+    expect(await write).toEqual({ code: "EPIPE", syscall: "write" });
+  });
+
+  // The capacity of a pipe is fixed on Linux.
+  it.skipIf(!isLinux)("resolves when the last byte fills it", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = openFifo(String(dir));
+    const room = fill(fifo.writer);
+    drain(fifo.reader);
+    expect(await Bun.write(knownPipe(fifo.writer), data.slice(0, room))).toBe(room);
+  });
+
+  it("resolves with nothing to write", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = openFifo(String(dir));
+    fill(fifo.writer);
+    expect(await Bun.write(knownPipe(fifo.writer), data.slice(1, 1))).toBe(0);
   });
 });

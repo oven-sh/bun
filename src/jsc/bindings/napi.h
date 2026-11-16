@@ -29,7 +29,7 @@
 #include <vector>
 
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
-extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_threadsafe_function_env_teardown(napi_env env, void* tsfn);
 extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
@@ -219,9 +219,7 @@ public:
             drain();
         }
 
-        // Threadsafe functions hold a raw pointer to this env's event loop,
-        // which a worker's shutdown frees while addon threads keep running.
-        // Neutralize them all before that happens (Node: ThreadSafeFunction::Cleanup).
+        // Addon threads can outlive the worker and still hold threadsafe functions: close them (Node: ThreadSafeFunction::Cleanup).
         // Their finalizers are native callbacks like the ones below, so they
         // start from a clean exception state too: a cleanup hook may have left one.
         clearExceptionsBetweenFinalizers();
@@ -295,7 +293,7 @@ public:
     // Pool thread, once execute() has returned or the work was cancelled.
     void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
 
-    // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
+    // Threadsafe-function registry. Each entry is a counted reference to an object allocated
     // by the Rust side, added and removed on the JS thread only: at creation,
     // by the destroy path (an event-loop task), and by teardown below. The
     // lock guards the torn-down flag so the "created after teardown" case is
@@ -325,7 +323,7 @@ public:
             tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
         }
         for (void* tsfn : tsfns) {
-            Bun__napi_threadsafe_function_env_teardown(tsfn);
+            Bun__napi_threadsafe_function_env_teardown(this, tsfn);
         }
     }
 

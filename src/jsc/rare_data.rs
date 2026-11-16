@@ -150,15 +150,11 @@ impl EntropyCache {
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
 
-// Safe fn-pointer type: `ctx` is an opaque round-trip pointer the registrant
-// supplied alongside `func`; the caller (`execute`) never dereferences it, only
-// forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
-// cast/deref locally, so invoking the pointer carries no caller-side precondition.
-pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
+pub(crate) type CleanupHookFunction = unsafe extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
-    pub ctx: *mut c_void,
+    pub(crate) ctx: *mut c_void,
     pub(crate) func: CleanupHookFunction,
     // Conceptually a borrow of the JSGlobalObject (JSC_BORROW per
     // LIFETIMES.tsv); a raw ptr avoids threading a lifetime param through
@@ -750,7 +746,9 @@ impl RareData {
         self.tls_defaults_version.update(|version| version + 1);
     }
 
-    pub fn push_cleanup_hook(
+    /// # Safety
+    /// `func` takes `ctx`, once, when the VM exits.
+    pub unsafe fn push_cleanup_hook(
         &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
@@ -760,7 +758,9 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    pub fn push_cleanup_hook_after_teardown_wait(
+    /// # Safety
+    /// As [`Self::push_cleanup_hook`].
+    pub unsafe fn push_cleanup_hook_after_teardown_wait(
         &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,

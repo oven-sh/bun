@@ -5,12 +5,9 @@
 //! For in-depth details on the fields, most of these are documented
 //! inside of `js_parser`
 
-use bun_alloc::Arena as Bump;
-
 use bun_alloc::AllocError as OOM;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{AstArena, AstBox, AstVec, ImportKind, ImportRecord};
 use bun_ast::{Loc, Range, Source};
-use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 
@@ -32,7 +29,7 @@ use crate::options;
 use bun_paths::fs::{Path as FsPath, PathName};
 
 pub(crate) struct AstBuilder<'a, 'bump> {
-    pub(crate) bump: &'bump Bump,
+    pub(crate) bump: &'bump AstArena,
     pub(crate) source: &'a Source<'a>,
     pub(crate) source_index: u32,
     pub(crate) stmts: Vec<Stmt>,
@@ -56,7 +53,7 @@ pub(crate) struct AstBuilder<'a, 'bump> {
 // `bun_js_parser`, these stubs are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub(crate) fn init(
-        bump: &'bump Bump,
+        bump: &'bump AstArena,
         source: &'a Source<'a>,
         hot_reloading: bool,
     ) -> Result<Self, OOM> {
@@ -94,11 +91,14 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
-        self.current_scope.generated.push(ref_);
-        self.declared_symbols.append(DeclaredSymbol {
-            ref_,
-            is_top_level: true,
-        })?;
+        self.current_scope.generated.push(self.bump, ref_);
+        self.declared_symbols.append(
+            self.bump,
+            DeclaredSymbol {
+                ref_,
+                is_top_level: true,
+            },
+        );
         Ok(ref_)
     }
 
@@ -154,13 +154,15 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let import_id: &[u8] = *import_id; // must be given '[N][]const u8'
             let ref_ = self.new_symbol(SymbolKind::Import, import_id)?;
             if self.hot_reloading {
-                self.get_symbol(ref_).namespace_alias =
-                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                self.get_symbol(ref_).namespace_alias = Some(AstBox::new_in(
+                    G::NamespaceAlias {
                         namespace_ref,
                         alias: bun_ast::StoreStr::new(import_id),
                         import_record_index: record,
                         ..Default::default()
-                    }));
+                    },
+                    self.bump,
+                ));
             }
             *out_ref = self.new_expr(E::ImportIdentifier {
                 ref_,
@@ -195,11 +197,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     pub(crate) fn new_stmt<T: StatementData>(&self, data: T) -> Stmt {
-        Stmt::alloc::<T>(data, Loc::EMPTY)
+        Stmt::allocate::<T>(self.bump, data, Loc::EMPTY)
     }
 
     pub(crate) fn new_expr<T: IntoExprData>(&self, data: T) -> Expr {
-        Expr::init::<T>(data, Loc::EMPTY)
+        Expr::allocate::<T>(self.bump, data, Loc::EMPTY)
     }
 
     pub(crate) fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
@@ -219,7 +221,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     ) -> Result<crate::BundledAst<'bump>, OOM> {
         // TODO: missing import scanner
 
-        let mut parts = bun_ast::PartList::with_capacity_in(2, self.bump);
+        let mut parts = bun_ast::PartList::with_capacity_in(2, self.bump.heap());
         // `*parts.mut_(i) = ...` on a grown-but-uninitialized slot first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
         // fields (`Vec`/`HashMap`), so that drop frees garbage and corrupts the
@@ -235,9 +237,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             // pretend that every symbol was used
             symbol_uses: 'uses: {
                 let mut map = PartSymbolUseMap::default();
-                map.ensure_total_capacity(self.symbols.len())?;
+                map.ensure_total_capacity(self.bump, self.symbols.len());
                 for i in 0..self.symbols.len() {
-                    map.put_assume_capacity(
+                    map.put(
+                        self.bump,
                         Ref::new(
                             RefInt::try_from(i).unwrap(),
                             self.source_index,
@@ -253,16 +256,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
         let generated_len = self.current_scope.generated.len();
-        top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
-        // `ArrayHashMap` keeps keys/values in private `Vec`s and rebuilds
-        // hashes on every `put_assume_capacity`, so a plain pre-reserved
-        // insert loop suffices (and `re_index` is a no-op here). `Vec` is
-        // move-only, so allocate a fresh one per key.
+        top_level_symbols_to_parts.ensure_total_capacity(self.bump, generated_len);
         for &ref_ in self.current_scope.generated.slice() {
-            top_level_symbols_to_parts
-                .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
+            top_level_symbols_to_parts.put(self.bump, ref_, AstVec::from_slice_in(&[1], self.bump));
         }
-        top_level_symbols_to_parts.re_index()?;
 
         // For more details on this section, look at js_parser.toAST
         // This is mimicking how it calls ImportScanner
@@ -303,6 +300,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         for item in st.items.slice() {
                             let ref_ = item.name.ref_;
                             self.named_imports.put(
+                                self.bump,
                                 ref_,
                                 bun_ast::NamedImport {
                                     alias: Some(item.alias),
@@ -311,9 +309,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: AstVec::new(),
                                 },
-                            )?;
+                            );
                         }
                         // convertStmt: `deduplicatedImport` is a no-op for
                         // AstBuilder (each generated file emits at most one
@@ -336,7 +334,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                 // ImportScanner.recordExportedBinding → recordExport
                                 self.record_export(binding.loc, original_name.slice(), ref_)?;
                                 export_props.push(G::Property {
-                                    key: Some(Expr::init(
+                                    key: Some(Expr::allocate(
+                                        self.bump,
                                         E::String::init(original_name.slice()),
                                         binding.loc,
                                     )),
@@ -355,32 +354,43 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // (`registerClientReference(...)`), which is not
                         // `can_be_moved()` — generate a temp const binding and
                         // reference it from `export_props`.
-                        let value = st.value.to_expr();
+                        let value = st.value.to_expr(self.bump);
                         let temp_id = self.generate_temp_ref(Some(b"default_export"));
-                        parts[1].declared_symbols.append(DeclaredSymbol {
-                            ref_: temp_id,
-                            is_top_level: true,
-                        })?;
+                        parts[1].declared_symbols.append(
+                            self.bump,
+                            DeclaredSymbol {
+                                ref_: temp_id,
+                                is_top_level: true,
+                            },
+                        );
                         parts[1]
                             .symbol_uses
-                            .put(temp_id, symbol::Use::unscoped(1))?;
-                        VecExt::append(&mut self.current_scope.generated, temp_id);
+                            .put(self.bump, temp_id, symbol::Use::unscoped(1));
+                        self.current_scope.generated.push(self.bump, temp_id);
                         export_props.push(G::Property {
-                            key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
+                            key: Some(Expr::allocate(
+                                self.bump,
+                                E::String::init(b"default"),
+                                stmt.loc,
+                            )),
                             value: Some(Expr::init_identifier(temp_id, stmt.loc)),
                             ..Default::default()
                         });
-                        hmr_stmts.push(Stmt::alloc(
+                        hmr_stmts.push(Stmt::allocate(
+                            self.bump,
                             S::Local {
                                 kind: S::Kind::KConst,
-                                decls: G::DeclList::from_slice(&[G::Decl {
-                                    binding: Binding::alloc(
-                                        self.bump,
-                                        bun_ast::b::Identifier { r#ref: temp_id },
-                                        stmt.loc,
-                                    ),
-                                    value: Some(value),
-                                }]),
+                                decls: G::DeclList::from_slice_in(
+                                    &[G::Decl {
+                                        binding: Binding::alloc(
+                                            self.bump,
+                                            bun_ast::b::Identifier { r#ref: temp_id },
+                                            stmt.loc,
+                                        ),
+                                        value: Some(value),
+                                    }],
+                                    self.bump,
+                                ),
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -393,10 +403,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             // ConvertESMExportsForHmr.finalize:
             if !export_props.is_empty() {
                 // `hmr.exports = { ... };`
-                hmr_stmts.push(Stmt::alloc(
+                hmr_stmts.push(Stmt::allocate(
+                    self.bump,
                     S::SExpr {
                         value: Expr::assign(
-                            Expr::init(
+                            self.bump,
+                            Expr::allocate(
+                                self.bump,
                                 E::Dot {
                                     target: Expr::init_identifier(self.hmr_api_ref, Loc::EMPTY),
                                     name: b"exports".into(),
@@ -405,9 +418,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                 },
                                 Loc::EMPTY,
                             ),
-                            Expr::init(
+                            Expr::allocate(
+                                self.bump,
                                 E::Object {
-                                    properties: bun_alloc::AstAlloc::vec_from_iter(export_props),
+                                    properties: G::PropertyList::from_slice_in(
+                                        &export_props,
+                                        self.bump,
+                                    ),
                                     ..Default::default()
                                 },
                                 Loc::EMPTY,
@@ -420,19 +437,25 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 // mark a dependency on module_ref so it is renamed
                 parts[1]
                     .symbol_uses
-                    .put(self.module_ref, symbol::Use::unscoped(1))?;
-                parts[1].declared_symbols.append(DeclaredSymbol {
-                    ref_: self.module_ref,
-                    is_top_level: true,
-                })?;
+                    .put(self.bump, self.module_ref, symbol::Use::unscoped(1));
+                parts[1].declared_symbols.append(
+                    self.bump,
+                    DeclaredSymbol {
+                        ref_: self.module_ref,
+                        is_top_level: true,
+                    },
+                );
             }
             // Head-part bookkeeping (only `parts[0]`, which is the empty
             // namespace-export part): mark dead and depend on `parts[1]`.
             parts[0].tag = bun_ast::PartTag::DeadDueToInlining;
-            parts[0].dependencies.push(bun_ast::Dependency {
-                part_index: 1,
-                source_index: bun_ast::Index(self.source_index),
-            });
+            parts[0].dependencies.push(
+                self.bump,
+                bun_ast::Dependency {
+                    part_index: 1,
+                    source_index: bun_ast::Index(self.source_index),
+                },
+            );
 
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(hmr_stmts.as_slice());
             parts[1].stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
@@ -454,6 +477,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         for item in st.items.slice() {
                             let ref_ = item.name.ref_;
                             self.named_imports.put(
+                                self.bump,
                                 ref_,
                                 bun_ast::NamedImport {
                                     alias: Some(item.alias),
@@ -462,9 +486,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: AstVec::new(),
                                 },
-                            )?;
+                            );
                         }
                     }
                     bun_ast::StmtData::SLocal(st) if st.is_export => {
@@ -485,9 +509,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         }
 
         parts[1].declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts[1].import_record_indices = bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
-            &mut self.import_records_for_current_part,
-        ));
+        parts[1].import_record_indices = bun_ast::PartImportRecordIndices::from_slice_in(
+            &self.import_records_for_current_part,
+            self.bump,
+        );
 
         Ok(crate::BundledAst {
             parts,
@@ -500,7 +525,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 core::mem::take(&mut self.import_records),
                 self.bump,
             ),
-            export_star_import_records: bun_alloc::AstAlloc::vec(),
+            export_star_import_records: AstVec::new(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,
             module_type: crate::options::ModuleType::Unknown,
@@ -541,12 +566,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ));
         } else {
             self.named_exports.put(
+                self.bump,
                 alias,
                 NamedExport {
                     alias_loc: Loc::EMPTY,
                     ref_,
                 },
-            )?;
+            );
         }
         Ok(())
     }

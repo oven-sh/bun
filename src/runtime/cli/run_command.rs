@@ -1010,7 +1010,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
         });
-        bun_ast::initialize_store();
 
         let options = VmInitOptions {
             transform_options: ctx.args.clone(),
@@ -1191,7 +1190,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
         }
-        bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.

@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use std::io::Write as _;
 use std::sync::LazyLock;
 

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bun_ast::{ASTMemoryAllocator, AstArena, ExportsKind, Loader, Log, Source};
+use bun_ast::{AstArena, ExportsKind, Loader, Log, Source};
 use bun_js_parser::{Define, Parser, ParserOptions};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
@@ -18,8 +18,6 @@ const PATH: &[u8] = b"/project/a.ts";
 
 fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
     let arena = AstArena::new();
-    let mut store = ASTMemoryAllocator::borrowing(&arena);
-    let _scope = store.enter();
     let mut options = ParserOptions::init(Default::default(), Loader::Ts);
     options.tree_shaking = true;
     options.warn_about_unbundled_modules = false;

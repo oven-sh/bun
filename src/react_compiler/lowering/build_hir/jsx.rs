@@ -6,7 +6,7 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, ObjectProperty,
+    BuiltinTag, Effect, HirAlloc, HirVec, InstructionValue, JsxAttribute, JsxTag, ObjectProperty,
     ObjectPropertyOrSpread, ObjectPropertyType, Place, PrimitiveValue, PropertyLiteral,
     SourceLocation, StoreStr, VariableBinding,
 };
@@ -23,10 +23,10 @@ use crate::program::JsxImportKind;
 
 fn estring_to_store_str(s: &E::EString) -> StoreStr {
     if s.is_utf16 {
-        super::helpers::arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
+        HirAlloc::dupe_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
     } else if s.next.is_some() {
         // `<a {...{ ["b" + "c"]: d }} />`: the parser inlines the spread, and joins the key into a rope.
-        let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(s.len());
+        let mut buf: HirVec<u8> = HirAlloc::vec_with_capacity(s.len());
         let mut cur = Some(s);
         while let Some(seg) = cur {
             buf.extend_from_slice(seg.slice8());
@@ -247,8 +247,8 @@ pub(super) fn lower_jsx_call(
         _ => None,
     };
 
-    let mut props: HirVec<JsxAttribute> = AstAlloc::vec();
-    let mut children: HirVec<Place> = AstAlloc::vec();
+    let mut props: HirVec<JsxAttribute> = HirAlloc::vec();
+    let mut children: HirVec<Place> = HirAlloc::vec();
 
     if let Some(obj) = automatic_props {
         // visit_expr.rs only wraps `children` in a synthetic E::Array when
@@ -493,7 +493,7 @@ fn lower_prop_as_spread(
         return Ok(None);
     };
     let place = lower_expression_to_temporary(builder, value)?;
-    let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
+    let mut properties: HirVec<ObjectPropertyOrSpread> = HirAlloc::vec();
     properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
         key,
         property_type: ObjectPropertyType::Property,

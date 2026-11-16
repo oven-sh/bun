@@ -65,7 +65,7 @@ pub(crate) fn get_str(expr: &Expr, key: &[u8]) -> Option<&'static [u8]> {
 /// Returns the entries of a mapping, or nothing for any other value.
 pub(crate) fn props(expr: &Expr) -> impl Iterator<Item = (&Expr, &Expr)> {
     let properties = match &expr.data {
-        ExprData::EObject(object) => object.properties.as_slice(),
+        ExprData::EObject(object) => object.properties.slice(),
         _ => &[],
     };
     properties

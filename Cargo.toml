@@ -365,7 +365,7 @@ strum = { version = "0.26", features = ["derive"] }
 # would bind `A` to `core::alloc::Allocator` directly) because it also enables
 # `min_specialization` on `T: Copy`, which our pinned nightly rejects with
 # "cannot specialize on trait `Copy`". So: use the polyfill trait, and bridge
-# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+# `bun_alloc::DefaultAlloc` to it (see `bun_alloc/hashbrown_bridge.rs`).
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }

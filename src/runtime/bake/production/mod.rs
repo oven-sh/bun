@@ -106,7 +106,6 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
     jsc::initialize(jsc::InitializeOptions::default());
-    bun_ast::initialize_store();
 
     let vm_options = jsc::virtual_machine::Options {
         args: ctx.args.clone(),

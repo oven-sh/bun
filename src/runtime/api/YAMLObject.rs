@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use core::ffi::c_void;
 
 use bun_ast::{Expr, expr::Data as ExprData};

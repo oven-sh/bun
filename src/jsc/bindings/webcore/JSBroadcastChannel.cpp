@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSBroadcastChannel.h"
 
-
 #include "EventNames.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"

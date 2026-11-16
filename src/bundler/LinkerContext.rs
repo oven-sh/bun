@@ -624,8 +624,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         Ok(chunks)
     }
 
-    /// The directives that lead `chunk`: those of its entry point. The dev server gives every module its own
-    /// closure, and the prologue goes there.
+    /// The directives that lead `chunk`: those of its entry point. The dev server gives every module its own closure, which gets them.
     pub(crate) fn directives_of_chunk(&self, chunk: &Chunk) -> bun_ast::StoreSlice<Stmt> {
         if chunk.is_entry_point() && self.options.output_format != Format::InternalBakeDev {
             self.graph.ast.items_directives()[chunk.entry_point.source_index() as usize]
@@ -658,8 +657,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             })
     }
 
-    /// Sloppy code can hold syntax that strict code cannot (`Ast::sloppy_only_syntax`), and a chunk that is
-    /// strict code as a whole does not parse with it. The parser sees one file. The chunk decides.
+    /// A chunk that is strict code as a whole does not parse with the `Ast::sloppy_only_syntax` of a file in it. Only the linker knows the chunk.
     fn report_sloppy_only_syntax(&self, chunks: &[Chunk<'a>], log: &mut Log) {
         if self.bundle.sloppy_only_syntax.is_empty() {
             return;

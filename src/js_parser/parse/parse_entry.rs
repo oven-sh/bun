@@ -154,8 +154,7 @@ pub struct Options<'a> {
     /// The source is one of JavaScriptCore's builtins: `@name` is a name.
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
-    /// The output always loads as strict code, so syntax that only sloppy code can hold is an error.
-    /// For a bundle that the linker makes, the linker reports it: see `Ast::sloppy_only_syntax`.
+    /// The output always loads as strict code, so the parser reports `Ast::sloppy_only_syntax` itself. For a bundle that is linked, the linker does.
     pub strict_output: bool,
 
     pub transform_only: bool,

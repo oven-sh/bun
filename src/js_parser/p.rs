@@ -5008,8 +5008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `text` names syntax at `r` that strict code cannot hold, in sloppy code. It is an error when the output is
-    /// strict code. For a bundle the linker knows that, chunk by chunk.
+    /// `text` names syntax at `r` of sloppy code that strict code cannot hold: an error if the output is strict, which for a bundle the linker knows.
     pub(crate) fn sloppy_only_syntax(&mut self, r: bun_ast::Range, text: &'a [u8]) {
         if self.options.strict_output {
             let why: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(

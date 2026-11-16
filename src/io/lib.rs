@@ -358,7 +358,9 @@ pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, R
 pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};
 
-pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
+pub use pipe_writer::{
+    BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult, WriteStatus,
+};
 #[cfg(windows)]
 pub use source::Source;
 

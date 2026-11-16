@@ -398,6 +398,11 @@ pub fn address_to_string(address: &Address) -> BunString {
             };
             BunString::clone_latin1(&buf[..len])
         }
+        #[cfg(unix)]
+        libc::AF_UNIX => {
+            let un = address.as_un().unwrap(); // family() just checked
+            BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
+        }
         _ => BunString::EMPTY,
     }
 }

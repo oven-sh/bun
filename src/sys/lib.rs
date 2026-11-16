@@ -8192,6 +8192,16 @@ pub mod net {
                 None
             }
         }
+        /// `None` unless `family() == AF_UNIX`.
+        #[cfg(unix)]
+        pub fn as_un(&self) -> Option<&libc::sockaddr_un> {
+            if self.family() == libc::AF_UNIX {
+                // SAFETY: as in `as_in4`, for `sockaddr_un`.
+                Some(unsafe { &*(&raw const self.any).cast::<libc::sockaddr_un>() })
+            } else {
+                None
+            }
+        }
     }
     impl fmt::Debug for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

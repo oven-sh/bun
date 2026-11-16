@@ -1,6 +1,6 @@
 //! The Huffman code of string literals (RFC 7541 §5.2).
 
-use crate::{Error, Result, wrapped, wrapped_mut};
+use crate::{Error, Result, wrapped};
 
 /// How far both directions may write past their result.
 pub(crate) const SLACK: usize = 8;
@@ -79,72 +79,81 @@ const CANONICAL: Canonical = {
     canonical
 };
 
-static CODES: [u64; EOS] = CANONICAL.codes;
-static CODE_LENGTHS: &[u8; EOS] = LENGTHS.first_chunk().unwrap();
 static SYMBOLS: [u8; EOS] = CANONICAL.symbols;
 static GROUPS: [Group; 32] = CANONICAL.groups;
+
+const LENGTH_BITS: u32 = 5;
+
+/// With their lengths in the lowest [`LENGTH_BITS`] bits.
+#[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
+static CODES: [u64; EOS] = {
+    let (mut codes, mut symbol) = (CANONICAL.codes, 0);
+    while symbol < EOS {
+        codes[symbol] |= LENGTHS[symbol] as u64;
+        symbol += 1;
+    }
+    codes
+};
 
 /// Bits on their way to `out`.
 struct Writer<'a> {
     out: &'a mut [u8],
-    written: usize,
     bits: u64,
-    count: u32,
+    count: u8,
 }
 
 impl Writer<'_> {
     /// The bits are of no use if there are too many.
     #[inline(always)]
-    fn with(&self, symbols: &[u8]) -> (u64, u32) {
-        let (mut bits, mut count) = (self.bits, self.count);
+    fn with(&self, symbols: &[u8]) -> (u64, u8) {
+        let (mut bits, mut count) = (self.bits, u64::from(self.count));
         for &symbol in symbols {
-            bits |= wrapped(&CODES, symbol.into()).wrapping_shr(count);
-            count += u32::from(*wrapped(CODE_LENGTHS, symbol.into()));
+            let code = *wrapped(&CODES, symbol.into());
+            bits |= code.wrapping_shr(count as u32);
+            count = count.wrapping_add(code);
         }
-        (bits, count)
+        (bits >> LENGTH_BITS << LENGTH_BITS, count as u8)
     }
 
     #[inline(always)]
-    fn store(&mut self, (bits, count): (u64, u32)) -> Option<()> {
-        let out = self.out.get_mut(self.written..).unwrap_or_default();
-        *out.first_chunk_mut()? = bits.to_be_bytes();
-        self.written += count as usize / 8;
-        self.bits = bits << (count / 8 * 8);
+    fn store(&mut self, (bits, count): (u64, u8)) -> Option<()> {
+        *self.out.first_chunk_mut()? = bits.to_be_bytes();
+        let whole_bytes = count / 8 % 8;
+        let _ = self.out.split_off_mut(..whole_bytes.into());
+        self.bits = bits << (8 * whole_bytes);
         self.count = count % 8;
-        Some(())
-    }
-
-    #[inline(always)]
-    fn write(&mut self, symbols: &[u8]) -> Option<()> {
-        if let bits @ (_, ..u64::BITS) = self.with(symbols) {
-            return self.store(bits);
-        }
-        core::hint::cold_path();
-        for symbol in symbols {
-            self.store(self.with(core::slice::from_ref(symbol)))?;
-        }
         Some(())
     }
 }
 
 /// Returns the length of the result, or `None` if that is longer than `out` without its [`SLACK`].
 #[inline(always)]
-pub(crate) fn encode(text: &[u8], out: &mut [u8]) -> Option<usize> {
-    const GROUP_LEN: usize = 4;
+pub(crate) fn encode(mut text: &[u8], out: &mut [u8]) -> Option<usize> {
+    const GROUP_LEN: usize = 5;
+    let out_len = out.len();
     let mut writer = Writer {
         out,
-        written: 0,
         bits: 0,
         count: 0,
     };
-    let (groups, rest) = text.as_chunks::<GROUP_LEN>();
-    for group in groups {
-        writer.write(group)?;
+    while !text.is_empty() {
+        while let Some((group, rest)) = text.split_first_chunk::<GROUP_LEN>()
+            && let (bits, count) = writer.with(group)
+            && u32::from(count) <= u64::BITS - LENGTH_BITS
+        {
+            writer.store((bits, count))?;
+            text = rest;
+        }
+        let mut symbols = text.iter();
+        for symbol in symbols.by_ref().take(GROUP_LEN) {
+            writer.store(writer.with(core::slice::from_ref(symbol)))?;
+        }
+        text = symbols.as_slice();
     }
-    writer.write(rest)?;
     let padded = writer.bits | u64::MAX >> writer.count;
     writer.store((padded, writer.count.next_multiple_of(8)))?;
-    (writer.written + SLACK <= writer.out.len()).then_some(writer.written)
+    let left = writer.out.len();
+    (left >= SLACK).then_some(out_len - left)
 }
 
 /// The most that `len` bytes decode to.
@@ -154,9 +163,16 @@ pub(crate) const fn max_decoded_len(len: usize) -> usize {
 }
 
 const LOOKUP_BITS: usize = 12;
-const LOOKUPS_PER_REFILL: usize = 4;
+const LOOKUPS_PER_STEP: usize = 4;
 
-/// What the next [`LOOKUP_BITS`] bits start with. From the lowest byte: a number of bits, a number of symbols, and up to two symbols.
+const _: () = assert!(LOOKUP_BITS * (LOOKUPS_PER_STEP + 1) <= 64 && 2 * LOOKUPS_PER_STEP <= SLACK);
+
+/// From the lowest byte: the bits that the codes take, the bits that their symbols take, and up to two symbols.
+const fn entry(symbols: usize, count: usize, length: usize) -> u32 {
+    (symbols << 16 | (8 * count) << 8 | length) as u32
+}
+
+/// An [`entry`] for what the next [`LOOKUP_BITS`] bits of a [`Reader`] start with, or 0.
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 static LOOKUP: [u32; 1 << LOOKUP_BITS] = {
     let mut lookup = [0; 1 << LOOKUP_BITS];
@@ -174,7 +190,7 @@ static LOOKUP: [u32; 1 << LOOKUP_BITS] = {
                 let mut index = (code >> (64 - LOOKUP_BITS)) as usize;
                 let end = index + (1 << (LOOKUP_BITS - length));
                 while index < end {
-                    lookup[index] = (symbols << 16 | count << 8 | length) as u32;
+                    lookup[!index % (1 << LOOKUP_BITS)] = entry(symbols, count, length);
                     index += 1;
                 }
             }
@@ -188,128 +204,97 @@ static LOOKUP: [u32; 1 << LOOKUP_BITS] = {
 struct Reader<'a> {
     out: &'a mut [u8],
     written: usize,
-    /// The next bit is the highest.
+    /// The next bit is the highest. All are inverted, which makes padding of the zeros that shifts bring in.
     bits: u64,
+    /// How many of `bits` are from bytes that the caller has moved past.
     count: u32,
 }
 
 impl Reader<'_> {
-    /// `next` is what follows the bits counted so far. Returns how many of its bytes are counted now.
+    /// Makes all of `bits` valid. `next` is what follows those that are counted.
     #[inline(always)]
-    fn refill(&mut self, next: u64) -> usize {
+    fn fill(&mut self, next: u64) {
         self.bits |= next >> self.count;
+    }
+
+    #[inline(always)]
+    fn look_up(&self) -> u32 {
+        *wrapped(&LOOKUP, (self.bits >> (64 - LOOKUP_BITS)) as usize)
+    }
+
+    /// Returns how many bytes of `next` are counted now.
+    #[inline(always)]
+    fn step(&mut self, next: u64) -> Result<u32> {
+        // The last fill has left enough for one lookup, which thus does not wait for this one.
+        let mut sum = self.look_up();
+        self.fill(next);
         let taken = (63 - self.count) / 8;
-        self.count |= 56;
-        taken as usize
-    }
-
-    /// Returns false if a code longer than [`LOOKUP_BITS`] is in the way.
-    #[inline(always)]
-    fn read_short_codes(&mut self) -> Result<bool> {
-        let out = self.out.get_mut(self.written..).unwrap_or_default();
-        let out: &mut [u8; 2 * LOOKUPS_PER_REFILL] =
-            out.first_chunk_mut().ok_or(Error::FieldTooLong)?;
-        let (mut sum, mut last) = (0u32, 0);
-        for _ in 0..LOOKUPS_PER_REFILL {
-            last = *wrapped(&LOOKUP, (self.bits >> (64 - LOOKUP_BITS)) as usize);
-            let at = usize::from((sum >> 8) as u8);
-            *wrapped_mut(out, at) = (last >> 16) as u8;
-            *wrapped_mut(out, at + 1) = (last >> 24) as u8;
-            self.bits = self.bits.wrapping_shl(last);
-            sum = sum.wrapping_add(last);
+        let lookups_left = if sum == 0 {
+            sum = long_code(!self.bits).ok_or(Error::Malformed)?;
+            0
+        } else {
+            LOOKUPS_PER_STEP - 1
+        };
+        let mut symbols = u64::from(sum >> 16);
+        self.bits = self.bits.wrapping_shl(sum);
+        for _ in 0..lookups_left {
+            let entry = self.look_up();
+            symbols |= u64::from(entry >> 16).wrapping_shl(sum >> 8);
+            self.bits = self.bits.wrapping_shl(entry);
+            sum = sum.wrapping_add(entry);
         }
-        self.count -= u32::from(sum as u8);
-        self.written += usize::from((sum >> 8) as u8);
-        Ok(last != 0)
-    }
-
-    /// Needs a refill before it.
-    #[inline(always)]
-    fn read_long_code(&mut self) -> Result<()> {
-        let (symbol, length) = long_code(self.bits).ok_or(Error::Malformed)?;
-        // What came before the code has not filled the part that `read_short_codes` asked for.
-        self.out
-            .split_at_mut(self.written)
-            .1
-            .iter_mut()
-            .take(1)
-            .for_each(|to| *to = symbol);
-        self.written += 1;
-        self.bits <<= length;
-        self.count -= length;
-        Ok(())
+        let out = self.out.get_mut(self.written..).unwrap_or_default();
+        *out.first_chunk_mut().ok_or(Error::FieldTooLong)? = symbols.to_le_bytes();
+        self.written += usize::from((sum >> 8) as u8 / 8);
+        self.count = (self.count | 56) - u32::from(sum as u8);
+        Ok(taken)
     }
 }
 
-/// The symbol and length of the code that `bits` starts with, unless that is EOS.
+/// What would be in [`LOOKUP`] for the code that `bits` starts with, unless that is EOS.
 #[inline(never)]
-fn long_code(bits: u64) -> Option<(u8, u32)> {
+fn long_code(bits: u64) -> Option<u32> {
     let mut lengths = LOOKUP_BITS + 1..=LONGEST;
     let length = lengths.find(|&length| bits <= wrapped(&GROUPS, length).last_code)?;
     let group = wrapped(&GROUPS, length);
     let before_last = (group.last_code - bits) >> (64 - length);
     let position = usize::from(group.last_position) - before_last as usize;
-    Some((*wrapped(&SYMBOLS, position), length as u32))
+    Some(entry((*wrapped(&SYMBOLS, position)).into(), 1, length))
 }
 
-/// Up to 7 bytes in the highest bits, and ones after them.
-#[inline(always)]
-fn padded(bytes: &[u8]) -> u64 {
-    let after = 64 - 8 * bytes.len() as u32;
-    let bits = match (bytes.first_chunk(), bytes.last_chunk(), bytes) {
-        (Some(&first), Some(&last), _) => {
-            u64::from(u32::from_be_bytes(first)) << 32
-                | u64::from(u32::from_be_bytes(last)) << after
-        }
-        (_, _, &[first, second, last]) => {
-            u64::from(u32::from_be_bytes([first, second, last, 0])) << 32
-        }
-        (_, _, &[first, last]) => u64::from(u16::from_be_bytes([first, last])) << 48,
-        (_, _, &[first, ..]) => u64::from(first) << 56,
-        (_, _, []) => return u64::MAX,
-    };
-    bits | u64::MAX >> (64 - after)
-}
-
-/// Returns the length of the result, which may reach into the [`SLACK`] of `out`.
-#[inline(always)]
-pub(crate) fn decode(mut encoded: &[u8], out: &mut [u8]) -> Result<usize> {
+/// `context` ends with `encoded`. Returns the length of the result, which may reach into the [`SLACK`] of `out`.
+#[inline(never)]
+pub(crate) fn decode(mut encoded: &[u8], context: &[u8], out: &mut [u8]) -> Result<usize> {
     let mut reader = Reader {
         out,
         written: 0,
         bits: 0,
         count: 0,
     };
-    let mut is_at_long_code = false;
+    if let Some(&next) = encoded.first_chunk() {
+        reader.fill(!u64::from_be_bytes(next));
+    }
     while let Some(&next) = encoded.first_chunk() {
-        let taken = reader.refill(u64::from_be_bytes(next));
-        encoded = encoded.get(taken..).unwrap_or_default();
-        if is_at_long_code {
-            reader.read_long_code()?;
-            is_at_long_code = false;
-        } else {
-            is_at_long_code = !reader.read_short_codes()?;
-        }
+        let taken = reader.step(!u64::from_be_bytes(next))?;
+        encoded = encoded.get(taken as usize..).unwrap_or_default();
     }
 
-    let mut next = padded(encoded);
+    let last = match context.last_chunk() {
+        Some(&last) => u64::from_be_bytes(last),
+        None => context
+            .iter()
+            .fold(0, |last, &byte| last << 8 | u64::from(byte)),
+    };
+    let mut next = !last << 8 << (56 - 8 * encoded.len());
     let mut left = i64::from(reader.count) + 8 * encoded.len() as i64;
-    loop {
-        let taken = reader.refill(next);
-        next = !(!next << (8 * taken));
-        let before = reader.count;
-        if is_at_long_code {
-            reader.read_long_code()?;
-            is_at_long_code = false;
-        } else {
-            is_at_long_code = !reader.read_short_codes()?;
-        }
+    reader.fill(next);
+    while reader.bits | next != 0 {
+        let before = reader.count | 56;
+        next <<= 8 * reader.step(next)?;
         left -= i64::from(before - reader.count);
-        match left {
-            ..0 => return Err(Error::Malformed),
-            // A long code starts with more ones than that.
-            0..8 if is_at_long_code => return Ok(reader.written),
-            _ => {}
-        }
+    }
+    match left {
+        0..8 => Ok(reader.written),
+        _ => Err(Error::Malformed),
     }
 }

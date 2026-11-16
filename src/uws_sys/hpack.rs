@@ -56,16 +56,25 @@ struct Encoded {
     len: usize,
 }
 
+fn copy_to<'a>(room: &mut &'a mut [u8], bytes: &[u8]) -> &'a [u8] {
+    let copy;
+    (copy, *room) = core::mem::take(room).split_at_mut(bytes.len());
+    copy.copy_from_slice(bytes);
+    copy
+}
+
 impl HpackBuffer {
     fn decode(&mut self, decoder: &mut Decoder, block: &[u8], limits: &Limits) -> Status {
-        self.bytes.clear();
+        self.bytes.resize(limits.size, 0);
         self.fields.clear();
+        let mut room = self.bytes.as_mut_slice();
         let (mut size, mut count) = (0, 0);
         let mut fields = decoder.decode(block);
         loop {
             let field = match fields.next() {
                 Ok(Some(field)) => field,
-                Ok(None) => break,
+                Ok(None) if count == self.fields.len() => return Status::Complete,
+                Ok(None) => return Status::OverLimit,
                 Err(Error::FieldTooLong) => return Status::OverHardLimit,
                 Err(Error::Malformed) => return Status::Malformed,
             };
@@ -75,26 +84,15 @@ impl HpackBuffer {
                 return Status::OverHardLimit;
             }
             if size <= limits.size && count <= limits.fields {
-                self.bytes.extend_from_slice(field.name);
-                self.bytes.extend_from_slice(field.value);
+                let name = match field.static_index {
+                    0 => copy_to(&mut room, field.name),
+                    index => bun_hpack::static_name(index),
+                };
                 self.fields.push(Header {
                     qpack_index: field.static_index.into(),
-                    ..Header::init(field.name, field.value, None)
+                    ..Header::init(name, copy_to(&mut room, field.value), None)
                 });
             }
-        }
-        // `bytes` has stopped moving.
-        let mut rest = self.bytes.as_slice();
-        for field in &mut self.fields {
-            let (name, value);
-            (name, rest) = rest.split_at(field.name_len as usize);
-            (value, rest) = rest.split_at(field.value_len as usize);
-            (field.name, field.value) = (name.as_ptr(), value.as_ptr());
-        }
-        if self.fields.len() == count {
-            Status::Complete
-        } else {
-            Status::OverLimit
         }
     }
 

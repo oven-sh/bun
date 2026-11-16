@@ -53,6 +53,8 @@ mod pseudo {
 #[derive(Clone, Copy)]
 pub(crate) struct PendingLocalSettings {
     pub settings: Settings,
+    /// Whether the frame has this entry. `settings` has a value either way.
+    pub has_header_table_size: bool,
 }
 
 /// Per-stream protocol state tracked by the engine.
@@ -841,13 +843,16 @@ impl Connection {
                     .pop_front()
                     .unwrap_or(PendingLocalSettings {
                         settings: self.local_settings,
+                        has_header_table_size: true,
                     });
             self.acked_local_initial_window = acked.settings.initial_window_size;
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
-            self.decoder
-                .set_max_table_size(acked.settings.header_table_size);
+            if acked.has_header_table_size {
+                self.decoder
+                    .set_max_table_size(acked.settings.header_table_size);
+            }
             sink.on_local_settings(&acked.settings);
             return false;
         }

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use bun_hpack::{Decoder, Encoder, Error, Indexing, MAX_FIELD_LEN};
+use bun_wyhash::Wyhash;
 
 /// RFC 7541 Appendix B.
 #[rustfmt::skip]
@@ -180,6 +181,7 @@ fn decode(decoder: &mut Decoder, block: &[u8]) -> Result<Vec<Field>, Error> {
         assert!(!next.name.is_empty());
         if let Some(position) = usize::from(next.static_index).checked_sub(1) {
             assert_eq!(static_table().nth(position).unwrap().0, next.name);
+            assert_eq!(bun_hpack::static_name(next.static_index), next.name);
         }
         all.push(Field {
             never_index: next.never_index,
@@ -587,6 +589,10 @@ mod decoder {
             ("0f 80 00 00", "[accept-charset=]"),
             ("0f 81 80 80 80 00 00", "[accept-encoding=]"),
             ("0f 80 80 80 80 80 00 00", "Malformed"),
+            ("0f", "Malformed"),
+            ("1f 80", "Malformed"),
+            ("3f", "Malformed"),
+            ("7f", "Malformed"),
             ("ff", "Malformed"),
             ("ff 80", "Malformed"),
             ("ff 00", "Malformed"),
@@ -761,7 +767,10 @@ mod decoder {
     }
 
     fn random_string(random: &mut Random) -> Vec<u8> {
-        let max_len = random.pick(&[1, 8, 30, 30, 300]);
+        let max_len = match random.below(100) {
+            0 => 30_000,
+            _ => random.pick(&[1, 8, 30, 30, 300]),
+        };
         let text = random.text(max_len);
         if random.below(2) == 0 {
             raw(&text)
@@ -777,7 +786,7 @@ mod decoder {
             let (mut decoder, mut model) = (Decoder::new(), Model::new());
             for _ in 0..50 {
                 if random.below(20) == 0 {
-                    let size = random.pick(&[0, 40, 200, 1000, 4096, 10_000]);
+                    let size = random.pick(&[0, 40, 200, 1000, 4096, 10_000, 100_000]);
                     decoder.set_max_table_size(size as u32);
                     model.set_max_table_size(size);
                 }
@@ -823,6 +832,14 @@ mod huffman {
         assert_eq!(
             decode(&mut Decoder::new(), &block),
             as_value.ok_or(Error::Malformed),
+            "{encoded:02x?}"
+        );
+        let block = [&hex("82 00 04ffff0000"), &string[..], &hex("82")].concat();
+        let get = || field(":method", "GET");
+        let inside = expected.map(|text| vec![get(), field([0xff, 0xff, 0, 0], text), get()]);
+        assert_eq!(
+            decode(&mut Decoder::new(), &block),
+            inside.ok_or(Error::Malformed),
             "{encoded:02x?}"
         );
     }
@@ -1015,6 +1032,40 @@ mod encoder {
         assert_eq!(encode(&mut encoder, "age", "~"), hex("55 017e"));
         assert_eq!(encode(&mut encoder, "via", "~"), hex("7c 017e"));
         assert_eq!(encode(&mut encoder, "", "~"), hex("40 00 017e"));
+    }
+
+    /// Two texts that the encoder files under the same hash.
+    fn with_equal_hashes(seed: u64) -> [String; 2] {
+        let mut seen = BTreeMap::new();
+        let mut texts = (0..).map(|number| format!("~{number:08}"));
+        texts
+            .find_map(|text| {
+                let hash = Wyhash::hash(seed, text.as_bytes()) as u32;
+                Some([seen.insert(hash, text.clone())?, text])
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn equal_hashes_do_not_make_equal_fields() {
+        let [first, second] = with_equal_hashes(60);
+        let mut encoder = Encoder::new();
+        for value in [&first, &second] {
+            let expected = [hex("7c"), literal(value.as_bytes())].concat();
+            assert_eq!(encode(&mut encoder, "via", value), expected);
+        }
+        assert_eq!(encode(&mut encoder, "via", first), hex("bf"));
+        assert_eq!(encode(&mut encoder, "via", second), hex("be"));
+
+        let [first, second] = with_equal_hashes(0);
+        let mut encoder = Encoder::new();
+        for name in [&first, &second] {
+            let expected = [hex("40"), literal(name.as_bytes()), raw(b"~")].concat();
+            assert_eq!(encode(&mut encoder, name, "~"), expected);
+        }
+        assert_eq!(encode(&mut encoder, &first, "~"), hex("bf"));
+        assert_eq!(encode(&mut encoder, &first, "~~"), hex("7f00 027e7e"));
+        assert_eq!(encode(&mut encoder, &second, "~~"), hex("7f00 027e7e"));
     }
 
     #[test]

@@ -1361,6 +1361,40 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
     }
   });
 
+  test("ours is changed from the transport of another session while it is being changed", async () => {
+    using server = await listen({}, stream => stream.respond({ "x-a": "b" }, { endStream: true }));
+    let onWrite: (() => void) | undefined;
+    const transport = new Duplex({
+      read() {},
+      write(_, __, done) {
+        onWrite?.();
+        onWrite = undefined;
+        done();
+      },
+    });
+    const client = http2.connect(`http://127.0.0.1:${server.port}`);
+    const other = http2.connect("http://localhost", { createConnection: () => transport });
+    const get = () => once(client.request().resume(), "response").then(([headers]) => headers["x-a"]);
+    const change = (settings: http2.Settings) =>
+      new Promise<void>((resolve, reject) => client.settings(settings, error => (error ? reject(error) : resolve())));
+    try {
+      expect(await get()).toBe("b");
+      const changes: Promise<void>[] = [];
+      onWrite = () => changes.push(change({ headerTableSize: 0 }));
+      other.ping(() => {});
+      expect(changes.length).toBe(0);
+      changes.push(change({ headerTableSize: 4096 }));
+      expect(changes.length).toBe(2);
+      await Promise.all(changes);
+      expect(await get()).toBe("b");
+      await change({ maxConcurrentStreams: 10 });
+      expect(await get()).toBe("b");
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  });
+
   test.each([
     [0, 65536],
     [65536, 0],

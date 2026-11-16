@@ -1,6 +1,6 @@
 //! RFC 7541 Appendix A.
 
-use crate::wrapped;
+use crate::{equal, wrapped};
 
 pub(crate) const LEN: usize = 61;
 
@@ -108,8 +108,9 @@ static BY_SLOT: [(u8, u8); SLOTS] = {
     table
 };
 
+/// For a [`Field::static_index`](crate::Field::static_index) other than 0.
 #[inline(always)]
-pub(crate) fn name(index: u8) -> &'static [u8] {
+pub fn name(index: u8) -> &'static [u8] {
     wrapped(&BY_INDEX, index.into()).0
 }
 
@@ -122,7 +123,7 @@ pub(crate) fn value(index: u8) -> &'static [u8] {
 #[inline(always)]
 pub(crate) fn find(wanted: &[u8]) -> core::ops::Range<u8> {
     let &(first, count) = wrapped(&BY_SLOT, slot(wanted));
-    if name(first) == wanted {
+    if equal(name(first), wanted) {
         first..first + count
     } else {
         0..0

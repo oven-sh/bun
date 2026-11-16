@@ -2,9 +2,6 @@
 
 use crate::{Error, Result};
 
-/// Enough for any `u32`.
-const MAX_CONTINUATIONS: usize = 5;
-
 /// `first` holds the prefix, and `rest` is what follows it.
 #[inline(always)]
 pub(crate) fn read(first: u8, prefix_bits: u32, rest: &mut &[u8]) -> Result<usize> {
@@ -14,9 +11,10 @@ pub(crate) fn read(first: u8, prefix_bits: u32, rest: &mut &[u8]) -> Result<usiz
         return Ok(prefix.into());
     }
     let mut value = usize::from(full);
-    for position in 0..MAX_CONTINUATIONS {
+    // Enough for any `u32`.
+    for shift in [0, 7, 14, 21, 28] {
         let &byte = rest.split_off_first().ok_or(Error::Malformed)?;
-        value += usize::from(byte & 0x7f) << (7 * position);
+        value += usize::from(byte & 0x7f) << shift;
         if byte < 0x80 {
             return Ok(value);
         }

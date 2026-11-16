@@ -1789,19 +1789,26 @@ impl H2FrameParser {
         };
         let _ = settings_header.write(&mut stream, &self.frames_sent_legacy);
         let _ = stream.write_all(&payload[..payload_len]);
+        self.write_settings(&buffer[..FrameHeader::BYTE_SIZE + payload_len]);
+        true
+    }
 
+    /// `bytes` end with a frame that has what `write_settings_payload` puts right now.
+    fn write_settings(&self, bytes: &[u8]) {
+        let submission = crate::api::h2::connection::PendingLocalSettings {
+            settings: self.local_settings.get().to_engine_settings(),
+            has_header_table_size: self.explicit_settings.get() & SETTING_BIT_HEADER_TABLE_SIZE
+                != 0,
+        };
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
-
+        // May run JS, whose SETTINGS get ahead of these.
+        self.cork();
         // Remember which values this submission carries so the engine can attribute the peer's
         // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
-        self.pending_settings_window_submissions.with_taken(|v| {
-            v.push(crate::api::h2::connection::PendingLocalSettings {
-                settings: settings.to_engine_settings(),
-            })
-        });
-        let _ = self.write(&buffer[..FrameHeader::BYTE_SIZE + payload_len]);
-        true
+        self.pending_settings_window_submissions
+            .with_taken(|v| v.push(submission));
+        let _ = self.write(bytes);
     }
 
     pub(crate) fn abort_stream(&self, stream: &Stream, abort_reason: JSValue) {
@@ -2025,16 +2032,9 @@ impl H2FrameParser {
             stream_identifier: 0,
             length: payload_len as u32,
         };
-        self.outstanding_settings
-            .set(self.outstanding_settings.get() + 1);
-        self.pending_settings_window_submissions.with_taken(|v| {
-            v.push(crate::api::h2::connection::PendingLocalSettings {
-                settings: self.local_settings.get().to_engine_settings(),
-            })
-        });
         let _ = settings_header.write(&mut preface_stream, &self.frames_sent_legacy);
         let _ = preface_stream.write_all(&payload[..payload_len]);
-        let _ = self.write(&preface_buffer[..24 + FrameHeader::BYTE_SIZE + payload_len]);
+        self.write_settings(&preface_buffer[..24 + FrameHeader::BYTE_SIZE + payload_len]);
     }
 
     pub(crate) fn send_window_update(

@@ -1,7 +1,7 @@
 use bun_wyhash::Wyhash;
 
-use crate::dynamic_table::{DynamicTable, Entry, Place, entry_size};
-use crate::{DEFAULT_TABLE_SIZE, huffman, integer, static_table, wrapped, wrapped_mut};
+use crate::dynamic_table::{DynamicTable, Entry, entry_size};
+use crate::{DEFAULT_TABLE_SIZE, equal, huffman, integer, static_table, wrapped, wrapped_mut};
 
 /// The peer may allow more.
 const MAX_TABLE_SIZE: usize = DEFAULT_TABLE_SIZE;
@@ -46,7 +46,7 @@ impl Encoder {
     /// Indexes every field that it may.
     pub fn new() -> Self {
         Self {
-            table: DynamicTable::new(MAX_TABLE_SIZE),
+            table: DynamicTable::new(),
             // Far from the zeros below.
             next_number: 0x8000,
             newest_by_field: [0; _],
@@ -118,7 +118,8 @@ impl Encoder {
             |links| links.older_by_field,
             |entry| {
                 (entry.links.field_hash, entry.place.static_index) == (hash, name.static_index)
-                    && self.table.stored(entry.place) == (name.stored(), value)
+                    && equal(self.table.value(entry.place), value)
+                    && (name.static_index != 0 || equal(self.table.name(entry.place), name.bytes))
             },
         )
     }
@@ -132,7 +133,8 @@ impl Encoder {
             *wrapped(&self.newest_by_name, name.hash as usize),
             |links| links.older_by_name,
             |entry| {
-                entry.links.name_hash == name.hash && self.table.field(entry.place).0 == name.bytes
+                entry.links.name_hash == name.hash
+                    && equal(self.table.name(entry.place), name.bytes)
             },
         )
     }
@@ -141,8 +143,7 @@ impl Encoder {
     fn insert(&mut self, name: &Name<'_>, value: &[u8], field_hash: u32) {
         let stored_name = name.stored();
         self.table.make_room(stored_name.len() + value.len());
-        let (room, start) = self.table.room();
-        let (for_name, rest) = room.split_at_mut(stored_name.len());
+        let (for_name, rest) = self.table.room().split_at_mut(stored_name.len());
         for_name.copy_from_slice(stored_name);
         rest.split_at_mut(value.len()).0.copy_from_slice(value);
 
@@ -157,12 +158,9 @@ impl Encoder {
             ),
             _ => number,
         };
-        let place = Place {
-            start,
-            name_len: stored_name.len() as u32,
-            value_len: value.len() as u32,
-            static_index: name.static_index,
-        };
+        let place = self
+            .table
+            .place_in_room(name.static_index, stored_name.len(), value.len());
         let links = Links {
             field_hash,
             name_hash: name.hash,
@@ -204,7 +202,7 @@ impl Block<'_> {
 
         let mut to_insert = None;
         if indexing != Indexing::Never {
-            if let Some(index) = same_name.find(|&index| static_table::value(index) == value) {
+            if let Some(index) = same_name.find(|&index| equal(static_table::value(index), value)) {
                 if let Some(history) = &mut encoder.history {
                     history.add(0);
                 }
@@ -246,29 +244,31 @@ impl Block<'_> {
 
 /// A string literal (RFC 7541 §5.2).
 fn write_literal(text: &[u8], out: &mut Vec<u8>) {
+    const SHORT_ROOM: [u8; 64] = [0; _];
     let start = out.len();
-    let likely_prefix_len = integer::written_len(7, text.len() / 4 * 3);
-    let max_prefix_len = integer::written_len(7, text.len());
-    out.resize(start + max_prefix_len + text.len() + huffman::SLACK, 0);
-    let at = start + likely_prefix_len;
-    let room = out.get_mut(at..at + text.len() + huffman::SLACK);
-    match huffman::encode(text, room.unwrap_or_default()) {
-        Some(len @ 1..) => {
-            let prefix_len = integer::written_len(7, len);
-            if prefix_len != likely_prefix_len {
-                out.copy_within(at..at + len, start + prefix_len);
-            }
-            let mut prefix = out.iter_mut().skip(start);
-            integer::write(0x80, 7, len, |byte| {
-                prefix.next().into_iter().for_each(|to| *to = byte);
-            });
-            out.truncate(start + prefix_len + len);
+    let text_start = start + integer::written_len(7, text.len());
+    let end = text_start + text.len() + huffman::SLACK;
+    if end - start <= SHORT_ROOM.len() {
+        out.extend_from_slice(&SHORT_ROOM);
+    } else {
+        out.resize(end, 0);
+    }
+    let room = out.get_mut(text_start..end).unwrap_or_default();
+    if let Some(len @ 1..) = huffman::encode(text, room) {
+        out.truncate(text_start + len);
+        let mut at = start;
+        #[expect(clippy::indexing_slicing, reason = "a smaller number is no longer")]
+        integer::write(0x80, 7, len, |byte| {
+            out[at] = byte;
+            at += 1;
+        });
+        if at < text_start {
+            out.drain(at..text_start);
         }
-        _ => {
-            out.truncate(start);
-            integer::write(0x00, 7, text.len(), |byte| out.push(byte));
-            out.extend_from_slice(text);
-        }
+    } else {
+        out.truncate(start);
+        integer::write(0x00, 7, text.len(), |byte| out.push(byte));
+        out.extend_from_slice(text);
     }
 }
 
@@ -308,11 +308,8 @@ impl History {
     /// Returns whether to index the field.
     #[inline(always)]
     fn add_and_judge(&mut self, hash: u32) -> bool {
-        let is_repeated = self
-            .hashes
-            .iter()
-            .take(history_len(MAX_TABLE_SIZE))
-            .fold(false, |found, &other| found | (other == hash));
+        let hashes = self.hashes.iter().take(history_len(MAX_TABLE_SIZE));
+        let is_repeated = hashes.fold(false, |found, &other| found | (other == hash));
         self.add(hash);
         is_repeated || !self.is_full
     }

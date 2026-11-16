@@ -1221,6 +1221,25 @@ describe("bounded output per input chunk", () => {
     expect(await through(zlib.brotliCompressSync(zeros), new DecompressionStream("brotli"))).toEqual([zeros]);
   });
 
+  test.each([130_000, 200_000])("CompressionStream(brotli): a step ends in the middle of %d bytes", async size => {
+    // The encoder holds its output back until a match comes after a MiB of literals.
+    const chunks = Array.from({ length: Math.ceil(1_300_000 / size) }, () => randomBytes(size).fill(0, 0, 64));
+    const codec = new CompressionStream("brotli", { level: 4 });
+    const pieces = await Array.fromAsync(ReadableStream.from(chunks).pipeThrough(codec));
+    expect(largest(pieces)).toBe(size);
+    expect(zlib.brotliDecompressSync(Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  test("DecompressionStream(brotli): a step ends in the middle of a chunk", async () => {
+    const plain = Buffer.from(randomBytes(20_000).toString("hex"));
+    // The decoder stops reading when its window is full.
+    const compressed = zlib.brotliCompressSync(plain, { params: { [zlib.constants.BROTLI_PARAM_LGWIN]: 10 } });
+    const codec = new DecompressionStream("brotli", { highWaterMark: 1000 });
+    const pieces = await Array.fromAsync(ReadableStream.from([compressed]).pipeThrough(codec));
+    expect(largest(pieces)).toBe(compressed.length);
+    expect(Buffer.concat(pieces).equals(plain)).toBe(true);
+  });
+
   // The close algorithm clears the transform's algorithms (which normally frees
   // the coder) as soon as the flush arm returns, while a flush this large is
   // still parked part-way through. The coder has to survive until the flush has

@@ -231,9 +231,11 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
     [
       "brotli: writeSync() before init() does without a decoder or an encoder",
       `const C = zlib.createBrotliCompress()._handle.constructor;
-       for (const mode of [8, 9]) new C(mode).writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64);
-       console.log("handled");`,
-      "handled",
+       for (const h of [new C(8), new C(9)]) {
+         h.onerror = (...error) => console.log(...error);
+         h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       }`,
+      "Compression failed -1 ERR_BROTLI_COMPRESSION_FAILED",
     ],
     [
       "zstd: writeSync() before init() does not dereference a null CCtx",

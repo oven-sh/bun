@@ -258,10 +258,27 @@ describe("fetch compress option", () => {
       });
     });
 
-    test.concurrent.each([100 * 1024, 600 * 1024])("%d bytes of text take quality 6 by default", async length => {
-      const text = Buffer.alloc(length, Array.from({ length: 2000 }, (_, i) => (i * i).toString(36)).join(" "));
-      const params = { [constants.BROTLI_PARAM_QUALITY]: 6, [constants.BROTLI_PARAM_SIZE_HINT]: length };
-      expect(await sent(text, "br")).toEqual(brotliCompressSync(text, { params }));
+    test.concurrent("a body may grow by more than three bytes for each 16 KiB", async () => {
+      const body = createHash("shake256", { outputLength: 600 * 1024 })
+        .update("fetch-compress")
+        .digest();
+      for (let at = 13000; at < body.length; at += 16 * 1024) body.fill(0, at, at + 20);
+      const compressed = await sent(body, { encoding: "br", level: 3 });
+      expect(compressed.length - body.length).toBe(130);
+      expect(brotliDecompressSync(compressed).equals(body)).toBe(true);
+    });
+
+    // No two qualities compress this to the same bytes.
+    const squares = Array.from({ length: 2000 }, (_, i) => (i * i).toString(4)).join(" ");
+
+    test.concurrent.each([
+      [100 * 1024, "br", 6],
+      [600 * 1024, "br", 6],
+      ...[0, 1, 4, 5, 7, 11].map(level => [16 * 1024, { encoding: "br", level }, level] as const),
+    ] as const)("%d bytes of text with %j take quality %d", async (length, compress, quality) => {
+      const text = Buffer.alloc(length, squares);
+      const params = { [constants.BROTLI_PARAM_QUALITY]: quality, [constants.BROTLI_PARAM_SIZE_HINT]: length };
+      expect(await sent(text, compress)).toEqual(brotliCompressSync(text, { params }));
     });
   });
 

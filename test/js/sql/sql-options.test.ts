@@ -191,17 +191,17 @@ describe("dates", () => {
     expect(dates(`${adapter}://uh/ud`, { dates: "string" })).toBe("string");
   });
 
-  test.each(["postgres", "mysql"])("%s: any other value throws", adapter => {
+  test.each(["postgres://uh/ud", "mysql://uh/ud", "sqlite://:memory:"])("%s: any other value throws", url => {
     const invalid = expect.objectContaining({
       code: "ERR_INVALID_ARG_VALUE",
       message: expect.stringContaining("must be one of: date, string"),
     });
     for (const value of ["temporal", "string ", "Date", true, 1]) {
-      expect(() => dates(`${adapter}://uh/ud`, { dates: value })).toThrow(invalid);
+      expect(() => dates(url, { dates: value })).toThrow(invalid);
     }
   });
 
-  test("sqlite ignores it", () => {
+  test("sqlite has no date columns: a mode is accepted and does nothing", () => {
     expect(() => optionsOf("sqlite://:memory:", { dates: "string" })).not.toThrow();
   });
 });

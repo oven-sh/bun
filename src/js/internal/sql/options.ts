@@ -649,6 +649,12 @@ function parseOptions(
     definitelyOptionsButMaybeEmpty,
   );
 
+  // SQLite has no date columns to decode. A value that is not a mode is still refused, on every adapter.
+  const dates = options.dates ?? "date";
+  if (dates !== "date" && dates !== "string") {
+    throw $ERR_INVALID_ARG_VALUE("dates", dates, "must be one of: date, string");
+  }
+
   if (adapter === "sqlite") {
     return parseSQLiteOptions(target, options);
   }
@@ -782,11 +788,6 @@ function parseOptions(
     throw $ERR_INVALID_ARG_VALUE("channelBinding", channelBinding, "must be one of: disable, prefer, require");
   }
   if (!isPostgres) refuseRequiredChannelBinding(adapter, channelBinding);
-
-  const dates = options.dates ?? "date";
-  if (dates !== "date" && dates !== "string") {
-    throw $ERR_INVALID_ARG_VALUE("dates", dates, "must be one of: date, string");
-  }
 
   const { onconnect, onclose, transform: transformOption } = options;
   if (onconnect !== undefined && !$isCallable(onconnect)) {

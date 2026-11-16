@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 416d6684b00bd0c8ee13102d907851f361b252d4ddd32cb3ce064940ccce4df7.
+// Written against that file with the SHA-256 aa8ae1f20f9ba32e05032ad429809cabccd59a6bb5373cd000b1bd8e3abbd3e9.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -8,7 +8,6 @@ const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
 const abortedSymbol = Symbol("aborted");
-const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
@@ -479,8 +478,6 @@ declare global {
       /** `null`: the response writes to the socket it is assigned, like in Node. */
       [kHandle]: NodeHTTPResponse | null | undefined;
       [kPendingCallbacks]: HttpWriteCallback[];
-      /** `null` while the response waits for its turn on the connection. */
-      [fakeSocketSymbol]: HttpSocket | SubstituteSocket | null | undefined;
       [kCloseCallback]: (() => void) | undefined;
     }
 
@@ -685,7 +682,6 @@ export {
   emitEOFIncomingMessageOuter,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
-  fakeSocketSymbol,
   getMaxHTTPHeaderSize,
   httpServerParts,
   isTlsSymbol,

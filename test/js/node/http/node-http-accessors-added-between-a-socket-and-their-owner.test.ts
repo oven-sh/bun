@@ -45,7 +45,7 @@ writableHighWaterMark added on the prototype of the class, GET, end(body): 0 1 1
 writableHighWaterMark added on the prototype of the class, GET, write(), end(body): 0 2 2 2 0
 writableHighWaterMark added on the prototype of the class, GET, a content-length, write(), end(): 0 2 2 2 0
 writableHighWaterMark added on the prototype of the class, POST with the body read: 0 1 1 1 0
-writableHighWaterMark added on the prototype of the class, POST with the body read, write(), end(body): 0 3 3 3 0
+writableHighWaterMark added on the prototype of the class, POST with the body read, write(), end(body): 0 2 2 2 0
 writableHighWaterMark added on the prototype of the class, POST with the body ignored: 0 1 1 1 0
 writableEnded added on the prototype of the class, GET, end(body): 0 0 0 0 0
 writableEnded added on the prototype of the class, GET, write(), end(body): 0 0 0 0 0
@@ -87,7 +87,7 @@ writableHighWaterMark added on net.Socket.prototype, GET, end(body): 0 1 1 1 0
 writableHighWaterMark added on net.Socket.prototype, GET, write(), end(body): 0 2 2 2 0
 writableHighWaterMark added on net.Socket.prototype, GET, a content-length, write(), end(): 0 2 2 2 0
 writableHighWaterMark added on net.Socket.prototype, POST with the body read: 0 1 1 1 0
-writableHighWaterMark added on net.Socket.prototype, POST with the body read, write(), end(body): 0 3 3 3 0
+writableHighWaterMark added on net.Socket.prototype, POST with the body read, write(), end(body): 0 2 2 2 0
 writableHighWaterMark added on net.Socket.prototype, POST with the body ignored: 0 1 1 1 0
 writableEnded added on net.Socket.prototype, GET, end(body): 0 0 0 0 0
 writableEnded added on net.Socket.prototype, GET, write(), end(body): 0 0 0 0 0
@@ -153,7 +153,7 @@ writableHighWaterMark on a prototype put below net.Socket.prototype, GET, end(bo
 writableHighWaterMark on a prototype put below net.Socket.prototype, GET, write(), end(body): 0 2 2 2 0
 writableHighWaterMark on a prototype put below net.Socket.prototype, GET, a content-length, write(), end(): 0 2 2 2 0
 writableHighWaterMark on a prototype put below net.Socket.prototype, POST with the body read: 0 1 1 1 0
-writableHighWaterMark on a prototype put below net.Socket.prototype, POST with the body read, write(), end(body): 0 3 3 3 0
+writableHighWaterMark on a prototype put below net.Socket.prototype, POST with the body read, write(), end(body): 0 2 2 2 0
 writableHighWaterMark on a prototype put below net.Socket.prototype, POST with the body ignored: 0 1 1 1 0
 writableEnded on a prototype put below net.Socket.prototype, GET, end(body): 0 0 0 0 0
 writableEnded on a prototype put below net.Socket.prototype, GET, write(), end(body): 0 0 0 0 0

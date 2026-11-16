@@ -822,7 +822,8 @@ describe("node:http server timeout enforcement", () => {
           }
           client.off("data", oneChunk);
           jest.advanceTimersByTime(60_000);
-          await readALittleEvery60s(res, client);
+          // The response has no socket once it has finished.
+          await readALittleEvery60s(req.socket, client);
         });
         expect({ timeouts, bodies: bodyLengths(received) }).toEqual({ timeouts: 0, bodies: [big.length] });
       });

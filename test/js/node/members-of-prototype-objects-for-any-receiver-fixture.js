@@ -23,7 +23,7 @@ const makers = {
   "node:http": () => {
     const http = require("node:http");
     const response = new http.ServerResponse(new http.IncomingMessage(null));
-    return [response, response.socket, new http.Agent(), new http.Server()];
+    return [response, new http.Agent(), new http.Server()];
   },
   "node:readline": () => [
     require("node:readline").createInterface({ input: new (require("node:stream").PassThrough)() }),

@@ -98,7 +98,6 @@ const named = secondTexts
 // A text that a program cannot name loads while one of these does.
 const loadedWith: Record<string, string> = {
   "internal/http.ts": "node:http2",
-  "internal/http/FakeSocket.ts": "node:_http_outgoing",
   "internal/net/isIP.ts": "node:net",
   "internal/net/symbols.ts": "node:net",
   "internal/primordials.js": "node:util",

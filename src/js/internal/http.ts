@@ -4,7 +4,6 @@ const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding"
 
 const abortedSymbol = Symbol("aborted");
 const eofInProgress = Symbol("eofInProgress");
-const fakeSocketSymbol = Symbol("fakeSocket");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
 // http.Server.prototype method for the `ws` package: takes a connection out of HTTP.
@@ -455,7 +454,6 @@ export {
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
-  fakeSocketSymbol,
   getMaxHTTPHeaderSize,
   httpServerParts,
   isTlsSymbol,

@@ -33,6 +33,10 @@ pub(crate) fn search(kernel: SimdSearch, haystack: &[u8], needle: &[u8]) -> f64 
         SimdSearch::Memmem => kernels::memmem(haystack, needle),
         SimdSearch::Memrmem => kernels::memrmem(haystack, needle),
         SimdSearch::Memrmem16 => kernels::memrmem16(&units(haystack), &units(needle)),
+        SimdSearch::ByteSetPrefixLength => match needle.as_chunks() {
+            (&[rows, columns], []) => Some(kernels::ByteSet { rows, columns }.prefix_len(haystack)),
+            _ => None,
+        },
     })
 }
 

@@ -18,6 +18,7 @@ export const SimdSearch = b.enumeration([
   "memmem",
   "memrmem",
   "memrmem16",
+  "byteSetPrefixLength",
 ]);
 export const SimdSharedSearch = b.enumeration([
   "indexOfChar",

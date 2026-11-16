@@ -47,9 +47,9 @@ mod simd {
             tests: impl Fn(Self) -> [Mask<T, N>; 2],
         ) -> Option<usize> {
             match const { size_of::<Self>() } {
-                16 => Self::position_near::<S, 4>(slice, tests),
-                32 => Self::position_near::<S, 2>(slice, tests),
-                _ => Self::position_near::<S, 1>(slice, tests),
+                16 => Self::position_by::<S, 4>(slice, tests),
+                32 => Self::position_by::<S, 2>(slice, tests),
+                _ => Self::position_by::<S, 1>(slice, tests),
             }
         }
 
@@ -74,7 +74,7 @@ mod simd {
 
         /// Where a match is within a block of `K` chunks is hard to predict, so nothing branches on it.
         #[inline(always)]
-        fn position_near<S: Source<Lane = T>, const K: usize>(
+        fn position_by<S: Source<Lane = T>, const K: usize>(
             slice: &[S],
             tests: impl Fn(Self) -> [Mask<T, N>; 2],
         ) -> Option<usize> {
@@ -223,8 +223,27 @@ mod simd {
             None
         }
 
+        /// `position` with less code, for a match that is not far from the start.
+        pub fn position_near<S: Source<Lane = T>>(
+            slice: &[S],
+            test: impl Fn(Self) -> Mask<T, N>,
+        ) -> Option<usize> {
+            let Some((before_last, last)) = slice.split_last_chunk() else {
+                return Self::load_padded_inline(slice).and_then(|p| p.first_set(test(p.lanes)));
+            };
+            for (i, chunk) in slice[..slice.len() - 1].as_chunks().0.iter().enumerate() {
+                if let Some(lane) = test(Self::load(chunk)).first_set() {
+                    return Some(N * i + lane);
+                }
+            }
+            Some(before_last.len() + test(Self::load(last)).first_set()?)
+        }
+
         /// `rposition` with less code, for a match that is not far from the end.
-        pub fn rposition_near(slice: &[T], test: impl Fn(Self) -> Mask<T, N>) -> Option<usize> {
+        pub fn rposition_near<S: Source<Lane = T>>(
+            slice: &[S],
+            test: impl Fn(Self) -> Mask<T, N>,
+        ) -> Option<usize> {
             let mut rest = slice;
             while rest.len() > N {
                 let (before, chunk) = rest.split_last_chunk()?;

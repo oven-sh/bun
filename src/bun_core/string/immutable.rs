@@ -1204,7 +1204,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     Some(i as u32 + offset)
 }
 
-pub use kernels::{contains_newline_or_non_ascii_or_quote, line_starts};
+pub use kernels::{ByteSet, contains_newline_or_non_ascii_or_quote, line_starts};
 
 /// Supports:
 /// - `"`

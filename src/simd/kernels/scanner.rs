@@ -1,35 +1,22 @@
 //! Ports of highway_strings.cpp: one pass over a source file, for the lexers.
+use crate::ByteSet;
 use bun_simd::{Out, blocks};
 
-struct Nibbles {
-    upper: [u8; 16],
-    lower: [u8; 16],
-}
-impl Nibbles {
-    const fn new(classes: &[(u32, u32, u32)]) -> Self {
-        let mut n = Nibbles {
-            upper: [0; 16],
-            lower: [0; 16],
-        };
-        let mut c = 0;
-        while c < classes.len() {
-            let (bit, rows, columns) = classes[c];
-            let mut i = 0;
-            while i < 16 {
-                if (rows >> i) & 1 != 0 {
-                    n.upper[i] |= 1 << bit;
-                }
-                if (columns >> i) & 1 != 0 {
-                    n.lower[i] |= 1 << bit;
-                }
-                i += 1;
-            }
-            c += 1;
+/// From a bit, and the rows and columns that have it.
+const fn set_of(mut classes: &[(u32, u32, u32)]) -> ByteSet {
+    let (mut rows, mut columns) = ([0; 16], [0; 16]);
+    while let [(bit, in_rows, in_columns), rest @ ..] = classes {
+        let mut i = 0;
+        while i < 16 {
+            rows[i] |= ((*in_rows >> i & 1) << *bit) as u8;
+            columns[i] |= ((*in_columns >> i & 1) << *bit) as u8;
+            i += 1;
         }
-        n
+        classes = rest;
     }
+    ByteSet { rows, columns }
 }
-const NAME_OR_BLANK: Nibbles = Nibbles::new(&[
+const NAME_OR_BLANK: ByteSet = set_of(&[
     (0, 1 << 0, 1 << 9),
     (1, 1 << 2, 1 << 0),
     (2, 1 << 2, 1 << 4),
@@ -38,15 +25,19 @@ const NAME_OR_BLANK: Nibbles = Nibbles::new(&[
     (5, (1 << 5) | (1 << 7), 0x07FF),
     (6, 1 << 5, 1 << 15),
 ]);
-const STRING_STOP: Nibbles = Nibbles::new(&[
-    (0, 0xFF03, 0xFFFF),
-    (1, 1 << 2, (1 << 2) | (1 << 4) | (1 << 7)),
-    (2, 1 << 5, 1 << 12),
-    (3, 1 << 6, 1 << 0),
+const STRING_STOP: ByteSet = ByteSet::new(&[
+    0..=0x1F,
+    b'"'..=b'"',
+    b'$'..=b'$',
+    b'\''..=b'\'',
+    b'\\'..=b'\\',
+    b'`'..=b'`',
+    0x80..=0xFF,
 ]);
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
+    use crate::byte_set::simd::this_target::class;
     use isa::{I8, U8};
 
     /// The offset after each newline. Panics unless there is room for 64 more than there are.
@@ -62,10 +53,6 @@ pub(crate) mod simd {
             }
         }
         out.finish()
-    }
-
-    fn class(v: U8, of: &Nibbles) -> U8 {
-        U8::repeat_16(of.upper).lookup(v >> 4) & U8::repeat_16(of.lower).lookup(v & 0x0F)
     }
 
     #[inline(always)]

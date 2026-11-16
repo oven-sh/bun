@@ -1,14 +1,18 @@
 //! Port of highway_xml.cpp.
+use crate::ByteSet;
 use bun_simd::{Out, blocks};
 use class::{ANYWHERE, GT, IN_TAG, LT};
 
-const LUT_LO: [u8; 16] = [
-    0x03, 0x03, 0x13, 0x03, 0x03, 0x03, 0x07, 0x13, 0x03, 0x0a, 0x0a, 0x03, 0x43, 0x23, 0x83, 0x03,
-];
-const LUT_HI: [u8; 16] = [0x09, 0x02, 0x14, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+const CLASSES: ByteSet = ByteSet {
+    rows: [0x09, 0x02, 0x14, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    columns: [
+        0x03, 0x03, 0x13, 0x03, 0x03, 0x03, 0x07, 0x13, 0x03, 0x0a, 0x0a, 0x03, 0x43, 0x23, 0x83,
+        0x03,
+    ],
+};
 /// For the scalar code of the parser, which has to agree with the kernels.
 pub mod class {
-    pub static OF_BYTE: [u8; 256] = crate::classes_of_bytes(super::LUT_LO, super::LUT_HI);
+    pub static OF_BYTE: [u8; 256] = super::CLASSES.classes();
     /// `&`, and control characters but for tab and newline
     pub const ANYWHERE: u8 = 0x07;
     /// Tab, newline, quotes and `=`
@@ -19,11 +23,12 @@ pub mod class {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
+    use crate::byte_set::simd::this_target::class;
     use isa::{Mask, U8, U16};
 
     /// `<`, `>`, and the bytes that lack each class.
     fn classify(v: U8) -> [Mask<u8, { U8::LEN }>; 4] {
-        let class = U8::repeat_16(LUT_LO).lookup(v & 0x0F) & U8::repeat_16(LUT_HI).lookup(v >> 4);
+        let class = class(v, &CLASSES);
         let lacks = |bits: u8| (class & bits).simd_eq(0);
         [
             v.simd_eq(b'<'),

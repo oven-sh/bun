@@ -6,6 +6,7 @@
 // The copies for the targets look alike.
 #![cfg_attr(mordant, allow(reimplemented_helper))]
 
+mod byte_set;
 mod convert;
 mod hex;
 mod image;
@@ -23,6 +24,7 @@ mod xxhash;
 
 use bun_simd::SharedU8;
 
+pub use byte_set::ByteSet;
 pub use convert::simd::{
     bswap16_shared, bswap32_shared, bswap64_shared, copy_ascii_prefix_to_shared,
     copy_few_ascii_to_shared, copy_short_ascii_prefix_to_shared, copy_u16_to_shared,
@@ -69,16 +71,6 @@ pub use xml::simd::{
 };
 pub use xxhash::XxHash64State;
 pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
-
-/// What the lookups of the low and the high four bits make of each byte.
-const fn classes_of_bytes(low: [u8; 16], high: [u8; 16]) -> [u8; 256] {
-    let (mut classes, mut byte) = ([0; 256], 0);
-    while byte < 256 {
-        classes[byte] = low[byte % 16] & high[byte / 16];
-        byte += 1;
-    }
-    classes
-}
 
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {

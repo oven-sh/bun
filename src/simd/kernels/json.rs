@@ -1,16 +1,20 @@
 //! Port of highway_json.cpp: stage 1 in the manner of simdjson.
+use crate::ByteSet;
 use bun_simd::{Out, blocks};
 use class::{STRUCTURAL, WHITESPACE};
 
-const LUT_LO: [u8; 16] = [
-    0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40, 0x60,
-];
-const LUT_HI: [u8; 16] = [
-    0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0,
-];
+const CLASSES: ByteSet = ByteSet {
+    rows: [
+        0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    columns: [
+        0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40,
+        0x60,
+    ],
+};
 /// For the scalar indexer, which has to agree with the kernel.
 pub mod class {
-    pub static OF_BYTE: [u8; 256] = crate::classes_of_bytes(super::LUT_LO, super::LUT_HI);
+    pub static OF_BYTE: [u8; 256] = super::CLASSES.classes();
     pub const STRUCTURAL: u8 = 0x07;
     pub const WHITESPACE: u8 = 0x18;
 }
@@ -21,6 +25,7 @@ const GIVES_UP: u32 = 1 << 3;
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
+    use crate::byte_set::simd::this_target::class;
     use isa::U8;
 
     #[export(up_to = neon)]
@@ -31,14 +36,13 @@ pub(crate) mod simd {
         dirty_out: &mut [u64],
         state: &mut [u64; 3],
     ) -> (&'a mut [u32], u32) {
-        let (lut_lo, lut_hi) = (U8::repeat_16(LUT_LO), U8::repeat_16(LUT_HI));
         let [mut prev_escaped, mut prev_in_string, mut prev_scalar] = *state;
         let (mut bs_in_str, mut ctrl_in_str, mut dirty_acc) = (0u64, 0u64, 0u64);
         let mut out = out.into_writer();
 
         for (block, bytes) in blocks(input, &mut [b' '; 64]).enumerate() {
             let [bs, quote, op, opws, odd, ctrl] = U8::bitmasks(bytes, |v| {
-                let class = lut_lo.lookup(v & 0x0F) & lut_hi.lookup(v >> 4);
+                let class = class(v, &CLASSES);
                 let lacks = |bits: u8| (class & bits).simd_eq(0);
                 [
                     v.simd_eq(b'\\'),

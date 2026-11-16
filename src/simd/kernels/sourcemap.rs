@@ -1,12 +1,17 @@
 //! Port of highway_sourcemap.cpp, after Muła's base64 decoder and Masked VByte.
+use crate::ByteSet;
 use bun_simd::{Out, Writer};
 
-const LUT_LO: [u8; 16] = [
-    0x15, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x13, 0x1A, 0x1B, 0x1B, 0x1B, 0x1A,
-];
-const LUT_HI: [u8; 16] = [
-    0x10, 0x10, 0x01, 0x02, 0x04, 0x08, 0x04, 0x08, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
-];
+const NOT_BASE64: ByteSet = ByteSet {
+    rows: [
+        0x10, 0x10, 0x01, 0x02, 0x04, 0x08, 0x04, 0x08, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+        0x10,
+    ],
+    columns: [
+        0x15, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x13, 0x1A, 0x1B, 0x1B, 0x1B,
+        0x1A,
+    ],
+};
 const LUT_ROLL: [u8; 16] = [
     0x00, 0x10, 0x13, 0x04, 0xBF, 0xBF, 0xB9, 0xB9, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
@@ -181,6 +186,7 @@ fn decode_vlq(digits: &Digits, at: &mut usize, end: usize) -> i32 {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
+    use crate::byte_set::simd::this_target::class;
     use isa::{I8, I32, U8, Vector, x128};
 
     const BLOCK: usize = U8::LEN;
@@ -212,10 +218,8 @@ pub(crate) mod simd {
     /// The value of each digit, or 0xFF.
     #[inline(always)]
     fn classify(block: U8) -> (U8, Bits) {
-        let (high, low) = (block >> 4, block & 0x0F);
-        let class = U8::repeat_16(LUT_LO).lookup(low) & U8::repeat_16(LUT_HI).lookup(high);
-        let is_other = class.simd_ne(0);
-        let roll = U8::repeat_16(LUT_ROLL).lookup(high + block.simd_eq(b'/').to_vector());
+        let is_other = class(block, &NOT_BASE64).simd_ne(0);
+        let roll = U8::repeat_16(LUT_ROLL).lookup((block >> 4) + block.simd_eq(b'/').to_vector());
         let digits = is_other.select(0xFF, block + roll);
         let is_semicolon = block.simd_eq(b';');
         let is_delimiter = block.simd_eq(b',') | is_semicolon;

@@ -82,7 +82,9 @@ mod simd {
                     Vector::position_refined(slice, |v| [v.simd_ne(other), test(v)]),
                     first
                 );
+                assert_eq!(Vector::position_near(slice, test), first);
                 assert_eq!(Vector::rposition(slice, test), last);
+                assert_eq!(Vector::rposition_near(slice, test), last);
             }
             room[range].fill(padding);
         }
@@ -133,6 +135,7 @@ mod simd {
                 let in_a: Vec<_> = (0..a.len()).filter(|&i| a[i] == one).collect();
                 let in_both: Vec<_> = in_a.iter().copied().filter(|&i| b[i] == one).collect();
                 let in_both_from_end: Vec<_> = in_both.iter().copied().rev().collect();
+                assert_eq!(Vector::position_near(a, test), in_a.first().copied());
                 assert_eq!(Vector::rposition_near(a, test), in_a.last().copied());
                 for stop_at in [0, in_both.len() / 2, usize::MAX] {
                     let check = |want: &[usize], run: &dyn Fn(Visit<'_>) -> Option<usize>| {

@@ -564,6 +564,45 @@ fn odd_blocks() {
     });
 }
 
+#[test]
+fn byte_set() {
+    let ranges = [9..=9, 32..=33, 35..=91, 93..=126, 128..=250, 252..=255];
+    let set = kernels::ByteSet::new(&ranges);
+    for byte in sample(0..=255, 40) {
+        let is_member = ranges.iter().any(|range| range.contains(&byte));
+        assert_eq!(set.contains(byte), is_member, "{byte}");
+        for at in [0, 15, 16, 63, 64, 130] {
+            let mut t = vec![b'a'; at + 1];
+            t[at] = byte;
+            check(at + usize::from(is_member), || set.prefix_len(&t));
+        }
+    }
+    for len in sample(0..210, 70) {
+        for at in sample(0..=len, 30) {
+            let t = [vec![b'a'; at], vec![b'\r'; len - at]].concat();
+            check(at, || set.prefix_len(&t));
+        }
+    }
+}
+
+fn diagonal(rows: u8) -> kernels::ByteSet {
+    kernels::ByteSet::new(&Vec::from_iter((0..rows).map(|row| 17 * row..=17 * row)))
+}
+
+#[test]
+fn byte_set_with_eight_patterns() {
+    let set = diagonal(8);
+    for byte in 0..=255 {
+        assert_eq!(set.contains(byte), byte % 17 == 0 && byte < 8 * 17);
+    }
+}
+
+#[test]
+#[should_panic = "bits < 8"]
+fn byte_set_with_nine_patterns() {
+    diagonal(9);
+}
+
 fn check_bswap<const N: usize>(t: &[u8], kernel: fn(&[AtomicU8])) {
     let mut swapped = t.to_vec();
     swapped

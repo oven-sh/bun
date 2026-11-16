@@ -482,6 +482,45 @@ fn shapes_of_calls(js: &[u8], lockfile: &[u8]) {
     });
 }
 
+/// The lines of HTTP responses, and the names of the fields.
+#[optimize(size)]
+fn heads() {
+    let random = &mut Random(7);
+    for (fields, kinds) in [(1, 1), (3, 1), (12, 1), (3, 2000), (12, 2000)] {
+        let mut head = |_| {
+            let mut head = b"HTTP/1.1 200 OK\r\n".to_vec();
+            for _ in 0..fields {
+                let longest = random.one_of(&[8, 30, 30, 50, 70, 300]);
+                let [name, value] = [3 + random.below(24), 1 + random.below(longest)];
+                head.extend([&b"a".repeat(name)[..], b": ", &b"b".repeat(value), b"\r\n"].concat());
+            }
+            [&head[..], b"\r\n"].concat()
+        };
+        let heads: Vec<_> = (0..kinds).map(&mut head).collect();
+        let heads: &Vec<_> = &heads.iter().cycle().take(2000).map(|it| &it[..]).collect();
+        compare!("ByteSet in 2000 heads, {kinds} of {fields} fields", |k| {
+            static TOKEN: k::ByteSet = k::ByteSet::new(&[b'-'..=b'-', b'A'..=b'Z', b'a'..=b'z']);
+            static CONTENT: k::ByteSet = k::ByteSet::new(&[b' '..=b'~', 0x80..=0xFF]);
+            each(heads, |head| {
+                let (mut rest, mut names) = (&head[CONTENT.prefix_len(head) + 2..], 0);
+                while rest[0] != b'\r' {
+                    let line = CONTENT.prefix_len(rest);
+                    names += TOKEN.prefix_len(rest);
+                    rest = &rest[line + 2..];
+                }
+                names
+            })
+        });
+    }
+    for n in [1, 3, 12, 1000] {
+        let text = &vec![b'a'; n][..];
+        compare!("ByteSet {n}", |k| {
+            static LETTERS: k::ByteSet = k::ByteSet::new(&[b'A'..=b'Z', b'a'..=b'z']);
+            LETTERS.prefix_len(opaque(text))
+        });
+    }
+}
+
 #[optimize(size)]
 fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     let url = b"//# sourceMappingURL=data:";
@@ -873,6 +912,7 @@ pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
     searches(&vec![b'a'; 1 << 16]);
     pieces(js);
     hops(js);
+    heads();
     escapes();
     styled_words(js);
     whole_files(js, json, map);

@@ -637,3 +637,43 @@ describe("oddBlocks", () => {
     }
   });
 });
+
+describe("byteSetPrefixLength", () => {
+  // The set is the rows, then the columns. Every bit is used, some rows share one, and one row has none.
+  const rows = [1, 2, 4, 8, 16, 32, 64, 128, 0, 1, 2, 4, 128, 128, 3, 255];
+  const columns = [0xe8, 0xfc, 0xf8, 0x01, 0x02, 0xfc, 0x80, 0xff, 0x00, 0xf8, 0xf4, 0x54, 0xd0, 0x55, 0xf4, 0x70];
+  const set = new Uint8Array([0, ...rows, ...columns]).subarray(1);
+  const isMember = (byte: number) => (rows[byte >> 4] & columns[byte & 15]) !== 0;
+  const member = 0x03;
+  const other = 0x08;
+  const prefixLength = (text: Uint8Array) => search("byteSetPrefixLength", text, set);
+
+  it("classifies every byte value in every lane", () => {
+    for (let byte = 0; byte < 256; byte++) {
+      for (let pos = 0; pos < 140; pos++) {
+        const text = new Uint8Array(140).fill(member);
+        text[pos] = byte;
+        compare("byteSet", prefixLength(text), isMember(byte) ? 140 : pos, `byte=${byte} pos=${pos}`);
+      }
+    }
+  });
+
+  it("stops at the first other byte, or where the text ends", () => {
+    for (let len = 0; len <= 200; len++) {
+      for (const off of OFFSETS) {
+        // Members around the text, to see that nothing outside it counts.
+        const text = new Uint8Array(off + len + 64).fill(member).subarray(off, off + len);
+        compare("byteSet", prefixLength(text), len, `len=${len} off=${off}`);
+        for (let pos = len - 1; pos >= 0; pos--) {
+          text[pos] = other;
+          compare("byteSet", prefixLength(text), pos, () => `len=${len} off=${off} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("returns -1 unless the set has 32 bytes", () => {
+    const withSetOf = (len: number) => search("byteSetPrefixLength", new Uint8Array(16), new Uint8Array(len));
+    expect([31, 32, 33, 48].map(withSetOf)).toEqual([-1, 0, -1, -1]);
+  });
+});

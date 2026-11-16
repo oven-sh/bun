@@ -277,6 +277,25 @@ impl Round<'_> {
         self.failures.unless(want == got, "odd_blocks");
     }
 
+    #[optimize(size)]
+    fn byte_set(&mut self) {
+        // Each byte that is left out takes up to one pattern, and the full rows take one.
+        let mut left_out: Vec<_> = (0..self.random.below(8))
+            .map(|_| self.some_byte())
+            .collect();
+        left_out.retain(|byte| !self.text[..self.text.len() / 2].contains(byte));
+        let members = (0..=255).filter(|byte| !left_out.contains(byte));
+        let ranges: Vec<_> = members.map(|byte| byte..=byte).collect();
+        let (first, second) = (highway::ByteSet::new(&ranges), rust::ByteSet::new(&ranges));
+        let (byte, fenced) = (
+            self.some_byte(),
+            self.rooms[0].copy_of(self.text, self.offset),
+        );
+        let want = (first.prefix_len(self.text), first.contains(byte));
+        let got = (second.prefix_len(fenced), second.contains(byte));
+        self.failures.unless(want == got, "ByteSet");
+    }
+
     /// `highway` returns how much it has written.
     #[optimize(size)]
     fn from_to<T: Copy, U: Copy + Default + PartialEq>(
@@ -734,6 +753,7 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         round.memmem();
         round.scanner_run_stops();
         round.odd_blocks();
+        round.byte_set();
         round.hashes();
         round.conversions();
         round.words();

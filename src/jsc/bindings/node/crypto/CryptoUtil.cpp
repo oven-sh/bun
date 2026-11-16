@@ -555,7 +555,8 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     }
 
     // Encode the signature in DER format
-    auto der = asn1_sig.encode();
+    auto buf = asn1_sig.encode();
+    ncrypto::DataPointer der(buf.data, buf.len);
     return der && derBuffer.tryAppend(der.span());
 }
 

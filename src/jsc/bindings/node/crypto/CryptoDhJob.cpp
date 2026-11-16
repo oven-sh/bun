@@ -15,17 +15,7 @@ void DhJobCtx::runTask(JSGlobalObject* globalObject)
     // later unrelated operation would pick them up.
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
-    auto dp = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
-    if (!dp) {
-        return;
-    }
-
-    WTF::Vector<uint8_t> result;
-    if (!result.tryGrow(dp.size())) {
-        return;
-    }
-
-    m_result = WTF::move(dp);
+    m_result = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
 }
 
 JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)

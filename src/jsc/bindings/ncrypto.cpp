@@ -38,8 +38,6 @@ namespace {
 using BignumCtxPointer = DeleteFnPtr<BN_CTX, BN_CTX_free>;
 using BignumGenCallbackPointer = DeleteFnPtr<BN_GENCB, BN_GENCB_free>;
 using NetscapeSPKIPointer = DeleteFnPtr<NETSCAPE_SPKI, NETSCAPE_SPKI_free>;
-using GeneralNamesPointer = DeleteFnPtr<GENERAL_NAMES, GENERAL_NAMES_free>;
-using AuthorityInfoAccessPointer = DeleteFnPtr<AUTHORITY_INFO_ACCESS, AUTHORITY_INFO_ACCESS_free>;
 
 static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB & ~ASN1_STRFLGS_ESC_CTRL;
 } // namespace
@@ -123,16 +121,15 @@ DataPointer DataPointer::Copy(const Buffer<const void>& buffer)
     return DataPointer(OPENSSL_memdup(buffer.data, buffer.len), buffer.len);
 }
 
-DataPointer DataPointer::ToUTF8(const ASN1_STRING* str)
-{
-    unsigned char* data = nullptr;
-    int len = ASN1_STRING_to_UTF8(&data, str);
-    return len < 0 ? DataPointer() : DataPointer(data, len);
-}
-
 DataPointer::DataPointer(void* data, size_t length)
     : data_(data)
     , len_(length)
+{
+}
+
+DataPointer::DataPointer(const Buffer<void>& buffer)
+    : data_(buffer.data)
+    , len_(buffer.len)
 {
 }
 
@@ -146,8 +143,9 @@ DataPointer::DataPointer(DataPointer&& other) noexcept
 
 DataPointer& DataPointer::operator=(DataPointer&& other) noexcept
 {
-    if (this != &other) reset(other.release());
-    return *this;
+    if (this == &other) return *this;
+    this->~DataPointer();
+    return *new (this) DataPointer(WTF::move(other));
 }
 
 DataPointer::~DataPointer()
@@ -189,11 +187,16 @@ Buffer<void> DataPointer::release()
 DataPointer DataPointer::resize(size_t len)
 {
     size_t actual_len = std::min(len_, len);
-    if (actual_len == 0) return DataPointer(release().data, 0);
-    void* new_data = OPENSSL_realloc(data_, actual_len);
-    if (new_data == nullptr) return {};
-    release();
-    return DataPointer(new_data, actual_len);
+    auto buf = release();
+    if (actual_len == len_) return DataPointer(buf.data, actual_len);
+    void* new_data = OPENSSL_realloc(buf.data, actual_len);
+    if (new_data == nullptr) {
+        OPENSSL_clear_free(buf.data, buf.len);
+        return {};
+    }
+    buf.data = new_data;
+    buf.len = actual_len;
+    return DataPointer(buf);
 }
 
 // ============================================================================
@@ -218,6 +221,11 @@ BignumPointer::BignumPointer(const unsigned char* data, size_t len)
 {
 }
 
+BignumPointer::BignumPointer(BignumPointer&& other) noexcept
+    : bn_(other.release())
+{
+}
+
 BignumPointer BignumPointer::New()
 {
     return BignumPointer(BN_new());
@@ -231,6 +239,18 @@ BignumPointer BignumPointer::NewSecure()
 #else
     return BignumPointer(BN_secure_new());
 #endif
+}
+
+BignumPointer& BignumPointer::operator=(BignumPointer&& other) noexcept
+{
+    if (this == &other) return *this;
+    this->~BignumPointer();
+    return *new (this) BignumPointer(WTF::move(other));
+}
+
+BignumPointer::~BignumPointer()
+{
+    reset();
 }
 
 void BignumPointer::reset(BIGNUM* bn)
@@ -515,7 +535,7 @@ BIOPointer ExportPublicKey(const char* input, size_t length)
     return bio;
 }
 
-DataPointer ExportChallenge(const char* input, size_t length)
+Buffer<char> ExportChallenge(const char* input, size_t length)
 {
 #ifdef OPENSSL_IS_BORINGSSL
     // OpenSSL uses EVP_DecodeBlock, which explicitly removes trailing characters,
@@ -528,7 +548,16 @@ DataPointer ExportChallenge(const char* input, size_t length)
     NetscapeSPKIPointer sp(NETSCAPE_SPKI_b64_decode(input, length));
     if (!sp) return {};
 
-    return DataPointer::ToUTF8(sp->spkac->challenge);
+    unsigned char* buf = nullptr;
+    int buf_size = ASN1_STRING_to_UTF8(&buf, sp->spkac->challenge);
+    if (buf_size >= 0) {
+        return {
+            .data = reinterpret_cast<char*>(buf),
+            .len = static_cast<size_t>(buf_size),
+        };
+    }
+
+    return {};
 }
 
 // ============================================================================
@@ -773,18 +802,23 @@ bool SafeX509SubjectAltNamePrint(const BIOPointer& out, X509_EXTENSION* ext)
     auto ret = OBJ_obj2nid(X509_EXTENSION_get_object(ext));
     if (ret != NID_subject_alt_name) return false;
 
-    GeneralNamesPointer names(static_cast<GENERAL_NAMES*>(X509V3_EXT_d2i(ext)));
+    GENERAL_NAMES* names = static_cast<GENERAL_NAMES*>(X509V3_EXT_d2i(ext));
     if (names == nullptr) return false;
 
-    for (OPENSSL_SIZE_T i = 0; i < sk_GENERAL_NAME_num(names.get()); i++) {
-        GENERAL_NAME* gen = sk_GENERAL_NAME_value(names.get(), i);
+    bool ok = true;
+
+    for (OPENSSL_SIZE_T i = 0; i < sk_GENERAL_NAME_num(names); i++) {
+        GENERAL_NAME* gen = sk_GENERAL_NAME_value(names, i);
 
         if (i != 0) BIO_write(out.get(), ", ", 2);
 
-        if (!ncrypto::PrintGeneralName(out, gen)) return false;
+        if (!(ok = ncrypto::PrintGeneralName(out, gen))) {
+            break;
+        }
     }
+    sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
 
-    return true;
+    return ok;
 }
 
 bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext)
@@ -792,13 +826,13 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext)
     auto ret = OBJ_obj2nid(X509_EXTENSION_get_object(ext));
     if (ret != NID_info_access) return false;
 
-    AuthorityInfoAccessPointer descs(static_cast<AUTHORITY_INFO_ACCESS*>(X509V3_EXT_d2i(ext)));
+    AUTHORITY_INFO_ACCESS* descs = static_cast<AUTHORITY_INFO_ACCESS*>(X509V3_EXT_d2i(ext));
     if (descs == nullptr) return false;
 
     bool ok = true;
 
-    for (OPENSSL_SIZE_T i = 0; i < sk_ACCESS_DESCRIPTION_num(descs.get()); i++) {
-        ACCESS_DESCRIPTION* desc = sk_ACCESS_DESCRIPTION_value(descs.get(), i);
+    for (OPENSSL_SIZE_T i = 0; i < sk_ACCESS_DESCRIPTION_num(descs); i++) {
+        ACCESS_DESCRIPTION* desc = sk_ACCESS_DESCRIPTION_value(descs, i);
 
         if (i != 0) BIO_write(out.get(), "\n", 1);
 
@@ -809,6 +843,7 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext)
             break;
         }
     }
+    sk_ACCESS_DESCRIPTION_pop_free(descs, ACCESS_DESCRIPTION_free);
 
 #if OPENSSL_VERSION_MAJOR < 3
     BIO_write(out.get(), "\n", 1);
@@ -823,6 +858,23 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext)
 X509Pointer::X509Pointer(X509* x509)
     : cert_(x509)
 {
+}
+
+X509Pointer::X509Pointer(X509Pointer&& other) noexcept
+    : cert_(other.release())
+{
+}
+
+X509Pointer& X509Pointer::operator=(X509Pointer&& other) noexcept
+{
+    if (this == &other) return *this;
+    this->~X509Pointer();
+    return *new (this) X509Pointer(WTF::move(other));
+}
+
+X509Pointer::~X509Pointer()
+{
+    reset();
 }
 
 void X509Pointer::reset(X509* x509)
@@ -1224,6 +1276,16 @@ BIOPointer::BIOPointer(BIO* bio)
 {
 }
 
+BIOPointer::BIOPointer(BIOPointer&& other) noexcept
+    : bio_(other.release())
+{
+}
+
+BIOPointer::~BIOPointer()
+{
+    reset();
+}
+
 void BIOPointer::reset(BIO* bio)
 {
     bio_.reset(bio);
@@ -1271,6 +1333,23 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
 DHPointer::DHPointer(DH* dh)
     : dh_(dh)
 {
+}
+
+DHPointer::DHPointer(DHPointer&& other) noexcept
+    : dh_(other.release())
+{
+}
+
+DHPointer& DHPointer::operator=(DHPointer&& other) noexcept
+{
+    if (this == &other) return *this;
+    this->~DHPointer();
+    return *new (this) DHPointer(WTF::move(other));
+}
+
+DHPointer::~DHPointer()
+{
+    reset();
 }
 
 void DHPointer::reset(DH* dh)
@@ -1802,6 +1881,23 @@ EVPKeyPointer::EVPKeyPointer(EVP_PKEY* pkey)
 {
 }
 
+EVPKeyPointer::EVPKeyPointer(EVPKeyPointer&& other) noexcept
+    : pkey_(other.release())
+{
+}
+
+EVPKeyPointer& EVPKeyPointer::operator=(EVPKeyPointer&& other) noexcept
+{
+    if (this == &other) return *this;
+    this->~EVPKeyPointer();
+    return *new (this) EVPKeyPointer(WTF::move(other));
+}
+
+EVPKeyPointer::~EVPKeyPointer()
+{
+    reset();
+}
+
 void EVPKeyPointer::reset(EVP_PKEY* pkey)
 {
     pkey_.reset(pkey);
@@ -2022,11 +2118,10 @@ DataPointer EVPKeyPointer::rawPrivateKey() const
     return {};
 }
 
-bool EVPKeyPointer::assign(ECKeyPointer&& eckey)
+bool EVPKeyPointer::assign(const ECKeyPointer& eckey)
 {
-    if (!pkey_ || !eckey || !EVP_PKEY_assign_EC_KEY(pkey_.get(), eckey.get())) return false;
-    eckey.release();
-    return true;
+    if (!pkey_ || !eckey) return {};
+    return EVP_PKEY_assign_EC_KEY(pkey_.get(), eckey.get());
 }
 
 bool EVPKeyPointer::set(const ECKeyPointer& eckey)
@@ -2744,6 +2839,16 @@ CipherCtxPointer::CipherCtxPointer(EVP_CIPHER_CTX* ctx)
 {
 }
 
+CipherCtxPointer::CipherCtxPointer(CipherCtxPointer&& other) noexcept
+    : ctx_(other.release())
+{
+}
+
+CipherCtxPointer::~CipherCtxPointer()
+{
+    reset();
+}
+
 void CipherCtxPointer::reset(EVP_CIPHER_CTX* ctx)
 {
     ctx_.reset(ctx);
@@ -2870,6 +2975,35 @@ ECDSASigPointer::ECDSASigPointer()
 ECDSASigPointer::ECDSASigPointer(ECDSA_SIG* sig)
     : sig_(sig)
 {
+    if (sig_) {
+        ECDSA_SIG_get0(sig_.get(), &pr_, &ps_);
+    }
+}
+ECDSASigPointer::ECDSASigPointer(ECDSASigPointer&& other) noexcept
+    : sig_(other.release())
+{
+    if (sig_) {
+        ECDSA_SIG_get0(sig_.get(), &pr_, &ps_);
+    }
+}
+
+ECDSASigPointer::~ECDSASigPointer()
+{
+    reset();
+}
+
+void ECDSASigPointer::reset(ECDSA_SIG* sig)
+{
+    sig_.reset();
+    pr_ = nullptr;
+    ps_ = nullptr;
+}
+
+ECDSA_SIG* ECDSASigPointer::release()
+{
+    pr_ = nullptr;
+    ps_ = nullptr;
+    return sig_.release();
 }
 
 ECDSASigPointer ECDSASigPointer::New()
@@ -2885,18 +3019,20 @@ ECDSASigPointer ECDSASigPointer::Parse(const Buffer<const unsigned char>& sig)
 
 bool ECDSASigPointer::setParams(BignumPointer&& r, BignumPointer&& s)
 {
-    if (!sig_ || !ECDSA_SIG_set0(sig_.get(), r.get(), s.get())) return false;
-    r.release();
-    s.release();
-    return true;
+    if (!sig_) return false;
+    return ECDSA_SIG_set0(sig_.get(), r.release(), s.release());
 }
 
-DataPointer ECDSASigPointer::encode() const
+Buffer<unsigned char> ECDSASigPointer::encode() const
 {
-    if (!sig_) return {};
-    unsigned char* data = nullptr;
-    int len = i2d_ECDSA_SIG(sig_.get(), &data);
-    return len < 0 ? DataPointer() : DataPointer(data, len);
+    if (!sig_)
+        return {
+            .data = nullptr,
+            .len = 0,
+        };
+    Buffer<unsigned char> buf;
+    buf.len = i2d_ECDSA_SIG(sig_.get(), &buf.data);
+    return buf;
 }
 
 // ============================================================================
@@ -2909,6 +3045,16 @@ ECGroupPointer::ECGroupPointer()
 ECGroupPointer::ECGroupPointer(EC_GROUP* group)
     : group_(group)
 {
+}
+
+ECGroupPointer::ECGroupPointer(ECGroupPointer&& other) noexcept
+    : group_(other.release())
+{
+}
+
+ECGroupPointer::~ECGroupPointer()
+{
+    reset();
 }
 
 void ECGroupPointer::reset(EC_GROUP* group)
@@ -2936,6 +3082,16 @@ ECPointPointer::ECPointPointer()
 ECPointPointer::ECPointPointer(EC_POINT* point)
     : point_(point)
 {
+}
+
+ECPointPointer::ECPointPointer(ECPointPointer&& other) noexcept
+    : point_(other.release())
+{
+}
+
+ECPointPointer::~ECPointPointer()
+{
+    reset();
 }
 
 void ECPointPointer::reset(EC_POINT* point)
@@ -2977,6 +3133,22 @@ ECKeyPointer::ECKeyPointer()
 ECKeyPointer::ECKeyPointer(EC_KEY* key)
     : key_(key)
 {
+}
+
+ECKeyPointer::ECKeyPointer(ECKeyPointer&& other) noexcept
+    : key_(other.release())
+{
+}
+
+ECKeyPointer& ECKeyPointer::operator=(ECKeyPointer&& other) noexcept
+{
+    key_.reset(other.release());
+    return *this;
+}
+
+ECKeyPointer::~ECKeyPointer()
+{
+    reset();
 }
 
 void ECKeyPointer::reset(EC_KEY* key)
@@ -3081,6 +3253,23 @@ EVPKeyCtxPointer::EVPKeyCtxPointer()
 EVPKeyCtxPointer::EVPKeyCtxPointer(EVP_PKEY_CTX* ctx)
     : ctx_(ctx)
 {
+}
+
+EVPKeyCtxPointer::EVPKeyCtxPointer(EVPKeyCtxPointer&& other) noexcept
+    : ctx_(other.release())
+{
+}
+
+EVPKeyCtxPointer& EVPKeyCtxPointer::operator=(
+    EVPKeyCtxPointer&& other) noexcept
+{
+    ctx_.reset(other.release());
+    return *this;
+}
+
+EVPKeyCtxPointer::~EVPKeyCtxPointer()
+{
+    reset();
 }
 
 void EVPKeyCtxPointer::reset(EVP_PKEY_CTX* ctx)
@@ -3516,6 +3705,22 @@ EVPMDCtxPointer::EVPMDCtxPointer(EVP_MD_CTX* ctx)
 {
 }
 
+EVPMDCtxPointer::EVPMDCtxPointer(EVPMDCtxPointer&& other) noexcept
+    : ctx_(other.release())
+{
+}
+
+EVPMDCtxPointer& EVPMDCtxPointer::operator=(EVPMDCtxPointer&& other) noexcept
+{
+    ctx_.reset(other.release());
+    return *this;
+}
+
+EVPMDCtxPointer::~EVPMDCtxPointer()
+{
+    reset();
+}
+
 void EVPMDCtxPointer::reset(EVP_MD_CTX* ctx)
 {
     ctx_.reset(ctx);
@@ -3696,6 +3901,22 @@ HMACCtxPointer::HMACCtxPointer()
 HMACCtxPointer::HMACCtxPointer(HMAC_CTX* ctx)
     : ctx_(ctx)
 {
+}
+
+HMACCtxPointer::HMACCtxPointer(HMACCtxPointer&& other) noexcept
+    : ctx_(other.release())
+{
+}
+
+HMACCtxPointer& HMACCtxPointer::operator=(HMACCtxPointer&& other) noexcept
+{
+    ctx_.reset(other.release());
+    return *this;
+}
+
+HMACCtxPointer::~HMACCtxPointer()
+{
+    reset();
 }
 
 void HMACCtxPointer::reset(HMAC_CTX* ctx)

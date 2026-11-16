@@ -219,7 +219,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
     }
 
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-    auto challenge = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    auto exported = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::DataPointer challenge(exported.data, exported.len);
     if (!challenge) {
         return JSValue::encode(jsEmptyString(vm));
     }

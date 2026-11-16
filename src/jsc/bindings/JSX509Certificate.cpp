@@ -328,11 +328,13 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
             continue;
 
         // Convert the ASN1_STRING to a string value
-        auto value_str = ncrypto::DataPointer::ToUTF8(str);
-        if (!value_str)
+        unsigned char* value_str = nullptr;
+        int value_str_size = ASN1_STRING_to_UTF8(&value_str, str);
+        if (value_str_size < 0)
             continue;
 
-        JSValue jsvalue = jsString(vm, String::fromUTF8(byteCast<char>(value_str.span())));
+        ncrypto::DataPointer free_value_str(value_str, value_str_size);
+        JSValue jsvalue = jsString(vm, String::fromUTF8(std::span(reinterpret_cast<const char*>(value_str), value_str_size)));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         // Check if this key already exists

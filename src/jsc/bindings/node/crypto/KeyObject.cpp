@@ -1607,10 +1607,11 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
         }
 
         auto pkey = ncrypto::EVPKeyPointer::New();
-        if (!pkey.assign(WTF::move(eckey))) {
+        if (!pkey.assign(eckey)) {
             throwInvalid();
             return {};
         }
+        eckey.release();
         return create(targetType, WTF::move(pkey));
     }
 

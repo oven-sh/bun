@@ -24,7 +24,7 @@
 # one in the try of `caught` in front of its throw, and one behind the join with its catch. f2 = straight, f3 = caught
 # The net of effects holds each of them to that: the handler puts back the counts of a quiet call that threw, as the code behind the call does where it returns. no-restart-behind-caught-effects.ir holds what may not restart.
 # RUN(COUNT): compile IterationRestartsEmitted testing=FailSpeculations:2 mechanisms=all
-# COUNT: statistic IterationRestartsEmitted 3
+# COUNT: statistic IterationRestartsEmitted 4
 # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all
 # NET: 1644 1212
 # NET-NEXT: 19046

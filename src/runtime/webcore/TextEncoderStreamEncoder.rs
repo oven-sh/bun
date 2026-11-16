@@ -164,10 +164,10 @@ impl TextEncoderStreamEncoder {
             break 'prepend None;
         };
 
-        let length = simdutf::length::utf8::from::utf16::le(remain);
+        let measured = simdutf::WithUtf8Len::utf16(remain);
 
         buf.try_reserve(
-            length
+            measured.utf8_len()
                 + match prepend {
                     Some(pre) => pre.len as usize,
                     None => 0,
@@ -179,21 +179,9 @@ impl TextEncoderStreamEncoder {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
-        // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
-        // count; on non-SUCCESS we commit 0 and fall through to the slow path.
-        let result = unsafe {
-            bun_core::vec::fill_spare(buf, 0, |spare| {
-                let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
-                (
-                    if r.status == simdutf::Status::SUCCESS {
-                        r.count
-                    } else {
-                        0
-                    },
-                    r,
-                )
-            })
-        };
+        let result = bun_core::vec::append_with(buf, usize::MAX, |spare| {
+            simdutf::convert::utf16::to::utf8::with_errors::le(measured, spare)
+        });
 
         if result.status != simdutf::Status::SUCCESS {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.

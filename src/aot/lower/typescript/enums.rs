@@ -1,14 +1,16 @@
 use bun_sema::atom::known;
 use bun_sema::bind::Decl;
+use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
     self, EnumId, EnumMemberId, ExprId, Flags, end_of_expr, is_parenthesized, start_of,
 };
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use super::enum_values::EnumMemberValue;
-use crate::ir::{FunctionKey, ValueId};
+use crate::ir::{FunctionKey, PropertyKeyId, ValueId};
 use crate::lower::function::{print_number, print_string};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
@@ -136,6 +138,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .any(|&(id, _)| self.file.is_name_on_object_prototype(hir[id].name));
         if self.has_single_declaration(container) && can_define_members {
             let layout = self.file.container_layout(container.merged);
+            if let Some((names, entries)) = self.data_entries_of_enum(&members) {
+                self.set_position(data.name_pos);
+                let created = self.lower_data_of_enum(declaration, &names, &entries);
+                self.initialize_container(container, created);
+                return;
+            }
             let mut builder = self.begin_object(layout);
             let mut reverse_keys: SmallVec<[(PropertyName, ValueId); 16]> = SmallVec::new();
             let defines_names_first = has_only_index_reverse_keys(&members)
@@ -166,6 +174,44 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             lowering.emit_set(container_object, name, value);
         });
         self.leave_scope(scope);
+    }
+
+    /// The names and the entries of an enum whose values are constants and that has reverse keys.
+    fn data_entries_of_enum(
+        &mut self,
+        members: &[(EnumMemberId, EnumMemberValue)],
+    ) -> Option<(
+        SmallVec<[(PropertyKeyId, ObjectMemberKind); 16]>,
+        Vec<(Constant, Constant)>,
+    )> {
+        let has_reverse_keys =
+            (members.iter()).any(|&(_, value)| matches!(value, EnumMemberValue::Number(_)));
+        if !has_reverse_keys || !has_only_index_reverse_keys(members) {
+            return None;
+        }
+        let hir = self.file.hir;
+        let mut names = SmallVec::new();
+        let mut seen = FxHashSet::default();
+        let mut entries = Vec::with_capacity(2 * members.len());
+        for &(id, value) in members {
+            let name = Constant::String(hir[id].name);
+            let key = self.file.name_key(hir[id].name);
+            if self.file.find_element_index(key).is_some() {
+                return None;
+            }
+            if seen.insert(key) {
+                names.push((key, ObjectMemberKind::Field));
+            }
+            match value {
+                EnumMemberValue::Number(number) => {
+                    entries.push((name, Constant::Number(number)));
+                    entries.push((Constant::Number(number), name));
+                }
+                EnumMemberValue::String(text) => entries.push((name, Constant::String(text))),
+                _ => return None,
+            }
+        }
+        Some((names, entries))
     }
 
     fn lower_enum_members(

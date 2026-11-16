@@ -12,9 +12,9 @@ use bun_core::strings;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
 #[derive(CssEql)]
-pub struct Animation {
+pub struct Animation<'bump> {
     /// The animation name.
-    pub name: AnimationName,
+    pub name: AnimationName<'bump>,
     /// The animation duration.
     pub(crate) duration: Time,
     /// The easing function for the animation.
@@ -30,13 +30,13 @@ pub struct Animation {
     /// The animation fill mode.
     pub(crate) fill_mode: AnimationFillMode,
     /// The animation timeline.
-    pub(crate) timeline: AnimationTimeline,
+    pub(crate) timeline: AnimationTimeline<'bump>,
 }
 
-impl Animation {
+impl<'bump> Animation<'bump> {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Animation {
-            name: self.name.deep_clone(bump),
+            name: self.name,
             duration: self.duration,
             timing_function: self.timing_function.clone(),
             iteration_count: self.iteration_count,
@@ -53,7 +53,7 @@ impl Animation {
     // expansion has nothing to map to yet. Re-add the field→PropertyIdTag table
     // once those longhand variants land.
 
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut name: Option<AnimationName> = None;
         let mut duration: Option<Time> = None;
         let mut timing_function: Option<EasingFunction> = None;
@@ -140,9 +140,8 @@ impl Animation {
         // string variants share one code path.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
-            AnimationName::Ident(ident) => Some(ident.v()),
-            // SAFETY: arena-owned slice lives for the parse session.
-            AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
+            AnimationName::Ident(ident) => Some(ident.v),
+            AnimationName::String(s) => Some(s),
         };
 
         // Unlike lightningcss — which only emits the components when a name is
@@ -252,64 +251,18 @@ impl Animation {
 }
 
 /// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
-// no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
-// carry raw `*const [u8]` arena pointers; derived eq/hash would compare by
-// pointer. Hand-written `eql`/`hash` below compare by content.
-#[derive(Clone, Copy)]
-pub enum AnimationName {
+#[derive(Clone, Copy, css::CssEql, css::generics::CssHash, css::DeepClone)]
+pub enum AnimationName<'bump> {
     /// The `none` keyword.
     None,
     /// An identifier of a `@keyframes` rule.
-    Ident(CustomIdent),
+    Ident(CustomIdent<'bump>),
     /// A `<string>` name of a `@keyframes` rule.
-    String(CSSString),
+    String(CSSString<'bump>),
 }
 
-impl AnimationName {
-    // hand-written (not `#[derive]`) because `CSSString` is a raw
-    // `*const [u8]` arena pointer — generics blanket impls cover `&[u8]` but
-    // not raw slices.
-    pub fn eql(&self, other: &Self) -> bool {
-        match (self, other) {
-            (AnimationName::None, AnimationName::None) => true,
-            (AnimationName::Ident(a), AnimationName::Ident(b)) => {
-                use crate::generics::CssEql;
-                a.eql(b)
-            }
-            (AnimationName::String(a), AnimationName::String(b)) => {
-                // SAFETY: arena-owned slices live for the parse session.
-                unsafe { bun_core::strings::eql(&**a, &**b) }
-            }
-            _ => false,
-        }
-    }
-
-    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        match self {
-            AnimationName::None => hasher.update(&0u32.to_ne_bytes()),
-            AnimationName::Ident(i) => {
-                hasher.update(&1u32.to_ne_bytes());
-                i.hash(hasher);
-            }
-            AnimationName::String(s) => {
-                hasher.update(&2u32.to_ne_bytes());
-                // SAFETY: arena-owned slice.
-                hasher.update(unsafe { crate::arena_str(*s) });
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // All payloads are `Copy` (arena slice pointers); identity copy.
-        match self {
-            AnimationName::None => AnimationName::None,
-            AnimationName::Ident(i) => AnimationName::Ident(*i),
-            AnimationName::String(s) => AnimationName::String(*s),
-        }
-    }
-
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+impl<'bump> AnimationName<'bump> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         // `none` keyword, then `<string>`, else `<custom-ident>`.
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
@@ -334,31 +287,9 @@ impl AnimationName {
         match self {
             AnimationName::None => return dest.write_str("none"),
             AnimationName::Ident(s) => {
-                // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(s.v) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck — capture arena/source_index
-                    // before borrowing dest.css_module mutably.
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
                 return s.to_css_with_options(dest, css_module_animation_enabled);
             }
-            AnimationName::String(s) => {
-                // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(*s) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
-
+            AnimationName::String(name) => {
                 // CSS-wide keywords and `none` cannot remove quotes
                 if strings::eql_case_insensitive_ascii_check_length(name, b"none")
                     || is_reserved_custom_ident(name)
@@ -374,19 +305,19 @@ impl AnimationName {
 
 /// The raw-token fallback of `animation` and `animation-name`. In a CSS module it tags the keyframes names.
 #[cold]
-pub(crate) fn parse_unparsed(
-    property_id: PropertyId,
-    input: &mut Parser,
+pub(crate) fn parse_unparsed<'bump>(
+    property_id: PropertyId<'bump>,
+    input: &mut Parser<'_, 'bump>,
     options: &css::ParserOptions,
-) -> css::Result<Property> {
+) -> css::Result<'bump, Property<'bump>> {
     let mut unparsed = UnparsedProperty::parse(property_id, input, options)?;
     if input.flags.css_modules() {
         for token in unparsed.value.v.iter_mut() {
             if let TokenOrValue::Token(Token::Ident(ident)) = *token
                 && !is_keyword(ident)
+                && let Some(ident) = CustomIdent::new(ident)
             {
-                let name = AnimationName::Ident(CustomIdent { v: ident });
-                *token = TokenOrValue::AnimationName(name);
+                *token = TokenOrValue::AnimationName(AnimationName::Ident(ident));
             }
         }
     }
@@ -400,7 +331,6 @@ fn is_keyword(ident: &[u8]) -> bool {
         || <AnimationFillMode as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
         || <AnimationPlayState as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
         || strings::eql_any_case_insensitive_ascii(ident, &[b"infinite", b"auto"])
-        || is_reserved_custom_ident(ident)
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
@@ -415,7 +345,7 @@ pub enum AnimationIterationCount {
 impl AnimationIterationCount {
     // Port of `css.DeriveParse(@This()).parse` — payload (`number: f32`) declared
     // first, single void variant (`infinite`) last → try number, then ident.
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if let Ok(v) = input.try_parse(CSSNumberFns::parse) {
             return Ok(AnimationIterationCount::Number(v));
         }
@@ -490,17 +420,18 @@ impl AnimationFillMode {
 }
 
 /// A value for the [animation-timeline](https://drafts.csswg.org/css-animations-2/#animation-timeline) property.
-pub enum AnimationTimeline {
+#[derive(PartialEq, Eq)]
+pub enum AnimationTimeline<'bump> {
     /// The animation's timeline is a DocumentTimeline, more specifically the default document timeline.
     Auto,
     /// The animation is not associated with a timeline.
     None,
     /// A timeline referenced by name.
-    DashedIdent(DashedIdent),
+    DashedIdent(DashedIdent<'bump>),
 }
 
-impl AnimationTimeline {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+impl<'bump> AnimationTimeline<'bump> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
             if strings::eql_case_insensitive_ascii_check_length(ident, b"auto") {
@@ -524,7 +455,7 @@ impl AnimationTimeline {
         }
     }
 
-    pub(crate) fn default() -> AnimationTimeline {
+    pub(crate) fn default() -> AnimationTimeline<'bump> {
         AnimationTimeline::Auto
     }
 
@@ -532,22 +463,7 @@ impl AnimationTimeline {
         match self {
             AnimationTimeline::Auto => AnimationTimeline::Auto,
             AnimationTimeline::None => AnimationTimeline::None,
-            // `DashedIdent` is a `Copy` arena-slice pointer.
             AnimationTimeline::DashedIdent(d) => AnimationTimeline::DashedIdent(*d),
-        }
-    }
-}
-
-// hand-written `PartialEq` — `DashedIdent` carries a raw
-// `*const [u8]` arena pointer; derive would compare by pointer, not content.
-impl PartialEq for AnimationTimeline {
-    fn eq(&self, other: &Self) -> bool {
-        use crate::generics::CssEql;
-        match (self, other) {
-            (AnimationTimeline::Auto, AnimationTimeline::Auto) => true,
-            (AnimationTimeline::None, AnimationTimeline::None) => true,
-            (AnimationTimeline::DashedIdent(a), AnimationTimeline::DashedIdent(b)) => a.eql(b),
-            _ => false,
         }
     }
 }

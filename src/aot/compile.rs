@@ -165,6 +165,8 @@ pub(crate) struct Build<'a> {
     /// Found while the host of the load is there. Said once it is known which code is left out.
     resolves_that_miss: Vec<Diagnostic>,
     missing_node_workers: Vec<Diagnostic>,
+    /// WebAssembly files that no import brings, each with the file that names it.
+    adjacent_web_assembly: Vec<(FileId, Vec<u8>)>,
     /// The files that are compiled only because a Worker may start from one of them. Sorted.
     files_of_guesses: Vec<FileId>,
     /// Those of them that failed to load, and what failed. Sorted.
@@ -503,6 +505,7 @@ impl<'a> Build<'a> {
             written_function_names: Vec::new(),
             resolves_that_miss: Vec::new(),
             missing_node_workers: Vec::new(),
+            adjacent_web_assembly: Vec::new(),
             files_of_guesses: Vec::new(),
             refused_guessed_files: Vec::new(),
             started_workers: StartedWorkers::default(),
@@ -643,6 +646,7 @@ impl<'a> Build<'a> {
         }
         let leftovers = core::mem::take(&mut self.leftovers);
         let beside = self.beside_runner();
+        let order_files = self.options.aot.order_files.as_slice();
         let clock = &mut self.clock;
         let provider = self.provider;
         let paths = PathsOfProgram {
@@ -659,7 +663,7 @@ impl<'a> Build<'a> {
             || {
                 clock.stop();
                 let entered = Instant::now();
-                let engine = engine::compile(bytes, engine_options, &output.texts);
+                let engine = engine::compile(bytes, engine_options, &output.texts, order_files);
                 (engine, entered.elapsed())
             },
         );

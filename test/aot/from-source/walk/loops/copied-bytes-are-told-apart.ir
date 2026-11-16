@@ -1,10 +1,10 @@
 # -- source: copied-bytes-are-told-apart.js
 # const table = {
 #   copy(data) {
-#     const out = new Uint8Array(8);
+#     const out = new Uint8Array(8); let sum = 0;
 #     for (let i = 0; i < data.length; i++)
-#       out[i] = data[i];
-#     return out.join();
+#       out[i] = data[i], sum += i;
+#     return sum < 0 ? "" : out.join();
 #   },
 # };
 # const name = JSON.parse('"copy"');

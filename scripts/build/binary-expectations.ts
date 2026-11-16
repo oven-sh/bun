@@ -257,7 +257,7 @@ function runtimeInitializers(cfg: Config): string[] {
       "_GLOBAL__sub_I_wlocale_inst.cc",
     );
   }
-  if (cfg.arm64 && (gnu || musl)) {
+  if (cfg.arm64 && (cfg.linux || cfg.freebsd)) {
     // Rust std's aarch64 outline-atomics (LSE) probe.
     initializers.push("_R*3std3sys18configure_builtins13RUST_LSE_INIT*");
   }

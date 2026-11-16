@@ -2,7 +2,7 @@
 //! `Sharing::Publishes` also adds the texts it first sees during checking. In any other checker
 //! such a text becomes a task-local atom (`OwnStore`).
 
-use crate::local::LOCAL;
+use crate::local::is_local_number;
 use crate::session::Session;
 use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
@@ -18,7 +18,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct Atom(pub u32);
 
 impl Atom {
-    pub const NONE: Atom = Atom(u32::MAX);
+    /// No name. Its text is empty, but interning the empty text gives `known::empty`.
+    pub const NONE: Atom = Atom(KNOWN_TEXTS.len() as u32 - 1);
 
     /// True if it's one of the words binder.go checks an `Identifier` for:
     /// `KindFirstFutureReservedWord` to `KindLastFutureReservedWord`, `await`
@@ -34,7 +35,7 @@ impl Atom {
     /// True if a task created it and hasn't published it yet.
     #[inline]
     pub fn is_own(self) -> bool {
-        self.0 & LOCAL != 0 && self != Atom::NONE
+        is_local_number(self.0)
     }
     #[inline]
     pub fn is_some(self) -> bool {
@@ -48,7 +49,7 @@ impl std::fmt::Debug for Atom {
     }
 }
 
-/// Texts of the atoms with constant numbers (`known`), indexed by number.
+/// Texts of the atoms with constant numbers (`known`, then `Atom::NONE`), indexed by number.
 pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 
 /// A single-file interner numbers the texts that aren't in its file from here up. A multi-file
@@ -274,6 +275,7 @@ macro_rules! known_atoms {
                 b"\xFE@iterator",
                 b"\xFE@asyncIterator",
                 b"\xFEglobal",
+                b"", // `Atom::NONE`, which stays last
             ];
             /// `[Symbol.iterator]` and `[Symbol.asyncIterator]` as property names. Interned right
             /// after `TEXTS`, because a `str` cannot contain their first byte.
@@ -535,6 +537,9 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 /// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
 
+/// Name prefix of `require`, `module` and `exports` in a script, where they are names in the global scope.
+pub const NAME_IN_GLOBAL_SCOPE: &[u8] = b"\xFF";
+
 fn with_symbol_name_prefix(name: &[u8]) -> SmallVec<[u8; 64]> {
     let mut text = SmallVec::new();
     text.extend_from_slice(SYMBOL_NAME_PREFIX);
@@ -672,10 +677,6 @@ impl crate::table::Id for Atom {
     #[inline]
     fn from_number(number: u32) -> Self {
         Atom(number)
-    }
-    #[inline]
-    fn local_number(self) -> Option<u32> {
-        self.is_own().then_some(self.0 & !LOCAL)
     }
 }
 
@@ -817,6 +818,8 @@ impl<'s> Interner<'s> {
             known::sym_async_iterator
         );
         assert_eq!(this.intern(b"\xFEglobal"), known::global_augmentation);
+        // Not interned: a lookup of the empty text finds `known::empty`.
+        assert_eq!(Atom(tables.texts.push(b""[..].into())), Atom::NONE);
         debug_assert!((KNOWN_TEXTS.iter().zip(0..)).all(|(text, i)| this.bytes(Atom(i)) == *text));
         this
     }
@@ -1043,7 +1046,7 @@ impl<'p, 's> Atoms<'p, 's> {
     #[inline]
     pub fn symbol_name_kind(&self, atom: Atom) -> Option<SymbolNameKind> {
         let class = self.class(atom);
-        if atom.is_some() && class & class::IS_SYMBOL_NAME != 0 {
+        if class & class::IS_SYMBOL_NAME != 0 {
             Some(SymbolNameKind::Symbol)
         } else if class & class::IS_PRIVATE_SYMBOL_NAME != 0 {
             Some(SymbolNameKind::Private)
@@ -1055,7 +1058,7 @@ impl<'p, 's> Atoms<'p, 's> {
     /// `isLateBoundName`
     #[inline]
     pub fn is_symbol_name(&self, atom: Atom) -> bool {
-        atom.is_some() && self.class(atom) & class::IS_SYMBOL_NAME != 0
+        self.class(atom) & class::IS_SYMBOL_NAME != 0
     }
 
     /// `IsPrivateIdentifierSymbol`: true if the name starts with `PRIVATE_NAME_PREFIX`.
@@ -1122,5 +1125,16 @@ mod tests {
             });
         });
         assert_eq!(atoms.class(atoms.intern(b"0")), class::IS_NUMERIC);
+    }
+
+    #[test]
+    fn none_has_an_empty_text_and_is_not_interned() {
+        let session = Session::new();
+        let common = Interner::in_common(&session);
+        for atoms in [common, Interner::over(&session, common)] {
+            assert_eq!(atoms.bytes(Atom::NONE), b"");
+            assert_eq!(atoms.intern(b""), known::empty);
+            assert_eq!(atoms.lookup(b""), Some(known::empty));
+        }
     }
 }

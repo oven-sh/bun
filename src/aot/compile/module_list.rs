@@ -3,6 +3,7 @@ use crate::engine::EngineResult;
 use crate::ir::Id;
 use crate::ir::generated::ModuleRequestKind;
 use crate::link::ProgramModule;
+use crate::load::module_paths::compute_display_path;
 use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::module_list::{
@@ -14,7 +15,7 @@ use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 
 pub(super) struct ListedModules {
     list: ModuleList,
@@ -96,6 +97,26 @@ pub(super) fn collect_module_list(
 }
 
 impl ListedModules {
+    pub(super) fn add_embedded_files(&mut self, paths: &[Vec<u8>], project_root: &[u8]) {
+        let inputs = &mut self.list.inputs;
+        let listed: FxHashSet<Vec<u8>> = inputs.iter().map(|it| it.path.clone()).collect();
+        for path in paths {
+            let name = compute_display_path(project_root, path).into_vec();
+            if listed.contains(&name) {
+                continue;
+            }
+            let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path));
+            let byte_count = stat.map_or(0, |stat| stat.st_size as u64);
+            inputs.push(ModuleInput {
+                path: name,
+                byte_count,
+                format: None,
+                imports: Vec::new(),
+                code_byte_count: 0,
+            });
+        }
+    }
+
     pub(super) fn finish(mut self, engine: Option<&EngineResult>) -> ModuleList {
         let Some(engine) = engine else {
             return self.list;

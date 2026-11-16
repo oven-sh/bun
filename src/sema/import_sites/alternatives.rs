@@ -30,6 +30,7 @@ use crate::hir::{
     MemberId, MemberKey, MemberKind, NodeData, PatElemId, PatId, PatKind, PropId, PropKey,
     PropKind, StmtId, StmtKind, TextOfOtherFile, UnOp, is_proto_setter,
 };
+use crate::hir::{CallId, FnKind};
 use crate::util::{FxBuild, FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
 use bun_sort_by_number::SortByNumber;
@@ -39,6 +40,8 @@ use std::collections::hash_map::Entry;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::{Deref, Range};
 use std::rc::Rc;
+
+mod execution;
 
 const EXPRESSIONS_FOLLOWED_IN_ANY_FILE: u32 = 4096;
 const MOST_TEXTS_MADE: u32 = 4096;
@@ -1025,6 +1028,27 @@ pub(super) fn find_known_alternatives(
     (found, follower.open_parameters)
 }
 
+/// What each of `operands` is wherever it is evaluated, for those of which the statements of the file tell, and whether it is nothing else. Each comes with whether a path of it is known.
+pub(super) fn find_executed_alternatives(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    data_file_queries: &AskedOfDataFiles,
+    operands: FxHashMap<ExprId, bool>,
+) -> FxHashMap<ExprId, (Vec<Found>, bool)> {
+    let folder = Folder::OfFile;
+    let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
+    follower.keeps_known_alternatives = true;
+    follower.follows_fields = true;
+    let executed = execution::find_executed_values(&follower, operands).into_iter();
+    let found = executed.map(|(operand, executed)| {
+        let apart = executed.values.into_iter();
+        let found =
+            apart.filter_map(|value| find_alternatives_among(&follower, operand, vec![value]));
+        (operand, (found.collect(), executed.are_all))
+    });
+    found.collect()
+}
+
 /// Returns the elements of `list` that can be resolved, as the parameter of `list.find(it => ..)` is.
 pub(super) fn find_known_elements(
     inputs: &ScanInputs<'_, '_>,
@@ -1927,6 +1951,7 @@ impl Follower<'_, '_, '_> {
                 self.values_of_new_map(hir[call])
             }
             ExprKind::New(call) => self.values_of_new_url(hir[call]),
+            ExprKind::TaggedTemplate(call) => self.values_of_raw_template(call),
             ExprKind::Array(items) => self.values_of_list(items),
             ExprKind::Object(_) => Some(vec![Held::Object(e)]),
             ExprKind::Fn(function) => Some(vec![Held::Function(function)]),
@@ -2133,6 +2158,35 @@ impl Follower<'_, '_, '_> {
             parts.push(written(text));
         }
         self.join_parts(&parts)
+    }
+
+    /// `` String.raw`a${b}` `` without escapes.
+    fn values_of_raw_template(&mut self, call: CallId) -> Option<Values> {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let (string, MemberKey::Name(method)) = hir.member_key(callee)? else {
+            return None;
+        };
+        let is_raw = self.needs_no_contents_proof()
+            && atoms.bytes(method) == b"raw"
+            && is_free_name(
+                hir,
+                bound,
+                hir.skip_type_assertions(string),
+                &[known::String],
+            );
+        let template = hir.template_of(call);
+        let ExprKind::Template { exprs } = expr_kind(hir, template)? else {
+            return None;
+        };
+        let (start, end) = (hir[template].pos as usize, hir[template].end as usize);
+        let written = hir.text.get(start..end)?;
+        match is_raw && !strings::contains_char(written, b'\\') {
+            true => self.values_of_template(exprs),
+            false => None,
+        }
     }
 
     fn values_of_binary(&mut self, op: BinOp, left: ExprId, right: ExprId) -> Option<Values> {
@@ -5086,11 +5140,68 @@ impl Follower<'_, '_, '_> {
         if let Some(values) = self.values_of_field_of_class_written_here(object, key) {
             return Some(values);
         }
+        if let Some(values) = self.values_of_argument_at(object, key) {
+            return Some(values);
+        }
         if let Some(values) = self.values_of_part_of_parsed_path(object, key) {
             return Some(values);
         }
         self.values_of_followed_member(object, key, chain)
             .or_else(|| self.values_of_field(member, object, key))
+    }
+
+    /// `arguments[0]`
+    fn values_of_argument_at(&mut self, object: ExprId, key: MemberKey) -> Option<Values> {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            atoms,
+            ..
+        } = self.inputs;
+        let object = hir.skip_type_assertions(object);
+        if !self.follows_assignments()
+            || !matches!(
+                expr_kind(hir, object),
+                Some(ExprKind::Ident(known::arguments))
+            )
+            || matches!(bound.binding(object), Binding::Symbol(_))
+        {
+            return None;
+        }
+        let place = match key {
+            MemberKey::Name(name) => {
+                bun_core::fmt::parse_int::<usize>(atoms.bytes(name), 10).ok()?
+            }
+            MemberKey::Computed(computed) => match decisions.constant(hir, computed) {
+                FoldedValue::Constant(Constant::Number(number)) if number >= 0.0 => number as usize,
+                _ => return None,
+            },
+            MemberKey::PrivateName(_) => return None,
+        };
+        let mut function = self.find_function_of_expression(object)?;
+        while hir[function].kind == FnKind::Arrow {
+            let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
+                return None;
+            };
+            function = self.find_function_of_expression(written)?;
+        }
+        if let Some(&(called, arguments)) = self.calls_in_progress.last()
+            && called == function
+        {
+            let argument = hir.ids(arguments).nth(place)?;
+            let calls = self
+                .calls_in_progress
+                .split_off(self.calls_in_progress.len() - 1);
+            let values = self.values_of(argument);
+            self.calls_in_progress.extend(calls);
+            return values;
+        }
+        let written_names = self.written_names;
+        let find_written = |name: Atom| written_names.find_expressions(hir, name);
+        let name = find_name_of(hir, bound, function, &find_written)?;
+        let passed = self.find_known_values_passed(name, place);
+        self.values_of_any(passed).filter(|it| !it.is_empty())
     }
 
     fn values_of_followed_member(
@@ -5299,7 +5410,70 @@ impl Follower<'_, '_, '_> {
             }
         }
         let is_known = is_only_written_here || self.keeps_known_alternatives;
-        (is_known && !values.is_empty()).then_some(values.all)
+        let values = self.with_elements_pushed(member, values.all);
+        (is_known && !values.is_empty()).then_some(values)
+    }
+
+    /// `values` of the field that `member` reads, with what `object.field.push(..)` adds to its lists.
+    fn with_elements_pushed(&mut self, member: ExprId, values: Values) -> Values {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        let is_list = |it: &Held| matches!(it, Held::List(_) | Held::ListOf(_));
+        if !self.follows_assignments() || !values.iter().any(is_list) {
+            return values;
+        }
+        let Some((_, key)) = hir.member_key(member) else {
+            return values;
+        };
+        let private = bound.private_name_of_reference(member);
+        let names_field = |list: ExprId| match hir.member_key(hir.skip_type_assertions(list)) {
+            Some((_, MemberKey::PrivateName(_))) => {
+                private.is_some()
+                    && bound.private_name_of_reference(hir.skip_type_assertions(list)) == private
+            }
+            Some((_, it)) => private.is_none() && it == key,
+            None => false,
+        };
+        let written_names = self.written_names;
+        let members = written_names.members(hir, bound);
+        let mut pushed = Distinct::new();
+        let calls = members.calls.get(&atoms.intern(b"push"));
+        for &call in calls.into_iter().flatten() {
+            let ExprKind::Call(written) = hir[call].kind else {
+                continue;
+            };
+            let callee = hir.skip_type_assertions(hir[written].callee);
+            if self.is_dead(call) || !hir.member_key(callee).is_some_and(|it| names_field(it.0)) {
+                continue;
+            }
+            for argument in hir.ids(hir[written].args) {
+                let held = match hir[argument].kind {
+                    ExprKind::Spread(list) => self.values_of_elements(list),
+                    _ => self.values_of_alternative(argument),
+                };
+                held.into_iter()
+                    .flatten()
+                    .for_each(|it| add(&mut pushed, it));
+            }
+        }
+        if pushed.is_empty() {
+            return values;
+        }
+        let mut all = Distinct::new();
+        for value in values {
+            let mut elements: Values = match value {
+                Held::List(places) => places.into_iter().flatten().collect(),
+                Held::ListOf(elements) => elements,
+                value => {
+                    add(&mut all, value);
+                    continue;
+                }
+            };
+            elements.extend(pushed.iter().cloned());
+            add(&mut all, Held::ListOf(elements));
+        }
+        all.all
     }
 
     /// Returns what the parameter that `name` mentions gets, if its function is a constructor.
@@ -6368,6 +6542,11 @@ impl Follower<'_, '_, '_> {
         {
             return Some(values);
         }
+        if let Some((is_join, passed)) = self.find_bound_path_function(callee) {
+            let passed = hir.ids(passed).skip(1).chain(hir.ids(call.args));
+            let parts = passed.map(PartOfPath::Written).collect();
+            return self.join_parts_below_folder(parts, is_join);
+        }
         if let Some(function) = self.find_path_joining_function(callee) {
             let takes_one_path = function != known::join && function != known::resolve;
             if takes_one_path && call.args.len() != 1 {
@@ -6385,6 +6564,9 @@ impl Follower<'_, '_, '_> {
         }
         if let Some(values) = self.values_of_path_converted(callee, call.args) {
             return Some(values);
+        }
+        if let Some(path) = self.find_shortened_path(callee, call.args) {
+            return self.values_of_path_below(path, &[b"..".to_vec()]);
         }
         if let Some((list, MemberKey::Name(known::join))) = hir.member_key(callee)
             && let Some(lists) = self.values_of(list)
@@ -6416,6 +6598,31 @@ impl Follower<'_, '_, '_> {
             }
         }
         Some(values.all)
+    }
+
+    /// `path.join.bind(path, a)`: whether it joins, and what is bound.
+    fn find_bound_path_function(&self, callee: ExprId) -> Option<(bool, IdList<ExprId>)> {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        if !self.needs_no_contents_proof() {
+            return None;
+        }
+        let made = follow_settled_bindings(hir, bound, callee);
+        let ExprKind::Call(call) = expr_kind(hir, made)? else {
+            return None;
+        };
+        let maker = hir.skip_type_assertions(hir[call].callee);
+        let (function, MemberKey::Name(method)) = hir.member_key(maker)? else {
+            return None;
+        };
+        if atoms.bytes(method) != b"bind" {
+            return None;
+        }
+        let function = self.find_path_joining_function(hir.skip_type_assertions(function))?;
+        let is_spread = |it: ExprId| matches!(expr_kind(hir, it), Some(ExprKind::Spread(_)));
+        (!hir.ids(hir[call].args).any(is_spread))
+            .then(|| (function != known::resolve, hir[call].args))
     }
 
     /// `path.dirname(a)`, and `path.format({ dir: a, base: b })`.
@@ -6512,6 +6719,49 @@ impl Follower<'_, '_, '_> {
         let mut texts = self.values_of(hir.id_at(args, 0))?;
         texts.retain(|it| matches!(it, Held::Text(text) if text.starts_at_own_directory));
         (!texts.is_empty()).then_some(texts)
+    }
+
+    /// `a` in `a.split("/").slice(0, -1).join("/")`.
+    fn find_shortened_path(&self, callee: ExprId, args: IdList<ExprId>) -> Option<ExprId> {
+        let &ScanInputs {
+            hir,
+            decisions,
+            atoms,
+            ..
+        } = self.inputs;
+        if !self.needs_no_contents_proof() {
+            return None;
+        }
+        let constant = |e: ExprId| match decisions.constant(hir, e) {
+            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+                Some(constant)
+            }
+            FoldedValue::Unknown => None,
+        };
+        let is_separator = |args: IdList<ExprId>| {
+            args.len() == 1
+                && (self.names_path_separator(hir.id_at(args, 0))
+                    || matches!(constant(hir.id_at(args, 0)), Some(Constant::String(text))
+                        if atoms.bytes(text) == b"/"))
+        };
+        let called_on = |callee: ExprId, method: &[u8]| {
+            let callee = hir.skip_type_assertions(callee);
+            let (object, MemberKey::Name(name)) = hir.member_key(callee)? else {
+                return None;
+            };
+            let object = hir.skip_type_assertions(object);
+            (atoms.bytes(name) == method).then_some(object)
+        };
+        let as_call = |e: ExprId| match expr_kind(hir, e)? {
+            ExprKind::Call(call) => Some(hir[call]),
+            _ => None,
+        };
+        let cut = as_call(called_on(callee, b"join").filter(|_| is_separator(args))?)?;
+        let is_one = cut.args.len() == 2
+            && constant(hir.id_at(cut.args, 0)) == Some(Constant::Number(0.0))
+            && constant(hir.id_at(cut.args, 1)) == Some(Constant::Number(-1.0));
+        let parts = as_call(called_on(cut.callee, b"slice").filter(|_| is_one)?)?;
+        called_on(parts.callee, b"split").filter(|_| is_separator(parts.args))
     }
 
     /// `path.parse(a).dir`.
@@ -7270,6 +7520,45 @@ impl Follower<'_, '_, '_> {
         Some(values.all)
     }
 
+    fn values_yielded_by(&mut self, generator: FnId) -> Option<Values> {
+        let hir = self.inputs.hir;
+        let yields: Vec<(ExprId, bool)> = (hir.exprs.iter().zip((0..).map(ExprId)))
+            .filter_map(|(written, e)| match written.kind {
+                ExprKind::Yield { value, star } if value.is_some() => Some((e, value, star)),
+                _ => None,
+            })
+            .filter(|it| self.find_function_of_expression(it.0) == Some(generator))
+            .map(|it| (it.1, it.2))
+            .collect();
+        let mut elements = Distinct::new();
+        for (value, is_star) in yields {
+            let held = match is_star {
+                true => self.values_of_elements(value),
+                false => self.values_of_alternative(value),
+            };
+            held.into_iter()
+                .flatten()
+                .for_each(|it| add(&mut elements, it));
+        }
+        (!elements.is_empty()).then(|| vec![Held::ListOf(elements.all)])
+    }
+
+    fn find_function_of_expression(&self, e: ExprId) -> Option<FnId> {
+        let bound = self.inputs.bound;
+        let mut parent = bound.parent_of_expr(e);
+        loop {
+            parent = match parent {
+                Parent::Expr(above) => bound.parent_of_expr(above),
+                Parent::Stmt(statement) => bound.parent_of_stmt(statement),
+                Parent::VarInit(declaration) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+                Parent::Prop(property) => Parent::Expr(bound.prop_owner[property.idx()]),
+                Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+                Parent::FnBody(function) => return Some(function),
+                _ => return None,
+            };
+        }
+    }
+
     /// Without `arguments` the function may be a closure that an earlier call made.
     fn values_returned_by(
         &mut self,
@@ -7282,6 +7571,9 @@ impl Follower<'_, '_, '_> {
             decisions,
             ..
         } = self.inputs;
+        if hir[function].flags.contains(Flags::GENERATOR) && self.follows_assignments() {
+            return self.values_yielded_by(function);
+        }
         if hir[function]
             .flags
             .intersects(Flags::ASYNC | Flags::GENERATOR)

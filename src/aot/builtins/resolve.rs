@@ -26,7 +26,7 @@ use super::runtime_uses::RuntimeUses;
 use super::table::{
     self, BuiltinId, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
 };
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, Keyword, MemberKey, NodeData, TypeNodeKind};
@@ -53,6 +53,11 @@ impl BuiltinPath {
     pub fn locked_builtin(self) -> Option<BuiltinId> {
         let is_locked = self.mutability == Mutability::AlwaysLocked;
         (is_locked && table::is_legal_builtin_constant(self.id)).then_some(self.id)
+    }
+
+    pub fn locked_number(self) -> Option<f64> {
+        let is_locked = self.mutability == Mutability::AlwaysLocked;
+        is_locked.then(|| table::number_constant(self.id)).flatten()
     }
 }
 
@@ -305,6 +310,8 @@ pub struct ResolvedBuiltins {
     tables_of_loaders_written: Box<[ExprId]>,
     unlocked: OnceLock<Arc<[u32]>>,
     mentioned: Box<[BuiltinId]>,
+    source_evaluator_escapes: bool,
+    may_call_unnamed_evaluator: bool,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
     uses: RuntimeUses,
@@ -545,8 +552,23 @@ impl ResolvedBuiltins {
     }
 
     pub fn mentions_evaluator(&self) -> bool {
-        let evaluators =
-            table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE;
+        self.mentions_any_of(
+            table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE,
+        )
+    }
+
+    /// `f instanceof Function`, `Function.prototype.call` and `typeof eval` evaluate nothing.
+    pub fn evaluator_comes_out(&self) -> bool {
+        self.source_evaluator_escapes || self.mentions_any_of(table::BuiltinFlags::RUNS_UNSEEN_CODE)
+    }
+
+    pub fn may_call_unnamed_evaluator(&self, hir: &hir::File<'_>) -> bool {
+        self.may_call_unnamed_evaluator
+            || (hir.exprs.iter())
+                .any(|expr| matches!(expr.kind, ExprKind::String(known::constructor)))
+    }
+
+    fn mentions_any_of(&self, evaluators: table::BuiltinFlags) -> bool {
         let loads_by_name = [
             BuiltinId::ModuleRequire,
             BuiltinId::ImportMetaRequire,

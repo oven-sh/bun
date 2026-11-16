@@ -400,7 +400,7 @@ pub(super) struct CodeFiles<'s, 'r> {
     pub(super) reads_code_on_request: bool,
 }
 
-pub(super) type ModuleSlots<'s> = Vec<Option<ArenaBox<'s, Module<'s>>>>;
+pub(super) type ModuleSlots<'s> = Vec<Option<ArenaBox<'s, ModuleWithTrees<'s>>>>;
 
 pub(super) type AddFile<'t, 's> =
     &'t mut dyn FnMut(&[u8], bool, &mut ModuleSlots<'s>, &mut Vec<u32>, &mut Found<'s>) -> FileId;

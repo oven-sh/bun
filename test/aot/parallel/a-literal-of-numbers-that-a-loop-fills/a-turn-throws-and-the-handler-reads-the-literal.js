@@ -1,4 +1,4 @@
-// STATISTIC: ArrayLiteralsAllocatedForLoops = 0
+// STATISTIC: ArrayLiteralsAllocatedForLoops = 1
 // Under: --aot-check=Validate: the storage that the literal is born with is what every access names
 // Under: --aot-harden=proof-checks: what is remembered of the literal is asked of memory
 'use strict';

@@ -1236,7 +1236,9 @@ impl RecordBuilder<'_, '_, '_> {
         }
         match interop.kind {
             ModuleKind::SourceText => {
-                record.flags |= self.planned_flags(file.project, ModuleRef::File(file.file));
+                let own = ModuleRef::File(file.file);
+                record.flags |= self.planned_flags(file.project, own);
+                record.exposes_global_object = graph.exposes_global_object(own);
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
             }
@@ -1261,6 +1263,7 @@ impl RecordBuilder<'_, '_, '_> {
             ModuleKind::CommonJs => {
                 let own = ModuleRef::File(file.file);
                 record.flags |= self.planned_flags(file.project, own);
+                record.exposes_global_object = graph.exposes_global_object(own);
                 record.requests = self.build_requests(file.project, own);
                 record.exports_variable = input.exports_variable(ProgramModule::File(file));
             }
@@ -1302,6 +1305,7 @@ impl RecordBuilder<'_, '_, '_> {
         let interop = graph.interop(own);
         let mut record = create_record(interop, path, display_path);
         record.flags = self.planned_flags(project, own);
+        record.exposes_global_object = graph.exposes_global_object(own);
         if is_bundler_helper(sources.kind(file.file), interop.kind) {
             record.flags |= ModuleFlags::IS_BUNDLER_HELPER;
         }

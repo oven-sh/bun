@@ -7,6 +7,7 @@
 # One layout, one order: the literal is the object that the fields go to, and nothing of it is made.
 # RUN: walk f1 mechanisms=all
 # CHECK: isInLoop=true isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = NewObject
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 15 0 {"a":1,"b":2,"c":3}

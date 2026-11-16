@@ -12,13 +12,14 @@
 # f3 = f
 # `a[2]` off a view whose length nobody knows: the place is written and the view stands in front of the loop, yet each read asked the length in its turn and gave "a number or undefined", and each store
 # asked it again. No turn of the typed copy runs other code or lays hands on the storage of a view, so every turn would find what the first finds: the place is held below the length once, in front
-# of the typed copy, as a small range below a written bound already was. A view that is too short leaves for the closed copy there.
+# of the typed copy, as a small range below a written bound already was. A view that is too short leaves there, for a typed copy that asks in its turns.
 # RUN(COUNT): compile TypedArrayBoundsChecksHoisted mechanisms=all
 # COUNT-NOT: statistic TypedArrayBoundsChecksHoisted 0
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
 # CHECK: ({{*}}: number @Double, {{*}}) isInLoop=true isLoopHead=true:
 # CHECK-NOT: @OptionalDouble = GetTypedArrayElement
+# CHECK: ({{*}}: number @Double, {{*}}) isInLoop=true isLoopHead=true:
 # CHECK: Return
 # RUN(ANSWER): run-in-shell
 # ANSWER: 3462.5 3812.5 NaN

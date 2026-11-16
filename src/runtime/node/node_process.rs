@@ -80,8 +80,8 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 // @190n: this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
-    let vm = global_object.bun_vm().as_mut();
-    vm.exit_handler.exit_code = code;
+    let vm = global_object.bun_vm();
+    vm.exit_handler.exit_code.set(code);
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
@@ -100,7 +100,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                 bun_core::reload_process(should_clear_terminal, false);
             });
         }
-        vm.exit_handler.requested = true;
+        vm.exit_handler.requested.set(true);
         vm.on_exit();
         vm.global_exit();
     }
@@ -470,7 +470,7 @@ mod _impl {
                     .map(|&arg| super::worker_option_string(arg)),
             );
         } else {
-            for arg in &vm.argv {
+            for arg in vm.argv {
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.push(BunString::clone_utf8(arg));
             }
@@ -489,13 +489,13 @@ mod _impl {
         // `--interactive` boots the bootstrap through `eval_source`, so read
         // the user's real `-e` bytes from `interactive_eval_script` instead
         // (`undefined` when empty, matching `node -i` without `-e`).
-        if let Some(script) = vm.module_loader.interactive_eval_script {
+        if let Some(script) = vm.module_loader.interactive_eval_script.get() {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
             return EncodedSlice::from_bytes(script).to_js(global_object);
         }
-        if let Some(source) = vm.module_loader.eval_source.as_deref() {
+        if let Some(source) = vm.module_loader.eval_source.get() {
             return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
@@ -609,8 +609,7 @@ mod _impl {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
 
         let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
@@ -639,9 +638,11 @@ mod _impl {
         match vm.set_process_cwd(on_disk) {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
-                vm.test_isolation_scope(|state| {
-                    state.saved_cwd.get_or_insert(prev_cwd);
-                });
+                if vm.test_isolation_enabled.get() {
+                    vm.test_isolation_state.saved_cwd.with_mut(|saved| {
+                        saved.get_or_insert(prev_cwd);
+                    });
+                }
                 #[cfg(windows)]
                 let without_trailing_slash =
                     bun_paths::string_paths::without_trailing_slash_windows_path;

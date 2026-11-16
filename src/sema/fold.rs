@@ -408,6 +408,20 @@ impl<'s> Decisions<'s> {
         self.dead_exprs.iter().map(|index| ExprId(index as u32))
     }
 
+    /// In the order of their numbers.
+    pub fn dead_exprs_and_short_circuited_links(&self) -> impl Iterator<Item = ExprId> + use<'s> {
+        let (dead, links) = (self.dead_exprs.0, self.short_circuited_links.0);
+        let word_at = |words: &[u64], index: usize| words.get(index).copied().unwrap_or(0);
+        (0..dead.len().max(links.len())).flat_map(move |index| {
+            let mut rest = word_at(dead, index) | word_at(links, index);
+            std::iter::from_fn(move || {
+                let position = (rest != 0).then(|| index * 64 + rest.trailing_zeros() as usize);
+                rest &= rest.wrapping_sub(1);
+                position.map(|position| ExprId(position as u32))
+            })
+        })
+    }
+
     pub fn dead_stmts(&self) -> impl Iterator<Item = StmtId> + use<'s> {
         self.dead_stmts.iter().map(|index| StmtId(index as u32))
     }

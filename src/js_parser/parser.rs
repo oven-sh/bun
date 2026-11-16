@@ -1169,12 +1169,6 @@ impl StringVoidMap {
         entry.found_existing
     }
 
-    fn init() -> Result<StringVoidMap, bun_core::Error> {
-        Ok(StringVoidMap {
-            map: StringHashMap::default(),
-        })
-    }
-
     fn reset(&mut self) {
         // We must reset or the hash table will contain invalid pointers
         self.map.clear();
@@ -1183,13 +1177,17 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop`.
     #[inline]
-    pub(crate) fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
+    pub(crate) fn get() -> bun_collections::pool::PoolGuard<StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
 
 impl bun_collections::pool::ObjectPoolType for StringVoidMap {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
+    fn init() -> Self {
+        StringVoidMap {
+            map: StringHashMap::default(),
+        }
+    }
     #[inline]
     fn reset(&mut self) {
         StringVoidMap::reset(self)
@@ -1379,7 +1377,7 @@ pub struct PropertyOpts {
     pub(crate) class_has_extends: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
-    pub(crate) ts_decorators: ExprNodeList,
+    pub(crate) ts_decorators: js_ast::StoreSlice<Expr>,
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
 }
@@ -1395,7 +1393,7 @@ impl Default for PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: js_ast::StoreSlice::EMPTY,
             has_argument_decorators: false,
             has_class_decorators: false,
         }
@@ -1747,7 +1745,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
     // same pattern.
     let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
     let log_ptr = lexer.log;
-    let mut parser = Parser {
+    let range = lexer.range();
+    let parser = Parser {
         options: opts,
         bump,
         lexer,
@@ -1756,11 +1755,9 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
-            let range = parser.lexer.range();
-            drop(parser);
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
@@ -1768,7 +1765,6 @@ pub fn new_lazy_export_ast_impl<'bump>(
             return Ok(None);
         }
     };
-    drop(parser);
 
     temp_log.append_to(log_to_copy_into);
     match result {
@@ -1776,8 +1772,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }
-        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
-        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
+        // `into_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+        _ => unreachable!("into_lazy_export_ast returns Result::Ast"),
     }
 }
 

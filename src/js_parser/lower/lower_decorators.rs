@@ -870,8 +870,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let bump = p.arena;
         let temps_before = p.temp_refs_to_declare.len();
 
-        let class_decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut class.ts_decorators);
-        let has_class_decorators = class_decorators.len_u32() > 0;
+        let class_decorators = core::mem::take(&mut class.ts_decorators);
+        let has_class_decorators = !class_decorators.is_empty();
 
         // `__decorateElement` numbers the initializer lists of accessors and
         // fields in the order it is called: static accessors, instance
@@ -880,7 +880,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_member_decorators = false;
         let mut lowered_names: HashMap<u32, ()> = HashMap::default();
         for prop in class.properties.slice() {
-            if prop.ts_decorators.len_u32() == 0 {
+            if prop.ts_decorators.is_empty() {
                 continue;
             }
             has_member_decorators = true;
@@ -937,11 +937,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EPrivateIdentifier(private) => Some(private.ref_.inner_index()),
                 _ => None,
             };
-            let decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut prop.ts_decorators);
+            let decorators = core::mem::take(&mut prop.ts_decorators);
             // An undecorated `accessor #x` behaves like the field `#x`.
             if private_index.is_some()
                 && prop.kind == PropertyKind::AutoAccessor
-                && decorators.len_u32() == 0
+                && decorators.is_empty()
             {
                 prop.kind = PropertyKind::Normal;
             }
@@ -959,11 +959,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
             let group = usize::from(!is_static) + if kind == 5 { 2 } else { 0 };
 
-            let dec_ref = if decorators.len_u32() > 0 {
+            let dec_ref = if !decorators.is_empty() {
                 let dec = p.declared_temp(b"_dec");
                 let list = p.new_expr(
                     E::Array {
-                        items: decorators,
+                        items: ExprNodeList::from_arena_slice(&decorators),
                         ..Default::default()
                     },
                     loc,
@@ -1260,7 +1260,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let dec = p.declared_temp(b"_dec");
                 let list = p.new_expr(
                     E::Array {
-                        items: class_decorators,
+                        items: ExprNodeList::from_arena_slice(&class_decorators),
                         ..Default::default()
                     },
                     loc,

@@ -11,10 +11,12 @@
 # function fill(n) { const table = new Table(); let sum = 0; for (let i = 0; i < n; i++) sum += table.put(i).key; return sum + table.size; }
 # print(fill(+"10"));
 # -- end of source
-# The captured variable was made a variable of the file, so the closure of `create` holds nothing and the guard of the member is all that the call asks.
+# The captured variable was made a variable of the file, so the closure of `create` holds nothing: no call asks for a closure, and nothing in sight writes the members, so nothing asks for them either.
 # RUN: walk f1:Body mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: AreMembersUnchanged conditions=[{layout={{*}} key="create"}]
+# CHECK: frame 2 callee=f6
+# CHECK: frame 3 callee=f5
+# CHECK-NOT: AreMembersUnchanged
 # CHECK-NOT: IsClosureOf
 # CHECK: Return
 # RUN(ANSWERS): run-in-shell mechanisms=all

@@ -1,5 +1,5 @@
 // Reference: bun build --compile
-// Build prints: 6 x warn: TS100098: This reads "data.txt", but the executable has no file at that path. Embed it with --asset data.txt
+// Build prints: 5 x warn: TS100098: This reads "data.txt", but the executable has no file at that path. Embed it with --asset data.txt
 import fs from "node:fs";
 import { join } from "node:path";
 const here = import.meta.dirname;

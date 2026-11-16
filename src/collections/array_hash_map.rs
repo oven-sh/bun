@@ -27,6 +27,7 @@ use std::alloc::Global;
 use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use hashbrown::hash_map::RawVacantEntryMut;
 
 use bun_alloc::AllocError;
 
@@ -539,31 +540,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Bulk-resize the backing columns so callers can
-    /// `keys_mut().copy_from_slice(...)` / `values_mut().copy_from_slice(...)`
-    /// and then `re_index()`.
-    ///
-    /// # Safety
-    /// `n` must not exceed reserved capacity, and every element in
-    /// `old_len..n` of each column must be fully written before any read
-    /// (including `re_index`, which reads `keys`). For `Copy` POD keys/values
-    /// (the only callers today) the intermediate uninit window is sound as
-    /// long as it is filled immediately.
-    pub unsafe fn set_entries_len(&mut self, n: usize) {
-        debug_assert!(n <= self.keys.capacity());
-        debug_assert!(n <= self.values.capacity());
-        debug_assert!(n <= self.hashes.capacity());
-        // SAFETY: caller contract above — `n` is within reserved capacity and
-        // the uninit window is filled before any read.
-        unsafe {
-            self.keys.set_len(n);
-            self.values.set_len(n);
-            self.hashes.set_len(n);
-        }
-        // Caller is about to overwrite keys/values then `re_index()`.
-        self.drop_index();
-    }
-
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
@@ -806,7 +782,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     /// Invalidate the accelerator. Called by operations that permute entry
-    /// indices wholesale (`sort`, `re_index`, bulk `set_entries_len`); paired
+    /// indices wholesale (`sort`, `re_index`); paired
     /// with an immediate `rebuild_index()` when the map is past the threshold
     /// so subsequent lookups never silently fall back to O(n) linear scan.
     /// Point removals (`pop`/`swap_remove`) instead patch the index in place
@@ -991,6 +967,22 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             self.rebuild_index();
         }
         Ok(())
+    }
+
+    /// Replaces the entries. `keys` must be distinct.
+    pub fn set_entries(&mut self, keys: &[K], values: impl Iterator<Item = V>)
+    where
+        K: Copy,
+    {
+        self.clear_retaining_capacity();
+        self.values.extend(values);
+        assert_eq!(keys.len(), self.values.len());
+        self.keys.extend_from_slice(keys);
+        self.hashes
+            .extend(keys.iter().map(|key| self.ctx.hash(key)));
+        if keys.len() > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
     }
 
     pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
@@ -1639,6 +1631,15 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringH
     }
 }
 
+impl<V, A: Allocator + HashbrownAllocator + Clone + Default> IntoIterator for StringHashMap<V, A> {
+    type Item = (StringHashMapKey<A>, V);
+    type IntoIter = hashbrown::hash_map::IntoIter<StringHashMapKey<A>, V, A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Deref for StringHashMap<V, A> {
     type Target = StringHashMapInner<V, A>;
     fn deref(&self) -> &Self::Target {
@@ -1670,6 +1671,23 @@ fn box_key<A: Allocator + Default>(key: &[u8]) -> Box<[u8], A> {
 #[inline]
 fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
     StringHashMapKey::owned(box_key::<A>(key))
+}
+
+pub enum EntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+    Occupied(&'a mut V),
+    Vacant(VacantEntryRef<'a, 'k, V, A>),
+}
+
+pub struct VacantEntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+    entry: RawVacantEntryMut<'a, StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
+    hash: u64,
+    key: &'k [u8],
+}
+
+impl<V, A: Allocator + HashbrownAllocator + Default> VacantEntryRef<'_, '_, V, A> {
+    pub fn insert(self, value: V) {
+        (self.entry).insert_hashed_nocheck(self.hash, owned_key::<A>(self.key), value);
+    }
 }
 
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
@@ -1711,6 +1729,20 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
             }
         }
         Ok(())
+    }
+
+    /// Like hashbrown's, but inserting copies `key`, which need not be `'static`.
+    pub fn entry_ref<'k>(&mut self, key: &'k [u8]) -> EntryRef<'_, 'k, V, A> {
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(e) => EntryRef::Occupied(e.into_mut()),
+            RawEntryMut::Vacant(entry) => EntryRef::Vacant(VacantEntryRef { entry, hash, key }),
+        }
     }
 
     /// Insert `value` under `key` **without copying the key bytes**. This is
@@ -1869,6 +1901,8 @@ pub mod string_hash_map {
     /// Result type alias for `StringHashMap::get_or_put*` so callers can name
     /// it as `string_hash_map::GetOrPutResult<'_, V>`.
     pub type GetOrPutResult<'a, V> = super::StringHashMapGetOrPut<'a, V>;
+
+    pub use super::{EntryRef, VacantEntryRef};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

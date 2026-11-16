@@ -8,9 +8,8 @@
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
-// For code that a flag like `--doctor`, `--rules` or `--init` runs once. `#[optimize(size)]` roughly halves its size,
-// and its speed doesn't matter. Nothing that runs per file has it.
-#![feature(optimize_attribute)]
+// `#[optimize(size)]` is for code that a flag like `--doctor`, `--rules` or `--init` runs once. Nothing that runs per
+// file has it.
 
 mod args;
 pub mod bunfig;

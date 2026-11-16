@@ -13,6 +13,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         function: FnId,
         name: Option<GivenName>,
     ) -> ValueId {
+        let hir = self.file.hir;
+        if hir.is_evaluated_function(function) {
+            self.set_position(hir.replaced_callee_position(hir[function].start));
+            self.builder.check_evaluation(true);
+        }
         self.create_named_closure(function, name, None)
     }
 

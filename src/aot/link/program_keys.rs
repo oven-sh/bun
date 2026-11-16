@@ -310,6 +310,13 @@ impl OrderedKey for ProgramFunctionKey {
             FunctionKey::AccessorGetter { file, member } => (11, file, member.0),
             FunctionKey::AccessorSetter { file, member } => (12, file, member.0),
             FunctionKey::PrivateNameTest { file, member } => (13, file, member.0),
+            FunctionKey::ModuleRequest { file, call } => (14, file, call.0),
+            FunctionKey::CopiedGetter {
+                file,
+                helper,
+                getter,
+            } => return join_rank(self.project, 15, [file.0, helper.0, getter.0]),
+            FunctionKey::PrototypeMaker(it) => (16, it.file, it.id.0),
         };
         join_rank(self.project, variant, [file.0, second, 0])
     }
@@ -343,6 +350,7 @@ impl OrderedKey for ProgramLayoutKey {
                 members: TypeIdentity([first, _]),
             } => (0x400, [file.0, high(first), first as u32]),
             LayoutKey::CreatedObject { file, call } => (0x500, [file.0, call, 0]),
+            LayoutKey::PrototypeMaker(it) => (0x501, [it.file.0, it.id.0, 0]),
             LayoutKey::Container(it) => (0x600, [it.file.0, it.id.0, 0]),
             LayoutKey::Environment { file, environment } => (0x700, [file.0, environment, 0]),
             LayoutKey::ModuleInstance(file) => (0x800, [file.0, 0, 0]),
@@ -382,6 +390,8 @@ impl OrderedKey for ProgramVariableKey {
             VariableKey::InstanceAllocator(file) => (18, file.0, 0),
             VariableKey::HasSeveralInstances(file) => (19, file.0, 0),
             VariableKey::EvaluationMark(file) => (20, file.0, 0),
+            VariableKey::AddedStatic(it) => (21, it.file.0, it.id.0),
+            VariableKey::PrototypeMaker(it) => (22, it.file.0, it.id.0),
         };
         join_rank(declared.project, variant, [first, second, 0])
     }

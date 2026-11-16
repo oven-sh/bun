@@ -1,7 +1,8 @@
 use bun_sema::bind::Binding;
-use bun_sema::hir::{PatKind, PropKey};
+use bun_sema::hir::{ExprId, ExprKind, PatId, PatKind, PropKey};
 use smallvec::SmallVec;
 
+use super::view::PatternProperty;
 use super::{DefaultHolder, PatternNode};
 use crate::builtins::table::BuiltinId;
 use crate::ir::generated::RuntimeErrorKind;
@@ -11,9 +12,12 @@ use crate::lower::member::PropertyName;
 use crate::modules::ModuleRef;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(super) fn destructure_object(&mut self, node: PatternNode, value: ValueId) {
-        let properties = self.file.pattern_properties(node);
-        let error_name = self.file.nullish_error_name(&properties);
+    fn check_destructured_value(
+        &mut self,
+        properties: &[PatternProperty],
+        value: ValueId,
+    ) -> ValueId {
+        let error_name = self.file.nullish_error_name(properties);
         let error_name = error_name.map(|name| self.file.intern_atom(name));
         let nullish = self.create_block();
         let object = self.branch_if_nullish(value, nullish);
@@ -24,6 +28,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_throw_runtime_error(RuntimeErrorKind::NotDestructurable, error_name);
         self.set_position(position);
         self.builder.switch_to(resume);
+        object
+    }
+
+    /// `source` stands for a module, and the pattern reads names from it. A variable that holds the module may hold nothing yet.
+    pub(in crate::lower) fn lower_destructured_module(
+        &mut self,
+        pattern: PatId,
+        source: ExprId,
+    ) -> ValueId {
+        let root = self.file.skip_type_syntax(source);
+        if !matches!(self.file.hir[root].kind, ExprKind::Ident(_)) {
+            return self.lower_expression(source);
+        }
+        let Some(holder) = self.lower_root(root) else {
+            return self.builder.undefined();
+        };
+        let properties = self.file.pattern_properties(PatternNode::Binding(pattern));
+        let position = self.file.destructured_position(source);
+        let outer = core::mem::replace(&mut self.destructured_position, position);
+        self.set_position(self.file.hir[pattern].pos);
+        let value = self.check_destructured_value(&properties, holder.value);
+        self.destructured_position = outer;
+        value
+    }
+
+    pub(super) fn destructure_object(&mut self, node: PatternNode, value: ValueId) {
+        let properties = self.file.pattern_properties(node);
+        let object = self.check_destructured_value(&properties, value);
         let has_rest = properties.iter().any(|property| property.is_rest);
         let mut read_names: SmallVec<[PropertyName; 8]> = SmallVec::new();
         for property in &properties {

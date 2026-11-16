@@ -7418,7 +7418,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let last = self.last_assignment_pos(file, symbol);
         let hir = self.hir(file);
-        let pos = hir.position_of_evaluation(hir[e].pos);
+        let pos = match hir.is_in_copied_factory(last) {
+            true => hir[e].pos,
+            false => hir.position_of_evaluation(hir[e].pos),
+        };
         last == 0 || last < self.end_of_token_before(file, pos)
     }
 
@@ -10271,7 +10274,7 @@ impl<'p, 's> Checker<'p, 's> {
         let callee = hir[c].callee;
         // "A call expression parented by an expression statement is a potential assertion. Other
         // call expressions are potential type predicate function calls."
-        let func_type = if hir.kind(hir.parent(hir.node(call))) == Kind::ExpressionStatement {
+        let func_type = if self.is_expression_statement(file, call) {
             self.explicit_type(file, callee, None)?
         } else if matches!(hir[callee].kind, ExprKind::Super) {
             return None;
@@ -10281,6 +10284,22 @@ impl<'p, 's> Checker<'p, 's> {
             self.check_non_null_type(file, callee, ty)
         };
         self.effects_signature_of_function_type(file, call, func_type, required_resolution)
+    }
+
+    /// `node.Parent.Kind == KindExpressionStatement`
+    fn is_expression_statement(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let statement = match bound.parent_of_expr(e) {
+            Parent::Stmt(statement) => statement,
+            Parent::None => {
+                return hir.kind(hir.parent(hir.node(e))) == Kind::ExpressionStatement;
+            }
+            _ => StmtId::NONE,
+        };
+        statement.is_some()
+            && !is_parenthesized(hir, e)
+            && matches!(hir[statement].kind, StmtKind::Expr(_))
+            && !bound.is_head_of_for(hir, statement)
     }
 
     /// The end of `getEffectsSignature`, once it has `funcType`.

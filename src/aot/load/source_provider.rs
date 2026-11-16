@@ -208,6 +208,11 @@ pub trait SourceProvider: Sync {
         false
     }
 
+    /// Whether an `--asset` names `source_path` or a parent folder.
+    fn is_in_asset(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
     /// Whether `module_path` is no file of an installed package, in an executable that its sources needn't lie beside.
     fn is_own_module_of_project(&self, _module_path: &[u8]) -> bool {
         false
@@ -243,6 +248,10 @@ pub trait SourceProvider: Sync {
         false
     }
 
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
     /// Embeds each `package.json` between `module_path` and the root of its package in `node_modules`, and returns those not embedded before.
     fn embed_package_json_files(&self, _module_path: &[u8]) -> Vec<Vec<u8>> {
         Vec::new()
@@ -276,6 +285,11 @@ pub trait SourceProvider: Sync {
         _is_query: bool,
     ) -> bool {
         false
+    }
+
+    /// The bytes of the file at `source_path`, if it is there and holds WebAssembly.
+    fn read_web_assembly(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        None
     }
 
     /// Embeds `source_path`, which `module_path` names, if it lies in an installed package and may be read as a file.

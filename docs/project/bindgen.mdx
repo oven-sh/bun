@@ -268,7 +268,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.undefined`                                    | `()`                             | `undefined`; only in a union                                  |
 | `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
-| `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
+| `b.nativePromiseContext("crate::T")`             | `Option<RefPtr<T>>`              | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
@@ -585,7 +585,8 @@ task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
 What outlives a call:
 
 - one of a class's **`internalFields`** (below), which the GC visits;
-- a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread.
+- a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread;
+- a `StrongWrapper<T>`, made with `StrongWrapper::new(this_value, cx.global())` for a class without `mutates`. `strong.payload()` borrows the struct. It panics once the VM is closed.
 
 A list of values goes in a `MarkedArgumentBuffer`, never a `Vec` or a `Box`: the GC does
 not look inside heap allocations. The compiler does not check this one.

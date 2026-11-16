@@ -7,6 +7,7 @@ use bun_exe_format::image::{
     AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageEditor, KnownSection,
     SectionLocation,
 };
+use bun_removable_features::trap::{AARCH64_TRAP, X86_64_BREAKPOINT, X86_64_TRAP};
 use bun_removable_features::{Feature, FeatureSet, RemovableFeatureState, RemovedRange};
 
 use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
@@ -14,11 +15,6 @@ use crate::icu_data::{find_dead_ranges, remove_items};
 use crate::model::{PlannedIcuPackage, PlannedRange, TrimPlan, TrimSummary, UnrequestedCut};
 use crate::table::{REMOVED_RANGES_HEADER_BYTES, encode_removed_ranges, read_u32};
 
-// `hlt` and `udf #0`. Not breakpoints: where a program listens for SIGTRAP, a breakpoint stops nothing.
-const X86_64_TRAP: u8 = 0xf4;
-const AARCH64_TRAP: [u8; 4] = 0u32.to_le_bytes();
-// macOS says too little about a `hlt` for the crash handler to tell it from a fault on data.
-const X86_64_BREAKPOINT: u8 = 0xcc;
 const STATE_BYTES: u64 = size_of::<RemovableFeatureState>() as u64;
 
 // The index that `bun_exe_format::builtins` reads.
@@ -418,11 +414,14 @@ fn write_removal_state(
     for feature in plan.removed().iter() {
         removal[usize::from(feature.index())] = plan.removal_of(feature) as u8;
     }
+    let is_test_runner_taken =
+        plan.removed().contains(Feature::Test) && !plan.decision.unretained.contains(Feature::Test);
     // A trimmed process looks up the native code of each built-in in the removed ranges.
     let is_trimmed = u32::from(
-        !plan
-            .removed()
-            .is_subset_of(&Feature::all_that_leave_unasked()),
+        is_test_runner_taken
+            || !plan
+                .removed()
+                .is_subset_of(&Feature::all_that_leave_unasked()),
     );
     write_state_field(
         state,

@@ -12,6 +12,7 @@ use crate::ir::{ClassSlot, VariableKey};
 use crate::lower::captures::{CapturedBinding, is_initialized_before};
 use crate::lower::class;
 use crate::lower::scope::analysis::{find_by_key, sort_unique};
+use crate::lower::scope::dead_zone::find_constant_initializer;
 use crate::lower::scope::{
     BindingForm, BindingRef, Initialization, ScopeSlot, WalkedFunctionId, order_by_number,
 };
@@ -44,6 +45,10 @@ pub(super) fn compute_sharing(
     let eval_bindings = uses.eval_uses.iter().map(|eval_use| eval_use.binding);
     let mut seen_by_eval: Vec<BindingRef> = eval_bindings.collect();
     sort_unique(&mut seen_by_eval);
+    let input = context.input;
+    let read_as_members = input.modules.bindings_read_as_members(input.file);
+    let mut read_as_members: Vec<SymbolId> = read_as_members.collect();
+    sort_unique(&mut read_as_members);
     debug_assert!(
         uses.uses.is_sorted(),
         "the users of a binding stand in order"
@@ -66,7 +71,11 @@ pub(super) fn compute_sharing(
         let is_seen_by_eval =
             !seen_by_eval.is_empty() && seen_by_eval.binary_search(&binding).is_ok();
         let mut readers = Users::new();
-        if !is_exported && !is_seen_by_eval && context.is_holder_without_value(binding) {
+        if !is_exported
+            && !is_seen_by_eval
+            && (context.is_holder_without_value(binding)
+                || is_captured_constant(context, owner, run, &read_as_members))
+        {
             readers.extend_from_slice(run);
             drop_users_behind_initialization(context, owner, &mut readers, &mut sharing);
             run = readers.as_slice();
@@ -88,7 +97,7 @@ pub(super) fn compute_sharing(
                 find_variable_key_between_bodies(context, binding)
             }
             BindingRef::Symbol(_) | BindingRef::Slot(..) => {
-                find_variable_key(context, binding).filter(|_| is_shared)
+                find_variable_key(context, binding, is_seen_by_eval).filter(|_| is_shared)
             }
         };
         if let Some(key) = key {
@@ -256,6 +265,24 @@ fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Op
     }
 }
 
+/// `var unit = "day"; C.prototype.get = function () { return this[unit]; };`: a closure made behind the declaration
+/// has the constant itself. A member read names the variable.
+fn is_captured_constant(
+    context: &Context<'_, '_>,
+    owner: WalkedFunctionId,
+    uses: &[(BindingRef, WalkedFunctionId)],
+    read_as_members: &[SymbolId],
+) -> bool {
+    let Some(&(BindingRef::Symbol(symbol), _)) = uses.first() else {
+        return false;
+    };
+    let input = context.input;
+    let decisions = &input.compiled.analysis.decisions;
+    uses.iter().any(|&(_, user)| user != owner)
+        && read_as_members.binary_search(&symbol).is_err()
+        && find_constant_initializer(input.hir, input.bound, decisions, symbol).is_some()
+}
+
 fn drop_users_behind_initialization(
     context: &Context<'_, '_>,
     owner: WalkedFunctionId,
@@ -317,8 +344,17 @@ fn symbol_key(context: &Context<'_, '_>, id: SymbolId) -> VariableKey {
     VariableKey::Symbol(Sym { file, id })
 }
 
-fn find_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<VariableKey> {
-    if !context.is_module_level_scope[context.scope_of(binding).idx()] {
+fn find_variable_key(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+    is_seen_by_eval: bool,
+) -> Option<VariableKey> {
+    let scope = context.scope_of(binding);
+    if !context.is_module_level_scope[scope.idx()] {
+        return None;
+    }
+    // What a direct eval of an inner module names stands in an environment.
+    if is_seen_by_eval && context.input.bound.code_unit(scope) != CodeUnit::File {
         return None;
     }
     create_variable_key(context, binding)
@@ -434,6 +470,7 @@ fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) ->
             }
         }
     }
+    symbols.extend(input.modules.wrapped().require_function(input.file));
     sort_unique(&mut symbols);
     symbols
 }

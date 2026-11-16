@@ -43,16 +43,27 @@ enum Repeats {
 }
 
 impl Folder<'_, '_> {
-    fn is_tested_for_type_or_truthiness(&self, e: ExprId) -> bool {
-        match self.bound.parent_of_expr(self.outermost_assertion(e)) {
-            Parent::Expr(parent) if parent.is_some() => match self.hir[parent].kind {
-                ExprKind::Unary { op, .. } => matches!(op, UnOp::Typeof | UnOp::Not),
-                ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or),
-                ExprKind::Cond { .. } => true,
-                _ => false,
-            },
-            Parent::Stmt(user) => matches!(self.hir[user].kind, StmtKind::If { .. }),
-            _ => false,
+    fn is_tested_for_type_or_truthiness(&self, mut e: ExprId) -> bool {
+        loop {
+            match self.bound.parent_of_expr(e) {
+                Parent::Expr(parent) if parent.is_some() => match self.hir[parent].kind {
+                    ExprKind::Unary { op, .. } => return matches!(op, UnOp::Typeof | UnOp::Not),
+                    ExprKind::Binary { op, .. } => return matches!(op, BinOp::And | BinOp::Or),
+                    ExprKind::Cond { .. } => return true,
+                    ExprKind::As { expr, .. }
+                    | ExprKind::Satisfies { expr, .. }
+                    | ExprKind::AsConst(expr)
+                    | ExprKind::NonNull(expr)
+                    | ExprKind::Instantiation { expr, .. }
+                        if expr == e =>
+                    {
+                        e = parent;
+                    }
+                    _ => return false,
+                },
+                Parent::Stmt(user) => return matches!(self.hir[user].kind, StmtKind::If { .. }),
+                _ => return false,
+            }
         }
     }
 
@@ -81,7 +92,7 @@ impl Folder<'_, '_> {
     fn find_type_of_own_object(&self, e: ExprId) -> Option<Atom> {
         let hir = self.hir;
         if let ExprKind::Ident(_) = hir[e].kind {
-            let Binding::Symbol(variable) = self.bound.binding(e) else {
+            let Some(Binding::Symbol(variable)) = self.bound.static_binding(e) else {
                 return None;
             };
             let literal = self.find_literal_of(variable)?;
@@ -100,7 +111,7 @@ impl Folder<'_, '_> {
             return None;
         }
         let object = hir.skip_type_assertions(object);
-        match self.bound.binding(object) {
+        match self.bound.static_binding(object)? {
             _ if !matches!(hir[object].kind, ExprKind::Ident(_)) => None,
             Binding::Symbol(variable) => self.find_type_of_own_field(e, variable, name),
             Binding::CommonJs(CommonJsVariable::Module) => {
@@ -302,9 +313,19 @@ impl Folder<'_, '_> {
                 Node::Statement(child) => bound.parent_of_stmt(child),
             };
             node = match parent {
-                Parent::Expr(user) if user.is_some() => Node::Expression(user),
+                Parent::Expr(user) if user.is_some() => {
+                    if repeats == Repeats::Never && self.is_target_of_pattern(node, user) {
+                        return None;
+                    }
+                    Node::Expression(user)
+                }
                 Parent::Prop(property) | Parent::PropKey(property) => {
-                    Node::Expression(bound.prop_owner[property.idx()])
+                    let owner = bound.prop_owner[property.idx()].some()?;
+                    // An element evaluates its key after its other attributes and its children.
+                    if repeats == Repeats::Never && matches!(hir[owner].kind, ExprKind::Jsx(_)) {
+                        return None;
+                    }
+                    Node::Expression(owner)
                 }
                 Parent::VarInit(declaration) => Node::Statement(bound.var_stmt[declaration.idx()]),
                 Parent::Stmt(user) => {
@@ -333,6 +354,18 @@ impl Folder<'_, '_> {
                 _ => return None,
             };
         }
+    }
+
+    /// An assignment evaluates the keys and the defaults of a pattern after its value.
+    fn is_target_of_pattern(&self, node: Node, assignment: ExprId) -> bool {
+        let ExprKind::Assign { target, .. } = self.hir[assignment].kind else {
+            return false;
+        };
+        matches!(node, Node::Expression(child) if child == target)
+            && matches!(
+                self.hir[target].kind,
+                ExprKind::Array(_) | ExprKind::Object(_)
+            )
     }
 
     fn find_call_in_place(&self, function: FnId) -> Option<CallInPlace> {
@@ -450,8 +483,8 @@ impl Folder<'_, '_> {
             | ExprKind::This
             | ExprKind::Fn(_) => true,
             ExprKind::Ident(_) => matches!(
-                self.bound.binding(e),
-                Binding::Symbol(_) | Binding::CommonJs(_)
+                self.bound.static_binding(e),
+                Some(Binding::Symbol(_) | Binding::CommonJs(_))
             ),
             ExprKind::Unary {
                 op: UnOp::Typeof | UnOp::Not | UnOp::Void,

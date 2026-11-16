@@ -93,7 +93,8 @@ impl Diagnostics {
         // The program has no place for a warning about a string that it evaluates.
         if let (Some(locator), Some(span)) = (locator.as_deref(), diagnostic.span)
             && diagnostic.severity != Severity::Error
-            && (locator.view().files().hir(span.file)).is_in_known_evaluation(span.start)
+            && let hir = locator.view().files().hir(span.file)
+            && (hir.is_in_known_evaluation(span.start) || hir.is_in_copied_factory(span.start))
         {
             return;
         }
@@ -292,7 +293,7 @@ pub(super) fn append_location(message: &mut Vec<u8>, path: &[u8], line: u32, col
 }
 
 fn append_source_text(message: &mut Vec<u8>, files: &Files<'_>, span: Span) {
-    let text = &files.module(span.file).hir.text[..];
+    let text = &files.hir(span.file).text[..];
     let end = (span.end as usize).min(span.start as usize + MAX_PRINTED_SOURCE_BYTES);
     let Some(source) = text
         .get(span.start as usize..end)

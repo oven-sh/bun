@@ -20,7 +20,7 @@
 # -- end of source
 # RUN(WALK): walk f4 mechanisms=all
 # WALK: frame {{*}} callee=f3
-# WALK: = IsUnmodifiedGenerator
+# WALK: = MakesPlainGenerators
 # WALK-NOT: = StepGenerator
 # WALK-NOT: = InstanceOf
 # RUN(ANSWERS): run-in-shell hand = function () { };

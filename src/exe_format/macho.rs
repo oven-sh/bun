@@ -116,11 +116,9 @@ impl MachoFile {
         let signature_capacity =
             MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
         let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_capacity);
-        // SAFETY: the capacity holds `obj_file.len()` bytes, all of which are written before the length says so.
-        unsafe {
-            bun_core::copy_in_parallel(data.as_mut_ptr(), obj_file.as_ptr(), obj_file.len());
-            data.set_len(obj_file.len());
-        }
+        bun_core::vec::append_with(&mut data, usize::MAX, |spare| {
+            bun_core::append_in_parallel(spare, obj_file);
+        });
 
         MachoFile::over(FileBytes::Vector(data))
     }

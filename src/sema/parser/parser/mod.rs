@@ -478,10 +478,12 @@ pub struct AppendedExpression {
     pub start: u32,
     pub end: u32,
     pub is_strict: bool,
+    /// `require` is a name of the global scope.
+    pub is_in_global_scope: bool,
 }
 
 /// `AppendedExpressionFilter(file, expressions_before, expression)`
-pub type AppendedExpressionFilter = dyn Fn(&FileBuilder, usize, ExprId) -> bool;
+pub type AppendedExpressionFilter<'a> = dyn Fn(&FileBuilder, usize, ExprId) -> bool + 'a;
 
 /// Parses `expressions`, which are in `text`, and adds the nodes of those that `accepts` takes to `file`. An expression
 /// that isn't JavaScript adds none. Returns the first node of each and the expression.
@@ -491,7 +493,7 @@ pub(crate) fn run_appended(
     expressions: &[AppendedExpression],
     atoms: &dyn Intern,
     scratch: &mut Scratch,
-    accepts: &AppendedExpressionFilter,
+    accepts: &AppendedExpressionFilter<'_>,
 ) -> (FileBuilder, Vec<Option<(ExprId, ExprId)>>) {
     let options = Options {
         is_jsx: true,
@@ -537,8 +539,20 @@ pub(crate) fn run_appended(
         let parsed = parser.appended_expression();
         (scratch.stacks, scratch.declared) = (parser.s, parser.declared);
         file = parser.f;
+        if expression.is_in_global_scope {
+            let mut index = 0;
+            file.specifier_uses.retain(|it| {
+                index += 1;
+                index <= before.specifier_uses || it.kind != SpecifierKind::RequireCall
+            });
+        }
+        let allowed_syntax = match expression.is_in_global_scope {
+            true => RARE_SYNTAX_IN_APPENDED_TEXT | rare::DECLARATION_AS_BODY,
+            false => RARE_SYNTAX_IN_APPENDED_TEXT,
+        };
         let accepted = parsed.filter(|&expression| {
-            flags == (file.rare_syntax, file.syntax_errors)
+            file.rare_syntax & !flags.0 & !allowed_syntax == 0
+                && file.syntax_errors == flags.1
                 && file.has_room_for_handles()
                 && is_plain_javascript_since(&file, &before)
                 && accepts(&file, before.exprs as usize, expression)
@@ -553,8 +567,15 @@ pub(crate) fn run_appended(
     (file, found)
 }
 
-/// Whether the nodes that follow `before` are JavaScript without classes, modules, regular expressions and tagged
-/// templates, which are one object for each time that the text is evaluated.
+/// What an appended text may add to [`rare`](bun_sema::hir::rare): the checks for early errors read the whole file.
+const RARE_SYNTAX_IN_APPENDED_TEXT: u32 = rare::DELETES_A_NAME
+    | rare::DIRECTIVE_IN_FUNCTION
+    | rare::NEW_TARGET
+    | rare::ODD_JUMP
+    | rare::ODD_TARGET;
+
+/// Whether the nodes that follow `before` are JavaScript without classes, modules and tagged templates, which are one
+/// object for each time that the text is evaluated.
 fn is_plain_javascript_since(file: &FileBuilder, before: &FileLens) -> bool {
     let lens = file_lens(file);
     let grown = [
@@ -594,7 +615,6 @@ fn is_plain_javascript_since(file: &FileBuilder, before: &FileLens) -> bool {
                 it.kind,
                 ExprKind::Missing
                     | ExprKind::PrivateIdentifier(_)
-                    | ExprKind::Regex { .. }
                     | ExprKind::TaggedTemplate(_)
                     | ExprKind::Class(_)
                     | ExprKind::As { .. }
@@ -634,6 +654,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             && self.lx.errors.is_empty()
             && self.lx.private_names.is_empty()
             && !self.lx.has_legacy_octal
+            && !self.lx.has_escaped_keyword
             && !self.has_top_level_await;
         self.sort_side_tables();
         is_whole.then_some(expression)
@@ -849,7 +870,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
             }
-            self.s.ids.push(statement.0);
+            self.push_statement(statement);
         }
         if self.reads_jsdoc() {
             self.end_of_file_jsdoc(reparsed);

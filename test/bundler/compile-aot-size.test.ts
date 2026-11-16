@@ -94,7 +94,9 @@ const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_3
 // And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.
 // And with oven-sh/bun#48478, from 24,324,717 and 1%.
 // And with oven-sh/WebKit#1036, from 26,919,547 and 1%.
-const mostBytesOfCompiler = 27_190_000;
+// And with oven-sh/WebKit#1040, from 29,515,694, with the room it had.
+// And behind oven-sh/bun#48714, from 30,813,843.
+const mostBytesOfCompiler = 30_900_000;
 
 const importsItsArguments = `
   import { join } from "node:path";
@@ -143,7 +145,7 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     expect(sharedBytes).toBeLessThan(16_384);
   });
 
-  // `--aot` keeps `bun:test`. One call from there into a reader of the compiler's tables keeps the tables in every executable.
+  // A program that names `bun:test` keeps it. One call from there into a reader of the compiler's tables keeps the tables in its executable.
   test("the test runner keeps nothing of the compiler", () => {
     const compiler = model.features.find(each => each.name === featureNamed("ImageCompiler"))!.index;
     const runner = model.features.find(each => each.name === featureNamed("Test"))!.index;
@@ -196,7 +198,7 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       600_000,
     );
 
-    test.skipIf(!isGlibc || process.arch !== "x64" || flags.length === 0)(
+    test.skipIf(!isGlibc || process.arch !== "x64")(
       "hello world contains no strings from the mocks",
       async () => {
         using dir = tempDirForAotBuilds("compile-aot-size", { "hello.ts": `console.log("hello world");` });

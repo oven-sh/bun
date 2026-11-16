@@ -92,7 +92,7 @@ describe.concurrent("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
     const { packageDir, env } = await setupTest();
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "--print", "require('is-number')"],
+      cmd: [bunExe(), "--install=fallback", "--print", "require('is-number')"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",

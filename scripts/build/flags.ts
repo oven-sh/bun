@@ -1429,6 +1429,13 @@ export const linkerFlags: Flag[] = [
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
   },
   {
+    // BunSignalActions.cpp: __wrap_abort puts the crash handler back, so that a
+    // failed assertion is reported under a listener for SIGABRT.
+    flag: "-Wl,--wrap=abort",
+    when: c => c.aot && (c.linux || c.freebsd) && !c.asan,
+    desc: "Report abort() in a compiled program whatever handles SIGABRT",
+  },
+  {
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
@@ -1934,7 +1941,6 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,
-    join(vendorDir, "picohttpparser"),
     join(vendorDir, "zlib"),
     // NODEJS_HEADERS_PATH comes from the nodejs dep; added separately
   ];
@@ -1983,6 +1989,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
+  {
+    file: "src/jsc/bindings/highway_byte_set.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
   },
   {
     file: "src/jsc/bindings/highway_png.cpp",

@@ -1,7 +1,8 @@
 // STATISTIC: LoopReloadBlocksEmitted >= 1
 // STATISTIC: ReloadingBackEdgesEmitted >= 1
+const outside: any = JSON.parse("{}");
 class Box { constructor(public list: number[], public scale: number, public limit: number) {} }
-const unseen = (x: any) => { (globalThis as any).kept = x; return (globalThis as any).kept; };
+const unseen = (x: any) => { outside.kept = x; return outside.kept; };
 function worthOf(box: Box): number { return box.scale; }
 function sum(box: Box, keys: number[], grow: (at: number) => void): number {
   let total = 0;

@@ -11,7 +11,7 @@ use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
 #[cfg(not(windows))]
-use bun_core::vec::UninitBuf;
+use {bun_core::vec::BorrowedBuf, core::mem::MaybeUninit};
 
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
@@ -419,35 +419,18 @@ pub(crate) fn copy_file_range(
 
 #[cfg(not(windows))]
 pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    let mut stack_buf = UninitBuf::<{ 8 * 4096 }>::uninit();
-    // SAFETY: `read` below is the only writer of `buf`; only `buf[..amt_read]` is read back.
-    let buf = unsafe { stack_buf.as_bytes_mut() };
-    let adjusted_count = buf.len().min(len);
-    match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
-        Ok(amt_read) => {
-            let mut amt_written: usize = 0;
-            if amt_read == 0 {
-                return Ok(0);
-            }
-
-            while amt_written < amt_read {
-                {
-                    let wrote =
-                        crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read])?;
-                    if wrote == 0 {
-                        return Ok(amt_written);
-                    }
-
-                    amt_written += wrote;
-                }
-            }
-            if amt_read == 0 {
-                return Ok(0);
-            }
-            Ok(amt_read)
+    let mut stack_buf = [const { MaybeUninit::uninit() }; 8 * 4096];
+    let adjusted_count = stack_buf.len().min(len);
+    let mut buf = BorrowedBuf::from(&mut stack_buf[..adjusted_count]);
+    let amt_read = crate::read_buf(Fd::from_native(in_ as _), buf.unfilled())?;
+    let mut remain = buf.filled();
+    while !remain.is_empty() {
+        match crate::write(Fd::from_native(out as _), remain)? {
+            0 => break,
+            wrote => remain = &remain[wrote..],
         }
-        Err(err) => Err(err),
     }
+    Ok(amt_read - remain.len())
 }
 
 /// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,

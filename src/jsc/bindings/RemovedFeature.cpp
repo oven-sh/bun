@@ -169,13 +169,15 @@ extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)
     auto text = Bun::textOfRemovableFeature(static_cast<JSC::RemovableFeature>(feature)).span();
     const char* beBun = getenv("BUN_BE_BUN");
     bool actsAsBun = beBun && *beBun;
-    Bun::writeToStandardError(actsAsBun ? "error: BUN_BE_BUN is set, but this executable doesn't include "_span : "error: --trim removed "_span);
+    bool isTrimmed = JSC::Bun__removableFeatureState.isTrimmed;
+    Bun::writeToStandardError(actsAsBun ? "error: BUN_BE_BUN is set, but this executable doesn't include "_span : isTrimmed ? "error: --trim removed "_span
+                                                                                                                            : "error: This executable doesn't include "_span);
     Bun::writeToStandardError(text);
     if (actsAsBun) {
         Bun::writeToStandardError(". Run bun instead.\n"_span);
         _exit(70);
     }
-    Bun::writeToStandardError(" from this executable, but the program needs it."_span);
+    Bun::writeToStandardError(isTrimmed ? " from this executable, but the program needs it."_span : ", but the program needs it."_span);
     if (Bun::isRemovedByRequest(feature)) {
         Bun::writeToStandardError(" It is listed in compile.trim.remove.\n"_span);
         _exit(70);

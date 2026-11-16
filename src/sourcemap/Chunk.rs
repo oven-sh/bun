@@ -46,11 +46,10 @@ impl Chunk {
         mutable: &mut MutableString,
         include_sources_contents: bool,
     ) -> Result<(), crate::Error> {
-        let ism = InternalSourceMap {
-            data: self.buffer.list.as_ptr(),
-        };
         let mut vlq = MutableString::init_empty();
-        ism.append_vlq_to(&mut vlq);
+        if let Some(ism) = InternalSourceMap::new(&self.buffer.list) {
+            ism.append_vlq_to(&mut vlq);
+        }
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,
@@ -121,7 +120,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 pub trait SourceMapFormatCtx: Sized {
-    fn init(prepend_count: bool) -> Self;
+    fn init(is_internal: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), crate::Error>;
     fn append(
         &mut self,
@@ -129,9 +128,7 @@ pub trait SourceMapFormatCtx: Sized {
         prev_state: SourceMapState,
     ) -> Result<(), crate::Error>;
     fn should_ignore(&self) -> bool;
-    fn get_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
-    fn get_count(&self) -> usize;
 }
 
 pub struct SourceMapFormat<T: SourceMapFormatCtx> {
@@ -139,9 +136,9 @@ pub struct SourceMapFormat<T: SourceMapFormatCtx> {
 }
 
 impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
-    pub fn init(prepend_count: bool) -> Self {
+    pub fn init(is_internal: bool) -> Self {
         Self {
-            ctx: T::init(prepend_count),
+            ctx: T::init(is_internal),
         }
     }
 
@@ -165,20 +162,8 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
     }
 
     #[inline]
-    pub(crate) fn get_buffer(&mut self) -> &mut MutableString {
-        // Returns `&mut` to avoid a double-ownership footgun;
-        // callers mutate in place.
-        self.ctx.get_buffer()
-    }
-
-    #[inline]
     pub(crate) fn take_buffer(&mut self) -> MutableString {
         self.ctx.take_buffer()
-    }
-
-    #[inline]
-    pub(crate) fn get_count(&self) -> usize {
-        self.ctx.get_count()
     }
 }
 
@@ -201,8 +186,8 @@ impl Default for VLQSourceMap {
 }
 
 impl SourceMapFormatCtx for VLQSourceMap {
-    fn init(prepend_count: bool) -> VLQSourceMap {
-        if prepend_count {
+    fn init(is_internal: bool) -> VLQSourceMap {
+        if is_internal {
             return VLQSourceMap {
                 data: MutableString::init_empty(),
                 internal: Some(internal_source_map::Builder::init()),
@@ -257,25 +242,12 @@ impl SourceMapFormatCtx for VLQSourceMap {
         self.count == 0
     }
 
-    fn get_buffer(&mut self) -> &mut MutableString {
-        if let Some(b) = &mut self.internal {
-            // Move the finalized buffer out and clear the builder.
-            self.data = b.finalize_take();
-            self.internal = None;
-        }
-        &mut self.data
-    }
-
     fn take_buffer(&mut self) -> MutableString {
         if let Some(b) = &mut self.internal {
-            self.data = b.finalize_take();
+            self.data = b.finalize();
             self.internal = None;
         }
         core::mem::replace(&mut self.data, MutableString::init_empty())
-    }
-
-    fn get_count(&self) -> usize {
-        self.count
     }
 }
 
@@ -370,9 +342,6 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     // to avoid replicating the previous mapping if we don't need to.
     pub line_starts_with_mapping: bool,
     pub cover_lines_without_mappings: bool,
-
-    /// When generating sourcemappings for bun, we store a count of how many mappings there were
-    pub prepend_count: bool,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -391,7 +360,6 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
-            prepend_count: false,
         }
     }
 }
@@ -447,19 +415,6 @@ impl NewBuilder<'_, VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
         self.update_generated_line_and_column(output);
-        // Capture scalars before borrowing `source_map` mutably via
-        // `get_buffer`, to satisfy the borrow checker.
-        if self.prepend_count {
-            let count = self.source_map.get_count();
-            let buffer = self.source_map.get_buffer();
-            let len = buffer.list.len();
-            buffer.list[0..8].copy_from_slice(&(len as u64).to_ne_bytes());
-            buffer.list[8..16].copy_from_slice(&(count as u64).to_ne_bytes());
-        } else {
-            // Finalize the internal builder eagerly; `take_buffer()` below
-            // also finalizes, so the effect is preserved.
-            let _ = self.source_map.get_buffer();
-        }
         Chunk {
             buffer: self.source_map.take_buffer(),
             end_state: self.prev_state,
@@ -673,8 +628,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         let idx = original_line.max(0) as usize;
 
         // PERF: read the three columns directly instead of `list.get(idx)`.
-        // `MultiArrayList::get` builds a 272-byte `Slice` (`[*mut u8; 32]` +
-        // len/cap) and then gathers *every* field via `ptr::read`; for the
+        // `MultiArrayList::get` gathers *every* field via `ptr::read`; for the
         // hot per-token path that dominated `add_source_mapping`. Each
         // `items::<>` is a single `base + CONST*cap` pointer add.
         let mut original_column = loc.start - byte_offsets[idx] as i32;

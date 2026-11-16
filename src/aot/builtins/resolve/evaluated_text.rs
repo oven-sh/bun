@@ -61,7 +61,8 @@ impl Resolver<'_, '_> {
         };
         let callee = self.value_of(input.hir[call].callee)?;
         let form = evaluated_text_form(callee.path.id)?;
-        let is_direct_eval = input.bound.eval_scope(expr).is_some();
+        let is_direct_eval =
+            input.bound.eval_scope(expr).is_some() || input.hir.is_settled_eval(call);
         if is_direct_eval || (form == EvaluatedTextForm::Script && is_construct) {
             return None;
         }

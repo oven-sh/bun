@@ -1,24 +1,34 @@
 mod bindings;
 
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{self, Binding, CodeUnit, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
+use bun_sema::hir::{BinOp, CallId, ClassId, ExprId, ExprKind, FnKind, IdList, KnownEvaluation};
 
 use super::BindingForm;
 use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
+use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags, FunctionKind, RuntimeErrorKind};
 use crate::ir::{BlockId, Edge, EvalScopeId, StringId, ValueId, VariableKey};
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 use crate::modules::ModuleKind;
+use smallvec::smallvec;
 use std::rc::Rc;
 
 #[derive(Clone)]
 pub(in crate::lower) struct NamesOfFileForEvals {
     listed_once: Option<EvalScopeId>,
     handed_over: Rc<[SymbolId]>,
+}
+
+/// `left + "suffix"`
+#[derive(Copy, Clone)]
+struct JoinedText {
+    expression: ExprId,
+    left: ExprId,
+    right: ExprId,
+    suffix: Atom,
 }
 
 #[derive(Copy, Clone)]
@@ -42,7 +52,11 @@ pub(crate) fn lower_direct_eval(
     let callee_name = lowering.file.identifier_name(callee);
     lowering.set_position(hir[callee].pos);
     let (function, this) = lowering.lower_identifier_callee(callee);
-    let arguments = lowering.lower_arguments(hir.written_args(call_id));
+    let joined = lowering.file.find_joined_text(call_id);
+    let arguments = match joined {
+        Some(joined) => Arguments::Values(smallvec![lowering.lower_expression(joined.left)]),
+        None => lowering.lower_arguments(hir.written_args(call_id)),
+    };
     lowering.set_position(hir[call].pos);
     let eval = lowering.emit_builtin_itself(BuiltinId::Eval);
     let is_eval = lowering.builder.strict_eq(function, eval);
@@ -59,10 +73,16 @@ pub(crate) fn lower_direct_eval(
 
     lowering.continue_in(direct);
     let evaluated = match lowering.file.find_binding_named_by_text(call, site.args) {
-        Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
+        Some((binding, name)) => {
+            lowering.builder.check_evaluation(false);
+            lowering.read_binding(binding, name, BindingRead::Value)
+        }
         None => {
-            lowering.lower_known_evaluations(call_id, &arguments, join);
-            lowering.emit_direct_eval(call, &arguments)
+            let arguments = lowering.lower_known_evaluations(call_id, &arguments, joined, join);
+            match hir.is_settled_eval(call_id) {
+                true => lowering.emit_settled_eval_end(call_id, &arguments, join),
+                false => lowering.emit_direct_eval(call, &arguments),
+            }
         }
     };
     lowering.jump_with(join, &[evaluated]);
@@ -70,6 +90,10 @@ pub(crate) fn lower_direct_eval(
     lowering.continue_in(ordinary);
     let name = Some(lowering.file.intern_atom(callee_name));
     let callee = Callee::without_key(other_function, this, name);
+    let arguments = match joined {
+        Some(joined) => lowering.join_text(joined, &arguments),
+        None => arguments,
+    };
     let returned = call::emit_call_of(lowering, callee, arguments);
     lowering.jump_with(join, &[returned]);
 
@@ -78,6 +102,43 @@ pub(crate) fn lower_direct_eval(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// What `call` evaluates, where every known string ends as it does: the strings are told apart by the left operand.
+    fn find_joined_text(&self, call: CallId) -> Option<JoinedText> {
+        let hir = self.hir;
+        let known = hir.known_evaluations_of(call);
+        if known.is_empty() {
+            return None;
+        }
+        let mut written = hir.ids(hir.written_args(call));
+        let (expression, None) = (written.next()?, written.next()) else {
+            return None;
+        };
+        let ExprKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } = hir[expression].kind
+        else {
+            return None;
+        };
+        let ExprKind::String(suffix) = hir[right].kind else {
+            return None;
+        };
+        let end = self.queries.atom_bytes(suffix);
+        let ends_as_joined = |it: &KnownEvaluation| {
+            let mut texts = hir.ids(it.arguments);
+            let text = texts.next();
+            text.is_some_and(|text| self.queries.atom_bytes(text).ends_with(end))
+        };
+        let is_joined = !end.is_empty() && known.iter().all(ends_as_joined);
+        is_joined.then_some(JoinedText {
+            expression,
+            left,
+            right,
+            suffix,
+        })
+    }
+
     fn find_binding_named_by_text(
         &self,
         call: ExprId,
@@ -184,32 +245,130 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    /// Where the string is one that the build has compiled, jumps to `join` with its function.
-    fn lower_known_evaluations(&mut self, call: CallId, arguments: &Arguments, join: BlockId) {
-        let Arguments::Values(arguments) = arguments else {
-            return;
+    fn join_text(&mut self, joined: JoinedText, left: &Arguments) -> Arguments {
+        let Arguments::Values(left) = left else {
+            unreachable!("the left operand is one value");
         };
-        let (hir, Some(&text)) = (self.file.hir, arguments.first()) else {
-            return;
-        };
+        let right = self.lower_expression(joined.right);
+        self.set_position(self.file.hir[joined.expression].pos);
+        let text = self.emit_binary(BinOp::Add, left[0], right);
+        Arguments::Values(smallvec![text])
+    }
+
+    /// Where the string is one that the build has compiled, jumps to `join` with what it evaluates to. Returns the arguments.
+    fn lower_known_evaluations(
+        &mut self,
+        call: CallId,
+        arguments: &Arguments,
+        joined: Option<JoinedText>,
+        join: BlockId,
+    ) -> Arguments {
+        let hir = self.file.hir;
         let all = hir.known_evaluations_of(call).iter();
         let known: Vec<_> = all.filter(|it| hir.is_valid_evaluation(it)).collect();
-        if known.is_empty() {
-            return;
-        }
+        let first = match known.is_empty() {
+            true => None,
+            false => self.emit_evaluated_string(arguments),
+        };
+        let Some(first) = first else {
+            return match joined {
+                Some(joined) => self.join_text(joined, arguments),
+                None => arguments.clone(),
+            };
+        };
         let texts = known.iter().filter_map(|it| hir.ids(it.arguments).next());
-        let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
+        let texts: Vec<Atom> = texts.collect();
         let blocks: Vec<BlockId> = known.iter().map(|_| self.create_block()).collect();
         let edges: Vec<Edge<'static>> = blocks.iter().map(|&block| Edge::to(block)).collect();
         let other = self.create_block();
+        let mut arguments = arguments.clone();
+        let mut text = first;
+        if let Some(joined) = joined {
+            let suffix = self.file.queries.atom_bytes(joined.suffix).len();
+            let strings: Vec<StringId> = texts
+                .iter()
+                .map(|&text| {
+                    let text = self.file.queries.atom_bytes(text);
+                    let left = text[..text.len() - suffix].to_vec();
+                    self.file.intern_bytes(&left)
+                })
+                .collect();
+            let unmatched = self.create_block();
+            self.builder
+                .switch_string(first, &strings, &edges, Edge::to(unmatched));
+            self.continue_in(unmatched);
+            arguments = self.join_text(joined, &arguments);
+            if let Arguments::Values(values) = &arguments {
+                text = values[0];
+            }
+        }
+        let strings: Vec<StringId> = texts
+            .iter()
+            .map(|&text| self.file.intern_atom(text))
+            .collect();
         self.builder
             .switch_string(text, &strings, &edges, Edge::to(other));
         for (evaluation, block) in known.into_iter().zip(blocks) {
             self.continue_in(block);
-            let function = self.lower_expression(evaluation.function);
-            self.jump_with(join, &[function]);
+            self.set_position(hir[hir[call].callee].pos);
+            self.builder.check_evaluation(false);
+            let mut value = self.lower_expression(evaluation.function);
+            if evaluation.is_called() {
+                self.set_position(hir[hir[call].callee].pos);
+                value = call::emit_call_by_eval(self, value, None);
+            }
+            self.jump_with(join, &[value]);
         }
         self.continue_in(other);
+        arguments
+    }
+
+    fn emit_settled_eval_end(
+        &mut self,
+        call: CallId,
+        arguments: &Arguments,
+        join: BlockId,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let known = hir.known_evaluations_of(call).iter();
+        self.set_position(hir[hir[call].callee].pos);
+        self.builder.check_evaluation(false);
+        let name = self.file.intern_atom(known::eval);
+        let refused: Vec<_> = known.filter(|it| !hir.is_valid_evaluation(it)).collect();
+        let text = match refused.is_empty() {
+            true => None,
+            false => self.emit_evaluated_string(arguments),
+        };
+        if let Some(text) = text {
+            let texts = refused.iter().filter_map(|it| hir.ids(it.arguments).next());
+            let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
+            let blocks: Vec<BlockId> = refused.iter().map(|_| self.create_block()).collect();
+            let edges: Vec<Edge<'static>> = blocks.iter().map(|&block| Edge::to(block)).collect();
+            let other = self.create_block();
+            self.builder
+                .switch_string(text, &strings, &edges, Edge::to(other));
+            let flags = match self.builder.function().kind {
+                FunctionKind::Arrow => EvalScopeFlags::IS_IN_ARROW_FUNCTION,
+                _ => EvalScopeFlags::default(),
+            };
+            let scope = self.file.fragment.add_eval_scope(EvalScope {
+                mode: self.mode(),
+                flags,
+                ..EvalScope::default()
+            });
+            for (evaluation, block) in refused.into_iter().zip(blocks) {
+                self.continue_in(block);
+                let this_value = self.builder.undefined();
+                let value = (self.builder).direct_eval(scope, text, this_value, None, &[]);
+                match self.file.needs_no_scope(evaluation) {
+                    true => self.jump_with(join, &[value]),
+                    false => self.builder.jump(Edge::to(other)),
+                }
+            }
+            self.continue_in(other);
+        }
+        self.emit_throw_runtime_error(RuntimeErrorKind::OmittedFromExecutable, Some(name));
+        self.builder.undefined()
     }
 
     fn list_names_of_file(&mut self, eval_scope: bind::EvalScope) -> NamesOfFileForEvals {
@@ -231,16 +390,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         names
     }
 
-    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
-        let text = match arguments {
-            Arguments::Values(values) => match values.first() {
-                Some(&text) => text,
-                None => return self.builder.undefined(),
-            },
+    fn emit_evaluated_string(&mut self, arguments: &Arguments) -> Option<ValueId> {
+        match arguments {
+            Arguments::Values(values) => values.first().copied(),
             Arguments::List(list) => {
                 let index = self.builder.integer(0);
-                self.builder.elem_get(*list, index)
+                Some(self.builder.elem_get(*list, index))
             }
+        }
+    }
+
+    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
+        let Some(text) = self.emit_evaluated_string(arguments) else {
+            return self.builder.undefined();
         };
         let eval_scope = self.file.bound.eval_scope(call);
         let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
@@ -256,7 +418,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .this_scope
                 .is_some_and(|scope| self.file.is_code_of_constructor(scope));
         let new_target = has_new_target.then(|| self.get_new_target());
-        let names_of_file = self.list_names_of_file(eval_scope);
+        let names_of_file = match eval_scope.is_in_global_code {
+            true => NamesOfFileForEvals {
+                listed_once: None,
+                handed_over: Rc::default(),
+            },
+            false => self.list_names_of_file(eval_scope),
+        };
         let handed_over = &names_of_file.handed_over;
         let (bindings, operands) =
             self.collect_eval_bindings(call, eval_scope, context, handed_over);

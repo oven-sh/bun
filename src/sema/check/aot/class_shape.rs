@@ -3,8 +3,8 @@ use super::answers::{
     MemberForm, MemberName, ObjectMemberKind, PositionTypes,
 };
 use super::class_stores::{
-    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner,
-    find_prototype_object_held_by, is_prototype_property,
+    BindingStore, BindingStoreKind, DefinedName, StoreForm, StoreIndex, ThisOwner, WrittenStores,
+    find_prototype_object_held_by, find_stored_function, is_prototype_property,
 };
 use super::queries::Queries;
 use crate::atom::{Atom, known};
@@ -18,6 +18,9 @@ use crate::program::{FileId, Sym};
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::cell::OnceCell;
+
+/// A method that stores so many fields beside those of the constructor fills its objects: `init`, `reset`.
+const FEWEST_FIELDS_OF_INITIALIZER: usize = 4;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum StorePlace {
@@ -60,6 +63,8 @@ impl StoreCandidate {
 struct StoreCandidates {
     stores: Vec<StoreCandidate>,
     prototype_accessor_names: FxHashSet<Atom>,
+    /// What is defined under them is not seen: an accessor may stand in the place of the field.
+    names_defined_on_prototype: FxHashSet<Atom>,
 }
 
 #[derive(Default)]
@@ -78,7 +83,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut names_stored_in_prototype = Vec::new();
         if bound.runtime.is_computed() {
             let index = self.store_index(file);
-            let candidates = store_candidates(
+            let mut candidates = store_candidates(
                 hir,
                 bound,
                 &index,
@@ -86,6 +91,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 bound.declared_symbol(Decl::Class(class)).some(),
                 bound.inner_class_symbol(class).some(),
             );
+            move_stores_of_setters(hir, class, &mut candidates.stores);
             names_stored_in_prototype = self.names_stored_in_prototype(&candidates);
             self.add_stores(file, &mut members, candidates);
         }
@@ -107,7 +113,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !can_be_constructor_function(&hir[function]) || !bound.runtime.is_computed() {
             return None;
         }
-        if is_written_as_method(hir, bound, function) {
+        let written = self.c.written_stores(file);
+        if is_written_as_method(hir, bound, written, function) {
             return None;
         }
         let index = self.store_index(file);
@@ -119,10 +126,43 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
-        for initializer in self.initializers_at_path(FunctionRef { file, function }) {
-            let stores = index
-                .this_stores_of(ThisOwner::Function(initializer))
-                .iter();
+        let mut callees = self.initializers_at_path(FunctionRef { file, function });
+        // `function State() {}`: methods such as `init` fill its objects.
+        let own_names: FxHashSet<Atom> = candidates
+            .stores
+            .iter()
+            .filter(|store| store.place == StorePlace::Instance)
+            .map(|store| store.name)
+            .collect();
+        if callees.is_empty() {
+            let called_off_new_objects = match own_names.is_empty() {
+                true => &[],
+                false => self.methods_called_off_new_objects(file),
+            };
+            for method in &candidates.stores {
+                if method.place != StorePlace::Prototype {
+                    continue;
+                }
+                let Some(function) = find_stored_function(hir, bound, method.value) else {
+                    continue;
+                };
+                // `this.state = new State(); this.state.init(..)`
+                let stores = index.this_stores_of(ThisOwner::Function(function)).iter();
+                let is_initializer = own_names.is_empty()
+                    || called_off_new_objects.contains(&method.name)
+                        && stores
+                            .map(|store| store.name)
+                            .filter(|name| !own_names.contains(name))
+                            .collect::<FxHashSet<Atom>>()
+                            .len()
+                            >= FEWEST_FIELDS_OF_INITIALIZER;
+                if is_initializer {
+                    callees.push(function);
+                }
+            }
+        }
+        for callee in callees {
+            let stores = index.this_stores_of(ThisOwner::Function(callee)).iter();
             candidates.stores.extend(stores.map(|store| StoreCandidate {
                 name: store.name,
                 kind: ObjectMemberKind::Field,
@@ -226,6 +266,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 types,
                 is_static: false,
                 is_optional: flags.contains(Flags::OPTIONAL),
+                may_be_defined_above: false,
                 form: MemberForm::default(),
             });
         }
@@ -321,6 +362,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             types,
             is_static,
             is_optional,
+            may_be_defined_above: false,
             form: MemberForm::default(),
         })
     }
@@ -368,6 +410,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let StoreCandidates {
             stores,
             prototype_accessor_names,
+            names_defined_on_prototype,
         } = candidates;
         let mut declared: FxHashSet<(MemberName, bool)> = members
             .iter()
@@ -442,6 +485,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 is_optional: !is_always_stored,
                 is_made_at_birth: candidate.place == StorePlace::Instance
                     && made_at_birth.contains(&candidate.name),
+                may_be_defined_above: candidate.place == StorePlace::Instance
+                    && names_defined_on_prototype.contains(&candidate.name),
                 form: match candidate.place {
                     StorePlace::Instance => forms.get(&candidate.name).copied().unwrap_or_default(),
                     StorePlace::Prototype | StorePlace::Class => candidate.defined,
@@ -503,7 +548,12 @@ fn is_stored_into(
     )
 }
 
-fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+fn is_written_as_method(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    written: WrittenStores<'_>,
+    function: FnId,
+) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
     };
@@ -514,6 +564,7 @@ fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) 
         );
         let literal = bound.prop_owner[property.idx()];
         return is_accessor_of_descriptor
+            || written.is_named_prototype_literal(literal)
             || is_stored_into(hir, bound, literal, |place| {
                 is_prototype_property(hir, hir.skip_type_assertions(place))
             });
@@ -559,6 +610,13 @@ fn store_candidates(
         .into_iter()
         .flatten()
         .flat_map(|symbol| index.binding_stores_of(symbol));
+    let defined_names =
+        (this_owners.iter()).flat_map(|&owner| index.names_defined_on_prototype_of(owner));
+    let defined_accessors = defined_names.clone().filter(|name| name.is_accessor);
+    let names_defined_on_prototype = defined_names
+        .filter(|name| !name.is_accessor)
+        .map(|name| name.name)
+        .collect();
     let prototype_accessor_names = binding_stores
         .clone()
         .filter(|store| match store.kind {
@@ -566,8 +624,9 @@ fn store_candidates(
             BindingStoreKind::Static => false,
         })
         .map(|store| store.name)
+        .chain(defined_accessors.clone().map(|accessor| accessor.name))
         .collect();
-    let is_binding_stable = outer.is_none_or(|outer| bound.is_stable_binding(outer));
+    let is_binding_stable = outer.is_none_or(|outer| bound.is_stable_beside_evals(outer));
     if is_binding_stable {
         stores.extend(binding_stores.map(binding_candidate));
     }
@@ -578,9 +637,88 @@ fn store_candidates(
             candidate.store,
         )
     });
+    let stores = bound.move_inner_assignments_first(hir, stores, |candidate| {
+        let is_own = candidate.place == StorePlace::Instance && !candidate.is_stored_by_callee;
+        is_own.then_some(candidate.store)
+    });
+    let mut stores = stores;
+    for accessor in defined_accessors {
+        add_stores_of_setter(hir, index, accessor, &mut stores);
+    }
     StoreCandidates {
         stores,
         prototype_accessor_names,
+        names_defined_on_prototype,
+    }
+}
+
+/// The setter of a defined accessor runs in the place of the constructor's store under its name.
+fn add_stores_of_setter(
+    hir: &hir::File<'_>,
+    index: &StoreIndex<'_>,
+    accessor: &DefinedName,
+    stores: &mut Vec<StoreCandidate>,
+) {
+    let runs_setter = |store: &StoreCandidate| {
+        store.place == StorePlace::Instance
+            && store.name == accessor.name
+            && store.is_in_every_construction
+    };
+    let (Some(setter), Some(place)) = (accessor.setter, stores.iter().position(runs_setter)) else {
+        return;
+    };
+    let birth = hir[stores[place].store].pos;
+    let of_setter = index.this_stores_of(ThisOwner::Function(setter)).iter();
+    let of_setter: Vec<_> = of_setter
+        .filter(|store| !store.is_stored_by_callee)
+        .map(|store| StoreCandidate {
+            name: store.name,
+            kind: ObjectMemberKind::Field,
+            place: StorePlace::Instance,
+            store: store.assign,
+            value: store.value,
+            form: store.form,
+            is_in_every_construction: store.is_in_every_construction,
+            defined: store.defined,
+            is_stored_by_callee: false,
+            birth: match store.is_in_every_construction {
+                true => birth,
+                false => u32::MAX,
+            },
+        })
+        .collect();
+    stores.splice(place..place, of_setter);
+}
+
+/// `constructor(x) { this.x = x; this.y = 0; }` runs `set x(value) { this._x = value; }`: `_x` is created ahead of `y`.
+fn move_stores_of_setters(hir: &hir::File<'_>, class: ClassId, stores: &mut Vec<StoreCandidate>) {
+    for id in hir[class].members.iter() {
+        let member = &hir[id];
+        let PropKey::Name(name) = hir.runtime_member_key(id) else {
+            continue;
+        };
+        if member.kind != MemberKind::Setter || member.flags.contains(Flags::STATIC) {
+            continue;
+        }
+        let is_in_setter = |store: &StoreCandidate| {
+            let position = hir[store.store].pos;
+            store.place == StorePlace::Instance
+                && (member.start..member.loc.end).contains(&position)
+        };
+        let runs_setter = |store: &StoreCandidate| {
+            store.place == StorePlace::Instance
+                && store.name == name
+                && store.is_in_every_construction
+        };
+        if !stores.iter().any(runs_setter) {
+            continue;
+        }
+        let (of_setter, others): (Vec<_>, Vec<_>) =
+            core::mem::take(stores).into_iter().partition(is_in_setter);
+        let place = others.iter().position(runs_setter);
+        stores.extend(others);
+        let place = place.unwrap_or(stores.len());
+        stores.splice(place..place, of_setter);
     }
 }
 

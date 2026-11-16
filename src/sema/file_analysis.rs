@@ -46,6 +46,9 @@ pub struct FileAnalysis<'s> {
     pub module_relative_reads: &'s [(ExprId, Atom)],
     /// The same of paths that are not known in between, as in `fs.readFileSync(path.join(import.meta.dirname, "lang", `${name}.json`))`: the operand, the start and the end.
     pub module_relative_patterns: &'s [(ExprId, Atom, Atom)],
+    /// What the order of the stores rules out, as far as that is followed. It is embedded too.
+    pub reads_ruled_out: &'s [(ExprId, Atom)],
+    pub patterns_ruled_out: &'s [(ExprId, Atom, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],
     /// Path operands of file reads, queries and folder listings with a value that can't be resolved, as in `fs.existsSync(path.join(folder, "package.json"))`.
     pub unknown_path_reads: &'s [ExprId],
@@ -60,6 +63,8 @@ pub struct FileAnalysis<'s> {
     pub named_paths: &'s [NamedPath],
     /// Files and folders that the file creates or writes to, relative to its own folder.
     pub paths_created: &'s [Atom],
+    /// Written names of WebAssembly files, as in `folder + "a.wasm"` where `folder` may be the file's own.
+    pub web_assembly_names: &'s [(ExprId, Atom)],
     /// Functions that read a file by a path that their callers give, whole or in part. Sorted.
     pub reading_functions: &'s [SymbolId],
     /// What leads to the file's own folder and is passed to a function, as in `find(__dirname)`, each with the function, or is handed on otherwise, as in `{ cwd: __dirname }`. Not the operand of a read that is known, the text that such a read gives, or what a started process is passed.

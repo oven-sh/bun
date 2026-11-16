@@ -20,10 +20,10 @@ bun_sema_parser.workspace = true
 bun_sema = { workspace = true, features = ["baselines"] }
 bun_sema_driver.workspace = true
 bun_sema_baselines.workspace = true
-bun_js_parser.workspace = true
 bun_threading.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_crash_handler.workspace = true
 bun_sys.workspace = true
 bun_zstd.workspace = true
 bun_boringssl_sys.workspace = true

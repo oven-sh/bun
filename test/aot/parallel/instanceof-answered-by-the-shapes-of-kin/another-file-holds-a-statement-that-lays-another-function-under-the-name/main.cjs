@@ -1,5 +1,6 @@
 // Whether a function calls itself as `this.alike(..)` is read off its own defining statement: a statement in another file, which never runs, lays another function under the same name and changes nothing.
-// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 8
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 7
+// The test in a return is none of them: the one in the condition answers it.
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Struct(name, args) { this.name = name; this.args = args; }

@@ -322,12 +322,22 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
   "Math.min": functionsIn("prelude/written-lists", "minOfList"),
-  "Array.prototype.sort": functionsIn("prelude/array-sort", "sort", "sortByDifference", "sortByReversedDifference").map(
-    called => ({
-      ...called,
-      when: b.whenCallRunsOtherCode,
-    }),
-  ),
+  "Array.prototype.sort": functionsIn(
+    "prelude/array-sort",
+    "sort",
+    "sortByDifference",
+    "sortByReversedDifference",
+    "sortByKeys",
+  ).map(called => ({
+    ...called,
+    when: b.whenCallRunsOtherCode,
+  })),
+  "Array.prototype.toSorted": functionsIn(
+    "prelude/array-sort",
+    "toSorted",
+    "toSortedByDifference",
+    "toSortedByReversedDifference",
+  ).map(called => ({ ...called, when: b.whenCallRunsOtherCode })),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),

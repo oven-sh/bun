@@ -1244,11 +1244,11 @@ export const shapes: Shape[] = [
     }),
   },
   // Each read asks a guard of every class of the family, and the list of what is asked was searched from its head for each class: classes x classes for each name. 4,000 classes and 64 names: 15.6 G instructions over 5.9.
-  // With as many names as classes the guards themselves are left, one a class and a name, in the walk and in the image.
+  // With as many names as classes the guards were one a class and a name, in the walk and in the image.
   ...(
     [
       ["sixty-four names", "classes", 2000, {}],
-      ["as many names", "classes, and names", 500, { growsSoFar: "3.99 times in GuardsOfClassGuardCounts" }],
+      ["as many names", "classes, and names", 500, { growsSoFarInInstructions: "2.19 times in instructions" }],
     ] as const
   ).map(
     ([names, counted, size, mark]): Shape => ({
@@ -5099,6 +5099,79 @@ console.log(typeof outmost.inner);
         "console.log(sum);\n",
     }),
   },
+  {
+    // A loop listed all names that were looked up in records of the shape, so each copy read and stored the names of all other copies.
+    name: "copies by for-in, each of a record of one shape or of an instance of a class of its own",
+    counted: "copies",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "let sum = 0;\n" +
+        lines(
+          size,
+          index =>
+            `class C${index} { constructor(o) { Object.assign(this, o); } step() { return this.a + this.d${index}; } }\n` +
+            `function copy${index}(o) { const r = {}; for (const k in o) r[k] = o[k]; return r; }\n` +
+            `function use${index}() { const o = new C${index}({ a: 1, b: 2, d${index}: 4 }); sum += copy${index}(sum < 9 ? { a: 3, b: ${index} } : o).a + o.step(); }`,
+        ) +
+        lines(size, index => `use${index}();`) +
+        "console.log(sum);\n",
+    }),
+  },
+  {
+    // The access under each name had the copy told once more of all names.
+    name: "names of two records that one for-in copies",
+    counted: "names",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function copy(o) { const r = {}; for (const k in o) r[k] = o[k]; return r; }\nconst first = process.argv.length > 1;\n" +
+        `console.log(copy(first ? { a: 1, ${upTo(size, index => `k${index}: ${index}`).join(", ")} } : { a: 2, ${upTo(size, index => `q${index}: ${index}`).join(", ")} }).a);\n`,
+    }),
+  },
+  {
+    name: "names of a record that a for-in copies to an object of the same prototype",
+    counted: "names",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function copy(o) { const r = Object.create(Object.getPrototypeOf(o)); for (const k in o) r[k] = o[k]; return r; }\nconst first = process.argv.length > 1;\n" +
+        `console.log(copy(first ? { a: 1, ${upTo(size, index => `k${index}: ${index}`).join(", ")} } : { a: 2, b: 3 }).a);\n`,
+    }),
+  },
+  {
+    // Each name that came to the instances told the loop of all names.
+    name: "names of instances that Object.assign fills and a loop goes over",
+    counted: "names",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "class Options { constructor(o) { Object.assign(this, o); } }\nfunction copy(o) { const r = {}; for (const k in o) if (Object.hasOwn(o, k)) r[k] = o[k]; return r; }\n" +
+        `console.log(copy(new Options({ a: 1, ${upTo(size, index => `k${index}: ${index}`).join(", ")} })).a);\n`,
+    }),
+  },
+  {
+    name: "copies by for-in, each of a record of one shape or of one with a name of its own",
+    counted: "copies",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "let sum = 0;\n" +
+        lines(
+          size,
+          index =>
+            `function copy${index}(o) { const r = {}; for (const k in o) r[k] = o[k]; return r; }\n` +
+            `function use${index}() { sum += copy${index}(sum & 1 ? { a: 3, b: ${index} } : { a: 2, d${index}: 4 }).a; }`,
+        ) +
+        lines(size, index => `use${index}();`) +
+        "console.log(sum);\n",
+    }),
+  },
   // What a parameter is used as holds what the next function uses it as. Each name that came from there was looked for among all that had come before it.
   {
     name: "functions that each store a name of their own in what a constructor hands them, and hand it to the next",
@@ -5922,6 +5995,26 @@ console.log(typeof outmost.inner);
     entry: "main.js",
     write: size => ({
       "main.js": `class Wide {\n  constructor(v) {\n${lines(size, index => `    this.f${index} += v;`)}  }\n}\nconsole.log(String(new Wide(1).f0));\n`,
+    }),
+  },
+  // What is filled is not sorted again at each call.
+  {
+    name: "methods that a constructor calls, each storing a field of its own",
+    counted: "methods",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Wide {\n  constructor(v) {\n${lines(size, index => `    this.m${index}(v);`)}  }\n${lines(size, index => `  m${index}(v) { this.f${index} = v; }`)}}\nconsole.log(String(new Wide(1).f0));\n`,
+    }),
+  },
+  // The keys of the methods below are not listed again for each method.
+  {
+    name: "methods that a constructor calls, each storing a field and calling the next",
+    counted: "methods",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Wide {\n  constructor(v) {\n    this.m0(v);\n  }\n${lines(size, index => `  m${index}(v) {\n    this.f${index} = v;\n${index + 1 < size ? `    this.m${index + 1}(v);\n` : ""}  }`)}}\nconsole.log(String(new Wide(1).f0));\n`,
     }),
   },
   // The same of static fields: the static blocks were sought among all members anew for each. 32,000 took 29 G instructions, and take 5.8.
@@ -7648,19 +7741,46 @@ export {};
         `module.exports = (function () {\n  const all = {};\n  all.gone = 1;\n  delete all.gone;\n` + lines(size, index => `  all.f${index} = () => "an${index}";`) + `  return all;\n})();\n`,
     }),
   },
-  // What still grows: each store goes through the held slots that share its bit among sixty-four, and each look goes through the blocks that are awaited to find the one where the guess fails.
   {
     name: "twice as many functions stored by name on an object behind one delete, in a file that a test requires",
     counted: "stores",
     size: 2000,
     entry: "a.test.js",
     isTestRun: true,
-    growsSoFarInInstructions: "2.18 times in instructions",
     write: size => ({
       "package.json": `{}\n`,
       "a.test.js": `import { expect, test } from "bun:test";\nimport { createRequire } from "node:module";\nconst ask = createRequire(import.meta.url);\ntest("it counts", () => {\n  expect(Object.keys(ask("./lib.cjs")).length).toBe(${size});\n});\n`,
       "lib.cjs":
         `module.exports = (function () {\n  const all = {};\n  all.gone = 1;\n  delete all.gone;\n` + lines(size, index => `  all.f${index} = () => "an${index}";`) + `  return all;\n})();\n`,
+    }),
+  },
+  // Each sum that a loop carries went through all blocks of the loop for a call: 1,600 statements took 1.3 G instructions.
+  {
+    name: "try statements in one loop that each step a variable of their own",
+    counted: "statements",
+    size: 800,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function step(i) { if (i > 5) throw i; return i; }\nfunction run(n) {\n` +
+        lines(size, index => `  let a${index} = 0;`) +
+        `  for (let i = 0; i < n; i++) {\n` +
+        lines(size, index => `    try { a${index} += step(i); } catch { a${index} -= 1; }`) +
+        `  }\n  return ${size ? `a0 + a${size - 1}` : "0"};\n}\nconsole.log(run(9));\n`,
+    }),
+  },
+  // Each store at a constant position was paired with each read of that position in the whole body: 4,000 statements took 3.3 G instructions.
+  {
+    name: "elements at a few constant positions that are read and stored in turn, before a loop that carries one",
+    counted: "statements",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}export {};\nfunction run(list: number[], other: number[], n: number): number {\n` +
+        lines(size, index => `  list[${index % 7}] = list[${index % 7}]! + other[${index % 5}]!;`) +
+        `  for (let turn = 0; turn < n; turn++) list[0] = list[0]! + turn;\n  return list[0]!;\n}\nconsole.log(run([1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5], 3));\n`,
     }),
   },
   // A parameter `options = {}` of a file without types is asked for its use, as one without a default is.
@@ -7700,6 +7820,19 @@ export {};
         `const table = { ${upTo(size, index => `take${index}`).join(", ")} }; const keys = JSON.parse(JSON.stringify(Object.keys(table))); let sum = 0;\n` +
         lines(size, index => `sum += table[keys[${index}]](${index}, { first${index}: 1, shared: 2 }) + table[keys[${index}]](${index});`) +
         `console.log(sum);\n`,
+    }),
+  },
+  // Each comparison climbed all names that the tests before it had narrowed, when it was folded and when its code was emitted: 5,600 took 2.49 G instructions, 1.65 now.
+  {
+    name: "tests of one number against written integers in a row, each of which returns a literal",
+    counted: "tests",
+    size: 2800,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `function find(at: number): { ok: boolean, value: number } | null {\n` +
+        lines(size, index => `  if (at === ${index}) return { ok: true, value: at + ${index} };`) +
+        `  return null;\n}\nlet sum = 0;\nfor (let i = 0; i < 9; i++) { const found = find(i); if (found) sum += found.value; }\nconsole.log(sum);\n`,
     }),
   },
   {
@@ -8277,6 +8410,67 @@ export {};
         "function large(x) {\n  x |= 0;\n  let s = 0;\n" +
         lines(size, index => `  s = (s + (x % ${index + 3}) + ((x / ${index + 3}) | 0)) | 0;`) +
         "  return s;\n}\nconsole.log(large(process.argv.length * 1000003));\n",
+    }),
+  },
+  {
+    // Each condition computed the low word of the whole sum anew, so the code of the function grew with the square.
+    name: "conditions that each test bits of another sum of one chain",
+    counted: "conditions",
+    size: 800,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Point { constructor(x) { this.x = x; } }\nfunction run(list) {\n  let sum = 0;\n  const point = list[0];\n` +
+        lines(size, index => `  point.${"abcdefgh"[index % 8]} = sum & ${index + 1} ? ${index} : "t"; sum += point.x;`) +
+        `  return sum;\n}\nconst list = [];\nfor (let k = 0; k < 64; ++k) list.push(new Point(k));\nfor (const p of list) { p.a = 1; p.b = 2; p.c = 3; p.d = 4; p.e = 5; p.f = 6; p.g = 7; p.h = 8; }\nconsole.log(run(list), run(list));\n`,
+    }),
+  },
+  {
+    // The checks of a hardened build climbed the dominators one by one where the code as written meets what each call may leave to it.
+    name: "statements of one function that a loop calls, each of which multiplies by what a call gives, in a hardened build",
+    counted: "statements",
+    size: 800,
+    entry: "main.js",
+    flags: ["--aot-harden=proof-checks"],
+    write: size => ({
+      "main.js":
+        `function f(o) {\n  let s = 0;\n${lines(size, () => `  s = (s * JSON.parse("3") + o.a) | 0;`)}  return s;\n}\n` +
+        `for (let t = 0; t < 3; t++) console.log(f({ a: t }));\n`,
+    }),
+  },
+  {
+    // Each block that is yet to be walked was searched for among all of them. Each access to an array asked all operations behind it whether they access the same array.
+    name: "statements of ten functions that a loop calls, each of which reckons with what a call gives",
+    counted: "statements of each function",
+    size: 150,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `let m = 0;\n` +
+        `function f0(o) {\n  let s = 0;\n${lines(size, () => `  s = (s * JSON.parse("3") + o.a) | 0;`)}  return s;\n}\n` +
+        `function f1(o) {\n  let s = 0;\n${lines(size, () => `  s += JSON.parse('{"w":3}').w * o.a + JSON.parse('{"x":2}').x * o.b;`)}  return s;\n}\n` +
+        `function f2(o, p) {\n  let s = 0;\n${lines(size, index => `  s = s * p[${index % 8}] + JSON.parse("3") * p[${(index + 3) % 8}];`)}  return s;\n}\n` +
+        `function f3(o) {\n  let s = 0, x = "";\n${lines(size, () => `  s = (s * JSON.parse("3") + o.a) | 0; x += s;`)}  return x.length;\n}\n` +
+        `function f4(o) {\n  let s = 0;\n  const list = [];\n${lines(size, index => `  const r${index} = { x: s * JSON.parse("${index}"), y: o.a }; list.push(r${index}); s = (s + r${index}.x * r${index}.y) | 0;`)}  return s + list.length;\n}\n` +
+        `function f5(o) {\n${lines(size, () => `  m = (m * JSON.parse("3") + o.a) | 0;`)}  return m;\n}\n` +
+        `function f6(o) {\n  let s = 0;\n${lines(size, () => `  s = (s * o.parse(s) + o.a) | 0;`)}  return s;\n}\n` +
+        `function f7(o) {\n  let s = 0;\n${lines(size, index => `  const l${index} = JSON.parse("[1, 2.5, ${index}]");`)}${lines(size, index => `  s = s * l${index}[0] + l${index}[1] * l${index}[2] + o.a;`)}  return s;\n}\n` +
+        `function f8(o) {\n  let s = 0;\n${lines(size, index => `  if (o.a === ${index % 5}) s = (s * JSON.parse("3") + o.b * o.a) | 0;`)}  return s;\n}\n` +
+        `function f9(o) {\n  let s = 0;\n${lines(size, () => `  try { s = (s * JSON.parse("3") + o.a * o.b) | 0; } catch (error) { s = 1; }`)}  return s;\n}\n` +
+        `for (let t = 0; t < 3; t++) {\n  const o = { a: t, b: 2, parse: JSON.parse };\n` +
+        `  console.log(f0(o), f1(o), f2(o, [t, 1, 2, 3, 4, 5, 6, 7.5]), f3(o), f4(o), f5(o), f6(o), f7(o), f8(o), f9(o));\n}\n`,
+    }),
+  },
+  {
+    // Behind each call the rest of the function may go on as written. For each value before it all operations behind it were asked whether they read the value.
+    name: "statements of one function that a loop calls, each of which multiplies by what a call gives",
+    counted: "statements",
+    size: 400,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function f(o) {\n  let s = 0;\n${lines(size, () => `  s = (s * JSON.parse("3") + o.a) | 0;`)}  return s;\n}\n` +
+        `for (let t = 0; t < 3; t++) console.log(f({ a: t }));\n`,
     }),
   },
   {

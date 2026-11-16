@@ -82,6 +82,54 @@ const sortInPlace = (name: string) =>
     implementation: b.compiled("prelude/array-sort", name),
   }) satisfies b.FunctionField;
 
+// Array.prototype.toSorted for an array and a comparator.
+const sortedCopy = (name: string) =>
+  ({
+    args: { array: b.instance("Array"), comparator: b.callable },
+    returns: b.instance("Array").fresh.dense,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: {
+      array: [b.contentsStoredIn(b.resultSlot("element"))],
+      comparator: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [b.slot("array", "element"), b.slot("array", "element")],
+          result: "Escapes",
+        }),
+      ],
+    },
+    implementation: b.compiled("prelude/array-sort", name),
+  }) satisfies b.FunctionField;
+
+// The compiler inlines this if a comparator is the difference of the keys of its arguments. It is never called.
+const sortByKeysInPlace = {
+  args: { array: b.instance("Array"), comparator: b.callable, direction: b.any },
+  returns: b.operand("array"),
+  capability: "js",
+  throws: true,
+  runsOnlyOperandCode: true,
+  runsUnseenCode: false,
+  uses: {
+    array: [b.returned, b.readsContents(), b.movesElements],
+    comparator: [
+      b.called({
+        afterwards: "TouchesOnlyWhatRowNames",
+        times: "Repeatedly",
+        this: b.undefined,
+        args: [b.slot("array", "element")],
+        result: "Escapes",
+      }),
+    ],
+    direction: b.inspected,
+  },
+  implementation: b.compiled("prelude/array-sort", "sortByKeys"),
+} satisfies b.FunctionField;
+
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
 const changedOrReturned = [b.everything, b.returned];
@@ -401,7 +449,10 @@ export default b.declarations(
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
     sortByDifference: sortInPlace("sortByDifference"),
+    sortByKeys: sortByKeysInPlace,
     sortByReversedDifference: sortInPlace("sortByReversedDifference"),
+    toSortedByDifference: sortedCopy("toSortedByDifference"),
+    toSortedByReversedDifference: sortedCopy("toSortedByReversedDifference"),
     // The protocol of iteration, for a loop over a value of which the engine knows nothing. The engine calls the functions directly, and goes by what their code does.
     ...helpersIn("prelude/iterator-consumers", {
       openIterator: { iterable: calledOrChanged },
@@ -409,6 +460,8 @@ export default b.declarations(
       stepIterator: { iterator: calledOrChanged, next: calledOrChanged },
       wayToStepIterator: { iterator: calledOrChanged, next: calledOrChanged },
       stepIteratorInWay: { iterator: calledOrChanged, way: calledOrChanged },
+      wayToStepMatches: { iterator: calledOrChanged, next: calledOrChanged },
+      stepMatchesInWay: { iterator: calledOrChanged, way: calledOrChanged },
       closeIterator: { iterator: calledOrChanged },
       closeIteratorAfterThrow: { iterator: calledOrChanged },
     }),

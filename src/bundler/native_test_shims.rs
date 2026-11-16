@@ -20,8 +20,7 @@ macro_rules! not_called_by_tests {
 not_called_by_tests! {
     __bun_resolver_parse_dependency
     __bun_resolver_init_package_manager
-    __bun_macro_context_init
-    __bun_macro_context_deinit
+    __bun_macro_drop_source_code_printer
     __bun_macro_context_call
     __bun_macro_collect_vm_garbage
     __bun_jsc_wtf_string_hash
@@ -105,7 +104,7 @@ const SIZE_OF_LOOP: usize = 64 * 1024;
 #[linkage = "weak"]
 extern "C" fn uws_get_loop() -> *mut c_void {
     thread_local! {
-        static LOOP: *mut c_void = Box::leak(vec![0u64; SIZE_OF_LOOP / 8].into_boxed_slice()).as_mut_ptr().cast();
+        static LOOP: *mut c_void = Box::leak(vec![0u128; SIZE_OF_LOOP / 16].into_boxed_slice()).as_mut_ptr().cast();
     }
     LOOP.with(|event_loop| *event_loop)
 }

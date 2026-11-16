@@ -3,7 +3,7 @@
 use core::mem::size_of;
 use core::ptr::read_unaligned;
 #[cfg(not(windows))]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::borrow::Cow;
 
 use bun_collections::StringArrayHashMap;
@@ -12,8 +12,8 @@ use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
-    CompiledProgram, FoundForFileSystemAlone, ImageFile, RefusedData, compare_source_paths,
-    name_in_plain_executable,
+    CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
+    compare_source_paths, name_in_plain_executable,
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
@@ -54,6 +54,8 @@ const EMBEDDED_FILES_DEVICE: u32 = 0x6275_6e66;
 const HAS_FILES_FOR_FILE_SYSTEM_ALONE: u32 = 8192;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
+/// The number of names and the size of their records and strings.
+const NAMES_HEADER_SIZE: usize = 2 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
 const IS_HIDDEN_FROM_REQUIRE: u32 = 2;
 const IS_HIDDEN_FROM_IMPORT: u32 = 4;
@@ -180,7 +182,7 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.image_alignment
         + RECORD_SIZE
         + entry_points
-        + size_of::<u32>()
+        + NAMES_HEADER_SIZE
         + package_names
         + size_of::<u32>()
         + path_aliases
@@ -225,10 +227,8 @@ pub(crate) fn append_image(
     builder.len = offset;
     let destination = &mut builder.writable()[..image.len()];
     if place == ImagePlace::InGraph {
-        // SAFETY: `destination` is `image.len()` writable bytes of the builder's own buffer, which `image` does not overlap.
-        unsafe {
-            bun_core::copy_in_parallel(destination.as_mut_ptr(), image.as_ptr(), image.len());
-        }
+        let mut destination = bun_core::vec::BorrowedBuf::from(destination);
+        bun_core::append_in_parallel(destination.unfilled(), image);
     }
     builder.len += image.len();
     Ok(StringPointer {
@@ -419,7 +419,7 @@ pub(crate) fn append_record(
     Ok(())
 }
 
-/// The number of names, a record a name, then the paths one after the other.
+/// A header of `NAMES_HEADER_SIZE` bytes, one record per name, then the paths.
 fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) -> Option<Vec<u8>> {
     let mut names: Vec<&CompiledPackageNameInput<'_>> = names.iter().collect();
     index_sort::sort_slice_unstable_by_key(&mut names, |name| name.path);
@@ -430,7 +430,7 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
         Some(index) => places.get(index as usize).copied(),
         None => Some(NO_ENTRY_POINT),
     };
-    let mut bytes = u32::try_from(names.len()).ok()?.to_le_bytes().to_vec();
+    let mut bytes = Vec::new();
     for name in &names {
         let length = u32::try_from(name.path.len()).ok()?;
         let words = [
@@ -446,15 +446,35 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
     for name in &names {
         bytes.extend_from_slice(name.path);
     }
+    add_names_header(names.len(), bytes)
+}
+
+fn add_names_header(count: usize, names: Vec<u8>) -> Option<Vec<u8>> {
+    let words = [u32::try_from(count).ok()?, u32::try_from(names.len()).ok()?];
+    let mut bytes: Vec<u8> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+    bytes.extend(names);
     Some(bytes)
 }
 
-// The number of names, then of each: its three strings, each behind its length, a length of u32::MAX for none, and a word for `hides_other_paths`.
+/// The bytes with their header. Empty if there are no names.
+fn skip_names(payload: &Payload, at: &mut usize) -> Option<&'static [u8]> {
+    let head = payload.bytes(*at, NAMES_HEADER_SIZE)?;
+    let (count, size) = head.split_at(size_of::<u32>());
+    let size = u32::from_le_bytes(size.try_into().ok()?) as usize;
+    let encoded = payload.bytes(*at, NAMES_HEADER_SIZE.checked_add(size)?)?;
+    *at += encoded.len();
+    Some(match u32::from_le_bytes(count.try_into().ok()?) {
+        0 => b"",
+        _ => encoded,
+    })
+}
+
+// A header of `NAMES_HEADER_SIZE` bytes, then for each name its three strings, each preceded by its length (u32::MAX if absent), and a word for `hides_other_paths`.
 fn encode_further_package_names(names: &[FurtherPackageName]) -> Vec<u8> {
     if names.is_empty() {
         return Vec::new();
     }
-    let mut bytes = (names.len() as u32).to_le_bytes().to_vec();
+    let mut bytes = Vec::new();
     let add = |bytes: &mut Vec<u8>, text: Option<&[u8]>| match text {
         Some(text) => {
             bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
@@ -468,34 +488,36 @@ fn encode_further_package_names(names: &[FurtherPackageName]) -> Vec<u8> {
         add(&mut bytes, name.imported.as_deref());
         bytes.extend_from_slice(&u32::from(name.hides_other_paths).to_le_bytes());
     }
-    bytes
+    add_names_header(names.len(), bytes).expect("the names of packages fit 32 bits")
 }
 
 fn read_further_package_names(
-    payload: &Payload,
-    at: &mut usize,
-) -> Option<Vec<CompiledFurtherPackageName>> {
-    let word = |at: &mut usize| {
-        let bytes = payload.bytes(*at, size_of::<u32>())?;
-        *at += size_of::<u32>();
+    encoded: &'static [u8],
+    _entry_point_count: usize,
+) -> Option<Box<[CompiledFurtherPackageName]>> {
+    let word = |rest: &mut &'static [u8]| {
+        let (bytes, after) = rest.split_at_checked(size_of::<u32>())?;
+        *rest = after;
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     };
-    let text = |at: &mut usize| -> Option<Option<&'static [u8]>> {
-        let length = word(at)?;
+    let text = |rest: &mut &'static [u8]| -> Option<Option<&'static [u8]>> {
+        let length = word(rest)?;
         if length == u32::MAX {
             return Some(None);
         }
-        let bytes = payload.bytes(*at, length as usize)?;
-        *at += bytes.len();
+        let (bytes, after) = rest.split_at_checked(length as usize)?;
+        *rest = after;
         Some(Some(bytes))
     };
-    let count = word(at)? as usize;
+    let mut rest = encoded;
+    let count = word(&mut rest)? as usize;
+    word(&mut rest)?;
     let mut names = Vec::new();
     for _ in 0..count {
-        let path = text(at)??;
-        let required = text(at)?;
-        let imported = text(at)?;
-        let hides_other_paths = word(at)? != 0;
+        let path = text(&mut rest)??;
+        let required = text(&mut rest)?;
+        let imported = text(&mut rest)?;
+        let hides_other_paths = word(&mut rest)? != 0;
         names.push(CompiledFurtherPackageName {
             path,
             required,
@@ -503,27 +525,26 @@ fn read_further_package_names(
             hides_other_paths,
         });
     }
-    names.is_sorted_by(|a, b| a.path < b.path).then_some(names)
+    let is_whole = rest.is_empty() && names.is_sorted_by(|a, b| a.path < b.path);
+    is_whole.then(|| names.into_boxed_slice())
 }
 
 fn read_package_names(
-    payload: &Payload,
-    at: &mut usize,
+    encoded: &'static [u8],
     entry_point_count: usize,
 ) -> Option<Box<[CompiledPackageName]>> {
-    let count = payload.bytes(*at, size_of::<u32>())?;
+    let (head, rest) = encoded.split_at_checked(NAMES_HEADER_SIZE)?;
+    let (count, _) = head.split_at(size_of::<u32>());
     let count = u32::from_le_bytes(count.try_into().ok()?) as usize;
-    let records_at = at.checked_add(size_of::<u32>())?;
-    let records = payload.bytes(records_at, count.checked_mul(PACKAGE_NAME_SIZE)?)?;
-    let mut path_at = records_at.checked_add(records.len())?;
+    let (records, mut paths) = rest.split_at_checked(count.checked_mul(PACKAGE_NAME_SIZE)?)?;
     let entry_point = |index: u32| match index {
         NO_ENTRY_POINT => Some(None),
         index => ((index as usize) < entry_point_count).then_some(Some(index)),
     };
     let mut names = Vec::with_capacity(count);
     for [length, required, imported, hidden] in records.as_chunks::<4>().0.as_chunks::<4>().0 {
-        let path = payload.bytes(path_at, u32::from_le_bytes(*length) as usize)?;
-        path_at += path.len();
+        let (path, after) = paths.split_at_checked(u32::from_le_bytes(*length) as usize)?;
+        paths = after;
         let hidden = u32::from_le_bytes(*hidden);
         names.push(CompiledPackageName {
             path,
@@ -534,11 +555,8 @@ fn read_package_names(
             is_hidden_from_import: hidden & IS_HIDDEN_FROM_IMPORT != 0,
         });
     }
-    if !names.is_sorted_by(|a, b| a.path < b.path) {
-        return None;
-    }
-    *at = path_at;
-    Some(names.into_boxed_slice())
+    let is_whole = paths.is_empty() && names.is_sorted_by(|a, b| a.path < b.path);
+    is_whole.then(|| names.into_boxed_slice())
 }
 
 /// The number of aliases, a record an alias, then the three strings of each one after the other.
@@ -674,7 +692,7 @@ fn try_read(
     }
 
     let mut end = module_paths_at + module_paths_size;
-    let package_names = read_package_names(payload, &mut end, entry_point_count)?;
+    let package_names = skip_names(payload, &mut end)?;
     let path_aliases = read_path_aliases(payload, &mut end)?;
     let mut root_below_working_directory = None;
     if header.flags & HAS_ROOT_BELOW_WORKING_DIRECTORY != 0 {
@@ -722,9 +740,9 @@ fn try_read(
         levels_above_root = u32::from_le_bytes(levels.try_into().ok()?) as usize;
         end += size_of::<u32>();
     }
-    let mut further_package_names = Vec::new();
+    let mut further_package_names: &'static [u8] = b"";
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
-        further_package_names = read_further_package_names(payload, &mut end)?;
+        further_package_names = skip_names(payload, &mut end)?;
     }
     let mut refused_data: &'static [u8] = b"";
     if header.flags & HAS_REFUSED_DATA != 0 {
@@ -762,7 +780,14 @@ fn try_read(
         source_path_order,
         header.flags & PRESERVES_SOURCE_PATHS != 0,
     );
-    let program = program.with_package_names(package_names);
+    let program = program.with_package_names_read_later(NamesReadLater::new(
+        package_names,
+        entry_point_count,
+        |encoded, entry_point_count| {
+            read_package_names(encoded, entry_point_count)
+                .unwrap_or_else(|| StandaloneModuleGraph::exit_without_program())
+        },
+    ));
     let program = program.with_root_below_working_directory(root_below_working_directory);
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
     let program = program.with_plugin_named(header.flags & NAMES_PLUGIN != 0);
@@ -774,7 +799,14 @@ fn try_read(
     let program = program.with_loaders_given_to_build(loaders_given_to_build);
     let program = program.with_files_for_file_system_alone(files_for_file_system_alone);
     let program = program.with_levels_above_root(levels_above_root);
-    let program = program.with_further_package_names(further_package_names.into_boxed_slice());
+    let program = program.with_further_package_names(NamesReadLater::new(
+        further_package_names,
+        entry_point_count,
+        |encoded, entry_point_count| {
+            read_further_package_names(encoded, entry_point_count)
+                .unwrap_or_else(|| StandaloneModuleGraph::exit_without_program())
+        },
+    ));
     Some(program.with_path_aliases(path_aliases))
 }
 
@@ -875,19 +907,38 @@ pub fn has_written_files() -> bool {
     HAS_WRITTEN_FILES.load(core::sync::atomic::Ordering::Acquire)
 }
 
-/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable. What another process has laid there is not trusted.
+/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable. What another process has written there is not trusted before the program itself has started a process, and never as code.
 pub fn find_written_file(name: &[u8]) -> Option<Box<[u8]>> {
+    find_file_on_disk(name, true)
+}
+
+/// `find_written_file` for a module or a library: what another process has written there is not trusted.
+pub fn find_written_code(name: &[u8]) -> Option<Box<[u8]>> {
+    find_file_on_disk(name, false)
+}
+
+fn find_file_on_disk(name: &[u8], trusts_other_processes: bool) -> Option<Box<[u8]>> {
     if !has_written_files() || !is_bun_standalone_file_path(name) {
         return None;
     }
     let mut buffer = path_buffer_pool::get();
     let name = absolute_key(name, &mut buffer)?.as_bytes();
     let graph = StandaloneModuleGraph::get_ref();
-    let key = graph.and_then(|it| Some(it.lookup_file(name)?.name));
+    let file = graph.and_then(|it| it.lookup_file(name));
     let path = {
         let written = WRITTEN_FILES.lock();
-        let is_meant = |it: &&WrittenFile| *it.path == *name || key == Some(&*it.key);
-        written.iter().find(is_meant)?.path_on_disk.clone()
+        let is_meant =
+            |it: &&WrittenFile| *it.path == *name || file.is_some_and(|file| *file.name == *it.key);
+        written
+            .iter()
+            .find(is_meant)
+            .map(|it| it.path_on_disk.clone())
+    };
+    let Some(path) = path else {
+        return match trusts_other_processes {
+            true => graph?.find_changed_file(file?),
+            false => None,
+        };
     };
     // A write that fails leaves the copy in the executable.
     bun_sys::exists(&path).then_some(path)
@@ -915,18 +966,56 @@ fn record_written_file(path: &[u8], key: &[u8], path_on_disk: &[u8]) {
     }
 }
 
-/// What of the program the disk had when the program was about to start its first process, or to remove a folder. What is gone later was removed, by whomever.
+/// Differs once a file was written.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct FileVersion {
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl FileVersion {
+    fn read(path: &[u8]) -> Option<Self> {
+        let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path)).ok()?;
+        let stat = bun_sys::PosixStat::init(&stat);
+        let (modified, changed) = (stat.mtime(), stat.ctime());
+        Some(Self {
+            inode: stat.ino,
+            size: stat.size,
+            modified: (modified.sec, modified.nsec),
+            changed: (changed.sec, changed.nsec),
+        })
+    }
+}
+
+struct FileFoundOnDisk {
+    path: Box<[u8]>,
+    version: FileVersion,
+}
+
+/// What the disk had of the program when the program was about to start its first process or to remove a folder. What is missing later was removed by someone, and what differs later was written by someone.
 struct FoundOnDisk {
     /// The files that nobody asked the build to embed, by their keys in the graph.
-    files: StringArrayHashMap<Box<[u8]>>,
+    files: StringArrayHashMap<FileFoundOnDisk>,
     /// Those files, and the folders with them and with entry points.
     paths: StringArrayHashMap<()>,
 }
 
 static FOUND_ON_DISK: std::sync::OnceLock<FoundOnDisk> = std::sync::OnceLock::new();
 
+static FOUND_BEFORE_PROCESSES: std::sync::OnceLock<Option<FoundOnDisk>> =
+    std::sync::OnceLock::new();
+
 fn found_on_disk() -> Option<&'static FoundOnDisk> {
     FOUND_ON_DISK.get().filter(|found| found.paths.count() != 0)
+}
+
+fn found_before_processes() -> Option<&'static FoundOnDisk> {
+    match FOUND_BEFORE_PROCESSES.get()? {
+        Some(found) => Some(found),
+        None => found_on_disk(),
+    }
 }
 
 impl FoundOnDisk {
@@ -1148,6 +1237,52 @@ static DESCRIPTORS: bun_threading::Guarded<Vec<Option<Box<Descriptor>>>> =
 #[cfg(not(windows))]
 static DESCRIPTOR_FILTER: AtomicU64 = AtomicU64::new(0);
 
+/// Paths of the disk that threads which run no script have written whole.
+#[cfg(not(windows))]
+static WRITTEN_BY_POOL: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    bun_threading::Guarded::new(Vec::new());
+
+#[cfg(not(windows))]
+static HAS_WRITTEN_BY_POOL: AtomicBool = AtomicBool::new(false);
+
+/// Whether `move_waiting_descriptors` has anything to do.
+#[cfg(not(windows))]
+#[inline(always)]
+pub fn has_waiting_descriptors() -> bool {
+    HAS_WRITTEN_BY_POOL.load(Ordering::Acquire)
+}
+
+/// Calls `read`, which reads `fd`. No thread moves an embedded file that is open there to the disk in the middle of it, or between its position and its bytes.
+#[cfg(not(windows))]
+#[inline]
+pub fn read_descriptor<T>(fd: Fd, read: impl FnOnce() -> T) -> T {
+    if DESCRIPTOR_FILTER.load(Ordering::Relaxed) & filter_bit(fd) == 0 {
+        return read();
+    }
+    let descriptors = DESCRIPTORS.lock();
+    let recorded = descriptors.get(fd.native() as usize);
+    let is_embedded_file = recorded.and_then(Option::as_deref).is_some_and(|it| {
+        stat_descriptor(fd).is_ok_and(|now| is_same_file(&now, &it.opened, has_birth_time()))
+    });
+    // What has the number of one that was closed may be a pipe.
+    if !is_embedded_file {
+        drop(descriptors);
+        return read();
+    }
+    read()
+}
+
+/// `fd` is about to be closed. From then on, any file may have its number.
+#[cfg(not(windows))]
+pub fn forget_descriptor(fd: Fd) {
+    if DESCRIPTOR_FILTER.load(Ordering::Relaxed) & filter_bit(fd) == 0 {
+        return;
+    }
+    if let Some(slot) = DESCRIPTORS.lock().get_mut(fd.native() as usize) {
+        *slot = None;
+    }
+}
+
 /// Whether a descriptor of an embedded path was ever opened.
 #[cfg(not(windows))]
 #[inline(always)]
@@ -1188,37 +1323,33 @@ fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
 /// `fd` reads the file at `path` from here on, from the same offset, if it still is what `is_meant` asks for when that is open.
 #[cfg(not(windows))]
 fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
-    use bun_sys::FdExt as _;
-    let opened = bun_sys::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
-    let reopened = (|| {
-        let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
-        bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
-        if !is_meant() {
-            return Ok(false);
+    let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    let opened = file.fd();
+    let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
+    bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
+    if !is_meant() {
+        return Ok(false);
+    }
+    // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // For Android, libc has the number of the call alone.
+        let (from, to) = (opened.native(), fd.native());
+        // SAFETY: both are descriptors of this process.
+        let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
+        match moved {
+            -1 => Err(bun_sys::Error::from_code(
+                bun_sys::E::EIO,
+                bun_sys::Tag::dup,
+            )),
+            _ => Ok(true),
         }
-        // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // For Android, libc has the number of the call alone.
-            let (from, to) = (opened.native(), fd.native());
-            // SAFETY: both are descriptors of this process.
-            let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
-            match moved {
-                -1 => Err(bun_sys::Error::from_code(
-                    bun_sys::E::EIO,
-                    bun_sys::Tag::dup,
-                )),
-                _ => Ok(true),
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            bun_sys::dup2(opened, fd)?;
-            bun_sys::set_close_on_exec(fd).map(|()| true)
-        }
-    })();
-    opened.close();
-    reopened
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        bun_sys::dup2(opened, fd)?;
+        bun_sys::set_close_on_exec(fd).map(|()| true)
+    }
 }
 
 impl StandaloneModuleGraph {
@@ -1467,9 +1598,11 @@ impl StandaloneModuleGraph {
             return None;
         }
         let under_own_root = Self::key_under_own_root(program, key);
+        let path = key;
         let key = under_own_root.as_deref().unwrap_or(key);
         if program.entry_point_by_source_path(key).is_some() || program.holds_module_at(key) {
-            return Some(SourcePathKind::File);
+            let is_gone = self.has_other_source_on_disk(program, key, path);
+            return (!is_gone).then_some(SourcePathKind::File);
         }
         let mut entry_points = program.entry_points_in_directory(key);
         let is_directory = entry_points.next().is_some() || program.holds_module_below(key);
@@ -1582,18 +1715,43 @@ impl StandaloneModuleGraph {
         bun_sys::IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
     }
 
-    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there.
+    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there, in whichever thread: at once if this thread runs scripts, and otherwise, as a script may be reading, from the next `move_waiting_descriptors` on.
     #[cfg(not(windows))]
-    pub fn move_descriptors_to_disk(&self, name: &[u8]) {
+    pub fn move_descriptors_to_disk(&self, name: &[u8], runs_scripts: bool) {
         let mut buffer = path_buffer_pool::get();
-        let path = absolute_key(name, &mut buffer);
-        let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
+        let Some(path) = absolute_key(name, &mut buffer).map(ZStr::as_bytes) else {
             return;
         };
-        let key = Self::key_under_own_root(program, path.as_bytes());
+        match runs_scripts {
+            true => self.move_descriptors_to(path),
+            false => {
+                WRITTEN_BY_POOL.lock().push(path.into());
+                HAS_WRITTEN_BY_POOL.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    /// For what threads of the pool have written, on a thread that runs scripts.
+    #[cfg(not(windows))]
+    #[cold]
+    pub fn move_waiting_descriptors(&self) {
+        HAS_WRITTEN_BY_POOL.store(false, Ordering::Release);
+        let written = core::mem::take(&mut *WRITTEN_BY_POOL.lock());
+        for path in &written {
+            self.move_descriptors_to(path);
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn move_descriptors_to(&self, path: &[u8]) {
+        let Some(program) = self.compiled_program.as_ref() else {
+            return;
+        };
+        let key = Self::key_under_own_root(program, path);
         let Some(file) = key.and_then(|it| self.lookup_file(&it)) else {
             return;
         };
+        let path = bun_core::ZBox::from_bytes(path);
         let mut descriptors = DESCRIPTORS.lock();
         for (index, slot) in descriptors.iter_mut().enumerate() {
             let Some(descriptor) = slot.as_deref().filter(|it| it.path == file.name) else {
@@ -1604,10 +1762,29 @@ impl StandaloneModuleGraph {
                 stat_descriptor(fd)
                     .is_ok_and(|now| is_same_file(&now, &descriptor.opened, has_birth_time()))
             };
-            if !is_open() || reopen_at(fd, path, is_open).is_ok() {
+            if !is_open() || reopen_at(fd, &path, is_open).is_ok() {
                 *slot = None;
             }
         }
+    }
+
+    /// The embedded files below the folder `name` that the disk has there, by their paths on the disk.
+    pub fn find_files_on_disk_below(&self, name: &[u8]) -> Vec<Box<[u8]>> {
+        let mut buffer = path_buffer_pool::get();
+        let path = absolute_key(name, &mut buffer);
+        let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
+            return Vec::new();
+        };
+        let path = path.as_bytes();
+        let Some(folder) = Self::key_under_own_root(program, path) else {
+            return Vec::new();
+        };
+        let keys = self.files.keys().iter();
+        let below = keys.filter(|key| is_at_or_below(key, &folder) && key.len() > folder.len());
+        below
+            .map(|key| [path, &key[folder.len()..]].concat().into_boxed_slice())
+            .filter(|it| bun_sys::exists(it))
+            .collect()
     }
 
     /// For a descriptor of an embedded path, returns the `lstat()` of the path with any changes made through the descriptor.
@@ -2016,6 +2193,33 @@ impl StandaloneModuleGraph {
         FOUND_ON_DISK.get_or_init(|| self.find_on_disk());
     }
 
+    pub fn note_process_start(&self) {
+        FOUND_BEFORE_PROCESSES.get_or_init(|| {
+            let was_looked_at = FOUND_ON_DISK.get().is_some();
+            self.note_found_on_disk();
+            was_looked_at.then(|| self.find_on_disk())
+        });
+        if found_on_disk().is_some() {
+            HAS_WRITTEN_FILES.store(true, core::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Where the disk has `file`, if that was written since the program has started its first process. A file that the disk did not have counts only in a folder that it had.
+    fn find_changed_file(&self, file: &File) -> Option<Box<[u8]>> {
+        let program = self.compiled_program.as_ref()?;
+        let found = found_before_processes()?;
+        if !self.is_file_for_file_system_alone(file) {
+            return None;
+        }
+        if let Some(before) = found.files.get(file.name) {
+            let is_changed = FileVersion::read(&before.path)? != before.version;
+            return is_changed.then(|| before.path.clone());
+        }
+        let path = Self::path_on_build_machine(program, file.name)?;
+        let is_there = found.paths.contains(bun_paths::dirname(&path)?) && bun_sys::exists(&path);
+        is_there.then(|| path.into_boxed_slice())
+    }
+
     fn find_on_disk(&self) -> FoundOnDisk {
         let mut found = FoundOnDisk {
             files: StringArrayHashMap::new(),
@@ -2039,10 +2243,11 @@ impl StandaloneModuleGraph {
             };
             let folder = bun_paths::dirname(&path);
             if folder.is_some_and(|it| found.find_folder(it, &mut missing))
-                && bun_sys::exists(&path)
+                && let Some(version) = FileVersion::read(&path)
             {
-                let _ = found.files.put(key, path.as_slice().into());
                 let _ = found.paths.put(&path, ());
+                let path = path.into_boxed_slice();
+                let _ = found.files.put(key, FileFoundOnDisk { path, version });
             }
         }
         for entry_point in &program.entry_points {
@@ -2056,8 +2261,8 @@ impl StandaloneModuleGraph {
 
     /// Whether the disk had the file `key`, which nobody asked the build to embed, and has it no longer.
     pub(crate) fn has_file_vanished(&self, key: &[u8]) -> bool {
-        let path = found_on_disk().and_then(|found| found.files.get(key));
-        path.is_some_and(|path| !bun_sys::exists(path))
+        let found = found_on_disk().and_then(|found| found.files.get(key));
+        found.is_some_and(|found| !bun_sys::exists(&found.path))
     }
 
     /// Whether the disk had the folder `key` and has it no longer. What somebody asked the build to embed keeps its folder.
@@ -2241,29 +2446,157 @@ impl StandaloneModuleGraph {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
         };
+        Self::folders_around(key_in_graph, key)
+            .find_map(|(folder_in_graph, folder)| {
+                let is_known =
+                    self.knows_source_on_disk(program, folder_in_graph, folder, key_in_graph)?;
+                Some(is_known || self.lists_source(program, folder_in_graph, folder, key_in_graph))
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_other_source_on_disk(
+        &self,
+        program: &CompiledProgram,
+        key_in_graph: &[u8],
+        key: &[u8],
+    ) -> bool {
+        let mut outermost = None;
+        for (folder_in_graph, folder) in Self::folders_around(key_in_graph, key) {
+            match self.knows_source_on_disk(program, folder_in_graph, folder, key_in_graph) {
+                Some(true) => return true,
+                Some(false) => outermost = Some((folder_in_graph, folder)),
+                None => {}
+            }
+        }
+        outermost.is_some_and(|(folder_in_graph, folder)| {
+            self.lists_source(program, folder_in_graph, folder, key_in_graph)
+        })
+    }
+
+    fn folders_around<'a>(
+        key_in_graph: &'a [u8],
+        key: &'a [u8],
+    ) -> impl Iterator<Item = (&'a [u8], &'a [u8])> {
         let mut cut = bun_paths::basename(key).len() + 1;
-        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
+        let is_on_disk = cut < key.len() && bun_sys::exists(&key[..key.len() - cut]);
+        core::iter::from_fn(move || {
+            if !is_on_disk || cut >= key.len() || cut >= key_in_graph.len() {
+                return None;
+            }
+            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
+            let folder = &key[..key.len() - cut];
+            let name = bun_paths::basename(folder);
+            cut = match name == bun_paths::basename(folder_in_graph) {
+                true => cut + name.len() + 1,
+                false => key.len(),
+            };
+            Some((folder_in_graph, folder))
+        })
+    }
+
+    fn knows_source_on_disk(
+        &self,
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+    ) -> Option<bool> {
+        let is_on_disk =
+            |source: &[u8]| is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
+        let mut entry_points = program.entry_points_in_directory(folder_in_graph);
+        let entry_point = entry_points.find(|it| it.source_path != key_in_graph);
+        let mut module: Option<Vec<u8>> = None;
+        program.for_each_module_below(folder_in_graph, &mut |path| {
+            module = (path != key_in_graph).then(|| path.to_vec());
+            module.is_none()
+        });
+        if entry_point.is_none() && module.is_none() {
+            return None;
+        }
+        let found = self.sources_on_disk.lock().get(folder).cloned();
+        let found = found
+            .flatten()
+            .map(|it| [folder_in_graph, &it].concat())
+            .filter(|it| !is_at_or_below(key_in_graph, it));
+        Some(
+            entry_point.is_some_and(|it| is_on_disk(it.source_path))
+                || module.is_some_and(|it| is_on_disk(&it))
+                || found.is_some_and(|it| is_on_disk(&it)),
+        )
+    }
+
+    fn lists_source(
+        &self,
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+    ) -> bool {
+        if matches!(self.sources_on_disk.lock().get(folder), Some(None)) {
             return false;
         }
-        while cut < key.len() && cut < key_in_graph.len() {
-            let folder = &key[..key.len() - cut];
-            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
-            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
-            let mut source = entry_points.next().map(|it| it.source_path.to_vec());
-            program.for_each_module_below(folder_in_graph, &mut |path| {
-                source = Some(path.to_vec());
-                false
-            });
-            if let Some(source) = source {
-                return is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
-            }
-            let name = bun_paths::basename(folder);
-            if name != bun_paths::basename(folder_in_graph) {
-                return false;
-            }
-            cut += name.len() + 1;
+        let mut is_complete = true;
+        let found = Self::find_listed_source(
+            program,
+            folder_in_graph,
+            folder,
+            key_in_graph,
+            &mut is_complete,
+        );
+        let below = found.map(|path| Box::from(&path[folder.len()..]));
+        let is_found = below.is_some();
+        let mut sources = self.sources_on_disk.lock();
+        if is_found || is_complete && !sources.contains(folder) {
+            let _ = sources.put(folder, below);
         }
-        false
+        is_found
+    }
+
+    fn find_listed_source(
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+        is_complete: &mut bool,
+    ) -> Option<Vec<u8>> {
+        #[cfg(test)]
+        tests::FOLDERS_READ.set(tests::FOLDERS_READ.get() + 1);
+        let directory = match bun_sys::Dir::open(folder) {
+            Ok(directory) => directory,
+            Err(error) => {
+                *is_complete &=
+                    matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR);
+                return None;
+            }
+        };
+        let mut entries = bun_sys::iterate_dir(directory.fd());
+        while let Some(entry) = entries.next().unwrap_or_else(|_| {
+            *is_complete = false;
+            None
+        }) {
+            let name = entry.name.slice_u8();
+            let [in_graph, path] = [folder_in_graph, folder].map(|it| [it, b"/", name].concat());
+            if in_graph == key_in_graph {
+                *is_complete = false;
+                continue;
+            }
+            let is_source = program.entry_point_by_source_path(&in_graph).is_some()
+                || program.holds_module_at(&in_graph);
+            if is_source && !is_at_or_below(key_in_graph, &in_graph) && is_file_on_disk(&path) {
+                return Some(path);
+            }
+            let mut entry_points = program.entry_points_in_directory(&in_graph);
+            let holds_sources =
+                entry_points.next().is_some() || program.holds_module_below(&in_graph);
+            if holds_sources
+                && let Some(found) =
+                    Self::find_listed_source(program, &in_graph, &path, key_in_graph, is_complete)
+            {
+                return Some(found);
+            }
+        }
+        None
     }
 
     pub(crate) fn directory_key<'a>(
@@ -2420,7 +2753,9 @@ pub(crate) mod tests {
         file_indices: &[Option<u32>],
         prefix_length: usize,
     ) -> crate::Result<Written> {
-        let mut builder = StringBuilder::init_capacity(prefix_length + capacity(input));
+        let mut builder = StringBuilder::default();
+        builder.cap = prefix_length + capacity(input);
+        builder.allocate().unwrap();
         let _ = builder.append_count(&vec![0xAA; prefix_length]);
         let image = append_image(&mut builder, input, ImagePlace::InGraph)?;
         let paths = append_entry_point_paths(&mut builder, input);
@@ -2592,12 +2927,25 @@ pub(crate) mod tests {
                 .iter()
                 .map(|name| PACKAGE_NAME_SIZE + name.path.len())
                 .sum::<usize>();
+        let names_end = bytes.len() - size_of::<u32>();
+        let read_names = |bytes: Vec<u8>| {
+            let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+            read_package_names(&bytes[names_at - NAMES_HEADER_SIZE..names_end], 3)
+        };
+        assert_eq!(read_names(bytes.clone()).map(|names| names.len()), Some(4));
         let mut out_of_range = bytes.clone();
         patch(&mut out_of_range, names_at + 4, 3);
-        assert_eq!(read_back(out_of_range, record_at).err(), Some(CORRUPTED));
+        assert_eq!(read_names(out_of_range), None);
         let mut too_many = bytes.clone();
-        patch(&mut too_many, names_at - 4, names.len() as u32 + 1);
-        assert_eq!(read_back(too_many, record_at).err(), Some(CORRUPTED));
+        patch(
+            &mut too_many,
+            names_at - NAMES_HEADER_SIZE,
+            names.len() as u32 + 1,
+        );
+        assert_eq!(read_names(too_many), None);
+        let mut too_long = bytes.clone();
+        patch(&mut too_long, names_at - 4, bytes.len() as u32);
+        assert_eq!(read_back(too_long, record_at).err(), Some(CORRUPTED));
         assert_eq!(
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
@@ -3462,6 +3810,44 @@ pub(crate) mod tests {
         }
         assert!(graph.may_answer_for(&folder.join("one/two")));
         assert!(graph.may_answer_for(&folder.join("one")));
+    }
+
+    std::thread_local! {
+        pub(super) static FOLDERS_READ: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn folders_without_sources_are_read_once() {
+        fn list_modules(start: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
+            for path in [
+                "/$bunfs/root/src/a/one.js",
+                "/$bunfs/root/src/a/two.js",
+                "/$bunfs/root/src/b/deep/one.js",
+                "/$bunfs/root/src/c/one.js",
+            ] {
+                let path = path.as_bytes();
+                if path.starts_with(start) && !each(path) {
+                    return;
+                }
+            }
+        }
+        let folder = TemporaryFolder::create("read-once");
+        let mut graph = with_request(&folder, false, read_graph);
+        let program = graph.compiled_program.take().unwrap();
+        program.set_module_listing(list_modules);
+        let root: &'static [u8] = folder.0.clone().leak();
+        graph.compiled_program = Some(program.with_root_on_build_machine(Some(root)));
+        for name in ["src/a", "src/b/deep", "src/c"] {
+            bun_sys::mkdir_recursive(&folder.join(name)).unwrap();
+        }
+        for _ in 0..100 {
+            for name in ["src/a/one.js", "src/b/deep/one.js", "src/c/one.js"] {
+                let kind = graph.source_path_kind(&folder.join(name));
+                assert_eq!(kind, Some(SourcePathKind::File), "{name}");
+            }
+        }
+        assert_eq!(FOLDERS_READ.get(), 6);
     }
 
     #[test]

@@ -78,6 +78,14 @@ struct PlaceInRow {
     has_form: bool,
 }
 
+/// The least depth of a class that has the field, in any row.
+#[derive(Clone, Copy)]
+struct HighestPlaces {
+    made_at_birth: u32,
+    any: u32,
+    has_form: bool,
+}
+
 fn is_accessor(kind: ObjectMemberKind) -> bool {
     matches!(
         kind,
@@ -102,9 +110,14 @@ pub(super) struct Memo<'c> {
     names_of_accessors: FxHashSet<MemberName>,
     pub(super) names_of_fields_asked_about: FxHashMap<u32, (crate::hir::ClassId, Atom)>,
     pub(super) reads_of_fields_off_this: Option<Arc<ReadsOfFields>>,
+    pub(super) typed_arrays_in_fields: Option<Rc<FxHashMap<Atom, Option<TypeId>>>>,
+    pub(super) values_stored_by_name:
+        FxHashMap<ClassDeclaration, Rc<super::inferred_from_use::ValuesByName>>,
     inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     places_of_classes: FxHashMap<ClassDeclaration, PlaceInRow>,
-    highest_places_of_fields: FxHashMap<MemberName, PlaceInRow>,
+    highest_places_of_fields: FxHashMap<MemberName, HighestPlaces>,
+    nearest_fields_above:
+        FxHashMap<(ClassDeclaration, MemberName), Option<(ClassDeclaration, PositionTypes)>>,
     forms_given_at_or_above: FxHashMap<(ClassDeclaration, MemberName), Option<MemberForm>>,
     own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
     variables: FxHashMap<Sym, WrittenType>,
@@ -120,8 +133,10 @@ pub(super) struct Memo<'c> {
     pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
     pub(super) reference_index: ReferenceIndex<'c>,
     pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
+    pub(super) methods_by_name: Option<Rc<super::inferred_from_use::MethodsByName>>,
+    pub(super) members_of_classes: Option<Rc<super::inferred_from_use::MembersOfClasses>>,
     pub(super) exported_symbols: Option<FxHashSet<Sym>>,
-    pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
+    pub(super) parameters_taking_elements: FxHashMap<(Atom, usize, usize), u8>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
     pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
@@ -329,6 +344,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.flow_analysis_disabled = around.map_or_else(Vec::new, |around| around.1);
     }
 
+    // Each of its callers has an instance of its own. The units that a crate is divided into for the code generator would keep the two apart.
+    #[inline]
     pub(super) fn ask<T>(
         &mut self,
         compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
@@ -491,7 +508,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let answer = self.ask(compute);
         if self.unstable_answers == unstable_answers {
             match answer {
-                Ok(known) => *slot(self.kept.type_at(row)) = Some(known),
+                Ok(known) => *slot(self.kept.type_to_change(row)) = Some(known),
                 Err(reason) => drop(self.memo.gave_up.insert((ty, question), reason)),
             }
         }
@@ -516,7 +533,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let answer = self.ask(compute);
         if self.unstable_answers == unstable_answers {
             match answer {
-                Ok(known) => *slot(self.kept.object_at(row)) = Some(known),
+                Ok(known) => *slot(self.kept.object_to_change(row)) = Some(known),
                 Err(reason) => drop(self.memo.gave_up.insert((ty, question), reason)),
             }
         }
@@ -535,7 +552,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     ) {
         if self.unstable_answers == unstable_answers {
             let row = self.kept.type_row(ty);
-            self.kept.type_at(row).identity = Some(identity);
+            self.kept.type_to_change(row).identity = Some(identity);
         }
     }
 
@@ -560,7 +577,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return false;
         }
         let row = self.kept.type_row(ty);
-        self.kept.type_at(row).facts |= (1 | u8::from(holds) << 1) << (fact as u8 * 2);
+        self.kept.type_to_change(row).facts |= (1 | u8::from(holds) << 1) << (fact as u8 * 2);
         true
     }
 
@@ -1019,7 +1036,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub fn is_int32_written(&self) -> bool {
-        self.c.p.aot_symbols().is_int32_written()
+        self.c.p.aot_symbols.is_int32_written()
     }
 
     pub fn written_parameters(&mut self, function: FunctionRef) -> &'c [WrittenParameter] {
@@ -1118,7 +1135,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | ClassMemberSource::StaticStore(_) => return Ok(TypeId::ANY),
         };
         let said = self.ask(|queries| Ok(queries.infer_field_type(class, field, position)))?;
-        let int32 = self.c.p.aot_symbols().int32_alias();
+        let int32 = self.c.p.aot_symbols.int32_alias();
         let int32 = int32.map(|alias| self.c.declared_type(alias));
         let mut names_list = false;
         let mut holds_numbers_alone = true;
@@ -1146,7 +1163,56 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// What the stores in other functions of a class say of a field.
+    pub fn type_from_later_field_stores(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        match (self.can_ask_about_field(shape, member), member.name) {
+            (true, MemberName::String(field)) => {
+                self.find_type_stored_later(shape.declaration, field)
+            }
+            _ => Ok(TypeId::ANY),
+        }
+    }
+
+    /// The typed array that classes of the file store into their fields of the same name.
+    pub fn typed_array_in_named_fields(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        match (self.can_ask_about_field(shape, member), member.name) {
+            (true, MemberName::String(field)) => {
+                let found = self.typed_arrays_in_fields().get(&field).copied().flatten();
+                Ok(found.unwrap_or(TypeId::ANY))
+            }
+            _ => Ok(TypeId::ANY),
+        }
+    }
+
+    fn can_ask_about_field(&self, shape: &ClassShape<'_>, member: &ClassMember) -> bool {
+        let is_stored = matches!(
+            member.source,
+            ClassMemberSource::ThisStore(_) | ClassMemberSource::Member(_)
+        );
+        is_stored && !member.is_static && shape.declaration.file() == self.file
+    }
+
     pub fn uses_say_what_read_is(&mut self, pattern: PatId, is_element: bool) -> bool {
+        if let crate::bind::Binding::Symbol(symbol) = self.bound().initialized_binding(pattern)
+            && self.references_of_binding(symbol).is_empty()
+        {
+            return false;
+        }
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        if !checked.is_ok_and(|ty| self.c.is_any(ty)) {
+            return false;
+        }
         let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
         else {
             return false;
@@ -1181,14 +1247,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let names_record = self.c.some_type(said, |c, part| {
             c.flags(part) & tf::OBJECT != 0 && !c.is_array(part)
         });
-        if names_record {
-            return false;
-        }
-        let checked = self.ask(|queries| {
-            let ty = queries.c.type_of_pat(queries.file, pattern);
-            queries.resolved(ty)
-        });
-        checked.is_ok_and(|ty| self.c.is_any(ty))
+        !names_record
     }
 
     pub fn uses_say_list_of_lists(&mut self, pattern: PatId) -> bool {
@@ -1200,6 +1259,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn compute_uses_imply_nested_list(&mut self, pattern: PatId) -> bool {
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        if !checked.is_ok_and(|ty| self.c.is_any(ty)) {
+            return false;
+        }
         let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
         else {
             return false;
@@ -1234,11 +1300,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 return false;
             };
         }
-        let checked = self.ask(|queries| {
-            let ty = queries.c.type_of_pat(queries.file, pattern);
-            queries.resolved(ty)
-        });
-        checked.is_ok_and(|ty| self.c.is_any(ty))
+        true
     }
 
     pub fn return_type(&mut self, function: FnId) -> CheckedType {
@@ -1393,7 +1455,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         has_accessor
     }
 
-    fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
+    pub(super) fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
         match class {
             ClassDeclaration::Class(class) => Some(self.class_shape(class)),
             ClassDeclaration::Function(function) => self.constructor_function_shape(function),
@@ -1476,12 +1538,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     .memo
                     .highest_places_of_fields
                     .entry(entry.name)
-                    .or_insert(PlaceInRow {
-                        depth: u32::MAX,
+                    .or_insert(HighestPlaces {
+                        made_at_birth: u32::MAX,
+                        any: u32::MAX,
                         has_form,
                     });
+                highest.any = highest.any.min(place.depth);
                 if entry.is_made_at_birth {
-                    highest.depth = highest.depth.min(place.depth);
+                    highest.made_at_birth = highest.made_at_birth.min(place.depth);
                 }
                 highest.has_form |= has_form;
             }
@@ -1511,7 +1575,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let mut chain = Vec::new();
         let mut current = self.declared_parent(shape.declaration);
         let mut found = None;
-        for _ in highest.depth..place.depth {
+        for _ in highest.made_at_birth..place.depth {
             let Some(class) = current else {
                 break;
             };
@@ -1540,6 +1604,42 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .forms_given_at_or_above
                 .insert((class, name), found);
         }
+        found
+    }
+
+    /// The nearest class above that has the field, with the field's types there.
+    pub fn nearest_field_above(
+        &mut self,
+        declaration: ClassDeclaration,
+        name: MemberName,
+    ) -> Option<(ClassDeclaration, PositionTypes)> {
+        let depth = self.find_place_in_row(declaration).depth;
+        let highest = self.memo.highest_places_of_fields.get(&name)?.any;
+        if highest >= depth {
+            return None;
+        }
+        if let Some(&known) = self.memo.nearest_fields_above.get(&(declaration, name)) {
+            return known;
+        }
+        let mut current = self.declared_parent(declaration);
+        let mut found = None;
+        for _ in highest..depth {
+            let Some(class) = current else {
+                break;
+            };
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            let named = members.iter().find(|entry| {
+                !entry.is_static && entry.kind == ObjectMemberKind::Field && entry.name == name
+            });
+            if let Some(entry) = named {
+                found = Some((class, entry.types));
+                break;
+            }
+            current = self.declared_parent(class);
+        }
+        self.memo
+            .nearest_fields_above
+            .insert((declaration, name), found);
         found
     }
 
@@ -1685,7 +1785,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.unstable_answers == unstable_answers {
             match answer {
                 Ok(known) if !has_inferred_member => {
-                    self.kept.object_at(row).members = Some(known);
+                    self.kept.object_to_change(row).members = Some(known);
                 }
                 Ok(_) | Err(_) => drop(self.memo.members.insert(object_type, answer)),
             }
@@ -1771,6 +1871,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             |answers| &mut answers.listed_members,
             |queries| queries.compute_listed_members(object_type),
         )
+    }
+
+    pub fn expressions_by_kind(&mut self, file: FileId) -> Arc<hir::ExprsByKind> {
+        self.c.exprs_by_kind(file)
+    }
+
+    pub fn creation_places(&mut self, object_type: TypeId) -> Vec<u32> {
+        let places = self.ask(|queries| queries.compute_creation_places(object_type));
+        places.unwrap_or_default()
     }
 
     pub fn listed_member_types(

@@ -739,7 +739,8 @@ function run(name, f) {
   try {
     r = show(f());
   } catch (e) {
-    r = "! " + e?.constructor?.name + " " + (e?.message ?? e);
+    const said = String(e?.message ?? e);
+    r = "! " + e?.constructor?.name + " " + (/is not iterable|is not a function \(near/.test(said) ? "no iterator" : said);
   }
   say(name + " " + r + " " + log);
 }

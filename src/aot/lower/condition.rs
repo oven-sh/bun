@@ -186,6 +186,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(on_not_taken);
     }
 
+    fn finish_split_of_truthy_local(
+        &mut self,
+        split: Split,
+        local: SymbolId,
+        value: ValueId,
+        on_truthy: BlockId,
+        on_falsy: BlockId,
+    ) {
+        self.builder.switch_to(split.taken);
+        self.narrow_local(local, value, split.taken_value);
+        self.jump(on_truthy);
+        self.builder.switch_to(split.not_taken);
+        self.jump(on_falsy);
+    }
+
     fn narrow_local(&mut self, local: SymbolId, value: ValueId, left: ValueId) {
         let origin = self.builder.value_behind_tests(value);
         let narrowed = self.builder.narrow_by_test(origin, left);
@@ -243,17 +258,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let Some((&last, leading)) = operands.split_last() else {
                     unreachable!("a logical condition has a left operand");
                 };
+                let late = self
+                    .suspending_arm
+                    .and_then(|arm| arm.late_continue)
+                    .filter(|late| late.test == expression);
+                let target_of_true = |lowering: &Self, operand: ExprId| match late {
+                    Some(late) if !lowering.reads_only_variables(operand) => late.block,
+                    _ => if_true,
+                };
                 for &operand in leading {
                     let next = self.create_block();
                     let (on_true, on_false) = if op == BinOp::And {
                         (next, if_false)
                     } else {
-                        (if_true, next)
+                        (target_of_true(self, operand), next)
                     };
                     self.lower_condition(operand, on_true, on_false);
                     self.continue_in(next);
                 }
-                self.lower_condition(last, if_true, if_false);
+                let on_true = target_of_true(self, last);
+                self.lower_condition(last, on_true, if_false);
             }
             ExprKind::Binary {
                 op: BinOp::Nullish,
@@ -309,9 +333,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let value = self.lower_expression(expression);
         let field = self.find_field_of_union(expression);
         self.set_position(self.file.hir[expression].pos);
+        let local = scope::find_tested_local(self, expression);
+        let local = local.filter(|&local| self.read_local(local) == value);
         let split = self.split_on_truthiness(value);
         let Some(field) = field else {
-            return self.finish_split(split, if_true, if_false);
+            return match local {
+                Some(local) => {
+                    self.finish_split_of_truthy_local(split, local, value, if_true, if_false)
+                }
+                None => self.finish_split(split, if_true, if_false),
+            };
         };
         let edges = [
             (split.taken, split.taken_value, if_true),
@@ -358,8 +389,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             } => {
                 let (passed, failed) = order_targets(is_negated, if_true, if_false);
                 let value = self.lower_typeof_operand(operand);
+                let local = scope::find_tested_local(self, operand);
+                let local = local.filter(|&local| self.read_local(local) == value);
                 self.set_position(self.file.hir[expression].pos);
-                self.jump_by_typeof(value, None, &[(known::object, passed)], failed);
+                self.jump_by_typeof(value, local, &[(known::object, passed)], failed);
             }
             LeafTest::Comparison { op, left, right } => {
                 self.lower_comparison(op, left, right, if_true, if_false);
@@ -523,7 +556,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn collect_logical_operands(&self, expression: ExprId, op: BinOp) -> SmallVec<[ExprId; 8]> {
+    pub(in crate::lower) fn collect_logical_operands(
+        &self,
+        expression: ExprId,
+        op: BinOp,
+    ) -> SmallVec<[ExprId; 8]> {
         let mut operands = SmallVec::new();
         let mut current = expression;
         while let ExprKind::Binary {

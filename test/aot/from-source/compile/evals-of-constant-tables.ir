@@ -1,0 +1,26 @@
+# The strings of each eval follow from the tables, so no eval is left and the class sees the built-in Array.
+# -- source: main.cjs
+# function make(Base) {
+#   class Matrix extends Base { static at(i) { return new Array(i); } }
+#   var template = `(function %name%(a, b) { return check(a, b) %op% b; })`;
+#   var rows = [["+", "add"], ["-", "sub", "subtract"]];
+#   var names = [];
+#   ["abs", "sign"].forEach(function (name) { names.push(["Math." + name, name]); });
+#   for (var row of rows) {
+#     var made = eval(fill(template, { name: row[1], op: row[0] }));
+#     for (var i = 1; i < row.length; i++) Matrix.prototype[row[i]] = made;
+#   }
+#   for (var name of names) {
+#     if (name.length === 2) Matrix[name[1]] = eval("(function " + name[1] + "(x) { return " + name[0] + "(x); })");
+#     else Matrix[name[1]] = eval(name[2]);
+#   }
+#   function check(a) { return a; }
+#   function fill(text, values) { for (var key in values) text = text.replace(new RegExp("%" + key + "%", "g"), values[key]); return text; }
+#   return Matrix;
+# }
+# const M = make(Object);
+# console.log(new M().add(1, 2), new M().subtract(5, 3), M.abs(-4), M.sign(-9), M.at(2).length);
+# -- end of source
+# RUN: print
+# CHECK-NOT: DirectEval
+# CHECK-NOT: ScopeHasBinding

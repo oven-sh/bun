@@ -34,7 +34,16 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
 
 pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
     match hir[function].body {
-        FnBody::Expr(body) => hir.position_of_evaluation(pos) < hir[body].pos,
+        FnBody::Expr(body) => {
+            let body = hir[body].pos;
+            let is_evaluated = hir.position_of_evaluation(body) != body;
+            let pos = if is_evaluated {
+                pos
+            } else {
+                hir.position_of_evaluation(pos)
+            };
+            pos < body
+        }
         FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
     }
 }
@@ -339,8 +348,9 @@ impl RuntimeBindings<'_> {
         self.depends_on_sloppy_mode
     }
 
-    pub fn set_module_goal(&mut self, is_module: bool) {
+    pub fn set_module_goal(&mut self, is_module: bool, has_sloppy_functions: bool) {
         self.is_module = is_module;
+        self.are_all_scopes_strict = is_module && !has_sloppy_functions;
     }
 
     pub fn stores(&self) -> &[SymbolStore] {
@@ -538,6 +548,14 @@ impl Bound<'_> {
         self.binding_under_goal(self.initialized_pattern_binding(name))
     }
 
+    /// The binding of a name that no object of a `with` and no variable of a direct eval may hide.
+    pub fn static_binding(&self, ident: ExprId) -> Option<Binding> {
+        match self.dynamic_lookup_scope(NodeData::Expr(ident)) {
+            None => Some(self.binding(ident)),
+            Some(_) => None,
+        }
+    }
+
     #[inline]
     pub fn dynamic_lookup_scope(&self, node: NodeData) -> Option<ScopeId> {
         let references = &self.runtime.references;
@@ -605,7 +623,7 @@ impl Bound<'_> {
     }
 
     pub fn is_strict_scope(&self, scope: ScopeId) -> bool {
-        self.runtime.is_module || has_bit(&self.runtime.strict_scopes, scope.idx())
+        self.runtime.are_all_scopes_strict || has_bit(&self.runtime.strict_scopes, scope.idx())
     }
 
     pub fn file_uses_arguments(&self) -> bool {
@@ -714,6 +732,22 @@ impl Bound<'_> {
     #[inline]
     pub fn is_stable_binding(&self, symbol: SymbolId) -> bool {
         self.binding_stability(symbol) == BindingStability::Stable
+    }
+
+    /// Nothing but a direct eval, which may never run, stores into the initialized binding.
+    pub fn is_stable_beside_evals(&self, symbol: SymbolId) -> bool {
+        match self.binding_stability(symbol) {
+            BindingStability::Stable => true,
+            BindingStability::VisibleToEval => {
+                self.initializing_declaration(symbol).is_some() && self.stores_to(symbol).is_empty()
+            }
+            BindingStability::NoBinding
+            | BindingStability::Linked
+            | BindingStability::Stored
+            | BindingStability::NotInitializedOnce
+            | BindingStability::MappedArgument
+            | BindingStability::ContainerMember => false,
+        }
     }
 
     #[inline]

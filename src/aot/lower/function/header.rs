@@ -34,6 +34,15 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_enclosing_key(&self, key: FunctionKey) -> Option<FunctionKey> {
         let bound = self.bound;
         let mut scope = match key {
+            FunctionKey::Source(source)
+                if self
+                    .inputs
+                    .modules
+                    .inner_module(self.file, source.function)
+                    .is_some() =>
+            {
+                return None;
+            }
             FunctionKey::Source(source) => {
                 let top = bound.fns[source.function.idx()].scope;
                 bound.scopes[top.idx()].parent
@@ -68,7 +77,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::InstanceInitializer(_)
                     | FunctionKey::AccessorGetter { .. }
                     | FunctionKey::AccessorSetter { .. }
-                    | FunctionKey::PrivateNameTest { .. }) => return Some(enclosing),
+                    | FunctionKey::PrivateNameTest { .. }
+                    | FunctionKey::ModuleRequest { .. }
+                    | FunctionKey::CopiedGetter { .. }
+                    | FunctionKey::PrototypeMaker(_)) => return Some(enclosing),
                 },
                 CodeUnit::FieldInitializer(member) => bound.member_class(member)?,
             };
@@ -113,14 +125,19 @@ impl FileLowering<'_, '_, '_, '_> {
         end_of_function(self.hir, self.bound, function)
     }
 
+    /// Where the file has the text of a function or of a class that may be in a copy.
+    pub(in crate::lower) fn written_range(&self, start: u32, end: u32) -> SourceRange {
+        SourceRange {
+            start: self.hir.written_position(start),
+            end: self.hir.written_position(end),
+        }
+    }
+
     pub(super) fn compute_text_range(&self, function: FnId) -> SourceRange {
         let Some(end) = self.find_end_of_function(function) else {
             return SourceRange::default();
         };
-        SourceRange {
-            start: self.hir[function].text_start,
-            end,
-        }
+        self.written_range(self.hir[function].text_start, end)
     }
 }
 
@@ -167,7 +184,7 @@ pub(crate) fn create_header(
     Function {
         name: None,
         module: file.module_id(),
-        position,
+        position: file.hir.written_position(position),
         source_range: SourceRange::default(),
         kind,
         role: file.source.function_role(),
@@ -194,6 +211,40 @@ pub(crate) fn declare_source_function(
     declare(file, function, |file| {
         create_source_header(file, function, name)
     })
+}
+
+/// A function that shows itself as `function` and captures nothing.
+pub(in crate::lower) fn create_header_of_copy(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    key: FunctionKey,
+    function: FnId,
+    name: StringId,
+) -> Function {
+    let mut header = create_source_header(file, function, Some(name));
+    header.captures = file.capture_positions(key);
+    header
+}
+
+pub(in crate::lower) fn create_header_of_missing_function(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+    name: Option<StringId>,
+) -> Function {
+    let flags = match file.is_checked() {
+        true => FunctionFlags::IS_CHECKED,
+        false => FunctionFlags::default(),
+    };
+    Function {
+        name,
+        module: file.module_id(),
+        position: file.hir.written_position(file.hir[function].start),
+        kind: FunctionKind::Plain,
+        role: file.source.function_role(),
+        flags,
+        this_type: DeclaredType::untyped(),
+        results: vec![DeclaredType::untyped()],
+        ..Function::default()
+    }
 }
 
 pub(crate) fn declare_source_function_with(
@@ -276,6 +327,10 @@ fn create_source_header(
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
         header.syntax |= FunctionSyntax::HAS_LIVE_AWAIT;
+    }
+    let wrapped = file.inputs.modules.wrapped();
+    if wrapped.runs_once_per_closure(source.file, function) {
+        header.syntax |= FunctionSyntax::RUNS_ONCE_PER_CLOSURE;
     }
     header.source_range = file.compute_text_range(function);
     let asked = file.find_originals_asked_for(function, header.source_range);

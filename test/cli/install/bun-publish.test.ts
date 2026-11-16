@@ -3238,6 +3238,30 @@ describe.concurrent("bin in the published manifest", () => {
     expect(captured.versions["1.0.0"].bin).toEqual(expected);
   });
 
+  test.skipIf(isWindows)("names that end with a backslash", async () => {
+    let captured: any = null;
+    using mock = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") captured = await req.json();
+        return new Response("OK", { status: 200 });
+      },
+    });
+    using dir = tempDir("publish-bin-backslash", {
+      "bunfig.toml": `[install.registry]\nurl = "http://localhost:${mock.port}"\ntoken = "unused"\n`,
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bin" } }),
+      bin: { "x\\\\\\\\\\": "", "sub\\": { "b.js": "" } },
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(captured.versions["1.0.0"].bin).toMatchObject({
+      "x\\\\\\\\\\": "bin/x\\\\\\\\\\",
+      "b.js": "bin/sub\\/b.js",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // No matter which folder the command runs in.
   test.each([
     [{ directories: { bin: "bin" } }, { "tool-cmd": "bin/tool-cmd", "other-cmd": "bin/more/other-cmd" }, ""],

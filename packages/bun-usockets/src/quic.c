@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 #else
 #include <ws2tcpip.h>
 #endif
@@ -821,9 +822,7 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 #endif
 
-/* Called once via a thread-safe static local in uws_h3_create_app
- * (libuwsockets_h3.cpp), so quic.c stays free of pthread/call_once. */
-void us_quic_global_init(void) {
+static void us_quic_global_init(void) {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
 #ifdef BUN_DEBUG
     if (getenv("BUN_DEBUG_lsquic")) {
@@ -831,6 +830,25 @@ void us_quic_global_init(void) {
         lsquic_set_log_level("debug");
     }
 #endif
+}
+
+#ifdef _WIN32
+static BOOL CALLBACK us_quic_global_init_win(PINIT_ONCE o, PVOID p, PVOID *c) {
+    (void) o; (void) p; (void) c;
+    us_quic_global_init();
+    return TRUE;
+}
+#endif
+
+lsquic_engine_t *us_quic_engine_new(unsigned flags, const struct lsquic_engine_api *api) {
+#ifdef _WIN32
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&once, us_quic_global_init_win, NULL, NULL);
+#else
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, us_quic_global_init);
+#endif
+    return lsquic_engine_new(flags, api);
 }
 
 static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
@@ -889,7 +907,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     api.ea_hsi_if = &us_quic_hset_if;
     api.ea_hsi_ctx = ctx;
 
-    ctx->engine = lsquic_engine_new(LSENG_HTTP_SERVER, &api);
+    ctx->engine = us_quic_engine_new(LSENG_HTTP_SERVER, &api);
     if (!ctx->engine) {
         SSL_CTX_free(ssl);
         us_free(ctx);
@@ -1437,7 +1455,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     api.ea_hsi_if = &us_quic_hset_if;
     api.ea_hsi_ctx = ctx;
 
-    ctx->engine = lsquic_engine_new(LSENG_HTTP, &api);
+    ctx->engine = us_quic_engine_new(LSENG_HTTP, &api);
     if (!ctx->engine) {
         SSL_CTX_free(ssl);
         us_free(ctx);
@@ -1604,12 +1622,12 @@ int us_quic_socket_context_connect(
     struct addrinfo_request *ai_req = NULL;
     int cached = Bun__addrinfo_get(ctx->loop, host, (uint16_t) port, &ai_req) == 0;
     if (cached) {
-        struct addrinfo_result *res = Bun__addrinfo_getRequestResult(ai_req);
-        if (res->error || !res->entries) {
+        struct addrinfo_result res = Bun__addrinfo_getRequestResult(ai_req);
+        if (res.error || !res.entries) {
             Bun__addrinfo_freeRequest(ai_req, 1);
             return -1;
         }
-        *out_qs = us_quic_connect_result(ctx, res, port, sni, reject_unauthorized);
+        *out_qs = us_quic_connect_result(ctx, &res, port, sni, reject_unauthorized);
         Bun__addrinfo_freeRequest(ai_req, *out_qs == NULL);
         return *out_qs ? 1 : -1;
     }
@@ -1642,9 +1660,9 @@ us_quic_socket_t *us_quic_pending_connect_resolved(
     struct us_quic_pending_connect_s *pc)
 {
     us_quic_socket_t *qs = NULL;
-    struct addrinfo_result *res = Bun__addrinfo_getRequestResult(pc->ai_req);
-    if (!res->error && res->entries) {
-        qs = us_quic_connect_result(pc->ctx, res, pc->port, pc->sni,
+    struct addrinfo_result res = Bun__addrinfo_getRequestResult(pc->ai_req);
+    if (!res.error && res.entries) {
+        qs = us_quic_connect_result(pc->ctx, &res, pc->port, pc->sni,
             pc->reject_unauthorized);
     }
     Bun__addrinfo_freeRequest(pc->ai_req, qs == NULL);

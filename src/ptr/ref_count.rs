@@ -146,14 +146,8 @@ pub struct RefCount<T: RefCounted> {
 
 impl<T: RefCounted> RefCount<T> {
     pub fn init() -> Self {
-        Self::init_exact_refs(1)
-    }
-
-    /// Caller will have to call `deref()` exactly `count` times to destroy.
-    pub fn init_exact_refs(count: u32) -> Self {
-        debug_assert!(count > 0);
         Self {
-            raw_count: Cell::new(count),
+            raw_count: Cell::new(1),
             thread: ThreadLock::init_locked_if_non_comptime(),
             #[cfg(debug_assertions)]
             debug: DebugData::empty(),
@@ -276,7 +270,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     }
 
     /// Caller will have to call `deref()` exactly `count` times to destroy.
-    pub fn init_exact_refs(count: u32) -> Self {
+    fn init_exact_refs(count: u32) -> Self {
         debug_assert!(count > 0);
         Self {
             raw_count: AtomicU32::new(count),
@@ -469,19 +463,6 @@ pub unsafe trait CellRefCounted: Sized {
             // SAFETY: refcount reached zero; no other holders.
             unsafe { Self::destroy(this) };
         }
-    }
-
-    /// Safe [`deref`](Self::deref) for a `NonNull<Self>` handle.
-    ///
-    /// The single audited `unsafe` lives here in `bun_ptr`, beside the trait
-    /// contract that makes it sound, so callers holding a `NonNull` never
-    /// re-derive the raw-pointer provenance themselves.
-    #[inline]
-    fn deref_nn(this: NonNull<Self>) {
-        // SAFETY: `CellRefCounted` impl contract — `this` is a live,
-        // heap-allocated `Self` whose allocation `destroy` knows how to free;
-        // `NonNull` guarantees non-null. The caller owns one ref.
-        unsafe { Self::deref(this.as_ptr()) };
     }
 }
 
@@ -756,24 +737,6 @@ mod tests {
             assert!((*RefCounted::get_ref_count(t)).has_one_ref());
             assert_eq!(*(*t).payload, 7);
             // Last ref: runs `destructor`, freeing the allocation.
-            RefCount::<Thing>::deref(t);
-        }
-        assert_eq!(drops(), before + 1);
-    }
-
-    #[test]
-    fn ref_count_init_exact_refs() {
-        let _serial = serial();
-        let before = drops();
-        let t = bun_core::heap::into_raw(Box::new(Thing {
-            ref_count: RefCount::init_exact_refs(3),
-            payload: Box::new(1),
-        }));
-        // SAFETY: `t` is live with three refs; exactly three derefs destroy it.
-        unsafe {
-            RefCount::<Thing>::deref(t);
-            RefCount::<Thing>::deref(t);
-            assert_eq!(drops(), before);
             RefCount::<Thing>::deref(t);
         }
         assert_eq!(drops(), before + 1);

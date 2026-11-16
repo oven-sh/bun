@@ -531,6 +531,11 @@ fn a_call_that_defines_names() {
             "a, marker true",
         ),
         (MARKING_HELPERS, EXPORT_OF_A, "get a, marker true"),
+        (
+            SWC_EXPORT,
+            "Object.defineProperty(exports, '__esModule', { value: true }), _export(exports, { a: function() { return 1; } }), console.log(1);",
+            "get a, marker true",
+        ),
     ] {
         assert_eq!(summarize(&format!("{helpers}{source}")), said, "{source}");
     }
@@ -919,6 +924,20 @@ fn a_star_written_in_line_is_the_names_of_the_required_file() {
             assert_eq!(program.member("m.cjs", "b"), "k.cjs b");
         },
     );
+    let older = module.replace(
+        "  if (key in exports && exports[key] === _k[key]) return;\n",
+        "",
+    );
+    let named = |star: &str| star.replace("get: function ()", "get: function get()");
+    for star in [named(&module), named(&older), older] {
+        with_program(
+            &[("main.cjs", main), ("m.cjs", &star[..]), leaf],
+            |program| {
+                assert!(program.keeps_names("m.cjs"), "{star}");
+                assert_eq!(program.member("m.cjs", "b"), "k.cjs b", "{star}");
+            },
+        );
+    }
     for changed in [
         module.replace("key === \"default\"", "key === \"b\""),
         module.replace("return _k[key];", "return _k.b;"),
@@ -949,6 +968,148 @@ fn a_star_written_in_line_is_the_names_of_the_required_file() {
     ] {
         let files = [("main.cjs", main), ("m.cjs", &changed[..]), leaf];
         let keeps_names = with_program(&files, |program| program.keeps_names("m.cjs"));
+        assert!(!keeps_names, "{changed}");
+    }
+}
+
+#[test]
+fn star_export_of_each_tool_lists_names() {
+    const SWC: &str = r#"_export_star(require("./k.cjs"), exports);
+function _export_star(from, to) {
+    Object.keys(from).forEach(function(k) {
+        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {
+            Object.defineProperty(to, k, {
+                enumerable: true,
+                get: function() {
+                    return from[k];
+                }
+            });
+        }
+    });
+    return from;
+}
+"#;
+    const ROLLUP: &str = "var k = require('./k.cjs');
+Object.keys(k).forEach(function (k$1) {
+    if (k$1 !== 'default' && !Object.prototype.hasOwnProperty.call(exports, k$1)) Object.defineProperty(exports, k$1, {
+        enumerable: true,
+        get: function () { return k[k$1]; }
+    });
+});
+";
+    const BABEL: &str = r#"var _exportNames = { own: true };
+exports.own = own;
+var _k = require("./k.cjs");
+Object.keys(_k).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
+  if (key in exports && exports[key] === _k[key]) return;
+  Object.defineProperty(exports, key, {
+    enumerable: true,
+    get: function () {
+      return _k[key];
+    }
+  });
+});
+function own() {}
+"#;
+    const ESBUILD: &str = r#"var m_exports = {};
+module.exports = __toCommonJS(m_exports);
+__reExport(m_exports, require("./k.cjs"), module.exports);
+0 && (module.exports = { ...require("./k.cjs") });
+"#;
+    let main = "const m = require('./m.cjs'); console.log(m.b);";
+    let marked = format!("{MARKER} exports.b = 1;");
+    let keeps_names = |module: &str, leaf: &str| {
+        let files = [("main.cjs", main), ("m.cjs", module), ("k.cjs", leaf)];
+        with_program(&files, |program| {
+            let keeps = program.keeps_names("m.cjs");
+            if keeps {
+                assert_eq!(program.member("m.cjs", "b"), "k.cjs b", "{module}");
+            }
+            keeps
+        })
+    };
+    let swc = format!("{MARKER} {SWC}");
+    let rollup = format!("{MARKER} {ROLLUP}");
+    let babel = format!("{MARKER} {BABEL}");
+    let esbuild = format!("{ESBUILD_HELPERS}{ESBUILD}");
+    for module in [&swc, &rollup, &babel, &esbuild] {
+        assert!(keeps_names(module, &marked), "{module}");
+    }
+    assert!(keeps_names(ROLLUP, &marked));
+    for module in [ROLLUP, &swc, &rollup, &esbuild] {
+        assert!(keeps_names(module, "exports.b = 1;"), "{module}");
+    }
+    assert!(!keeps_names(
+        ROLLUP,
+        "exports.__esModule = true; exports.b = 1;"
+    ));
+    let hidden = format!(
+        "{MARKER} Object.defineProperty(exports, 'c', {{ value: 1, writable: true }}); exports.b = 1;"
+    );
+    assert!(keeps_names(&swc, &hidden));
+    assert!(!keeps_names(&esbuild, &hidden));
+    for changed in [
+        swc.replace("k !== \"default\"", "k !== \"b\""),
+        swc.replace("return from[k];", "return from.b;"),
+        swc.replace("Object.keys(from)", "Object.getOwnPropertyNames(from)"),
+        rollup.replace("return k[k$1];", "return k;"),
+        rollup.replace(
+            "var k = require('./k.cjs');",
+            "var k = require('./k.cjs'); k = {};",
+        ),
+        babel.replace(
+            "function own() {}",
+            "function own() {} _exportNames.b = true;",
+        ),
+        babel.replace(
+            "var _exportNames = { own: true };",
+            "var _exportNames = { own: true, ...globalThis };",
+        ),
+        esbuild.replace(
+            "var m_exports = {};",
+            "var m_exports = {}; console.log(m_exports);",
+        ),
+        esbuild.replace("__reExport(m_exports,", "__reExport(globalThis,"),
+    ] {
+        assert!(!keeps_names(&changed, &marked), "{changed}");
+    }
+}
+
+#[test]
+fn swc_literal_getters_are_names() {
+    let module = format!(
+        "{MARKER}
+function _export(target, all) {{
+    for(var name in all)Object.defineProperty(target, name, {{
+        enumerable: true,
+        get: Object.getOwnPropertyDescriptor(all, name).get
+    }});
+}}
+_export(exports, {{
+    get a () {{
+        return a;
+    }},
+    get b () {{
+        return b;
+    }}
+}});
+const a = 1;
+function b() {{ return a; }}
+"
+    );
+    with_required(&module, |program| {
+        assert!(program.keeps_names("m.cjs"));
+        assert_eq!(program.member("m.cjs", "a"), "m.cjs#a");
+        assert_eq!(program.member("m.cjs", "b"), "m.cjs#b");
+    });
+    for changed in [
+        module.replace("get a ()", "a: function()"),
+        module.replace("return a;\n    },", "return a;\n    }, set a (v) {},"),
+        module.replace(".get\n", ".set\n"),
+    ] {
+        let keeps_names = with_required(&changed, |program| program.keeps_names("m.cjs"));
         assert!(!keeps_names, "{changed}");
     }
 }
@@ -1557,6 +1718,52 @@ console.log(require_a().a);";
         shapes_of_inner_modules(of_enclosing_function),
         [Shape::Value]
     );
+}
+
+fn shapes_of_bodies(helpers: &str, body: &str) -> Vec<Shape> {
+    let main = format!(
+        "(() => {{ var e = {{ 1: (e, t, i) => {{ {body} }} }}, t = {{}};
+function i(n) {{ var r = t[n]; if (void 0 !== r) return r.exports; var s = t[n] = {{ exports: {{}} }}; return e[n](s, s.exports, i), s.exports }}
+{helpers}
+console.log(i(1).a);
+}})();"
+    );
+    with_graph(&[("main.cjs", main.as_str())], |graph, input| {
+        let file = file_named(input, "main.cjs");
+        let callbacks = graph.inner_modules(file).iter();
+        callbacks
+            .map(|&callback| graph.shape(ModuleRef::Inner { file, callback }))
+            .collect()
+    })
+}
+
+#[test]
+fn webpack_getter_helper_defines_names() {
+    let define = "i.d = (e, t) => { for (var n in t) i.o(t, n) && !i.o(e, n) && Object.defineProperty(e, n, { enumerable: !0, get: t[n] }) };";
+    let owns = "i.o = (e, t) => Object.prototype.hasOwnProperty.call(e, t);";
+    let mark = "i.r = e => { \"undefined\" != typeof Symbol && Symbol.toStringTag && Object.defineProperty(e, Symbol.toStringTag, { value: \"Module\" }), Object.defineProperty(e, \"__esModule\", { value: !0 }) };";
+    let body = "i.r(t); i.d(t, { a: () => a }); class a {}";
+    let helpers = format!("{define} {owns} {mark}");
+    assert_eq!(shapes_of_bodies(&helpers, body), [Shape::Names]);
+    let in_one_statement = helpers.replace(';', ",").replace("},", "}") + " void 0;";
+    let in_one_statement = in_one_statement.replace("} i.", "}, i.");
+    assert_eq!(shapes_of_bodies(&in_one_statement, body), [Shape::Names]);
+    for helpers in [
+        format!("{define} {mark}"),
+        format!("{define} {owns}"),
+        format!("{define} {owns} {mark} i.o = () => true;"),
+        format!("{define} {owns} {mark} globalThis.later = () => {{ i.d = null; }};"),
+        format!("console.log(i(1)); {define} {owns} {mark}"),
+        format!("if (globalThis.on) {{ {define} }} {owns} {mark}"),
+    ] {
+        assert_ne!(
+            shapes_of_bodies(&helpers, body),
+            [Shape::Names],
+            "{helpers}"
+        );
+    }
+    let defined_before = "t.a = 1; i.d(t, { a: () => 2 });";
+    assert_eq!(shapes_of_bodies(&helpers, defined_before), [Shape::Value]);
 }
 
 #[test]

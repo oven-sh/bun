@@ -368,6 +368,142 @@ it.skipIf(!isWindows)("--watch reports an error when its executable was renamed"
   }
 });
 
+// The listeners of the kill signal are the last JavaScript that runs before the process starts again. A signal that
+// arrives while they run used to be queued for a loop that did not turn again.
+for (const [how, statement] of [
+  ["returns", ""],
+  ["calls process.exit()", "process.exit();"],
+]) {
+  it.skipIf(isWindows)(
+    `a SIGTERM that arrives while --watch restarts the process ends it (the listener ${how})`,
+    async () => {
+      using dir = tempDir("watch-sigterm-during-restart", {
+        "script.js": `
+          const { spawnSync } = require("node:child_process");
+          process.on("SIGTERM", () => {
+            spawnSync("kill", ["-TERM", String(process.pid)]);
+            ${statement}
+          });
+          console.log("ready");
+          setInterval(() => {}, 1000);
+        `,
+      });
+      const proc = (watchee = spawn({
+        cmd: [bunExe(), "--watch", "--no-clear-screen", "script.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      }));
+      const { waitFor, release, output } = stdoutWaiter(proc);
+      await waitFor("ready\n");
+      const path = join(String(dir), "script.js");
+      await Bun.write(path, readFileSync(path, "utf8") + "\n");
+      await waitFor("ready\nready\n").catch(() => proc.exited);
+      release();
+      expect({ output: output(), signalCode: proc.signalCode }).toEqual({ output: "ready\n", signalCode: "SIGTERM" });
+    },
+  );
+
+  // Node restarts the script whatever its listener does.
+  it.skipIf(isWindows)(
+    `a SIGTERM that the listener sends to its own process does not stop the restart (the listener ${how})`,
+    async () => {
+      using dir = tempDir("watch-sigterm-to-self-during-restart", {
+        "script.js": `
+          process.on("SIGTERM", () => {
+            process.kill(process.pid, "SIGTERM");
+            ${statement}
+          });
+          console.log("ready");
+          setInterval(() => {}, 1000);
+        `,
+      });
+      const proc = (watchee = spawn({
+        cmd: [bunExe(), "--watch", "--no-clear-screen", "script.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      }));
+      const { waitFor, release } = stdoutWaiter(proc);
+      await waitFor("ready\n");
+      const path = join(String(dir), "script.js");
+      await Bun.write(path, readFileSync(path, "utf8") + "\n");
+      await waitFor("ready\nready\n");
+      release();
+    },
+  );
+}
+
+it.skipIf(isWindows)("a SIGTERM whose listener has run does not stop the next restart", async () => {
+  using dir = tempDir("watch-sigterm-seen", {
+    "script.js": `
+      process.on("SIGTERM", () => setImmediate(() => console.log("seen")));
+      console.log("ready");
+      setInterval(() => {}, 1000);
+    `,
+  });
+  const proc = (watchee = spawn({
+    cmd: [bunExe(), "--watch", "--watch-kill-signal", "SIGINT", "--no-clear-screen", "script.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  }));
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("ready\n");
+  proc.kill("SIGTERM");
+  await waitFor("ready\nseen\n");
+  const path = join(String(dir), "script.js");
+  await Bun.write(path, readFileSync(path, "utf8") + "\n");
+  await waitFor("ready\nseen\nready\n");
+  release();
+});
+
+// The watcher's thread starts the process again if the kill signal has no listeners, and if the script is busy.
+for (const killSignal of ["SIGINT", "SIGTERM"]) {
+  for (const sender of ["another process", "the script"]) {
+    it.skipIf(isWindows)(
+      `a SIGTERM that ${sender} sent ${sender === "the script" ? "does not stop" : "ends"} a busy script that --watch restarts (the kill signal is ${killSignal})`,
+      async () => {
+        using dir = tempDir("watch-sigterm-of-busy-script", {
+          "script.js": `
+            process.on("SIGTERM", () => {});
+            ${sender === "the script" ? `process.kill(process.pid, "SIGTERM");` : ""}
+            console.log("ready");
+            const end = Date.now() + 30_000;
+            while (Date.now() < end) {}
+          `,
+        });
+        const proc = (watchee = spawn({
+          cmd: [bunExe(), "--watch", "--watch-kill-signal", killSignal, "--no-clear-screen", "script.js"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "ignore",
+        }));
+        const { waitFor, release, output } = stdoutWaiter(proc);
+        await waitFor("ready\n");
+        if (sender === "another process") proc.kill("SIGTERM");
+        const path = join(String(dir), "script.js");
+        await Bun.write(path, readFileSync(path, "utf8") + "\n");
+        await waitFor("ready\nready\n").catch(() => proc.exited);
+        release();
+        expect({ output: output(), signalCode: proc.signalCode }).toEqual(
+          sender === "the script"
+            ? { output: "ready\nready\n", signalCode: null }
+            : { output: "ready\n", signalCode: "SIGTERM" },
+        );
+      },
+    );
+  }
+}
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself

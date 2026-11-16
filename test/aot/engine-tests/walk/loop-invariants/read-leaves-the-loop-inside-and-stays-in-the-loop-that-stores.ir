@@ -1,11 +1,9 @@
-# the loop around stores into the field and the loop inside does not. The read stands in front of the loop inside, in a block of the loop around
+# the loop around stores into the field and the loop inside does not. The value of the field is carried around the loop: it is read once, in front of both
 # class Box { x: number; constructor(x: number) { this.x = x; } }
 # function sum(o: Box, n: number) { let s = 0; for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) s = (s + o.x) | 0; o.x = i; } return s; }
 # console.log(sum(new Box(2), 5));
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK-NOT: GetSlot
-# CHECK: isLoopHead=true
 # CHECK: = GetSlot {{*}}key="x"
 # CHECK: isLoopHead=true
 # CHECK-NOT: GetSlot

@@ -52,5 +52,4 @@ pub use stream::Stream;
 pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 #[allow(non_upper_case_globals)]
 pub static live_streams: AtomicU32 = AtomicU32::new(0);
-pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;

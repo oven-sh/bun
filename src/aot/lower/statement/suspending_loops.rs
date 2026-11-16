@@ -1,4 +1,4 @@
-use bun_sema::hir::{ExprId, ExprKind, IdList, NodeData, StmtId, StmtKind, VarKind};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, NodeData, StmtId, StmtKind, UnOp, VarKind};
 use bun_sema::node::Node;
 
 use crate::ir::BlockId;
@@ -17,6 +17,13 @@ pub(in crate::lower) struct SuspendingArm {
     pub(in crate::lower) statement: StmtId,
     pub(in crate::lower) loop_statement: StmtId,
     pub(in crate::lower) resumed: BlockId,
+    pub(in crate::lower) late_continue: Option<LateContinue>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(in crate::lower) struct LateContinue {
+    pub(in crate::lower) test: ExprId,
+    pub(in crate::lower) block: BlockId,
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -231,6 +238,84 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    pub(in crate::lower) fn reads_only_variables(&self, expression: ExprId) -> bool {
+        let hir = self.file.hir;
+        match hir[expression].kind {
+            ExprKind::Ident(_)
+            | ExprKind::This
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_) => true,
+            ExprKind::Unary {
+                op: UnOp::Not | UnOp::Typeof | UnOp::Void,
+                operand,
+            }
+            | ExprKind::NonNull(operand)
+            | ExprKind::AsConst(operand)
+            | ExprKind::As { expr: operand, .. }
+            | ExprKind::Satisfies { expr: operand, .. } => self.reads_only_variables(operand),
+            ExprKind::Binary { op, left, right } => {
+                !matches!(op, BinOp::In | BinOp::Instanceof)
+                    && self.reads_only_variables(left)
+                    && self.reads_only_variables(right)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn begin_late_continue(&mut self, test: ExprId, yes: StmtId) {
+        let hir = self.file.hir;
+        let continues = match hir[yes].kind {
+            StmtKind::Continue(_) => true,
+            StmtKind::Block(statements) => {
+                statements.len == 1
+                    && matches!(hir[hir.id_at(statements, 0)].kind, StmtKind::Continue(_))
+            }
+            _ => false,
+        };
+        if !continues
+            || !self
+                .suspending_arm
+                .is_some_and(|arm| arm.part == SuspendingPart::Rest)
+            || !matches!(hir[test].kind, ExprKind::Binary { op: BinOp::Or, .. })
+            || self.file.is_statically_resolved(test)
+        {
+            return;
+        }
+        let operands = self.file.collect_logical_operands(test, BinOp::Or);
+        if !self.reads_only_variables(operands[0])
+            || operands
+                .iter()
+                .all(|&operand| self.reads_only_variables(operand))
+        {
+            return;
+        }
+        let block = self.create_block();
+        if let Some(arm) = &mut self.suspending_arm {
+            arm.late_continue = Some(LateContinue { test, block });
+        }
+    }
+
+    pub(super) fn end_late_continue(&mut self, test: ExprId, yes: StmtId) {
+        let Some(arm) = self.suspending_arm else {
+            return;
+        };
+        let Some(late) = arm.late_continue.filter(|late| late.test == test) else {
+            return;
+        };
+        self.continue_in(late.block);
+        let target = self.set_continue_target(arm.loop_statement, arm.resumed);
+        self.lower_statement(yes);
+        if let Some(target) = target {
+            self.set_continue_target(arm.loop_statement, target);
+        }
+        if let Some(arm) = &mut self.suspending_arm {
+            arm.late_continue = None;
+        }
+    }
+
     pub(super) fn lower_suspending_arm(
         &mut self,
         arm: SuspendingArm,
@@ -241,11 +326,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let other = self.create_block();
         self.lower_condition(test, suspending, other);
         self.continue_in(suspending);
-        self.push_continue_target(arm.loop_statement, arm.resumed);
+        let cleans_up = self.cleans_up_before_next_iteration(arm.loop_statement);
+        let target = self.set_continue_target(arm.loop_statement, arm.resumed);
         self.lower_statement(yes);
         self.lower_statements(behind);
-        self.pop_jump_target();
-        self.jump(arm.resumed);
+        self.emit_continue(arm.loop_statement);
+        if !cleans_up && let Some(target) = target {
+            self.set_continue_target(arm.loop_statement, target);
+        }
 
         self.continue_in(other);
         if no.is_some() {

@@ -1762,6 +1762,11 @@ ${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${indent(cppDispatch(f
 }`;
 }
 
+function creatorOf(fn: FunctionDefinition): string {
+  if (fn.replacesBoundFunction) return "createBoundFunctionReplacement";
+  return fn.namedAsBound ? "createFunctionNamedAsBound" : "createFunction";
+}
+
 function cppSourceForFunction(fn: FunctionDefinition, guard: Guard | null): string {
   if (fn.isValue) {
     const [signature] = fn.signatures;
@@ -1787,7 +1792,7 @@ ${fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature
 ${fn.exportName ? hostFunction : `namespace Bun::Bindgen::Generated::${fn.origin!.namespace} {\n${hostFunction}\n}`}
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${fn.origin!.stem}_${fn.name}(Zig::GlobalObject* globalObject)
 {
-    return Bun::Bindgen::${fn.namedAsBound ? "createFunctionNamedAsBound" : "createFunction"}(globalObject, ${fn.length}, ${asciiLiteral(fn.jsName)}, ${cppFunctionSymbol(fn)});
+    return Bun::Bindgen::${creatorOf(fn)}(globalObject, ${fn.length}, ${asciiLiteral(fn.jsName)}, ${cppFunctionSymbol(fn)});
 }
 `;
 }
@@ -2317,6 +2322,7 @@ function rustForPayload(type: ClassType): string {
   return `${rustDeclareCreateCell(type)}// SAFETY: the offset is \`static_assert\`ed against the C++ cell.
 unsafe impl bindgen::JsPayload for ${rustPath} {
     const PAYLOAD_OFFSET: usize = ${offsetOfPayload(type)};
+    const SHARED_THIS: bool = ${type.sharedThis};
     #[inline(always)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void> {
         // SAFETY: forwarded.

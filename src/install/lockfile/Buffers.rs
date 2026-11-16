@@ -211,16 +211,15 @@ pub(crate) fn save(
 
         #[cfg(debug_assertions)]
         {
-            use bun_install::dependency::version::Tag;
             for dep in remaining {
-                let path = match dep.version.tag {
-                    Tag::Folder => dep.version.folder(),
-                    Tag::Workspace => dep.version.workspace(),
-                    Tag::Symlink => dep.version.symlink(),
-                    Tag::Tarball => match &dep.version.tarball().uri {
-                        crate::dependency::URI::Local(local) => local,
-                        _ => continue,
-                    },
+                let path = match &dep.version.value {
+                    dependency::Value::Folder(path)
+                    | dependency::Value::Workspace(path)
+                    | dependency::Value::Symlink(path)
+                    | dependency::Value::Tarball(dependency::TarballInfo {
+                        uri: dependency::URI::Local(path),
+                        ..
+                    }) => path,
                     _ => continue,
                 };
                 let path = lockfile.str(path);

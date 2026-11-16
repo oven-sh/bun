@@ -1003,6 +1003,7 @@ console.log(answer);
       240_000,
     );
 
+    // One object of eight keeps its one field, so no object is made with room for the others.
     inPart(test)(
       "a function that is entered where the range is full gets the RangeError of the range",
       async () => {
@@ -1058,7 +1059,7 @@ function widen(o, i) {
 function fill() {
   for (let i = 0; i < objects.length; i++) {
     try {
-      widen(objects[i], i);
+      if (i % 8) widen(objects[i], i);
       turns += depth(3);
     } catch (error) {
       return "inside " + i + " " + error.name + " " + error.message.slice(0, 30);

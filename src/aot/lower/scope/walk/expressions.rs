@@ -1,4 +1,5 @@
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
+use bun_sema::check::aot::find_super_call;
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
     BinOp, Branches, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId,
@@ -75,6 +76,9 @@ impl Walker<'_, '_> {
                 return;
             }
             _ => return,
+        }
+        if expression == self.literal_of_bodies {
+            return;
         }
         match self.hir[expression].kind {
             ExprKind::Cond { test: tested, .. }
@@ -303,7 +307,9 @@ impl Walker<'_, '_> {
                     CodeUnit::File | CodeUnit::FieldInitializer(_) => None,
                 };
                 let owner = owner.filter(|it| self.walk.functions[it.index()].creator.is_some());
+                let wrapped = self.input.modules.wrapped();
                 if let Some(owner) = owner
+                    && wrapped.require_function(self.input.file) != Some(symbol)
                     && let Some(function) = find_declaration_made_at_first_read(hir, bound, symbol)
                 {
                     let time = self.tick();
@@ -419,6 +425,9 @@ impl Walker<'_, '_> {
 
     fn visit_call(&mut self, expression: ExprId, call: CallId, context: Context) {
         let call = self.hir[call];
+        if self.requests_inner_module(expression, &call) {
+            return;
+        }
         let mut binds_this_for_what_follows = false;
         if matches!(self.hir[call.callee].kind, ExprKind::Super) {
             let scope = context.lexical_scope;
@@ -443,6 +452,10 @@ impl Walker<'_, '_> {
                 self.visit_direct_eval(expression, eval, context);
             }
             self.record_argument_read(&call, context);
+            if let Some(written) = find_super_call(self.hir, self.bound, expression) {
+                self.use_new_target(context);
+                self.record_symbol_use(context, written.name);
+            }
             let loads_module = self.evaluates_inner_module(expression, &call)
                 || ((self.walk.has_wrapper_parameters || self.walk.has_values_of_each_run)
                     && self.is_bound_module_call(expression, &call));
@@ -457,6 +470,11 @@ impl Walker<'_, '_> {
                 && self.is_require_seen(expression)
             {
                 let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+                self.record_slot_use(context.function, self.file_scope, slot);
+            }
+            let compares_callee = is_site_of_require && !loads_module;
+            if compares_callee && self.is_value_of_run(CommonJsVariable::Require, context) {
+                let slot = ScopeSlot::CommonJs(CommonJsVariable::Require);
                 self.record_slot_use(context.function, self.file_scope, slot);
             }
             if let Some((function, _)) = function_named_by_call(self.hir, self.bound, &call)
@@ -527,8 +545,19 @@ impl Walker<'_, '_> {
         }
     }
 
+    fn requests_inner_module(&self, expression: ExprId, call: &Call) -> bool {
+        let (modules, file) = (self.input.modules, self.input.file);
+        call.args.len() == 2
+            && !modules.inner_modules(file).is_empty()
+            && modules.requested_module(file, expression).is_some()
+    }
+
     fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {
-        if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
+        if self.input.modules.inner_modules(self.input.file).is_empty() {
+            return false;
+        }
+        let wrapped = self.input.modules.wrapped();
+        if call.args.len() > 1 && !wrapped.is_start_of_bundle(self.input.file, expression) {
             return false;
         }
         match self.input.modules.stored_site(self.input.file, expression) {

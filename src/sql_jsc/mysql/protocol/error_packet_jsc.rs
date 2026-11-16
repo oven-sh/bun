@@ -30,9 +30,9 @@ pub(crate) trait ErrorPacketJsc {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
 }
 
-impl ErrorPacketJsc for ErrorPacket {
+impl ErrorPacketJsc for ErrorPacket<'_> {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        let mut msg = self.error_message.slice();
+        let mut msg = self.error_message;
         if msg.is_empty() {
             msg = b"MySQL error occurred";
         }

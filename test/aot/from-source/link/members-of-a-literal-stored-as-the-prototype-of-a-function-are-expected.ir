@@ -2,7 +2,7 @@
 # So the summary knows it as what a read of that `prototype` gives: a value under a name is a store on the prototype object, a getter or a setter a definition there, as a descriptor that is written in the body lays one.
 # If a getter cost the literal that, no row would list what it holds, and no method beside the getter would be known.
 # The closures of the getters and setters are in sight, so the function and its layout stay, and a method that is written once is proven.
-# A name that is written again behind the store is not, be it a second function, a descriptor or a value.
+# A name that is written again behind the store is not. Of two functions the one that is stored last is expected; of a descriptor or a value nothing is.
 # f1 = Tally, f2 = Twice, f3 = raise, f4 = lower, f5 = paces, f6 and f7 = level, f11 = k
 # -- source: main.js
 # function Tally() { this.sum = 0; this.steps = 0; }
@@ -38,7 +38,7 @@
 # RUN(KEPT): link members mechanisms=all
 # KEPT: on-prototype L1 "k" function=f11
 # RUN(AGAIN): link members mechanisms=all
-# AGAIN-NOT: "m" expected=
+# AGAIN: on-prototype L1 "m" expected=f12
 # AGAIN-NOT: "m" function=
 # AGAIN-NOT: "g" getter=
 # AGAIN-NOT: "h" getter=

@@ -3,7 +3,7 @@
 # let kept;
 # function last(name) { const l = shelf.get(name); kept = "none"; for (let i = 0; i < l.length; i++) kept = l[i]; return kept; }
 # function find(name, x) { const l = shelf.get(name); for (let i = 0; i < l.length; i++) if (l[i] === x) return i; return -1; }
-# function copy(name) { const l = shelf.get(name), o = new Array(4); for (let i = 0; i < l.length; i++) o[i] = l[i]; return o.join("|"); }
+# function copy(name) { const l = shelf.get(name), o = new Array(4); let sum = 0; for (let i = 0; i < l.length; i++) { o[i] = l[i]; sum += i; } return sum < 0 ? "" : o.join("|"); }
 # function gather(name) { const l = shelf.get(name), o = []; for (let i = 0; i < l.length; i++) o.push(l[i]); return o.length; }
 # function each(name, take) { const l = shelf.get(name); kept = "none"; for (let i = 0; i < l.length; i++) take(l[i]); return kept; }
 # const seen = [];

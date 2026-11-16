@@ -1,7 +1,5 @@
 //! One in-flight request on a multiplexed HTTP/2 `ClientSession`. Owned by the
-//! session's `streams` map; `client` is a weak back-pointer to the `HTTPClient`
-//! that the request belongs to (cleared before any terminal callback so the
-//! deliver loop never dereferences a freed client).
+//! session's `streams` map.
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -12,16 +10,14 @@ use bun_http_types::h2::flow_control::{RecvWindow, SendWindow};
 use bun_http_types::h2::stream::{Event, State, transition};
 
 // `live_streams` lives in the parent module of `h2_client/`.
-use crate::HTTPClient;
+use crate::InFlightRequest;
 
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub(crate) id: u32,
     // BACKREF: the session owns the stream through its `streams` map.
     pub(crate) session: NonNull<super::ClientSession>,
-    // BACKREF: weak back-pointer, cleared before terminal callbacks.
-    // Lifetime-erased — the stream never reads borrowed fields through this.
-    pub(crate) client: Option<NonNull<HTTPClient<'static>>>,
+    pub(crate) client: Option<InFlightRequest>,
     pub(crate) opened_at: Instant,
 
     /// DATA payload accumulated across one onData() pass.
@@ -54,36 +50,8 @@ pub struct Stream {
     pub(crate) send_window: SendWindow,
     /// Unsent suffix of a `.bytes` request body, parked while the send
     /// window is exhausted. Borrows from `client.state.request_body`.
-    // BACKREF: borrows from `client.state.request_body`; `RawSlice` carries
-    // the outlives-holder invariant (client outlives every Stream it owns).
+    // BACKREF: only `write_body` reads it, and it borrows that client.
     pub(crate) pending_body: bun_ptr::RawSlice<u8>,
-}
-
-impl Stream {
-    /// Mutable access to the owning `HTTPClient` while `client` is `Some`.
-    ///
-    /// INVARIANT: `client` is a weak back-pointer set in `attach` and cleared
-    /// (via `take()`) before any terminal callback that could free the
-    /// `AsyncHTTP` embedding it; while `Some`, the client is alive and is a
-    /// disjoint allocation from both this `Stream` and the `ClientSession`.
-    /// HTTP-thread-only.
-    #[inline]
-    pub(crate) fn client_mut(&mut self) -> Option<&mut HTTPClient<'static>> {
-        // Delegates to the shared accessor in `client_session`; see INVARIANT
-        // above (identical to `stream_client_mut`'s invariant).
-        self.client.map(super::client_session::stream_client_mut)
-    }
-
-    /// Shared access to the owning `HTTPClient` while `client` is `Some`.
-    /// See [`Self::client_mut`] for the lifetime invariant.
-    #[inline]
-    pub(crate) fn client_ref(&self) -> Option<&HTTPClient<'static>> {
-        // Same INVARIANT as `client_mut`; route through the shared
-        // `stream_client_mut` accessor (one centralised unsafe) and reborrow
-        // shared.
-        self.client
-            .map(|c| &*super::client_session::stream_client_mut(c))
-    }
 }
 
 impl Drop for Stream {
@@ -96,13 +64,12 @@ impl Stream {
     pub(crate) fn new(
         id: u32,
         session: NonNull<super::ClientSession>,
-        client: Option<NonNull<HTTPClient<'static>>>,
         send_window: SendWindow,
     ) -> Self {
         Self {
             id,
             session,
-            client,
+            client: None,
             opened_at: Instant::now(),
             body_buffer: Vec::new(),
             decoded_headers: Headers::default(),

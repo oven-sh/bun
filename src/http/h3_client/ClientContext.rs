@@ -12,8 +12,8 @@ use bun_uws::quic::context::ConnectResult;
 use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
+use crate::InFlightRequest;
 use crate::ssl_config::SSLConfig;
-use crate::{Carrier, HTTPClient};
 
 use crate::h3_client::h3_client;
 
@@ -59,7 +59,7 @@ impl ClientContext {
     /// INVARIANT: `this` is the leaked-`Box` process-lifetime singleton stored
     /// in `INSTANCE`; all access is HTTP-thread-only, so the returned `&mut`
     /// is the sole live borrow for its (caller-chosen) lifetime. Mirrors the
-    /// `client_mut`/`stream_mut` backref-upgrade helpers in `client_session`.
+    /// `stream_mut` backref-upgrade helper in `client_session`.
     #[inline]
     pub(crate) fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
@@ -90,14 +90,13 @@ impl ClientContext {
         Some(self_)
     }
 
-    /// Find or open a connection to `hostname:port` and queue `client` on it.
-    /// An error leaves `client` on no session, for the caller to fail.
+    /// Find or open a connection to `port` on the host of `client` and queue `client` on it.
     pub(crate) fn connect(
         &mut self,
-        client: &mut HTTPClient,
-        hostname: &[u8],
+        client: InFlightRequest,
         port: u16,
-    ) -> crate::Result<()> {
+    ) -> Result<(), (InFlightRequest, crate::Error)> {
+        let hostname = bun_url::strip_ipv6_brackets(client.url.hostname);
         let reject = client.flags.reject_unauthorized;
         // Same gate as `HTTPThread::connect`: `rejectUnauthorized` alone stays on the default context.
         let tls_props = client
@@ -129,13 +128,17 @@ impl ClientContext {
         // deliberately not `CString::new`, which would reject interior NUL
         // and diverge by failing.
         // Resolution and certificate verification name an IPv6 literal without its brackets.
-        let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
+        let mut host_buf = hostname.to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
         let ssl_ctx = tls_props
             .as_ref()
             .map(|tls| crate::http_thread().quic_ssl_ctx(tls))
-            .transpose()?;
+            .transpose();
+        let ssl_ctx = match ssl_ctx {
+            Ok(ssl_ctx) => ssl_ctx,
+            Err(err) => return Err((client, err)),
+        };
         let sni = tls_props
             .as_ref()
             .and_then(|tls| tls.get().server_name_cstr())
@@ -189,14 +192,12 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                // `fail_session` fails what is queued, and that dispatch frees
-                // the `AsyncHTTP` the caller still holds. Queue nothing.
-                if let Carrier::H3(stream) = client.carrier {
-                    session_mut(session).detach(stream.as_ptr());
-                }
-                let _registry_ref = self.unregister(session_mut(session));
+                let s = session_mut(session);
+                let client = s.pending[0].client.take().expect("enqueued above");
+                s.detach(s.pending[0].as_ptr());
+                let _registry_ref = self.unregister(s);
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-                return Err(crate::Error::ConnectionRefused);
+                return Err((client, crate::Error::ConnectionRefused));
             }
         }
         Ok(())

@@ -18,7 +18,7 @@ use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
 use crate::signals::Field as Signal;
 use crate::ssl_config::{SSLConfig, SharedPtr};
-use crate::{Carrier, HTTPClient, Protocol, StreamProgress};
+use crate::{Carrier, InFlightRequest, Protocol, StreamProgress};
 
 use crate::h3_client::h3_client;
 
@@ -135,14 +135,15 @@ impl ClientSession {
     /// Queue `client` for a stream on this connection. The lsquic stream is
     /// created asynchronously, so the request goes into `pending` until
     /// `onStreamOpen` pops it.
-    pub(crate) fn enqueue(&mut self, client: &mut HTTPClient) {
+    pub(crate) fn enqueue(&mut self, mut client: InFlightRequest) {
         debug_assert!(!self.closed);
         client.flags.protocol = Protocol::Http3;
         client.allow_retry = false;
 
-        let stream = AliasableBox::new(Stream::new(self, client));
+        let mut stream = AliasableBox::new(Stream::new(self));
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
         client.carrier = Carrier::H3(stream.as_non_null());
+        stream.client = Some(client);
         self.pending.push(stream);
 
         if self.handshake_done {
@@ -161,12 +162,10 @@ impl ClientSession {
     /// The producer of the request's stream body has more bytes, or ended it.
     pub(crate) fn stream_request_body(stream_ptr: NonNull<Stream>, message: WriteMessageType) {
         let stream = stream_mut(stream_ptr.as_ptr());
-        let Some(client) = stream.client else {
+        let Some(client) = &mut stream.client else {
             return;
         };
-        let crate::HTTPRequestBody::Stream(body) =
-            &mut client_mut(client).state.original_request_body
-        else {
+        let crate::HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
             return;
         };
         if message == WriteMessageType::LengthMismatch {
@@ -183,21 +182,20 @@ impl ClientSession {
     /// The consumer of the stream's response body takes bytes again.
     pub(crate) fn resume_receive(stream_ptr: NonNull<Stream>) {
         let stream = stream_mut(stream_ptr.as_ptr());
-        let Some(client) = stream.client else {
+        let Some(client) = &mut stream.client else {
             return;
         };
-        let client = client_mut(client);
         // The consumer can be paused again by the time this runs.
         let paused = client.signals.is_receive_paused();
-        if let Some(qs) = stream.qstream_mut() {
-            qs.hold_window(paused);
+        if let Some(qs) = stream.qstream {
+            quic_stream_mut(qs.as_ptr()).hold_window(paused);
         }
         if let Err(err) = client.send_held_body() {
             stream.session_mut().fail(stream_ptr.as_ptr(), err);
         }
     }
 
-    /// Unlink and free `stream`.
+    /// Unlink and free `stream`, whose `client` the caller has taken.
     pub(super) fn detach(&mut self, stream: *mut Stream) {
         self.detach_with(stream, false);
     }
@@ -206,10 +204,6 @@ impl ClientSession {
     fn detach_with(&mut self, stream: *mut Stream, abort: bool) {
         let st = stream_mut(stream);
         debug_assert!(core::ptr::eq(st.session.as_ptr(), self));
-        if let Some(cl) = st.client {
-            client_mut(cl).carrier = Carrier::None;
-        }
-        st.client = None;
         let request_body_done = st.request_body_done;
         if let Some(qs) = st.qstream_mut() {
             *qs.ext::<Stream>() = None;
@@ -232,12 +226,10 @@ impl ClientSession {
     }
 
     pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
-        // Capture the client ptr before detach() invalidates `stream`.
-        let client = stream_mut(stream).client;
+        let client = stream_mut(stream).client.take();
         self.detach_with(stream, true);
-        if let Some(cl) = client {
-            // detach() cleared cl.carrier but the HTTPClient itself is alive.
-            client_mut(cl).fail(err);
+        if let Some(client) = client {
+            client.fail(err);
         }
     }
 
@@ -248,33 +240,26 @@ impl ClientSession {
     /// pooled session goes stale between the `matches()` check and the first
     /// stream open.
     pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
-        // Shaped for Stacked Borrows like `fail` below — `detach()`
-        // re-derives `&mut HTTPClient` from the same raw ptr to clear `carrier`, which
-        // would invalidate any `&mut HTTPClient` held across it. Hold the raw
-        // `client_ptr` across `detach` and only form `&mut` afterward.
         let st = stream_mut(stream);
-        let Some(client_ptr) = st.client else {
+        let Some(mut client) = st.client.take() else {
             return self.fail(stream, err);
         };
-        // `Stream.client` is a live backref while attached; `ParentRef::from`
-        // (NonNull → shared deref) reads the Copy `flags` field without
-        // forming `&mut HTTPClient` across the `detach()` below.
-        let client_ref = bun_ptr::ParentRef::from(client_ptr);
         // An Alt-Svc upgrade whose connection never came up goes back to TCP (RFC 7838 §2.4).
-        if !self.handshake_done && client_ref.flags.forced_protocol != Some(Protocol::Http3) {
+        if !self.handshake_done && client.flags.forced_protocol != Some(Protocol::Http3) {
             self.detach_with(stream, true);
-            return client_mut(client_ptr).h3_upgrade_failed(err);
+            return client.h3_upgrade_failed(err);
         }
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
-        let replay_safe = !st.headers_sent || st.peer_rejected || client_ref.method.is_idempotent();
-        if client_ref.flags.h3_retried || st.is_streaming_body || !replay_safe {
-            return self.fail(stream, err);
+        let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
+        if client.flags.h3_retried || st.is_streaming_body || !replay_safe {
+            self.detach_with(stream, true);
+            return client.fail(err);
         }
         let Some(ctx) = ClientContext::get() else {
-            return self.fail(stream, err);
+            self.detach_with(stream, true);
+            return client.fail(err);
         };
-        // Same backref as above; short-lived write before detach().
-        client_mut(client_ptr).flags.h3_retried = true;
+        client.flags.h3_retried = true;
         // The end of one stream leaves the connection usable, and connect() may
         // pick it again. It must not if the connection is going, or if the
         // origin rejected the request, which it does when it shuts down.
@@ -282,25 +267,17 @@ impl ClientSession {
             self.closed = true;
         }
         let port = self.port;
-        let host: Vec<u8> = self.hostname.clone();
         bun_core::scoped_log!(
             h3_client,
             "retry {}:{} after {}",
-            bstr::BStr::new(&host),
+            bstr::BStr::new(&self.hostname),
             port,
             bstr::BStr::new(err.name()),
         );
         self.detach_with(stream, true);
-        // Formed only after detach() so its Unique tag is not invalidated by
-        // detach()'s aliasing write to `client.carrier`.
-        let client = client_mut(client_ptr);
-        if ClientContext::as_mut(ctx)
-            .connect(client, &host, port)
-            .is_err()
-        {
+        if let Err((client, _)) = ClientContext::as_mut(ctx).connect(client, port) {
             client.h3_upgrade_failed(err);
         }
-        // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
     /// The stream closed without a FIN (`deliver` detaches at the FIN), so a body that already started is truncated.
@@ -308,7 +285,8 @@ impl ClientSession {
         let st = stream_mut(stream);
         if st
             .client
-            .is_some_and(|client| client_mut(client).signals.get(Signal::Aborted))
+            .as_ref()
+            .is_some_and(|client| client.signals.get(Signal::Aborted))
         {
             return self.fail(stream, crate::Error::Aborted);
         }
@@ -332,24 +310,21 @@ impl ClientSession {
     /// machine sees the same call sequence regardless of transport.
     pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
-        let Some(client_ptr) = st.client else {
+        let Some(mut client) = st.client.take() else {
             if done {
                 self.detach(stream);
             }
             return;
         };
-        // NB: `detach()` clears `client.carrier` through this same raw
-        // backref, which pops this `&mut`'s Unique tag under Stacked Borrows —
-        // so every `self.detach(stream)` below that is followed by further
-        // `client` use re-derives a fresh `&mut` from `client_ptr` first.
-        let client = client_mut(client_ptr);
 
         if client.signals.get(Signal::Aborted) {
-            return self.fail(stream, crate::Error::Aborted);
+            self.detach_with(stream, true);
+            return client.fail(crate::Error::Aborted);
         }
 
         if st.status_code == 0 {
             // Only interim responses so far.
+            st.client = Some(client);
             if done {
                 self.retry_or_fail(stream, crate::Error::HTTP3StreamReset);
             }
@@ -364,44 +339,21 @@ impl ClientSession {
         let progress = client.receive_from_stream(head, &st.body_buffer, done);
         st.body_buffer.clear();
         match progress {
-            Ok(StreamProgress::Open { report: false }) => {}
-            Ok(StreamProgress::Open { report: true }) => {
-                if let Err(err) = client.send_progress() {
-                    self.fail(stream, err);
-                }
-            }
+            Ok(StreamProgress::Open) => st.client = Some(client),
             Ok(StreamProgress::Complete) => {
                 self.detach(stream);
-                // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                let client = client_mut(client_ptr);
-                if let Err(err) = client.send_progress() {
-                    client.fail(err);
-                }
+                client.deliver();
             }
             Ok(StreamProgress::Redirect) => {
                 self.detach(stream);
-                // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                client_mut(client_ptr).follow_redirect();
+                client.follow_redirect();
             }
-            Err(err) => self.fail(stream, err),
+            Err(err) => {
+                self.detach_with(stream, true);
+                client.fail(err);
+            }
         }
     }
-}
-
-/// Upgrade a `Stream.client` backref to `&mut HTTPClient`.
-///
-/// INVARIANT: every `NonNull<HTTPClient>` reaching here came from a live
-/// `Stream.client` — an `as_erased_ptr()` of the `HTTPClient` embedded in its
-/// `AsyncHTTP`, which strictly outlives the `Stream`. All h3 callbacks run on
-/// the HTTP thread, so the returned `&mut` is the sole live borrow. Per the
-/// Stacked-Borrows notes in `deliver`/`retry_or_fail`, callers re-derive a
-/// fresh `&mut` here after each `detach()` (which clears `client.carrier`
-/// through this same raw backref) rather than holding one across it.
-/// Routes through the crate-wide [`HTTPClient::from_erased_backref`] accessor
-/// (also used by `encode.rs` / `PendingConnect.rs` for the same backref).
-#[inline]
-pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
-    HTTPClient::from_erased_backref(p)
 }
 
 /// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
@@ -462,7 +414,7 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 /// result is the sole reference to its allocation. Either way the session is a
 /// `heap::into_raw`-boxed allocation disjoint from `ClientContext`, and all
 /// access is HTTP-thread-only, so the returned `&mut` is the sole live borrow
-/// for its scope. Mirrors [`client_mut`]/[`stream_mut`] — centralises the
+/// for its scope. Mirrors [`stream_mut`] — centralises the
 /// `unsafe { &mut *p }` backref upgrade repeated across `ClientContext` /
 /// `PendingConnect`.
 #[inline]

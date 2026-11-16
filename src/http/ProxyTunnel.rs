@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ops::ControlFlow::{self, Continue};
 use core::ptr::{NonNull, addr_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -9,9 +10,9 @@ use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
-use crate::internal_state::{HTTPStage, Stage};
-use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, SSLWrapper, WriteDataError};
-use crate::{AlpnOffer, Carrier, HTTPClient};
+use crate::internal_state::HTTPStage;
+use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, SSLWrapper};
+use crate::{AlpnOffer, Carrier, HTTPClient, NextStep};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
@@ -35,6 +36,8 @@ type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
     pub(crate) wrapper: Option<ProxyTunnelWrapper>,
+    /// Set by the callbacks of `wrapper`, which return nothing; taken by `start`, `on_writable`, `receive` and `write`.
+    next_step: Cell<ControlFlow<NextStep>>,
     /// Property of the inner TLS session, not the owning client. Captured from
     /// the client in detachOwner() and restored to the next client in adopt()
     /// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
@@ -64,6 +67,7 @@ impl Default for ProxyTunnel {
         LIVE_TUNNELS.fetch_add(1, Ordering::Relaxed);
         Self {
             wrapper: None,
+            next_step: Cell::new(Continue(())),
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
             ref_count: Cell::new(1),
@@ -92,6 +96,25 @@ impl ProxyTunnel {
         // SAFETY: see INVARIANT above. Projects only the `wrapper` field; no
         // intermediate `&Self` is formed.
         unsafe { (*addr_of!((*this).wrapper)).as_ref() }
+    }
+
+    /// Shared access to `next_step` (disjoint from `wrapper`).
+    #[inline]
+    fn next_step_of<'a>(this: NonNull<Self>) -> &'a Cell<ControlFlow<NextStep>> {
+        // SAFETY: see [`Self::wrapper_ref`].
+        unsafe { &*addr_of!((*this.as_ptr()).next_step) }
+    }
+
+    #[inline]
+    fn maybe_set_next_step(this: NonNull<Self>, flow: ControlFlow<NextStep>) {
+        if flow.is_break() {
+            Self::next_step_of(this).set(flow);
+        }
+    }
+
+    #[inline]
+    fn take_next_step(this: NonNull<Self>) -> ControlFlow<NextStep> {
+        Self::next_step_of(this).replace(Continue(()))
     }
 
     /// Bump the intrusive refcount and return a guard that releases it on Drop.
@@ -227,7 +250,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
 
             if report_progress {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                progress_update_for_proxy_socket(ctx);
+                progress_update_for_proxy_socket(ctx, proxy_nn);
                 return;
             }
         }
@@ -247,17 +270,18 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
 
             if report_progress {
                 // `this` dead (NLL); see Body arm.
-                progress_update_for_proxy_socket(ctx);
+                progress_update_for_proxy_socket(ctx, proxy_nn);
                 return;
             }
         }
         HTTPStage::ProxyHeaders => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData proxy_headers");
-            match this.carrier {
+            let flow = match this.carrier {
                 Carrier::Tls(socket) => this.handle_on_data_headers::<true>(decoded_data, socket),
                 Carrier::Tcp(socket) => this.handle_on_data_headers::<false>(decoded_data, socket),
-                _ => {}
-            }
+                _ => Continue(()),
+            };
+            ProxyTunnel::maybe_set_next_step(proxy_nn, flow);
         }
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
@@ -303,7 +327,6 @@ fn on_handshake(
             return;
         }
         if this.wants_server_identity_check() {
-            // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
             // Assert the wrapper is Some, then silently return
             // (no debug_assert) on the ssl-None sub-case.
             debug_assert!(ProxyTunnel::wrapper_ref(proxy_nn.as_ptr()).is_some());
@@ -314,31 +337,17 @@ fn on_handshake(
             // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
             // SSLWrapper for the open inner TLS connection (NonNull invariant).
             let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
-            match this.carrier {
-                Carrier::Tls(socket) => {
-                    if !this.check_server_identity::<true>(socket, ssl, false) {
-                        scoped_log!(
-                            http_proxy_tunnel,
-                            "ProxyTunnel onHandshake checkServerIdentity failed"
-                        );
-                        // checkServerIdentity already called closeAndFail()
-                        // → fail() → result callback, which may have
-                        // destroyed the AsyncHTTP that embeds `this`. Do not
-                        // touch `this` after a `false` return.
-                        return;
-                    }
-                }
-                Carrier::Tcp(socket) => {
-                    if !this.check_server_identity::<false>(socket, ssl, false) {
-                        scoped_log!(
-                            http_proxy_tunnel,
-                            "ProxyTunnel onHandshake checkServerIdentity failed"
-                        );
-                        // see Tls arm — `this` may be freed here.
-                        return;
-                    }
-                }
-                _ => {}
+            let flow = match this.carrier {
+                Carrier::Tls(socket) => this.check_server_identity::<true>(socket, ssl, false),
+                Carrier::Tcp(socket) => this.check_server_identity::<false>(socket, ssl, false),
+                _ => Continue(()),
+            };
+            if flow.is_break() {
+                scoped_log!(
+                    http_proxy_tunnel,
+                    "ProxyTunnel onHandshake checkServerIdentity failed"
+                );
+                return ProxyTunnel::maybe_set_next_step(proxy_nn, flow);
             }
         }
 
@@ -347,11 +356,12 @@ fn on_handshake(
         // socket out first, then let `this` (NLL) end before the call so the
         // reentrant `&mut *ctx` inside write_encrypted does not alias.
         // `client_from_ctx` re-derives the fresh sole `&mut HTTPClient`.
-        match this.carrier {
+        let flow = match this.carrier {
             Carrier::Tls(socket) => client_from_ctx(ctx).on_writable::<true, true>(socket),
             Carrier::Tcp(socket) => client_from_ctx(ctx).on_writable::<true, false>(socket),
-            _ => {}
-        }
+            _ => Continue(()),
+        };
+        ProxyTunnel::maybe_set_next_step(proxy_nn, flow);
     } else {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake failed");
         // The wrapper reports a failed handshake together with the verify
@@ -413,15 +423,14 @@ fn on_close(ctx: *mut HTTPClient) {
     // loop tick via `schedule_proxy_deref` to avoid freeing within the callback.
     let keepalive = ProxyTunnel::ref_guard(proxy_nn);
 
-    // If a response is in progress, mirror HTTPClient.onClose semantics:
+    // Mirror `HTTPClient::on_close`:
     // treat connection close as end-of-body for identity transfer when no content-length.
-    let in_progress = this.state.stage != Stage::Done && this.state.stage != Stage::Fail;
     let mut fail_err: Option<crate::Error> = None;
-    if in_progress && this.state.is_body_complete_on_close() {
+    if this.state.is_body_complete_on_close() {
         match this.end_body() {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                progress_update_for_proxy_socket(ctx);
+                progress_update_for_proxy_socket(ctx, proxy_nn);
                 crate::http_thread().schedule_proxy_deref(keepalive);
                 return;
             }
@@ -437,26 +446,26 @@ fn on_close(ctx: *mut HTTPClient) {
     );
 }
 
-/// Fails the request. The client may be freed when this returns.
 fn fail_request(ctx: *mut HTTPClient, keepalive: RefPtr<ProxyTunnel>, err: Error) {
     let this = client_from_ctx(ctx);
-    // `close_and_fail` de-tags the outer socket before `fail()` frees the client.
-    match this.carrier {
+    let flow = match this.carrier {
         Carrier::Tls(socket) => this.close_and_fail::<true>(err, socket),
         Carrier::Tcp(socket) => this.close_and_fail::<false>(err, socket),
         _ => this.fail(err),
-    }
+    };
+    ProxyTunnel::maybe_set_next_step(keepalive.as_non_null(), flow);
     crate::http_thread().schedule_proxy_deref(keepalive);
 }
 
 /// `ctx` must be live, and the caller must not hold `&mut HTTPClient` across this call.
-fn progress_update_for_proxy_socket(ctx: *mut HTTPClient) {
+fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTunnel>) {
     let client = client_from_ctx(ctx);
-    match client.carrier {
+    let flow = match client.carrier {
         Carrier::Tls(socket) => client.progress_update::<true>(socket),
         Carrier::Tcp(socket) => client.progress_update::<false>(socket),
-        _ => {}
-    }
+        _ => Continue(()),
+    };
+    ProxyTunnel::maybe_set_next_step(proxy, flow);
 }
 
 /// The inner connection's form of `HTTPClient::server_identity`.
@@ -477,23 +486,20 @@ impl ProxyTunnel {
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
         start_payload: &[u8],
-    ) {
+    ) -> ControlFlow<NextStep> {
         // The context a direct connection with these options uses.
         let ssl_ctx = match crate::http_thread().ssl_ctx_for(this.tls_props.as_ref()) {
             Ok(ssl_ctx) => ssl_ctx,
-            Err(err) => {
-                this.close_and_fail::<IS_SSL>(err, socket);
-                return;
-            }
+            Err(err) => return this.close_and_fail::<IS_SSL>(err, socket),
         };
-        Self::start_with_ctx(this, ssl_ctx, start_payload);
+        Self::start_with_ctx(this, ssl_ctx, start_payload)
     }
 
     fn start_with_ctx(
         this: &mut HTTPClient,
         ssl_ctx: bun_boringssl_sys::OwnedSslCtx,
         start_payload: &[u8],
-    ) {
+    ) -> ControlFlow<NextStep> {
         let wrapper = ProxyTunnelWrapper::init_with_ctx(
             ssl_ctx,
             true,
@@ -517,14 +523,15 @@ impl ProxyTunnel {
         let mut tunnel = ProxyTunnel::default();
         tunnel.wrapper = Some(wrapper);
         let proxy_tunnel = RefPtr::new(tunnel);
-        let proxy_ptr = proxy_tunnel.as_ptr();
+        let proxy = proxy_tunnel.as_non_null();
+        let _guard = proxy_tunnel.clone();
         this.proxy_tunnel = Some(proxy_tunnel);
         // `this` is not used below: start() synchronously fires on_open() /
         // write_encrypted(), which re-derive `&mut HTTPClient` from the raw ctx
         // pointer and touch only tunnel fields disjoint from `wrapper` via
         // `addr_of!` (see ALIASING NOTE), so the `&SSLWrapper` formed here is
         // never aliased by a `&mut`.
-        let wrapper = ProxyTunnel::wrapper_ref(proxy_ptr).unwrap();
+        let wrapper = ProxyTunnel::wrapper_ref(proxy.as_ptr()).unwrap();
         if !start_payload.is_empty() {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
             wrapper.start_with_payload(start_payload);
@@ -532,6 +539,7 @@ impl ProxyTunnel {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
             wrapper.start();
         }
+        Self::take_next_step(proxy)
     }
 
     pub(crate) fn shutdown(this: NonNull<Self>) {
@@ -547,7 +555,7 @@ impl ProxyTunnel {
     /// handle (see [`Self::ref_guard`]): the flush below can complete or fail
     /// the request, which releases that handle, leaving the guard's ref as the
     /// last one. A `&mut self` receiver would then be freed while still live.
-    pub(crate) fn on_writable(this: NonNull<Self>) {
+    pub(crate) fn on_writable(this: NonNull<Self>) -> ControlFlow<NextStep> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
         let _guard = Self::ref_guard(this);
         // The reentrant write_encrypted touches no field of the tunnel, so it can't alias the `&wrapper` from `wrapper_ref`.
@@ -555,13 +563,13 @@ impl ProxyTunnel {
             // Sends what the socket refused, then cycles through the SSL state machine.
             wrapper.flush();
         }
-        // _guard derefs here.
+        Self::take_next_step(this)
     }
 
     /// Encrypted bytes arrived on the outer socket. Same contract as
     /// [`Self::on_writable`]: delivering the decrypted data can release the
     /// client's handle, so the guard taken from it may hold the last ref.
-    pub(crate) fn receive(this: NonNull<Self>, buf: &[u8]) {
+    pub(crate) fn receive(this: NonNull<Self>, buf: &[u8]) -> ControlFlow<NextStep> {
         let _guard = Self::ref_guard(this);
         // receive_data() fires on_data/on_handshake/write_encrypted/on_close
         // synchronously; each accesses only tunnel fields disjoint from
@@ -571,25 +579,23 @@ impl ProxyTunnel {
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
             wrapper.receive_data(buf);
         }
-        // _guard derefs here.
+        Self::take_next_step(this)
     }
 
     /// `write` takes every byte and keeps what the socket refuses, so a body without a bound waits while this is true.
-    pub(crate) fn holds_refused_ciphertext(&self) -> bool {
-        self.wrapper
-            .as_ref()
-            .is_some_and(|wrapper| wrapper.refused_ciphertext() > 0)
+    pub(crate) fn holds_refused_ciphertext(this: NonNull<Self>) -> bool {
+        Self::wrapper_ref(this.as_ptr()).is_some_and(|wrapper| wrapper.refused_ciphertext() > 0)
     }
 
-    pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
-        if let Some(wrapper) = &self.wrapper {
-            return wrapper.write_data(buf).map_err(|e| match e {
-                WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
-                WriteDataError::WantRead => crate::Error::WantRead,
-                WriteDataError::WantWrite => crate::Error::WantWrite,
-            });
-        }
-        Err(crate::Error::ConnectionClosed)
+    /// `None` if TLS takes no data now.
+    pub(crate) fn write(this: NonNull<Self>, buf: &[u8]) -> ControlFlow<NextStep, Option<usize>> {
+        let _guard = Self::ref_guard(this);
+        let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) else {
+            return Continue(None);
+        };
+        let written = wrapper.write_data(buf);
+        Self::take_next_step(this)?;
+        Continue(written.ok())
     }
 
     /// Detach the tunnel from its current HTTPClient owner so it can be safely

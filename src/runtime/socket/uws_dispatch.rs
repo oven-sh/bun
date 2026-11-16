@@ -276,11 +276,9 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     let s_ref = us_socket_t::opaque_mut(s);
     let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
-        SocketKind::HttpClientTls => s_ref
-            .ext::<Option<core::ptr::NonNull<c_void>>>()
-            .map_or(Unchecked, |ext| {
-                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
-            }),
+        SocketKind::HttpClientTls => {
+            bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
+        }
         SocketKind::WsClientUpgradeTls => s_ref
             .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
             .map_or(Unchecked, |client| client.server_identity(ssl)),

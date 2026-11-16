@@ -14,7 +14,7 @@ use bun_uws as uws;
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HttpClient, InitError, NewHttpContext, h3};
+use crate::{AsyncHttp, Carrier, InFlightRequest, InitError, NewHttpContext, h3};
 
 // The scope registry keys on name, so the two visibilities (.hidden +
 // .visible) are split into two scope names.
@@ -129,8 +129,10 @@ pub struct HttpThread {
     pub(crate) timer: Instant,
     pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
 
-    /// Owns the requests that have started, by the `async_http_id` that other threads' messages name. Sockets and streams point into them.
+    /// What each `InFlightRequest` owns, by the `async_http_id` that other threads' messages name.
     pub(crate) in_flight: ArrayHashMap<u32, NonNull<AsyncHttp<'static>>>,
+    /// See `Carrier::None`.
+    pub(crate) held: ArrayHashMap<u32, InFlightRequest>,
 }
 
 impl HttpThread {
@@ -166,6 +168,7 @@ impl HttpThread {
             timer: Instant::now(),
             lazy_libdeflater: None,
             in_flight: ArrayHashMap::new(),
+            held: ArrayHashMap::new(),
         }
     }
 }
@@ -456,10 +459,7 @@ impl HttpThread {
         entry
     }
 
-    pub(crate) fn connect<const IS_SSL: bool>(
-        &mut self,
-        client: &mut HttpClient,
-    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
+    pub(crate) fn connect<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -474,36 +474,39 @@ impl HttpThread {
                 if !tls.get().requires_custom_request_ctx {
                     break 'custom_ctx;
                 }
-                let ctx = self.custom_https_context(&tls)?;
+                let ctx = match self.custom_https_context(&tls) {
+                    Ok(ctx) => ctx,
+                    Err(err) => return client.fail(err),
+                };
                 client.set_custom_ssl_ctx(ctx.clone());
-                // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                return Self::dial(https_context_mut(&ctx), client)
-                    .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
+                return Self::dial(https_context_mut(&ctx), client);
             }
         }
         Self::dial(self.context::<IS_SSL>(), client)
     }
 
     /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.
-    fn dial<const IS_SSL: bool>(
-        ctx: &mut NewHttpContext<IS_SSL>,
-        client: &mut HttpClient,
-    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
-        let unix_path = client.unix_socket_path;
-        if !unix_path.is_empty() {
-            return ctx.connect_socket(client, unix_path);
+    fn dial<const IS_SSL: bool>(ctx: &mut NewHttpContext<IS_SSL>, mut client: InFlightRequest) {
+        client.connected_url = client
+            .http_proxy
+            .clone()
+            .unwrap_or_else(|| client.url.clone());
+        if !client.unix_socket_path.is_empty() {
+            return ctx.connect_socket(client);
         }
-        if let Some(url) = client.http_proxy.clone() {
+        if let Some(url) = &client.http_proxy {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
                 if url.protocol.is_empty() || url.has_http_like_protocol() {
-                    return ctx.connect(client, url.hostname, url.get_port_auto());
+                    let port = url.get_port_auto();
+                    return ctx.connect(client, port);
                 }
-                return Err(crate::Error::UnsupportedProxyProtocol);
+                return client.fail(crate::Error::UnsupportedProxyProtocol);
             }
         }
-        let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
-        ctx.connect(client, hn, pt)
+        client.connected_url.hostname = client.url.hostname;
+        let port = client.url.get_port_auto();
+        ctx.connect(client, port);
     }
 
     /// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
@@ -521,11 +524,11 @@ impl HttpThread {
         }
     }
 
-    /// The client of a started request whose final result hasn't gone out.
-    fn request(&self, async_http_id: u32) -> Option<NonNull<HttpClient<'static>>> {
+    /// `None` unless the request has started and its last result hasn't gone out.
+    fn carrier_of(&self, async_http_id: u32) -> Option<Carrier> {
         let http = *self.in_flight.get(&async_http_id)?;
-        // SAFETY: `in_flight` holds live boxes, and the projection keeps the allocation's own provenance.
-        Some(unsafe { NonNull::new_unchecked(&raw mut (*http.as_ptr()).client) })
+        // SAFETY: live until `finish` takes it out of `in_flight`, and not borrowed between two events.
+        Some(unsafe { (*http.as_ptr()).client.carrier })
     }
 
     fn drain_queued_shutdowns(&mut self) {
@@ -535,8 +538,8 @@ impl HttpThread {
             let queued_shutdowns = core::mem::take(&mut *INBOX.shutdowns.lock());
 
             for http in &queued_shutdowns {
-                match self.request(http.async_http_id) {
-                    Some(client) => HttpClient::abort(client),
+                match self.carrier_of(http.async_http_id) {
+                    Some(carrier) => carrier.abort(http.async_http_id),
                     // Still in `INBOX.tasks` / `deferred_tasks`, or already done. `drain_events` scans those even when `active >= max`.
                     None => self.has_pending_queued_abort = true,
                 }
@@ -554,8 +557,8 @@ impl HttpThread {
         loop {
             let queued_writes = core::mem::take(&mut *INBOX.writes.lock());
             for write in &queued_writes {
-                if let Some(client) = self.request(write.async_http_id) {
-                    HttpClient::request_stream_message(client, write.kind);
+                if let Some(carrier) = self.carrier_of(write.async_http_id) {
+                    carrier.request_stream_message(write.kind);
                 }
             }
             let len = queued_writes.len();
@@ -571,8 +574,8 @@ impl HttpThread {
         loop {
             let queued_cert_check_resumes = core::mem::take(&mut *INBOX.cert_check_resumes.lock());
             for resume in &queued_cert_check_resumes {
-                if let Some(client) = self.request(resume.async_http_id) {
-                    HttpClient::cert_check_passed(client);
+                if let Some(carrier) = self.carrier_of(resume.async_http_id) {
+                    carrier.cert_check_passed();
                 }
             }
             let len = queued_cert_check_resumes.len();
@@ -614,8 +617,8 @@ impl HttpThread {
                 return;
             }
             for id in queued {
-                if let Some(client) = self.request(id) {
-                    HttpClient::receive_resumed(client);
+                if let Some(carrier) = self.carrier_of(id) {
+                    carrier.receive_resumed(id);
                 }
             }
         }
@@ -670,14 +673,14 @@ impl HttpThread {
         //
         // Already-aborted tasks are started regardless of `max`: `start_()` will
         // observe the `aborted` signal and fail immediately with
-        // `error.AbortedBeforeConnecting`, and `AsyncHTTP::on_result` decrements
+        // `error.AbortedBeforeConnecting`, and `InFlightRequest::finish` decrements
         // `active_requests_count` in the same turn — so they never hold a slot.
         // Without this, an aborted fetch that was queued behind `max` would sit
         // there until some unrelated request completed; if every active request
         // is itself hung, the aborted one never settles and its promise hangs
         // forever even though the user called `controller.abort()`.
         //
-        // `start_queued_task` can re-enter `AsyncHTTP::on_result` synchronously (for
+        // `InFlightRequest::start` can reach `finish` synchronously (for
         // aborted tasks, or when connect() fails immediately), which reads both
         // `active_requests_count` and `deferred_tasks.items.len` to decide whether
         // to wake the loop. To keep those reads accurate we swap the deferred list
@@ -690,7 +693,7 @@ impl HttpThread {
             for http in pending {
                 let aborted = http.client.signals.get(crate::signals::Field::Aborted);
                 if aborted || active < max {
-                    start_queued_task(http, &mut self.in_flight);
+                    InFlightRequest::start(http);
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
@@ -710,7 +713,7 @@ impl HttpThread {
                 self.defer(http);
                 continue;
             }
-            start_queued_task(http, &mut self.in_flight);
+            InFlightRequest::start(http);
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -809,8 +812,7 @@ impl HttpThread {
             http.release_at_shutdown();
         }
         for http in core::mem::take(&mut self.in_flight).values() {
-            // SAFETY: the box that `start_queued_task` leaked. Sockets and streams still point
-            // into it, but the loop never ticks again.
+            // SAFETY: from a `Box`. Its `InFlightRequest` is not used again: this thread parks for good.
             unsafe { bun_core::heap::take(http.as_ptr()) }.release_at_shutdown();
         }
     }
@@ -861,28 +863,14 @@ fn evict_oldest_ssl_context() {
     map.swap_remove_at(oldest_idx);
 }
 
-fn start_queued_task(
-    http: Box<AsyncHttp<'static>>,
-    in_flight: &mut ArrayHashMap<u32, NonNull<AsyncHttp<'static>>>,
-) {
-    let id = http.async_http_id;
-    let mut http = bun_core::heap::into_raw_nn(http);
-    bun_core::handle_oom(in_flight.put(id, http));
-    // SAFETY: just leaked. It lives until its last result takes it out of `in_flight`.
-    unsafe { http.as_mut() }.on_start();
-}
-
 /// Debug+ASAN invariant check: the socket a request records as its carrier is live (unfreed) memory.
 #[inline]
 fn assert_request_sockets_alive(thread: &HttpThread) {
     if cfg!(debug_assertions) {
         for &id in thread.in_flight.keys() {
-            let Some(client) = thread.request(id) else {
-                continue;
-            };
-            let socket = match bun_ptr::ParentRef::from(client).carrier {
-                crate::Carrier::Tcp(socket) => socket.socket,
-                crate::Carrier::Tls(socket) => socket.socket,
+            let socket = match thread.carrier_of(id) {
+                Some(Carrier::Tcp(socket)) => socket.socket,
+                Some(Carrier::Tls(socket)) => socket.socket,
                 _ => continue,
             };
             if let Some(usocket) = socket.get() {

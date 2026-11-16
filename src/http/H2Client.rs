@@ -63,4 +63,3 @@ pub mod stream;
 pub use client_session::ClientSession;
 pub(crate) use client_session::SessionPtr;
 pub use pending_connect::PendingConnect;
-pub use stream::Stream;

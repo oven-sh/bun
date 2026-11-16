@@ -297,8 +297,8 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
                     // response that already finished in this same read.
                     s.fatal_error = Some(crate::Error::HTTP2GoAway);
                     // The server may have processed this stream, so only an idempotent request is sent again.
-                    s.http1_required |=
-                        http1_required && s.client_ref().is_some_and(|c| c.method.is_idempotent());
+                    s.http1_required |= http1_required
+                        && s.client.as_ref().is_some_and(|c| c.method.is_idempotent());
                 }
             }
         }

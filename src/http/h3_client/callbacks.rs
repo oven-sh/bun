@@ -279,10 +279,10 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     if fin != 0
         && stream.headers_delivered
         && s.connection_failed()
-        && stream.client.is_some_and(|client| {
-            let client = super::client_session::client_mut(client);
-            client.state.content_length.is_none()
-        })
+        && stream
+            .client
+            .as_ref()
+            .is_some_and(|client| client.state.content_length.is_none())
     {
         return stream
             .session_mut()
@@ -294,12 +294,8 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     if fin != 0 {
         return;
     }
-    let Some(client) = stream.client else { return };
-    s.hold_window(
-        super::client_session::client_mut(client)
-            .signals
-            .is_receive_paused(),
-    );
+    let Some(client) = &stream.client else { return };
+    s.hold_window(client.signals.is_receive_paused());
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {

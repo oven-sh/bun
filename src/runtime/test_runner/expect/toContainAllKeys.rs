@@ -1,6 +1,6 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
-use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
+use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome, WalkFirst};
 
 impl Expect {
     #[optimize(size)]
@@ -15,19 +15,8 @@ impl Expect {
             |g, value, expected| {
                 let count = expected.get_length(g)?;
                 let keys = value.keys(g)?;
-                let mut pass = false;
-                if keys.get_length(g)? == count {
-                    pass = true;
-                    let mut itr = keys.array_iterator(g)?;
-                    'outer: while let Some(item) = itr.next()? {
-                        let mut i: u32 = 0;
-                        while u64::from(i) < count {
-                            if item.jest_deep_equals(expected.get_index(g, i)?, g)? { continue 'outer; }
-                            i += 1;
-                        }
-                        pass = false; break;
-                    }
-                }
+                let pass = keys.get_length(g)? == count
+                    && Self::lists_cover_each_other(g, keys, expected, count, WalkFirst::Received)?;
                 Ok(ContainOutcome { pass, received_override: Some(keys) })
             })
     }

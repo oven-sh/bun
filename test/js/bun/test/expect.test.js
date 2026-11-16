@@ -3091,6 +3091,88 @@ describe("expect()", () => {
     expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
   });
 
+  test("toContainAllKeys with an asymmetric matcher", () => {
+    /** @type {string[]} */
+    const calls = [];
+    expect.extend({
+      toBeKeyNamed(/** @type {string} */ key, /** @type {string} */ name) {
+        calls.push(`${key}~${name}`);
+        return { pass: key === name, message: () => "" };
+      },
+      toBeKeyB(/** @type {string} */ key) {
+        calls.push(key);
+        if (key !== "b") throw new TypeError("This must be the key b!");
+        return { pass: true, message: () => "" };
+      },
+      toAddAnItemTo(/** @type {string} */ key, /** @type {unknown[]} */ list) {
+        list.push("zzz");
+        return { pass: true, message: () => "" };
+      },
+    });
+    const named = (/** @type {string} */ name) => ANY(expect).toBeKeyNamed(name);
+    const keyB = () => ANY(expect).toBeKeyB();
+    const callsOf = (/** @type {() => unknown} */ assertion) => {
+      calls.length = 0;
+      assertion();
+      return [...calls];
+    };
+
+    // A matcher that takes each key does not stand in for an expected item that is not a key.
+    expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.any(String), "zzz"]);
+    expect({ a: 1, b: 2 }).not.toContainAllKeys(["zzz", expect.any(String)]);
+    expect({ a: 1, b: 2, c: 3 }).not.toContainAllKeys([expect.any(String), expect.any(String), "zzz"]);
+    // With colors on, escape codes split this text, so the plain message is compared.
+    let message = "";
+    try {
+      expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "zzz"]);
+    } catch (e) {
+      message = stripVTControlCharacters(ANY(e).message);
+    }
+    expect(message).toContain(
+      isBun
+        ? 'Expected to contain all keys: [\n  Any<String>, "zzz"\n]\nReceived: [ "a", "b" ]'
+        : "Expected object to contain all keys",
+    );
+
+    // An expected item that no key took still finds its key. Two items can find the same key.
+    expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "a"]);
+    expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "b"]);
+    expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), expect.any(String)]);
+    expect({ a: 1, b: 2, c: 3 }).toContainAllKeys([expect.any(String), "a", "a"]);
+
+    // An item that no key took gets the keys in order, so a matcher can throw for the first key.
+    expect(() => expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), keyB()])).toThrow(
+      "This must be the key b!",
+    );
+    expect(callsOf(() => expect({ b: 1, a: 2 }).toContainAllKeys([expect.any(String), keyB()]))).toEqual(["b"]);
+
+    // A regex with the g flag keeps lastIndex, so a pair that matched is not compared again.
+    expect({ a: 1 }).toContainAllKeys([expect.stringMatching(/a/g)]);
+
+    // A different count fails before a comparison.
+    expect(callsOf(() => expect({ a: 1, b: 2 }).not.toContainAllKeys([named("a")]))).toEqual([]);
+
+    // The count is read once: an item that a matcher adds while it runs is not compared.
+    /** @type {unknown[]} */
+    const growing = [];
+    growing.push(ANY(expect).toAddAnItemTo(growing));
+    expect({ a: 1 }).toContainAllKeys(growing);
+    expect(growing).toHaveLength(2);
+    /** @type {unknown[]} */
+    const growingWithAnItemLeft = [];
+    growingWithAnItemLeft.push(ANY(expect).toAddAnItemTo(growingWithAnItemLeft), "b");
+    expect({ a: 1, b: 2 }).toContainAllKeys(growingWithAnItemLeft);
+
+    if (isBun) {
+      // jest-extended only checks that each expected item is a key, so it passes this.
+      expect({ a: 1, b: 2 }).not.toContainAllKeys(["a", "a"]);
+      // Each key stops at its first match. jest-extended gives each expected item to the keys.
+      expect(
+        callsOf(() => expect({ a: 1, b: 2, c: 3 }).toContainAllKeys([named("a"), named("b"), named("c")])),
+      ).toEqual(["a~a", "b~a", "b~b", "c~a", "c~b", "c~c"]);
+    }
+  });
+
   test("toContainAnyKeys", () => {
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
@@ -3275,6 +3357,173 @@ describe("expect()", () => {
     expect(shallow).not.toContainAllValues(["foo", 0]);
     expect(deep).not.toContainAllValues(["duck", { foo: "bar" }]);
     expect(deepArray).not.toContainAllValues(["duck", [{ foo: "bar" }]]);
+  });
+
+  test("toContainAllValues with a repeated value", () => {
+    // A repeated expected value does not stand in for an object value that expected lacks.
+    expect({ a: 1, b: 2 }).not.toContainAllValues([1, 1]);
+    expect({ a: 2, b: 1 }).not.toContainAllValues([1, 1]);
+    expect({ a: 1, b: 1, c: 2 }).not.toContainAllValues([1, 1, 1]);
+    expect({ a: 0, b: -0 }).not.toContainAllValues([0, 0]);
+    expect({ id: 7, role: "admin", ok: true }).not.toContainAllValues([7, 7, 7]);
+    expect({ a: 1, b: "x" }).not.toContainAllValues([expect.any(Number), 1]);
+    expect({ a: 1, b: 2, c: "z" }).not.toContainAllValues([expect.any(Number), expect.any(Number), expect.any(Number)]);
+    expect(() => expect({ a: 1, b: 2 }).toContainAllValues([1, 1])).toThrow(
+      isBun ? "Expected to contain all values" : "Expected object to contain all values",
+    );
+
+    // Repeated values that are on both sides still match. The counts of one value can differ.
+    expect({ a: 1, b: 1 }).toContainAllValues([1, 1]);
+    expect({ a: 1, b: 1, c: 2 }).toContainAllValues([2, 1, 1]);
+    expect({ a: 1, b: 1, c: 2 }).toContainAllValues([1, 2, 2]);
+    expect({ a: { x: 1 }, b: { x: 1 } }).toContainAllValues([{ x: 1 }, { x: 1 }]);
+    expect({ a: 1, b: "x" }).toContainAllValues([expect.any(String), expect.any(Number)]);
+    expect({ a: 1, b: 2 }).toContainAllValues([expect.any(Number), 1]);
+    expect(() => expect({ a: 1, b: 1 }).not.toContainAllValues([1, 1])).toThrow(
+      isBun ? "Expected to not contain all values" : "Expected object to not contain all values",
+    );
+
+    // The same set of values with a different count does not match.
+    expect({ a: 1, b: 1 }).not.toContainAllValues([1]);
+    expect({ a: 1 }).not.toContainAllValues([1, 1]);
+
+    expect({}).toContainAllValues([]);
+    expect({}).not.toContainAllValues([1]);
+    expect({ a: 1 }).not.toContainAllValues([]);
+    if (isBun) {
+      // jest-extended 5.0.0 and later fail a received value that is not a plain object.
+      expect([]).toContainAllValues([]);
+      expect([1, 2]).toContainAllValues([2, 1]);
+      expect(["s", "s"]).toContainAllValues(["s", "s"]);
+      expect(["s", "t"]).not.toContainAllValues(["s", "s"]);
+    }
+
+    if (isBun) {
+      // jest-extended only checks that each object value is in expected, so it passes these.
+      expect({ a: 1, b: 1 }).not.toContainAllValues([1, 2]);
+      expect({ a: 1, b: 2 }).not.toContainAllValues([expect.any(Number), "zzz"]);
+    }
+  });
+
+  test("toContainAllValues with an asymmetric matcher", () => {
+    /** @type {unknown[]} */
+    const calls = [];
+    expect.extend({
+      // The expect.extend example in the Jest docs: it throws for a value that is not a number.
+      toBeNumberWithin(/** @type {unknown} */ actual, /** @type {number} */ floor, /** @type {number} */ ceiling) {
+        calls.push(actual);
+        if (typeof actual !== "number") throw new TypeError("These must be of type number!");
+        return { pass: actual >= floor && actual <= ceiling, message: () => "" };
+      },
+      toBeValue(/** @type {unknown} */ actual, /** @type {unknown} */ value) {
+        calls.push(`${actual}~${value}`);
+        return { pass: actual === value, message: () => "" };
+      },
+    });
+    const range = () => ANY(expect).toBeNumberWithin(1, 10);
+    const is = (/** @type {unknown} */ value) => ANY(expect).toBeValue(value);
+    const callsOf = (/** @type {() => unknown} */ assertion) => {
+      calls.length = 0;
+      assertion();
+      return [...calls];
+    };
+
+    // An expected item stops at its first match, so this matcher does not get the string.
+    expect(callsOf(() => expect({ price: 5, name: "x" }).toContainAllValues(["x", range()]))).toEqual([5]);
+    if (isBun) {
+      // jest-extended gives each object value to the expected items in order, so there the matcher gets "x" and throws.
+      expect(callsOf(() => expect({ price: 5, name: "x" }).toContainAllValues([range(), "x"]))).toEqual([5]);
+      expect(callsOf(() => expect({ price: 5, name: "y" }).not.toContainAllValues([range(), "x"]))).toEqual([5]);
+      expect(callsOf(() => expect({ a: 1, b: 2, c: 3 }).toContainAllValues([is(1), is(2), is(3)]))).toEqual([
+        "1~1",
+        "1~2",
+        "2~2",
+        "1~3",
+        "2~3",
+        "3~3",
+      ]);
+      // The matcher takes 7. Then 5 is the one value that no expected item took, so only 5 is compared again.
+      expect(callsOf(() => expect({ id: 7, price: 5, name: "x" }).toContainAllValues([7, range(), "x"]))).toEqual([
+        7, 5,
+      ]);
+      // The received value stays on the left: the expected matcher is asked about the received matcher.
+      expect({ a: expect.any(Number) }).toContainAllValues([expect.anything()]);
+      expect({ a: 1, b: expect.any(Number) }).toContainAllValues([expect.anything(), expect.anything()]);
+      // A value that no expected item took gets the items from the first, so a matcher can get a value again.
+      expect(callsOf(() => expect({ a: 1, b: 2, c: 3 }).toContainAllValues([is(3), 3, expect.any(Number)]))).toEqual([
+        "1~3",
+        "2~3",
+        "3~3",
+        "2~3",
+      ]);
+    }
+
+    // A value that no expected item took is compared with each item, so the matcher gets the string.
+    expect(() => expect({ a: 5, b: "x" }).toContainAllValues([range(), range()])).toThrow(
+      "These must be of type number!",
+    );
+    expect(() => expect({ a: 5, b: "x" }).toContainAllValues([range(), expect.anything()])).toThrow(
+      "These must be of type number!",
+    );
+    // A value that is the same as a taken value is not compared again.
+    expect(callsOf(() => expect({ a: 5, b: 5 }).toContainAllValues([range(), range()]))).toEqual([5, 5]);
+    // The same with 128 values, one more than the marks that fit inline.
+    const many = Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`k${i}`, 5]));
+    expect(callsOf(() => expect(many).toContainAllValues(Object.keys(many).map(() => range())))).toEqual(
+      Object.values(many),
+    );
+    expect({ ...many, k127: 6 }).not.toContainAllValues(Object.values(many));
+
+    // A regex with the g flag keeps lastIndex, so a pair that matched is not compared again.
+    expect({ a: "a" }).toContainAllValues([expect.stringMatching(/a/g)]);
+    expect(() => expect({ a: "a" }).not.toContainAllValues([expect.stringMatching(/a/g)])).toThrow(
+      isBun ? "Expected to not contain all values" : "Expected object to not contain all values",
+    );
+    expect({ a: "a", b: "a" }).toContainAllValues([expect.stringMatching(/a/g), expect.stringMatching(/a/g)]);
+  });
+
+  test_skipIf(!isBun)("toContainAllValues calls a pending async matcher one time", async () => {
+    let calls = 0;
+    expect.extend({
+      async toBeNumberLater(/** @type {unknown} */ actual) {
+        calls++;
+        await Promise.resolve();
+        return { pass: typeof actual === "number", message: () => "" };
+      },
+    });
+    await expect({ a: 5, b: "x" }).toContainAllValues([ANY(expect).toBeNumberLater(), "x"]);
+    expect(calls).toBe(1);
+  });
+
+  test_skipIf(!isBun)(
+    "toContainAllValues asks a pending async matcher again for a value that no item took",
+    async () => {
+      /** @type {string[]} */
+      const calls = [];
+      expect.extend({
+        async toBeValueLater(/** @type {unknown} */ actual, /** @type {unknown} */ value) {
+          calls.push(`${actual}~${value}`);
+          await Promise.resolve();
+          return { pass: actual === value, message: () => "" };
+        },
+      });
+      const laterIs = (/** @type {unknown} */ value) => ANY(expect).toBeValueLater(value);
+
+      // No expected item took 2, so the matcher gets it a second time. Then expect.any(Number) matches it.
+      await expect({ a: 1, b: 2, c: 3 }).toContainAllValues([laterIs(3), 3, expect.any(Number)]);
+      expect(calls).toEqual(["1~3", "2~3", "3~3", "2~3"]);
+
+      // Here no expected item matches 2.
+      calls.length = 0;
+      await expect({ a: 1, b: 2, c: 3 }).not.toContainAllValues([laterIs(3), 3, 1]);
+      expect(calls).toEqual(["1~3", "2~3", "3~3", "2~3"]);
+    },
+  );
+
+  // The matcher of a value that no expected item took is asked again. A g or y regex then starts at its old lastIndex.
+  test.todo("toContainAllValues with a g or y regex and a value that no item took", () => {
+    expect({ a: "a", b: "b" }).toContainAllValues([expect.stringMatching(/./g), expect.stringMatching(/./g)]);
+    expect({ a: "ab", b: "b" }).not.toContainAllValues([expect.stringMatching(/b/y), "b"]);
   });
 
   test("toContainAnyValues", () => {

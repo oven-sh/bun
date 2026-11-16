@@ -306,6 +306,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_byte_set.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_jpeg.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).

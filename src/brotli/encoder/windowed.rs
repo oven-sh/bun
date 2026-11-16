@@ -165,6 +165,7 @@ impl Windowed {
             window: self.ring.window(),
             start: wrap(self.written),
             length: (self.processed - self.written) as usize,
+            literal_count: self.commands.literal_count,
             before: self.last_written_bytes,
         };
         try_reserve_for(source.length, writer)?;

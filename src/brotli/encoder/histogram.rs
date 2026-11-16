@@ -1,11 +1,13 @@
 //! Counts symbols, and estimates what they cost.
 
+use bun_highway::{BROTLI_SPARE_LOGARITHMS, brotli_estimate_costs};
+
 use super::log2::fast_log2;
 use super::symbol_set::SymbolSet;
 use crate::format::{
-    CODE_LENGTH_CODES, COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_CODE_LENGTH,
-    MAX_DIRECT_CODES, MAX_POSTFIX_BITS, REPEAT_ZERO_CODE_LENGTH,
+    COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_DIRECT_CODES, MAX_POSTFIX_BITS,
 };
+use crate::memory::{self, Result};
 
 /// The largest distance alphabet.
 pub(super) const DISTANCE_SYMBOLS: usize =
@@ -42,9 +44,7 @@ impl<const N: usize> Histogram<N> {
 
     #[inline(always)]
     pub(super) fn add_all(&mut self, symbols: &[u16]) {
-        for &symbol in symbols {
-            self.counts[usize::from(symbol)] += 1;
-        }
+        count_symbols(symbols, &mut self.counts);
         self.total += symbols.len();
     }
 
@@ -55,25 +55,189 @@ impl<const N: usize> Histogram<N> {
         }
         self.total += other.total;
     }
+}
 
-    pub(super) fn used(&self) -> SymbolSet {
-        SymbolSet::matching(&self.counts, |count| count != 0)
+#[inline(always)]
+pub(super) fn count_symbols(symbols: &[u16], counts: &mut [u32]) {
+    for &symbol in symbols {
+        counts[usize::from(symbol)] += 1;
+    }
+}
+
+/// A histogram for any alphabet, with the symbols that it has.
+#[derive(Clone, Copy)]
+pub(super) struct Indexed<'a> {
+    counts: &'a [u32],
+    pub(super) total: usize,
+    used: SymbolSet,
+}
+
+impl<'a> Indexed<'a> {
+    pub(super) fn new(counts: &'a [u32], total: usize) -> Self {
+        let searched = if total == 0 { &[] } else { counts };
+        Self {
+            counts,
+            total,
+            used: SymbolSet::matching(searched, |count| count != 0),
+        }
     }
 
-    /// An estimate of the bits for the prefix code and for the symbols.
-    pub(super) fn cost(&self) -> f64 {
-        self.cost_of(&self.used())
+    pub(super) fn empty(alphabet_size: usize) -> Self {
+        Self::new(&[0; COMMAND_SYMBOLS][..alphabet_size], 0)
+    }
+}
+
+/// For the same alphabet.
+pub(super) struct IndexedList {
+    pub(super) alphabet_size: usize,
+    counts: Vec<u32>,
+    indexes: Vec<(usize, SymbolSet)>,
+}
+
+impl IndexedList {
+    pub(super) fn new(alphabet_size: usize) -> Self {
+        Self {
+            alphabet_size,
+            counts: Vec::new(),
+            indexes: Vec::new(),
+        }
     }
 
-    /// For a caller that knows what is [`used`](Self::used).
-    pub(super) fn cost_of(&self, used: &SymbolSet) -> f64 {
-        static NOTHING: [u32; COMMAND_SYMBOLS] = [0; _];
-        cost(used, self.total, &self.counts, &NOTHING)
+    pub(super) fn clear(&mut self) {
+        self.counts.clear();
+        self.indexes.clear();
     }
 
-    /// `used` has the symbols of both.
-    pub(super) fn cost_with(&self, other: &Self, used: &SymbolSet) -> f64 {
-        cost(used, self.total + other.total, &self.counts, &other.counts)
+    pub(super) fn try_reserve(&mut self, additional: usize) -> Result<()> {
+        memory::try_reserve(&mut self.counts, additional * self.alphabet_size)?;
+        memory::try_reserve(&mut self.indexes, additional)
+    }
+
+    pub(super) fn push(&mut self, histogram: &Indexed<'_>) {
+        self.counts.extend_from_slice(histogram.counts);
+        self.indexes.push((histogram.total, histogram.used));
+    }
+
+    #[inline(always)]
+    pub(super) fn get(&self, id: u32) -> Indexed<'_> {
+        let (total, used) = self.indexes[id as usize];
+        Indexed {
+            counts: &self.counts[id as usize * self.alphabet_size..][..self.alphabet_size],
+            total,
+            used,
+        }
+    }
+
+    /// Adds `second` to `first`, which comes before it.
+    pub(super) fn merge(&mut self, [first, second]: [u32; 2]) {
+        let (total, used) = self.indexes[second as usize];
+        let index = &mut self.indexes[first as usize];
+        *index = (index.0 + total, index.1.union(&used));
+        let size = self.alphabet_size;
+        let (before, added) = self.counts.split_at_mut(second as usize * size);
+        for (count, added) in before[first as usize * size..]
+            .iter_mut()
+            .zip(&added[..size])
+        {
+            *count += added;
+        }
+    }
+}
+
+/// Estimates the bits for a prefix code and for its symbols.
+pub(super) struct Estimator {
+    logarithms: Vec<[f64; 2]>,
+}
+
+impl Estimator {
+    /// For histograms of about `symbols` symbols altogether.
+    pub(super) fn new(symbols: usize) -> Result<Self> {
+        let known = (symbols / 32).next_power_of_two().clamp(256, 4096);
+        let mut logarithms = memory::empty(known + BROTLI_SPARE_LOGARITHMS)?;
+        logarithms.push([1e6, 0.0]);
+        logarithms.extend((1..known).map(|count| [fast_log2(count), count as f64]));
+        logarithms.resize(known + BROTLI_SPARE_LOGARITHMS, [0.0; 2]);
+        Ok(Self { logarithms })
+    }
+
+    pub(super) fn cost(&mut self, histogram: &Indexed<'_>) -> f64 {
+        let &Indexed {
+            counts,
+            total,
+            used,
+        } = histogram;
+        let nothing = Indexed::empty(counts.len()).counts;
+        if used.len() <= 4 {
+            return cost_of_few(&used, total, counts, nothing);
+        }
+        let (totals, gaps) = ([total as u32; 4], used.gaps().map(|gaps| [gaps; 4]));
+        let logarithms = &mut self.logarithms;
+        brotli_estimate_costs(
+            counts,
+            [nothing; 4],
+            used.words(),
+            &totals,
+            &gaps,
+            logarithms,
+        )[0]
+    }
+
+    /// Of `common` together with those of `all` that have one of `ids`.
+    #[inline(never)]
+    pub(super) fn set_costs(
+        &mut self,
+        common: &Indexed<'_>,
+        all: &IndexedList,
+        ids: &[u32],
+        costs: &mut [f64],
+    ) {
+        // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L13
+        let (mut waiting, mut counts) = ([0; 4], [common.counts; 4]);
+        let (mut totals, mut gaps) = ([0; 4], [[0; 4]; 2]);
+        let (mut all_used, mut count) = (common.used, 0);
+        for (left, &id) in (0..ids.len()).rev().zip(ids) {
+            let other = all.get(id);
+            let (total, used) = (common.total + other.total, common.used.union(&other.used));
+            if used.len() <= 4 {
+                costs[id as usize] = cost_of_few(&used, total, common.counts, other.counts);
+            } else {
+                all_used = all_used.union(&used);
+                (waiting[count], counts[count], totals[count]) = (id, other.counts, total as u32);
+                [gaps[0][count], gaps[1][count]] = used.gaps();
+                count += 1;
+            }
+            if count == 4 || (count != 0 && left == 0) {
+                let estimates = brotli_estimate_costs(
+                    common.counts,
+                    counts,
+                    all_used.words(),
+                    &totals,
+                    &gaps,
+                    &mut self.logarithms,
+                );
+                for (&id, cost) in waiting[..count].iter().zip(estimates) {
+                    costs[id as usize] = cost;
+                }
+                (all_used, count) = (common.used, 0);
+            }
+        }
+    }
+}
+
+/// `used` has the symbols of both, at most four.
+#[inline(never)]
+fn cost_of_few(used: &SymbolSet, total: usize, counts: &[u32], more: &[u32]) -> f64 {
+    let mut sums = [0; 4];
+    for (sum, symbol) in sums.iter_mut().zip(used) {
+        *sum = counts[symbol] + more[symbol];
+    }
+    sums.sort_unstable();
+    let [d, c, b, a] = sums;
+    match used.len() {
+        0 | 1 => 12.0,
+        2 => 20.0 + total as f64,
+        3 => 28.0 + f64::from(2 * (a + b + c)) - f64::from(a),
+        _ => 37.0 + f64::from(3 * (c + d)) + f64::from(2 * (a + b)) - f64::from(a.max(c + d)),
     }
 }
 
@@ -99,79 +263,9 @@ pub(super) fn count_every_nth_byte<const N: usize>(bytes: &[u8]) -> [u32; LITERA
     counts
 }
 
-/// `value` is in `0.0..64.0`. A cast would spend time on what is not.
-#[inline(always)]
-fn whole_part(value: f64) -> usize {
-    (value.floor() + (1u64 << (f64::MANTISSA_DIGITS - 1)) as f64).to_bits() as usize % 64
-}
-
-// https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/bit_cost_inc.h#L13
-#[inline(never)]
-fn cost(used: &SymbolSet, total: usize, counts: &[u32], more: &[u32]) -> f64 {
-    let more = &more[..counts.len()];
-    let count_of = |symbol: usize| counts[symbol] + more[symbol];
-    let used_count = used.len();
-    if used_count <= 4 {
-        let mut first = [0; 4];
-        for (count, symbol) in first.iter_mut().zip(used) {
-            *count = count_of(symbol);
-        }
-        first.sort_unstable();
-        let [d, c, b, a] = first;
-        return match used_count {
-            0 | 1 => 12.0,
-            2 => 20.0 + total as f64,
-            3 => 28.0 + f64::from(2 * (a + b + c)) - f64::from(a),
-            _ => 37.0 + f64::from(3 * (c + d)) + f64::from(2 * (a + b)) - f64::from(a.max(c + d)),
-        };
-    }
-    let mut bits = 0.0;
-    let mut lengths = [0; CODE_LENGTH_CODES];
-    let log2_total = fast_log2(total);
-    let cost_of = |count: u32| {
-        let log2_p = log2_total - fast_log2(count as usize);
-        let length = whole_part(log2_p + 0.5).min(MAX_CODE_LENGTH);
-        (f64::from(count) * log2_p, length)
-    };
-    let rare: [_; 8] = core::array::from_fn(|count| cost_of(count as u32));
-    let (mut lone_zeros, mut next_symbol) = (0, 0);
-    for symbol in used {
-        let count = count_of(symbol);
-        let zeros = symbol - next_symbol;
-        next_symbol = symbol + 1;
-        if zeros < 3 {
-            lone_zeros += zeros as u32;
-        } else {
-            let mut left = zeros - 2;
-            while left > 0 {
-                lengths[usize::from(REPEAT_ZERO_CODE_LENGTH)] += 1;
-                bits += 3.0;
-                left >>= 3;
-            }
-        }
-        let (cost, length) = match rare.get(count as usize) {
-            Some(&known) => known,
-            None => cost_of(count),
-        };
-        bits += cost;
-        lengths[length % 16] += 1;
-    }
-    lengths[0] += lone_zeros;
-    let longer = lengths[2..=MAX_CODE_LENGTH]
-        .iter()
-        .rposition(|&count| count != 0);
-    let max_length = longer.map_or(1, |index| index + 2);
-    bits + (18 + 2 * max_length) as f64 + inlined_bits_entropy(&lengths)
-}
-
 /// The entropy, but at least one bit for each symbol.
 #[inline(never)]
 pub(super) fn bits_entropy(counts: &[u32]) -> f64 {
-    inlined_bits_entropy(counts)
-}
-
-#[inline(always)]
-fn inlined_bits_entropy(counts: &[u32]) -> f64 {
     let sum = counts.iter().sum::<u32>() as usize;
     let mut bits = 0.0;
     for symbol in &SymbolSet::matching(counts, |count| count > 1) {

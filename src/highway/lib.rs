@@ -269,6 +269,101 @@ unsafe extern "C" {
         masks: *mut u64,
         bit_planes: bool,
     );
+
+    fn highway_brotli_find_switches(
+        symbols: *const u16,
+        length: usize,
+        symbol_costs: *const [f64; 8],
+        alphabet_size: usize,
+        groups: usize,
+        switch_cost: f64,
+        costs: *mut [f64; 8],
+        switches: *mut u8,
+        cheapest: *mut u8,
+    );
+
+    fn highway_brotli_estimate_costs(
+        common: *const u32,
+        others: &[*const u32; 4],
+        size: usize,
+        used: &[u64; BROTLI_MAX_SYMBOLS / 64],
+        totals: &[u32; 4],
+        gaps: &[[u32; 4]; 2],
+        table: *mut [f64; 2],
+        limit: u32,
+        costs: &mut [f64; 4],
+    );
+
+    fn highway_brotli_remove_pairs(
+        costs: *mut f64,
+        pairs: *mut [u32; 2],
+        count: usize,
+        a: u32,
+        b: u32,
+    ) -> usize;
+
+    fn highway_brotli_sort_leaves(
+        leaves: *const u64,
+        count: usize,
+        like_shell_sort: bool,
+        sorted: *mut u64,
+    ) -> bool;
+
+    safe fn highway_brotli_pairs_in_16(bytes: &[u8; 18]) -> u64;
+
+    safe fn highway_brotli_pairs_in_64(bytes: &[u8; 66]) -> u64;
+
+    fn highway_brotli_short_codes(
+        bytes: *const u8,
+        last_start: u32,
+        ring_mask: u32,
+        position: u32,
+        pair: u16,
+        distances: &[i32; 4],
+    ) -> u32;
+
+    fn highway_brotli_short_codes_of_five(
+        bytes: *const u8,
+        last_start: u32,
+        ring_mask: u32,
+        position: u32,
+        pair: u16,
+        distances: &[[i32; 4]; 8],
+        ranked: &[u64; 5],
+        hopeless: f32,
+        others: &mut u64,
+    ) -> u32;
+
+    fn highway_brotli_try_lengths(
+        costs: *mut f32,
+        nodes: *mut u32,
+        stride: usize,
+        length: usize,
+        end: usize,
+        extra_bits: *const f32,
+        symbol_costs: *const f32,
+        base: f32,
+        distance: u32,
+        insert: u32,
+    );
+
+    fn highway_brotli_try_matches(
+        costs: *mut f32,
+        nodes: *mut u32,
+        stride: usize,
+        length: usize,
+        end: usize,
+        extra_bits: *const f32,
+        matches: &[u64; 4],
+        count: usize,
+        distance_costs: &[f32; 64],
+        first_symbol_costs: *const f32,
+        first_base: f32,
+        first_insert: u32,
+        second_symbol_costs: *const f32,
+        second_base: f32,
+        second_insert: u32,
+    );
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -1655,6 +1750,294 @@ pub fn jpeg_forward_transform<const MASKS: usize>(
     Ok(())
 }
 
+/// Adds up what `symbols` cost in each histogram, where one can take over the sum of the cheapest for `switch_cost`.
+#[inline(always)]
+pub fn brotli_find_switches(
+    symbols: &[u16],
+    // For each symbol of the alphabet, as many as there are `costs`.
+    symbol_costs: &[[f64; 8]],
+    switch_cost: f64,
+    // The sums, for groups of histograms.
+    costs: &mut [[f64; 8]],
+    // For each symbol and group, a bit for each histogram that takes over before the symbol.
+    switches: &mut [u8],
+    // For each symbol, the first of the cheapest histograms after it.
+    cheapest: &mut [u8],
+) {
+    let groups = costs.len();
+    assert!((1..=16).contains(&groups) && groups <= symbol_costs.len());
+    assert!(symbols.len() <= cheapest.len().min(switches.len() / groups));
+    // SAFETY: the kernel limits the symbols to the alphabet, and writes `groups` and one byte for each (asserted above).
+    unsafe {
+        highway_brotli_find_switches(
+            symbols.as_ptr(),
+            symbols.len(),
+            symbol_costs.as_ptr(),
+            symbol_costs.len() / groups,
+            groups,
+            switch_cost,
+            costs.as_mut_ptr(),
+            switches.as_mut_ptr(),
+            cheapest.as_mut_ptr(),
+        );
+    }
+}
+
+/// `kMaxSymbols` in highway_brotli.cpp.
+const BROTLI_MAX_SYMBOLS: usize = 704;
+
+/// How many entries [`brotli_estimate_costs`] needs for numbers that have none: `kSpareEntries` in highway_brotli.cpp.
+pub const BROTLI_SPARE_LOGARITHMS: usize = 256;
+
+/// The bits for a prefix code and its symbols, for the sums of `common` and each of `others`. They have five symbols or more.
+#[inline(always)]
+pub fn brotli_estimate_costs(
+    common: &[u32],
+    others: [&[u32]; 4],
+    // A bit for each symbol that any of them has.
+    used: &[u64; BROTLI_MAX_SYMBOLS / 64],
+    totals: &[u32; 4],
+    // Up to the last symbol: the zeros in runs of one or two, and the number of longer runs.
+    gaps: &[[u32; 4]; 2],
+    // `[log2(n), n]` up to a power of two, with a million for the logarithm of zero, and then the spare entries.
+    logarithms: &mut [[f64; 2]],
+) -> [f64; 4] {
+    let size = common.len();
+    assert!(size <= BROTLI_MAX_SYMBOLS && size.is_multiple_of(8));
+    assert!(others.iter().all(|other| other.len() == size));
+    let known = logarithms.len().wrapping_sub(BROTLI_SPARE_LOGARITHMS);
+    assert!(known.is_power_of_two() && known <= 1 << 24);
+    let mut costs = [0.0; 4];
+    // SAFETY: the kernel reads `size` counts of each, and replaces what is not `known` by a spare entry before it looks it up.
+    unsafe {
+        highway_brotli_estimate_costs(
+            common.as_ptr(),
+            &others.map(<[u32]>::as_ptr),
+            size,
+            used,
+            totals,
+            gaps,
+            logarithms.as_mut_ptr(),
+            2 * known as u32,
+            &mut costs,
+        );
+    }
+    costs
+}
+
+/// [`brotli_remove_pairs`] takes whole groups of this many.
+pub const BROTLI_PAIR_GROUP: usize = 4;
+
+/// Returns how many have neither `a` nor `b`. One that costs less than the first, or as much with a smaller difference, trades places with it.
+#[inline(always)]
+pub fn brotli_remove_pairs(costs: &mut [f64], pairs: &mut [[u32; 2]], [a, b]: [u32; 2]) -> usize {
+    let count = costs.len();
+    assert!(count != 0 && count == pairs.len() && count.is_multiple_of(BROTLI_PAIR_GROUP));
+    // SAFETY: the kernel reads `count` of both, and writes no further than it has read.
+    unsafe { highway_brotli_remove_pairs(costs.as_mut_ptr(), pairs.as_mut_ptr(), count, a, b) }
+}
+
+/// How many elements after the leaves the kernel may copy to the same index: `kLeafGroup` in highway_brotli.cpp.
+pub const BROTLI_LEAF_SLACK: usize = 16;
+
+/// Sorts the first `count` of `leaves` by their high halves, unless one is above 32766 or a slice is too short.
+#[inline(always)]
+pub fn brotli_sort_leaves(
+    leaves: &[u64],
+    count: usize,
+    // With the gaps 132, 57, 23, 10, 4 and 1. Otherwise, ties keep their order.
+    like_shell_sort: bool,
+    sorted: &mut [u64],
+) -> bool {
+    count <= BROTLI_MAX_SYMBOLS
+        && count + BROTLI_LEAF_SLACK <= leaves.len().min(sorted.len())
+        // SAFETY: the kernel has room for `count` leaves, and limits its indices to `count + BROTLI_LEAF_SLACK - 1`.
+        && unsafe {
+            highway_brotli_sort_leaves(leaves.as_ptr(), count, like_shell_sort, sorted.as_mut_ptr())
+        }
+}
+
+/// From the top bit on, whether the two bytes at `at` also are at a distance of 1 and so on, up to `range`, which is 16 or 64.
+#[inline(always)]
+pub fn brotli_pairs_before(bytes: &[u8], at: usize, range: usize) -> Option<u64> {
+    let bytes = bytes.get(at.checked_sub(range)?..)?;
+    match range {
+        16 => Some(highway_brotli_pairs_in_16(bytes.first_chunk()?)),
+        64 => Some(highway_brotli_pairs_in_64(bytes.first_chunk()?)),
+        _ => None,
+    }
+}
+
+/// Where a search for matches at the last distances is.
+#[derive(Clone, Copy)]
+pub struct BrotliPlace<'a> {
+    /// From the offset into the match that `pair` is at. With fewer than 8 bytes, no code is ruled out.
+    pub ring: &'a [u8],
+    pub ring_mask: u32,
+    pub position: u32,
+    pub pair: [u8; 2],
+}
+
+impl BrotliPlace<'_> {
+    #[inline(always)]
+    fn last_start(&self) -> Option<u32> {
+        Some(self.ring.len().checked_sub(8)? as u32)
+    }
+}
+
+/// A bit for each of the 16 short distance codes that may lead to the pair.
+#[inline(always)]
+pub fn brotli_short_codes(place: BrotliPlace<'_>, last_distances: &[i32; 4]) -> u32 {
+    let Some(last_start) = place.last_start() else {
+        return 0xFFFF;
+    };
+    // SAFETY: the kernel reads 8 bytes from `last_start` at most.
+    unsafe {
+        highway_brotli_short_codes(
+            place.ring.as_ptr(),
+            last_start,
+            place.ring_mask,
+            place.position,
+            u16::from_le_bytes(place.pair),
+            last_distances,
+        )
+    }
+}
+
+/// `kSlotShift` in highway_brotli.cpp.
+pub const BROTLI_SLOT_SHIFT: u32 = 4;
+
+/// [`brotli_short_codes`] for the first, and for the other four from the low bits on.
+#[inline(always)]
+pub fn brotli_short_codes_of_five(
+    place: BrotliPlace<'_>,
+    last_distances: &[[i32; 4]; 8],
+    // Three bits from `BROTLI_SLOT_SHIFT` on choose the distances. The high half is a cost as an `f32`, and there are no codes if it is positive.
+    ranked: &[u64; 5],
+    // From this cost on, there are no codes for the same distances as those of the first.
+    hopeless: f32,
+) -> (u32, u64) {
+    let Some(last_start) = place.last_start() else {
+        return (0xFFFF, u64::MAX);
+    };
+    let mut others = 0;
+    // SAFETY: the kernel reads 8 bytes from `last_start` at most.
+    let first = unsafe {
+        highway_brotli_short_codes_of_five(
+            place.ring.as_ptr(),
+            last_start,
+            place.ring_mask,
+            place.position,
+            u16::from_le_bytes(place.pair),
+            last_distances,
+            ranked,
+            hopeless,
+            &mut others,
+        )
+    };
+    (first, others)
+}
+
+/// The cheapest known ways to each offset, seen from `offset`.
+pub struct BrotliWays<'a> {
+    pub costs: &'a mut [f32],
+    /// Three rows, each as long as `costs`: the copy length, the distance, and [`BrotliStart::insert`].
+    pub nodes: &'a mut [u32],
+    pub offset: u32,
+}
+
+impl BrotliWays<'_> {
+    /// The two at `offset`, and the length of a row.
+    #[inline(always)]
+    fn reaching<const N: usize>(self, end: usize) -> (*mut f32, *mut u32, usize) {
+        const { assert!(N >= 3) };
+        let (stride, offset) = (self.costs.len(), self.offset as usize);
+        assert!(end <= N - 3 && offset + N <= stride && 3 * stride <= self.nodes.len());
+        let (costs, nodes) = (self.costs.as_mut_ptr(), self.nodes.as_mut_ptr());
+        (
+            costs.wrapping_add(offset),
+            nodes.wrapping_add(offset),
+            stride,
+        )
+    }
+}
+
+/// What comes before a copy.
+#[derive(Clone, Copy)]
+pub struct BrotliStart<'a, const N: usize> {
+    pub cost: f32,
+    /// By copy length.
+    pub symbol_costs: &'a [f32; N],
+    pub insert: u32,
+}
+
+/// Takes the copies of `lengths` that are cheaper than what is known. The cost of the distance is in that of `start`.
+#[inline(always)]
+pub fn brotli_try_lengths<const N: usize>(
+    ways: BrotliWays<'_>,
+    lengths: core::ops::Range<usize>,
+    extra_bits: &[f32; N],
+    start: BrotliStart<'_, N>,
+    distance: u32,
+) {
+    let (costs, nodes, stride) = ways.reaching::<N>(lengths.end);
+    // SAFETY: the kernel touches up to `N` numbers of the tables, and of each row from the offset on (asserted above).
+    unsafe {
+        highway_brotli_try_lengths(
+            costs,
+            nodes,
+            stride,
+            lengths.start,
+            lengths.end,
+            extra_bits.as_ptr(),
+            start.symbol_costs.as_ptr(),
+            start.cost,
+            distance,
+            start.insert,
+        );
+    }
+}
+
+/// `kLengthShift` in highway_brotli.cpp.
+pub const BROTLI_LENGTH_SHIFT: u32 = 37;
+
+/// [`brotli_try_lengths`] with the first match that is long enough, and the cheaper start, or else the first.
+#[inline(always)]
+pub fn brotli_try_matches<const N: usize>(
+    ways: BrotliWays<'_>,
+    lengths: core::ops::Range<usize>,
+    extra_bits: &[f32; N],
+    [first, second]: [BrotliStart<'_, N>; 2],
+    // The distance in the low half, and the length from `BROTLI_LENGTH_SHIFT` on.
+    matches: &[u64; 4],
+    count: usize,
+    // From symbol 16 on, without postfix bits and direct codes.
+    distance_costs: &[f32; 64],
+) {
+    assert!(lengths.start < lengths.end);
+    let (costs, nodes, stride) = ways.reaching::<N>(lengths.end);
+    // SAFETY: as in `brotli_try_lengths`.
+    unsafe {
+        highway_brotli_try_matches(
+            costs,
+            nodes,
+            stride,
+            lengths.start,
+            lengths.end,
+            extra_bits.as_ptr(),
+            matches,
+            count,
+            distance_costs,
+            first.symbol_costs.as_ptr(),
+            first.cost,
+            first.insert,
+            second.symbol_costs.as_ptr(),
+            second.cost,
+            second.insert,
+        );
+    }
+}
+
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`
 /// writable rows: `generated`/`original` as `[line, column]` i32 pairs
 /// (byte-compatible with `bun_sourcemap::LineColumnOffset`, which is
@@ -1716,6 +2099,217 @@ pub unsafe fn parse_mappings(
             core::ptr::from_mut::<ParseMappingsState>(state).cast::<i32>(),
             err_at,
         )
+    }
+}
+
+#[cfg(test)]
+mod brotli_tests {
+    use super::*;
+
+    /// The kernels are only linked into the full binary.
+    macro_rules! stubs {
+        ($($kernel:ident($($parameter:ty),*) -> $result:ty;)*) => {$(
+            #[unsafe(no_mangle)]
+            extern "C" fn $kernel($(_: $parameter),*) -> $result {
+                Default::default()
+            }
+        )*};
+    }
+    type In = *const u8;
+    type Out = *mut u8;
+    stubs! {
+        highway_brotli_find_switches(In, usize, In, usize, usize, f64, Out, Out, Out) -> ();
+        highway_brotli_estimate_costs(In, In, usize, In, In, In, Out, u32, Out) -> ();
+        highway_brotli_remove_pairs(Out, Out, usize, u32, u32) -> usize;
+        highway_brotli_pairs_in_16(In) -> u64;
+        highway_brotli_pairs_in_64(In) -> u64;
+        highway_brotli_try_lengths(Out, Out, usize, usize, usize, In, In, f32, u32, u32) -> ();
+        highway_brotli_try_matches(Out, Out, usize, usize, usize, In, In, usize, In, In, f32, u32, In, f32, u32) -> ();
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn highway_brotli_sort_leaves(
+        _: *const u64,
+        _: usize,
+        _: bool,
+        _: *mut u64,
+    ) -> bool {
+        true
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn highway_brotli_short_codes(
+        _: In,
+        last_start: u32,
+        _: u32,
+        _: u32,
+        _: u16,
+        _: In,
+    ) -> u32 {
+        last_start
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn highway_brotli_short_codes_of_five(
+        _: In,
+        last_start: u32,
+        _: u32,
+        _: u32,
+        _: u16,
+        _: In,
+        _: In,
+        _: f32,
+        _: Out,
+    ) -> u32 {
+        last_start
+    }
+
+    fn returns<T>(call: impl FnOnce() -> T) -> bool {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)).is_ok()
+    }
+
+    #[test]
+    fn find_switches() {
+        let fits = |symbol_costs, groups, switches, cheapest| {
+            let (symbol_costs, mut costs) = (vec![[0.0; 8]; symbol_costs], vec![[0.0; 8]; groups]);
+            let [mut switches, mut cheapest] = [vec![0; switches], vec![0; cheapest]];
+            returns(|| {
+                brotli_find_switches(
+                    &[0; 5],
+                    &symbol_costs,
+                    0.0,
+                    &mut costs,
+                    &mut switches,
+                    &mut cheapest,
+                );
+            })
+        };
+        assert!(fits(3, 3, 15, 5));
+        assert!(!fits(2, 3, 15, 5));
+        assert!(!fits(3, 3, 14, 5));
+        assert!(!fits(3, 3, 15, 4));
+        assert!(!fits(3, 0, 15, 5));
+        assert!(fits(16, 16, 80, 5));
+        assert!(!fits(17, 17, 85, 5));
+    }
+
+    #[test]
+    fn estimate_costs() {
+        let fits = |size, [a, b, c, d]: [usize; 4], logarithms| {
+            let (counts, mut logarithms) = (&[0; 712], vec![[0.0; 2]; logarithms]);
+            let others = [&counts[..a], &counts[..b], &counts[..c], &counts[..d]];
+            returns(|| {
+                brotli_estimate_costs(
+                    &counts[..size],
+                    others,
+                    &[0; 11],
+                    &[0; 4],
+                    &[[0; 4]; 2],
+                    &mut logarithms,
+                )
+            })
+        };
+        let enough = BROTLI_SPARE_LOGARITHMS + 4;
+        assert!(fits(704, [704; 4], enough));
+        assert!(!fits(712, [712; 4], enough));
+        assert!(!fits(12, [12; 4], enough));
+        for nth in 0..4 {
+            let mut sizes = [16; 4];
+            sizes[nth] = 8;
+            assert!(!fits(16, sizes, enough));
+        }
+        for logarithms in [0, 4, enough - 5, enough - 4, enough - 1, enough + 1] {
+            assert!(!fits(16, [16; 4], logarithms));
+        }
+    }
+
+    #[test]
+    fn remove_pairs() {
+        let fits = |costs, pairs| {
+            let (mut costs, mut pairs) = (vec![0.0; costs], vec![[0; 2]; pairs]);
+            returns(|| brotli_remove_pairs(&mut costs, &mut pairs, [0, 1]))
+        };
+        assert!(fits(8, 8));
+        for (costs, pairs) in [(0, 0), (6, 6), (8, 4), (4, 8)] {
+            assert!(!fits(costs, pairs));
+        }
+    }
+
+    #[test]
+    fn sort_leaves() {
+        let fits = |leaves, count, sorted| {
+            brotli_sort_leaves(&vec![0; leaves], count, true, &mut vec![0; sorted])
+        };
+        assert!(fits(720, 704, 720));
+        assert!(!fits(719, 704, 720));
+        assert!(!fits(720, 704, 719));
+        assert!(!fits(721, 705, 721));
+        assert!(!fits(720, usize::MAX, 720));
+    }
+
+    #[test]
+    fn pairs_before() {
+        for range in [16, 64] {
+            let fits = |len, at| brotli_pairs_before(&vec![0; len], at, range).is_some();
+            assert!(fits(range + 2, range));
+            assert!(!fits(range + 2, range - 1));
+            assert!(!fits(range + 2, range + 1));
+            assert!(!fits(range + 1, range));
+            assert!(!fits(range + 2, usize::MAX));
+        }
+        assert_eq!(brotli_pairs_before(&[0; 128], 64, 32), None);
+    }
+
+    #[test]
+    fn short_codes() {
+        let results = |len| {
+            let place = BrotliPlace {
+                ring: &[0; 20][..len],
+                ring_mask: u32::MAX,
+                position: 0,
+                pair: [0; 2],
+            };
+            (
+                brotli_short_codes(place, &[0; 4]),
+                brotli_short_codes_of_five(place, &[[0; 4]; 8], &[0; 5], 0.0),
+            )
+        };
+        assert_eq!(results(20), (12, (12, 0)));
+        assert_eq!(results(8), (0, (0, 0)));
+        assert_eq!(results(7), (0xFFFF, (0xFFFF, u64::MAX)));
+    }
+
+    #[test]
+    fn try_copies() {
+        let fit = |costs, nodes, offset, [first, end]: [usize; 2]| {
+            let (mut costs, mut nodes) = (vec![0.0; costs], vec![0; nodes]);
+            let start = BrotliStart {
+                cost: 0.0,
+                symbol_costs: &[0.0; 12],
+                insert: 0,
+            };
+            [false, true].map(|has_matches| {
+                let ways = BrotliWays {
+                    costs: &mut costs,
+                    nodes: &mut nodes,
+                    offset,
+                };
+                let (lengths, bits) = (first..end, start.symbol_costs);
+                returns(|| match has_matches {
+                    false => brotli_try_lengths(ways, lengths, bits, start, 0),
+                    true => {
+                        brotli_try_matches(ways, lengths, bits, [start; 2], &[0; 4], 1, &[0.0; 64])
+                    }
+                })
+            })
+        };
+        assert_eq!(fit(17, 51, 5, [2, 9]), [true; 2]);
+        assert_eq!(fit(17, 51, 5, [2, 10]), [false; 2]);
+        assert_eq!(fit(17, 51, 6, [2, 9]), [false; 2]);
+        assert_eq!(fit(17, 50, 5, [2, 9]), [false; 2]);
+        assert_eq!(fit(17, 51, u32::MAX, [2, 9]), [false; 2]);
+        assert_eq!(fit(17, 51, 5, [9, 9]), [true, false]);
+        assert_eq!(fit(17, 51, 5, [usize::MAX, 9]), [true, false]);
     }
 }
 

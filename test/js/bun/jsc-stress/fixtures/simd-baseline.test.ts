@@ -6,7 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { deflateSync, inflateSync } from "node:zlib";
+import { brotliCompressSync, constants, deflateSync, inflateSync } from "node:zlib";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -244,6 +244,54 @@ function linesOf(file: Uint8Array): Buffer {
   }
   return inflateSync(Buffer.concat(idat));
 }
+
+describe("Brotli encoder: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_brotli.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+  // three have to lead to the same bytes. These checksums are from google/brotli.
+  // Text takes turns with bytes of few, of many, and of scattered values, and some of it comes again with changes.
+  const words = ["the ", "The ", "time ", "information ", "of ", "<div>", "</div>\n", "é", "working ", "1024, "];
+  const input = Buffer.alloc(24000);
+  let state = 1;
+  const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) >>> 16;
+  for (let at = 0, part = 0; at < input.length; part++) {
+    const end = Math.min(input.length, at + 300 + (random() % 900));
+    while (at < end) {
+      if (part % 5 === 0) {
+        at += input.write(words[random() % words.length], at);
+      } else if (part % 5 === 4 && random() % 16) {
+        input[at] = input[at - 1100 - (part % 3)];
+        at++;
+      } else {
+        input[at++] = random() & [0, 0x07, 0x7f, 0xc9, 0xff][part % 5];
+      }
+    }
+  }
+
+  test.each([
+    { quality: 5, expected: [0xa8b039ed, 0x3df1b1bd] },
+    { quality: 9, expected: [0x869eb61c, 0xfbea90a9] },
+    { quality: 10, expected: [0xf294e22b, 0x51cb00fb] },
+    { quality: 11, expected: [0x089c7811, 0x89fdfe52] },
+  ])("quality $quality", ({ quality, expected }) => {
+    const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
+    const checksum = (bytes: Buffer) => Bun.hash.crc32(brotliCompressSync(bytes, { params }));
+    expect([checksum(input.subarray(0, 1500)), checksum(input)]).toEqual(expected);
+  });
+
+  // These depend on how bytes that are equally frequent get sorted.
+  test.each([
+    { quality: 0, expected: 0xf3f68ec3 },
+    { quality: 3, expected: 0x3b33ad84 },
+  ])("each number of distinct bytes at quality $quality", ({ quality, expected }) => {
+    const bytes = Array.from({ length: 700 }, (_, i) => Math.imul(i * i + 1, 0x9e3779b1) >>> 24);
+    const streams = Array.from({ length: 256 }, (_, last) =>
+      brotliCompressSync(Buffer.concat([Buffer.alloc(300), Buffer.from(bytes.map(byte => byte % (last + 1)))]), {
+        params: { [constants.BROTLI_PARAM_QUALITY]: quality },
+      }),
+    );
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(expected);
+  });
+});
 
 describe("JPEG codec: Highway runtime dispatch", () => {
   // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All

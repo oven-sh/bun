@@ -141,7 +141,7 @@ impl Buckets<false> {
         /// Take about as long as setting up buckets.
         const SPARE_HOPS: usize = 1 << 13;
         let counted = small.hops.min(USUAL_HOPS * (input_size - input_size / 4));
-        counted > USUAL_HOPS * position + SPARE_HOPS
+        counted.max(small.hops / 2) > USUAL_HOPS * position + SPARE_HOPS
     }
 
     /// Goes on at `position`, where `small` left off.
@@ -198,7 +198,9 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
     #[inline(always)]
     fn prefetch(&self, eight: u64) {
         let next = Head(self.table.heads[hash::<LONG>(eight, BUCKET_BITS)]).next();
-        prefetch_read(self.table.slots.as_ptr().wrapping_add(next), Locality::L1);
+        for slot in [next, next.saturating_sub(16)] {
+            prefetch_read(self.table.slots.as_ptr().wrapping_add(slot), Locality::L1);
+        }
     }
 
     #[inline(always)]
@@ -213,17 +215,21 @@ impl<const LONG: bool> Hasher for Buckets<LONG> {
             (count, 0)
         };
         let (newer, older) = table.slots[head.next() - newer..head.next() + older].split_at(newer);
-        prefetch_read(newer.as_ptr_range().end.wrapping_sub(1), Locality::L1);
         let mut best = Match::NONE;
         let length = search.try_recent(recent, self.recent_count, &mut best);
+        let nearest = (newer.last()).map_or(0, |&at| search.position.wrapping_sub(at as usize));
+        let length = search.raise(length, nearest, &self.words, &mut best);
         let mut filter = Filter::new(search, length);
-        'bucket: for part in [newer, older] {
-            for &candidate in part.iter().rev() {
-                if !search.reaches_back_to(candidate as usize) {
+        'bucket: for mut part in [newer, older] {
+            if part.is_empty() {
+                break;
+            }
+            while let [rest @ .., candidate] = filter.skip(search, part) {
+                if !search.reaches_back_to(*candidate as usize) {
                     break 'bucket;
                 }
-                let distance = search.position - candidate as usize;
-                filter.try_position(search, candidate as usize, distance, &mut best);
+                filter.try_passed(search, *candidate as usize, &mut best);
+                part = rest;
             }
         }
         table.insert(key, head, search.position);
@@ -322,24 +328,30 @@ impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> Hasher
         let (key, _) = Self::key_and_tag(eight);
         prefetch_read(&raw const self.counts[key], Locality::L1);
         prefetch_read(&raw const self.tags[key], Locality::L1);
-        prefetch_read(&raw const self.positions[key], Locality::L1);
+        for line in self.positions[key].as_chunks::<16>().0 {
+            prefetch_read(line, Locality::L1);
+        }
     }
 
     #[inline(always)]
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
         let (key, tag) = Self::key_and_tag(search.first_eight());
         let (count, positions, tags) = (self.counts[key], &self.positions[key], &self.tags[key]);
-        for line in positions.as_chunks::<16>().0 {
-            prefetch_read(line, Locality::L1);
-        }
         let newest = usize::from(count.wrapping_neg()) % SIZE;
         let used = usize::from(count).min(SIZE);
         let mut candidates = equal_tags(tags, tag, newest) & ((1u64 << used) - 1) as u32;
         let mut best = Match::NONE;
         let length = search.try_recent(recent, 4, &mut best);
+        let first_of =
+            |candidates: u32| positions[(newest + candidates.trailing_zeros() as usize) % SIZE];
+        let nearest = match candidates {
+            0 => 0,
+            _ => search.position.wrapping_sub(first_of(candidates) as usize),
+        };
+        let length = search.raise(length, nearest, &self.words, &mut best);
         let mut filter = Filter::new(search, length);
         while candidates != 0 {
-            let candidate = positions[(newest + candidates.trailing_zeros() as usize) % SIZE];
+            let candidate = first_of(candidates);
             let distance = search.position.wrapping_sub(candidate as usize);
             if !search.reaches(distance) {
                 break;

@@ -1,23 +1,30 @@
 //! Finds the cheapest sequence of commands for a block (qualities 10 and 11).
 
+use core::array::from_fn;
 use core::hint::select_unpredictable;
 use core::ops::RangeInclusive;
+
+use bun_highway::{
+    BROTLI_SLOT_SHIFT, BrotliPlace, BrotliStart, BrotliWays, brotli_short_codes,
+    brotli_short_codes_of_five, brotli_try_lengths, brotli_try_matches,
+};
 
 use super::command::{
     Command, Commands, DISTANCE_CODE_OFFSET, DistancePrefix, codes_of_short_lengths,
     combine_length_codes, copy_length_code, insert_length_code,
 };
-use super::hash::{BinaryTree, BytePair, Candidate};
+use super::hash::{BinaryTree, Candidate};
 use super::histogram::DISTANCE_SYMBOLS;
 use super::input_block::InputBlock;
 use super::literal_cost;
 use super::log2::{const_log2, fast_log2};
-use super::matching::match_length;
+use super::matching::{bytes_at, match_length};
 use super::ring_buffer::Window;
 use super::symbol_set::SymbolSet;
+use super::words::WordMatches;
 use crate::format::{
-    Alphabet, COMMAND_SYMBOLS, COPY_LENGTH_CODES, INSERT_LENGTH_CODES, LITERAL_SYMBOLS,
-    SHORT_CODE_BASES, SHORT_CODE_DELTAS, SHORT_COPY_END,
+    Alphabet, COMMAND_SYMBOLS, COPY_LENGTH_CODES, FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES,
+    LITERAL_SYMBOLS, SHORT_CODE_BASES, SHORT_CODE_DELTAS, SHORT_COPY_END,
 };
 use crate::memory::{self, Result};
 
@@ -26,41 +33,34 @@ const LONG_COPY: usize = 16384;
 const HASHED_BYTES: usize = 4;
 
 /// The last command on the cheapest known way to a position.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Node {
-    /// The length in the low 25 bits, and above it 9 plus what it exceeds the length in the stream by.
-    copy_length: u32,
+    /// The length in the low 25 bits, and above it that of the word of the static dictionary, if it is one.
+    copy: u32,
     distance: u32,
     /// The length in the low 27 bits, and above it the short distance code plus one, or zero.
-    insert_length: u32,
+    insert: u32,
 }
 
 impl Node {
-    #[inline(always)]
-    fn with_length(self, length: usize) -> Self {
-        self.with_word(length, length)
-    }
+    const WORD_SHIFT: u32 = 25;
+    const CODE_SHIFT: u32 = 27;
 
     #[inline(always)]
-    fn with_word(self, length: usize, word_length: usize) -> Self {
-        Self {
-            copy_length: (length | ((length + 9 - word_length) << 25)) as u32,
-            ..self
+    fn copy_length(&self) -> usize {
+        self.copy as usize % (1 << Self::WORD_SHIFT)
+    }
+
+    fn coded_copy_length(&self) -> usize {
+        match self.copy >> Self::WORD_SHIFT {
+            0 => self.copy_length(),
+            word_length => word_length as usize,
         }
     }
 
     #[inline(always)]
-    fn copy_length(&self) -> usize {
-        (self.copy_length & 0x1FF_FFFF) as usize
-    }
-
-    fn coded_copy_length(&self) -> usize {
-        self.copy_length() + 9 - (self.copy_length >> 25) as usize
-    }
-
-    #[inline(always)]
     fn insert_length(&self) -> usize {
-        (self.insert_length & 0x7FF_FFFF) as usize
+        self.insert as usize % (1 << Self::CODE_SHIFT)
     }
 
     #[inline(always)]
@@ -68,12 +68,16 @@ impl Node {
         self.copy_length() + self.insert_length()
     }
 
-    #[inline(always)]
     fn distance_code(&self) -> usize {
-        match self.insert_length >> 27 {
+        match self.insert >> Self::CODE_SHIFT {
             0 => self.distance as usize + DISTANCE_CODE_OFFSET,
             short => short as usize - 1,
         }
+    }
+
+    #[inline(always)]
+    fn changes_last_distances(&self) -> bool {
+        (self.insert >> Self::CODE_SHIFT != 1) & (self.copy >> Self::WORD_SHIFT == 0)
     }
 }
 
@@ -92,6 +96,15 @@ static COPY_EXTRA_BITS: CostByCopyLength = {
     bits
 };
 
+static INSERT_EXTRA_BITS: [f32; INSERT_LENGTH_CODES.len()] = {
+    let (mut bits, mut code) = ([0.0; _], 0);
+    while code < bits.len() {
+        bits[code] = INSERT_LENGTH_CODES[code].extra_bits as f32;
+        code += 1;
+    }
+    bits
+};
+
 #[derive(Clone, Copy)]
 struct SymbolCosts {
     commands: [f32; COMMAND_SYMBOLS],
@@ -100,6 +113,8 @@ struct SymbolCosts {
     with_last_distance: [CostByCopyLength; 8],
     distances: [f32; DISTANCE_SYMBOLS],
     cheapest_command: f32,
+    /// For each insert length code, the most that another one saves for the same copy.
+    most_saved: [f32; 24],
 }
 
 static FIRST_GUESS: SymbolCosts = {
@@ -117,13 +132,14 @@ static FIRST_GUESS: SymbolCosts = {
         with_last_distance: [[0.0; _]; _],
         distances: logarithms_from(20),
         cheapest_command: 0.0,
+        most_saved: [0.0; _],
     };
-    costs.commands_changed();
+    costs.changed();
     costs
 };
 
 impl SymbolCosts {
-    const fn commands_changed(&mut self) {
+    const fn changed(&mut self) {
         self.cheapest_command = UNREACHED;
         let mut i = 0;
         while i < COMMAND_SYMBOLS {
@@ -144,6 +160,30 @@ impl SymbolCosts {
             }
             length += 1;
         }
+        self.most_saved = [0.0; _];
+        let mut copy_code = 0;
+        while copy_code < COPY_LENGTH_CODES.len() {
+            self.compare_insert_codes(copy_code, false);
+            self.compare_insert_codes(copy_code, true);
+            copy_code += 1;
+        }
+    }
+
+    const fn compare_insert_codes(&mut self, copy_code: usize, is_last_distance: bool) {
+        let (mut costs, mut cheapest, mut code) = (INSERT_EXTRA_BITS, UNREACHED, 0);
+        while code < costs.len() {
+            let symbol = combine_length_codes(code, copy_code, is_last_distance) as usize;
+            costs[code] += self.commands[symbol];
+            if symbol >= FIRST_COMMAND_WITH_DISTANCE {
+                costs[code] += self.distances[0];
+            }
+            cheapest = cheapest.min(costs[code]);
+            code += 1;
+        }
+        while code > 0 {
+            code -= 1;
+            self.most_saved[code] = self.most_saved[code].max(costs[code] - cheapest);
+        }
     }
 
     fn set_from(&mut self, commands: &[Command], alphabet: Alphabet) {
@@ -156,7 +196,7 @@ impl SymbolCosts {
         set_costs(&symbols, true, &mut self.commands);
         let distances = &distances[..alphabet.size as usize];
         set_costs(distances, true, &mut self.distances);
-        self.commands_changed();
+        self.changed();
     }
 }
 
@@ -210,54 +250,70 @@ fn accumulate(costs: &mut [f32]) {
 
 const MAX_STARTS: usize = 5;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Start {
-    cost: f32,
-    last_distances: [i32; 4],
+    offset: usize,
+    /// Compared with nothing but literals.
+    relative_cost: f32,
+    slot: usize,
 }
 
-/// The best positions for a command to start at: those that cost the least, compared with nothing but literals.
+/// The best positions for a command to start at. Until there are enough, the rest are [`UNREACHED`].
 struct Starts {
-    /// From the high bits: the difference, which is not positive, the offset, and the slot. The largest number is the best.
-    sorted: [u64; MAX_STARTS],
-    count: usize,
-    slots: [Start; Self::SLOTS],
+    /// From the high bits: the relative cost, which has a minus sign, the offset, and the slot. The largest number is the best.
+    ranked: [u64; MAX_STARTS],
+    last_distances: [[i32; 4]; Self::SLOTS],
+    costs: [f32; Self::SLOTS],
+    /// As in `ranked`.
     free_slot: u64,
 }
 
 impl Starts {
-    const SLOTS: usize = (MAX_STARTS + 1).next_power_of_two();
+    const SLOTS: usize = 8;
+    const OFFSET_SHIFT: u32 = BROTLI_SLOT_SHIFT + Self::SLOTS.ilog2();
 
     fn new() -> Self {
+        let slot = |index: usize| (index << BROTLI_SLOT_SHIFT) as u64;
+        let unreached = u64::from(UNREACHED.to_bits()) << 32;
         Self {
-            sorted: core::array::from_fn(|rank| (MAX_STARTS - 1 - rank) as u64),
-            count: 0,
-            slots: Default::default(),
-            free_slot: MAX_STARTS as u64,
+            ranked: from_fn(|rank| unreached | slot(MAX_STARTS - 1 - rank)),
+            last_distances: [[0; 4]; _],
+            costs: [0.0; _],
+            free_slot: slot(MAX_STARTS),
         }
     }
 
     #[inline(always)]
-    fn push(&mut self, offset: usize, relative_cost: f32, start: Start, max_count: usize) {
-        self.slots[self.free_slot as usize % Self::SLOTS] = start;
-        let mut moved = (u64::from(relative_cost.to_bits()) << 32)
-            | ((offset * Self::SLOTS) as u64 + self.free_slot);
-        for slot in &mut self.sorted {
-            (*slot, moved) = (moved.max(*slot), moved.min(*slot));
+    fn push(&mut self, offset: usize, saved: f32, cost: f32, last_distances: [i32; 4]) {
+        let slot = (self.free_slot >> BROTLI_SLOT_SHIFT) as usize % Self::SLOTS;
+        (self.last_distances[slot], self.costs[slot]) = (last_distances, cost);
+        let mut moved = (u64::from((-saved).to_bits()) << 32)
+            | ((offset << Self::OFFSET_SHIFT) as u64 + self.free_slot);
+        for ranked in &mut self.ranked {
+            (*ranked, moved) = (moved.max(*ranked), moved.min(*ranked));
         }
-        self.free_slot = moved % Self::SLOTS as u64;
-        self.count = max_count.min(self.count + 1);
+        self.free_slot = moved % (1 << Self::OFFSET_SHIFT);
     }
 
-    /// The offset, the difference, and the rest.
+    /// A bit for each short distance code, for the best one and for the others. `count` is 1 or [`MAX_STARTS`].
     #[inline(always)]
-    fn get(&self, rank: usize) -> (usize, f32, Start) {
-        let packed = self.sorted[rank];
-        (
-            packed as u32 as usize / Self::SLOTS,
-            f32::from_bits((packed >> 32) as u32),
-            self.slots[packed as usize % Self::SLOTS],
-        )
+    fn promising(&self, count: usize, place: BrotliPlace<'_>, hopeless: f32) -> (u32, u64) {
+        if count == 1 {
+            let last_distances = &self.last_distances[self.get(0).slot];
+            (brotli_short_codes(place, last_distances), 0)
+        } else {
+            brotli_short_codes_of_five(place, &self.last_distances, &self.ranked, hopeless)
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, rank: usize) -> Start {
+        let packed = self.ranked[rank];
+        Start {
+            offset: (packed as u32 >> Self::OFFSET_SHIFT) as usize,
+            relative_cost: f32::from_bits((packed >> 32) as u32),
+            slot: (packed >> BROTLI_SLOT_SHIFT) as usize % Self::SLOTS,
+        }
     }
 }
 
@@ -294,18 +350,48 @@ fn lanes(values: &[f32], at: usize) -> &[f32; LANES] {
     values[at..].first_chunk().unwrap_or(&[UNREACHED; LANES])
 }
 
+/// The literals from a start on.
+#[derive(Clone, Copy)]
+struct Insert {
+    length: u32,
+    code: usize,
+    /// Of the whole way.
+    cost: f32,
+}
+
+/// What the tries from one offset share.
+struct Attempt {
+    offset: usize,
+    min_length: usize,
+    /// A start that costs this much gains nothing from a copy that the best one tried.
+    hopeless: f32,
+    last_match: ShortMatch,
+    /// From [`SHORT_COPY_END`] on.
+    longest_improvement: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ShortMatch {
+    distance: usize,
+    length: usize,
+    /// It does not count after a longer match than this.
+    max_tried: usize,
+}
+
 struct Paths<'a> {
     block: InputBlock<'a>,
+    padded: &'a [u8],
     symbols: &'a SymbolCosts,
     /// The cost of all the bytes before each offset.
     literals: Vec<f32>,
     /// Longer matches are only tried in full.
     max_varied_length: usize,
-    starts_to_try: usize,
+    /// Fewer candidates can be tried at once.
+    at_once_below: usize,
     starts: Starts,
-    /// Where `costs` is below [`UNREACHED`].
-    nodes: Vec<Node>,
-    /// With [`LANES`] more at the end. See [`Link`].
+    /// See [`BrotliWays`]. Valid where `costs` is below [`UNREACHED`].
+    nodes: Vec<u32>,
+    /// With room for a [`CostByCopyLength`] from each offset on. See [`Link`].
     costs: Vec<f32>,
     /// Before the block.
     first_distances: [i32; 4],
@@ -313,20 +399,25 @@ struct Paths<'a> {
 
 impl<'a> Paths<'a> {
     fn new(block: &InputBlock<'a>, first_distances: [i32; 4]) -> Result<Self> {
-        let thorough = block.params.quality > 10;
         let mut literals = memory::empty(block.length + 1)?;
         literals.push(0.0);
         literal_cost::estimate(block.data_from(block.position), &mut literals);
         accumulate(&mut literals);
+        let distances = block.params.distance;
+        let is_usual = block.dictionary.is_none()
+            && distances.postfix_bits == 0
+            && distances.direct_codes == 0;
+        let size = block.length + COPY_EXTRA_BITS.len();
         let mut paths = Self {
             block: *block,
+            padded: block.padded(),
             symbols: &FIRST_GUESS,
             literals,
-            max_varied_length: if thorough { 325 } else { 150 },
-            starts_to_try: if thorough { MAX_STARTS } else { 1 },
+            max_varied_length: if block.params.quality > 10 { 325 } else { 150 },
+            at_once_below: if is_usual { LANES + 1 } else { 0 },
             starts: Starts::new(),
-            nodes: memory::filled(Node::default(), block.length + 1)?,
-            costs: memory::filled(UNREACHED, block.length + 1 + LANES)?,
+            nodes: memory::zeroed(3 * size)?,
+            costs: memory::filled(UNREACHED, size)?,
             first_distances,
         };
         paths.costs[0] = 0.0;
@@ -345,10 +436,36 @@ impl<'a> Paths<'a> {
     }
 
     #[inline(always)]
-    fn changes_last_distances(&self, node: &Node, offset: usize) -> bool {
-        let copy_start = self.block.position + offset - node.copy_length();
-        node.distance as usize <= self.block.max_copy_distance(copy_start)
-            && node.distance_code() > 0
+    fn node(&self, offset: usize) -> Node {
+        let row = self.costs.len();
+        Node {
+            copy: self.nodes[offset],
+            distance: self.nodes[row + offset],
+            insert: self.nodes[2 * row + offset],
+        }
+    }
+
+    /// Returns whether it is cheaper than what is known.
+    #[inline(always)]
+    fn try_node(&mut self, offset: usize, cost: f32, node: Node) -> bool {
+        let is_cheaper = cost < self.costs[offset];
+        if is_cheaper {
+            let row = self.costs.len();
+            self.costs[offset] = cost;
+            self.nodes[offset] = node.copy;
+            self.nodes[row + offset] = node.distance;
+            self.nodes[2 * row + offset] = node.insert;
+        }
+        is_cheaper
+    }
+
+    #[inline(always)]
+    fn ways_from(&mut self, offset: usize) -> BrotliWays<'_> {
+        BrotliWays {
+            costs: &mut self.costs,
+            nodes: &mut self.nodes,
+            offset: offset as u32,
+        }
     }
 
     /// The way to `offset` is final.
@@ -361,18 +478,13 @@ impl<'a> Paths<'a> {
         }
         let mut last_distances = self.first_distances;
         if offset != 0 {
-            let node = self.nodes[offset];
+            let node = self.node(offset);
             let earlier = self.last_change_up_to(offset - node.command_length());
-            let changes = self.changes_last_distances(&node, offset);
+            let changes = node.changes_last_distances();
             self.costs[offset] = f32::from_bits(Link::new(earlier, changes).0);
             last_distances = self.distances_from(select_unpredictable(changes, offset, earlier));
         }
-        let start = Start {
-            cost,
-            last_distances,
-        };
-        self.starts
-            .push(offset, cost - as_literals, start, self.starts_to_try);
+        (self.starts).push(offset, as_literals - cost, cost, last_distances);
     }
 
     #[inline(always)]
@@ -396,7 +508,7 @@ impl<'a> Paths<'a> {
         let mut first_distances = self.first_distances.iter();
         for distance in &mut distances {
             if change != 0 {
-                *distance = self.nodes[change].distance as i32;
+                *distance = self.nodes[self.costs.len() + change] as i32;
                 change = self.link(change).earlier();
             } else if let Some(&first) = first_distances.next() {
                 *distance = first;
@@ -408,10 +520,23 @@ impl<'a> Paths<'a> {
     /// Shorter copies lead to positions that are reached more cheaply already.
     #[inline(always)]
     fn min_useful_length(&self, offset: usize) -> usize {
-        let (start, _, Start { cost, .. }) = self.starts.get(0);
-        let literals = self.literals[offset] - self.literals[start];
-        let mut min_cost = cost + self.symbols.cheapest_command + literals;
-        let (mut length, mut bucket, mut bucket_end) = (2, 4, 10);
+        let best = self.starts.get(0);
+        let literals = self.literals[offset] - self.literals[best.offset];
+        let min_cost = self.starts.costs[best.slot] + self.symbols.cheapest_command + literals;
+        // With each extra bit that the length takes.
+        let [none, one, two] = [min_cost, min_cost + 1.0, min_cost + 1.0 + 1.0];
+        if let Some(costs) = self.costs[offset + 2..].first_chunk::<20>() {
+            let mut dearer = 0;
+            for i in 0..16 {
+                dearer |= u16::from([none, none, one, two][i / LANES] < costs[i]) << i;
+            }
+            let dearer = u32::from(dearer) | (less([two; LANES], lanes(costs, 16)) << 16);
+            if dearer != 0 {
+                return 2 + dearer.trailing_zeros() as usize;
+            }
+        }
+        let mut min_cost = two + 1.0;
+        let (mut length, mut bucket, mut bucket_end) = (22, 32, 38);
         loop {
             let dearer = less([min_cost; LANES], lanes(&self.costs, offset + length));
             if dearer != 0 {
@@ -426,65 +551,69 @@ impl<'a> Paths<'a> {
         }
     }
 
-    /// The length of the match at `distance`, if it may be longer than `longer_than`.
     #[inline(always)]
-    fn match_at(
-        &self,
-        position: usize,
-        data: &[u8],
-        distance: usize,
-        longer_than: usize,
-    ) -> Option<usize> {
+    fn match_at(&self, position: usize, data: &[u8], distance: usize) -> ShortMatch {
         let block = &self.block;
+        let mut max_tried = block.window.before_end(position);
         let source = if distance.wrapping_sub(1) < block.max_backward(position) {
-            if longer_than > block.window.before_end(position - distance) {
-                return None;
-            }
+            max_tried = max_tried.min(block.window.before_end(position - distance));
             block.window.from(position - distance)
         } else {
             let end_distance = block.dictionary_end_distance(position);
-            block.dictionary?.at_distance(distance, end_distance)?
+            (block.dictionary)
+                .and_then(|dictionary| dictionary.at_distance(distance, end_distance))
+                .unwrap_or_default()
         };
-        (source.get(longer_than) == Some(&data[longer_than])).then(|| match_length(source, data))
+        ShortMatch {
+            distance,
+            length: match_length(source, data),
+            max_tried,
+        }
     }
 
-    /// `node` has all but the length. Returns the longest improvement, from [`SHORT_COPY_END`] on.
+    #[inline(always)]
+    fn insert_from(&self, rank: usize, offset: usize) -> Insert {
+        let start = self.starts.get(rank);
+        let length = offset - start.offset;
+        let code = insert_length_code(length);
+        Insert {
+            length: length as u32,
+            code,
+            cost: start.relative_cost + INSERT_EXTRA_BITS[code] + self.literals[offset],
+        }
+    }
+
+    /// `node` has all but the copy length.
     #[inline(always)]
     fn try_lengths(
         &mut self,
-        offset: usize,
+        attempt: &mut Attempt,
         lengths: RangeInclusive<usize>,
         insert_code: usize,
         [with_distance, without_distance]: [f32; 2],
         node: Node,
-    ) -> usize {
+    ) {
         let (first, last) = lengths.into_inner();
-        let (base, symbol_costs) = match self.symbols.with_last_distance.get(insert_code) {
-            Some(costs) if node.insert_length >> 27 == 1 => (without_distance, costs),
+        let (cost, symbol_costs) = match self.symbols.with_last_distance.get(insert_code) {
+            Some(costs) if node.insert >> Node::CODE_SHIFT == 1 => (without_distance, costs),
             _ => (with_distance, &self.symbols.with_distance[insert_code]),
         };
-        let short_end = SHORT_COPY_END.min(last + 1);
-        let mut length = first;
-        while length < short_end {
-            let (extra, symbol) = (lanes(&COPY_EXTRA_BITS, length), lanes(symbol_costs, length));
-            let costs = core::array::from_fn(|i| base + extra[i] + symbol[i]);
-            let mut better = less(costs, lanes(&self.costs, offset + length));
-            better &= (1 << LANES.min(short_end - length)) - 1;
-            while better != 0 {
-                let lane = better.trailing_zeros() as usize % LANES;
-                better &= better - 1;
-                self.costs[offset + length + lane] = costs[lane];
-                self.nodes[offset + length + lane] = node.with_length(length + lane);
-            }
-            length += LANES;
+        let start = BrotliStart {
+            cost,
+            symbol_costs,
+            insert: node.insert,
+        };
+        let (offset, short) = (attempt.offset, first..SHORT_COPY_END.min(last + 1));
+        let ways = self.ways_from(offset);
+        brotli_try_lengths(ways, short, &COPY_EXTRA_BITS, start, node.distance);
+        if last >= SHORT_COPY_END {
+            let long = first.max(SHORT_COPY_END)..=last;
+            let longest = self.try_long_lengths(offset, long, insert_code, with_distance, node);
+            attempt.longest_improvement = attempt.longest_improvement.max(longest);
         }
-        if last < SHORT_COPY_END {
-            return 0;
-        }
-        let lengths = first.max(SHORT_COPY_END)..=last;
-        self.try_long_lengths(offset, lengths, insert_code, with_distance, node)
     }
 
+    /// Returns the longest improvement.
     #[inline(never)]
     fn try_long_lengths(
         &mut self,
@@ -503,12 +632,10 @@ impl<'a> Paths<'a> {
             let cost =
                 base + f32::from(range.extra_bits) + self.symbols.commands[usize::from(symbol)];
             let end = (last + 1).min(usize::from(range.base) + (1 << range.extra_bits));
-            let (from, to) = (offset + length, offset + end);
-            let targets = (self.costs[from..to].iter_mut()).zip(&mut self.nodes[from..to]);
-            for (i, (old_cost, old_node)) in targets.enumerate() {
-                if cost < *old_cost {
-                    (*old_cost, *old_node) = (cost, node.with_length(length + i));
-                    longest = length + i;
+            for length in length..end {
+                let copy = length as u32;
+                if self.try_node(offset + length, cost, Node { copy, ..node }) {
+                    longest = length;
                 }
             }
             length = end;
@@ -516,143 +643,234 @@ impl<'a> Paths<'a> {
         longest
     }
 
-    /// A bit for each short distance code that may match for longer than `longer_than`, which is not zero.
-    #[inline(always)]
-    fn promising_codes(
-        &self,
-        position: usize,
-        data: &[u8],
-        [a, b, c, d]: [i32; 4],
-        longer_than: usize,
-    ) -> u32 {
-        let pair = BytePair::new(self.block.window, position, data, longer_than - 1);
-        let [near_a, near_b] = [a, b].map(|distance| pair.may_be_around(distance));
-        let mut promising = (near_a & 1)
-            | ((near_b & 1) << 1)
-            | (pair.may_be_at(c) << 2)
-            | (pair.may_be_at(d) << 3)
-            | ((near_a >> 1) << 4)
-            | ((near_b >> 1) << 10);
-        if self.block.dictionary.is_some() {
-            let max_backward = self.block.max_backward(position);
-            // The codes that refer to each of them may reach into the dictionary.
-            for (distance, codes) in [(a + 3, 0x03F1), (b + 3, 0xFC02), (c, 4), (d, 8)] {
-                if distance as usize > max_backward {
-                    promising |= codes;
-                }
-            }
-        }
-        promising
-    }
-
-    /// Settles `offset`, and tries the copies from there. Returns the longest improvement, from [`LONG_COPY`] on.
-    #[inline(always)]
-    fn extend(&mut self, offset: usize, candidates: &[Candidate]) -> Option<usize> {
-        self.settle(offset);
-        let position = self.block.position + offset;
+    /// `promising` has 16 bits for each start from `first_rank` on.
+    #[inline(never)]
+    fn try_short_codes(&mut self, attempt: &mut Attempt, mut first_rank: usize, promising: u128) {
+        let position = self.block.position + attempt.offset;
         let data = self.block.data_from(position);
-        let comparable = data.len().min(self.block.window.before_end(position) + 1);
-        let min_length = self.min_useful_length(offset);
-        let mut longest = 0;
-
-        for rank in 0..self.starts.count {
-            let (start, relative_cost, Start { last_distances, .. }) = self.starts.get(rank);
-            let insert_length = offset - start;
-            let insert_code = insert_length_code(insert_length);
-            let base_cost = relative_cost
-                + f32::from(INSERT_LENGTH_CODES[insert_code].extra_bits)
-                + self.literals[offset];
-
-            let mut tried = min_length - 1;
-            let mut promising = 0;
-            if tried < comparable {
-                promising = self.promising_codes(position, data, last_distances, tried);
+        let (mut promising, mut more) = (promising as u64, (promising >> 64) as u64);
+        let (mut found, mut previous_rank, mut tried) = (attempt.last_match, usize::MAX, 0);
+        loop {
+            if promising == 0 {
+                if more == 0 {
+                    break;
+                }
+                (promising, more, first_rank) = (more, 0, first_rank + 4);
             }
-            while promising != 0 && tried < comparable {
-                let code = promising.trailing_zeros() as usize % 16;
-                promising &= promising - 1;
-                let base = last_distances[usize::from(SHORT_CODE_BASES[code]) % 4];
-                let distance = (base + i32::from(SHORT_CODE_DELTAS[code])) as usize;
-                let matched = self.match_at(position, data, distance, tried);
-                let Some(matched) = matched.filter(|&matched| matched > tried) else {
-                    continue;
-                };
-                let node = Node {
-                    copy_length: 0,
-                    distance: distance as u32,
-                    insert_length: (((code + 1) << 27) | insert_length) as u32,
-                };
-                let bases = [base_cost + self.symbols.distances[code], base_cost];
-                let lengths = tried + 1..=matched;
-                longest = longest.max(self.try_lengths(offset, lengths, insert_code, bases, node));
-                tried = matched;
+            let bit = promising.trailing_zeros() as usize;
+            promising &= promising - 1;
+            let (rank, code) = (first_rank + bit / 16, bit % 16);
+            tried = select_unpredictable(rank == previous_rank, tried, attempt.min_length - 1);
+            previous_rank = rank;
+            let last_distances = &self.starts.last_distances[self.starts.get(rank).slot];
+            let base = last_distances[usize::from(SHORT_CODE_BASES[code]) % 4];
+            let distance = (base + i32::from(SHORT_CODE_DELTAS[code])) as usize;
+            if distance != found.distance {
+                found = self.match_at(position, data, distance);
             }
-
-            if rank >= 2 {
+            if found.length <= tried || tried > found.max_tried {
                 continue;
             }
-            let mut next_length = min_length;
-            for candidate in candidates {
-                let matched = candidate.length();
-                if matched < next_length {
-                    continue;
-                }
-                let prefix = DistancePrefix::new(
-                    candidate.distance() + DISTANCE_CODE_OFFSET,
-                    &self.block.params.distance,
-                );
-                let with_distance = base_cost
-                    + prefix.extra_bits() as f32
-                    + self.symbols.distances[prefix.symbol()];
-                let node = Node {
-                    copy_length: 0,
-                    distance: candidate.distance() as u32,
-                    insert_length: insert_length as u32,
-                };
-                if let Some(word_length) = candidate.word_length() {
-                    let cost = with_distance
-                        + COPY_EXTRA_BITS[word_length]
-                        + self.symbols.with_distance[insert_code][word_length];
-                    if cost < self.costs[offset + matched] {
-                        self.costs[offset + matched] = cost;
-                        self.nodes[offset + matched] = node.with_word(matched, word_length);
-                    }
-                } else {
-                    if matched > self.max_varied_length {
-                        next_length = matched;
-                    }
-                    let (lengths, bases) = (next_length..=matched, [with_distance; 2]);
-                    longest =
-                        longest.max(self.try_lengths(offset, lengths, insert_code, bases, node));
-                }
-                next_length = matched + 1;
-            }
+            let insert = self.insert_from(rank, attempt.offset);
+            let node = Node {
+                copy: 0,
+                distance: distance as u32,
+                insert: ((code as u32 + 1) << Node::CODE_SHIFT) | insert.length,
+            };
+            let bases = [insert.cost + self.symbols.distances[code], insert.cost];
+            self.try_lengths(attempt, tried + 1..=found.length, insert.code, bases, node);
+            tried = found.length;
         }
-        Some(longest).filter(|&longest| longest >= LONG_COPY)
+        attempt.last_match = found;
     }
 
-    /// Extends the paths from `offset`, and returns the offset to go on from.
-    fn step(&mut self, offset: usize, candidates: &[Candidate]) -> usize {
-        let mut skip = self.extend(offset, candidates).unwrap_or(1);
+    #[inline(always)]
+    fn try_one_by_one(&mut self, attempt: &mut Attempt, rank: usize, candidates: &[Candidate]) {
+        let insert = self.insert_from(rank, attempt.offset);
+        let mut next_length = attempt.min_length;
+        for candidate in candidates {
+            let matched = candidate.length();
+            if matched < next_length {
+                continue;
+            }
+            let prefix = DistancePrefix::new(
+                candidate.distance() + DISTANCE_CODE_OFFSET,
+                &self.block.params.distance,
+            );
+            let with_distance =
+                insert.cost + prefix.extra_bits() as f32 + self.symbols.distances[prefix.symbol()];
+            let node = Node {
+                copy: 0,
+                distance: candidate.distance() as u32,
+                insert: insert.length,
+            };
+            if let Some(word_length) = candidate.word_length() {
+                let cost = with_distance
+                    + COPY_EXTRA_BITS[word_length]
+                    + self.symbols.with_distance[insert.code][word_length];
+                let copy = ((word_length << Node::WORD_SHIFT) | matched) as u32;
+                self.try_node(attempt.offset + matched, cost, Node { copy, ..node });
+            } else {
+                if matched > self.max_varied_length {
+                    next_length = matched;
+                }
+                let (lengths, bases) = (next_length..=matched, [with_distance; 2]);
+                self.try_lengths(attempt, lengths, insert.code, bases, node);
+            }
+            next_length = matched + 1;
+        }
+    }
+
+    /// From two starts. The last of the first `count` has the length `longest`.
+    #[inline(always)]
+    fn try_at_once(
+        &mut self,
+        attempt: &Attempt,
+        [rank, other_rank]: [usize; 2],
+        [a, b, c, d]: &[Candidate; LANES],
+        count: usize,
+        longest: usize,
+    ) {
+        let symbols = self.symbols;
+        let start = |insert: Insert| BrotliStart {
+            cost: insert.cost,
+            symbol_costs: &symbols.with_distance[insert.code],
+            insert: insert.length,
+        };
+        let best = start(self.insert_from(rank, attempt.offset));
+        let other = start(self.insert_from(other_rank, attempt.offset));
+        if let Some(distance_costs) = symbols.distances[16..].first_chunk() {
+            brotli_try_matches(
+                self.ways_from(attempt.offset),
+                attempt.min_length..longest + 1,
+                &COPY_EXTRA_BITS,
+                [best, other],
+                &[a.0, b.0, c.0, d.0],
+                count,
+                distance_costs,
+            );
+        }
+    }
+
+    /// Settles `offset`, and tries the first `count` of `padded`, which has [`LANES`] more, from 1 or [`MAX_STARTS`]. Returns the offset to go on from.
+    #[inline(always)]
+    fn step(&mut self, starts: usize, offset: usize, padded: &[Candidate], count: usize) -> usize {
+        /// More than rounding can make up for, compared with the largest number.
+        const MARGIN: f32 = 16.0 * f32::EPSILON;
+        self.settle(offset);
+        let min_length = self.min_useful_length(offset);
+        let best = self.starts.get(0);
+        let hopeless = best.relative_cost
+            + self.symbols.most_saved[insert_length_code(offset - best.offset)]
+            + (self.literals[offset] + 256.0) * MARGIN;
+        let pair = bytes_at(self.padded, offset + min_length - 2);
+        let place = (self.block.window).place(self.block.position + offset, min_length - 2, pair);
+        let (first, others) = self.starts.promising(starts, place, hopeless);
+        let all = || u128::from(first) | (u128::from(others) << 16);
+        let mut attempt = Attempt {
+            offset,
+            min_length,
+            hopeless,
+            last_match: ShortMatch::default(),
+            longest_improvement: 0,
+        };
+
+        let last = padded[count.saturating_sub(1)];
+        let last = select_unpredictable(count == 0, Candidate::default(), last);
+        let longest = last.length();
+        let Some(four) = padded.first_chunk().filter(|_| {
+            count < self.at_once_below && longest < SHORT_COPY_END && last.word_length().is_none()
+        }) else {
+            return self.step_slowly(&mut attempt, starts, all(), &padded[..count]);
+        };
+        if longest >= min_length {
+            if first != 0 {
+                self.try_short_codes(&mut attempt, 0, first.into());
+            }
+            let (mut ranks, mut done) = ([0, usize::from(starts > 1 && others as u16 == 0)], 0);
+            loop {
+                self.try_at_once(&attempt, ranks, four, count, longest);
+                if starts == 1 || ranks[1] == 1 || self.starts.get(1).relative_cost >= hopeless {
+                    break;
+                }
+                self.try_short_codes(&mut attempt, 1, (others as u16).into());
+                (ranks, done) = ([1, 1], 1);
+            }
+            if others >> (16 * done) != 0 {
+                self.try_short_codes(&mut attempt, 1 + done, (others >> (16 * done)).into());
+            }
+        } else if u64::from(first) | others != 0 {
+            self.try_short_codes(&mut attempt, 0, all());
+        }
+        if attempt.longest_improvement < LONG_COPY {
+            return offset + 1;
+        }
+        self.skip(offset, attempt.longest_improvement)
+    }
+
+    #[inline(never)]
+    fn step_slowly(
+        &mut self,
+        attempt: &mut Attempt,
+        starts: usize,
+        mut promising: u128,
+        candidates: &[Candidate],
+    ) -> usize {
+        let (offset, skipped) = (attempt.offset, attempt.min_length - 2);
+        let end_distance = (self.block).dictionary_end_distance(self.block.position + offset);
+        let pair = bytes_at(self.padded, offset + skipped);
+        if let Some(dictionary) = self.block.dictionary
+            && let Some(place) = dictionary.place(end_distance, skipped, pair)
+        {
+            let (first, others) = self.starts.promising(starts, place, attempt.hopeless);
+            promising |= u128::from(first) | (u128::from(others) << 16);
+        }
+        for rank in 0..starts.min(2) {
+            if promising as u16 != 0 {
+                self.try_short_codes(attempt, rank, (promising as u16).into());
+            }
+            promising >>= 16;
+            if rank == 0 || self.starts.get(rank).relative_cost < attempt.hopeless {
+                self.try_one_by_one(attempt, rank, candidates);
+            }
+        }
+        if promising != 0 {
+            self.try_short_codes(attempt, 2, promising);
+        }
+        let mut skip = 1;
+        if attempt.longest_improvement >= LONG_COPY {
+            skip = attempt.longest_improvement;
+        }
         if let [only] = candidates
             && only.length() > self.max_varied_length
         {
             skip = skip.max(only.length());
         }
-        let next = offset + skip;
+        self.skip(attempt.offset, skip)
+    }
+
+    /// Returns the offset to go on from.
+    #[inline(never)]
+    fn skip(&mut self, offset: usize, length: usize) -> usize {
+        let next = offset + length;
         for skipped in offset + 1..next.min(searched_length(&self.block)) {
             self.settle(skipped);
         }
         next
     }
 
-    /// `counts` has how many of `found` there are for each offset.
+    /// `counts` has how many of `found` there are for each offset, and there are [`LANES`] more.
+    #[inline(never)]
     fn extend_all(&mut self, mut found: &[Candidate], counts: &[u8]) {
         let (mut offset, searched) = (0, searched_length(&self.block));
         while offset < searched {
-            let next = self.step(offset, &found[..usize::from(counts[offset])]);
-            let passed = counts[offset..next.min(searched)].iter();
-            found = &found[passed.map(|&count| usize::from(count)).sum()..];
+            let count = usize::from(counts[offset]);
+            let next = self.step(MAX_STARTS, offset, found, count);
+            found = &found[count..];
+            if next != offset + 1 {
+                let passed = counts[offset + 1..next.min(searched)].iter();
+                found = &found[passed.map(|&count| usize::from(count)).sum()..];
+            }
             offset = next;
         }
     }
@@ -665,7 +883,7 @@ impl<'a> Paths<'a> {
         let mut count = 0;
         let mut offset = end;
         while offset != 0 {
-            offset -= self.nodes[offset].command_length();
+            offset -= self.node(offset).command_length();
             count += 1;
         }
         // And one for the literals after them.
@@ -674,7 +892,7 @@ impl<'a> Paths<'a> {
         commands.list.resize(first + count, Command::insert_only(0));
         offset = end;
         for slot in commands.list[first..].iter_mut().rev() {
-            let node = self.nodes[offset];
+            let node = self.node(offset);
             offset -= node.command_length();
             let mut insert_length = node.insert_length();
             if offset == 0 {
@@ -690,10 +908,10 @@ impl<'a> Paths<'a> {
             commands.literal_count += insert_length;
         }
         if end != 0 {
-            let node = self.nodes[end];
+            let node = self.node(end);
             let earlier = self.last_change_up_to(end - node.command_length());
             commands.last_distances = self.distances_from(earlier);
-            if self.changes_last_distances(&node, end) {
+            if node.changes_last_distances() {
                 commands.remember_distance(node.distance as usize);
             }
         }
@@ -709,6 +927,7 @@ fn searched_length(block: &InputBlock<'_>) -> usize {
 struct Finder<'a, 'b> {
     tree: &'b mut BinaryTree,
     block: InputBlock<'a>,
+    words: WordMatches,
     in_window: Vec<Candidate>,
     in_dictionary: Vec<Candidate>,
 }
@@ -718,18 +937,13 @@ impl Finder<'_, '_> {
 
     /// Appends to `found`, which has room. Only the last candidate stays if it is longer than `long`.
     #[inline(always)]
-    fn find(&mut self, offset: usize, long: usize, found: &mut Vec<Candidate>) {
+    fn find(&mut self, offset: usize, nearby: usize, long: usize, found: &mut Vec<Candidate>) {
         let position = self.block.position + offset;
         let search = self
             .block
             .search_at(position, &self.block.padded()[offset..]);
-        let short_match_range = if self.block.params.quality > 10 {
-            64
-        } else {
-            16
-        };
         let first = found.len();
-        self.tree.find_all(&search, short_match_range, found);
+        self.tree.find_all(&search, nearby, &mut self.words, found);
         if let Some(dictionary) = self.block.dictionary {
             self.in_window.clear();
             self.in_window.extend(found.drain(first..));
@@ -777,6 +991,7 @@ pub(super) fn add_commands(
     let mut finder = Finder {
         tree,
         block: *block,
+        words: WordMatches::new(),
         in_window: memory::empty(scratch)?,
         in_dictionary: memory::empty(scratch)?,
     };
@@ -786,12 +1001,14 @@ pub(super) fn add_commands(
     let searched = searched_length(block);
 
     if block.params.quality == 10 {
-        let mut found = memory::empty(Finder::MAX_CANDIDATES)?;
+        let mut found = memory::empty(Finder::MAX_CANDIDATES + LANES)?;
         let mut offset = 0;
         while offset < searched {
             found.clear();
-            finder.find(offset, long, &mut found);
-            let next = paths.step(offset, &found);
+            finder.find(offset, 16, long, &mut found);
+            let count = found.len();
+            found.extend([Candidate::default(); LANES]);
+            let next = paths.step(1, offset, &found, count);
             if next > offset + 1 {
                 finder.store_between(offset, next);
             }
@@ -806,7 +1023,7 @@ pub(super) fn add_commands(
     while offset < searched {
         memory::try_reserve(&mut found, Finder::MAX_CANDIDATES)?;
         let first = found.len();
-        finder.find(offset, long, &mut found);
+        finder.find(offset, 64, long, &mut found);
         counts[offset] = (found.len() - first) as u8;
         offset = match found[first..] {
             [only] if only.length() > long => {
@@ -816,6 +1033,9 @@ pub(super) fn add_commands(
             _ => offset + 1,
         };
     }
+
+    memory::try_reserve(&mut found, LANES)?;
+    found.extend([Candidate::default(); LANES]);
 
     let (first, literal_count) = (commands.list.len(), commands.literal_count);
     let pending_literals = commands.pending_literals;

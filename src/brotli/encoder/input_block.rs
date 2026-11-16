@@ -50,6 +50,13 @@ impl<'a> InputBlock<'a> {
         self.position == 0 && (self.is_last || self.length < self.params.block_size())
     }
 
+    /// Whether the ring does not end within the block or the window before it.
+    #[inline(always)]
+    pub(super) fn is_contiguous(&self) -> bool {
+        self.window.index(self.position) >= self.max_backward(self.position)
+            && self.length <= self.window.before_end(self.position) + 1
+    }
+
     #[inline(always)]
     pub(super) fn end(&self) -> usize {
         self.position + self.length
@@ -96,6 +103,7 @@ impl<'a> InputBlock<'a> {
             padded,
             max_backward: self.max_backward(position),
             block: self,
+            to_beat: 0,
         }
     }
 

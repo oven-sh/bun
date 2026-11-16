@@ -1,7 +1,8 @@
 //! Hash tables over the static dictionary, built at compile time.
 #![allow(clippy::large_unopt_stack_frames, clippy::large_const_arrays)] // None of them exist at run time.
 
-use super::matching::hash_of_four;
+use super::matching::{bytes_at, hash_of_four};
+use super::words::OMIT_LAST;
 use crate::dictionary::{
     MAX_WORD_LENGTH, MIN_WORD_LENGTH, PADDED_WORD_LENGTH, padded_word, size_bits,
 };
@@ -33,9 +34,15 @@ impl PackedWord {
         usize::from(self.0 / 32)
     }
 
+    /// With what follows it.
+    #[inline(always)]
+    pub(super) fn padded_spelling(self) -> &'static [u8; PADDED_WORD_LENGTH] {
+        word(self.length(), self.index())
+    }
+
     #[inline(always)]
     pub(super) fn spelling(self) -> &'static [u8] {
-        &word(self.length(), self.index())[..self.length()]
+        &self.padded_spelling()[..self.length()]
     }
 
     /// With the transform that has this index.
@@ -45,16 +52,37 @@ impl PackedWord {
     }
 }
 
-/// A word of at least eight bytes and a shorter one, which may start with `first_four`.
+/// Whether there are [`likely_words`] for `first_four`.
 #[inline(always)]
-pub(super) fn likely_words(first_four: [u8; 4]) -> [PackedWord; 2] {
-    LIKELY[hash_of_four(u32::from_le_bytes(first_four), LIKELY_BITS)]
+pub(super) fn has_likely_words(first_four: [u8; 4]) -> bool {
+    let hash = hash_of_four(u32::from_le_bytes(first_four), START_BITS);
+    (LIKELY.starts[hash / 64] >> (hash % 64)) & 1 != 0
 }
 
-const LIKELY_BITS: u32 = 14;
+/// A word of at least eight bytes and a shorter one, which may start with `first_four`. Only if it [`has_likely_words`].
+#[inline(always)]
+pub(super) fn likely_words(first_four: [u8; 4]) -> [PackedWord; 2] {
+    let hash = hash_of_four(u32::from_le_bytes(first_four), START_BITS);
+    let before = LIKELY.starts[hash / 64] & ((1 << (hash % 64)) - 1);
+    LIKELY.words[usize::from(LIKELY.ranks[hash / 64]) + before.count_ones() as usize]
+}
 
-static LIKELY: [[PackedWord; 2]; 1 << LIKELY_BITS] = {
-    let mut table = [[PackedWord(0); 2]; 1 << LIKELY_BITS];
+/// Words compete for the slots of a hash with this many bits.
+const LIKELY_BITS: u32 = 14;
+/// So many that few hashes have a word.
+const START_BITS: u32 = 17;
+const START_COUNT: usize = 4997;
+
+struct Likely {
+    /// A bit for each hash that has words.
+    starts: [u64; 1 << (START_BITS - 6)],
+    /// How many bits are set before each of `starts`.
+    ranks: [u16; 1 << (START_BITS - 6)],
+    words: [[PackedWord; 2]; START_COUNT],
+}
+
+static LIKELY: Likely = {
+    let mut table = [[(PackedWord(0), 0); 2]; 1 << LIKELY_BITS];
     let mut kept = [[false; 2]; 1 << LIKELY_BITS];
     let mut count = 0;
     let mut length = MAX_WORD_LENGTH;
@@ -64,16 +92,41 @@ static LIKELY: [[PackedWord; 2]; 1 << LIKELY_BITS] = {
         while index > 0 {
             index -= 1;
             let [a, b, c, d, ..] = *word(length, index);
-            let key = hash_of_four(u32::from_le_bytes([a, b, c, d]), LIKELY_BITS);
+            let hash = hash_of_four(u32::from_le_bytes([a, b, c, d]), START_BITS);
+            let key = hash >> (START_BITS - LIKELY_BITS);
             if !kept[key][slot] {
-                table[key][slot] = PackedWord::new(length, index);
+                table[key][slot] = (PackedWord::new(length, index), hash);
                 kept[key][slot] = (KEEPS_ITS_SLOT[count / 64] >> (count % 64)) & 1 != 0;
             }
             count += 1;
         }
         length -= 1;
     }
-    table
+
+    let mut likely = Likely {
+        starts: [0; _],
+        ranks: [0; _],
+        words: [[PackedWord(0); 2]; _],
+    };
+    let (mut hash, mut count) = (0, 0);
+    while hash < 1 << START_BITS {
+        if hash % 64 == 0 {
+            likely.ranks[hash / 64] = count as u16;
+        }
+        let mut slot = 0;
+        while slot < 2 {
+            let (word, start) = table[hash >> (START_BITS - LIKELY_BITS)][slot];
+            if word.0 != 0 && start == hash {
+                likely.words[count][slot] = word;
+                likely.starts[hash / 64] |= 1 << (hash % 64);
+            }
+            slot += 1;
+        }
+        count += (likely.starts[hash / 64] >> (hash % 64)) as usize;
+        hash += 1;
+    }
+    assert!(count == START_COUNT);
+    likely
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -83,28 +136,55 @@ pub(super) enum Case {
     UppercaseAll,
 }
 
-#[derive(Clone, Copy)]
-struct CasedWord {
-    word: PackedWord,
-    case: Case,
-    /// Of the bytes that every match starts with.
-    tag: u8,
+const CASES: [Case; 3] = [Case::Unchanged, Case::UppercaseFirst, Case::UppercaseAll];
+const TAG_BITS: u32 = 6;
+
+/// For a word that is of use if four bytes match, and for one that takes five.
+#[inline(always)]
+const fn tags_of(first_eight: u64) -> [u8; 2] {
+    let hash = hash_of_four(first_eight as u32, ALL_BITS + 5) as u8;
+    let fifth = (first_eight >> 32) as u8;
+    [32 + hash % 32, hash.wrapping_add(fifth) % 32]
 }
 
-#[inline(always)]
-const fn tag_of(first_four: u32) -> u8 {
-    hash_of_four(first_four << 8, 8) as u8
+/// A bit for each of `tags` that is either.
+#[inline(never)] // Inlined, it does not always become vector instructions.
+fn tagged_with(tags: &[u8; 16], four: u8, five: u8) -> u32 {
+    (0..16).fold(0, |bits, i| {
+        let tag = tags[i] % (1 << TAG_BITS);
+        bits | (u32::from((tag == four) | (tag == five)) << i)
+    })
 }
 
-/// Among them are all the words that start with `first_four`.
+/// From the longest to the shortest. Of the words that match for just four bytes, those with the lowest address are among them.
 #[inline(always)]
-pub(super) fn all_words(first_four: [u8; 4]) -> impl Iterator<Item = (PackedWord, Case)> {
-    let first_four = u32::from_le_bytes(first_four);
-    let key = hash_of_four(first_four, ALL_BITS);
-    let bucket = &ALL.words[usize::from(ALL.starts[key])..usize::from(ALL.starts[key + 1])];
-    let tag = tag_of(first_four);
-    let alike = bucket.iter().filter(move |cased| cased.tag == tag);
-    alike.map(|cased| (cased.word, cased.case))
+pub(super) fn all_words(first_eight: u64) -> impl Iterator<Item = (PackedWord, Case)> {
+    let key = hash_of_four(first_eight as u32, ALL_BITS);
+    let (mut at, end) = (
+        usize::from(ALL.starts[key]),
+        usize::from(ALL.starts[key + 1]),
+    );
+    let [four, five] = tags_of(first_eight);
+    let alike_at = move |at: usize| {
+        tagged_with(&bytes_at(&ALL.tags, at), four, five) & ((1 << (end - at).min(16)) - 1)
+    };
+    let mut alike = alike_at(at);
+    core::iter::from_fn(
+        #[inline(always)]
+        move || {
+            while alike == 0 {
+                at += 16;
+                if at >= end {
+                    return None;
+                }
+                alike = alike_at(at);
+            }
+            let index = at + alike.trailing_zeros() as usize;
+            alike &= alike - 1;
+            let case = CASES[usize::from(ALL.tags[index] >> TAG_BITS)];
+            Some((ALL.words[index], case))
+        },
+    )
 }
 
 const ALL_BITS: u32 = 15;
@@ -112,7 +192,9 @@ const ALL_COUNT: usize = 31704;
 
 struct All {
     starts: [u16; (1 << ALL_BITS) + 1],
-    words: [CasedWord; ALL_COUNT],
+    words: [PackedWord; ALL_COUNT],
+    /// With the [`Case`] above them.
+    tags: [u8; ALL_COUNT + 16],
 }
 
 const WORD_COUNT: usize = 13504;
@@ -148,17 +230,13 @@ const fn spell(case: Case) -> [(u16, [u64; 3]); WORD_COUNT] {
 
 static ALL: All = {
     const NONE: usize = ALL_COUNT;
-    const EMPTY: CasedWord = CasedWord {
-        word: PackedWord(0),
-        case: Case::Unchanged,
-        tag: 0,
-    };
-    const CASES: [Case; 3] = [Case::Unchanged, Case::UppercaseFirst, Case::UppercaseAll];
     const UNCHANGED: [(u16, [u64; 3]); WORD_COUNT] = spell(CASES[0]);
     const UPPERCASE_FIRST: [(u16, [u64; 3]); WORD_COUNT] = spell(CASES[1]);
     const UPPERCASE_ALL: [(u16, [u64; 3]); WORD_COUNT] = spell(CASES[2]);
     let spellings = [&UNCHANGED, &UPPERCASE_FIRST, &UPPERCASE_ALL];
-    let mut found = [(EMPTY, [0u64; 3]); ALL_COUNT];
+    let mut found = [((PackedWord(0), 0), [0u64; 3]); ALL_COUNT];
+    // For a hash of four bytes, the longer word that is cut down to them at the lowest address.
+    let mut lowest = [(usize::MAX, NONE); 1 << 17];
     let mut earlier = [NONE; ALL_COUNT];
     let mut latest = [NONE; 1 << ALL_BITS];
     let (mut count, mut shorter_words) = (0, 0);
@@ -184,8 +262,22 @@ static ALL: All = {
             }
             if is_new {
                 let word = PackedWord::new(length, index);
-                let tag = tag_of(spelled[0] as u32);
-                found[count] = (CasedWord { word, case, tag }, spelled);
+                let [four, five] = tags_of(spelled[0]);
+                let mut tag = if length == 4 { four } else { five };
+                if matches!(case, Case::Unchanged) && length > 4 && length - 4 < OMIT_LAST.len() {
+                    let address = index + ((OMIT_LAST[length - 4] as usize) << size_bits(length));
+                    let (other_address, other) = &mut lowest[hash_of_four(spelled[0] as u32, 17)];
+                    if *other != NONE && found[*other].1[0] as u32 != spelled[0] as u32 {
+                        tag = four;
+                    } else if address < *other_address {
+                        if *other != NONE {
+                            found[*other].0.1 = tags_of(found[*other].1[0])[1];
+                        }
+                        (*other_address, *other) = (address, count);
+                        tag = four;
+                    }
+                }
+                found[count] = ((word, tag + ((case as u8) << TAG_BITS)), spelled);
                 earlier[count] = latest[key];
                 latest[key] = count;
                 count += 1;
@@ -198,13 +290,14 @@ static ALL: All = {
 
     let mut all = All {
         starts: [0; (1 << ALL_BITS) + 1],
-        words: [EMPTY; ALL_COUNT],
+        words: [PackedWord(0); _],
+        tags: [0; _],
     };
     let (mut key, mut next) = (0, 0);
     while key < 1 << ALL_BITS {
         let mut other = latest[key];
         while other != NONE {
-            all.words[next] = found[other].0;
+            (all.words[next], all.tags[next]) = found[other].0;
             next += 1;
             other = earlier[other];
         }

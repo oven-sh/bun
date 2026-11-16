@@ -7,7 +7,7 @@ mod huffman;
 mod prefix_code;
 mod ring_buffer;
 
-use crate::context::{ContextMode, DISTANCE_CONTEXTS, LITERAL_CONTEXTS};
+use crate::context::{ContextLut, ContextMode, DISTANCE_CONTEXTS, LITERAL_CONTEXTS};
 use crate::format::{
     Alphabet, BLOCK_LENGTH_CODES, DistanceParams, LARGE_MAX_WINDOW_BITS, MAX_BLOCK_TYPES,
     MAX_DICTIONARY_SIZE, MIN_WINDOW_BITS, max_backward_distance,
@@ -197,6 +197,8 @@ pub struct Decoder {
     symbols: Forest<Symbol>,
     first_trees: [usize; 3],
     literal_root: Root,
+    /// Blocks in another mode are left to the slow loop.
+    lut_in_trees: &'static ContextLut,
 }
 
 impl Default for Decoder {
@@ -221,6 +223,7 @@ impl Default for Decoder {
             symbols: Forest::default(),
             first_trees: [0; 3],
             literal_root: Root::Narrow,
+            lut_in_trees: ContextMode::Utf8.lut(),
         }
     }
 }
@@ -392,6 +395,10 @@ impl Decoder {
                     for (mode, map) in self.context_modes.iter_mut().zip(maps) {
                         mode.take_if(|_| has_one_tree || *map == [map[0]; _]);
                     }
+                    let modes = self.context_modes.iter().take(maps.len());
+                    if let Some(mode) = modes.flatten().next() {
+                        self.lut_in_trees = mode.lut();
+                    }
                     State::DistanceContextMap
                 }
                 State::DistanceContextMap => {
@@ -514,7 +521,7 @@ impl Decoder {
             Category::Literal => {
                 while self.symbols.len() < first + self.literal_map.tree_count as usize {
                     let code = self.codes.read(Alphabet::LITERALS, reader)?;
-                    self.symbols.push_literals(code, self.literal_root)?;
+                    (self.symbols).push_literals(code, self.literal_root, self.lut_in_trees)?;
                 }
             }
             Category::Command => {

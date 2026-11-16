@@ -1,19 +1,17 @@
 //! Writes meta-blocks (RFC 7932 section 9.2).
 
-use super::bit_writer::{BitWriter, Bits, Room};
+use super::bit_writer::{BitWriter, Bits, Code};
 use super::block_splitter::{Block, BlockSplit};
-use super::command::Command;
+use super::command::{Command, ROOM_FOR_LENGTHS, room_for_distances};
 use super::histogram::Histogram;
-use super::huffman::{
-    Code, SYMBOL_SLACK, TreeBuilder, assign_codes, max_description_size, write_symbols,
-};
+use super::huffman::{TreeBuilder, assign_codes, max_description_size};
 use super::log2::log2_floor;
 use super::meta_block::{Literals, MetaBlock, Source};
 use super::params::Params;
 use crate::context::{ContextMode, DISTANCE_CONTEXT_BITS, DISTANCE_CONTEXTS, LITERAL_CONTEXT_BITS};
 use crate::format::{
     Alphabet, BLOCK_LENGTH_CODES, BLOCK_LENGTH_SYMBOLS, COMMAND_SYMBOLS, DistanceParams,
-    LITERAL_SYMBOLS, MAX_BLOCK_TYPES,
+    FIRST_COMMAND_WITH_DISTANCE, LITERAL_SYMBOLS, MAX_BLOCK_TYPES,
 };
 use crate::memory::{self, Result};
 
@@ -321,10 +319,12 @@ fn write_trivial_context_map(
 fn build_and_write_codes<const N: usize>(
     histograms: &[Histogram<N>],
     alphabet: Alphabet,
+    room: &[Code; N],
+    spare: usize,
     trees: &mut TreeBuilder,
     writer: &mut BitWriter,
 ) -> Result<Vec<[Code; N]>> {
-    let mut all_codes = memory::filled([Code::EMPTY; N], histograms.len())?;
+    let mut all_codes = memory::filled(*room, histograms.len() + spare)?;
     for (codes, histogram) in all_codes.iter_mut().zip(histograms) {
         writer.try_reserve(max_description_size(alphabet))?;
         trees.build_and_write(&histogram.counts, alphabet, codes, writer);
@@ -332,6 +332,7 @@ fn build_and_write_codes<const N: usize>(
     Ok(all_codes)
 }
 
+#[inline(never)]
 pub(super) fn write_full_meta_block(
     length: usize,
     commands: &[Command],
@@ -374,24 +375,51 @@ pub(super) fn write_full_meta_block(
             None => write_trivial_context_map(tree_count, context_bits, trees, writer)?,
         }
     }
-    let literals =
-        build_and_write_codes(&block.literal_histograms, Alphabet::LITERALS, trees, writer)?;
-    let symbols =
-        build_and_write_codes(&block.command_histograms, Alphabet::COMMANDS, trees, writer)?;
-    let distances =
-        build_and_write_codes(&block.distance_histograms, distance.alphabet, trees, writer)?;
+    let mut literals = build_and_write_codes(
+        &block.literal_histograms,
+        Alphabet::LITERALS,
+        &[Code::EMPTY; _],
+        1,
+        trees,
+        writer,
+    )?;
+    let symbols = build_and_write_codes(
+        &block.command_histograms,
+        Alphabet::COMMANDS,
+        &ROOM_FOR_LENGTHS,
+        0,
+        trees,
+        writer,
+    )?;
+    let distances = build_and_write_codes(
+        &block.distance_histograms,
+        distance.alphabet,
+        &room_for_distances(distance),
+        0,
+        trees,
+        writer,
+    )?;
 
     let codes = Codes {
-        literals: literals.as_flattened(),
         commands: &symbols,
         distances: &distances,
         distance_map,
     };
-    write_commands(commands, &block.literals, &codes, &mut switchers, writer)
+    write_commands(
+        commands,
+        &block.literals,
+        literals.as_flattened_mut(),
+        &codes,
+        &mut switchers,
+        writer,
+    )
 }
 
+/// After the codes of the literals, for those of the commands and distances of a batch with their extra bits.
+const SLOTS: usize = 128;
+const BATCH_SIZE: usize = 384;
+
 struct Codes<'a, const DISTANCES: usize> {
-    literals: &'a [Code],
     commands: &'a [[Code; COMMAND_SYMBOLS]],
     distances: &'a [[Code; DISTANCES]],
     distance_map: Option<&'a [u32]>,
@@ -408,95 +436,88 @@ impl<const DISTANCES: usize> Codes<'_, DISTANCES> {
 
 /// The codes of the current block types.
 struct CurrentCodes<'a, const DISTANCES: usize> {
-    literals: &'a [Code],
     commands: &'a [Code; COMMAND_SYMBOLS],
     distances: [&'a [Code; DISTANCES]; DISTANCE_CONTEXTS],
 }
 
 impl<const DISTANCES: usize> CurrentCodes<'_, DISTANCES> {
     #[inline(always)]
-    fn literal(&self, literal: u16) -> Code {
-        self.literals[usize::from(literal)]
+    fn lengths(&self, command: &Command) -> Code {
+        command.with_lengths(self.commands[command.symbol()])
     }
 
     #[inline(always)]
-    fn distance_bits(&self, command: &Command) -> Bits {
-        let code = self.distances[command.distance_context()][command.distance().symbol()];
-        let code = code.only_if(command.has_distance_symbol());
-        code.bits().then(command.distance_extra())
+    fn distance(&self, command: &Command) -> Code {
+        command
+            .with_distance(self.distances[command.distance_context()][command.distance().symbol()])
     }
 
-    /// Returns how many commands, literals and distances it wrote before it ran out of any of them.
+    /// Returns how many commands, literals and distances it wrote before it ran out of any of them. All commands copy.
     #[inline(never)]
     fn write_batch(
         &self,
         commands: &[Command],
         literals: &[u16],
-        max_distances: usize,
-        mut room: Room<'_>,
+        table: &mut [Code],
+        indices: &mut [u32; BATCH_SIZE],
+        writer: &mut BitWriter,
     ) -> [usize; 3] {
-        let (mut rest, mut distances_left) = (literals, max_distances);
-        let mut distance = Bits::EMPTY;
-        let mut written = 0;
-        for command in commands {
-            let count = command.insert_length();
-            let distances = usize::from(command.has_distance_symbol());
-            if count + SYMBOL_SLACK > rest.len() || distances > distances_left {
+        const FEW: usize = Literals::SLACK;
+        let first_slot = table.len() - SLOTS;
+        let (mut rest, mut count, mut slot) = (literals, 0, first_slot as u32);
+        for (command, slots) in commands.iter().zip(table[first_slot..].as_chunks_mut().0) {
+            let inserted = command.insert_length();
+            if inserted > FEW || inserted + FEW > rest.len() || count + FEW + 2 > BATCH_SIZE {
                 break;
             }
-            let (code, extra) = (
-                self.commands[command.symbol()].bits(),
-                command.length_extra(),
-            );
-            let before = if distance.count + code.count + extra.count <= Bits::MAX_COUNT {
-                distance.then(code.then(extra))
-            } else {
-                room.write_bits(distance);
-                room.write_bits(code);
-                extra
-            };
-            let padded = &rest[..count + SYMBOL_SLACK];
-            write_symbols(&mut room, before, padded, |literal| self.literal(literal));
-            rest = &rest[count..];
-            distance = self.distance_bits(command);
-            distances_left -= distances;
-            written += 1;
+            *slots = [self.lengths(command), self.distance(command)];
+            indices[count] = slot;
+            let few: [_; FEW] = core::array::from_fn(|i| u32::from(rest[i]));
+            indices[count + 1..][..FEW].copy_from_slice(&few);
+            count += 1 + inserted;
+            indices[count] = slot + 1;
+            count += usize::from(command.symbol() >= FIRST_COMMAND_WITH_DISTANCE);
+            rest = &rest[inserted..];
+            slot += 2;
         }
-        room.write_bits(distance);
-        [
-            written,
-            literals.len() - rest.len(),
-            max_distances - distances_left,
-        ]
+        writer.write_codes::<4, _>(&indices[..count], |index| table[index as usize]);
+        let written = (slot as usize - first_slot) / 2;
+        let literal_count = literals.len() - rest.len();
+        [written, literal_count, count - written - literal_count]
     }
 }
 
+#[inline(never)]
+fn write_literals(literals: &[u16], table: &[Code], writer: &mut BitWriter) {
+    writer.write_codes::<5, _>(literals, |literal| table[usize::from(literal)]);
+}
+
+/// `table` has the codes of the literals, and [`SLOTS`] more.
 fn write_commands<const DISTANCES: usize>(
     mut commands: &[Command],
     literals: &Literals,
+    table: &mut [Code],
     codes: &Codes<'_, DISTANCES>,
     [literal_blocks, command_blocks, distance_blocks]: &mut [BlockSwitcher<'_>; 3],
     writer: &mut BitWriter,
 ) -> Result<()> {
-    const BATCH: usize = 2048;
     let mut literals = literals.padded();
     let mut current = CurrentCodes {
-        literals: codes.literals,
         commands: &codes.commands[0],
         distances: codes.distances_by_context(0),
     };
+    let mut indices = [0; _];
     loop {
-        let batch = &commands[..commands.len().min(BATCH).min(command_blocks.cursor.left())];
-        let max_literals = literal_blocks.cursor.left().min(8 * BATCH);
-        let padded = &literals[..literals.len().min(max_literals + SYMBOL_SLACK)];
-        let max_bytes = 14 * batch.len() + 2 * padded.len();
-        writer.try_reserve(max_bytes)?;
-        let [command_count, literal_count, distance_count] = current.write_batch(
-            batch,
-            padded,
-            distance_blocks.cursor.left(),
-            writer.with_room(max_bytes),
-        );
+        // The last command may copy nothing.
+        let count = (commands.len().saturating_sub(1))
+            .min(SLOTS / 2)
+            .min(command_blocks.cursor.left())
+            .min(distance_blocks.cursor.left());
+        let max_literals = literal_blocks.cursor.left().min(BATCH_SIZE);
+        let padded = &literals[..literals.len().min(max_literals + Literals::SLACK)];
+        writer.try_reserve(14 * count + 2 * padded.len())?;
+        let [command_count, literal_count, distance_count] =
+            current.write_batch(&commands[..count], padded, table, &mut indices, writer);
         command_blocks.cursor.skip(command_count);
         literal_blocks.cursor.skip(literal_count);
         distance_blocks.cursor.skip(distance_count);
@@ -510,20 +531,18 @@ fn write_commands<const DISTANCES: usize>(
             current.commands = &codes.commands[command_blocks.switch(writer)];
         }
         command_blocks.cursor.skip(1);
-        writer.write_bits(current.commands[command.symbol()].bits());
-        writer.write_bits(command.length_extra());
+        writer.write_bits(current.lengths(command).bits());
+        if let Some(extra) = command.separate_length_extra() {
+            writer.write_bits(extra);
+        }
         let mut left = command.insert_length();
         while left != 0 {
             if literal_blocks.cursor.left() == 0 {
                 literal_blocks.switch(writer);
             }
-            let count = left.min(literal_blocks.cursor.left()).min(8 * BATCH);
+            let count = left.min(literal_blocks.cursor.left()).min(4096);
             writer.try_reserve(2 * count)?;
-            let mut room = writer.with_room(2 * count);
-            let padded = &literals[..count + SYMBOL_SLACK];
-            write_symbols(&mut room, Bits::EMPTY, padded, |literal| {
-                current.literal(literal)
-            });
+            write_literals(&literals[..count], table, writer);
             literal_blocks.cursor.skip(count);
             (literals, left) = (&literals[count..], left - count);
         }
@@ -532,12 +551,13 @@ fn write_commands<const DISTANCES: usize>(
                 current.distances = codes.distances_by_context(distance_blocks.switch(writer));
             }
             distance_blocks.cursor.skip(1);
-            writer.write_bits(current.distance_bits(command));
+            writer.write_bits(current.distance(command).bits());
         }
     }
 }
 
 /// One prefix code for each category.
+#[inline(never)]
 pub(super) fn write_plain_meta_block(
     source: &Source<'_>,
     commands: &[Command],
@@ -550,12 +570,14 @@ pub(super) fn write_plain_meta_block(
     static FIXED_COMMAND_CODES: [Code; COMMAND_SYMBOLS] = {
         let mut lengths = [11; COMMAND_SYMBOLS];
         lengths.split_at_mut(448).0.copy_from_slice(&[9; 448]);
-        let mut codes = [Code::EMPTY; COMMAND_SYMBOLS];
+        let mut codes = ROOM_FOR_LENGTHS;
         assign_codes(&lengths, &mut codes);
         codes
     };
+    const ROOM_FOR_DISTANCES: [Code; PLAIN_DISTANCE_SYMBOLS] =
+        room_for_distances(&DistanceParams::new(0, 0, true));
     static FIXED_DISTANCE_CODES: [Code; PLAIN_DISTANCE_SYMBOLS] = {
-        let mut codes = [Code::EMPTY; PLAIN_DISTANCE_SYMBOLS];
+        let mut codes = ROOM_FOR_DISTANCES;
         assign_codes(&[6; 64], &mut codes);
         codes
     };
@@ -567,7 +589,7 @@ pub(super) fn write_plain_meta_block(
     for &literal in literals.all() {
         literal_counts[usize::from(literal as u8)] += 1;
     }
-    let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS];
+    let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS + SLOTS];
     let mut build_and_write = |counts: &[u32], alphabet, codes: &mut [Code], writer: &mut _| {
         if fast {
             trees.build_and_write_fast(counts, alphabet, codes, writer);
@@ -596,8 +618,8 @@ pub(super) fn write_plain_meta_block(
             symbols[command.symbol()] += 1;
             distances[command.distance().symbol()] += u32::from(command.has_distance_symbol());
         }
-        command_codes = [Code::EMPTY; COMMAND_SYMBOLS];
-        distance_codes = [Code::EMPTY; PLAIN_DISTANCE_SYMBOLS];
+        command_codes = ROOM_FOR_LENGTHS;
+        distance_codes = ROOM_FOR_DISTANCES;
         build_and_write(&symbols, Alphabet::COMMANDS, &mut command_codes, writer);
         build_and_write(
             &distances,
@@ -608,11 +630,17 @@ pub(super) fn write_plain_meta_block(
         (&command_codes, &distance_codes)
     };
     let codes = Codes {
-        literals: &literal_codes,
         commands: core::slice::from_ref(command_codes),
         distances: core::slice::from_ref(distance_codes),
         distance_map: None,
     };
     let mut switchers = core::array::from_fn(|_| BlockSwitcher::single_block());
-    write_commands(commands, &literals, &codes, &mut switchers, writer)
+    write_commands(
+        commands,
+        &literals,
+        &mut literal_codes,
+        &codes,
+        &mut switchers,
+        writer,
+    )
 }

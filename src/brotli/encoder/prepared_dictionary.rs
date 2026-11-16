@@ -1,7 +1,10 @@
 use core::ops::Range;
 
+use bun_highway::BrotliPlace;
+
 use super::hash::{Candidate, Match, score, score_of_recent};
-use super::matching::{HASH_MULTIPLIER_64, load32, load64, match_length};
+use super::matching::{HASH_MULTIPLIER_64, load32, match_length};
+use super::ring_buffer::SLACK;
 use crate::memory::{self, Result};
 
 const BUCKET_LIMIT: u8 = 32;
@@ -10,7 +13,7 @@ const GROUP_SIZE: usize = 1024;
 
 /// What came before the stream, and a hash table over it.
 pub(super) struct PreparedDictionary {
-    bytes: Vec<u8>,
+    padded: Vec<u8>,
     bucket_bits: u32,
     buckets: Buckets,
     offsets: Vec<u32>,
@@ -58,13 +61,16 @@ fn hash(eight_bytes: u64, bucket_bits: u32) -> usize {
 
 impl PreparedDictionary {
     pub(super) fn new(bytes: &[u8]) -> Result<Self> {
-        let bytes = memory::copied(bytes)?;
+        let mut padded = memory::empty(bytes.len() + SLACK)?;
+        padded.extend_from_slice(bytes);
+        padded.extend([0; SLACK]);
         let mut bucket_bits = 17;
         while 16 << bucket_bits < bytes.len() && bucket_bits < 22 {
             bucket_bits += 1;
         }
         let keys = || {
-            (0..bytes.len().saturating_sub(7)).map(|i| (i, hash(load64(&bytes, i), bucket_bits)))
+            let all = padded[..bytes.len()].array_windows().enumerate();
+            all.map(|(i, &eight)| (i, hash(u64::from_le_bytes(eight), bucket_bits)))
         };
         let mut room = memory::zeroed::<u8>(1 << bucket_bits)?;
         for (_, key) in keys() {
@@ -79,7 +85,7 @@ impl PreparedDictionary {
             }
         }
         Ok(Self {
-            bytes,
+            padded,
             bucket_bits,
             buckets,
             offsets,
@@ -87,7 +93,7 @@ impl PreparedDictionary {
     }
 
     pub(super) fn bytes(&self) -> &[u8] {
-        &self.bytes
+        &self.padded[..self.padded.len().saturating_sub(SLACK)]
     }
 
     /// The latest first.
@@ -100,7 +106,23 @@ impl PreparedDictionary {
     /// The bytes that `distance` refers to, if the last byte of the dictionary is at `end_distance + 1`.
     pub(super) fn at_distance(&self, distance: usize, end_distance: usize) -> Option<&[u8]> {
         let length = distance.checked_sub(end_distance)?;
-        Some(&self.bytes[self.bytes.len().checked_sub(length)?..])
+        Some(&self.bytes()[self.bytes().len().checked_sub(length)?..])
+    }
+
+    /// `pair` is `offset` bytes into a match, if one can be so long. See [`Self::at_distance`].
+    #[inline(always)]
+    pub(super) fn place(
+        &self,
+        end_distance: usize,
+        offset: usize,
+        pair: [u8; 2],
+    ) -> Option<BrotliPlace<'_>> {
+        (offset + pair.len() <= self.bytes().len()).then(|| BrotliPlace {
+            ring: &self.padded[offset..],
+            ring_mask: u32::MAX,
+            position: (self.bytes().len() + end_distance) as u32,
+            pair,
+        })
     }
 
     #[inline(never)]
@@ -160,7 +182,7 @@ impl PreparedDictionary {
         offset: usize,
         best_length: usize,
     ) -> Option<(usize, &[u8])> {
-        let source = &self.bytes[offset..];
+        let source = &self.bytes()[offset..];
         let distance = query.end_distance + source.len();
         (distance <= query.max_distance
             && best_length <= query.before_ring_end

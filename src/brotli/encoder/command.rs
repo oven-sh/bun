@@ -1,13 +1,13 @@
 //! How a command is encoded (RFC 7932 sections 4 and 5).
 
-use super::bit_writer::Bits;
+use super::bit_writer::{Bits, Code};
 use super::input_block::InputBlock;
 use super::log2::log2_floor;
 use super::matching::match_length;
 use crate::context::{DISTANCE_CONTEXTS, distance_context};
 use crate::format::{
     COMMAND_SYMBOLS, COPY_LENGTH_CODES, CommandCodes, DISTANCE_SHORT_CODES, DistanceParams,
-    FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES, LengthCode,
+    FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES, LengthCode, MAX_CODE_LENGTH,
 };
 use crate::memory::{self, Result};
 
@@ -105,6 +105,63 @@ static MEANINGS: [Meaning; COMMAND_SYMBOLS.next_power_of_two()] = {
     meanings
 };
 
+impl Meaning {
+    const fn extra_bits(self) -> u32 {
+        (self.insert_extra_bits + self.copy_extra_bits) as u32
+    }
+
+    const fn fits_one_code(self) -> bool {
+        MAX_CODE_LENGTH as u32 + self.extra_bits() <= Bits::MAX_COUNT
+    }
+}
+
+/// What moves the extra bits of the two lengths to the top of a word.
+static MULTIPLIERS: [[u64; 2]; COMMAND_SYMBOLS.next_power_of_two()] = {
+    const fn below(bits: u32) -> u64 {
+        1u64.unbounded_shl(u64::BITS - bits)
+    }
+    let mut multipliers = [[0; 2]; _];
+    let mut symbol = 0;
+    while symbol < COMMAND_SYMBOLS {
+        let meaning = MEANINGS[symbol];
+        if meaning.fits_one_code() {
+            let copy = meaning.copy_extra_bits as u32;
+            multipliers[symbol] = [below(meaning.extra_bits()), below(copy)];
+        }
+        symbol += 1;
+    }
+    multipliers
+};
+
+/// What to prepend the codes to, for [`Command::with_lengths`].
+pub(super) const ROOM_FOR_LENGTHS: [Code; COMMAND_SYMBOLS] = {
+    let mut room = [Code::EMPTY; _];
+    let mut symbol = 0;
+    while symbol < COMMAND_SYMBOLS {
+        let (meaning, [insert, copy]) = (MEANINGS[symbol], MULTIPLIERS[symbol]);
+        if meaning.fits_one_code() {
+            let bases = (insert.wrapping_mul(meaning.insert_base as u64))
+                .wrapping_add(copy.wrapping_mul(meaning.copy_base as u64));
+            room[symbol] = Code::new(meaning.extra_bits(), bases.wrapping_neg());
+        }
+        symbol += 1;
+    }
+    room
+};
+
+/// What to prepend the codes to, for [`Command::with_distance`].
+pub(super) const fn room_for_distances<const N: usize>(params: &DistanceParams) -> [Code; N] {
+    let first = DISTANCE_SHORT_CODES + params.direct_codes;
+    let mut room = [Code::EMPTY; N];
+    let mut symbol = first;
+    while symbol < params.alphabet.size {
+        let extra_bits = 1 + ((symbol - first) >> (params.postfix_bits + 1));
+        room[symbol as usize] = Code::new(extra_bits, 0);
+        symbol += 1;
+    }
+    room
+}
+
 #[inline(always)]
 fn command_symbol(insert_length: usize, copy_length: usize, use_last_distance: bool) -> u16 {
     combine_length_codes(
@@ -120,6 +177,7 @@ pub(super) const DISTANCE_CODE_OFFSET: usize = DISTANCE_SHORT_CODES as usize - 1
 pub(super) struct DistancePrefix {
     /// The symbol in the low 10 bits, and above it the number of extra bits.
     packed: u16,
+    /// At the top.
     extra: u32,
 }
 
@@ -143,14 +201,14 @@ impl DistancePrefix {
     #[inline(always)]
     fn past_direct_codes(code: usize, first: usize, postfix_bits: u32) -> Self {
         let distance = (1 << (postfix_bits + 2)) + (code - first);
-        let bucket = log2_floor(distance) - 1;
         let postfix = distance & ((1 << postfix_bits) - 1);
-        let prefix = (distance >> bucket) & 1;
-        let bits = (bucket - postfix_bits) as usize;
-        let symbol = first + ((2 * (bits - 1) + prefix) << postfix_bits) + postfix;
+        let bits = (log2_floor(distance) - 1 - postfix_bits) as usize;
+        // 2 or 3 in the high half.
+        let aligned = ((distance >> postfix_bits) as u64) << (32 - bits);
+        let group = 2 * bits + (aligned >> 32) as usize - 4;
         Self {
-            packed: ((bits << 10) | symbol) as u16,
-            extra: ((distance - ((2 + prefix) << bucket)) >> postfix_bits) as u32,
+            packed: ((bits << 10) | (first + (group << postfix_bits) + postfix)) as u16,
+            extra: aligned as u32,
         }
     }
 
@@ -173,7 +231,8 @@ impl DistancePrefix {
         let high = symbol >> params.postfix_bits;
         let low = symbol & ((1 << params.postfix_bits) - 1);
         let offset = ((2 + (high & 1)) << self.extra_bits()) - 4;
-        ((offset + self.extra as usize) << params.postfix_bits) + low + first
+        let extra = self.extra >> (32 - self.extra_bits());
+        ((offset + extra as usize) << params.postfix_bits) + low + first
     }
 }
 
@@ -278,23 +337,34 @@ impl Command {
         usize::from(self.meaning().distance_context) % DISTANCE_CONTEXTS
     }
 
-    /// Up to 48 bits.
-    #[inline(always)]
-    pub(super) fn length_extra(&self) -> Bits {
+    /// What [`with_lengths`](Self::with_lengths) leaves out.
+    pub(super) fn separate_length_extra(&self) -> Option<Bits> {
         let meaning = self.meaning();
+        if meaning.fits_one_code() {
+            return None;
+        }
         let insert = Bits::new(
             u32::from(meaning.insert_extra_bits),
             u64::from(self.insert_length - u32::from(meaning.insert_base)),
         );
-        insert.then(Bits::new(
+        Some(insert.then(Bits::new(
             u32::from(meaning.copy_extra_bits),
             (self.coded_copy_length() - usize::from(meaning.copy_base)) as u64,
-        ))
+        )))
     }
 
     #[inline(always)]
-    pub(super) fn distance_extra(&self) -> Bits {
-        Bits::new(self.distance().extra_bits(), u64::from(self.distance_extra))
+    pub(super) fn with_lengths(&self, code: Code) -> Code {
+        let [insert, copy] = MULTIPLIERS[self.symbol() % MULTIPLIERS.len()];
+        // The product drops what is above the length.
+        let coded = (self.copy_length).wrapping_add_signed(self.copy_length as i32 >> 25);
+        code.plus(insert.wrapping_mul(u64::from(self.insert_length)))
+            .plus(copy.wrapping_mul(u64::from(coded)))
+    }
+
+    #[inline(always)]
+    pub(super) fn with_distance(&self, code: Code) -> Code {
+        code.plus(u64::from(self.distance_extra) << 32)
     }
 }
 

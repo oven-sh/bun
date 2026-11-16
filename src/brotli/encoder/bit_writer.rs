@@ -31,6 +31,47 @@ impl Bits {
     }
 }
 
+/// Up to [`Bits::MAX_COUNT`] bits at the top, and how many they are at the bottom. One shift makes room for them.
+#[derive(Clone, Copy)]
+pub(super) struct Code(u64);
+
+impl Code {
+    pub(super) const EMPTY: Self = Self(0);
+    const LENGTH_BITS: u32 = 6;
+
+    /// `top` has zeros below the `length` bits.
+    #[inline(always)]
+    pub(super) const fn new(length: u32, top: u64) -> Self {
+        Self(top | length as u64)
+    }
+
+    #[inline(always)]
+    pub(super) const fn length(self) -> u32 {
+        self.0 as u32 % (1 << Self::LENGTH_BITS)
+    }
+
+    #[inline(always)]
+    pub(super) const fn bits(self) -> Bits {
+        let value = self.0 >> Self::LENGTH_BITS;
+        Bits::new(
+            self.length(),
+            value >> (64 - Self::LENGTH_BITS - self.length()),
+        )
+    }
+
+    /// For extra bits, which the length has already.
+    #[inline(always)]
+    pub(super) const fn plus(self, top: u64) -> Self {
+        Self(self.0.wrapping_add(top))
+    }
+
+    #[inline(always)]
+    pub(super) const fn prepend(&mut self, first: Self) {
+        let length = first.length() as u64;
+        *self = self.plus(((first.0 - length) >> self.length()) + length);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct BitWriter {
     /// Longer than what is written. The unused bits of the incomplete byte are zero.
@@ -75,25 +116,56 @@ impl BitWriter {
         self.buffer[position / 8] &= (1 << (position % 8)) - 1;
     }
 
-    /// For a loop that writes up to `bytes` bytes.
-    #[inline(always)]
-    pub(super) fn with_room(&mut self, bytes: usize) -> Room<'_> {
-        let mut room = Room {
-            position: self.position,
-            writer: self,
-        };
-        room.ensure(bytes);
-        room
-    }
-
     #[cold]
     fn grow(&mut self, needed: usize) {
-        let with_spare = (needed + 256).min(self.buffer.capacity());
+        debug_assert!(needed <= self.buffer.capacity());
+        let with_spare = (needed + 1024).min(self.buffer.capacity());
         self.buffer.resize(needed.max(with_spare), 0);
     }
 
     pub(super) fn write_bits(&mut self, bits: Bits) {
-        self.with_room(0).write_bits(bits);
+        debug_assert!(bits.count <= Bits::MAX_COUNT && bits.value >> bits.count == 0);
+        let at = self.complete_count();
+        if at + WORD > self.buffer.len() {
+            self.grow(at + WORD);
+        }
+        let word = &mut self.buffer[at..at + WORD];
+        let joined = u64::from(word[0]) | (bits.value << (self.position % 8));
+        put_bytes(word, 0, joined.to_le_bytes());
+        self.position += bits.count;
+    }
+
+    /// `N` at once if they fit, as they do most of the time. Together they have less than 256 bits.
+    #[inline(always)]
+    pub(super) fn write_codes<const N: usize, T: Copy>(
+        &mut self,
+        items: &[T],
+        code_of: impl Fn(T) -> Code,
+    ) {
+        let (groups, rest) = items.as_chunks::<N>();
+        let mut groups = groups.iter();
+        loop {
+            let (buffer, mut end) = (&mut *self.buffer, self.position);
+            let misfit = groups.find(|group| {
+                let codes = group.iter().map(|&item| code_of(item));
+                put_codes(buffer, end, codes)
+                    .map(|next| end = next)
+                    .is_none()
+            });
+            self.position = end;
+            let Some(group) = misfit else {
+                return self.write_each(rest, &code_of);
+            };
+            self.write_each(group, &code_of);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write_each<T: Copy>(&mut self, items: &[T], code_of: &impl Fn(T) -> Code) {
+        for &item in items {
+            self.write_bits(code_of(item).bits());
+        }
     }
 
     pub(super) fn write(&mut self, count: u32, value: u64) {
@@ -126,46 +198,22 @@ impl BitWriter {
     }
 }
 
-pub(super) struct Room<'a> {
-    writer: &'a mut BitWriter,
-    position: u32,
-}
-
-impl Room<'_> {
-    /// For up to `bytes` bytes from here.
-    #[inline(always)]
-    pub(super) fn ensure(&mut self, bytes: usize) {
-        let needed = self.position as usize / 8 + bytes + WORD;
-        if needed > self.writer.buffer.len() {
-            self.writer.grow(needed);
-        }
+/// Returns where `codes` end, unless they are too long for one write or there is no room.
+#[inline(always)]
+fn put_codes(buffer: &mut [u8], start: u32, codes: impl Iterator<Item = Code>) -> Option<u32> {
+    let (mut joined, mut sum) = (0, 0u32);
+    for code in codes {
+        joined = (joined >> code.length()) | code.0;
+        sum = sum.wrapping_add(code.0 as u32);
     }
-
-    #[inline(always)]
-    pub(super) fn write_bits(&mut self, bits: Bits) {
-        debug_assert!(bits.count <= Bits::MAX_COUNT && bits.value >> bits.count == 0);
-        let at = self.position as usize / 8;
-        let word = &mut self.writer.buffer[at..at + WORD];
-        let joined = u64::from(word[0]) | (bits.value << (self.position % 8));
-        put_bytes(word, 0, joined.to_le_bytes());
-        self.position += bits.count;
+    let end = start + u32::from(sum as u8);
+    let shift = (start & !7).wrapping_sub(end);
+    if (shift as i32) < Code::LENGTH_BITS as i32 - 64 {
+        return None;
     }
-
-    /// At once if they fit, as they do most of the time.
-    #[inline(always)]
-    pub(super) fn write_both(&mut self, first: Bits, second: Bits) {
-        if first.count + second.count <= Bits::MAX_COUNT {
-            self.write_bits(first.then(second));
-        } else {
-            self.write_bits(first);
-            self.write_bits(second);
-        }
-    }
-}
-
-impl Drop for Room<'_> {
-    #[inline(always)]
-    fn drop(&mut self) {
-        self.writer.position = self.position;
-    }
+    let at = start as usize / 8;
+    let word = buffer.get_mut(at..at + WORD)?;
+    let joined = u64::from(word[0]) | (joined >> (shift % 64));
+    put_bytes(word, 0, joined.to_le_bytes());
+    Some(end)
 }

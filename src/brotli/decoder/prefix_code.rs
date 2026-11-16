@@ -3,7 +3,7 @@
 use core::hint::select_unpredictable;
 
 use super::Stop;
-use super::bit_reader::{BitReader, Bits};
+use super::bit_reader::{BitReader, Bits, REFILLED};
 use super::huffman::{SymbolLists, fill_root};
 use crate::DecodeError;
 use crate::format::{
@@ -58,7 +58,7 @@ impl PrefixCodeReader {
                 Phase::CodeLengthCode(code) => {
                     code.read(reader)?;
                     let table = CodeLengthTable::new(code)?;
-                    symbols.clear();
+                    symbols.clear_for_runs(alphabet.size);
                     self.phase = Phase::SymbolLengths(table, SymbolLengths::new());
                 }
                 Phase::SymbolLengths(table, lengths) => {
@@ -105,7 +105,7 @@ fn read_simple_code(
     sorted.sort_unstable();
     code.clear();
     for (symbol, length) in sorted.into_iter().take(count) {
-        code.push(length, symbol);
+        code.push_run(length, symbol, 1);
     }
     Ok(())
 }
@@ -162,20 +162,21 @@ impl CodeLengthCode {
     }
 }
 
-/// From the low bits: the length with the extra bits (6 bits), the symbol (5 bits), and the length of the code.
-struct CodeLengthTable([u16; 1 << MAX_CODE_LENGTH_CODE_LENGTH]);
+/// The length of the code with and without the extra bits, the symbol unless it is a repeat, and a mask for the extra bits.
+struct CodeLengthTable([[u8; 4]; 1 << MAX_CODE_LENGTH_CODE_LENGTH]);
 
 impl CodeLengthTable {
     fn new(code: &CodeLengthCode) -> Result<Self, Stop> {
         let entry_for = |symbol: u32, length: u32| {
-            let extra_bits = if symbol < FIRST_REPEAT {
-                0
+            let (symbol, extra_bits) = if symbol < FIRST_REPEAT {
+                (symbol, 0)
             } else {
-                repeat_extra_bits(symbol)
+                (0, repeat_extra_bits(symbol))
             };
-            ((length << 11) | (symbol << 6) | (length + extra_bits)) as u16
+            let mask = (1 << extra_bits) - 1;
+            ((mask << 24) | (symbol << 16) | (length << 8) | (length + extra_bits)).to_le_bytes()
         };
-        let mut table = [0; _];
+        let mut table = [[0; 4]; _];
         if code.space == 0 {
             let of_length = |length: usize| {
                 let mut symbols = code.symbols_by_length.get(length).copied().unwrap_or(0);
@@ -203,8 +204,9 @@ struct SymbolLengths {
     symbol: u32,
     space: i32,
     previous_length: u32,
-    repeat: u32,
-    repeated_length: u32,
+    previous_mask: u32,
+    /// Two less than what the last repeats of the same kind add up to.
+    run: u32,
 }
 
 impl SymbolLengths {
@@ -213,8 +215,8 @@ impl SymbolLengths {
             symbol: 0,
             space: 1 << MAX_CODE_LENGTH,
             previous_length: u32::from(INITIAL_REPEATED_CODE_LENGTH),
-            repeat: 0,
-            repeated_length: 0,
+            previous_mask: 0,
+            run: 0,
         }
     }
 
@@ -239,46 +241,43 @@ impl SymbolLengths {
         reader: &mut BitReader<'_>,
         symbols: &mut SymbolLists,
     ) -> Result<(), Stop> {
+        const MASK_FOR_PREVIOUS: u32 = (1 << repeat_extra_bits(FIRST_REPEAT)) - 1;
         /// How much of the space of all codes one takes up.
         static SHARES: [u16; 16] = [
             0, 16384, 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1,
         ];
         #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
         let share = |length: u32| i32::from(SHARES[length as usize % 16]);
-        while self.symbol < alphabet_size && self.space != 0 {
-            reader.refill_for(8);
-            let peek = reader.bits.peek() as u32;
-            #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
-            let entry = u32::from(table.0[peek as usize % 32]);
-            reader.bits.skip(entry % 64)?;
-            let code = (entry >> 6) % 32;
-            if code < FIRST_REPEAT {
-                symbols.push(code, self.symbol);
-                self.symbol += 1;
-                self.space -= share(code);
-                self.repeat = 0;
-                self.previous_length = select_unpredictable(code != 0, code, self.previous_length);
-                continue;
-            }
-            let extra_bits = repeat_extra_bits(code);
-            let extra = (peek >> (entry >> 11)) & ((1 << extra_bits) - 1);
-            let length = select_unpredictable(code == FIRST_REPEAT, self.previous_length, 0);
-            let before = select_unpredictable(self.repeated_length == length, self.repeat, 0);
-            self.repeated_length = length;
-            self.repeat = (before.saturating_sub(2) << extra_bits) + extra + 3;
-            let count = self.repeat - before;
-            if self.symbol + count > alphabet_size {
-                return Err(DecodeError::HuffmanSpace.into());
-            }
-            if length != 0 {
+        loop {
+            reader.refill();
+            for _ in 0..REFILLED / 8 {
+                let peek = reader.bits.peek() as u32;
+                #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
+                let entry = &table.0[peek as usize % 32];
+                reader.bits.skip(u32::from(entry[0]))?;
+                let (length, mask) = (u32::from(entry[2]), u32::from(entry[3]));
+                let extra = (peek >> (entry[1] % 32)) & mask;
+                // With a mask of zero, this counts one symbol.
+                let goes_on = core::mem::replace(&mut self.previous_mask, mask) == mask;
+                let before = select_unpredictable(goes_on, self.run, 0);
+                let more = before * mask + extra + 1;
+                self.run = before + more;
+                let count = more + select_unpredictable(goes_on, 0, mask & 2);
+
+                let previous = self.previous_length;
+                let length = select_unpredictable(mask == MASK_FOR_PREVIOUS, previous, length);
+                self.previous_length = select_unpredictable(length != 0, length, previous);
                 symbols.push_run(length, self.symbol, count);
                 self.space -= count as i32 * share(length);
+                self.symbol += count;
+                if self.symbol >= alphabet_size || self.space == 0 {
+                    return if self.symbol <= alphabet_size && self.space == 0 {
+                        Ok(())
+                    } else {
+                        Err(DecodeError::HuffmanSpace.into())
+                    };
+                }
             }
-            self.symbol += count;
         }
-        if self.space != 0 {
-            return Err(DecodeError::HuffmanSpace.into());
-        }
-        Ok(())
     }
 }

@@ -1,16 +1,16 @@
 //! Collects the commands of a block, and then writes them with codes of their own (quality 1).
 
-use core::ops::ControlFlow;
+use core::ops::{ControlFlow, Range};
 
 use super::{
-    FIRST_COPY_AT_LAST_DISTANCE, SYMBOLS, Sink, Table, Token, build_and_write_codes, find_matches,
-    table_bits,
+    Item, ItemCodes, MAX_LITERAL_ITEMS, Sink, Table, build_and_write_codes, find_matches,
+    insert_last, table_bits,
 };
 use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
-use crate::encoder::bit_writer::BitWriter;
-use crate::encoder::histogram::{bits_entropy, count_bytes, count_every_nth_byte};
-use crate::encoder::huffman::{Code, SYMBOL_SLACK, TreeBuilder, write_symbols};
-use crate::format::{Alphabet, LITERAL_SYMBOLS, WINDOW_GAP};
+use crate::encoder::bit_writer::{BitWriter, Code};
+use crate::encoder::histogram::{bits_entropy, count_every_nth_byte};
+use crate::encoder::huffman::TreeBuilder;
+use crate::format::{Alphabet, LITERAL_SYMBOLS};
 use crate::memory::{self, Result};
 
 const BLOCK_SIZE: usize = 1 << 17;
@@ -18,45 +18,69 @@ const BLOCK_SIZE: usize = 1 << 17;
 #[derive(Default)]
 pub(in crate::encoder) struct TwoPass {
     table: Table,
-    tokens: Vec<[u32; 2]>,
-    literals: Vec<u8>,
+    items: Vec<Item>,
+    runs: Vec<LongRun>,
+}
+
+/// Literals that are not among the items.
+struct LongRun {
+    items_before: usize,
+    start: usize,
+    end: usize,
+}
+
+/// An increment has to wait for the previous one of the same counter.
+struct Histograms([[u32; Item::INDICES]; 2]);
+
+impl Histograms {
+    #[inline(always)]
+    fn add<T: Copy>(&mut self, all: &[T], index: impl Fn(T) -> usize) {
+        let (pairs, rest) = all.as_chunks();
+        for &[a, b] in pairs {
+            self.0[0][index(a)] += 1;
+            self.0[1][index(b)] += 1;
+        }
+        if let &[last] = rest {
+            self.0[0][index(last)] += 1;
+        }
+    }
+
+    fn counts_from<const N: usize>(&self, first: usize) -> [u32; N] {
+        let [even, odd] = self.0.each_ref().map(|counts| &counts[first..first + N]);
+        core::array::from_fn(|i| even[i] + odd[i])
+    }
 }
 
 struct Block {
-    /// The symbol in the low 8 bits, and above it the value. Nothing goes with a token that inserts.
-    tokens: Vec<[u32; 2]>,
-    literals: Vec<u8>,
-    histogram: [u32; SYMBOLS],
+    items: Vec<Item>,
+    runs: Vec<LongRun>,
+    histograms: Histograms,
     /// How much of the whole input is in the output. Blocks to store wait for one that is compressed.
     written: usize,
 }
 
 impl Sink for Block {
     #[inline(always)]
-    fn refuses(&mut self, _start: usize, _end: usize) -> bool {
+    fn refuses(&self, _start: usize, _end: usize) -> bool {
         false
     }
 
     #[inline(always)]
-    fn insert(&mut self, padded: &[u8]) {
-        let length = padded.len() - WINDOW_GAP;
-        self.tokens(Token::insert(length), Token::NONE);
-        match padded.first_chunk::<WINDOW_GAP>() {
-            Some(chunk) if length <= WINDOW_GAP => {
-                let end = self.literals.len() + length;
-                self.literals.extend_from_slice(chunk);
-                self.literals.truncate(end);
-            }
-            _ => self.literals.extend_from_slice(&padded[..length]),
-        }
+    fn found(&mut self, _item: Item) {}
+
+    #[inline(never)]
+    fn items(&mut self, items: &[Item]) {
+        self.items.extend_from_slice(items);
+        self.histograms.add(items, Item::index);
     }
 
-    #[inline(always)]
-    fn tokens(&mut self, first: Token, second: Token) {
-        let packed = [first, second].map(|token| (token.symbol | (token.value << 8)) as u32);
-        self.tokens.push(packed);
-        self.histogram[first.symbol % SYMBOLS] += 1;
-        self.histogram[second.symbol % SYMBOLS] += 1;
+    #[inline(never)]
+    fn literals(&mut self, _input: &[u8], Range { start, end }: Range<usize>) {
+        self.runs.push(LongRun {
+            items_before: self.items.len(),
+            start,
+            end,
+        });
     }
 }
 
@@ -89,11 +113,10 @@ impl TwoPass {
         writer: &mut BitWriter,
     ) -> Result<()> {
         let table = self.table.cleared::<TABLE_SIZE>()?;
-        // Pushing to a local is faster than pushing to a field.
         let mut block = Block {
-            tokens: core::mem::take(&mut self.tokens),
-            literals: core::mem::take(&mut self.literals),
-            histogram: [0; SYMBOLS],
+            items: core::mem::take(&mut self.items),
+            runs: core::mem::take(&mut self.runs),
+            histograms: Histograms([[0; _]; 2]),
             written: 0,
         };
         for start in (0..input.len()).step_by(BLOCK_SIZE) {
@@ -101,7 +124,7 @@ impl TwoPass {
             block.begin(end - start)?;
             let (ControlFlow::Continue(next_literal) | ControlFlow::Break(next_literal)) =
                 find_matches::<_, MIN_MATCH>(input, start, end, start, table, &mut block);
-            block.end(&input[..end], start, next_literal, trees, writer)?;
+            block.end(&input[..end], start, next_literal, trees, writer);
         }
         block.finish(input, writer);
         self.keep_memory_of(block);
@@ -109,24 +132,17 @@ impl TwoPass {
     }
 
     fn keep_memory_of(&mut self, block: Block) {
-        (self.tokens, self.literals) = (block.tokens, block.literals);
+        (self.items, self.runs) = (block.items, block.runs);
     }
 }
 
 impl Block {
     fn begin(&mut self, size: usize) -> Result<()> {
-        self.tokens.clear();
-        self.literals.clear();
-        self.histogram.fill(0);
-        memory::try_reserve(&mut self.tokens, size / 2 + 1)?;
-        memory::try_reserve(&mut self.literals, size + WINDOW_GAP)
-    }
-
-    fn insert_last(&mut self, literals: &[u8]) {
-        if !literals.is_empty() {
-            self.tokens(Token::insert(literals.len()), Token::NONE);
-            self.literals.extend_from_slice(literals);
-        }
+        self.items.clear();
+        self.runs.clear();
+        self.histograms = Histograms([[0; _]; 2]);
+        memory::try_reserve(&mut self.items, size)?;
+        memory::try_reserve(&mut self.runs, size / MAX_LITERAL_ITEMS + 1)
     }
 
     fn store_rest_of(&self, input: &[u8], writer: &mut BitWriter) {
@@ -153,49 +169,44 @@ impl Block {
         next_literal: usize,
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
-    ) -> Result<()> {
-        let last_literals = &input[next_literal..];
-        if !is_worth_compressing(&input[start..], self.literals.len() + last_literals.len()) {
-            return Ok(());
+    ) {
+        if next_literal < input.len() {
+            insert_last(input, next_literal..input.len(), self);
+        }
+        let counts: [_; LITERAL_SYMBOLS] = self.histograms.counts_from(0);
+        let in_items: u32 = counts.iter().sum();
+        let in_runs: usize = self.runs.iter().map(|run| run.end - run.start).sum();
+        if !is_worth_compressing(&input[start..], in_items as usize + in_runs) {
+            return;
         }
         self.store_rest_of(&input[..start], writer);
         self.written = input.len();
-        self.insert_last(last_literals);
         write_plain_header(writer, MetaBlockKind::Compressed, input.len() - start);
-        let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS];
+        for run in &self.runs {
+            self.histograms.add(&input[run.start..run.end], usize::from);
+        }
+        let literal_counts: [u32; LITERAL_SYMBOLS] = self.histograms.counts_from(0);
+        let mut codes = ItemCodes([Code::EMPTY; _]);
         trees.build_and_write_fast(
-            &count_bytes(&self.literals),
+            &literal_counts,
             Alphabet::LITERALS,
-            &mut literal_codes,
+            codes.literals(),
             writer,
         );
+        let mut histogram = self.histograms.counts_from(LITERAL_SYMBOLS);
         // Each code needs two symbols.
         for symbol in [1, 2, 64, 84] {
-            self.histogram[symbol] += 1;
+            histogram[symbol] += 1;
         }
-        let codes = build_and_write_codes(self.histogram, 0, trees, writer);
+        build_and_write_codes(histogram, 0, codes.symbols(), trees, writer);
 
-        self.literals.extend([0; SYMBOL_SLACK]);
-        let max_bytes = 7 * self.tokens.len() + 2 * self.literals.len();
-        writer.try_reserve(max_bytes)?;
-        let mut room = writer.with_room(max_bytes);
-        let mut literals = &*self.literals;
-        for packed in &self.tokens {
-            let [first, second] = packed.map(|packed| Token {
-                symbol: packed as usize % SYMBOLS,
-                value: packed as usize >> 8,
-            });
-            if first.symbol < FIRST_COPY_AT_LAST_DISTANCE {
-                let padded = &literals[..first.value + SYMBOL_SLACK];
-                write_symbols(&mut room, codes.bits(first), padded, |literal| {
-                    literal_codes[usize::from(literal)]
-                });
-                literals = &literals[first.value..];
-            } else {
-                room.write_bits(codes.bits(first).then(codes.bits(second)));
-            }
+        let mut written = 0;
+        for run in &self.runs {
+            codes.write_items(&self.items[written..run.items_before], writer);
+            codes.write_literals(&input[run.start..run.end], writer);
+            written = run.items_before;
         }
-        Ok(())
+        codes.write_items(&self.items[written..], writer);
     }
 }
 

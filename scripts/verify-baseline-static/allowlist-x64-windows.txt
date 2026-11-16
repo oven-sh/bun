@@ -770,6 +770,17 @@ bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
+# Bun Brotli encoder (src/jsc/bindings/highway_brotli.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::BrotliAddEntries                                        [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliEstimateCosts                                     [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliFindSwitches                                      [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliRemovePairs                                       [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliSortLeaves                                        [AVX, AVX2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------

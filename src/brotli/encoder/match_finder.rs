@@ -3,7 +3,8 @@
 use super::command::{Command, Commands, DISTANCE_CODE_OFFSET};
 use super::hash::{
     BinaryTree, Buckets, Chains, Dense, ForgetfulChains, Hasher, Linked, MAX_SMALL_INPUT_SIZE,
-    MIN_SCORE, Match, Paged, Quick, RecentDistances, Small, TaggedBuckets, WithRolling, jump,
+    MIN_SCORE, Match, Paged, Quick, RecentDistances, Search, Small, TaggedBuckets, WithRolling,
+    jump, prefetch,
 };
 use super::input_block::InputBlock;
 use super::params::LARGE_INPUT_SIZE;
@@ -62,7 +63,7 @@ impl MatchFinder {
             _ => 16,
         };
         let max_small_size = match quality {
-            ..4 => 1 << 11,
+            ..4 | 10.. => 1 << 11,
             4 => 1 << 12,
             _ => MAX_SMALL_INPUT_SIZE,
         };
@@ -80,7 +81,7 @@ impl MatchFinder {
             (4, _) if large_input => Self::Quick4Large(Quick::new(Dense::new()?)),
             (4, Some(size)) => Self::Quick4Small(Quick::new(Paged::new(size)?)),
             (4, None) => Self::Quick4(Quick::new(Dense::new()?)),
-            (10.., _) => Self::BinaryTree(BinaryTree::new(params.window_bits)?),
+            (10.., size) => Self::BinaryTree(BinaryTree::new(params.window_bits, size)?),
             _ if params.window_bits <= 16 => {
                 let max_hops = if quality > 6 { 7 } else { 8 } << (quality - 4);
                 if quality < 9 {
@@ -215,7 +216,7 @@ impl Greedy<'_, '_> {
         self.commands.try_reserve(block.length / 2 + 1)
     }
 
-    /// Up to the end of the block, or to a match after which it `is_enough`.
+    /// Up to the end of the block, or to where it `is_enough`.
     fn go_on<H: Hasher>(
         &mut self,
         hasher: &mut H,
@@ -289,19 +290,18 @@ fn short_code(distance: usize, last: [i32; 4]) -> Option<usize> {
 #[inline(always)]
 fn find<H: Hasher>(
     hasher: &mut H,
-    block: &InputBlock<'_>,
+    search: &Search<'_>,
     searched_dictionary: Option<&PreparedDictionary>,
     recent: &RecentDistances,
-    position: usize,
-    padded: &[u8],
     longer_than: usize,
 ) -> Match {
-    let best = hasher.find(&block.search_at(position, padded), recent, longer_than);
+    let best = hasher.find(search, recent, longer_than);
     let (Some(dictionary), &[a, b, c, d, ..]) = (searched_dictionary, recent) else {
         return best;
     };
     // Field by field, so that `best` can stay in registers.
-    let improved = dictionary.improve(&block.query_at(position), [a, b, c, d], Match { ..best });
+    let query = search.block.query_at(search.position);
+    let improved = dictionary.improve(&query, [a, b, c, d], Match { ..best });
     Match { ..improved }
 }
 
@@ -316,9 +316,12 @@ fn add_greedily<H: Hasher>(
     commands: &mut Commands,
 ) -> (usize, usize) {
     const LAZY_MARGIN: usize = 175;
+    /// From one that the longest jumps follow.
+    const SIXTH_SEARCH: usize = 17 * 6;
     let block = *block;
     let store_end = block.store_end(H::LOOKAHEAD);
     let patience = if block.params.quality < 9 { 64 } else { 512 };
+    let may_prune = block.is_contiguous() && searched.is_none();
     let mut position = block.position;
     let mut padded = block.padded();
     let mut literals_start = position - commands.pending_literals;
@@ -331,7 +334,10 @@ fn add_greedily<H: Hasher>(
             if padded.len() <= H::LOOKAHEAD + SLACK {
                 break 'block block.end();
             }
-            let best = find(hasher, &block, searched, &recent, position, padded, 0);
+            let jumps = position >= skip_after;
+            prefetch(hasher, padded, if jumps { SIXTH_SEARCH } else { 1 });
+            let search = block.search_at(position, padded);
+            let best = find(hasher, &search, searched, &recent, 0);
             if best.score != MIN_SCORE {
                 break best;
             }
@@ -345,20 +351,20 @@ fn add_greedily<H: Hasher>(
                     (position, padded) = hasher.skip(&block, position, padded, recent[0]);
                 }
             }
+            if is_enough(hasher, position) {
+                break 'block position;
+            }
         };
 
         for _ in 0..4 {
             let after = &padded[1..];
-            let next = find(
-                hasher,
-                &block,
-                searched,
-                &recent,
-                position + 1,
-                after,
-                best.length - 1,
-            );
-            if next.score < best.score + LAZY_MARGIN {
+            let to_beat = best.score + LAZY_MARGIN - 1;
+            let search = Search {
+                to_beat: if may_prune { to_beat } else { 0 },
+                ..block.search_at(position + 1, after)
+            };
+            let next = find(hasher, &search, searched, &recent, best.length - 1);
+            if next.score <= to_beat {
                 break;
             }
             position += 1;
@@ -369,6 +375,7 @@ fn add_greedily<H: Hasher>(
             }
         }
         skip_after = position + 2 * best.length + patience;
+        prefetch(hasher, padded, best.length);
 
         let mut code = best.distance + DISTANCE_CODE_OFFSET;
         if best.distance <= block.max_copy_distance(position) {
@@ -395,9 +402,7 @@ fn add_greedily<H: Hasher>(
             stored_start = stored_start.max(best.length - (best.distance << 2));
         }
         if let Some(covered) = padded.get(stored_start..stored_end + SLACK) {
-            for (i, eight) in covered.array_windows().enumerate() {
-                hasher.store(u64::from_le_bytes(*eight), position + stored_start + i);
-            }
+            hasher.store_all(covered, position + stored_start);
         }
         position += best.length;
         padded = &padded[best.length..];

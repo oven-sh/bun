@@ -2,13 +2,15 @@
 
 use core::array::from_fn;
 
-use super::cluster::{BATCH, Cluster, Combiner, closest, renumber};
-use super::histogram::Histogram;
+use bun_highway::brotli_find_switches;
+
+use super::cluster::{BATCH, Clusters, Combiner, renumber};
+use super::histogram::{DISTANCE_SYMBOLS, Indexed, count_symbols};
 use super::log2::fast_log2;
-use crate::format::MAX_BLOCK_TYPES;
+use crate::format::{COMMAND_SYMBOLS, LITERAL_SYMBOLS, MAX_BLOCK_TYPES};
 use crate::memory::{self, Result};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Block {
     pub(super) kind: u8,
     pub(super) length: u32,
@@ -29,10 +31,10 @@ impl BlockSplit {
     }
 
     /// Neighbors of the same type become one block.
-    fn joined(type_count: usize, types: &[u32], lengths: &[usize]) -> Result<Self> {
-        let mut blocks: Vec<Block> = memory::empty(lengths.len())?;
-        for (&kind, &length) in types.iter().zip(lengths) {
-            let (kind, length) = (kind as u8, length as u32);
+    fn joined(type_count: usize, types: &[u32], untyped: &[Block]) -> Result<Self> {
+        let mut blocks: Vec<Block> = memory::empty(untyped.len())?;
+        for (&kind, &Block { length, .. }) in types.iter().zip(untyped) {
+            let kind = kind as u8;
             match blocks.last_mut() {
                 Some(last) if last.kind == kind => last.length += length,
                 _ => blocks.push(Block { kind, length }),
@@ -57,6 +59,7 @@ impl BlockSplit {
 
 // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/block_splitter.c#L24
 pub(super) struct Tuning {
+    alphabet_size: usize,
     symbols_per_histogram: usize,
     max_histograms: usize,
     sample_length: usize,
@@ -64,6 +67,7 @@ pub(super) struct Tuning {
 }
 
 pub(super) const LITERALS: Tuning = Tuning {
+    alphabet_size: LITERAL_SYMBOLS,
     symbols_per_histogram: 544,
     max_histograms: 100,
     sample_length: 70,
@@ -71,6 +75,7 @@ pub(super) const LITERALS: Tuning = Tuning {
 };
 
 pub(super) const COMMANDS: Tuning = Tuning {
+    alphabet_size: COMMAND_SYMBOLS,
     symbols_per_histogram: 530,
     max_histograms: 50,
     sample_length: 40,
@@ -78,45 +83,62 @@ pub(super) const COMMANDS: Tuning = Tuning {
 };
 
 pub(super) const DISTANCES: Tuning = Tuning {
+    alphabet_size: DISTANCE_SYMBOLS,
     symbols_per_histogram: 544,
     max_histograms: 50,
     sample_length: 40,
     switch_cost: 14.6,
 };
 
-pub(super) fn split<const N: usize>(
+pub(super) fn split(
     data: &[u16],
     tuning: &Tuning,
     iterations: usize,
+    combiner: &mut Combiner,
 ) -> Result<BlockSplit> {
     if data.len() < 128 {
         return BlockSplit::single(data.len());
     }
     let count = (data.len() / tuning.symbols_per_histogram + 1).min(tuning.max_histograms);
-    let mut histograms = memory::filled(Histogram::<N>::EMPTY, count)?;
-    sample(data, tuning.sample_length, &mut histograms);
+    let size = tuning.alphabet_size;
+    let mut histograms = memory::zeroed(count * size)?;
+    sample(data, tuning, &mut histograms);
 
-    let mut ids = memory::zeroed(data.len())?;
-    let mut path = PathFinder::new(data.len(), N, count)?;
+    let mut path = PathFinder::new(data.len(), size, count)?;
+    let (mut blocks, mut previous) = (Vec::new(), Vec::new());
     for _ in 0..iterations {
-        if histograms.len() == 1 {
-            ids.fill(0);
-        } else {
-            path.begin(&histograms);
-            path.assign(data, tuning.switch_cost, &mut ids);
+        if histograms.len() == size {
+            return BlockSplit::single(data.len());
         }
-        let used = renumber_ids(&mut ids);
-        histograms.truncate(used);
-        histograms.iter_mut().for_each(Histogram::clear);
-        for (&symbol, &id) in data.iter().zip(&ids) {
-            histograms[usize::from(id)].add(usize::from(symbol));
+        path.begin(&histograms, size);
+        path.assign(data, tuning.switch_cost, &mut blocks)?;
+        // The same blocks lead to the same histograms.
+        if blocks == previous {
+            break;
         }
+        histograms.truncate(renumber_kinds(&mut blocks) * size);
+        histograms.fill(0);
+        for (block, symbols) in with_symbols(&blocks, data) {
+            count_symbols(symbols, &mut histograms[usize::from(block.kind) * size..]);
+        }
+        core::mem::swap(&mut blocks, &mut previous);
     }
     drop((path, histograms));
-    cluster_blocks::<N>(data, &run_lengths(&ids)?)
+    cluster_blocks(data, &previous, size, combiner)
 }
 
-fn sample<const N: usize>(data: &[u16], length: usize, histograms: &mut [Histogram<N>]) {
+fn with_symbols<'a>(
+    blocks: &'a [Block],
+    mut data: &'a [u16],
+) -> impl ExactSizeIterator<Item = (&'a Block, &'a [u16])> {
+    blocks.iter().map(move |block| {
+        let symbols;
+        (symbols, data) = data.split_at(block.length as usize);
+        (block, symbols)
+    })
+}
+
+fn sample(data: &[u16], tuning: &Tuning, histograms: &mut [u32]) {
     let random_numbers = || {
         let mut seed = 7u32;
         move || {
@@ -124,19 +146,24 @@ fn sample<const N: usize>(data: &[u16], length: usize, histograms: &mut [Histogr
             seed as usize
         }
     };
-    let count = histograms.len();
+    let (size, length) = (tuning.alphabet_size, tuning.sample_length);
+    let count = histograms.len() / size;
     let mut random = random_numbers();
-    for (i, histogram) in histograms.iter_mut().enumerate() {
+    for (i, histogram) in histograms.chunks_exact_mut(size).enumerate() {
         let mut start = data.len() * i / count;
         if i != 0 {
             start += random() % (data.len() / count);
         }
-        histogram.add_all(&data[start.min(data.len() - length - 1)..][..length]);
+        start = start.min(data.len() - length - 1);
+        count_symbols(&data[start..][..length], histogram);
     }
     let mut random = random_numbers();
     for i in 0..(2 * data.len() / length + 100).next_multiple_of(count) {
         let start = random() % (data.len() - length + 1);
-        histograms[i % count].add_all(&data[start..][..length]);
+        count_symbols(
+            &data[start..][..length],
+            &mut histograms[i % count * size..],
+        );
     }
 }
 
@@ -149,13 +176,9 @@ type Costs = [f64; LANES];
 struct PathFinder {
     symbol_costs: Vec<Costs>,
     costs: Vec<Costs>,
-    /// A bit for each histogram: whether the cheapest path that ends in it switches here.
+    /// A bit for each histogram: whether the cheapest path that ends in it switches before this symbol.
     switches: Vec<u8>,
-}
-
-#[inline(always)]
-fn lanes_where(test: impl Fn(usize) -> bool) -> u8 {
-    (0..LANES).fold(0, |bits, lane| bits | (u8::from(test(lane)) << lane))
+    cheapest: Vec<u8>,
 }
 
 impl PathFinder {
@@ -165,19 +188,20 @@ impl PathFinder {
             symbol_costs: memory::empty(alphabet_size * groups)?,
             costs: memory::empty(groups)?,
             switches: memory::zeroed(length * groups)?,
+            cheapest: memory::zeroed(length)?,
         })
     }
 
-    fn begin<const N: usize>(&mut self, histograms: &[Histogram<N>]) {
-        let groups = histograms.len().div_ceil(LANES);
+    fn begin(&mut self, histograms: &[u32], alphabet_size: usize) {
+        let groups = (histograms.len() / alphabet_size).div_ceil(LANES);
         self.costs.clear();
         self.costs.resize(groups, [0.0; LANES]);
         self.symbol_costs.clear();
-        self.symbol_costs.resize(N * groups, [TOO_MUCH; LANES]);
-        for (i, histogram) in histograms.iter().enumerate() {
-            let log2_total = fast_log2(histogram.total);
+        (self.symbol_costs).resize(alphabet_size * groups, [TOO_MUCH; LANES]);
+        for (i, histogram) in histograms.chunks_exact(alphabet_size).enumerate() {
+            let log2_total = fast_log2(histogram.iter().sum::<u32>() as usize);
             let targets = self.symbol_costs[i / LANES..].iter_mut().step_by(groups);
-            for (costs, &count) in targets.zip(&histogram.counts) {
+            for (costs, &count) in targets.zip(histogram) {
                 costs[i % LANES] = log2_total
                     - match count {
                         0 => -2.0,
@@ -189,65 +213,43 @@ impl PathFinder {
 
     /// Chooses a histogram for each symbol.
     #[inline(never)]
-    fn assign(&mut self, data: &[u16], switch_cost: f64, ids: &mut [u8]) {
-        const PROLOGUE: usize = 2000;
+    fn assign(&mut self, data: &[u16], switch_cost: f64, blocks: &mut Vec<Block>) -> Result<()> {
         let groups = self.costs.len();
-
-        // What limits the costs after a symbol is applied when the next one is added.
-        let (mut min_cost, mut max_cost) = (0.0, TOO_MUCH);
-        let rows = self.switches.chunks_exact_mut(groups);
-        for (position, ((&symbol, id), switches)) in
-            data.iter().zip(&mut *ids).zip(rows).enumerate()
-        {
-            let added = &self.symbol_costs[usize::from(symbol) * groups..][..groups];
-            let mut min_costs = [TOO_MUCH; LANES];
-            for ((costs, added), switches) in self.costs.iter_mut().zip(added).zip(switches) {
-                let relative = costs.map(|cost| cost - min_cost);
-                *switches = lanes_where(|lane| relative[lane] >= max_cost);
-                let next = from_fn(|lane| smaller(relative[lane], max_cost) + added[lane]);
-                min_costs = from_fn(|lane| smaller(next[lane], min_costs[lane]));
-                *costs = next;
-            }
-            let [a, b, c, d] = from_fn(|lane| smaller(min_costs[lane], min_costs[lane + 4]));
-            min_cost = smaller(smaller(a, c), smaller(b, d));
-            for (group, costs) in self.costs.iter().enumerate() {
-                let cheapest = lanes_where(|lane| costs[lane] == min_cost);
-                if cheapest != 0 {
-                    *id = (group * LANES) as u8 + cheapest.trailing_zeros() as u8;
-                    break;
-                }
-            }
-            max_cost = switch_cost;
-            if position < PROLOGUE {
-                max_cost *= 0.77 + (0.07 / PROLOGUE as f64) * position as f64;
-            }
+        brotli_find_switches(
+            data,
+            &self.symbol_costs,
+            switch_cost,
+            &mut self.costs,
+            &mut self.switches,
+            &mut self.cheapest,
+        );
+        blocks.clear();
+        let mut end = data.len();
+        while end != 0 {
+            let kind = self.cheapest[end - 1];
+            let (group, bit) = (usize::from(kind) / LANES, 1 << (usize::from(kind) % LANES));
+            let mut column = self.switches[group..end * groups].iter().step_by(groups);
+            let start = column
+                .rposition(|switches| switches & bit != 0)
+                .unwrap_or(0);
+            memory::try_reserve(blocks, 1)?;
+            blocks.push(Block {
+                kind,
+                length: (end - start) as u32,
+            });
+            end = start;
         }
-
-        let Some((&mut mut current, earlier)) = ids.split_last_mut() else {
-            return;
-        };
-        let rows = self.switches[groups..data.len() * groups].chunks_exact(groups);
-        for (id, switches) in earlier.iter_mut().zip(rows).rev() {
-            let [group, lane] = [current / LANES as u8, current % LANES as u8];
-            if (switches[usize::from(group)] >> lane) & 1 != 0 {
-                current = *id;
-            }
-            *id = current;
-        }
+        blocks.reverse();
+        Ok(())
     }
 }
 
-/// `f64::min` spends time on NaN.
-#[inline(always)]
-fn smaller(a: f64, b: f64) -> f64 {
-    if a < b { a } else { b }
-}
-
-fn renumber_ids(ids: &mut [u8]) -> usize {
-    let mut new_ids = [None; 256];
+/// In the order they appear. Returns how many there are.
+fn renumber_kinds(blocks: &mut [Block]) -> usize {
+    let mut new_kinds = [None; 256];
     let mut count = 0;
-    for id in ids {
-        *id = *new_ids[usize::from(*id)].get_or_insert_with(|| {
+    for block in blocks {
+        block.kind = *new_kinds[usize::from(block.kind)].get_or_insert_with(|| {
             count += 1;
             count - 1
         });
@@ -255,36 +257,30 @@ fn renumber_ids(ids: &mut [u8]) -> usize {
     usize::from(count)
 }
 
-fn run_lengths(ids: &[u8]) -> Result<Vec<usize>> {
-    let runs = || ids.chunk_by(|a, b| a == b);
-    let mut lengths = memory::empty(runs().count())?;
-    lengths.extend(runs().map(<[u8]>::len));
-    Ok(lengths)
+fn indexed<'a>(symbols: &[u16], counts: &'a mut [u32]) -> Indexed<'a> {
+    counts.fill(0);
+    count_symbols(symbols, counts);
+    Indexed::new(counts, symbols.len())
 }
 
-fn cluster_blocks<const N: usize>(data: &[u16], lengths: &[usize]) -> Result<BlockSplit> {
-    let histograms_of_blocks = || {
-        let mut rest = data;
-        lengths.iter().map(move |&length| {
-            let (block, after) = rest.split_at(length);
-            rest = after;
-            let mut histogram = Histogram::<N>::EMPTY;
-            histogram.add_all(block);
-            histogram
-        })
-    };
-
-    let mut combiner = Combiner::default();
-    let mut clusters = Vec::new();
-    let mut batch = memory::empty(lengths.len().min(BATCH))?;
-    let mut histograms = histograms_of_blocks();
-    for _ in 0..lengths.len().div_ceil(BATCH) {
+fn cluster_blocks(
+    data: &[u16],
+    blocks: &[Block],
+    alphabet_size: usize,
+    combiner: &mut Combiner,
+) -> Result<BlockSplit> {
+    let counts = &mut [0; COMMAND_SYMBOLS][..alphabet_size];
+    let (mut clusters, mut batch) = (Clusters::new(alphabet_size), Clusters::new(alphabet_size));
+    batch.try_reserve(blocks.len().min(BATCH))?;
+    let mut waiting = with_symbols(blocks, data);
+    while waiting.len() != 0 {
         batch.clear();
-        batch.extend(histograms.by_ref().take(BATCH).map(|h| Cluster::new(&h)));
-        let (mut live, count): ([u32; BATCH], _) = (from_fn(|i| i as u32), batch.len());
-        let left = combiner.combine(&mut batch, &mut live[..count], BATCH)?;
-        memory::try_reserve(&mut clusters, left)?;
-        clusters.extend(live[..left].iter().map(|&id| batch[id as usize]));
+        for (_, symbols) in waiting.by_ref().take(BATCH) {
+            batch.push_new(&indexed(symbols, counts));
+        }
+        let live = &mut from_fn::<_, BATCH, _>(|i| i as u32)[..batch.len()];
+        let left = combiner.combine_new(&mut batch, live, BATCH)?;
+        clusters.add_from(&batch, &live[..left])?;
     }
     drop(batch);
 
@@ -292,10 +288,10 @@ fn cluster_blocks<const N: usize>(data: &[u16], lengths: &[usize]) -> Result<Blo
     let left = combiner.combine(&mut clusters, &mut live, MAX_BLOCK_TYPES)?;
     live.truncate(left);
     let mut previous = 0;
-    let mut assignments = memory::collected(histograms_of_blocks().map(|histogram| {
-        previous = closest(&histogram, &clusters, &live, previous);
+    let mut assignments = memory::collected(with_symbols(blocks, data).map(|(_, symbols)| {
+        previous = combiner.closest(&indexed(symbols, counts), &clusters, &live, previous);
         previous
     }))?;
     let type_count = renumber(&mut assignments, clusters.len())?;
-    BlockSplit::joined(type_count, &assignments, lengths)
+    BlockSplit::joined(type_count, &assignments, blocks)
 }

@@ -1,22 +1,22 @@
 //! Distributes the symbols of a meta-block among block types and contexts.
 
 use super::block_splitter::{self, Block, BlockSplit};
-use super::cluster::cluster_histograms;
+use super::cluster::{Combiner, cluster_histograms};
 use super::command::{Command, DistancePrefix};
 use super::histogram::{
-    CommandHistogram, DISTANCE_SYMBOLS, DistanceHistogram, Histogram, LiteralHistogram,
+    CommandHistogram, DistanceHistogram, Estimator, Histogram, Indexed, LiteralHistogram,
     bits_entropy,
 };
 use super::huffman::smooth_counts;
 use super::literal_contexts::{ContextGroups, MAX_GROUPS};
-use super::matching::put_bytes;
+use super::matching::bytes_at;
 use super::params::Params;
 use super::ring_buffer::Window;
 use crate::context::{ContextMode, DISTANCE_CONTEXTS, LITERAL_CONTEXTS};
 use crate::format::{
     COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_BLOCK_TYPES, MAX_POSTFIX_BITS,
 };
-use crate::memory::{self, Result, Zeroable};
+use crate::memory::{self, Result};
 
 const MAX_HISTOGRAMS: usize = 256;
 
@@ -25,6 +25,7 @@ pub(super) struct Source<'a> {
     pub(super) window: Window<'a>,
     pub(super) start: usize,
     pub(super) length: usize,
+    pub(super) literal_count: usize,
     /// The bytes before the start, the last one first.
     pub(super) before: [u8; 2],
 }
@@ -35,31 +36,35 @@ pub(super) struct Literals {
 }
 
 impl Literals {
-    const SLACK: usize = 8;
-
-    fn zeroed<T: Zeroable>(commands: &[Command]) -> Result<Vec<T>> {
-        let count: usize = commands.iter().map(Command::insert_length).sum();
-        memory::zeroed(count + Self::SLACK)
-    }
+    pub(super) const SLACK: usize = 16;
 
     pub(super) fn gather(source: &Source<'_>, commands: &[Command]) -> Result<Self> {
-        let mut bytes = Self::zeroed::<u8>(commands)?;
-        let (mut position, mut count) = (source.start, 0);
-        for command in commands {
-            let mut copied = 0;
-            loop {
-                let eight = source.window.bytes_at::<8>(position + copied);
-                put_bytes(&mut bytes, count + copied, eight);
-                copied += 8;
-                if copied >= command.insert_length() {
-                    break;
+        let mut padded = memory::zeroed(source.literal_count + Self::SLACK)?;
+        let (mut position, mut rest) = (source.start, &mut *padded);
+        let mut commands = commands.iter();
+        loop {
+            let misfit = commands.find(|command| {
+                let count = command.insert_length();
+                let at = source.window.index(position);
+                if count <= Self::SLACK
+                    && let Some(bytes) = source.window.bytes.get(at..at + Self::SLACK)
+                    && let Some(slots) = rest.first_chunk_mut::<{ Self::SLACK }>()
+                {
+                    *slots = bytes_at(bytes, 0).map(u16::from);
+                    rest = &mut core::mem::take(&mut rest)[count..];
+                    position += count + command.copy_length();
+                    return false;
                 }
-            }
-            count += command.insert_length();
-            position += command.insert_length() + command.copy_length();
+                true
+            });
+            let Some(command) = misfit else {
+                return Ok(Self { padded });
+            };
+            let count = command.insert_length();
+            widen(source.window.parts(position, count), rest);
+            rest = &mut rest[count..];
+            position += count + command.copy_length();
         }
-        let padded = memory::collected(bytes.iter().map(|&byte| u16::from(byte)))?;
-        Ok(Self { padded })
     }
 
     /// The numbers are those of the contexts.
@@ -70,7 +75,7 @@ impl Literals {
         numbers: &[u8; LITERAL_CONTEXTS],
     ) -> Result<Self> {
         let lut = mode.lut();
-        let mut padded = Self::zeroed(commands)?;
+        let mut padded = memory::zeroed(source.literal_count + Self::SLACK)?;
         let (mut position, mut count) = (source.start, 0);
         let [last, second_last] = source.before;
         let [a, b, c, d] = source.window.bytes_at(position);
@@ -95,11 +100,10 @@ impl Literals {
             (position, count) = (next_position, end);
             from_two_before = source.window.bytes_at(position - 2);
         }
-        padded[count..].fill(0);
         Ok(Self { padded })
     }
 
-    /// With some more at the end, whose number is zero.
+    /// With [`SLACK`](Self::SLACK) more at the end.
     pub(super) fn padded(&self) -> &[u16] {
         &self.padded
     }
@@ -111,6 +115,17 @@ impl Literals {
     fn all_mut(&mut self) -> &mut [u16] {
         let count = self.padded.len() - Self::SLACK;
         &mut self.padded[..count]
+    }
+}
+
+#[inline(never)]
+fn widen(parts: [&[u8]; 2], mut slots: &mut [u16]) {
+    for part in parts {
+        let filled;
+        (filled, slots) = slots.split_at_mut(part.len());
+        for (slot, &byte) in filled.iter_mut().zip(part) {
+            *slot = u16::from(byte);
+        }
     }
 }
 
@@ -137,7 +152,8 @@ impl MetaBlock {
         params: &Params,
         context_mode: ContextMode,
     ) -> Result<Self> {
-        let distance_params = choose_distance_params(commands, params);
+        let mut estimator = Estimator::new(source.literal_count.max(commands.len()))?;
+        let distance_params = choose_distance_params(commands, params, &mut estimator);
         if distance_params != params.distance {
             for command in commands.iter_mut().filter(|c| c.has_distance_symbol()) {
                 let code = command.distance().code(&params.distance);
@@ -146,17 +162,20 @@ impl MetaBlock {
         }
 
         let iterations = if params.quality < 11 { 3 } else { 10 };
+        let mut combiner = Combiner::new(estimator);
         let mut literals = Literals::gather(source, commands)?;
-        let literal_split = block_splitter::split::<LITERAL_SYMBOLS>(
+        let literal_split = block_splitter::split(
             literals.all(),
             &block_splitter::LITERALS,
             iterations,
+            &mut combiner,
         )?;
         let mut symbols = memory::collected(commands.iter().map(|c| c.symbol() as u16))?;
-        let command_split = block_splitter::split::<COMMAND_SYMBOLS>(
+        let command_split = block_splitter::split(
             &symbols,
             &block_splitter::COMMANDS,
             iterations,
+            &mut combiner,
         )?;
         let mut command_histograms = memory::filled(Histogram::EMPTY, command_split.type_count)?;
         for (kind, symbols) in command_split.apply_to(&mut symbols) {
@@ -166,10 +185,11 @@ impl MetaBlock {
         let with_distance = || commands.iter().filter(|c| c.has_distance_symbol());
         symbols.clear();
         symbols.extend(with_distance().map(|c| c.distance().symbol() as u16));
-        let distance_split = block_splitter::split::<DISTANCE_SYMBOLS>(
+        let distance_split = block_splitter::split(
             &symbols,
             &block_splitter::DISTANCES,
             iterations,
+            &mut combiner,
         )?;
         let mut distance_histograms = memory::filled(
             Histogram::EMPTY,
@@ -198,7 +218,7 @@ impl MetaBlock {
         }
 
         let (literal_histograms, mut literal_context_map) =
-            cluster_histograms(&literal_histograms, MAX_HISTOGRAMS)?;
+            cluster_histograms(&literal_histograms, MAX_HISTOGRAMS, &mut combiner)?;
         for (kind, literals) in literal_split.apply_to(literals.all_mut()) {
             let map = &literal_context_map[kind * contexts..][..contexts];
             for tagged in literals {
@@ -212,7 +232,7 @@ impl MetaBlock {
             literal_context_map = memory::collected(spread)?;
         }
         let (distance_histograms, distance_context_map) =
-            cluster_histograms(&distance_histograms, MAX_HISTOGRAMS)?;
+            cluster_histograms(&distance_histograms, MAX_HISTOGRAMS, &mut combiner)?;
         Ok(Self {
             literals,
             literal_split,
@@ -258,10 +278,10 @@ impl MetaBlock {
 
         let mut symbols = GreedySplitter::new(COMMAND_SYMBOLS, 1, 1024, 500.0, commands.len())?;
         let mut distances = GreedySplitter::new(64, 1, 512, 100.0, commands.len())?;
-        for command in commands {
-            symbols.add_if(true, command.symbol());
-            distances.add_if(command.has_distance_symbol(), command.distance().symbol());
-        }
+        symbols.add_all(commands, |command| (true, command.symbol()));
+        distances.add_all(commands, |command| {
+            (command.has_distance_symbol(), command.distance().symbol())
+        });
         let (command_split, command_histograms) = symbols.finish();
         let (distance_split, distance_histograms) = distances.finish();
         let literal_context_map = groups.map(|groups| {
@@ -298,8 +318,13 @@ impl MetaBlock {
 }
 
 #[inline(never)]
-fn choose_distance_params(commands: &[Command], params: &Params) -> DistanceParams {
+fn choose_distance_params(
+    commands: &[Command],
+    params: &Params,
+    estimator: &mut Estimator,
+) -> DistanceParams {
     let original = params.distance;
+    let mut cost_of = |candidate| distance_cost(commands, &original, &candidate, estimator);
     let mut best = original;
     let mut best_cost = 1e99;
     let mut tried_original = false;
@@ -309,7 +334,7 @@ fn choose_distance_params(commands: &[Command], params: &Params) -> DistancePara
             let direct_codes = direct_msb << postfix_bits;
             let candidate = DistanceParams::new(postfix_bits, direct_codes, params.large_window);
             tried_original |= candidate == original;
-            match distance_cost(commands, &original, &candidate) {
+            match cost_of(candidate) {
                 Some(cost) if cost <= best_cost => (best, best_cost) = (candidate, cost),
                 _ => break,
             }
@@ -317,9 +342,7 @@ fn choose_distance_params(commands: &[Command], params: &Params) -> DistancePara
         }
         direct_msb = direct_msb.saturating_sub(1) / 2;
     }
-    if !tried_original
-        && distance_cost(commands, &original, &original).is_some_and(|cost| cost < best_cost)
-    {
+    if !tried_original && cost_of(original).is_some_and(|cost| cost < best_cost) {
         best = original;
     }
     best
@@ -330,6 +353,7 @@ fn distance_cost(
     commands: &[Command],
     original: &DistanceParams,
     candidate: &DistanceParams,
+    estimator: &mut Estimator,
 ) -> Option<f64> {
     let mut histogram = DistanceHistogram::EMPTY;
     let mut extra_bits = 0;
@@ -345,7 +369,7 @@ fn distance_cost(
         histogram.add(prefix.symbol());
         extra_bits += prefix.extra_bits();
     }
-    Some(histogram.cost() + f64::from(extra_bits))
+    Some(estimator.cost(&Indexed::new(&histogram.counts, histogram.total)) + f64::from(extra_bits))
 }
 
 /// Gives each block a new type, or merges it with one of the last two types.
@@ -397,11 +421,24 @@ impl<const N: usize> GreedySplitter<N> {
         })
     }
 
+    /// `symbol_of` says whether the command has one.
     #[inline(always)]
-    fn add_if(&mut self, condition: bool, symbol: usize) {
-        self.histograms[self.current].counts[symbol] += u32::from(condition);
-        self.block_size += usize::from(condition);
-        if self.block_size == self.target_block_size {
+    fn add_all(&mut self, commands: &[Command], symbol_of: impl Fn(&Command) -> (bool, usize)) {
+        let mut commands = commands.iter();
+        loop {
+            let counts = &mut self.histograms[self.current].counts;
+            let mut left = self.target_block_size;
+            while left != 0
+                && let Some(command) = commands.next()
+            {
+                let (has_one, symbol) = symbol_of(command);
+                counts[symbol] += u32::from(has_one);
+                left -= usize::from(has_one);
+            }
+            self.block_size = self.target_block_size - left;
+            if left != 0 {
+                return;
+            }
             self.finish_block(false);
         }
     }
@@ -411,8 +448,14 @@ impl<const N: usize> GreedySplitter<N> {
         loop {
             let (fit, rest) = literals.split_at(literals.len().min(self.target_block_size));
             let histograms = &mut self.histograms[self.current..];
-            for [literal, group] in fit.iter().map(|tagged| tagged.to_le_bytes()) {
-                histograms[usize::from(group)].counts[usize::from(literal)] += 1;
+            if let [histogram] = histograms {
+                for &literal in fit {
+                    histogram.counts[usize::from(literal as u8)] += 1;
+                }
+            } else {
+                for [literal, group] in fit.iter().map(|tagged| tagged.to_le_bytes()) {
+                    histograms[usize::from(group)].counts[usize::from(literal)] += 1;
+                }
             }
             self.block_size = fit.len();
             if self.block_size < self.target_block_size {

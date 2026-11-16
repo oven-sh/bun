@@ -18,20 +18,23 @@ pub(super) use small::{MAX_SMALL_INPUT_SIZE, Small};
 
 use core::hint::{Locality, prefetch_read};
 
+use bun_highway::brotli_short_codes;
+
 use super::input_block::InputBlock;
 use super::log2::log2_floor;
-use super::matching::{bytes_at, load32, load64, splat, zero_bytes};
+use super::matching::{bytes_at, load32, load64};
 use super::ring_buffer::{SLACK, Window};
 use super::words::QuickWordSearch;
 use crate::memory::Result;
 
 // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/hash.h#L94
 const SCORE_BASE: usize = 1920;
+const SCORE_PER_BYTE: usize = 135;
 pub(super) const MIN_SCORE: usize = SCORE_BASE + 100;
 
 #[inline(always)]
 pub(super) fn score(length: usize, distance: usize) -> usize {
-    SCORE_BASE + 135 * length - 30 * log2_floor(distance) as usize
+    SCORE_BASE + SCORE_PER_BYTE * length - 30 * log2_floor(distance) as usize
 }
 
 /// With the distance that short code `index` stands for.
@@ -42,7 +45,7 @@ pub(super) fn score_of_recent(length: usize, index: usize) -> usize {
     } else {
         39 + ((0x1CA10 >> (index & 0xE)) & 0xE)
     };
-    SCORE_BASE + 135 * length + 15 - penalty
+    SCORE_BASE + SCORE_PER_BYTE * length + 15 - penalty
 }
 
 #[derive(Clone, Copy)]
@@ -82,70 +85,6 @@ fn prefetch_for_store<T>(slot: &T) {
 /// What the short distance codes stand for.
 pub(super) type RecentDistances = [i32; 16];
 
-/// Reorders the bits of seven positions by their distance: the middle one, then -1, +1, -2, +2, -3 and +3.
-#[inline(always)]
-fn by_distance(by_position: u8) -> u32 {
-    static REORDERED: [u8; 128] = {
-        let mut reordered = [0; 128];
-        let mut by_position = 0;
-        while by_position < 128 {
-            let mut i = 0;
-            while i < 7 {
-                let bit = (by_position as u8 >> [3, 4, 2, 5, 1, 6, 0][i]) & 1;
-                reordered[by_position] |= bit << i;
-                i += 1;
-            }
-            by_position += 1;
-        }
-        reordered
-    };
-    u32::from(REORDERED[usize::from(by_position) % 128])
-}
-
-/// Two bytes that a match has to have. A bit that is not set rules out a distance within the window.
-pub(super) struct BytePair<'a> {
-    window: Window<'a>,
-    position: usize,
-    offset: usize,
-    bytes: [u8; 2],
-}
-
-impl<'a> BytePair<'a> {
-    /// The bytes at `offset` in `data`, which is at `position`.
-    #[inline(always)]
-    pub(super) fn new(window: Window<'a>, position: usize, data: &[u8], offset: usize) -> Self {
-        Self {
-            window,
-            position,
-            offset,
-            bytes: bytes_at(data, offset),
-        }
-    }
-
-    #[inline(always)]
-    fn index(&self, distance: i32) -> usize {
-        let earlier = self.position.wrapping_sub(distance as usize);
-        self.window.index(earlier) + self.offset
-    }
-
-    #[inline(always)]
-    pub(super) fn may_be_at(&self, distance: i32) -> u32 {
-        let at = self.index(distance).min(self.window.bytes.len() - 2);
-        u32::from(bytes_at(self.window.bytes, at) == self.bytes)
-    }
-
-    /// See [`by_distance`].
-    #[inline(always)]
-    pub(super) fn may_be_around(&self, distance: i32) -> u32 {
-        let start = self.index(distance + 3);
-        let Some(bytes) = self.window.bytes.get(start..start + 9) else {
-            return 0x7F;
-        };
-        let [first, second] = [0, 1].map(|i| load64(bytes, i) ^ splat(self.bytes[i]));
-        by_distance(zero_bytes(first | second))
-    }
-}
-
 pub(super) struct Search<'a> {
     pub(super) window: Window<'a>,
     pub(super) position: usize,
@@ -154,6 +93,8 @@ pub(super) struct Search<'a> {
     /// How far back the window reaches.
     pub(super) max_backward: usize,
     pub(super) block: &'a InputBlock<'a>,
+    /// A match that scores no higher is of no use. Only if [`InputBlock::is_contiguous`].
+    pub(super) to_beat: usize,
 }
 
 impl<'a> Search<'a> {
@@ -213,18 +154,9 @@ impl<'a> Search<'a> {
     /// A bit for each of the first `count` that may match for two bytes.
     #[inline(always)]
     fn promising(&self, recent: &RecentDistances, count: usize) -> u32 {
-        let pair = BytePair::new(self.window, self.position, self.padded, 0);
-        let mut promising = 0;
-        for (i, &distance) in recent[..4].iter().enumerate() {
-            promising |= pair.may_be_at(distance) << i;
-        }
-        if count > 4 {
-            promising |= (pair.may_be_around(recent[0]) >> 1) << 4;
-            if count > 10 {
-                promising |= (pair.may_be_around(recent[1]) >> 1) << 10;
-            }
-        }
-        promising
+        let place = (self.window).place(self.position, 0, bytes_at(self.padded, 0));
+        let last = recent.first_chunk().unwrap_or(&[0; 4]);
+        brotli_short_codes(place, last) & ((1 << count) - 1)
     }
 
     /// Returns the length that further matches have to exceed.
@@ -256,12 +188,41 @@ impl<'a> Search<'a> {
         best.length.max(3)
     }
 
+    /// Raises `best` to `to_beat`, and `length` to what positions from `nearest` back have to exceed then.
+    #[inline(always)]
+    fn raise(
+        &self,
+        length: usize,
+        nearest: usize,
+        words: &QuickWordSearch,
+        best: &mut Match,
+    ) -> usize {
+        if best.score >= self.to_beat || !self.reaches(nearest) {
+            return length;
+        }
+        let max_length = self.padded.len() - SLACK;
+        let matches = || {
+            let difference = self.difference_at(self.window.index(self.position - nearest));
+            let short = ((difference.trailing_zeros() / 8) as usize).min(max_length);
+            short >= 4 && score(short, nearest) > MIN_SCORE
+        };
+        // Words are counted where nothing matches.
+        if best.score == MIN_SCORE && words.is_active() && !matches() {
+            return length;
+        }
+        best.score = self.to_beat;
+        let too_short = (self.to_beat - score(0, nearest)) as u32 / SCORE_PER_BYTE as u32;
+        length.max(max_length.min(too_short as usize))
+    }
+
     #[inline(always)]
     fn try_words(&self, words: &mut QuickWordSearch, candidates: usize, best: &mut Match) {
         if best.score == MIN_SCORE && words.is_active() {
             let first = self.block.max_copy_distance(self.position) + 1;
             let max = self.block.params.distance.max_distance;
-            words.improve(self.data(), candidates, first, max, best);
+            if let Some(word) = words.find(self.padded, candidates, first, max) {
+                *best = word;
+            }
         }
     }
 }
@@ -285,6 +246,53 @@ impl<'a> Filter<'a> {
                 &[]
             },
             last_four: load32(search.padded, length - 3),
+        }
+    }
+
+    /// Leaves out the last ones of the ascending `positions`, up to one that passes or is out of reach.
+    #[inline(always)]
+    fn skip<'b>(&self, search: &Search<'a>, positions: &'b [u32]) -> &'b [u32] {
+        match (search.position - search.max_backward) as u32 {
+            0 => self.skip_while(search.window, positions, |_| true),
+            oldest => self.skip_while(search.window, positions, |position| position >= oldest),
+        }
+    }
+
+    #[inline(always)]
+    fn skip_while<'b>(
+        &self,
+        window: Window<'_>,
+        mut positions: &'b [u32],
+        is_in_reach: impl Fn(u32) -> bool,
+    ) -> &'b [u32] {
+        let Some(last) = self.shifted.len().checked_sub(4) else {
+            return &[];
+        };
+        while let &[ref rest @ .., position] = positions
+            && is_in_reach(position)
+        {
+            let masked = window.index(position as usize);
+            if masked <= last && load32(self.shifted, masked) == self.last_four {
+                break;
+            }
+            positions = rest;
+        }
+        positions
+    }
+
+    /// [`Self::try_position`] for one that passes. What is farther away has to be longer, even if it is no better.
+    #[inline(always)]
+    fn try_passed(&mut self, search: &Search<'a>, position: usize, best: &mut Match) {
+        let distance = search.position - position;
+        let length = search.match_length_at(search.window.index(position));
+        let score = score(length, distance);
+        if best.score < score {
+            *best = Match::new(length, distance, score);
+            *self = Self::new(search, length);
+        } else if search.block.is_contiguous()
+            && length + self.shifted.len() > search.window.without_tail().len() + 3
+        {
+            *self = Self::new(search, length);
         }
     }
 
@@ -313,7 +321,7 @@ impl<'a> Filter<'a> {
     }
 }
 
-pub(super) trait Hasher {
+pub(super) trait Hasher: Sized {
     /// How many bytes have to follow a position.
     const LOOKAHEAD: usize;
 
@@ -325,6 +333,11 @@ pub(super) trait Hasher {
 
     /// `eight` are the bytes from `position` on.
     fn store(&mut self, eight: u64, position: usize);
+
+    #[inline(never)] // Inlined, the loop has to share its registers.
+    fn store_all(&mut self, bytes: &[u8], position: usize) {
+        store_each(self, bytes, position);
+    }
 
     /// For a search that is likely to come.
     #[inline(always)]
@@ -360,6 +373,22 @@ pub(super) trait Hasher {
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, longer_than: usize) -> Match;
 }
 
+/// Each eight of `bytes`, which are at `position`.
+#[inline(always)]
+fn store_each(hasher: &mut impl Hasher, bytes: &[u8], position: usize) {
+    for (i, eight) in bytes.array_windows().enumerate() {
+        hasher.store(u64::from_le_bytes(*eight), position + i);
+    }
+}
+
+/// For the search at `offset` in `padded`.
+#[inline(always)]
+pub(super) fn prefetch(hasher: &impl Hasher, padded: &[u8], offset: usize) {
+    if let Some(eight) = padded.get(offset..).and_then(<[u8]>::first_chunk) {
+        hasher.prefetch(u64::from_le_bytes(*eight));
+    }
+}
+
 /// Where nothing matched for a while, there are four steps between searches.
 #[inline(always)]
 pub(super) fn jump<'a, H: Hasher>(
@@ -369,11 +398,6 @@ pub(super) fn jump<'a, H: Hasher>(
     mut padded: &'a [u8],
     step: usize,
 ) -> (usize, &'a [u8]) {
-    /// Where the sixth search will be.
-    const AHEAD: usize = 16 + 17 * 5;
-    if let Some(eight) = padded.get(AHEAD..).and_then(<[u8]>::first_chunk) {
-        hasher.prefetch(u64::from_le_bytes(*eight));
-    }
     let end = (position + 4 * step).min(block.end() - (H::LOOKAHEAD - 1).max(step));
     while position < end {
         hasher.store(load64(padded, 0), position);

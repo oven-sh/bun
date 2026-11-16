@@ -3,15 +3,15 @@
 use core::ops::{ControlFlow, Range};
 
 use super::{
-    FIRST_COPY_AT_LAST_DISTANCE, SYMBOLS, Sink, Table, Token, TokenCodes, build_and_write_codes,
-    codes_for, find_matches, table_bits,
+    FIRST_COPY_AT_LAST_DISTANCE, FIRST_DISTANCE, Item, ItemCodes, ROOM, SYMBOLS, Sink, Table,
+    build_and_write_codes, find_matches, insert_last, symbol_with_rank, table_bits,
 };
 use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
-use crate::encoder::bit_writer::{BitWriter, Bits, Room};
+use crate::encoder::bit_writer::{BitWriter, Code};
 use crate::encoder::histogram::{count_bytes, count_every_nth_byte};
-use crate::encoder::huffman::{Code, SYMBOL_SLACK, TreeBuilder, write_symbols};
+use crate::encoder::huffman::{TreeBuilder, assign_codes};
 use crate::encoder::log2::fast_log2;
-use crate::format::{Alphabet, INSERT_LENGTH_CODES, LITERAL_SYMBOLS, WINDOW_GAP};
+use crate::format::{Alphabet, INSERT_LENGTH_CODES, LITERAL_SYMBOLS};
 use crate::memory::Result;
 
 const FIRST_BLOCK_SIZE: usize = 3 << 15;
@@ -28,6 +28,24 @@ const FIRST_LENGTHS: [u8; SYMBOLS] = [
     5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7, 7, 8, 10, 12, 12, 12, 12, 12, 12,
     12, 12, 12, 12, 12, 12, 0, 0, 0, 0,
 ];
+
+static FIRST_CODES: [Code; SYMBOLS] = {
+    let mut lengths = FIRST_LENGTHS;
+    let mut rank = 0;
+    while rank < FIRST_DISTANCE {
+        lengths[rank] = FIRST_LENGTHS[symbol_with_rank(rank)];
+        rank += 1;
+    }
+    let (commands, distances) = lengths.split_at(FIRST_DISTANCE);
+    let (mut ranked, mut codes) = ([Code::EMPTY; FIRST_DISTANCE], ROOM);
+    assign_codes(commands, &mut ranked);
+    assign_codes(distances, codes.split_at_mut(FIRST_DISTANCE).1);
+    while rank > 0 {
+        rank -= 1;
+        codes[symbol_with_rank(rank)].prepend(ranked[rank]);
+    }
+    codes
+};
 
 /// How the stream describes [`FIRST_LENGTHS`], 56 bits at a time.
 const FIRST_LENGTHS_STORED: [u64; 8] = [
@@ -61,31 +79,18 @@ pub(in crate::encoder) struct OnePass {
 
 struct MetaBlock {
     start: usize,
-    codes: TokenCodes,
-    histogram: [u32; SYMBOLS],
-    literal_codes: [Code; LITERAL_SYMBOLS],
+    codes: ItemCodes,
+    histogram: [u32; Item::INDICES],
     /// The codes save less than 2%.
     literals_are_random: bool,
 }
 
 struct Emitter<'a> {
     block: &'a mut MetaBlock,
-    end: usize,
-    room: Room<'a>,
-    /// With fewer literals, there is nothing to check.
-    checked_from: usize,
+    writer: &'a mut BitWriter,
 }
 
 impl MetaBlock {
-    fn emitter<'a>(&'a mut self, end: usize, writer: &'a mut BitWriter) -> Emitter<'a> {
-        Emitter {
-            block: self,
-            end,
-            room: writer.with_room(0),
-            checked_from: 0,
-        }
-    }
-
     /// From all of the bytes, whether they end up as literals or not.
     fn build_and_write_literal_codes(
         &mut self,
@@ -105,11 +110,11 @@ impl MetaBlock {
         trees.build_and_write_fast(
             &histogram,
             Alphabet::LITERALS,
-            &mut self.literal_codes,
+            self.codes.literals(),
             writer,
         );
         let total: u32 = histogram.iter().sum();
-        let bits = histogram.iter().zip(&self.literal_codes);
+        let bits = histogram.iter().zip(&self.codes.0);
         let bits: u32 = bits.map(|(count, code)| count * code.length()).sum();
         self.literals_are_random = bits * 125 / total > 980;
     }
@@ -123,7 +128,10 @@ impl MetaBlock {
         next_literal: usize,
         writer: &mut BitWriter,
     ) -> ControlFlow<usize, usize> {
-        let mut emitter = self.emitter(end, writer);
+        let mut emitter = Emitter {
+            block: self,
+            writer,
+        };
         find_matches::<_, 5>(input, start, end, next_literal, table, &mut emitter)
     }
 }
@@ -153,55 +161,27 @@ impl SizedTable<'_> {
     }
 }
 
-impl Emitter<'_> {
-    #[inline(always)]
-    fn counted(&mut self, token: Token) -> Bits {
-        self.block.histogram[token.symbol % SYMBOLS] += 1;
-        self.block.codes.bits(token)
-    }
-
-    fn insert_last(&mut self, literals: &[u8]) {
-        let command = self.counted(Token::insert(literals.len()));
-        self.room.write_bits(command);
-        let code_of = |literal| self.block.literal_codes[usize::from(literal)];
-        write_symbols(&mut self.room, Bits::EMPTY, literals, code_of);
-        for &literal in &literals[literals.len().saturating_sub(SYMBOL_SLACK)..] {
-            self.room.write_bits(code_of(literal).bits());
-        }
-    }
-}
-
 impl Sink for Emitter<'_> {
     #[inline(always)]
-    fn refuses(&mut self, start: usize, end: usize) -> bool {
-        if end - start < self.checked_from {
-            return false;
-        }
-        let refuses = end - start >= MANY_LITERALS
+    fn refuses(&self, start: usize, end: usize) -> bool {
+        end - start >= MANY_LITERALS
             && self.block.literals_are_random
-            && (start - self.block.start) * 50 <= end - start;
-        if !refuses {
-            // Not earlier, so that input that is refused does not pay for zeroing it.
-            self.room.ensure(2 * (self.end - start) + 8);
-            self.checked_from = MANY_LITERALS;
-        }
-        refuses
+            && (start - self.block.start) * 50 <= end - start
     }
 
     #[inline(always)]
-    fn insert(&mut self, padded: &[u8]) {
-        let length = padded.len() - WINDOW_GAP;
-        let command = self.counted(Token::insert(length));
-        let padded = &padded[..length + SYMBOL_SLACK];
-        write_symbols(&mut self.room, command, padded, |literal| {
-            self.block.literal_codes[usize::from(literal)]
-        });
+    fn found(&mut self, item: Item) {
+        self.block.histogram[item.index()] += 1;
     }
 
     #[inline(always)]
-    fn tokens(&mut self, first: Token, second: Token) {
-        let bits = self.counted(first).then(self.counted(second));
-        self.room.write_bits(bits);
+    fn items(&mut self, items: &[Item]) {
+        self.block.codes.write_items(items, self.writer);
+    }
+
+    #[inline(always)]
+    fn literals(&mut self, input: &[u8], range: Range<usize>) {
+        self.block.codes.write_literals(&input[range], self.writer);
     }
 }
 
@@ -219,33 +199,34 @@ impl OnePass {
             13 => SizedTable::Bits13(self.table.cleared()?),
             _ => SizedTable::Bits15(self.table.cleared()?),
         };
-        let mut block = MetaBlock {
-            start: 0,
-            codes: const { codes_for(&FIRST_LENGTHS) },
-            histogram: INITIAL_HISTOGRAM,
-            literal_codes: [Code::EMPTY; LITERAL_SYMBOLS],
-            literals_are_random: false,
-        };
-        while block.start < input.len() {
-            let (start, header) = (block.start, writer.position());
+        let mut start = 0;
+        while start < input.len() {
+            let mut block = MetaBlock {
+                start,
+                codes: ItemCodes([Code::EMPTY; _]),
+                histogram: [0; _],
+                literals_are_random: false,
+            };
+            let header = writer.position();
             let mut end = input.len().min(start + FIRST_BLOCK_SIZE);
             write_plain_header(writer, MetaBlockKind::Compressed, end - start);
             block.build_and_write_literal_codes(&input[start..end], trees, writer);
             match self.histogram {
                 None => {
+                    block.codes.symbols().copy_from_slice(&FIRST_CODES);
                     for bits in FIRST_LENGTHS_STORED {
                         writer.write(56, bits);
                     }
                 }
                 Some(histogram) => {
                     let first = FIRST_COPY_AT_LAST_DISTANCE;
-                    block.codes = build_and_write_codes(histogram, first, trees, writer);
+                    build_and_write_codes(histogram, first, block.codes.symbols(), trees, writer);
                 }
             }
 
             let (mut from, mut next_literal) = (start, start);
             let refused_end = loop {
-                block.histogram = INITIAL_HISTOGRAM;
+                block.histogram[LITERAL_SYMBOLS..][..SYMBOLS].copy_from_slice(&INITIAL_HISTOGRAM);
                 match table.emit_matches(&mut block, input, from..end, next_literal, writer) {
                     ControlFlow::Continue(at) => next_literal = at,
                     ControlFlow::Break(at) => break Some(at),
@@ -253,7 +234,7 @@ impl OnePass {
                 let next_end = input.len().min(end + MERGED_BLOCK_SIZE);
                 if next_end > end
                     && next_end - start <= MAX_MERGED_SIZE
-                    && codes_suit(&block.literal_codes, &input[end..next_end])
+                    && codes_suit(block.codes.literals(), &input[end..next_end])
                 {
                     let length = (next_end - start - 1) as u32;
                     writer.overwrite(header + 3, 20, length);
@@ -261,27 +242,30 @@ impl OnePass {
                     continue;
                 }
                 if next_literal < end {
-                    let mut emitter = block.emitter(end, writer);
+                    let mut emitter = Emitter {
+                        block: &mut block,
+                        writer,
+                    };
                     if emitter.refuses(next_literal, end) {
                         break Some(end);
                     }
-                    emitter.insert_last(&input[next_literal..end]);
+                    insert_last(input, next_literal..end, &mut emitter);
                 }
                 break None;
             };
-            self.histogram = Some(block.histogram);
+            self.histogram = block.histogram[LITERAL_SYMBOLS..].first_chunk().copied();
             if let Some(refused_end) = refused_end {
                 end = refused_end;
                 writer.rewind(header);
                 write_uncompressed(writer, [&input[start..end], &[]]);
             }
-            block.start = end;
+            start = end;
         }
         Ok(())
     }
 }
 
-fn codes_suit(codes: &[Code; LITERAL_SYMBOLS], input: &[u8]) -> bool {
+fn codes_suit(codes: &[Code], input: &[u8]) -> bool {
     const SAMPLE_RATE: usize = 43;
     let histogram = count_every_nth_byte::<SAMPLE_RATE>(input);
     let total = input.len().div_ceil(SAMPLE_RATE);

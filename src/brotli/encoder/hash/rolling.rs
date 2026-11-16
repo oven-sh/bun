@@ -115,6 +115,11 @@ impl<H: Hasher, const STEP: usize> Hasher for WithRolling<H, STEP> {
     }
 
     #[inline(always)]
+    fn store_all(&mut self, bytes: &[u8], position: usize) {
+        self.inner.store_all(bytes, position);
+    }
+
+    #[inline(always)]
     fn prefetch(&self, eight: u64) {
         self.inner.prefetch(eight);
     }
@@ -130,6 +135,10 @@ impl<H: Hasher, const STEP: usize> Hasher for WithRolling<H, STEP> {
 
     #[inline(always)]
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, longer_than: usize) -> Match {
+        let search = &Search {
+            to_beat: 0,
+            ..*search
+        };
         let mut best = self.inner.find(search, recent, longer_than);
         self.rolling.improve(search, &mut best);
         best

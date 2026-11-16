@@ -2,7 +2,8 @@
 
 use super::Stop;
 use super::bit_reader::Bits;
-use crate::format::{COMMAND_SYMBOLS, MAX_CODE_LENGTH};
+use crate::context::ContextLut;
+use crate::format::{COMMAND_SYMBOLS, MAX_CODE_LENGTH, reverse_byte};
 use crate::{DecodeError, memory};
 use std::collections::TryReserveError;
 
@@ -34,28 +35,21 @@ impl SymbolLists {
         self.counts = [0; _];
     }
 
-    /// Symbols come in ascending order.
-    #[inline(always)]
-    pub(super) fn push(&mut self, length: u32, symbol: u32) {
-        let length = length as usize % LENGTHS;
-        let last = core::mem::replace(&mut self.last[length], symbol as u16);
-        self.next[usize::from(last) % Self::SIZE] = symbol as u16;
-        self.counts[length] += 1;
+    /// Of more than one symbol.
+    pub(super) fn clear_for_runs(&mut self, alphabet_size: u32) {
+        self.clear();
+        for (next, successor) in self.next.iter_mut().zip(1..alphabet_size as u16) {
+            *next = successor;
+        }
     }
 
-    /// `count` is not zero.
+    /// Symbols come in ascending order. `count` is not zero.
     #[inline(always)]
     pub(super) fn push_run(&mut self, length: u32, first: u32, count: u32) {
-        self.push(length, first);
-        let end = first + count;
-        // What this writes past the end is for symbols that have no successor yet.
-        for symbol in (first..end).step_by(8) {
-            if let Some(next) = self.next[symbol as usize % Self::SIZE..].first_chunk_mut::<8>() {
-                *next = core::array::from_fn(|i| symbol as u16 + i as u16 + 1);
-            }
-        }
-        self.last[length as usize % LENGTHS] = end as u16 - 1;
-        self.counts[length as usize % LENGTHS] += count as u16 - 1;
+        let length = length as usize % LENGTHS;
+        let last = core::mem::replace(&mut self.last[length], (first + count - 1) as u16);
+        self.next[usize::from(last) % Self::SIZE] = first as u16;
+        self.counts[length] += count as u16;
     }
 
     /// How much longer than `length` the last code is that it takes to fill the space of `space` codes of that length.
@@ -105,7 +99,7 @@ pub(super) enum Root {
 
 impl Root {
     #[inline(always)]
-    const fn bits(self) -> u32 {
+    pub(super) const fn bits(self) -> u32 {
         (self as u32).bit_width()
     }
 }
@@ -235,7 +229,7 @@ impl<E: Entry> Forest<E> {
                     *slot.ok_or(Stop::UNREACHABLE)? = E::link(start, start + table, bits);
                 }
                 let entry = entry_for(symbol, length);
-                let mut at = table + in_table;
+                let mut at = table + usize::from(in_table);
                 loop {
                     *tree.get_mut(at).ok_or(Stop::UNREACHABLE)? = entry;
                     at += step;
@@ -285,30 +279,15 @@ pub(super) fn fill_root<E: Copy, I: Iterator<Item = u32>, const SIZE: usize>(
     next_code
 }
 
-#[inline(always)]
-#[allow(clippy::indexing_slicing)] // A `u8` into 256 entries.
-fn reverse_byte(byte: u8) -> usize {
-    static REVERSED: [u8; 256] = {
-        let mut reversed = [0; 256];
-        let mut i = 0;
-        while i < 256 {
-            reversed[i] = (i as u8).reverse_bits();
-            i += 1;
-        }
-        reversed
-    };
-    usize::from(REVERSED[usize::from(byte)])
-}
-
 /// The low 16 bits.
 #[inline(always)]
 fn reverse(code: u32) -> usize {
-    reverse_byte((code >> 8) as u8) | (reverse_byte(code as u8) << 8)
+    usize::from(reverse_byte((code >> 8) as u8)) | (usize::from(reverse_byte(code as u8)) << 8)
 }
 
-/// A value, and below it the length of the code.
+/// A value, and below it the length of the code. Then, for a literal, [`ContextLut::parts`].
 #[derive(Clone, Copy, Default)]
-pub(super) struct Symbol(u16);
+pub(super) struct Symbol(u32);
 
 impl Symbol {
     /// What a shift of a `u64` looks at.
@@ -316,24 +295,46 @@ impl Symbol {
 
     #[inline(always)]
     fn new(value: u32, length: u32) -> Self {
-        Self(((value << Self::LENGTH_BITS) | length) as u16)
+        Self((value << Self::LENGTH_BITS) | length)
     }
 
     #[inline(always)]
     fn value(self) -> u32 {
-        u32::from(self.0) >> Self::LENGTH_BITS
+        self.0 >> Self::LENGTH_BITS
     }
 
     /// The value and the length in a tree of literals, where each is a byte of the entry.
     #[inline(always)]
     pub(super) fn literal(self) -> (u8, u32) {
-        let [length, literal] = self.0.to_le_bytes();
+        let [length, literal, ..] = self.0.to_le_bytes();
         (literal, u32::from(length))
     }
 
     #[inline(always)]
+    pub(super) fn context_parts(self) -> [u32; 2] {
+        [self.0 >> 24, (self.0 >> 16) & 0xFF]
+    }
+
+    #[inline(always)]
     fn length(self) -> u32 {
-        u32::from(self.0) % (1 << Self::LENGTH_BITS)
+        self.0 % (1 << Self::LENGTH_BITS)
+    }
+
+    #[inline(always)]
+    #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
+    pub(super) fn in_root(tree: &SymbolTree, root: Root, bits: u64) -> Self {
+        tree[(bits as u32 & root as u32) as usize]
+    }
+
+    /// Follows the link, if that is what `bits` led to in the root.
+    #[inline(always)]
+    #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
+    pub(super) fn resolve(self, tree: &SymbolTree, root: Root, bits: u64) -> Self {
+        let Some(more_bits) = self.length().checked_sub(LENGTHS as u32) else {
+            return self;
+        };
+        let rest = (bits as u32 >> root.bits()) & ((1 << more_bits) - 1);
+        tree[(self.value() + rest) as usize % Self::REACH]
     }
 }
 
@@ -349,14 +350,8 @@ impl Entry for Symbol {
 pub(super) type SymbolTree = [Symbol; Symbol::REACH];
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
 pub(super) fn peek_symbol(tree: &SymbolTree, root: Root, bits: u64) -> Symbol {
-    let entry = tree[(bits as u32 & root as u32) as usize];
-    let Some(more_bits) = entry.length().checked_sub(LENGTHS as u32) else {
-        return entry;
-    };
-    let rest = (bits as u32 >> root.bits()) & ((1 << more_bits) - 1);
-    tree[(entry.value() + rest) as usize % Symbol::REACH]
+    Symbol::in_root(tree, root, bits).resolve(tree, root, bits)
 }
 
 /// From a tree that is not for literals.
@@ -369,16 +364,23 @@ pub(super) fn read_symbol(tree: &SymbolTree, bits: &mut Bits) -> Result<u32, Sto
 
 impl Forest<Symbol> {
     pub(super) fn push_symbols(&mut self, code: &SymbolLists) -> Result<(), Stop> {
-        self.push_shifted(code, Root::Narrow, 0)
+        self.push(code, Root::Narrow, Symbol::new)
     }
 
-    pub(super) fn push_literals(&mut self, code: &SymbolLists, root: Root) -> Result<(), Stop> {
-        self.push_shifted(code, root, 8 - Symbol::LENGTH_BITS)
-    }
-
-    fn push_shifted(&mut self, code: &SymbolLists, root: Root, shift: u32) -> Result<(), Stop> {
+    pub(super) fn push_literals(
+        &mut self,
+        code: &SymbolLists,
+        root: Root,
+        lut: &ContextLut,
+    ) -> Result<(), Stop> {
         self.push(code, root, |symbol, length| {
-            Symbol::new(symbol << shift, length)
+            let [last, second_last] = lut.parts(symbol as u8);
+            Symbol(u32::from_le_bytes([
+                length as u8,
+                symbol as u8,
+                second_last,
+                last,
+            ]))
         })
     }
 }
@@ -432,7 +434,10 @@ impl Ranges {
     #[inline(always)]
     pub(super) fn halves_of_large(&self) -> [u32; 2] {
         let [.., a, b, c, d] = self.0;
-        [[a, b], [c, d]].map(|half| u32::from(u16::from_le_bytes(half)))
+        [
+            u32::from(u16::from_le_bytes([a, b])),
+            u32::from(u16::from_le_bytes([c, d])),
+        ]
     }
 
     /// `self` is from a narrow root, and `entries` are those of its forest.

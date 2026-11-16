@@ -1,5 +1,7 @@
 use super::slots::Slots;
-use super::{Hasher, MIN_SCORE, Match, RecentDistances, Search, jump, score, score_of_recent};
+use super::{
+    Hasher, MIN_SCORE, Match, RecentDistances, Search, jump, score, score_of_recent, store_each,
+};
 use crate::encoder::input_block::InputBlock;
 use crate::encoder::matching::{HASH_MULTIPLIER_64, load32, load64};
 use crate::encoder::ring_buffer::{SLACK, Window};
@@ -92,6 +94,11 @@ impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Has
             (position, padded) = jump(self, block, position + 1, &padded[1..], 4);
         }
         (position, padded)
+    }
+
+    #[inline(always)]
+    fn store_all(&mut self, bytes: &[u8], position: usize) {
+        store_each(self, bytes, position);
     }
 
     #[inline(always)]

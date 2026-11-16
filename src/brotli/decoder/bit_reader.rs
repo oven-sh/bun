@@ -55,17 +55,27 @@ impl Bits {
 
 const WORD: usize = size_of::<u64>();
 
-/// With positions of 32 bits, checking one takes a single comparison.
-pub(super) struct FastReader<'a> {
-    pub(super) bits: Bits,
+/// For a loop that goes on as long as there are eight bytes left. With positions of 32 bits, that is one comparison.
+pub(super) trait FastReader {
+    fn peek(&self) -> u64;
+
+    fn skip(&mut self, n: u32);
+
+    /// Shows [`REFILLED`] bits or more to `step`, which says how many it took. Fails, and changes nothing, near the end.
+    fn step<T>(&mut self, step: impl FnOnce(u64) -> (T, u32)) -> Option<T>;
+}
+
+/// Has the next bits sooner than [`Reloading`].
+pub(super) struct Refilling<'a> {
+    bits: Bits,
     input: &'a [u8],
     used: u32,
 }
 
-impl FastReader<'_> {
-    /// All 64 bits come from the input then. Fails, and changes nothing, near the end of it.
+impl Refilling<'_> {
+    /// All 64 bits come from the input then.
     #[inline(always)]
-    pub(super) fn refill(&mut self) -> bool {
+    fn refill(&mut self) -> bool {
         let at = self.used as usize;
         let Some(word) = self.input.get(at..at + WORD).and_then(<[u8]>::as_array) else {
             return false;
@@ -77,12 +87,98 @@ impl FastReader<'_> {
     }
 }
 
+impl FastReader for Refilling<'_> {
+    #[inline(always)]
+    fn peek(&self) -> u64 {
+        self.bits.peek()
+    }
+
+    #[inline(always)]
+    fn skip(&mut self, n: u32) {
+        self.bits.skip_known(n);
+    }
+
+    #[inline(always)]
+    fn step<T>(&mut self, step: impl FnOnce(u64) -> (T, u32)) -> Option<T> {
+        self.refill().then(|| {
+            let (value, n) = step(self.peek());
+            self.skip(n);
+            value
+        })
+    }
+}
+
+/// Takes fewer instructions than [`Refilling`].
+pub(super) struct Reloading<'a> {
+    input: &'a [u8],
+    /// Where the last word came from.
+    at: u32,
+    /// How many of its bits are gone.
+    used: u32,
+    /// The others.
+    rest: u64,
+}
+
+impl Reloading<'_> {
+    #[inline(always)]
+    pub(super) fn used(&self) -> u32 {
+        self.used
+    }
+
+    /// The word from the byte that has the next bit, for [`skip_in`](Self::skip_in).
+    #[inline(always)]
+    pub(super) fn reload(&mut self) -> Option<u64> {
+        let at = self.at + self.used / 8;
+        let word = self.input.get(at as usize..at as usize + WORD)?;
+        let word = u64::from_le_bytes(*word.as_array()?);
+        (self.at, self.used) = (at, self.used % 8);
+        Some(word)
+    }
+
+    #[inline(always)]
+    pub(super) fn skip_in(&mut self, word: u64, n: u32) {
+        self.used += n;
+        debug_assert!(self.used < u64::BITS);
+        self.rest = word >> (self.used % u64::BITS);
+    }
+}
+
+impl FastReader for Reloading<'_> {
+    #[inline(always)]
+    fn peek(&self) -> u64 {
+        self.rest
+    }
+
+    #[inline(always)]
+    fn skip(&mut self, n: u32) {
+        self.used += n;
+        debug_assert!(self.used < u64::BITS);
+        self.rest >>= n % u64::BITS;
+    }
+
+    #[inline(always)]
+    fn step<T>(&mut self, step: impl FnOnce(u64) -> (T, u32)) -> Option<T> {
+        let word = self.reload()?;
+        let (value, n) = step(word >> self.used);
+        self.skip_in(word, n);
+        Some(value)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct BitReader<'a> {
     pub(super) bits: Bits,
     input: &'a [u8],
+    /// With what refills took.
+    whole_input: &'a [u8],
     /// The end of the input, in the high bits.
     last_word: u64,
+}
+
+#[inline(always)]
+fn within_32_bits(input: &[u8]) -> Option<&[u8]> {
+    let last = input.len().checked_sub(WORD)?.min(1 << 30) as u32;
+    input.get(..last as usize + WORD)
 }
 
 impl<'a> BitReader<'a> {
@@ -94,6 +190,7 @@ impl<'a> BitReader<'a> {
         Self {
             bits,
             input,
+            whole_input: input,
             last_word,
         }
     }
@@ -103,22 +200,51 @@ impl<'a> BitReader<'a> {
         self.input.len()
     }
 
-    /// Refilled, for a loop that refills as long as there are eight bytes left.
     #[inline(always)]
-    pub(super) fn begin_fast(&self) -> Option<FastReader<'a>> {
-        let last = self.input.len().checked_sub(WORD)?.min(1 << 30) as u32;
-        let mut fast = FastReader {
+    pub(super) fn begin_refilling(&self) -> Option<Refilling<'a>> {
+        let mut fast = Refilling {
             bits: self.bits,
-            input: self.input.get(..last as usize + WORD)?,
+            input: within_32_bits(self.input)?,
             used: 0,
         };
         fast.refill().then_some(fast)
     }
 
     #[inline(always)]
-    pub(super) fn end_fast(&mut self, fast: &FastReader<'a>) {
+    pub(super) fn end_refilling(&mut self, fast: &Refilling<'a>) {
         self.bits = fast.bits;
         self.input = self.input.get(fast.used as usize..).unwrap_or_default();
+    }
+
+    /// Not while there are bits of earlier input.
+    #[inline(always)]
+    pub(super) fn begin_reloading(&self) -> Option<Reloading<'a>> {
+        let mut fast = Reloading {
+            input: within_32_bits(self.whole_input.get(self.byte_of_next_bit()?..)?)?,
+            at: 0,
+            used: self.bits.count.wrapping_neg() % 8,
+            rest: 0,
+        };
+        fast.step(|_| ((), 0))?;
+        Some(fast)
+    }
+
+    #[inline(always)]
+    pub(super) fn end_reloading(&mut self, fast: &Reloading<'a>) {
+        let taken = (fast.at + fast.used.div_ceil(8)) as usize;
+        self.input = (self.byte_of_next_bit())
+            .and_then(|start| self.whole_input.get(start + taken..))
+            .unwrap_or_default();
+        self.bits = Bits {
+            value: fast.rest,
+            count: fast.used.wrapping_neg() % 8,
+        };
+    }
+
+    #[inline(always)]
+    fn byte_of_next_bit(&self) -> Option<usize> {
+        let taken = self.whole_input.len() - self.input.len();
+        taken.checked_sub(self.bits.count.div_ceil(8) as usize)
     }
 
     #[inline(always)]

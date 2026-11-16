@@ -65,6 +65,14 @@ impl ContextLut {
         lut
     }
 
+    /// What `byte` adds to the context of the next literal, and to that of the one after it.
+    #[inline(always)]
+    #[allow(clippy::indexing_slicing)] // A `u8` into 256 entries.
+    pub(crate) fn parts(&self, byte: u8) -> [u8; 2] {
+        let byte = usize::from(byte);
+        [self.last[byte], self.second_last[byte]]
+    }
+
     /// In `0..LITERAL_CONTEXTS`.
     #[inline(always)]
     #[allow(clippy::indexing_slicing)] // A `u8` into 256 entries.

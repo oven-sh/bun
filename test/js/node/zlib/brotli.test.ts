@@ -1000,6 +1000,102 @@ it("limits the length of prefix codes", () => {
   `);
 });
 
+describe("literals that are equally frequent", () => {
+  const runs = counts => Buffer.concat(counts.map((count, i) => Buffer.alloc(count, 255 - i)));
+  function shuffled(bytes) {
+    for (let i = bytes.length - 1; i > 0; i--) {
+      const j = noise.readUInt16LE(i) % (i + 1);
+      [bytes[i], bytes[j]] = [bytes[j], bytes[i]];
+    }
+    return bytes;
+  }
+
+  it("get their lengths for each number of kinds", () => {
+    const inputs = Array.from({ length: 256 }, (_, i) =>
+      runs([30, ...noise.subarray(0, i).map(byte => 9 + (byte % 3))]),
+    );
+    expect(roundTrips(inputs, { [QUALITY]: 0 })).toMatchInlineSnapshot(`"120838 8f1bbdc4"`);
+  });
+
+  it.each([
+    [[4, 10, 23], "5117 042ab525"],
+    [[10, 23, 57, 132], "6124 a1205831"],
+  ])("get their lengths if they are in order at sums of %j", (gaps, expected) => {
+    const isSum = [true];
+    for (let i = 1; i < 256; i++) isSum[i] = gaps.some(gap => isSum[i - gap]);
+    const inputs = [0, 1, 15, 16, 100].map(first => runs(isSum.map((_, i) => (isSum[i - first] ? 20 : 5))));
+    expect(roundTrips(inputs, { [QUALITY]: 0 })).toBe(expected);
+  });
+
+  it("get their lengths next to one that occurs up to 32747 times", () => {
+    const inputs = [16400, 32743, 32744, 32745, 32746, 32747].map(count =>
+      runs([count, ...Array(16 + (count % 5)).fill(1)]),
+    );
+    expect(roundTrips(inputs, { [QUALITY]: 0 })).toMatchInlineSnapshot(`"554 5d50caa8"`);
+  });
+
+  it("get their lengths next to one that is every other byte", () => {
+    const others = shuffled(runs(Array.from(noise.subarray(0, 255), byte => 60 + 40 * (byte % 5))));
+    const input = Buffer.alloc(2 * others.length);
+    others.forEach((byte, i) => (input[2 * i] = byte));
+    expect([1, 3].map(quality => roundTrip(input, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+      [
+        "45156 81a0d1b5",
+        "44743 91718df3",
+      ]
+    `);
+  });
+
+  it("are not evened out with one that is just too rare after 175 of them", () => {
+    const counts = Array.from({ length: 178 }, (_, i) => (i === 175 ? 0 : i < 53 ? 4 + (i % 2) : 4 + (i % 3)));
+    expect(counts.slice(0, 175).reduce((a, b) => a + b)).toBe(848);
+    const input = shuffled(Buffer.concat(counts.map((count, i) => Buffer.alloc(count, i))));
+    expect(roundTrip(input, { [QUALITY]: 4 })).toMatchInlineSnapshot(`"828 44ef99b2"`);
+  });
+});
+
+it("has long copies after each few literals", () => {
+  const records = Array.from({ length: 120 }, (_, i) => [
+    noise.subarray(9 * i, 9 * i + (i % 7)),
+    Buffer.alloc(2200, i),
+  ]);
+  const input = Buffer.concat(records.flat());
+  expect([0, 1, 2, 3, 5].map(quality => roundTrip(input, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+    [
+      "1406 125687ca",
+      "1190 86c01120",
+      "1186 91906af2",
+      "958 8a611a65",
+      "912 24990ba2",
+    ]
+  `);
+});
+
+it("has many literals and a long copy after about a thousand symbols", () => {
+  const record = (i, length) => [
+    noise.subarray(40 * i, 40 * i + length),
+    noise.subarray(9000 + (i % 2) * 8, 9008 + (i % 2) * 8),
+  ];
+  const inputs = Array.from({ length: 40 }, (_, first) =>
+    Buffer.concat([
+      noise.subarray(9000, 9016),
+      ...record(0, 1),
+      ...record(1, 1 + (first % 20)),
+      ...Array.from({ length: first < 20 ? 52 : 60 }, (_, i) => record(i + 2, 16)).flat(),
+      noise.subarray(5000, 5031),
+      Buffer.alloc(2300),
+    ]),
+  );
+  expect([0, 1, 2, 5].map(quality => roundTrips(inputs, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+    [
+      "56419 1a69c8fd",
+      "45136 6e527d0f",
+      "47722 1f2afc22",
+      "40779 82a0dc78",
+    ]
+  `);
+});
+
 it("keeps distance parameters that beat those it tries", () => {
   let at = 0;
   const periods = Array.from({ length: 300 }, (_, i) => [67, 75, 83, 91, 99, 107, 115, 119][(i * 3) % 8]);
@@ -2087,6 +2183,22 @@ it("decodes codes of up to 15 bits", () => {
   expect(decodeInPieces(bits.finish(), [1, 5, 4096], 4096)).toEqual(Array(3).fill("1832 40335292"));
 });
 
+it("decodes lengths whose two kinds of repeats take turns", () => {
+  // One bit for a length of seven, and five bits for each kind of repeat.
+  const bits = windowOf(16).plainLastHeader(128);
+  bits.put([2, 0], [2, 2], [2, 1], [4, 0], [3, 3], [2, 0], [4, 15], [2, 0], [4, 15], [4, 7], [1, 0]);
+  for (let i = 0; i < 21; i++) bits.code(5, 31).put([3, 0]).code(5, 30).put([2, 3]);
+  bits.put([1, 0]).simpleCode(10, 312).simpleCode(6, 0).put([5, 30]);
+  for (let i = 0; i < 128; i++) bits.code(7, i);
+  const expected = Array.from({ length: 190 }, (_, i) => i).filter(i => i % 9 === 0 || i % 9 > 3);
+  expect([...zlib.brotliDecompressSync(bits.finish())]).toEqual([...expected, 190]);
+});
+
+it("needs no more input to tell that a code is incomplete", () => {
+  const stream = windowOf(16).plainLastHeader(1).complexCode(Array(256).fill(9)).finish();
+  expect(drive(zlib.createBrotliDecompress(), [[FINISH, stream]], 64).code).toBe("ERR__ERROR_FORMAT_HUFFMAN_SPACE");
+});
+
 it.each([9, 10, 11, 12, 13, 14, 15])("decodes commands of 48 + %d bits at each alignment", length => {
   // The code of one bit is for a literal and two bytes from the last distance.
   const lengths = Array(704).fill(0).fill(length, 702);
@@ -2097,7 +2209,7 @@ it.each([9, 10, 11, 12, 13, 14, 15])("decodes commands of 48 + %d bits at each a
     bits.simpleCode(8, 97).complexCode(lengths).sixBitCode();
     let [at, last] = [noise.copy(out, 0, 0, 40), 4];
     for (let i = 0; i < 8; i++) {
-      for (; bits.count !== i; at += 3) {
+      for (let short = 0; short < 8 || bits.count !== 7 - i; short++, at += 3) {
         bits.put([1, 0]);
         out.copyWithin(at + 1, at + 1 - last, at + 3 - last);
       }
@@ -2181,6 +2293,25 @@ it.each([
   for (let type = 0; type < typeCounts[1]; type++) bits.simpleCode(10, ...commands(type)).put([1, 0]);
   for (let tree = 0; tree < 4; tree++) bits.simpleCode(7, tree, 16 + tree, 25 + tree, 35 + (tree & 1)).put([1, 0]);
   expect(decodeInPieces(bits.put(...body).finish(), [4096, 100, 13, 1], 1000)).toEqual(Array(4).fill(expected));
+});
+
+it("has a context mode for each block of a long insert", () => {
+  const bits = windowOf(16).uncompressed(noise.subarray(0, 2)).lastHeader(800);
+  // Four blocks of 177 + 23 literals.
+  bits.number(4).simpleCode(3, 1).simpleCode(5, 14).put([5, 23], [8, 0], [2, 0], [2, 1], [2, 2], [2, 3]);
+  bits.number(4).put([1, 0]).simpleCode(2, 0, 1, 2, 3).put([1, 0]);
+  for (let context = 0; context < 256; context++) bits.put([2, noise[context] & 3]);
+  bits.put([2, 0]);
+  for (let tree = 0; tree < 4; tree++) bits.simpleCode(8, tree, 32 + tree, 101 + tree, 200 + tree).put([1, 0]);
+  bits
+    .simpleCode(10, 472)
+    .simpleCode(6, 0)
+    .put([9, 800 - 578]);
+  for (let i = 0; i < 800; i++) {
+    if (i && i % 200 === 0) bits.put([5, 23]);
+    bits.put([2, noise[256 + i] & 3]);
+  }
+  expect(decodeInPieces(bits.finish(), [4096, 1], 1000)).toEqual(Array(2).fill("802 40bce842"));
 });
 
 it.each([
@@ -2386,6 +2517,15 @@ it.each([1023, 1024, 1025])("ends a meta-block %d bytes into a window of 1024", 
   ];
   const decode = bits => zlib.brotliDecompressSync(bits.finish(), { dictionary: Buffer.from("cdef") });
   expect(streams.map(bits => decode(bits).latin1Slice(end - 5))).toEqual(["baaaa", "bbbbb", "bcdef", "btime"]);
+});
+
+it("ends a meta-block with the longest that a word can get", () => {
+  const stored = text.subarray(0, 40);
+  const bits = windowOf(16).uncompressed(stored).plainHeader(37).fixedCodes();
+  bits.copy(24).distance(41 + (73 << 5));
+  expect(zlib.brotliDecompressSync(bits.uncompressed(stored).put([2, 3]).finish()).toString()).toBe(
+    `${stored} the <script type="text/javas of the ${stored}`,
+  );
 });
 
 it.each([

@@ -1991,6 +1991,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run for every byte that Brotli compresses.",
+  },
+  {
     file: "src/jsc/bindings/highway_byte_set.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

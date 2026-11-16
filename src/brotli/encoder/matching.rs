@@ -31,19 +31,6 @@ pub(super) fn load64(data: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(bytes_at(data, at))
 }
 
-#[inline(always)]
-pub(super) fn splat(byte: u8) -> u64 {
-    u64::from(byte) * 0x0101_0101_0101_0101
-}
-
-/// A bit for each byte that is zero.
-#[inline(always)]
-pub(super) fn zero_bytes(bytes: u64) -> u8 {
-    const LOW: u64 = 0x7F7F_7F7F_7F7F_7F7F;
-    let high_bits = !(((bytes & LOW) + LOW) | bytes | LOW);
-    (high_bits.wrapping_mul(0x0002_0408_1020_4081) >> 56) as u8
-}
-
 /// The length of the common prefix.
 #[inline(always)]
 pub(super) fn match_length(a: &[u8], b: &[u8]) -> usize {

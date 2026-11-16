@@ -185,3 +185,19 @@ impl CommandCodes {
         }
     }
 }
+
+/// Prefix codes are in the stream with their first bit lowest.
+#[inline(always)]
+#[allow(clippy::indexing_slicing)] // A `u8` into 256 entries.
+pub(crate) const fn reverse_byte(byte: u8) -> u8 {
+    static REVERSED: [u8; 256] = {
+        let mut reversed = [0; 256];
+        let mut i = 0;
+        while i < 256 {
+            reversed[i] = (i as u8).reverse_bits();
+            i += 1;
+        }
+        reversed
+    };
+    REVERSED[byte as usize]
+}

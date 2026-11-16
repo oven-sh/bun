@@ -3,78 +3,36 @@
 mod one_pass;
 mod two_pass;
 
-use core::ops::ControlFlow;
+use core::ops::{ControlFlow, Range};
 
 use one_pass::OnePass;
 use two_pass::TwoPass;
 
 use super::bit_stream::{write_empty_last, write_uncompressed};
-use super::bit_writer::{BitWriter, Bits};
-use super::command::{combine_length_codes, copy_length_code, insert_length_code};
-use super::huffman::{Code, Lengths, TreeBuilder, assign_codes};
-use super::matching::{HASH_MULTIPLIER_32, load32, load64, match_length};
+use super::bit_writer::{BitWriter, Code};
+use super::command::{
+    codes_of_short_lengths, combine_length_codes, copy_length_code, insert_length_code,
+};
+use super::huffman::{Lengths, TreeBuilder};
+use super::matching::{HASH_MULTIPLIER_32, bytes_at, load32, load64, match_length};
 use super::params::FAST_WINDOW_BITS;
+use super::symbol_set::SymbolSet;
 use super::try_reserve_for;
 use crate::format::{
-    COMMAND_SYMBOLS, COPY_LENGTH_CODES, INSERT_LENGTH_CODES, LengthCode, SHORT_COPY_END, WINDOW_GAP,
+    COMMAND_SYMBOLS, COPY_LENGTH_CODES, INSERT_LENGTH_CODES, LITERAL_SYMBOLS, LengthCode,
+    SHORT_COPY_END, WINDOW_GAP,
 };
 use crate::memory::{self, Result};
 
-/// Half of the symbols stand for commands, and half for distances.
+/// Half for distances, and half for commands, which have either literals and a copy of two bytes, or a copy alone.
 const SYMBOLS: usize = 128;
 const FIRST_COPY_AT_LAST_DISTANCE: usize = 24;
 const FIRST_COPY: usize = 40;
 const FIRST_DISTANCE: usize = 64;
-/// From here on, the length has too many extra bits to be written together with the distance.
-const HUGE_COPY: u32 = COPY_LENGTH_CODES[23].base as u32;
 
-/// A command has either literals and a copy of two bytes, or a copy alone.
-#[derive(Clone, Copy)]
-struct Token {
-    symbol: usize,
-    /// In the range that the symbol stands for.
-    value: usize,
-}
-
-impl Token {
-    /// Inserting no literals does not come up, so the symbol has no code.
-    const NONE: Self = Self {
-        symbol: 0,
-        value: 0,
-    };
-    const LAST_DISTANCE: Self = Self {
-        symbol: FIRST_DISTANCE,
-        value: 0,
-    };
-
-    #[inline(always)]
-    fn insert(length: usize) -> Self {
-        Self {
-            symbol: insert_length_code(length),
-            value: length,
-        }
-    }
-
-    /// `first` is the symbol for two bytes.
-    #[inline(always)]
-    fn copy(first: usize, length: usize) -> Self {
-        Self {
-            symbol: first + copy_length_code(length),
-            value: length,
-        }
-    }
-
-    /// Two symbols for each power of two.
-    #[inline(always)]
-    fn distance(distance: u32) -> Self {
-        let value = distance as usize + 3;
-        let extra_bits = value.ilog2() - 1;
-        Self {
-            symbol: FIRST_DISTANCE + 12 + 2 * extra_bits as usize + (value >> extra_bits),
-            value,
-        }
-    }
-}
+/// For the second half of 24 extra bits. Inserting no literals does not come up, so the symbol has no code.
+const MORE_BITS: usize = 0;
+const HALF_OF_24_BITS: u32 = 12;
 
 /// The lowest value and the number of extra bits of each symbol.
 const RANGES: [(u32, u32); SYMBOLS] = {
@@ -91,45 +49,205 @@ const RANGES: [(u32, u32); SYMBOLS] = {
         ranges[FIRST_DISTANCE + 17 + 2 * i] = (6 << i, i as u32 + 1);
         i += 1;
     }
+    ranges[MORE_BITS].1 = HALF_OF_24_BITS;
+    ranges[23].1 = HALF_OF_24_BITS;
+    ranges[FIRST_COPY + 23].1 = HALF_OF_24_BITS;
     ranges
 };
 
-/// From the low bits: the length of the code, the length with the extra bits (8 bits each), `code - (base << length)`.
-struct TokenCodes([i64; SYMBOLS]);
+/// From the high bits: an index, the extra bits, zeros. The indices of the symbols follow those of the literals.
+#[derive(Clone, Copy)]
+struct Item(u32);
 
-impl TokenCodes {
-    const fn new(codes: &[Code; SYMBOLS]) -> Self {
-        let mut packed = [0; SYMBOLS];
-        let mut i = 0;
-        while i < SYMBOLS {
-            let (code, (base, extra_bits)) = (codes[i].bits(), RANGES[i]);
-            let addend = code.value as i64 - ((base as i64) << code.count);
-            packed[i] = (addend << 16) | (((code.count + extra_bits) << 8) | code.count) as i64;
-            i += 1;
+impl Item {
+    const LAST_DISTANCE: Self = Self::new(FIRST_DISTANCE, 0);
+    const EXTRA_BITS: u32 = f32::MANTISSA_DIGITS - 1;
+    const INDICES: usize = 1 << (u32::BITS - Self::EXTRA_BITS);
+
+    /// `value` is in the range that `symbol` stands for.
+    const fn new(symbol: usize, value: u32) -> Self {
+        let (base, extra_bits) = RANGES[symbol % SYMBOLS];
+        let extra = (value - base) << (Self::EXTRA_BITS - extra_bits);
+        Self((((LITERAL_SYMBOLS + symbol) as u32) << Self::EXTRA_BITS) | extra)
+    }
+
+    /// For each length below `N`. `first` is the symbol for `codes[0]`.
+    const fn for_short_lengths<const N: usize>(
+        first: usize,
+        codes: &[LengthCode; 24],
+    ) -> [Self; N] {
+        let symbols: [u8; N] = codes_of_short_lengths(codes);
+        let mut items = [Self(0); N];
+        let mut length = codes[0].base as usize;
+        while length < N {
+            items[length] = Self::new(first + symbols[length] as usize, length as u32);
+            length += 1;
         }
-        Self(packed)
+        items
     }
 
     #[inline(always)]
-    fn bits(&self, token: Token) -> Bits {
-        let packed = self.0[token.symbol % SYMBOLS];
-        let shifted = (token.value as u64) << (packed & 63);
-        Bits::new(
-            u32::from((packed >> 8) as u8),
-            shifted.wrapping_add_signed(packed >> 16),
-        )
+    fn literal(literal: u8) -> Self {
+        Self(u32::from(literal) << Self::EXTRA_BITS)
+    }
+
+    /// Two symbols for each power of two, like the exponent and the first bit of the mantissa of a float.
+    #[inline(always)]
+    fn distance(distance: u32) -> Self {
+        const OFFSET: u32 = Item::new(FIRST_DISTANCE + 16, 4).0 - (4f32.to_bits() << 1);
+        let value = (distance + 3) as i32 as f32;
+        Self((value.to_bits() << 1) + OFFSET)
+    }
+
+    #[inline(always)]
+    fn index(self) -> usize {
+        (self.0 >> Self::EXTRA_BITS) as usize
+    }
+}
+
+struct ItemCodes([Code; Item::INDICES]);
+
+impl ItemCodes {
+    fn literals(&mut self) -> &mut [Code] {
+        &mut self.0[..LITERAL_SYMBOLS]
+    }
+
+    fn symbols(&mut self) -> &mut [Code] {
+        &mut self.0[LITERAL_SYMBOLS..][..SYMBOLS]
+    }
+
+    #[inline(never)]
+    fn write_literals(&self, literals: &[u8], writer: &mut BitWriter) {
+        writer.write_codes::<5, _>(literals, |literal| self.0[usize::from(literal)]);
+    }
+
+    #[inline(never)]
+    fn write_items(&self, items: &[Item], writer: &mut BitWriter) {
+        writer.write_codes::<4, _>(items, |item| {
+            self.0[item.index()].plus(u64::from(item.0) << (u64::BITS - Item::EXTRA_BITS))
+        });
     }
 }
 
 trait Sink {
     /// Whether the literals in `start..end` are not worth compressing. Asked before each insert.
-    fn refuses(&mut self, start: usize, end: usize) -> bool;
+    fn refuses(&self, start: usize, end: usize) -> bool;
 
-    /// The command that inserts all but the last [`WINDOW_GAP`] bytes.
-    fn insert(&mut self, padded: &[u8]);
+    /// For each symbol with a code, as soon as it is known.
+    fn found(&mut self, item: Item);
 
-    /// They have no more than 56 bits.
-    fn tokens(&mut self, first: Token, second: Token);
+    fn items(&mut self, items: &[Item]);
+
+    /// Those that are too many to make items of.
+    fn literals(&mut self, input: &[u8], range: Range<usize>);
+}
+
+const BATCH_SIZE: usize = 1024;
+const MAX_LITERAL_ITEMS: usize = 2 * WINDOW_GAP;
+const MAX_ITEMS_PER_MATCH: usize = 1 + MAX_LITERAL_ITEMS + 4;
+
+static SHORT_INSERTS: [Item; MAX_LITERAL_ITEMS + 1] =
+    Item::for_short_lengths(0, &INSERT_LENGTH_CODES);
+static SHORT_COPIES: [Item; 134] = Item::for_short_lengths(FIRST_COPY, &COPY_LENGTH_CODES);
+static COPIES_AT_LAST_DISTANCE: [Item; SHORT_COPY_END] =
+    Item::for_short_lengths(FIRST_COPY_AT_LAST_DISTANCE, &COPY_LENGTH_CODES);
+
+/// A loop over items of all kinds has no branches that depend on the input.
+struct Batch<'a, S: Sink> {
+    items: &'a mut [Item; BATCH_SIZE + MAX_ITEMS_PER_MATCH],
+    count: usize,
+    sink: &'a mut S,
+}
+
+impl<S: Sink> Batch<'_, S> {
+    #[inline(always)]
+    fn flush(&mut self) {
+        let count = core::mem::take(&mut self.count);
+        self.sink.items(&self.items[..count]);
+    }
+
+    #[inline(always)]
+    fn make_room_for_match(&mut self) {
+        if self.count > BATCH_SIZE {
+            core::hint::cold_path();
+            self.flush();
+        }
+    }
+
+    #[inline(always)]
+    fn push<const N: usize>(&mut self, items: [Item; N]) {
+        self.items[self.count..self.count + N].copy_from_slice(&items);
+        self.count += N;
+        for item in items {
+            self.sink.found(item);
+        }
+    }
+
+    #[inline(always)]
+    fn put_literals(&mut self, at: usize, literals: Chunk) {
+        self.items[at..at + WINDOW_GAP].copy_from_slice(&literals.map(Item::literal));
+    }
+
+    /// `input` has a chunk at the end of `range`.
+    #[inline(always)]
+    fn insert(&mut self, input: &[u8], range: Range<usize>) {
+        let length = range.end - range.start;
+        let Some(&command) = SHORT_INSERTS.get(length) else {
+            let count = core::mem::take(&mut self.count);
+            return insert_after(self.items, count, input, range, self.sink);
+        };
+        self.push([command]);
+        self.put_literals(self.count, bytes_at(input, range.start));
+        if length > WINDOW_GAP {
+            let more = bytes_at(input, range.start + WINDOW_GAP);
+            self.put_literals(self.count + WINDOW_GAP, more);
+        }
+        self.count += length;
+    }
+
+    #[inline(always)]
+    fn copy(&mut self, length: usize, distance: Item) {
+        if let Some(&command) = SHORT_COPIES.get(length) {
+            self.push([command, distance]);
+        } else {
+            let symbol = FIRST_COPY + copy_length_code(length);
+            let room = &mut self.items[self.count..];
+            self.count += put_command(symbol, length, room);
+            self.sink.found(room[0]);
+            self.push([distance]);
+        }
+    }
+}
+
+/// Returns how many `items` it takes, up to two.
+#[inline(never)]
+fn put_command(symbol: usize, length: usize, items: &mut [Item]) -> usize {
+    let (base, extra_bits) = RANGES[symbol % SYMBOLS];
+    let more = (length as u32 - base) >> extra_bits;
+    items[0] = Item::new(symbol, length as u32 - (more << extra_bits));
+    items[1] = Item::new(MORE_BITS, more);
+    1 + usize::from(symbol % FIRST_COPY == 23)
+}
+
+/// After the first `count` of `items`, which has room for two more.
+#[inline(never)]
+fn insert_after(
+    items: &mut [Item],
+    count: usize,
+    input: &[u8],
+    range: Range<usize>,
+    sink: &mut impl Sink,
+) {
+    let symbol = insert_length_code(range.len());
+    let added = put_command(symbol, range.len(), &mut items[count..]);
+    sink.found(items[count]);
+    sink.items(&items[..count + added]);
+    sink.literals(input, range);
+}
+
+/// The literals after the last match.
+fn insert_last(input: &[u8], range: Range<usize>, sink: &mut impl Sink) {
+    insert_after(&mut [Item(0); 2], 0, input, range, sink);
 }
 
 #[derive(Default)]
@@ -278,7 +396,7 @@ impl<const TABLE_SIZE: usize, const MIN_MATCH: usize> Finder<'_, TABLE_SIZE, MIN
     }
 }
 
-/// Returns where the last command ends, or breaks with the end of the literals that `sink` refuses.
+/// Returns where the last command ends, or gives up with the end of the literals that `sink` refuses.
 #[inline(always)]
 fn find_matches<const TABLE_SIZE: usize, const MIN_MATCH: usize>(
     input: &[u8],
@@ -297,31 +415,35 @@ fn find_matches<const TABLE_SIZE: usize, const MIN_MATCH: usize>(
         searched: &input[..limit as usize + WINDOW_GAP],
         table,
     };
+    let mut batch = Batch {
+        items: &mut [Item(0); _],
+        count: 0,
+        sink,
+    };
     let mut last_distance = 0;
     let mut scanned = finder.scan(start as u32, None);
     // Each lookup comes before the output of the previous match, which fills the wait for its result.
     while let Some((match_start, found)) = scanned {
-        if sink.refuses(next_literal, match_start as usize) {
+        if batch.sink.refuses(next_literal, match_start as usize) {
             return ControlFlow::Break(match_start as usize);
         }
         let length = finder.length(match_start, &found);
         let mut at = match_start + length;
         let mut next = finder.after_match(at, true);
-        sink.insert(&input[next_literal..match_start as usize + WINDOW_GAP]);
+        batch.make_room_for_match();
+        batch.insert(input, next_literal..match_start as usize);
         let distance = if found.distance == last_distance {
-            Token::LAST_DISTANCE
+            Item::LAST_DISTANCE
         } else {
-            Token::distance(found.distance)
+            Item::distance(found.distance)
         };
         last_distance = found.distance;
-        match length as usize - 2 {
-            rest @ ..SHORT_COPY_END => {
-                sink.tokens(distance, Token::copy(FIRST_COPY_AT_LAST_DISTANCE, rest))
-            }
-            rest => {
-                sink.tokens(distance, Token::NONE);
-                sink.tokens(Token::copy(FIRST_COPY, rest), Token::LAST_DISTANCE);
-            }
+        let rest = length as usize - 2;
+        if let Some(&command) = COPIES_AT_LAST_DISTANCE.get(rest) {
+            batch.push([distance, command]);
+        } else {
+            batch.push([distance]);
+            batch.copy(rest, Item::LAST_DISTANCE);
         }
 
         while next.obstacles == 0 {
@@ -329,18 +451,13 @@ fn find_matches<const TABLE_SIZE: usize, const MIN_MATCH: usize>(
             last_distance = next.distance;
             at += length;
             next = finder.after_match(at, false);
-            let copy = Token::copy(FIRST_COPY, length as usize);
-            let distance = Token::distance(last_distance);
-            if length < HUGE_COPY {
-                sink.tokens(copy, distance);
-            } else {
-                sink.tokens(copy, Token::NONE);
-                sink.tokens(distance, Token::NONE);
-            }
+            batch.make_room_for_match();
+            batch.copy(length as usize, Item::distance(last_distance));
         }
         next_literal = at as usize;
         scanned = finder.scan(at, Some(last_distance));
     }
+    batch.flush();
     ControlFlow::Continue(next_literal)
 }
 
@@ -357,53 +474,55 @@ const FULL_SYMBOLS: [u16; SYMBOLS / 2] = {
     full
 };
 
-const fn codes_for(lengths: &[u8; SYMBOLS]) -> TokenCodes {
-    /// Sorts groups of eight by [`FULL_SYMBOLS`]. Only [`Token::NONE`], which has no code, ends up out of order.
-    const GROUPS: [usize; 8] = [3, 4, 5, 0, 6, 1, 7, 2];
-    let mut sorted_lengths = [0; SYMBOLS / 2];
-    let mut i = 0;
-    while i < SYMBOLS / 2 {
-        sorted_lengths[i] = lengths[GROUPS[i / 8] * 8 + i % 8];
-        i += 1;
-    }
-    let mut sorted_codes = [Code::EMPTY; SYMBOLS / 2];
-    assign_codes(&sorted_lengths, &mut sorted_codes);
-    let mut codes = [Code::EMPTY; SYMBOLS];
-    i = 0;
-    while i < SYMBOLS / 2 {
-        codes[GROUPS[i / 8] * 8 + i % 8] = sorted_codes[i];
-        i += 1;
-    }
-    let distance_codes = codes.split_at_mut(SYMBOLS / 2).1;
-    assign_codes(lengths.split_at(SYMBOLS / 2).1, distance_codes);
-    TokenCodes::new(&codes)
+/// The groups of eight symbols of the first half, in the order of their codes. Only [`MORE_BITS`] ends up out of order.
+const ORDER: [usize; 8] = [3, 4, 5, 0, 6, 1, 7, 2];
+
+const fn symbol_with_rank(rank: usize) -> usize {
+    ORDER[rank / 8 % 8] % 8 * 8 + rank % 8
 }
+
+/// What to prepend the codes to.
+const ROOM: [Code; SYMBOLS] = {
+    let mut room = [Code::EMPTY; _];
+    let mut i = 0;
+    while i < SYMBOLS {
+        room[i] = Code::new(RANGES[i].1, 0);
+        i += 1;
+    }
+    room
+};
 
 /// Ties are decided as if `first_command` came first.
 fn build_and_write_codes(
     mut histogram: [u32; SYMBOLS],
     first_command: usize,
+    codes: &mut [Code],
     trees: &mut TreeBuilder,
     writer: &mut BitWriter,
-) -> TokenCodes {
-    histogram[Token::NONE.symbol] = 0;
+) {
+    histogram[MORE_BITS] = 0;
+    codes.copy_from_slice(&ROOM);
     let (commands, distances) = histogram.split_at_mut(SYMBOLS / 2);
-    let mut lengths = [0; SYMBOLS];
-    let (command_lengths, distance_lengths) = lengths.split_at_mut(SYMBOLS / 2);
+    let mut lengths = [0; SYMBOLS / 2];
     commands.rotate_left(first_command);
-    trees.set_lengths(commands, 15, command_lengths);
-    command_lengths.rotate_right(first_command);
-    trees.set_lengths(distances, 14, distance_lengths);
-
+    let mut next = trees.set_lengths(commands, 15, &mut lengths);
+    lengths.rotate_right(first_command);
+    let ranked = ORDER.map(|group| bytes_at::<8>(&lengths, group * 8));
     let mut stored = Lengths::zeros(COMMAND_SYMBOLS);
-    for (&symbol, &length) in FULL_SYMBOLS.iter().zip(&*command_lengths) {
-        stored.all_mut()[usize::from(symbol)] = length;
+    for rank in &SymbolSet::matching(ranked.as_flattened(), |length| length != 0) {
+        let symbol = symbol_with_rank(rank);
+        stored.all_mut()[usize::from(FULL_SYMBOLS[symbol])] = lengths[symbol];
+        codes[symbol].prepend(next.take(lengths[symbol]));
     }
     trees.write_complex(&stored, writer);
+
     stored = Lengths::zeros(SYMBOLS / 2);
-    stored.all_mut().copy_from_slice(distance_lengths);
+    let lengths = stored.all_mut();
+    next = trees.set_lengths(distances, 14, lengths);
+    for symbol in &SymbolSet::matching(lengths, |length| length != 0) {
+        codes[FIRST_DISTANCE + symbol].prepend(next.take(lengths[symbol]));
+    }
     trees.write_complex(&stored, writer);
-    codes_for(&lengths)
 }
 
 #[allow(clippy::large_enum_variant)] // There is one for each stream.

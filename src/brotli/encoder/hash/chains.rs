@@ -255,10 +255,11 @@ impl Hasher for ForgetfulChains {
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
         let key = key(search.first_eight());
         let mut best = self.common.try_recent(search, recent, key);
-        let mut filter = Filter::new(search, best.length.max(3));
         let bank = &self.links[self.bank_starts[key % BANKS] as usize..];
         let [low, high, mut index] = self.heads[key].map(usize::from);
         let mut distance = entry(search.position) - (low | (high << 16));
+        let length = search.raise(best.length.max(3), distance, &self.common.words, &mut best);
+        let mut filter = Filter::new(search, length);
         for _ in (0..self.common.max_hops).rev() {
             if distance > search.max_backward {
                 break;

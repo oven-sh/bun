@@ -9,7 +9,9 @@ const MIN_SIZE: usize = 1024;
 const GROWTH: usize = 64 * 1024;
 /// A copy may spoil this many bytes after its end, which no distance reaches.
 const CHUNK: usize = size_of::<u128>();
-const _: () = assert!(CHUNK <= WINDOW_GAP && transform::ROOM <= SLACK);
+/// What a copy may spoil as long as the ring did not wrap, and nothing comes after the position.
+pub(super) const WIDE_CHUNK: usize = 3 * CHUNK;
+const _: () = assert!(CHUNK <= WINDOW_GAP && transform::ROOM <= SLACK && WIDE_CHUNK <= SLACK);
 
 /// The window. It is no larger than what the meta-blocks so far need, and its bytes exist once decoding gets near them.
 #[derive(Default)]
@@ -138,13 +140,17 @@ impl RingBuffer {
 }
 
 #[inline(always)]
-fn copy_chunk(bytes: &mut [u8], source: usize, target: usize) -> Option<()> {
-    let chunk: [u8; CHUNK] = *bytes.get(source..)?.first_chunk()?;
+pub(super) fn copy_chunk<const N: usize>(
+    bytes: &mut [u8],
+    source: usize,
+    target: usize,
+) -> Option<()> {
+    let chunk: [u8; N] = *bytes.get(source..)?.first_chunk()?;
     *bytes.get_mut(target..)?.first_chunk_mut()? = chunk;
     Some(())
 }
 
-/// As if byte by byte. Neither range wraps.
+/// As if byte by byte. Neither range wraps. Fails if `distance` is zero.
 #[inline(always)]
 pub(super) fn copy(
     bytes: &mut [u8],
@@ -159,10 +165,10 @@ pub(super) fn copy(
             return repeat(bytes, source, target, distance, length);
         }
     }
-    copy_chunk(bytes, source, target)?;
+    copy_chunk::<CHUNK>(bytes, source, target)?;
     if length > CHUNK {
         if length <= 2 * CHUNK {
-            copy_chunk(bytes, source + CHUNK, target + CHUNK)?;
+            copy_chunk::<CHUNK>(bytes, source + CHUNK, target + CHUNK)?;
         } else {
             copy_long(bytes, source, target, length)?;
         }
@@ -219,10 +225,13 @@ fn repeat(
         }
         all
     };
+    if period == 0 {
+        return None;
+    }
     let Some(&(mask, multiplier, step)) = BY_PERIOD.get(period) else {
         return (0..length)
             .step_by(CHUNK)
-            .try_for_each(|offset| copy_chunk(bytes, source + offset, target + offset));
+            .try_for_each(|offset| copy_chunk::<CHUNK>(bytes, source + offset, target + offset));
     };
     let chunk = u128::from_le_bytes(*bytes.get(source..)?.first_chunk()?);
     let pattern = (chunk & mask).wrapping_mul(multiplier).to_le_bytes();

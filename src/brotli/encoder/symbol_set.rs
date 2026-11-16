@@ -23,9 +23,9 @@ fn group_where(count: usize, test: impl Fn(usize) -> bool) -> u64 {
 
 impl SymbolSet {
     #[inline(always)]
-    pub(super) fn matching(counts: &[u32], test: impl Fn(u32) -> bool) -> Self {
+    pub(super) fn matching<T: Copy>(values: &[T], test: impl Fn(T) -> bool) -> Self {
         let mut words = [0; _];
-        let (groups, rest) = counts.as_chunks::<GROUP>();
+        let (groups, rest) = values.as_chunks::<GROUP>();
         for (index, group) in groups.iter().enumerate() {
             let first = index * GROUP;
             words[first / WORD] |= group_where(GROUP, |i| test(group[i])) << (first % WORD);
@@ -36,18 +36,24 @@ impl SymbolSet {
         }
         Self {
             words,
-            word_count: counts.len().div_ceil(WORD),
+            word_count: values.len().div_ceil(WORD),
         }
     }
 
-    /// The symbols whose value differs from the next one, in the whole groups before the last value.
+    /// The symbols whose value passes `test` together with the next one.
     #[inline(always)]
-    pub(super) fn run_ends(values: &[u8]) -> Self {
+    pub(super) fn matching_next<T: Copy>(values: &[T], test: impl Fn(T, T) -> bool) -> Self {
         let mut words = [0; _];
-        let (groups, next_groups) = (values.as_chunks::<GROUP>().0, values[1..].as_chunks().0);
-        for (index, (group, next)) in groups.iter().zip(next_groups).enumerate() {
-            let (first, next): (_, &[u8; GROUP]) = (index * GROUP, next);
-            words[first / WORD] |= group_where(GROUP, |i| group[i] != next[i]) << (first % WORD);
+        let (next_groups, next_rest) = values[1..].as_chunks::<GROUP>();
+        for (index, (group, next)) in values.as_chunks().0.iter().zip(next_groups).enumerate() {
+            let (first, group): (_, &[T; GROUP]) = (index * GROUP, group);
+            words[first / WORD] |=
+                group_where(GROUP, |i| test(group[i], next[i])) << (first % WORD);
+        }
+        if !next_rest.is_empty() {
+            let first = next_groups.len() * GROUP;
+            let bits = group_where(next_rest.len(), |i| test(values[first + i], next_rest[i]));
+            words[first / WORD] |= bits << (first % WORD);
         }
         Self {
             words,
@@ -55,12 +61,67 @@ impl SymbolSet {
         }
     }
 
+    /// After the last symbol.
+    #[inline(always)]
+    pub(super) fn end(&self) -> usize {
+        let last = self.words.iter().rposition(|&word| word != 0);
+        last.map_or(0, |i| i * WORD + self.words[i].ilog2() as usize + 1)
+    }
+
+    /// The symbols below [`end`](Self::end) but for runs of five zeros or seven other counts. `self` has the others.
+    #[inline(always)]
+    pub(super) fn outside_long_runs(&self, counts: &[u32]) -> Self {
+        const MARGIN: usize = 8;
+        let end = self.end();
+        let whole_groups = &counts[..counts.len().min(end.next_multiple_of(GROUP) + 1)];
+        let same_as_next = Self::matching_next(whole_groups, |count, next| count == next);
+        let (mut words, word_count) = ([0; _], end.div_ceil(WORD));
+        for (i, word) in words[..word_count].iter_mut().enumerate() {
+            let around = |set: &Self| {
+                let at = |i: usize| u128::from(set.words.get(i).copied().unwrap_or(0));
+                (at(i.wrapping_sub(1)) >> (WORD - MARGIN))
+                    | (at(i) << MARGIN)
+                    | (at(i + 1) << (WORD + MARGIN))
+            };
+            // Where so many equal counts start.
+            let two = around(&same_as_next);
+            let three = two & (two >> 1);
+            let five = three & (three >> 2);
+            let seven = five & (three >> 4);
+            let first = (five & !around(self)) | seven | (seven << 2);
+            let first_two = first | (first << 1);
+            *word = !((first_two | (first_two << 2) | (first << 4)) >> MARGIN) as u64;
+        }
+        words[word_count - 1] &= u64::MAX >> (end.wrapping_neg() % WORD);
+        Self { words, word_count }
+    }
+
     #[inline(always)]
     pub(super) fn union(&self, other: &Self) -> Self {
         Self {
             words: from_fn(|i| self.words[i] | other.words[i]),
-            ..*self
+            word_count: self.word_count.max(other.word_count),
         }
+    }
+
+    pub(super) fn words(&self) -> &[u64; COMMAND_SYMBOLS / WORD] {
+        &self.words
+    }
+
+    /// Up to the last symbol: how many are missing alone or in twos, and how often more are missing in a row.
+    #[inline(always)]
+    pub(super) fn gaps(&self) -> [u32; 2] {
+        let (mut after_missing, mut previous) = ([0; 3], u64::MAX);
+        for &word in &self.words[..self.word_count] {
+            let mut symbols = word;
+            for (missing, count) in (1..).zip(&mut after_missing) {
+                symbols &= !((word << missing) | (previous >> (u64::BITS - missing)));
+                *count += symbols.count_ones();
+            }
+            previous = word;
+        }
+        let [one, two, three] = after_missing;
+        [one + two - 2 * three, three]
     }
 
     #[inline(always)]

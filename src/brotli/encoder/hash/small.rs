@@ -74,21 +74,25 @@ impl<const BUCKETS: usize> Hasher for Small<BUCKETS> {
 
     #[inline(always)]
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
-        let mut link = self.insert(search.first_eight(), search.position);
+        let mut link = usize::from(self.insert(search.first_eight(), search.position));
         let mut best = Match::NONE;
         let length = search.try_recent(recent, self.recent_count, &mut best);
-        let mut filter = Filter::new(search, length);
-        let mut left = self.max_hops;
-        while left != 0 {
-            let candidate = usize::from(link).wrapping_sub(1);
-            let Some(&next) = self.links.get(candidate) else {
-                break;
-            };
-            link = next;
-            left -= 1;
-            filter.try_position(search, candidate, search.position - candidate, &mut best);
+        if link != 0 {
+            let nearest = search.position + 1 - link;
+            let length = search.raise(length, nearest, &self.words, &mut best);
+            let mut filter = Filter::new(search, length);
+            let mut left = self.max_hops;
+            while left != 0 {
+                let candidate = link.wrapping_sub(1);
+                let Some(&next) = self.links.get(candidate) else {
+                    break;
+                };
+                link = usize::from(next);
+                left -= 1;
+                filter.try_position(search, candidate, search.position - candidate, &mut best);
+            }
+            self.hops += self.max_hops - left;
         }
-        self.hops += self.max_hops - left;
         search.try_words(&mut self.words, 2, &mut best);
         best
     }

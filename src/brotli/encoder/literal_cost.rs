@@ -3,43 +3,49 @@
 use super::log2::fast_log2;
 
 /// Whether more than three quarters of the bytes belong to UTF-8 sequences.
-pub(super) fn is_mostly_utf8(parts: [&[u8]; 2]) -> bool {
-    let [first, second] = parts;
-    let (mut valid, mut at) = (0, 0);
-    while let Some(rest @ [_, ..]) = first.get(at..) {
-        let length = if rest.len() >= 4 {
-            sequence_length(rest)
-        } else {
-            let mut joined = [0; 4];
-            for (slot, byte) in joined.iter_mut().zip(rest.iter().chain(second)) {
-                *slot = *byte;
-            }
-            sequence_length(&joined)
-        };
-        valid += length;
-        at += length.max(1);
-    }
-    at -= first.len();
-    while let Some(rest @ [_, ..]) = second.get(at..) {
-        let length = sequence_length(rest);
-        valid += length;
-        at += length.max(1);
-    }
+pub(super) fn is_mostly_utf8([first, second]: [&[u8]; 2]) -> bool {
+    let after = |bytes: &[u8], next: &[u8]| {
+        let (mut joined, last) = ([0; 6], &bytes[bytes.len().saturating_sub(3)..]);
+        let slots = joined[3 - last.len()..].iter_mut();
+        for (slot, byte) in slots.zip(last.iter().chain(next)) {
+            *slot = *byte;
+        }
+        bytes_in_sequences(&joined)
+    };
+    let valid = bytes_in_sequences(first)
+        + after(first, second)
+        + bytes_in_sequences(second)
+        + after(second, &[]);
     valid * 4 > (first.len() + second.len()) * 3
+}
+
+/// Of those that start before the last three bytes. They do not overlap, because none starts with a continuation byte.
+#[inline(never)]
+fn bytes_in_sequences(bytes: &[u8]) -> usize {
+    const BATCH: usize = 48;
+    let (mut total, mut rest) = (0, bytes);
+    while let Some(batch) = rest.first_chunk::<{ BATCH + 3 }>() {
+        let sum = (0..BATCH).fold(0, |sum, i| {
+            sum + sequence_length([batch[i], batch[i + 1], batch[i + 2], batch[i + 3]])
+        });
+        total += usize::from(sum);
+        rest = &rest[BATCH..];
+    }
+    let lengths = rest.array_windows().map(|&four| sequence_length(four));
+    total + lengths.map(usize::from).sum::<usize>()
 }
 
 /// Zero for NUL, and for what is not UTF-8. Surrogates count.
 #[inline(always)]
-fn sequence_length(bytes: &[u8]) -> usize {
-    match *bytes {
-        [1..=0x7F, ..] => 1,
-        [0xC2..=0xDF, 0x80..=0xBF, ..] => 2,
-        [0xE0, 0xA0..=0xBF, 0x80..=0xBF, ..] | [0xE1..=0xEF, 0x80..=0xBF, 0x80..=0xBF, ..] => 3,
-        [0xF0, 0x90..=0xBF, 0x80..=0xBF, 0x80..=0xBF, ..]
-        | [0xF1..=0xF3, 0x80..=0xBF, 0x80..=0xBF, 0x80..=0xBF, ..]
-        | [0xF4, 0x80..=0x8F, 0x80..=0xBF, 0x80..=0xBF, ..] => 4,
-        _ => 0,
-    }
+fn sequence_length([lead, b, c, d]: [u8; 4]) -> u8 {
+    let [two, three, four] = [b, c, d].map(|byte| (byte as i8) < -0x40);
+    let out_of_range =
+        (lead == 0xE0) & (b < 0xA0) | (lead == 0xF0) & (b < 0x90) | (lead == 0xF4) & (b >= 0x90);
+    let two = two & !out_of_range;
+    u8::from(matches!(lead, 1..=0x7F))
+        + 2 * u8::from(matches!(lead, 0xC2..=0xDF) & two)
+        + 3 * u8::from(matches!(lead, 0xE0..=0xEF) & two & three)
+        + 4 * u8::from(matches!(lead, 0xF0..=0xF4) & two & three & four)
 }
 
 /// Appends a cost for each byte to `costs`, which has room for them.
@@ -68,6 +74,37 @@ pub(super) fn estimate(data: &[u8], costs: &mut Vec<f32>) {
     });
 }
 
+#[derive(Clone, Copy)]
+struct Class {
+    counts: [usize; 256],
+    total: usize,
+    /// A total, and its logarithm.
+    logged: (usize, f64),
+}
+
+impl Class {
+    #[inline(always)]
+    fn add(&mut self, byte: u8) {
+        self.counts[usize::from(byte)] += 1;
+        self.total += 1;
+    }
+
+    #[inline(always)]
+    fn remove(&mut self, byte: u8) {
+        self.counts[usize::from(byte)] -= 1;
+        self.total -= 1;
+    }
+
+    #[inline(always)]
+    fn cost(&mut self, byte: u8, overhead: f64) -> f64 {
+        if self.logged.0 != self.total {
+            self.logged = (self.total, fast_log2(self.total));
+        }
+        let cost = self.logged.1 - fast_log2(self.counts[usize::from(byte)]) + overhead;
+        if cost < 1.0 { cost * 0.5 + 0.5 } else { cost }
+    }
+}
+
 #[inline(always)]
 fn estimate_in_classes(
     data: &[u8],
@@ -76,24 +113,21 @@ fn estimate_in_classes(
     class_at: impl Fn(usize) -> usize,
     mut emit: impl FnMut(f64),
 ) {
-    let mut histograms = [[0; 256]; 2];
-    let mut totals = [0; 2];
+    let mut classes = [Class {
+        counts: [0; _],
+        total: 0,
+        logged: (0, 0.0),
+    }; 2];
     for (at, &byte) in data.iter().enumerate().take(half_window) {
-        histograms[class_at(at)][usize::from(byte)] += 1;
-        totals[class_at(at)] += 1;
+        classes[class_at(at)].add(byte);
     }
     for (at, &byte) in data.iter().enumerate() {
         if let Some(old) = at.checked_sub(half_window) {
-            histograms[class_at(old)][usize::from(data[old])] -= 1;
-            totals[class_at(old)] -= 1;
+            classes[class_at(old)].remove(data[old]);
         }
         if let Some(&new) = data.get(at + half_window) {
-            histograms[class_at(at + half_window)][usize::from(new)] += 1;
-            totals[class_at(at + half_window)] += 1;
+            classes[class_at(at + half_window)].add(new);
         }
-        let class = class_at(at);
-        let count = histograms[class][usize::from(byte)];
-        let cost = fast_log2(totals[class]) - fast_log2(count) + overhead;
-        emit(if cost < 1.0 { cost * 0.5 + 0.5 } else { cost });
+        emit(classes[class_at(at)].cost(byte, overhead));
     }
 }

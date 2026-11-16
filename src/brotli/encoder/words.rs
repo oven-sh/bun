@@ -1,8 +1,9 @@
 //! Finds words of the static dictionary in the input.
 
-use super::hash::{Match, score};
-use super::matching::{bytes_at, match_length};
-use super::word_tables::{Case, PackedWord, all_words, likely_words};
+use super::hash::{MIN_SCORE, Match, score};
+use super::matching::{bytes_at, load64, match_length};
+use super::ring_buffer::SLACK;
+use super::word_tables::{Case, PackedWord, all_words, has_likely_words, likely_words};
 use crate::transform::Kind::{Identity, OmitLast, UppercaseAll, UppercaseFirst};
 use crate::transform::Transform;
 
@@ -14,7 +15,7 @@ macro_rules! transform {
 }
 
 /// The transform that omits the last `n` bytes.
-const OMIT_LAST: [u8; 10] = {
+pub(super) const OMIT_LAST: [u8; 10] = {
     let (mut transforms, mut n) = ([0; _], 0);
     while n < transforms.len() {
         transforms[n] = Transform::index_of(b"", OmitLast(n as u8), b"").unwrap();
@@ -59,37 +60,75 @@ impl QuickWordSearch {
         self.matches >= self.lookups >> 7
     }
 
-    /// Replaces `best` with a word at the start of `data` that is no worse. `first_distance` refers to the first word.
+    /// The best word at the start of `padded`, which ends with [`SLACK`] bytes. `first_distance` refers to the first word.
     #[inline(always)]
-    pub(super) fn improve(
+    pub(super) fn find(
         &mut self,
-        data: &[u8],
+        padded: &[u8],
         candidates: usize,
         first_distance: usize,
         max_distance: usize,
-        best: &mut Match,
-    ) {
+    ) -> Option<Match> {
         self.lookups += candidates;
-        for word in likely_words(bytes_at(data, 0)).into_iter().take(candidates) {
-            if word.length() != 0
-                && let Some(found) = match_of(word, data, first_distance)
-                && found.distance <= max_distance
-                && found.score >= best.score
-            {
-                *best = Match { ..found };
-                self.matches += 1;
-            }
+        // Fewer than four bytes never score high enough.
+        if !has_likely_words(bytes_at(padded, 0)) {
+            return None;
+        }
+        let (best, matches) = best_likely_word(padded, candidates, first_distance, max_distance);
+        if matches == 0 {
+            return None;
+        }
+        self.matches += matches;
+        Some(Match { ..best })
+    }
+}
+
+/// And how many were the best so far.
+#[cold]
+#[inline(never)]
+fn best_likely_word(
+    padded: &[u8],
+    candidates: usize,
+    first_distance: usize,
+    max_distance: usize,
+) -> (Match, usize) {
+    let (mut best, mut matches) = (Match::new(0, 0, MIN_SCORE), 0);
+    for word in likely_words(bytes_at(padded, 0))
+        .into_iter()
+        .take(candidates)
+    {
+        if word.length() != 0
+            && let Some(found) = match_of(word, padded, first_distance)
+            && found.distance <= max_distance
+            && found.score >= best.score
+        {
+            best = found;
+            matches += 1;
+        }
+    }
+    (best, matches)
+}
+
+/// How much of the word is at the start of `padded`, which ends with [`SLACK`] bytes.
+#[inline(always)]
+fn matched_length(word: PackedWord, padded: &[u8]) -> usize {
+    let most = word.length().min(padded.len() - SLACK);
+    let mut matched = 0;
+    loop {
+        let difference = load64(word.padded_spelling(), matched) ^ load64(padded, matched);
+        matched += (difference.trailing_zeros() / 8) as usize;
+        if difference != 0 || matched >= most {
+            return matched.min(most);
         }
     }
 }
 
-#[cold]
-#[inline(never)]
-fn match_of(word: PackedWord, data: &[u8], first_distance: usize) -> Option<Match> {
-    if word.length() > data.len() {
+#[inline(always)]
+fn match_of(word: PackedWord, padded: &[u8], first_distance: usize) -> Option<Match> {
+    if word.length() + SLACK > padded.len() {
         return None;
     }
-    let length = match_length(word.spelling(), data);
+    let length = matched_length(word, padded);
     let omitted = word.length() - length;
     let distance = first_distance + word.address(*OMIT_LAST.get(omitted)?);
     Some(Match {
@@ -142,24 +181,31 @@ impl WordMatches {
         self.lengths |= 1 << length;
     }
 
-    /// At the start of `data`, which has at least four bytes. Some matches below `min_length` are left out.
+    /// At the start of `padded`, which has at least four bytes and [`SLACK`]. Some matches below `min_length` are left out.
     #[inline(always)]
-    pub(super) fn find(&mut self, data: &[u8], min_length: usize) {
+    pub(super) fn find(&mut self, padded: &[u8], min_length: usize) {
         // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/static_dict.c#L72
         self.lengths = 0;
-        for (word, case) in all_words(bytes_at(data, 0)) {
+        let data = &padded[..padded.len() - SLACK];
+        for (word, case) in all_words(load64(padded, 0)) {
+            if word.length() + b". This ".len() < min_length {
+                break;
+            }
             if case == Case::Unchanged {
-                self.add_unchanged(word, data, min_length);
+                self.add_unchanged(word, padded, min_length);
             } else if let Some(after) = strip_word(word, case, data) {
                 self.add_punctuated(ShortPrefix::None, word, case, after);
             }
         }
-        if let [first @ (b' ' | b'.'), a, b, c, d, ..] = *data {
+        if let [first @ (b' ' | b'.'), _, _, _, _, ..] = *data {
             let prefix = match first {
                 b' ' => ShortPrefix::Space,
                 _ => ShortPrefix::Dot,
             };
-            for (word, case) in all_words([a, b, c, d]) {
+            for (word, case) in all_words(load64(padded, 1)) {
+                if word.length() + 3 < min_length {
+                    break;
+                }
                 if (first == b' ' || case == Case::Unchanged)
                     && let Some(after) = strip_word(word, case, &data[1..])
                 {
@@ -169,7 +215,7 @@ impl WordMatches {
         }
         macro_rules! add_between {
             ($prefix:literal, $($suffix:literal),+) => {
-                for (word, after) in unchanged_words(&data[$prefix.len()..]) {
+                for (word, after) in unchanged_words(&padded[$prefix.len()..]) {
                     $(if after.starts_with($suffix) {
                         let length = $prefix.len() + word.length() + $suffix.len();
                         self.add(word, transform!($prefix, Identity, $suffix), length);
@@ -191,9 +237,10 @@ impl WordMatches {
     }
 
     #[inline(never)]
-    fn add_unchanged(&mut self, word: PackedWord, data: &[u8], min_length: usize) {
+    fn add_unchanged(&mut self, word: PackedWord, padded: &[u8], min_length: usize) {
+        let data = &padded[..padded.len() - SLACK];
         let length = word.length();
-        let matched = match_length(word.spelling(), data);
+        let matched = matched_length(word, padded);
         if matched + 1 >= length && data[length - 1..].starts_with(b"ing ") {
             self.add(word, transform!(b"", OmitLast(1), b"ing "), length + 3);
         }
@@ -289,7 +336,8 @@ fn strip_word(word: PackedWord, case: Case, data: &[u8]) -> Option<&[u8]> {
     matches.then_some(after)
 }
 
-fn unchanged_words(data: &[u8]) -> impl Iterator<Item = (PackedWord, &[u8])> {
-    let words = all_words(bytes_at(data, 0)).filter(|&(_, case)| case == Case::Unchanged);
+fn unchanged_words(padded: &[u8]) -> impl Iterator<Item = (PackedWord, &[u8])> {
+    let data = &padded[..padded.len() - SLACK];
+    let words = all_words(load64(padded, 0)).filter(|&(_, case)| case == Case::Unchanged);
     words.filter_map(|(word, case)| Some((word, strip_word(word, case, data)?)))
 }

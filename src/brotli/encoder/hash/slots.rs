@@ -86,11 +86,11 @@ impl<const PAGES: usize> Slots for Paged<PAGES> {
     }
 }
 
-/// Even less to clear. For a slot that is set after each look, so that it passes no link twice.
+/// Even less to clear. As long as a slot is set after each look, it passes no link twice. Indices can have 17 bits.
 pub(in crate::encoder) struct Linked {
     /// The last position in any of the slots that have the same low bits.
     heads: Vec<u16>,
-    /// For each position, the head that it replaced, and above that its slot.
+    /// For each position, the head that it replaced, and above that its slot, whose lowest bit goes without saying.
     links: Vec<u32>,
 }
 
@@ -111,7 +111,7 @@ impl Slots for Linked {
         let mut position = self.heads[index & (self.heads.len() - 1)];
         while position != 0 {
             let link = self.links[usize::from(position)];
-            if (link >> u16::BITS) as u16 == index as u16 {
+            if link >> u16::BITS == index as u32 >> 1 {
                 break;
             }
             position = (link as u16).min(position - 1);
@@ -124,6 +124,7 @@ impl Slots for Linked {
         let at = index & (self.heads.len() - 1);
         let head = core::mem::replace(&mut self.heads[at], position as u16);
         debug_assert!(usize::from(head) < position.max(1));
-        self.links[position] = ((index as u32) << u16::BITS) | u32::from(head);
+        debug_assert!(index >> 1 < Self::SIZE && self.heads.len() > 1);
+        self.links[position] = (index as u32 >> 1 << u16::BITS) | u32::from(head);
     }
 }

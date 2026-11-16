@@ -72,10 +72,10 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"__filename;"#, CommonJs),
     ("a.js", r#""use strict";"#, CommonJs),
     ("a.js", r#"'use strict'; 1;"#, CommonJs),
-    ("a.js", r#"("use strict");"#, CommonJs),
-    ("a.js", r"'use\x20strict';", CommonJs),
+    ("a.js", r#"("use strict");"#, Esm),
+    ("a.js", r"'use\x20strict';", Esm),
     ("a.ts", r#""use strict" as any;"#, CommonJs),
-    ("a.ts", r#"<any>"use strict";"#, CommonJs),
+    ("a.ts", r#"<any>"use strict";"#, Esm),
     (
         "a.ts",
         r#"import type A = require("a"); "use strict";"#,

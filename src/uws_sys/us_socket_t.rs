@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::Fd;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
@@ -22,7 +23,7 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 /// Which of the three codes a close uses decides whether the close callback
 /// has run by the time `close()` returns. Only `failure` guarantees that: for
-/// the other two, `us_internal_ssl_close` (crypto/openssl.c) keeps a TLS
+/// the other two, `us_internal_ssl_close` (crypto/openssl.cpp) keeps a TLS
 /// socket open while it still owns the loop's ciphertext spill, i.e. when the
 /// last batch flush hit a full kernel buffer, and finishes the close from the
 /// next writable event or the peer's FIN, which a peer that stopped reading
@@ -214,10 +215,10 @@ impl us_socket_t {
         c::us_socket_get_tos(self)
     }
 
-    /// Resume a handshake suspended by an asynchronous SNICallback. `ctx`
-    /// carries an owned SSL_CTX reference that the call consumes (may be
-    /// null = fall through to the default context); `error` aborts instead.
-    pub(crate) fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
+    /// `None` falls through to the default context; `error` aborts instead.
+    pub(crate) fn sni_resolve(&mut self, ctx: Option<OwnedSslCtx>, error: bool) {
+        // C frees the reference.
+        let ctx = ctx.map_or(ptr::null_mut(), OwnedSslCtx::into_raw);
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 

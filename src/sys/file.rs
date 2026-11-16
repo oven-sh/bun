@@ -50,6 +50,16 @@ impl File {
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).handle
     }
+    /// As [`FdExt::make_lib_uv_owned`].
+    pub fn make_lib_uv_owned(mut self) -> core::result::Result<Self, MakeLibUvOwnedError> {
+        self.handle = self.handle.make_lib_uv_owned()?;
+        Ok(self)
+    }
+    /// As [`FdExt::make_lib_uv_owned_for_syscall`].
+    pub fn make_lib_uv_owned_for_syscall(mut self, syscall_tag: Tag) -> Maybe<Self> {
+        self.handle = self.handle.make_lib_uv_owned_for_syscall(syscall_tag)?;
+        Ok(self)
+    }
     /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
     pub fn borrow(fd: &Fd) -> &File {
@@ -139,22 +149,17 @@ impl File {
     /// Loop `read()` into a **fixed** caller-owned slice until EOF or full.
     /// Returns total bytes read.
     pub fn read_all(&self, buf: &mut [u8]) -> Maybe<usize> {
-        let mut rest = &mut *buf;
-        let mut total_read: usize = 0;
-        while !rest.is_empty() {
-            let n = read(self.handle, rest)?;
-            if n == 0 {
-                break;
-            }
-            rest = &mut rest[n..];
-            total_read += n;
-        }
-        Ok(total_read)
+        self.read_all_buf(BorrowedBuf::from(buf).unfilled())
+    }
+    pub fn read_all_buf(&self, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
+        let start = cursor.written();
+        while cursor.capacity() != 0 && read_buf(self.handle, cursor.reborrow())? != 0 {}
+        Ok(cursor.written() - start)
     }
     /// Growable-`Vec` variant (was previously misnamed `read_all`). Kept for
     /// callers that want cursor-relative streaming into an existing `Vec`.
     pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
-        read_fill_vec(buf, 8192, |dst, _| read(self.handle, dst))
+        read_fill_vec(buf, 8192, |dst, _| read_buf(self.handle, dst))
     }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
@@ -197,12 +202,12 @@ impl File {
         read_fill_vec(list, 16, |dst, off| {
             #[cfg(unix)]
             {
-                pread(self.handle, dst, off)
+                pread_buf(self.handle, dst, off)
             }
             #[cfg(not(unix))]
             {
                 let _ = off;
-                read(self.handle, dst)
+                read_buf(self.handle, dst)
             }
         })
     }
@@ -220,17 +225,17 @@ impl File {
     /// Loop `pread()` from `offset` until `buf` is
     /// full or EOF. Returns total bytes read (may be `< buf.len()` on EOF).
     pub fn pread_all(&self, buf: &mut [u8], offset: u64) -> Maybe<usize> {
-        let mut off = offset as i64;
-        let mut total: usize = 0;
-        while total < buf.len() {
-            let n = pread(self.handle, &mut buf[total..], off)?;
-            if n == 0 {
+        self.pread_all_buf(BorrowedBuf::from(buf).unfilled(), offset)
+    }
+    pub fn pread_all_buf(&self, mut cursor: BorrowedCursor<'_, u8>, offset: u64) -> Maybe<usize> {
+        let start = cursor.written();
+        while cursor.capacity() != 0 {
+            let at = offset as i64 + (cursor.written() - start) as i64;
+            if pread_buf(self.handle, cursor.reborrow(), at)? == 0 {
                 break;
             }
-            total += n;
-            off += n as i64;
         }
-        Ok(total)
+        Ok(cursor.written() - start)
     }
 
     // ── seek / stat / kind ───────────────────────────────────────────────

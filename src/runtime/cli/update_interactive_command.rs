@@ -684,11 +684,10 @@ impl UpdateInteractiveCommand {
                 b""
             };
 
-            let is_catalog = dep.version.tag == dependency::Tag::Catalog;
-            let catalog_name: Option<Box<[u8]>> = is_catalog
-                .then(|| dep.version.catalog().slice(json_buf))
-                .filter(|name| !name.is_empty())
-                .map(Box::from);
+            let catalog = match &dep.version.value {
+                dependency::Value::Catalog(name) => Some(name.slice(json_buf)),
+                _ => None,
+            };
 
             outdated_packages.push(OutdatedPackage {
                 name: Box::from(name_slice),
@@ -701,8 +700,8 @@ impl UpdateInteractiveCommand {
                 workspace_name: Box::from(workspace_name),
                 behavior: dep.behavior,
                 uses_default_registry,
-                is_catalog,
-                catalog_name,
+                is_catalog: catalog.is_some(),
+                catalog_name: catalog.filter(|name| !name.is_empty()).map(Box::from),
                 use_latest: update_to_latest, // default to --latest flag value
                 latest_is_newer: latest.is_newer_than(manifest, current_ver, string_buf),
             });
@@ -980,7 +979,7 @@ impl UpdateInteractiveCommand {
             }
 
             if needs_redraw {
-                let synchronized = Output::synchronized();
+                let _synchronized = Output::synchronized();
 
                 if !initial_draw {
                     Output::up(total_lines);
@@ -1201,7 +1200,6 @@ impl UpdateInteractiveCommand {
 
                 total_lines = lines_displayed + 1;
                 Output::clear_to_end();
-                synchronized.end();
             }
             Output::flush();
 

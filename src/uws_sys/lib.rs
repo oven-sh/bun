@@ -52,7 +52,7 @@ impl us_bun_verify_error_t {
     /// `error` of [`Self::peer_disconnected`]. Not an X509 code.
     pub const PEER_DISCONNECTED: core::ffi::c_int = -46;
 
-    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.c.
+    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.cpp.
     pub const fn peer_disconnected() -> Self {
         Self {
             error_no: Self::PEER_DISCONNECTED,
@@ -536,7 +536,7 @@ pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
-pub use listen_socket::ListenSocket;
+pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};

@@ -141,6 +141,59 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  { development: true, setup: "resolves" },
+  { development: false, setup: "resolves" },
+  { development: true, setup: "rejects" },
+])(
+  "a server that is gone unroots its plugins (development: $development, setup $setup)",
+  async ({ development, setup }) => {
+    using dir = tempDir("serve-plugins-unrooted", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        export default {
+          name: "p",
+          async setup() {
+            globalThis.rootedInSetup = globalThis.rooted();
+            await new Promise(setImmediate);
+            if (${setup === "rejects"}) throw new Error("plugin setup failed on purpose");
+          },
+        };
+      `,
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": `
+        import { heapStats } from "bun:jsc";
+        import html from "./index.html";
+        globalThis.rooted = () => heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0;
+        async function serve() {
+          const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+          await fetch(server.url).then(r => r.text(), () => {});
+          await server.stop(true);
+        }
+        await serve();
+        for (let i = 0; i < 50 && rooted() > 0; i++) {
+          Bun.gc(true);
+          await new Promise(setImmediate);
+        }
+        console.log(JSON.stringify({ rootedInSetup, rooted: rooted() }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.includes("plugin setup failed on purpose")).toBe(setup === "rejects");
+    expect(stdout).toEndWith(`{"rootedInSetup":1,"rooted":0}\n`);
+    expect(exitCode).toBe(0);
+  },
+);
+
 const parkedPlugin = /* ts */ `
   export default {
     name: "parked-plugin",

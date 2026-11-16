@@ -686,6 +686,35 @@ test("413 on a chunked upload frees the context while the handler promise stays 
   }
 });
 
+test.each([
+  ["a fetched Response", (url: URL) => fetch(url)],
+  ["the body of a fetched Response", async (url: URL) => new Response((await fetch(url)).body)],
+  ["a rewritten Response", async (url: URL) => new HTMLRewriter().transform(await fetch(url))],
+])("413 on a chunked upload frees the context while %s is piped to the client", async (_, respond) => {
+  const { promise: upstreamClosed, resolve: signalUpstreamClosed } = Promise.withResolvers<void>();
+  using upstream = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    // One chunk, then nothing: no later write tells the pipe that the response is gone.
+    fetch: () => new Response(new ReadableStream({ start: c => c.enqueue("a"), cancel: () => signalUpstreamClosed() })),
+  });
+  using server = Bun.serve({ port: 0, idleTimeout: 0, maxRequestBodySize: 1024, fetch: () => respond(upstream.url) });
+
+  const { promise: closed, resolve: signalClosed } = Promise.withResolvers<void>();
+  const socket = connect(Number(server.port), "127.0.0.1");
+  socket.on("error", () => {}).on("close", () => signalClosed());
+  socket.once("data", () => socket.write(`800\r\n${Buffer.alloc(0x800, "a")}\r\n`));
+  socket.write("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n");
+
+  try {
+    await closed;
+    expect(server.pendingRequests).toBe(0);
+    await upstreamClosed;
+  } finally {
+    socket.destroy();
+  }
+});
+
 // A request subscribes to its connection's close only once its dispatch is
 // over (to_async), so a close that lands before that was lost. server.stop(true)
 // inside the handler closes the connection right there. A request with its body
@@ -1001,4 +1030,50 @@ test.each([204, 304])("a %d Response with a ReadableStream body cancels the stre
   expect(await res.text()).toBe("");
   expect(cancelReasons).toStrictEqual([undefined]);
   await stopAndAssertDrained(server);
+});
+
+// Script that runs while the response is rendered aborts the request, and the render then found no response. The
+// callback that delivered the request body is still on the stack when the microtask runs, so the request is pending.
+test.concurrent.each([
+  [
+    "cancel() of a 204 Response's body",
+    false,
+    `return new Response(new ReadableStream({ cancel: stop }), { status: 204 })`,
+  ],
+  [
+    "cancel() of a 304 Response's body",
+    false,
+    `return new Response(new ReadableStream({ cancel: stop }), { status: 304 })`,
+  ],
+  ["a getter of the error to print", true, `throw Object.defineProperty(new Error(), "message", { get: stop })`],
+])("server.stop(true) in %s releases the request once", async (_, development, answer) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let during;
+        function stop() {
+          server.stop(true);
+          queueMicrotask(() => (during ??= server.pendingRequests));
+        }
+        const server = Bun.serve({
+          port: 0,
+          development: ${development},
+          async fetch(req) {
+            await req.text();
+            ${answer};
+          },
+        });
+        const result = await fetch(server.url, { method: "POST", body: "a" }).then(r => r.status, () => "closed");
+        console.log(JSON.stringify({ result, during, after: server.pendingRequests }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(JSON.stringify({ result: "closed", during: 1, after: 0 }) + "\n");
+  // An error that was printed sets the exit code.
+  expect(exitCode).toBe(development ? 1 : 0);
 });

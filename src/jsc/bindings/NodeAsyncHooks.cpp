@@ -35,7 +35,7 @@ struct EntriesWithoutTracking {
     EntriesIntoScript sinceFirstFrame;
 };
 
-static thread_local EntriesWithoutTracking* entriesWithoutTracking;
+static thread_local std::unique_ptr<EntriesWithoutTracking> entriesWithoutTracking;
 static thread_local bool trackingWaitsForFirstFrame;
 
 static void* calleeOf(CallFrame* callFrame)
@@ -68,26 +68,21 @@ static bool takeEntriesThatReturned(VM& vm, EntriesIntoScript& entries)
     return outermost.outerFrame == top && outermost.outerCallFrame == vm.topCallFrame && outermost.outerCallee == calleeOf(vm.topCallFrame);
 }
 
-static void forgetEntriesWithoutTracking()
-{
-    delete std::exchange(entriesWithoutTracking, nullptr);
-}
-
 bool waitsForMicrotasksThatBeganWithoutAsyncContextTracking()
 {
-    return entriesWithoutTracking;
+    return !!entriesWithoutTracking;
 }
 
 void didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(VM& vm, Zig::GlobalObject* globalObject)
 {
-    auto* entries = entriesWithoutTracking;
+    auto* entries = entriesWithoutTracking.get();
     if (!entries)
         return;
     takeEntriesThatReturned(vm, entries->sinceFirstConstructor);
     if (takeEntriesThatReturned(vm, entries->sinceFirstFrame))
         globalObject->m_asyncContextData->putInternalField(vm, 0, jsUndefined());
     if (entries->sinceFirstConstructor.isEmpty() && entries->sinceFirstFrame.isEmpty())
-        forgetEntriesWithoutTracking();
+        entriesWithoutTracking = nullptr;
 }
 
 void updateOnEachMicrotaskTick(VM&);
@@ -96,7 +91,7 @@ static void waitForMicrotasksInProgress(VM& vm)
 {
     updateOnEachMicrotaskTick(vm);
     vm.whenIdle([&vm] {
-        forgetEntriesWithoutTracking();
+        entriesWithoutTracking = nullptr;
         updateOnEachMicrotaskTick(vm);
     });
 }
@@ -104,7 +99,7 @@ static void waitForMicrotasksInProgress(VM& vm)
 static void waitForEntriesFromBeforeFirstConstructor(VM& vm)
 {
     ASSERT(!entriesWithoutTracking);
-    entriesWithoutTracking = new EntriesWithoutTracking;
+    entriesWithoutTracking = std::make_unique_for_overwrite<EntriesWithoutTracking>();
     entriesWithoutTracking->sinceFirstConstructor = entriesInProgress(vm);
     waitForMicrotasksInProgress(vm);
 }
@@ -122,7 +117,7 @@ void beginTrackingAsyncContexts(JSC::JSGlobalObject* globalObject)
     }
 
     if (!entriesWithoutTracking)
-        entriesWithoutTracking = new EntriesWithoutTracking;
+        entriesWithoutTracking = std::make_unique_for_overwrite<EntriesWithoutTracking>();
     auto& sinceFirstConstructor = entriesWithoutTracking->sinceFirstConstructor;
     EntriesIntoScript entries = entriesInProgress(vm);
     // Those that have returned without a job ending since.

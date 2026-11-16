@@ -1317,11 +1317,12 @@ fn keep_where_parsers_refused_data(
             paths.display_path,
             b"\" could not be parsed as ",
             type_attribute_of(*loader).as_bytes(),
-        ];
+        ]
+        .concat();
         provider.keep_where_text_is_refused(&RefusedText {
             path: paths.public_path,
             is_syntax_error: *loader == Loader::Json,
-            message: said_by_bun_run.unwrap_or(&message.concat()),
+            message: said_by_bun_run.unwrap_or(&message),
             line: place.line,
             column: place.column,
             offset: place.offset,
@@ -1648,6 +1649,9 @@ impl Build<'_> {
         steps.end_with(|| format!("{project_name}: bind modules"));
         self.diagnostics.add_module_failures(view, &graph);
         let runs_tests = self.options.load.runs_tests;
+        if runs_tests {
+            known_helpers.leave_replaceable_variables(&graph);
+        }
         let files = view.files();
         let compiled = files.compiled_files().iter().copied();
         for file in compiled.filter(|&file| !files.analysis(file).errors.is_empty()) {

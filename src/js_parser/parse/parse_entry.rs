@@ -1,8 +1,8 @@
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use core::mem::MaybeUninit;
 
 use crate::Error;
+use crate::Macro::{MacroContext, MacroRemap};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core;
 use bun_core::strings;
@@ -29,24 +29,6 @@ pub type TSXParser<'a> = P<'a, true, false>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
-
-/// Stack-local in-place `P` constructor. `P` is ~5 KiB; the previous
-/// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
-/// struct (ASM-verified: `_scan_imports` 14168-B frame, 5× `memcpy`). This
-/// macro reserves an uninitialized slot on the caller's stack, has `P::init`
-/// write to it directly, and yields a `&mut P` borrow that runs `P::drop` via
-/// `scopeguard` on scope exit — no `Self`-sized moves, no heap.
-macro_rules! init_p {
-    (let $p:ident: $ty:ty = ($($arg:expr),* $(,)?)) => {
-        let mut slot = MaybeUninit::<$ty>::uninit();
-        // SAFETY: `p` refers to the value `init` wrote into `slot`, which does not drop it. The
-        // guard holds the only reference to it, so it is dropped once and not used afterwards.
-        let mut guard = scopeguard::guard(<$ty>::init(&mut slot, $($arg),*), |p| unsafe {
-            core::ptr::drop_in_place(p)
-        });
-        let $p: &mut $ty = &mut guard;
-    };
-}
 
 /// What `Parser::parse_only` parsed.
 pub struct ParsedOnly<'p, 'a> {
@@ -146,8 +128,10 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
-    /// Keeps every directive in the AST, in its original position and with its original text.
-    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
+    /// Keeps every directive in its original position and with its original text, and keeps
+    /// `"use asm"`. The string that starts a block is kept the same way. Otherwise a directive
+    /// has its string value, an escaped spelling of `"use strict"` is dropped, and the prologue
+    /// of the file moves to `Ast.directives`.
     pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
@@ -159,7 +143,8 @@ pub struct Options<'a> {
     pub code_splitting: bool,
     pub package_version: &'a [u8],
 
-    pub macro_context: Option<&'a mut MacroContext>,
+    pub macro_context: Option<MacroContext<'a>>,
+    pub macro_remap: Option<&'a MacroRemap>,
 
     pub warn_about_unbundled_modules: bool,
 
@@ -198,57 +183,18 @@ pub struct Options<'a> {
     pub is_entry_point: bool,
 }
 
-impl<'a> Default for Options<'a> {
-    fn default() -> Self {
-        // `macro_context` is `None`; caller must set
-        // before use. This impl exists so `_parse` can `core::mem::take` the
-        // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
-        // by value) instead of bitwise-copying it and double-freeing on drop.
-        Options {
-            jsx: options::JSX::Pragma::default(),
-            ts: false,
-            keep_names: true,
-            ignore_dce_annotations: false,
-            keep_directives: false,
-            preserve_unused_imports_ts: false,
-            use_define_for_class_fields: true,
-            suppress_warnings_about_weird_code: true,
-            features: RuntimeFeatures::default(),
-            tree_shaking: false,
-            bundle: false,
-            code_splitting: false,
-            package_version: b"",
-            macro_context: None,
-            warn_about_unbundled_modules: true,
-            allow_unresolved: &options::AllowUnresolved::DEFAULT,
-            module_type: options::ModuleType::Unknown,
-            jsc_builtin_syntax: false,
-            output_format: options::Format::Esm,
-            transform_only: false,
-            import_meta_glob: None,
-            import_meta_main_value: None,
-            lower_import_meta_main_for_node_js: false,
-            framework: None,
-            repl_mode: false,
-            lower_toml_datetimes: false,
-            is_entry_point: false,
-        }
-    }
-}
-
 impl<'a> Options<'a> {
     /// Field-by-field clone for the bundler's empty-file fallback
     /// (`getEmptyAST(..., opts, ...)` after `caches.js.parse(..., opts, ...)`
-    /// returned null). `parse()` consumes `opts`,
-    /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
+    /// returned null). `parse()` consumes `opts`.
     ///
     /// Co-located with the struct so adding a field is a hard error here —
     /// the struct-literal below has no `..Default::default()` tail. Callers
     /// take this snapshot *before* moving `opts` into `parse()`.
     ///
-    /// Intentionally NOT carried over (lazy-export / `to_lazy_export_ast` does
-    /// not consult them; carrying them would alias or double-own):
-    /// - `macro_context` (`&'a mut`) — macro evaluation runs only on the full
+    /// Intentionally NOT carried over (lazy-export / `into_lazy_export_ast` does
+    /// not consult them):
+    /// - `macro_context`, `macro_remap` — macro evaluation runs only on the full
     ///   parse path.
     /// - `features.replace_exports` — visit-pass-only; the lazy stub has no
     ///   user statements to rewrite.
@@ -314,6 +260,7 @@ impl<'a> Options<'a> {
             code_splitting: self.code_splitting,
             package_version: self.package_version,
             macro_context: None,
+            macro_remap: None,
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
@@ -378,8 +325,6 @@ impl<'a> Options<'a> {
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
-        // `macro_context` is `None`
-        // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
@@ -394,10 +339,8 @@ impl<'a> Options<'a> {
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // Materializing an invalid `&mut T` is immediate UB regardless of
-            // use, so model "not yet set" as `None`; callers must assign `Some(_)`
-            // before any read site `.unwrap()`s it.
             macro_context: None,
+            macro_remap: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
@@ -486,19 +429,15 @@ impl<'a> Parser<'a> {
     /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
     /// `Err`: the source does not parse.
     #[cold]
-    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
-        type Pi<'a> = P<'a, false, false>;
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
+    pub fn parse_only<R>(self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
+        let p = &mut JavaScriptParser::init(
+            self.bump,
+            self.log,
+            self.source,
+            self.define,
+            self.lexer,
+            self.options,
         );
-        let options = core::mem::take(&mut self.options);
-        init_p!(let p: Pi<'_> =
-            (self.bump, self.log, self.source, self.define, lexer, options));
         p.starts_for_parse_only = Some(Default::default());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
@@ -508,6 +447,7 @@ impl<'a> Parser<'a> {
         }
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
@@ -525,7 +465,7 @@ impl<'a> Parser<'a> {
     /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
-    pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult<'a>) -> Result<(), Error> {
+    pub fn scan_imports(self, scan_pass: &mut ScanPassResult<'a>) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
@@ -535,33 +475,17 @@ impl<'a> Parser<'a> {
 
     #[cold]
     fn _scan_imports<const TS: bool>(
-        &mut self,
+        self,
         scan_pass: &mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
-        type Pi<'a, const TS: bool> = P<'a, TS, true>;
-        // `Lexer` owns `Vec`s and `Options` owns
-        // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
-        // when `self` later drops. Move them out, leaving inert placeholders.
-        //
-        // The inert placeholder lexer is given its *own* arena-allocated `Log`
-        // so it does not alias `self.log` at all — keeps the placeholder fully
-        // disjoint from the real `Log` handed to `P` and never read again.
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
+        let p = &mut P::<TS, true>::init(
+            self.bump,
+            self.log,
+            self.source,
+            self.define,
+            self.lexer,
+            self.options,
         );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        init_p!(let p: Pi<'a, TS> =
-            (self.bump, self.log, self.source, self.define, lexer, options));
 
         // `p` holds the result's containers while it scans.
         p.import_records =
@@ -599,6 +523,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
 
@@ -688,33 +613,20 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn to_lazy_export_ast(
-        &mut self,
+    pub(crate) fn into_lazy_export_ast(
+        self,
         expr: Expr,
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
-        // Move lexer/options out and leave inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
+        let p = &mut JavaScriptParser::init(
+            self.bump,
+            self.log,
+            self.source,
+            self.define,
+            self.lexer,
+            self.options,
         );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        init_p!(let p: JavaScriptParser<'_> =
-            (self.bump, self.log, self.source, self.define, lexer, options));
 
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
@@ -783,8 +695,47 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            &[],
         )?))
     }
+}
+
+/// Takes the directive prologue off the front of a module's statements. The prologue is data on
+/// the AST (`Ast.directives`), and what prints it prints it ahead of the statements it adds.
+/// A legal comment inside the prologue stays with the statements.
+fn split_directive_prologue<'a>(
+    arena: &'a Arena,
+    stmts: &'a mut [Stmt],
+) -> (&'a [Stmt], &'a mut [Stmt]) {
+    let mut prologue_len = 0;
+    let mut directive_count = 0;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt.data {
+            js_ast::StmtData::SDirective(_) => {
+                directive_count += 1;
+                prologue_len = i + 1;
+            }
+            js_ast::StmtData::SComment(_) => {}
+            _ => break,
+        }
+    }
+    if prologue_len == directive_count {
+        let (directives, stmts) = stmts.split_at_mut(prologue_len);
+        return (directives, stmts);
+    }
+
+    let mut directives = BumpVec::<Stmt>::with_capacity_in(directive_count, arena);
+    let mut kept_from = prologue_len;
+    for i in (0..prologue_len).rev() {
+        if matches!(stmts[i].data, js_ast::StmtData::SComment(_)) {
+            kept_from -= 1;
+            stmts[kept_from] = stmts[i];
+        } else {
+            directives.push(stmts[i]);
+        }
+    }
+    directives.reverse();
+    (directives.into_bump_slice(), &mut stmts[kept_from..])
 }
 
 /// A container queued by `lower_date_time_literals`' worklist.
@@ -892,10 +843,6 @@ impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         bun_crash_handler::scoped_action!(bun_crash_handler::Action::Parse(self.source.path.text));
 
-        // `parse()` consumes `self` by value, so we
-        // destructure here and hand the owned `lexer`/`options` straight to
-        // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
-        // double-free hazard.
         let Parser {
             options,
             lexer,
@@ -909,8 +856,7 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        init_p!(let p: P<'_, TS, false> =
-            (bump, log, source, define, lexer, options));
+        let p = &mut P::<TS, false>::init(bump, log, source, define, lexer, options);
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
@@ -974,6 +920,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -1013,6 +960,13 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
+        // `keep_directives` leaves each directive where it is written.
+        let (directives, stmts): (&'a [Stmt], &'a mut [Stmt]) = if p.options.keep_directives {
+            (&[], stmts)
+        } else {
+            split_directive_prologue(p.arena, stmts)
+        };
+
         // A second guard dropped at end of `_parse` restores the previous action.
         bun_crash_handler::scoped_action!(bun_crash_handler::Action::Visit(source.path.text));
 
@@ -1032,7 +986,7 @@ impl<'a> Parser<'a> {
                     .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
-            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(directives);
             let import_bindings = bun_react_compiler::collect_import_bindings(
                 stmts,
                 p.import_records.items(),
@@ -2587,7 +2541,7 @@ impl<'a> Parser<'a> {
             uses_test_api || p.options.features.is_test_entry_point || !p.did_apply_test_feature
         );
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang, directives)?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.
@@ -2755,8 +2709,3 @@ struct PragmaState {
     seen_cjs: bool,
     seen_bytecode: bool,
 }
-
-#[cfg(target_arch = "wasm32")]
-pub type MacroContext = Option<*mut c_void>;
-#[cfg(not(target_arch = "wasm32"))]
-pub type MacroContext = crate::Macro::MacroContext;

@@ -34,14 +34,14 @@ use core::fmt;
 use core::ops::ControlFlow;
 use std::sync::atomic::Ordering;
 
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, File};
 
 pub(crate) use crate::generated_bindgen::interpreter::js_ShellInterpreter as js;
 pub(crate) use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::r#async::Async;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::binary::Binary;
 pub(crate) use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
@@ -229,7 +229,6 @@ node_accessors! {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub(crate) type ExitCode = u16;
-pub(crate) type Pipe = [Fd; 2];
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -285,7 +284,7 @@ pub(crate) struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub args: JsCell<Box<ShellArgs>>,
 
-    pub(crate) keep_alive: bun_io::KeepAlive,
+    pub(crate) keep_alive: bun_io::JsKeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
@@ -547,7 +546,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
-            keep_alive: bun_io::KeepAlive::default(),
+            keep_alive: bun_io::JsKeepAlive::default(),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
@@ -798,7 +797,7 @@ impl Interpreter {
         })
     }
 
-    /// Drop the node and recycle its slot. The node's own `deinit` must run first.
+    /// Drop the node and recycle its slot. A `deinit` of the node's own must run first.
     pub(crate) fn free_node(&self, id: NodeId) {
         // Guard: callers may have stored `NodeId::NONE` in `currently_executing`
         // when `spawn_expr` failed (Subshell init error path). Nothing
@@ -835,7 +834,7 @@ impl Interpreter {
         if let Node::Pipeline(p) = self.node(parent) {
             let rightmost = p.cmds.as_deref().is_none_or(|c| {
                 c.len() < 2
-                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd { id, .. }) if *id == child)
+                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
             });
             if rightmost {
                 self.as_pipeline_mut(parent).base.interrupted = true;
@@ -947,15 +946,15 @@ impl Interpreter {
         io: IO,
     ) -> (Option<NodeId>, Yield) {
         let child = match expr {
-            ast::Expr::Cmd(c) => Cmd::init(self, shell, *c, parent, io),
+            ast::Expr::Cmd(c) => Cmd::init(self, Env::inherited(shell), *c, parent, io),
             ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
             ast::Expr::Pipeline(p) => Pipeline::init(self, shell, *p, parent, io),
             ast::Expr::Assign(a) => Assigns::init(self, shell, *a, parent, AssignCtx::Shell),
-            ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
-            ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
+            ast::Expr::If(i) => If::init(self, Env::inherited(shell), *i, parent, io),
+            ast::Expr::CondExpr(c) => CondExpr::init(self, Env::inherited(shell), *c, parent, io),
             ast::Expr::Subshell(s) => {
                 // Stmt/Binary callers dupe
-                // the env here so `Subshell::start`/`next` can use `base.shell`
+                // the env here so `Subshell::start`/`next` can use `shell`
                 // as-is. (Pipeline dupes itself and calls `Subshell::init`
                 // directly, so it does NOT go through this path.)
                 // SAFETY: `shell` is the live parent `ShellExecEnv` borrowed for the
@@ -988,17 +987,17 @@ impl Interpreter {
         }
         // NOTE: keep in sync with shell_state_dispatch! table (irregular Async/Free arms keep this hand-rolled for v1).
         match self.nodes.get()[id.idx()].kind() {
-            StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),
             StateKind::Binary => Binary::deinit(self, id),
             StateKind::Pipeline => Pipeline::deinit(self, id),
             StateKind::Cmd => Cmd::deinit(self, id),
-            StateKind::Assign => Assigns::deinit(self, id),
             StateKind::Expansion => Expansion::deinit(self, id),
-            StateKind::IfClause => If::deinit(self, id),
-            StateKind::Condexpr => CondExpr::deinit(self, id),
-            StateKind::Async => return, // Async deinit is purposefully empty; freed later by async_cmd_done → actually_deinit.
-            StateKind::Subshell => Subshell::deinit(self, id),
+            StateKind::Async => return, // Freed by `async_cmd_done`.
+            StateKind::Script
+            | StateKind::Assign
+            | StateKind::IfClause
+            | StateKind::Condexpr
+            | StateKind::Subshell => {}
             StateKind::Free => return,
         }
         self.free_node(id);
@@ -1019,7 +1018,6 @@ impl Interpreter {
     }
 
     pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
-        Async::actually_deinit(self, async_id);
         self.free_node(async_id);
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
@@ -1115,27 +1113,21 @@ impl Interpreter {
 
         // ── dup stdout ─────────────────────────────────────────────────────
         log!("Duping stdout");
-        let stdout_fd = if bun_core::output::stdio::is_stdout_null() {
+        let stdout = File::from_fd(if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
             shell_dup(Fd::stdout())?
-        };
+        });
 
-        // ── dup stderr (errdefer closes stdout on failure) ────────────────
+        // ── dup stderr ─────────────────────────────────────────────────────
         log!("Duping stderr");
-        let stderr_fd_res = if bun_core::output::stdio::is_stderr_null() {
-            open_null_device()
+        let stderr_fd = if bun_core::output::stdio::is_stderr_null() {
+            open_null_device()?
         } else {
-            shell_dup(Fd::stderr())
-        };
-        let stderr_fd = match stderr_fd_res {
-            Ok(fd) => fd,
-            Err(e) => {
-                closefd(stdout_fd);
-                return Err(e);
-            }
+            shell_dup(Fd::stderr())?
         };
 
+        let stdout_fd = stdout.into_raw();
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
@@ -1186,7 +1178,7 @@ impl Interpreter {
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
         Ok(())
     }
@@ -1376,7 +1368,7 @@ impl Interpreter {
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
@@ -1534,9 +1526,6 @@ impl Drop for Interpreter {
                 }
             }
         }
-
-        let event_loop_ctx = self.event_loop.as_event_loop_ctx();
-        self.keep_alive.unref(event_loop_ctx);
     }
 }
 
@@ -1579,7 +1568,6 @@ pub(crate) fn throw_shell_err(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
-/// Every state node holds a `*mut ShellExecEnv` in its `Base`.
 pub(crate) struct ShellExecEnv {
     pub(crate) _buffered_stdout: Bufio,
     pub(crate) _buffered_stderr: Bufio,
@@ -1968,10 +1956,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
     }
 }
 
-/// Note: takes a pre-cached `mode` from `event_loop.stdout().data
-/// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
-/// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
-/// (non-pollable → synchronous write path), matching Windows behavior.
+/// `false` (synchronous writes) if `fstat` fails, as on Windows.
 fn is_pollable(fd: Fd) -> bool {
     #[cfg(windows)]
     {
@@ -2023,15 +2008,8 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
     }
 }
 
-/// Tolerates EBADF (already-closed) so cleanup paths that may double-close
-/// don't panic; skips stdin/stdout/stderr.
-pub(crate) fn closefd(fd: Fd) {
-    use bun_sys::FdExt;
-    let _ = fd.close_allowing_bad_file_descriptor(None);
-}
-
-/// Closes with [`closefd`], which, unlike `Dir`, leaves a descriptor that landed on 0-2 open.
-pub(crate) struct OwnedFd(Fd);
+/// Unlike `Dir`, leaves a descriptor that landed on 0-2 open. Unlike `File`, tolerates EBADF.
+pub(crate) struct OwnedFd(pub(crate) Fd);
 
 impl OwnedFd {
     pub(crate) fn fd(&self) -> Fd {
@@ -2041,22 +2019,23 @@ impl OwnedFd {
 
 impl Drop for OwnedFd {
     fn drop(&mut self) {
+        use bun_sys::FdExt;
         if self.0.is_valid() {
-            closefd(self.0);
+            let _ = self.0.close_allowing_bad_file_descriptor(None);
         }
     }
 }
 
 /// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted
-/// to a libuv-owned fd via `makeLibUVOwnedForSyscall(.dup, .close_on_fail)` so
+/// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so
 /// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
 /// instead of a raw NT handle.
 pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
-        bun_sys::dup(fd)?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup, bun_sys::ErrorCase::CloseOnFail)
+        bun_sys::File::from_fd(bun_sys::dup(fd)?)
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
+            .map(bun_sys::File::into_raw)
     }
     #[cfg(not(windows))]
     {
@@ -2191,7 +2170,6 @@ pub(crate) fn shell_openat(
 ) -> bun_sys::Result<Fd> {
     #[cfg(windows)]
     {
-        use bun_sys::FdExt;
         if flags & bun_sys::O::DIRECTORY != 0 {
             if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -2205,11 +2183,10 @@ pub(crate) fn shell_openat(
                         ..Default::default()
                     },
                 )
+                .map(bun_sys::File::from_fd)
                 .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+                .map(bun_sys::File::into_raw);
             }
             return bun_sys::open_dir_at_windows_a(
                 dir,
@@ -2220,8 +2197,10 @@ pub(crate) fn shell_openat(
                     ..Default::default()
                 },
             )
+            .map(bun_sys::File::from_fd)
             .map_err(|e| e.with_path(path.as_bytes()))?
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
+            .map(bun_sys::File::into_raw);
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
@@ -2291,7 +2270,7 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
     let mut idx = 0usize;
     while idx < args.len() {
         // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init) that stay
-        // put until `Cmd::deinit`; every caller is done with `'a` inside the builtin's `start`.
+        // put until the node is freed; every caller is done with `'a` inside the builtin's `start`.
         let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
@@ -2474,7 +2453,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 // ShellTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Thread-pool task wrapper used by mv/rm/ls/mkdir/touch/cp builtins.
+/// Thread-pool task wrapper used by [`PoolTask`] and the mv/rm/cp builtins.
 ///
 /// A trait the per-builtin task struct implements. The container-of chain
 /// (WorkPoolTask → ShellTask → Ctx) is built from `core::mem::offset_of!` in
@@ -2537,8 +2516,7 @@ pub(crate) struct ShellTask {
     pub(crate) keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
-    /// field. Set at `ShellTask::new`; cleared (raw-ptr) only when the task
-    /// is freed.
+    /// field.
     pub(crate) interp: *mut Interpreter,
     /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
     /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
@@ -2546,18 +2524,18 @@ pub(crate) struct ShellTask {
     pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
 }
 
-impl ShellTask {
-    /// A queued completion that will never run (`Taskable::release_unrun`):
-    /// drop the keep-alive `schedule` took, as `run_from_main_thread` would have.
-    pub(crate) fn unref_unrun(&self) {
+impl Drop for ShellTask {
+    fn drop(&mut self) {
         self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
     }
+}
 
+impl ShellTask {
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
     #[track_caller]
-    pub(crate) fn new_child(parent: &ShellTask) -> Self {
+    fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
@@ -2571,12 +2549,13 @@ impl ShellTask {
             },
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
-            interp: core::ptr::null_mut(),
+            interp: parent.interp,
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
         }
     }
 
-    pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
+    pub(crate) fn new(interp: &Interpreter) -> Self {
+        let event_loop = interp.event_loop;
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
@@ -2587,7 +2566,7 @@ impl ShellTask {
             poster: None,
             event_loop,
             keep_alive: Default::default(),
-            interp: core::ptr::null_mut(),
+            interp: interp.as_ctx_ptr(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
         }
     }
@@ -2615,7 +2594,7 @@ impl ShellTask {
     /// exists (e.g. `ls`).
     ///
     /// SAFETY: same as [`Self::schedule`].
-    pub(crate) unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
+    unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `WorkPool::schedule` returns the worker
@@ -2644,15 +2623,14 @@ impl ShellTask {
     /// Called from the worker
     /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
     /// concurrent task so the main thread re-enters via
-    /// [`run_from_main_thread`](Self::run_from_main_thread) (which performs the
-    /// `keep_alive.unref` paired with [`schedule`](Self::schedule)).
+    /// [`run_from_main_thread`](Self::run_from_main_thread).
     ///
     /// # Safety
     /// `ctx` must be the same live heap allocation passed to
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
+        use bun_event_loop::EventLoopTask;
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
@@ -2669,8 +2647,7 @@ impl ShellTask {
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
-                    ct.from(ctx, AutoDeinit::ManualDeinit);
-                    poster.post_js(core::ptr::NonNull::from(ct));
+                    poster.post_js_intrusive(core::ptr::NonNull::from(ct.from(ctx)));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.
@@ -2682,12 +2659,6 @@ impl ShellTask {
         }
     }
 
-    /// Unrefs the
-    /// event-loop keep-alive paired with [`schedule`], then dispatches to
-    /// `C::run_from_main_thread`. The high-tier `runtime::dispatch::run_task`
-    /// `shell_dispatch!` arm calls this so the ref/unref pairing is kept at
-    /// the seam.
-    ///
     /// # Safety
     /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
     /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
@@ -2697,12 +2668,70 @@ impl ShellTask {
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this)
-                .keep_alive
-                .unref((*this).event_loop.as_event_loop_ctx());
             let interp = &*(*this).interp;
             C::run_from_main_thread(ctx, interp);
         }
+    }
+}
+
+/// What a [`PoolTask`] takes to the pool and back.
+pub(crate) trait ShellWork: Send {
+    const TAG: bun_event_loop::TaskTag;
+    fn run_from_thread_pool(&mut self, task: &ShellTask);
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield;
+}
+
+/// Owned by the pool, then by the queue of the interpreter's loop.
+pub(crate) struct PoolTask<W> {
+    task: ShellTask,
+    work: W,
+}
+
+impl<W: ShellWork> PoolTask<W> {
+    pub(crate) fn schedule(interp: &Interpreter, work: W) {
+        let task = ShellTask::new(interp);
+        // SAFETY: freed once it is back.
+        unsafe { ShellTask::schedule(bun_core::heap::alloc(Self { task, work })) };
+    }
+
+    pub(crate) fn schedule_no_ref(interp: &Interpreter, work: W) {
+        Self::schedule_task_no_ref(ShellTask::new(interp), work);
+    }
+
+    #[track_caller]
+    pub(crate) fn schedule_child(parent: &ShellTask, work: W) {
+        Self::schedule_task_no_ref(ShellTask::new_child(parent), work);
+    }
+
+    fn schedule_task_no_ref(task: ShellTask, work: W) {
+        // SAFETY: freed once it is back.
+        unsafe { ShellTask::schedule_no_ref(bun_core::heap::alloc(Self { task, work })) };
+    }
+}
+
+impl<W: ShellWork> bun_event_loop::Taskable for PoolTask<W> {
+    const TAG: bun_event_loop::TaskTag = W::TAG;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { bun_core::heap::destroy(this) };
+    }
+    /// See [`ShellTaskCtx`]: a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl<W: ShellWork> ShellTaskCtx for PoolTask<W> {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: &mut Self) {
+        this.work.run_from_thread_pool(&this.task);
+    }
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+        // SAFETY: the box that was scheduled, which the queue has let go of.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        let next = this.work.run_from_main_thread(interp);
+        drop(this);
+        next.run(interp);
     }
 }
 

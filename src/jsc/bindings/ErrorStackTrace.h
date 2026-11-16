@@ -208,12 +208,11 @@ inline bool hasExternalSourceMap()
     return image && image->isObfuscated();
 }
 
-// The file that every compiled frame of such an executable names. The line and column of a frame are a position in the map.
+// The file that every compiled frame of the program names in such an executable. The line and column of a frame are a position in the map.
 String externalSourceMapFileURL();
 // The same file, as a stack trace prints it.
 String externalSourceMapDisplayPath();
 
-String sourceURL(const JSC::AOT::SourcePosition&);
 String sourceURL(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
 String displayPath(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
 #endif

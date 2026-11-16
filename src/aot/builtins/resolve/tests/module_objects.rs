@@ -280,6 +280,38 @@ fn the_main_module_without_its_name() {
         assert_mentions(source, &[("process", EntryPoint, HolderEscaped)]);
     }
     for source in [
+        "process.on('zz', function () { 'use strict'; held = this; });",
+        "process.on('zz', listener);",
+        "process.prependOnceListener('zz', listeners.first);",
+        "const held = process.on('zz', () => {});",
+    ] {
+        let method = &source[source.find("process").unwrap()..source.find('(').unwrap()];
+        assert_mentions(source, &[(method, EntryPoint, HolderEscaped)]);
+    }
+    for source in [
+        "process.emit = function () { 'use strict'; return this; };",
+        "process.cwd = replaced;",
+    ] {
+        let method = &source[..source.find(' ').unwrap()];
+        assert_mentions(source, &[(method, EntryPoint, HolderEscaped)]);
+    }
+    for source in [
+        "process.on('zz', () => {}); process.once('zz', function () {}); process.emit('zz', value);",
+        "function end() {} process.on('exit', end);",
+        "process.emit = () => {}; process.exitCode = code; process.removeListener('zz', listener);",
+    ] {
+        assert_mentions(source, &[]);
+    }
+    for source in [
+        "require.resolve = function () { 'use strict'; return this; };",
+        "let f = () => {}; f = function () { 'use strict'; return this; }; require.resolve = f;",
+        "function f() {} f = function () { 'use strict'; return this; }; require.resolve = f;",
+        "require.resolve = replaced;",
+    ] {
+        assert_mentions(source, &[("require.resolve", EntryPoint, Escaped)]);
+    }
+    assert_mentions("require.resolve = () => {};", &[]);
+    for source in [
         "f(globalThis);",
         "const [root] = [globalThis];",
         "globalThis[key];",

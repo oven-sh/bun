@@ -11,7 +11,7 @@ use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::fs::FileSystem;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 // Wyhash (final4 variant). Must stay stable so on-disk
 // `.pile` filenames/hashes remain interchangeable across versions.
 use bun_wyhash::Wyhash;
@@ -85,7 +85,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-const EXPECTED_VERSION: u32 = 51;
+/// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
+/// prologue of the file first.
+const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -285,19 +287,12 @@ impl Entry {
             &mut tmpname_buf[..],
             input_hash,
         )?;
-        // Reborrow shared: `Tmpfile::create` wants `&ZStr`, and we still need
-        // it for the errdefer `unlinkat` below.
-        let tmpfilename: &ZStr = &*tmpfilename;
 
         let output_bytes = output_code.byte_slice();
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
-        let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
+        let tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
         {
-            let errdefer = scopeguard::guard((), |()| {
-                let _ = sys::unlinkat(destination_dir, tmpfilename);
-            });
-
             let mut metadata_buf = [0u8; Metadata::SIZE];
             let metadata_bytes_len: usize = {
                 let mut metadata = Metadata {
@@ -386,17 +381,15 @@ impl Entry {
             }
 
             let end_position = i64::try_from(file_len).expect("int cast");
-            let _ = sys::preallocate_file(tmpfile.fd.cast(), 0, end_position);
+            let _ = sys::preallocate_file(tmpfile.file.fd().cast(), 0, end_position);
             while position < end_position {
-                let written = sys::pwritev(tmpfile.fd, vecs, position)?;
+                let written = sys::pwritev(tmpfile.file.fd(), vecs, position)?;
                 if written == 0 {
                     return Err(crate::CrateError::WriteFailed);
                 }
 
                 position += i64::try_from(written).expect("int cast");
             }
-
-            let _ = scopeguard::ScopeGuard::into_inner(errdefer);
         }
 
         // The basename of a NUL-terminated
@@ -407,7 +400,7 @@ impl Entry {
         // SAFETY: `base` is a suffix of `destination_path`, which the caller
         // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
         let base_z = unsafe { ZStr::from_raw(base.as_ptr(), base.len()) };
-        tmpfile.finish(base_z)?;
+        tmpfile.finish(base_z).map_err(|(err, _)| err)?;
         Ok(())
     }
 
@@ -532,8 +525,7 @@ impl Entry {
                 self.metadata.sourcemap_byte_offset,
             )?;
 
-            // `InternalSourceMap::find` trusts these header offsets.
-            if !bun_sourcemap::InternalSourceMap::is_valid_blob(&sourcemap) {
+            if bun_sourcemap::InternalSourceMap::new(&sourcemap).is_none() {
                 return Err(crate::CrateError::InvalidSourceMap);
             }
 
@@ -582,27 +574,14 @@ pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
-/// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
-/// `MissingData` on a short read.
-///
-/// Uses `Box::new_uninit_slice` instead of `vec![0u8; len]` so the cache hot
-/// path (lint/create-next benches) skips the redundant zero-memset — the kernel
-/// is about to overwrite every byte anyway.
+/// Reads `len` bytes at `offset`, or returns `MissingData` on a short read.
 fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Box<[u8]>> {
-    let mut buf = Box::<[u8]>::new_uninit_slice(len);
-    // SAFETY: `MaybeUninit<u8>` and `u8` have identical size/align, and
-    // `pread_all` only ever *writes* into the slice (the syscall fills it) —
-    // it never reads the uninitialized bytes. Standard read-into-uninit-buffer
-    // pattern; the slice is not exposed past this point until proven full.
-    let dst: &mut [u8] =
-        unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
-    let read = file.pread_all(dst, offset)?;
-    if read != len {
+    let mut buf = Vec::with_capacity(len);
+    bun_core::vec::append_with(&mut buf, len, |spare| file.pread_all_buf(spare, offset))?;
+    if buf.len() != len {
         return Err(crate::CrateError::MissingData);
     }
-    // SAFETY: `pread_all` reported `len` bytes written, so every element is
-    // initialized.
-    Ok(unsafe { buf.assume_init() })
+    Ok(buf.into_boxed_slice())
 }
 
 impl RuntimeTranspilerCache {
@@ -845,14 +824,7 @@ impl RuntimeTranspilerCache {
             None
         } else {
             let dir = sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-            let dfd = dir.into_raw();
-            match dfd.make_lib_uv_owned() {
-                Ok(f) => Some(sys::File::from_fd(f)),
-                Err(e) => {
-                    dfd.close();
-                    return Err(e.into());
-                }
-            }
+            Some(sys::File::from_fd(dir.into_raw()).make_lib_uv_owned()?)
         };
 
         Entry::save(

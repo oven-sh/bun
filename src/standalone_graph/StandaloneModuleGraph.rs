@@ -25,8 +25,7 @@ use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
 };
 use bun_sourcemap as SourceMap;
-#[cfg(windows)]
-use bun_sys::FdExt as _;
+use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
 use bun_sys::{self as Syscall, E, Fd, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
@@ -1098,45 +1097,29 @@ impl LazySourceMap {
             LazySourceMap::None => None,
             LazySourceMap::Parsed(map) => Some(Arc::clone(map)),
             LazySourceMap::Serialized(serialized) => {
-                let Some(blob) = serialized.mapping_blob() else {
+                let Some(parts) = serialized.parts().filter(|parts| {
+                    SourceMap::InternalSourceMap::new(parts.mapping_blob).is_some()
+                }) else {
                     *self = LazySourceMap::None;
                     return None;
                 };
-                if !SourceMap::InternalSourceMap::is_valid_blob(blob) {
-                    *self = LazySourceMap::None;
-                    return None;
-                }
-                let ism = SourceMap::InternalSourceMap {
-                    data: blob.as_ptr(),
-                };
-                let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
+                let mut stored =
+                    SourceMap::ParsedSourceMap::from_internal(parts.mapping_blob.into());
 
-                let source_files_count = serialized.source_files_count();
                 // PERF: `external_source_names` is `Vec<Box<[u8]>>` so we
                 // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
-                let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
+                let file_names: Vec<Box<[u8]>> = (parts.file_names.iter())
+                    .map(|name| Box::from(serialized.get(name.get()).unwrap_or_default()))
+                    .collect();
                 let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
                     std::iter::repeat_with(std::sync::OnceLock::new)
-                        .take(source_files_count)
+                        .take(file_names.len())
                         .collect();
-                for i in 0..source_files_count {
-                    // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
-                    // (disjoint from bytecode); StringPointer offsets were serialized by
-                    // `to_bytes` and are in-bounds.
-                    file_names.push(Box::from(unsafe {
-                        slice_to(
-                            serialized.bytes.as_ptr(),
-                            serialized.bytes.len(),
-                            serialized.source_file_name(i),
-                        )
-                    }));
-                }
 
                 let data = Box::new(SourceMap::SerializedSourceMap::Loaded {
-                    map: SourceMap::SerializedSourceMap::SerializedSourceMap {
-                        bytes: serialized.bytes,
-                    },
+                    map: *serialized,
+                    compressed_files: parts.compressed_files,
                     decompressed_files: decompressed_contents_slice.into_boxed_slice(),
                 });
 
@@ -1507,9 +1490,6 @@ impl StandaloneModuleGraph {
                     contents,
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
-                            // `&[u8]` is align(1), and every structured read
-                            // from these bytes (header / StringPointer tables)
-                            // goes through `read_unaligned` in SerializedSourceMap.
                             bytes: sourcemap_bytes,
                         })
                     } else {
@@ -1708,20 +1688,17 @@ fn encode_text_module(
         string_builder.len += 1;
     }
     let start = string_builder.len;
-    let dst = string_builder.writable();
-    assert!(dst.len() >= 2 * utf8.len() + 2);
-    // SAFETY: `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file; asserted above.
-    let byte_len = unsafe {
-        bun_core::strings::write_wtf8_as_utf16le(utf8, first_non_ascii as usize, dst.as_mut_ptr())
-    };
-    dst[byte_len] = 0;
-    dst[byte_len + 1] = 0;
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "written at an even offset just above"
-    )]
-    // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
-    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
+    // `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file.
+    let dst: &mut [u16] =
+        bun_core::cast_slice_mut(&mut string_builder.writable()[..2 * utf8.len() + 2]);
+    let (ascii, rest) = utf8.split_at(first_non_ascii as usize);
+    let (ascii_units, rest_units) = dst.split_at_mut(ascii.len());
+    strings::copy_u8_into_u16(ascii_units, ascii);
+    let len = ascii.len() + strings::convert_utf8_to_utf16_in_buffer(rest_units, rest).len();
+    dst[len] = 0;
+    // SAFETY: `dst` starts with `len` initialized units.
+    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr(), len) };
+    let byte_len = 2 * len;
     string_builder.len += byte_len + 2;
     (
         StringPointer {
@@ -2407,9 +2384,11 @@ struct UnfinishedCopy<'a> {
 }
 
 impl<'a> UnfinishedCopy<'a> {
-    fn new(fd: Fd, name: &'a ZStr) -> Self {
-        let file = Some(ExecutableFile(fd));
-        Self { file, name }
+    fn new(file: ExecutableFile, name: &'a ZStr) -> Self {
+        Self {
+            file: Some(file),
+            name,
+        }
     }
 }
 
@@ -2445,22 +2424,10 @@ impl<'a> Injected<'a> {
     }
 }
 
-pub(crate) struct ExecutableFile(Fd);
-
-impl ExecutableFile {
-    fn fd(&self) -> Fd {
-        self.0
-    }
-}
-
-impl Drop for ExecutableFile {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        bun_sys::close_on_fork::close(self.0);
-        #[cfg(windows)]
-        self.0.close();
-    }
-}
+#[cfg(unix)]
+type ExecutableFile = bun_sys::close_on_fork::File;
+#[cfg(windows)]
+type ExecutableFile = bun_sys::File;
 
 pub(crate) fn inject<'a>(
     payload: &mut PayloadParts<'_>,
@@ -2557,7 +2524,7 @@ pub(crate) fn inject<'a>(
                     ..Default::default()
                 },
             ) {
-                Ok(f) => f,
+                Ok(fd) => ExecutableFile::from_fd(fd),
                 Err(e) => {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
@@ -2567,7 +2534,7 @@ pub(crate) fn inject<'a>(
                 }
             };
 
-            break 'brk (file, UnfinishedCopy::new(file, zname));
+            break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
         }
 
         #[cfg(target_os = "macos")]
@@ -2575,10 +2542,9 @@ pub(crate) fn inject<'a>(
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
             if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
-                if let bun_sys::Result::Ok(res) =
-                    Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0)
-                {
-                    break 'brk (res, UnfinishedCopy::new(res, zname));
+                let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
+                if let Ok(file) = ExecutableFile::openat(Fd::cwd(), zname, flags, 0) {
+                    break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
                 }
             }
         }
@@ -2586,10 +2552,10 @@ pub(crate) fn inject<'a>(
         // otherwise, just copy the file
 
         #[cfg(not(windows))]
-        let fd: Fd = 'brk2: {
+        let file = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match bun_sys::close_on_fork::openat(
+                match ExecutableFile::openat(
                     Fd::cwd(),
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
@@ -2647,12 +2613,12 @@ pub(crate) fn inject<'a>(
             unreachable!()
         };
         #[cfg(not(windows))]
-        let copy = UnfinishedCopy::new(fd, zname);
+        let (fd, copy) = (file.fd(), UnfinishedCopy::new(file, zname));
         #[cfg(not(windows))]
-        let self_fd: Fd = 'brk2: {
+        let template = 'brk2: {
             for retry in 0..3 {
                 match Syscall::open(self_exe, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0) {
-                    Ok(res) => break 'brk2 res,
+                    Ok(res) => break 'brk2 Syscall::CloseOnDrop::new(res),
                     Err(err) => {
                         if retry < 2 {
                             match err.get_errno() {
@@ -2677,8 +2643,6 @@ pub(crate) fn inject<'a>(
 
         #[cfg(not(windows))]
         {
-            let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
-
             // A trimmed executable is written whole, from the template's bytes: an ELF one where it has compiled code.
             let is_written_whole = additions.trims()
                 && match target.os {
@@ -2686,7 +2650,7 @@ pub(crate) fn inject<'a>(
                     CompileTargetOs::Mac => true,
                     _ => false,
                 };
-            if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
+            if !is_written_whole && let Err(e) = bun_sys::copy_file(template.fd(), fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e
@@ -3031,16 +2995,16 @@ pub(crate) fn download_to_path(
         let url = bun_url::URL::parse(&url_str_copy);
         {
             // The unconditional
-            // `progress.end()` below is sufficient: no fallible call sits between
+            // `refresher.end()` below is sufficient: no fallible call sits between
             // `refresher.start` and it, so every exit path (including the
             // error returns after it) ends the node exactly once.
             // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
-            let progress = refresher.start(b"Downloading", 0);
+            refresher.start(b"Downloading", 0);
 
-            let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
+            let mut async_http = bun_http::AsyncHTTP::init_sync(
                 bun_http::Method::GET,
                 url,
                 Default::default(),
@@ -3049,13 +3013,12 @@ pub(crate) fn download_to_path(
                 http_proxy,
                 bun_http::ProxySettings::from_env(env),
                 bun_http::FetchRedirect::Follow,
-            ));
-            async_http.client.progress_node =
-                core::ptr::NonNull::new(core::ptr::from_mut(progress));
+            );
+            async_http.client.progress = Some(&mut refresher);
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
             let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
-            progress.end();
+            refresher.end();
             let status_code = send_result?.status_code() as u16;
 
             match status_code {
@@ -3082,8 +3045,6 @@ pub(crate) fn download_to_path(
             }
 
             {
-                // Note: reshaped for borrowck — `refresher.start` borrows
-                // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
                 let gunzip_result = (|| -> crate::Result<()> {
                     let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
@@ -3096,7 +3057,7 @@ pub(crate) fn download_to_path(
                         .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();
-                refresher.root.end();
+                refresher.end();
                 gunzip_result?;
             }
             refresher.refresh();
@@ -3124,7 +3085,7 @@ pub(crate) fn download_to_path(
                     },
                 );
                 if extract_res.is_err() {
-                    refresher.root.end();
+                    refresher.end();
                     // Return error without printing - let caller handle the messaging
                     return Err(crate::Error::ExtractionFailed);
                 }
@@ -3148,14 +3109,14 @@ pub(crate) fn download_to_path(
 
                             // fallthrough, failed for another reason
                         }
-                        refresher.root.end();
+                        refresher.end();
                         // Return error without printing - let caller handle the messaging
                         return Err(crate::Error::ExtractionFailed);
                     }
                     break;
                 }
                 drop(tmpdir);
-                refresher.root.end();
+                refresher.end();
             }
             refresher.refresh();
         }
@@ -3880,65 +3841,6 @@ fn from_bytes_alloc(
 /// loaded in memory as is. Source contents are compressed with ZSTD to
 /// reduce the file size, and mappings are stored as an InternalSourceMap
 /// blob (varint deltas + sync points) so lookups need no decode pass.
-#[derive(Clone, Copy)]
-pub struct SerializedSourceMap {
-    pub bytes: &'static [u8],
-}
-
-/// Following the header bytes:
-/// - source_files_count number of StringPointer, file names
-/// - source_files_count number of StringPointer, zstd compressed contents
-/// - the InternalSourceMap blob, `map_bytes_length` bytes
-/// - all the StringPointer contents
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct SerializedSourceMapHeader {
-    pub source_files_count: u32,
-    pub map_bytes_length: u32,
-}
-
-impl SerializedSourceMap {
-    pub(crate) fn header(self) -> SerializedSourceMapHeader {
-        // SAFETY: bytes.len() >= size_of::<Header>() must hold (caller checked); align(1) read.
-        unsafe {
-            core::ptr::read_unaligned(self.bytes.as_ptr().cast::<SerializedSourceMapHeader>())
-        }
-    }
-
-    pub(crate) fn mapping_blob(self) -> Option<&'static [u8]> {
-        if self.bytes.len() < size_of::<SerializedSourceMapHeader>() {
-            return None;
-        }
-        let head = self.header();
-        let start = size_of::<SerializedSourceMapHeader>()
-            + head.source_files_count as usize * size_of::<StringPointer>() * 2;
-        if start > self.bytes.len() || head.map_bytes_length as usize > self.bytes.len() - start {
-            return None;
-        }
-        Some(&self.bytes[start..][..head.map_bytes_length as usize])
-    }
-
-    // Note: the serialized byte buffer carries no alignment guarantee. Materializing a
-    // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
-    // (UB otherwise), so expose count + indexed unaligned reads instead.
-
-    pub(crate) fn source_files_count(self) -> usize {
-        self.header().source_files_count as usize
-    }
-
-    fn string_pointers_base(self) -> *const StringPointer {
-        self.bytes[size_of::<SerializedSourceMapHeader>()..]
-            .as_ptr()
-            .cast()
-    }
-
-    pub(crate) fn source_file_name(self, index: usize) -> StringPointer {
-        debug_assert!(index < self.source_files_count());
-        // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
-        unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
-    }
-}
-
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
@@ -3985,20 +3887,20 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         return Err(crate::Error::InvalidSourceMap);
     }
 
-    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq)
+    let map_blob = SourceMap::internal_source_map::from_vlq(map_vlq)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
-    let map_blob_len_u32 =
-        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
-    let sources_len_u32 =
-        u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
-    header_list.extend_from_slice(&sources_len_u32.to_le_bytes());
-    header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
+    let header = SourceMap::SerializedSourceMap::Header {
+        source_files_count: u32::try_from(sources_paths.items().len())
+            .map_err(|_| crate::Error::SourceMapTooLarge)?,
+        map_bytes_length: u32::try_from(map_blob.len())
+            .map_err(|_| crate::Error::SourceMapTooLarge)?,
+    };
+    header_list.extend_from_slice(bun_core::bytes_of(&header));
 
-    let string_payload_start_location = size_of::<u32>()
-        + size_of::<u32>()
+    let string_payload_start_location = size_of_val(&header)
         + size_of::<StringPointer>() * sources_content.items().len() * 2 // path + source
         + map_blob.len();
 

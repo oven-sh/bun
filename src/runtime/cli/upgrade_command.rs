@@ -1,6 +1,5 @@
 use bun_collections::VecExt;
 use core::ffi::c_char;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
@@ -255,8 +254,7 @@ impl UpgradeCommand {
             crate::cli::cli_arena().alloc(MutableString::init(2048)?);
         let headers_buf: &'static [u8] = crate::cli::cli_dupe(&headers_buf);
 
-        // ensure very stable memory address
-        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             header_entries,
@@ -265,15 +263,11 @@ impl UpgradeCommand {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
-        ));
+        );
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
-            // `progress_node` stores an untracked NonNull borrow of the caller's
-            // `refresher.root`; sound because `send_sync` below completes before this
-            // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node =
-                Some(NonNull::from(&mut refresher.as_deref_mut().unwrap().root));
+            async_http.client.progress = refresher.as_deref_mut();
         }
         let response = async_http.send_sync(metadata_body)?;
 
@@ -298,11 +292,11 @@ impl UpgradeCommand {
             Err(err) => {
                 if !SILENT {
                     let refresher = refresher.expect("infallible: progress active");
-                    refresher.root.end();
+                    refresher.end();
                     refresher.refresh();
 
                     if log.errors > 0 {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = log.print(Output::error_writer());
                         Global::exit(1);
                     } else {
                         bun_core::pretty_errorln!(
@@ -320,10 +314,10 @@ impl UpgradeCommand {
         if log.errors > 0 {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print(Output::error_writer());
                 Global::exit(1);
             }
 
@@ -340,7 +334,7 @@ impl UpgradeCommand {
         if !expr.is_object() {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
                 bun_core::pretty_errorln!(
@@ -362,7 +356,7 @@ impl UpgradeCommand {
         if version.tag.is_empty() {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
                 bun_core::pretty_errorln!(
@@ -457,7 +451,7 @@ impl UpgradeCommand {
 
         if !SILENT {
             let refresher = refresher.expect("infallible: progress active");
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
@@ -561,8 +555,7 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
-            let refresher: &mut Progress::Progress =
-                Box::leak(Box::new(Progress::Progress::default()));
+            let refresher = &mut Progress::Progress::default();
             refresher.start(b"Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
@@ -574,7 +567,7 @@ impl UpgradeCommand {
                 return Ok(());
             };
 
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             if !Environment::IS_CANARY {
@@ -629,15 +622,15 @@ impl UpgradeCommand {
         let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let refresher: &mut Progress::Progress =
-                Box::leak(Box::new(Progress::Progress::default()));
-            refresher.start(b"Downloading", version.size as usize).unit = Progress::Unit::Bytes;
+            let refresher = &mut Progress::Progress::default();
+            refresher.start(b"Downloading", version.size as usize);
+            refresher.root().unit.set(Progress::Unit::Bytes);
             refresher.refresh();
             // Store in the process-lifetime CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
 
-            let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+            let mut async_http = HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
                 zip_url,
                 headers::EntryList::default(),
@@ -646,10 +639,8 @@ impl UpgradeCommand {
                 http_proxy,
                 HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
-            ));
-            // `refresher` is intentionally leaked (process-lifetime), so the
-            // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node = Some(NonNull::from(&mut refresher.root));
+            );
+            async_http.client.progress = Some(refresher);
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;
@@ -672,13 +663,10 @@ impl UpgradeCommand {
                 200 => {}
                 _ => return Err(crate::Error::HTTPError),
             }
-            // Release the immutable borrow of `env_loader` (via `http_proxy`)
-            // before the map mutations below.
-            drop(async_http);
 
             let bytes = zip_file_buffer.slice();
 
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             if bytes.is_empty() {
@@ -1253,22 +1241,19 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // `spawn_sync` takes the C-style `[*:null]?[*:0]const u8` envp
-                // directly, so build it from the DotEnv map. Output is buffered and
-                // silently dropped along with any spawn error.
-                if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
-                    let _ = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_ptr().cast::<*const c_char>()),
-                        cwd: Box::<[u8]>::from(target_dirname),
-                        stdout: spawn_sync::SyncStdio::Buffer,
-                        stderr: spawn_sync::SyncStdio::Buffer,
-                        stdin: spawn_sync::SyncStdio::Ignore,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                }
+                let envp = env_loader.map.to_envp();
+                // Output is buffered and silently dropped along with any spawn error.
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: build_argv(&completions_argv),
+                    envp: Some(envp.as_list()),
+                    cwd: Box::<[u8]>::from(target_dirname),
+                    stdout: spawn_sync::SyncStdio::Buffer,
+                    stderr: spawn_sync::SyncStdio::Buffer,
+                    stdin: spawn_sync::SyncStdio::Ignore,
+                    #[cfg(windows)]
+                    windows: spawn_windows_options(),
+                    ..Default::default()
+                });
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
@@ -1326,7 +1311,7 @@ pub(crate) mod upgrade_js_bindings {
     // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
     // effectively single-threaded.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::File>> = bun_core::RacyCell::new(None);
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
@@ -1393,7 +1378,7 @@ pub(crate) mod upgrade_js_bindings {
                     // System-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
                     unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
+                        TEMPDIR_FD.write(Some(sys::File::from_fd(sys::Fd::from_system(fd))));
                     }
                 }
                 _ => {}
@@ -1404,13 +1389,8 @@ pub(crate) mod upgrade_js_bindings {
     pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
-            use bun_sys::FdExt as _;
             // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
-            // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
-                fd.close();
-            }
+            unsafe { TEMPDIR_FD.write(None) };
         }
     }
 }

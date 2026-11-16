@@ -123,8 +123,7 @@ pub(crate) use yield_::Yield;
 pub(crate) mod dispatch_tasks;
 
 /// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
-/// `runtime::dispatch::run_file_poll` can name `StaticPipeWriter<ShellSubprocess>`
-/// for the `SHELL_STATIC_PIPE_WRITER` poll arm.
+/// `runtime::dispatch::__bun_run_io` can name `StaticPipeWriter<ShellSubprocess>`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 
@@ -145,7 +144,7 @@ pub(crate) mod ast {
     use bun_shell_parser::parse::ast as p;
     pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
-    pub(crate) type SmolList<T, const N: usize> = bun_shell_parser::parse::SmolList<'static, T, N>;
+    pub(crate) type SmolList<T> = bun_shell_parser::parse::SmolList<'static, T>;
     pub(crate) type Script = p::Script<'static>;
     pub(crate) type Stmt = p::Stmt<'static>;
     pub(crate) type Expr = p::Expr<'static>;

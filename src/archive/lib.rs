@@ -17,6 +17,8 @@ use bun_wyhash::hash;
 
 pub mod error;
 pub use error::{Error, ReadDataError, Result};
+mod npm_path;
+pub use npm_path::normalize_npm_entry_path;
 
 pub use bun_tar as tar;
 use bun_tar::{Dialect, Entry, Event, MemoryDecoder, Options};
@@ -35,7 +37,7 @@ pub fn os_path<'a>(
     buf: &'a mut Vec<OSPathChar>,
 ) -> Result<&'a [OSPathChar], AllocError> {
     buf.clear();
-    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf).map_err(|_| AllocError)?;
+    bun_tar::compose::to_utf16(entry, buf).map_err(|_| AllocError)?;
     Ok(buf)
 }
 
@@ -198,35 +200,13 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// Returns the path where node-tar would extract the npm tarball entry `path`, whose leading
-/// `package/` is already removed. The result is empty for an entry that node-tar skips.
-pub fn normalize_npm_entry_path<'a, T: bun_paths::PathChar>(
-    path: &[T],
-    buf: &'a mut [T],
-) -> &'a mut [T] {
-    if path
-        .split(|c| bun_paths::is_sep_any_t(*c))
-        .any(|part| part == [T::from_u8(b'.'); 2])
-    {
-        return &mut buf[..0];
-    }
-    #[cfg(windows)]
-    return bun_paths::resolve_path::normalize_buf_t::<T, bun_paths::platform::Auto>(path, buf);
-    #[cfg(not(windows))]
-    bun_paths::resolve_path::normalize_string_generic_t::<T, false, false>(
-        path,
-        buf,
-        T::from_u8(b'/'),
-        |c| c == T::from_u8(b'/'),
-    )
-}
-
 /// Whether Windows takes the normalized `path` to start somewhere else than in the directory it is opened in.
 #[cfg(windows)]
-pub fn has_windows_root<T: bun_paths::PathChar>(path: &[T]) -> bool {
+pub fn starts_elsewhere_on_windows<T: bun_paths::PathChar>(path: &[T]) -> bool {
     bun_paths::is_absolute_windows_t(path)
         || matches!(path, [letter, colon, ..]
             if bun_paths::resolve_path::is_drive_letter_t(*letter) && *colon == T::from_u8(b':'))
+        || path.split(|c| bun_paths::is_sep_any_t(*c)).next() == Some(T::lit(b".."))
 }
 
 /// Returns the first component of an entry's path, which is the archive's root folder.
@@ -369,11 +349,8 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     // returns BadPathName here.
     let it = bun_paths::ComponentIterator::init(sub_path, bun_paths::PathFormat::Windows)?;
     bun_paths::make_path_with(it, |prefix| {
-        match open_dir_at_windows(dir_fd, prefix, opts) {
-            Ok(fd) => {
-                fd.close();
-                Ok(bun_paths::MakePathStep::Created)
-            }
+        match open_dir_at_windows(dir_fd, prefix, opts).map(File::from_fd) {
+            Ok(_) => Ok(bun_paths::MakePathStep::Created),
             Err(e) if e.get_errno() == E::ENOENT => Ok(bun_paths::MakePathStep::NotFound(e.into())),
             Err(e) => Err(e.into()),
         }
@@ -429,6 +406,9 @@ pub trait ArchiveAppender {
     }
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
 
+    /// See [`tar::Reader::skipped_header`].
+    fn on_skipped_header(&mut self) {}
+
     fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
         let _ = path;
         unreachable!()
@@ -447,24 +427,10 @@ impl Archiver {
         // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
-        // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
-        let dir: Fd = 'brk: {
-            let cwd = Fd::cwd();
-
-            // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
-            if bun_paths::is_absolute(root) {
-                let Ok(d) = bun_sys::open_dir_absolute(root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            } else {
-                let Ok(d) = bun_sys::open_dir_at(cwd, root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            }
+        // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
+        let Ok(dir) = bun_sys::Dir::open(root) else {
+            return Ok(());
         };
-        let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
         let mut reader = open_memory(file_buffer, Dialect::General)?;
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
@@ -520,7 +486,7 @@ impl Archiver {
                 continue 'loop_;
             }
             #[cfg(windows)]
-            if has_windows_root(pathname) {
+            if starts_elsewhere_on_windows(pathname) {
                 continue 'loop_;
             }
             let dirname = strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
@@ -528,11 +494,10 @@ impl Archiver {
             let size: usize = usize::try_from(entry.size().max(0)).unwrap();
             let in_the_way = leaves_root(pathname)?
                 || (size > 0
-                    && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
-                        Ok(opened) => {
-                            let _close = bun_sys::CloseOnDrop::new(opened);
-                            bun_sys::get_file_size(opened)? > 0
-                        }
+                    && match bun_sys::openat_a(&dir, pathname, bun_sys::O::WRONLY, 0)
+                        .map(bun_sys::CloseOnDrop::new)
+                    {
+                        Ok(opened) => opened.get_end_pos()? > 0,
                         Err(_) => false,
                     });
 
@@ -646,9 +611,8 @@ impl Archiver {
                 let sep: OSPathChar = b'/' as OSPathChar;
                 let mut i = 0usize;
                 while i < options.depth_to_skip {
-                    // npm counts the empty name before a leading `/` as a component.
                     while let [first, rest @ ..] = remaining {
-                        if *first == sep && !options.npm {
+                        if *first == sep {
                             remaining = rest;
                         } else {
                             break;
@@ -673,7 +637,18 @@ impl Archiver {
             }
             let pathname: &[OSPathChar] = remaining;
 
-            if pathname.len() >= normalized_buf.len() {
+            let normalized = if options.npm {
+                debug_assert_eq!(options.depth_to_skip, 1);
+                normalize_npm_entry_path(entry, &mut normalized_buf[..])?
+            } else {
+                (pathname.len() < normalized_buf.len()).then(|| {
+                    bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
+                        pathname,
+                        &mut normalized_buf[..],
+                    )
+                })
+            };
+            let Some(normalized) = normalized else {
                 if options.log {
                     bun_core::warn!(
                         "Skipping entry with a path longer than the maximum path length: {}\n",
@@ -684,15 +659,6 @@ impl Archiver {
                     );
                 }
                 continue;
-            }
-
-            let normalized = if options.npm {
-                normalize_npm_entry_path(pathname, &mut normalized_buf[..])
-            } else {
-                bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
-                    pathname,
-                    &mut normalized_buf[..],
-                )
             };
             let normalized_len = normalized.len();
             normalized_buf[normalized_len] = 0;
@@ -700,12 +666,6 @@ impl Archiver {
             let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
             if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
                 continue;
-            }
-
-            // On POSIX the leading separators are already gone.
-            #[cfg(windows)]
-            if has_windows_root(path) {
-                continue 'loop_;
             }
 
             #[cfg(windows)]
@@ -726,6 +686,12 @@ impl Archiver {
                         _ => {}
                     }
                 }
+            }
+
+            // On POSIX the leading separators are already gone.
+            #[cfg(windows)]
+            if starts_elsewhere_on_windows(path) {
+                continue 'loop_;
             }
 
             let path_slice: &[OSPathChar] = &path[..];
@@ -852,13 +818,7 @@ impl Archiver {
                         }
                     };
 
-                    let output = match file_handle_native.make_lib_uv_owned() {
-                        Ok(fd) => File::from_fd(fd),
-                        Err(err) => {
-                            file_handle_native.close();
-                            return Err(err.into());
-                        }
-                    };
+                    let output = File::from_fd(file_handle_native).make_lib_uv_owned()?;
 
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 
@@ -899,6 +859,10 @@ impl Archiver {
                 }
                 _ => {}
             }
+        }
+
+        if reader.skipped_header() {
+            appender.on_skipped_header();
         }
 
         #[cfg(unix)]

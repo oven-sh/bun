@@ -1,4 +1,4 @@
-//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.c.
+//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.cpp.
 //!
 //! One `ClientContext` per HTTP-thread loop wraps the lsquic client engine;
 //! each `ClientSession` is one QUIC connection to an origin and multiplexes
@@ -52,5 +52,4 @@ pub use stream::Stream;
 pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 #[allow(non_upper_case_globals)]
 pub static live_streams: AtomicU32 = AtomicU32::new(0);
-pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;

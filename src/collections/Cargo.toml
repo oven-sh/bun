@@ -27,6 +27,4 @@ bun_core.workspace = true
 bun_wyhash.workspace = true
 bun_ptr.workspace = true
 rustc-hash = "2"
-
-
-bun_simdutf_sys.workspace = true
+scopeguard.workspace = true

@@ -46,17 +46,13 @@ impl DevServer {
     pub(crate) fn replace_asset_path(
         &mut self,
         abs_path: &[u8],
-        mut contents: AnyBlob,
+        contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
         debug_assert!(self.magic == Magic::Valid);
-        let Self {
-            assets,
-            client_graph,
-            server,
-            ..
-        } = self;
+        let Self { graphs, server, .. } = self;
+        let assets = &mut graphs.assets;
         // Invariant: `files.count() == refs.len()`, re-checked before each
         // return below.
 
@@ -92,8 +88,8 @@ impl DevServer {
             // `StringArrayHashMap` owns its keys as `Box<[u8]>`, and
             // `get_or_put` already boxed `abs_path` on insert, so no key
             // reassignment is needed — `insert_empty` is still called for its
-            // side effect of registering the file in `client_graph`.
-            let _ = client_graph.insert_empty(abs_path, FileKind::Unknown)?;
+            // side effect of registering the file in the client graph.
+            let _ = graphs.client.insert_empty(abs_path, FileKind::Unknown)?;
         } else {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
@@ -137,8 +133,6 @@ impl DevServer {
             MapEntry::Occupied(occupied) => {
                 let file_index = occupied.index();
                 assets.refs[file_index] += 1;
-                // Release the owned blob on the duplicate-content path.
-                contents.detach();
                 file_index
             }
         };

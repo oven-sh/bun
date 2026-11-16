@@ -14,7 +14,6 @@
 
 use core::fmt::{self, Write};
 
-use super::parse::SmolList;
 use super::parse::ast::{
     Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
     Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
@@ -75,13 +74,6 @@ fn write_stmt(w: &mut impl Write, s: &Stmt<'_>) -> fmt::Result {
     w.write_str("{\"exprs\":")?;
     write_array(w, s.exprs, write_expr)?;
     w.write_char('}')
-}
-
-fn write_stmt_smol<const N: usize>(
-    w: &mut impl Write,
-    s: &SmolList<'_, Stmt<'_>, N>,
-) -> fmt::Result {
-    write_array(w, s.slice(), write_stmt)
 }
 
 fn write_expr(w: &mut impl Write, e: &Expr<'_>) -> fmt::Result {
@@ -186,11 +178,11 @@ fn write_subshell(w: &mut impl Write, s: &Subshell<'_>) -> fmt::Result {
 
 fn write_if(w: &mut impl Write, i: &If<'_>) -> fmt::Result {
     w.write_str("{\"cond\":")?;
-    write_stmt_smol(w, &i.cond)?;
+    write_array(w, &i.cond, write_stmt)?;
     w.write_str(",\"then\":")?;
-    write_stmt_smol(w, &i.then)?;
+    write_array(w, &i.then, write_stmt)?;
     w.write_str(",\"else_parts\":")?;
-    write_array(w, i.else_parts.slice(), |w, part| write_stmt_smol(w, part))?;
+    write_array(w, &i.else_parts, |w, part| write_array(w, part, write_stmt))?;
     w.write_char('}')
 }
 

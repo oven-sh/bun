@@ -41,16 +41,15 @@ public:
 
     uv_tty_t* tty() { return &handle; }
 
-    void close()
-    {
-        uv_close((uv_handle_t*)(tty()), [](uv_handle_t* handle) -> void {
-            uv_tty_t* ttyHandle = (uv_tty_t*)handle;
-            ptrdiff_t offset = offsetof(UV::TTY, handle);
-
-            UV::TTY* tty = (UV::TTY*)((char*)ttyHandle - offset);
-            delete tty;
-        });
-    }
+    // The deleter once `uv_tty_init()` has succeeded.
+    struct Close {
+        void operator()(TTY* tty) const
+        {
+            uv_close((uv_handle_t*)(tty->tty()), [](uv_handle_t* handle) -> void {
+                delete (TTY*)((char*)handle - offsetof(TTY, handle));
+            });
+        }
+    };
 };
 
 }
@@ -139,19 +138,10 @@ public:
         static_cast<TTYWrapObject*>(cell)->TTYWrapObject::~TTYWrapObject();
     }
 
-    ~TTYWrapObject()
-    {
-#if OS(WINDOWS)
-        if (handle) {
-            handle->close();
-        }
-#endif
-    }
-
     int fd = -1;
 
 #if OS(WINDOWS)
-    UV::TTY* handle;
+    std::unique_ptr<UV::TTY, UV::TTY::Close> handle;
 #else
     BunTTYState ttyState {};
 #endif
@@ -162,9 +152,6 @@ private:
         , fd(fd)
 
     {
-#if OS(WINDOWS)
-        handle = nullptr;
-#endif
     }
 
     void finishCreation(JSC::VM& vm)
@@ -457,14 +444,13 @@ public:
         }
 
 #if OS(WINDOWS)
-        auto* handle = new UV::TTY();
-        memset(handle, 0, sizeof(UV::TTY));
-        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
+        auto uninitialized = std::make_unique<UV::TTY>();
+        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), uninitialized->tty(), fd, 0);
         if (rc < 0) {
-            delete handle;
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
             return {};
         }
+        std::unique_ptr<UV::TTY, UV::TTY::Close> handle { uninitialized.release() };
         ASSERT(handle->tty()->loop);
 #else
         if (!isatty(fd)) {
@@ -477,7 +463,7 @@ public:
         auto* object = TTYWrapObject::create(vm, globalObject, structure, fd);
 
 #if OS(WINDOWS)
-        object->handle = handle;
+        object->handle = WTF::move(handle);
 #endif
 
         return JSValue::encode(object);

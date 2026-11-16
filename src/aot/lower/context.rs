@@ -313,8 +313,8 @@ fn analyze_scopes_of_file(
     let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
     analyze_scopes(&ScopeInput {
         file,
-        hir: &module.hir,
-        bound: &module.bound,
+        hir: files.hir(file),
+        bound: files.bound(file),
         compiled: module.compiled.expect("only compiled files are lowered"),
         modules: inputs.modules,
         builtins: file_inputs.builtins,

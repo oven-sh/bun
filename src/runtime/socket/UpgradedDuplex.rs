@@ -225,7 +225,7 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
-        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
+        // Retry writes parked during the handshake, like openssl.cpp's `ssl_write_wants_read`.
         if handshake_success && !this.is_shutdown() {
             (this.handlers.on_writable)(this.handlers.ctx);
         }
@@ -696,9 +696,7 @@ impl UpgradedDuplex {
     }
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.current_timeout.set(ms);
 
         // if the interval is 0 means that we stop the timer

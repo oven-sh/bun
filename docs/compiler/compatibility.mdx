@@ -92,7 +92,7 @@ bun compile ./strings.ts && ./strings
 
 `eval`, `new Function` and `node:vm` work, under a computed name like `globalThis[name](code)` too. The build can't see that code and the executable has no JIT, so Bun interprets it.
 
-There's one exception. Some libraries make many similar functions from a template, as in `eval(template.replace("NAME", "add"))` or `new Function("a", "b", "return a " + operator + " b")`. Where the build can work out such strings from the constants of the file, it compiles the function. For `eval` the string has to be one function in parentheses. The executable uses the function where the strings turn out to be the same.
+There's one exception. Some libraries make many similar functions from a template, as in `eval(template.replace("NAME", "add"))` or `new Function("a", "b", "return a " + operator + " b")`. Where the build can work out such strings from the constants of the file, and those that it imports from other files, it compiles the function. For `eval` the string has to be one function in parentheses. The executable uses the function where the strings turn out to be the same.
 
 - Where the build can't tell that a call evaluates code, the call throws an `EvalError`. `fn[name](code)` does if `"constructor"` isn't written anywhere in your code.
 - Code from a string can `import()` your entry points. Any other file may throw `Cannot load`. Pass the module to that code instead. From a JSON file in the executable it gets the `default` export. A named one throws a `ReferenceError` when it's read, unless an `import` of yours names it. `new Function("path", "return import(path)")` and `eval("import('./a.js')")`, with strings that are written out like that, are compiled as that `import()`.
@@ -324,7 +324,6 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | In your program                                                                | `bun run`                                   | An executable                           |
 | ------------------------------------------------------------------------------ | ------------------------------------------- | --------------------------------------- |
 | `{ function inner() {} }` in a CommonJS file that isn't in strict mode         | `inner` stays inside the block              | `inner` is visible after it             |
-| `"use strict"` at the start of a function, in such a file                      | Dropped                                     | The function is in strict mode          |
 | `const first = read(), limit = 5`, where `read()` returns `limit`              | `5`                                         | A `ReferenceError`                      |
 | `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws             | Throws                                  |
 | `(Color as any).Red = 2`, then `Color.Red`, for an `enum` imported from a file | `2`                                         | `1`. The member is a constant           |

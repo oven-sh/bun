@@ -34,11 +34,12 @@ pub struct TextThatSpellsFile {
 
 type FilesBySpelling<'a> = FxHashMap<&'a [u8], SmallVec<[FileId; 2]>>;
 
-fn index_by_spelling<'a>(input: &BindInput<'a, '_>) -> FilesBySpelling<'a> {
-    let files = input.files;
-    let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
+fn index_by_spelling<'a>(
+    files: &'a Files<'_>,
+    is_code: impl Fn(FileId) -> bool,
+) -> FilesBySpelling<'a> {
     let mut files_by_spelling = FilesBySpelling::default();
-    for &file in files.compiled_files().iter().filter(is_code) {
+    for &file in files.compiled_files().iter().filter(|&&file| is_code(file)) {
         let spelling = without_extension(files.module(file).file_name());
         files_by_spelling.entry(spelling).or_default().push(file);
         if spelling.ends_with(b"/index") {
@@ -58,6 +59,29 @@ fn loads_by_unknown_name(files: &Files<'_>, file: FileId, counts: impl Fn(u32) -
             || !names.files_missing_at_build_at.is_empty()
             || source.builtins.loads_unknown_modules()
     })
+}
+
+fn requires_by_unknown_name(files: &Files<'_>, file: FileId) -> bool {
+    let sites = &files.analysis(file).import_sites;
+    let is_import =
+        |&site: &u32| matches!(sites[site as usize].kind, ImportSiteKind::ImportCall(_));
+    parsed_source(files, file).is_some_and(|source| {
+        let names = &source.contents.names;
+        source.builtins.loads_unknown_modules()
+            || !names.unknown_names_at.iter().all(is_import)
+            || (names.loads_by_unknown_name && names.unknown_names_at.is_empty())
+    })
+}
+
+pub(crate) fn find_files_that_unknown_names_may_require(files: &Files<'_>) -> Vec<FileId> {
+    let compiled = files.compiled_files().iter().copied();
+    let mut requiring = compiled.clone();
+    if !requiring.any(|file| requires_by_unknown_name(files, file)) {
+        return Vec::new();
+    }
+    let files_by_spelling = index_by_spelling(files, |_| true);
+    let texts = compiled.flat_map(|file| find_files_spelled_by(files, &files_by_spelling, file));
+    texts.map(|text| text.spelled).collect()
 }
 
 fn is_held_by_no_pattern(files: &Files<'_>, file: FileId, site: u32) -> bool {
@@ -207,9 +231,9 @@ pub(super) fn list_texts_that_spell_files(
     if !compiled.any(|&file| loads_by_unknown_name(files, file, |_| true)) {
         return None;
     }
-    let files_by_spelling = index_by_spelling(input);
-    let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
-    let code_files = files.compiled_files().iter().filter(is_code);
+    let is_code = |file: FileId| input.sources.kind(file) == SourceKind::Program;
+    let files_by_spelling = index_by_spelling(files, is_code);
+    let code_files = files.compiled_files().iter().filter(|&&file| is_code(file));
     let mut found: Vec<(FileId, Vec<TextThatSpellsFile>)> =
         code_files.map(|&file| (file, Vec::new())).collect();
     found.sort_unstable_by_key(|of_file| of_file.0);

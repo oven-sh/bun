@@ -164,9 +164,6 @@ impl StaticRoute {
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<StaticRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); every `Response` accessor used below takes
-        // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
             if !HTTPStatusText::is_sendable(response.status_code()) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -269,11 +266,7 @@ impl StaticRoute {
 
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
-        Self::retain_for_response(this);
-        if let Some(server) = this.server.get() {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
-        }
+        Self::retain_for_response(this, resp);
         resp.corked(|| this.render_metadata_and_end(resp));
         Self::on_response_complete(this, resp);
     }
@@ -324,11 +317,7 @@ impl StaticRoute {
 
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
-        Self::retain_for_response(this);
-        if let Some(server) = this.server.get() {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
-        }
+        Self::retain_for_response(this, resp);
         let mut finished = false;
         this.do_render_blob(resp, &mut finished);
         if finished {
@@ -350,12 +339,16 @@ impl StaticRoute {
 
     /// The response whose uws userdata is this route keeps it alive until
     /// `on_response_complete`.
-    fn retain_for_response(this: ThisPtr<Self>) {
+    fn retain_for_response(this: ThisPtr<Self>, resp: AnyResponse) {
         let n = this.pending_responses.get();
         if n == 0 {
             this.pending_ref.set(Some(RefPtr::from_this(this)));
         }
         this.pending_responses.set(n + 1);
+        if let Some(server) = this.server.get() {
+            server.on_pending_request();
+            resp.timeout(server.config().idle_timeout);
+        }
     }
 
     /// May free `this`.
@@ -364,7 +357,7 @@ impl StaticRoute {
         resp.clear_on_writable();
         resp.clear_timeout();
         if let Some(server) = this.server.get() {
-            server.on_static_request_complete();
+            server.on_request_complete();
         }
         let n = this.pending_responses.get() - 1;
         this.pending_responses.set(n);
@@ -447,7 +440,7 @@ impl StaticRoute {
         if self.has_date {
             resp.mark_wrote_date_header();
         }
-        let entries = self.headers.entries.slice();
+        let entries = &self.headers.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();
@@ -555,11 +548,7 @@ impl StaticRoute {
         status: u16,
     ) -> bool {
         req.set_yield(false);
-        Self::retain_for_response(this);
-        if let Some(server) = this.server.get() {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
-        }
+        Self::retain_for_response(this, resp);
         this.do_write_status(status, resp);
         this.do_write_headers(resp);
         if !HTTPStatusText::is_null_body(status) {
@@ -568,11 +557,5 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
         Self::on_response_complete(this, resp);
         true
-    }
-}
-
-impl Drop for StaticRoute {
-    fn drop(&mut self) {
-        self.blob.detach();
     }
 }

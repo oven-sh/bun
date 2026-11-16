@@ -103,10 +103,11 @@ mod simd {
         let (mut room, zero, one) = (Room::new(T::from(0)), T::from(0), T::from(1));
         let room = room.all();
         let test = |v: Vector<T, N>| v.simd_eq(one);
-        for range in ranges::<T>(N, alignments).filter(|it| it.len() == 13 * N - 1) {
+        let lens = [2 * N - 1, 4 * N - 1, 13 * N - 1];
+        for range in ranges::<T>(N, alignments).filter(|it| lens.contains(&it.len())) {
             let slice = &mut room[range];
             for apart in [0, 1, N, 2 * N, 3 * N] {
-                for first in 0..slice.len() - apart {
+                for first in 0..slice.len().saturating_sub(apart) {
                     (slice[first], slice[first + apart]) = (one, one);
                     let found = Vector::position(black_box(view(slice)), test);
                     assert_eq!(found, Some(first));
@@ -546,8 +547,20 @@ mod simd {
         }
     }
 
+    fn narrow_and_shared<const N: usize>() {
+        let mut bytes = Vec::from_iter(0..4 * N as u8);
+        let four = Vector::<u8, N>::load4(shared(&mut bytes).as_chunks().0.as_array().unwrap());
+        assert_eq!(four.map(Vector::to_array).as_flattened(), bytes);
+        four[1].store_shared(shared_out(&mut bytes).first_chunk().unwrap());
+        assert_eq!(bytes[..2 * N], four[1].to_array().repeat(2));
+    }
+
     #[export]
     pub fn short_slices() {
+        narrow_and_shared::<2>();
+        narrow_and_shared::<4>();
+        narrow_and_shared::<8>();
+        narrow_and_shared::<16>();
         padded::<u8, _, { U8::LEN }>(plain);
         padded::<u8, _, { U8::LEN }>(shared);
         padded::<u8, _, 16>(plain);

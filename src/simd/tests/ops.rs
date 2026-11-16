@@ -111,8 +111,8 @@ mod simd {
                 "{name}"
             );
             assert_eq!(got.count(), u64::count_ones(bits) as usize, "{name}");
-            for lane in 0..=N {
-                let before = want[..lane].iter().filter(|&&it| it).count();
+            for lane in (0..=N).chain([usize::MAX / 2 + 1]) {
+                let before = want.iter().take(lane).filter(|&&it| it).count();
                 assert_eq!(got.count_before(lane), before, "{name}");
             }
             assert_eq!(got.to_vector().to_array(), vector, "{name}");

@@ -135,6 +135,7 @@ function wordsOfTheStackOnWindows(cellOf, say) {
   const fields = new Uint32Array(information.buffer);
   const committed = 0x1000;
   const anyExecute = 0xf0;
+  const executeOnly = 0x10;
   const isImage = 0x1000000;
   const pages = new Map();
   const pageAt = address => {
@@ -303,6 +304,34 @@ function wordsOfTheStackOnWindows(cellOf, say) {
     );
 
   const mentioned = new Set();
+  // A return address that is not one of a live frame is what an earlier call left: with the word, it tells whose frame lay there.
+  // A return address lies behind a call: `call` with an offset, or through a register or memory.
+  const followsCall = word => {
+    const page = pageAt(word - 7n);
+    if (!page || !(page.protection & anyExecute) || (page.protection & 0xff) === executeOnly) return false;
+    const byte = back => read.u8(Number(word) - back, 0);
+    return (
+      byte(5) === 0xe8 ||
+      (byte(2) === 0xff && ((byte(1) & 0xf8) === 0xd0 || (byte(1) & 0xf8) === 0x10)) ||
+      (byte(3) === 0xff && ((byte(2) & 0xf8) === 0x50 || byte(2) === 0x14)) ||
+      (byte(4) === 0xff && byte(3) === 0x54) ||
+      (byte(6) === 0xff && ((byte(5) & 0xf8) === 0x90 || byte(5) === 0x15)) ||
+      (byte(7) === 0xff && byte(6) === 0x94)
+    );
+  };
+  const returnsOfLiveFrames = new Set(frames.map(({ to }) => to - 8n));
+  if (frames.length) returnsOfLiveFrames.add(frames[0].from - 8n);
+  const leftAround = index => {
+    const left = [];
+    for (let at = Math.max(0, index - 64); at < Math.min(words.length, index + 64); at++) {
+      const code = at !== index && !returnsOfLiveFrames.has(start + BigInt(at) * 8n) && codeAt(words[at]);
+      if (!code?.image || !followsCall(words[at])) continue;
+      mentioned.add(code.place);
+      left.push(`${at < index ? "-" : "+"}${hex(Math.abs(at - index) * 8)} ${code.place}`);
+    }
+    return left.join(", ");
+  };
+
   let shown = 0;
   for (let index = words.length - 1; index >= 0 && shown < 16; index--) {
     const cell = cellOf(words[index]);
@@ -319,7 +348,7 @@ function wordsOfTheStackOnWindows(cellOf, say) {
       const callers = frames.slice(owner + 1, owner + 11).map(({ place }) => place);
       for (const each of [place, ...callers]) mentioned.add(each);
       if (saver) mentioned.add(saver.place);
-      where = `in the frame of ${place}, ${hex(address - from)} above its stack pointer${saver ? `, where ${saver === frames[owner] ? "it" : saver.place} saved ${register}` : ""} | called from, each the caller of the one before: ${callers.join(", ")}`;
+      where = `in the frame of ${place}, ${hex(address - from)} above its stack pointer${saver ? `, where ${saver === frames[owner] ? "it" : saver.place} saved ${register}` : ""} | called from, each the caller of the one before: ${callers.join(", ")} | return addresses that an earlier call left around it: ${leftAround(index)}`;
     } else {
       const near = [];
       for (let at = Math.max(0, index - 96); at < Math.min(words.length, index + 384); at++) {

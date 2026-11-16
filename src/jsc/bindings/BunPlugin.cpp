@@ -2100,7 +2100,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         RETURN_IF_EXCEPTION(scope, {});
         auto compiled = isBuiltinModuleKey(path) ? std::nullopt : JSC::AOT::findVariantToMock(globalObject, path, Bun::findMockedModule(path));
         bool isCommonJS = compiled && !JSC::AOT::isESModule(*compiled) && !JSC::AOT::isDataFile(*compiled);
-        bool hasOwnOriginal = spy && compiled && (isCommonJS || JSC::AOT::isESModule(*compiled)) && JSC::AOT::hasIntactOriginal(globalObject, *compiled);
+        bool hasOwnOriginal = compiled && JSC::AOT::hasIntactOriginal(globalObject, *compiled) && ((spy && (isCommonJS || JSC::AOT::isESModule(*compiled))) || (isCommonJS && Zig::isOriginalLoadedAgain(globalObject, this, path)));
         // The loader holds a later run of the file, which is what this mock patches.
         bool isOverLaterRun = compiled && (originalExports || originalCommonJSExports) && JSC::AOT::isEvicted(globalObject, *compiled);
         bool isUnevaluatedEvictedFile = isCommonJS && JSC::AOT::isEvicted(globalObject, *compiled) && JSC::AOT::moduleExports(globalObject, *compiled).isUndefined();

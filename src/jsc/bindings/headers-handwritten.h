@@ -5,6 +5,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSType.h"
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 #include <set>
@@ -475,6 +476,31 @@ struct DeepMatchState {
     }
 };
 
+// What a walk of Bun__deepMatch does at a mismatch.
+enum class DeepMatchWalk : uint8_t {
+    // It returns false.
+    Stops,
+    // It goes on, and gives no result. It records the matchers of the pattern that pass, for the message of a
+    // comparison that failed.
+    Collects,
+};
+
+// The state of a walk that collects.
+struct DeepMatchStateOfCollector : DeepMatchState {
+    // The rows cell of the comparison that failed, or null. A matcher with a row there passed, and is not asked again.
+    JSC::JSCell* rowsOfComparison { nullptr };
+    // The place in that cell of the two objects that the walk is at, or 0.
+    uint32_t place { 0 };
+    // The received objects that the walk is inside of.
+    WTF::Vector<JSC::JSObject*, 16> path;
+    // The patterns that a scan found a matcher in. A pattern that is nested deep is then scanned once, not once for
+    // each object around it.
+    UncheckedKeyHashSet<JSC::JSObject*> patternsWithMatcher;
+};
+
+template<DeepMatchWalk walk>
+using DeepMatchStateOf = std::conditional_t<walk == DeepMatchWalk::Collects, DeepMatchStateOfCollector, DeepMatchState>;
+
 // JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
 struct MatchedRow {
     JSC::JSValue value;
@@ -502,13 +528,13 @@ void appendMissingMatchedRowNames(JSC::JSCell* rows, uint32_t place, std::span<c
  *
  * `object` and `subset` must be objects. Neither is changed.
  */
-template<bool enableAsymmetricMatchers>
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk = Bun::DeepMatchWalk::Stops>
 bool Bun__deepMatch(
     JSC::JSValue object,
     JSC::JSValue subset,
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
-    Bun::DeepMatchState& state,
+    Bun::DeepMatchStateOf<walk>& state,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

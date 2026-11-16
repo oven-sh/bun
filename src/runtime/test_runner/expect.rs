@@ -620,6 +620,18 @@ impl Expect {
         false
     }
 
+    /// Called by C++, by a walk that collects the matchers that passed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_isAsymmetricMatcher(value: JSValue) -> bool {
+        Self::is_asymmetric_matcher(value)
+    }
+
+    /// Called by C++ before and after that walk asks a matcher. A matcher that had to leave a promise alone gave no answer.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect_answersWithheld() -> u32 {
+        Pass::answers_withheld()
+    }
+
     /// Called by C++ when matching with asymmetric matchers
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
@@ -657,6 +669,10 @@ impl Expect {
         let promise = match flags.promise() {
             Promise::None => None,
             _ => match Pass::settled(global_this, Question { asked: Asked::Promise, who: JSValue::UNDEFINED, what: v }, &mut || {
+                // A collecting pass leaves the promise alone, so the matcher finds none.
+                if Pass::withholds_promises() {
+                    return Ok(JSValue::UNDEFINED);
+                }
                 Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
             }) {
                 Ok(promise) => promise,
@@ -1670,6 +1686,9 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
             if promise.status() == js_promise::Status::Pending {
+                if Pass::withholds_promises() {
+                    return Ok(false);
+                }
                 return Err(Pass::wait_for(global_this, promise));
             }
 
@@ -3428,7 +3447,8 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute,
+//   Expect_isAsymmetricMatcher, Expect_answersWithheld
 
 #[cfg(test)]
 mod tests {

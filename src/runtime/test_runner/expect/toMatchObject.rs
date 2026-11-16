@@ -1,6 +1,7 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 use super::DiffFormatter;
+use super::expect_deferred::Pass;
 use super::throw;
 use super::{get_signature, Expect};
 
@@ -49,6 +50,15 @@ impl Expect {
         }
 
         // handle failure
+        // The comparison stopped at the first mismatch, so `rows` lacks the matchers after it. They are asked here,
+        // under a pass that lets none of them wait.
+        let rows = if not {
+            rows
+        } else {
+            let collecting = Pass::collecting();
+            let _entered = collecting.enter();
+            received_object.jest_matched_rows(expected, global, rows)?
+        };
         let diff_formatter = DiffFormatter::with_matched_rows(global, received_object, expected, not, rows)?;
 
         if not {

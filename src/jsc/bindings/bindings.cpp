@@ -266,8 +266,12 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 // Ensure we instantiate the true and false variants of this function
 template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
+// The walk for the message of a toMatchObject() that failed (JestMatchedRows.cpp).
+template bool Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchStateOfCollector& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
+extern "C" bool Expect_isAsymmetricMatcher(JSC::EncodedJSValue value);
+extern "C" uint32_t Expect_answersWithheld();
 
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
@@ -2561,15 +2565,119 @@ static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, Thr
 }
 #endif
 
-template<bool enableAsymmetricMatchers>
+// Whether `pattern` holds a matcher that a walk that collects would ask, at one of its keys or below them.
+// `withMatcher` gets each pattern that it finds one in. The walk asks again about each of them as it goes down.
+static bool patternHoldsMatcher(JSGlobalObject* globalObject, ThrowScope& throwScope, JSObject* pattern, UncheckedKeyHashSet<JSObject*>& seen, UncheckedKeyHashSet<JSObject*>& withMatcher)
+{
+    VM& vm = globalObject->vm();
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        throwStackOverflowError(globalObject, throwScope);
+        return false;
+    }
+    if (withMatcher.contains(pattern))
+        return true;
+    if (!seen.add(pattern).isNewEntry)
+        return false;
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    pattern->getPropertyNames(globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    for (const auto& name : names) {
+        JSValue value = pattern->get(globalObject, name);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!value.isObject())
+            continue;
+        bool holdsMatcher = Expect_isAsymmetricMatcher(JSValue::encode(value));
+        if (!holdsMatcher) {
+            holdsMatcher = patternHoldsMatcher(globalObject, throwScope, asObject(value), seen, withMatcher);
+            RETURN_IF_EXCEPTION(throwScope, false);
+        }
+        if (holdsMatcher) {
+            withMatcher.add(pattern);
+            return true;
+        }
+    }
+    return false;
+}
+
+// What a walk that collects does with a key of the pattern. Returns false if it threw.
+// It reads a property of the received object only to ask a matcher about it, or to go into an object whose pattern holds a matcher.
+static bool collectMatchersAtKey(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchStateOfCollector& state, JSObject* obj, JSObject* subsetObj, const Identifier& property)
+{
+    // The printer lists no private names.
+    if (property.isPrivateName())
+        return true;
+    // What the comparison left at this key before it failed.
+    Bun::MatchedRow row = state.place ? Bun::matchedRow(state.rowsOfComparison, state.place, property) : Bun::MatchedRow {};
+    // A row that does not lead on is a matcher that the comparison asked here, and that passed.
+    if (row.value && !row.childPlace) {
+        state.recordIfAsked(obj, subsetObj, property, row.value, jsUndefined());
+        return true;
+    }
+    JSValue subsetProp = subsetObj->get(globalObject, property);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (!subsetProp.isObject())
+        return true;
+
+    if (Expect_isAsymmetricMatcher(JSValue::encode(subsetProp))) {
+        // The comparison did not come to this matcher, or it failed at it.
+        JSValue prop = obj->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (prop.isEmpty())
+            return true;
+        uint32_t withheld = Expect_answersWithheld();
+        auto result = matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        // A matcher that had to leave a promise alone gave no answer, and neither did one that holds it.
+        if (result == AsymmetricMatcherResult::PASS && Expect_answersWithheld() == withheld)
+            state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
+        return true;
+    }
+
+    // A row that leads on holds the object that the comparison read here, and the rows below are about that object.
+    JSValue prop = row.childPlace ? row.value : JSValue();
+    if (!prop) {
+        UncheckedKeyHashSet<JSObject*> seenPatterns;
+        bool holdsMatcher = patternHoldsMatcher(globalObject, throwScope, asObject(subsetProp), seenPatterns, state.patternsWithMatcher);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!holdsMatcher)
+            return true;
+        prop = obj->getIfPropertyExists(globalObject, property);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (prop.isEmpty() || !prop.isObject())
+            return true;
+        // A matcher in the received value and an object with asymmetricMatch() get no row, so neither is asked.
+        if (Expect_isAsymmetricMatcher(JSValue::encode(prop)) || !asymmetricMatchMethod(globalObject, prop) != !asymmetricMatchMethod(globalObject, subsetProp))
+            return true;
+        // A received value that holds itself would lead the walk around for as long as the pattern goes on.
+        if (state.path.contains(asObject(prop)))
+            return true;
+    }
+
+    state.gcBuffer.append(prop);
+    state.gcBuffer.append(subsetProp);
+    state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+    if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second)
+        return true;
+    uint32_t placeHere = state.place;
+    state.place = row.childPlace;
+    state.path.append(asObject(prop));
+    bool walked = Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(prop, subsetProp, globalObject, throwScope, state, false);
+    state.path.removeLast();
+    state.place = placeHere;
+    RETURN_IF_EXCEPTION(throwScope, false);
+    return walked;
+}
+
+template<bool enableAsymmetricMatchers, Bun::DeepMatchWalk walk>
 bool Bun__deepMatch(
     JSValue objValue,
     JSValue subsetValue,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
-    Bun::DeepMatchState& state,
+    Bun::DeepMatchStateOf<walk>& state,
     bool isMatchingObjectContaining)
 {
+    constexpr bool collects = walk == Bun::DeepMatchWalk::Collects;
 
     // Caller must ensure only objects are passed to this function.
     ASSERT(objValue.isCell());
@@ -2583,8 +2691,14 @@ bool Bun__deepMatch(
     if constexpr (enableAsymmetricMatchers) {
         // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
         if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
-            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
+            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue)) {
+                if constexpr (collects) {
+                    // The testers answered for all that the two objects hold.
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    return true;
+                }
                 return *verdict;
+            }
         }
     }
 
@@ -2597,8 +2711,10 @@ bool Bun__deepMatch(
         if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
             auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (nodesEqual)
+            if (nodesEqual) {
+                if constexpr (collects) return true;
                 return *nodesEqual;
+            }
         }
     }
 
@@ -2612,7 +2728,7 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
+    bool objIsArray = !collects && isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
@@ -2639,6 +2755,11 @@ bool Bun__deepMatch(
     }
 
     for (const auto& property : subsetProps) {
+        if constexpr (collects) {
+            if (!collectMatchersAtKey(globalObject, throwScope, state, obj, subsetObj, property))
+                return false;
+            continue;
+        }
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
@@ -2719,7 +2840,8 @@ bool Bun__deepMatch(
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
-    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+    // A walk that collects has no row to make there.
+    if (!collects && vm.aotState().someClassHasPrivateNames) [[unlikely]] {
         bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
             return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });

@@ -287,6 +287,9 @@ enum Role {
     Replaying,
     /// Wraps a function that returns its result to user code synchronously, so nothing under it may defer.
     Barrier,
+    /// The matcher has failed and asks asymmetric matchers only to say in its message which of them passed.
+    /// Under it no asymmetric matcher reads a promise or waits for one.
+    Collecting,
 }
 
 /// One run of a matcher body. Must stay on the stack, where the GC's conservative scan keeps its JSValues alive.
@@ -294,6 +297,7 @@ pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
     /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
+    /// For `Role::Collecting`, how many answers were withheld.
     cursor: Cell<u32>,
     /// Four bits per `recent` entry: `Asked << 1 | threw`.
     recent_kinds: Cell<u32>,
@@ -343,6 +347,10 @@ impl Pass {
         Self::new(Role::Barrier, JSValue::ZERO)
     }
 
+    pub(crate) fn collecting() -> Pass {
+        Self::new(Role::Collecting, JSValue::ZERO)
+    }
+
     #[inline]
     fn innermost<'a>() -> &'a Cell<*const Pass> {
         // SAFETY: every JS thread has a `RuntimeState` that outlives the script it runs.
@@ -360,6 +368,29 @@ impl Pass {
     fn current<'a>() -> Option<&'a Pass> {
         // SAFETY: a live `EnteredPass` in a caller's frame borrows whatever `innermost()` points to.
         unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
+    }
+
+    /// The collecting pass that the caller runs in. A barrier hides it, and so does the body of another matcher:
+    /// `this.equals()` and `asymmetricMatch()` answer user code there as they do anywhere else.
+    fn innermost_collecting<'a>() -> Option<&'a Pass> {
+        // SAFETY: as in `current`.
+        unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Collecting)
+    }
+
+    /// Whether an asymmetric matcher has to leave a promise alone, because the caller only collects.
+    /// Its answer then counts as withheld: it says neither that the matcher passed nor that it failed.
+    #[inline(never)]
+    pub(crate) fn withholds_promises() -> bool {
+        let Some(collecting) = Self::innermost_collecting() else {
+            return false;
+        };
+        collecting.cursor.set(collecting.cursor.get() + 1);
+        true
+    }
+
+    /// How many answers the collecting pass that the caller runs in has withheld.
+    pub(crate) fn answers_withheld() -> u32 {
+        Self::innermost_collecting().map_or(0, |collecting| collecting.cursor.get())
     }
 
     #[inline]

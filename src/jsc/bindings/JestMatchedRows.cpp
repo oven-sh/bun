@@ -414,6 +414,31 @@ JSC::JSValue JestMatchedRows::forSerializers(JSC::JSGlobalObject* globalObject, 
 
 } // namespace Bun
 
+// The rows for the message of a toMatchObject() that failed: the matchers of the pattern that pass, wherever the comparison stopped.
+// `rowsOfComparison` is what JSC__JSValue__jestDeepMatch gave for it: a matcher with a row there passed, and is not asked again.
+// The walk asks the others. The caller is in a collecting pass (expect_deferred.rs), so none of them waits.
+// Rust declares this by hand, with a reference. cppbind would hand out a raw pointer.
+extern "C" void JSC__JSValue__jestMatchedRows(JSC::EncodedJSValue received, JSC::EncodedJSValue pattern, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rowsOfComparison, JSC::EncodedJSValue* rows)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSValue root = JSC::JSValue::decode(received);
+    JSC::JSValue rootPattern = JSC::JSValue::decode(pattern);
+    Bun::DeepMatchStateOfCollector state;
+    state.records = true;
+    state.rowsOfComparison = Bun::JestMatchedRows::from(rowsOfComparison);
+    state.place = state.rowsOfComparison ? Bun::JestMatchedRows::rootPlace : 0;
+    state.path.append(root.getObject());
+    Bun__deepMatch<true, Bun::DeepMatchWalk::Collects>(root, rootPattern, globalObject, scope, state, false);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // The walk goes deeper than the comparison went. Where the stack runs out, the message gets the rows of the comparison alone.
+        auto* error = dynamicDowncast<JSC::ErrorInstance>(exception->value());
+        if (error && error->isStackOverflowError() && scope.tryClearException())
+            *rows = rowsOfComparison;
+        return;
+    }
+    *rows = JSC::JSValue::encode(Bun::matchedRowsFrom(globalObject, state, root, rootPattern));
+}
+
 // These answer for any `rows` and `place`: a value that is not a rows cell has no place.
 extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows)
 {

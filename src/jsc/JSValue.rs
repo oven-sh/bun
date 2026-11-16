@@ -2548,7 +2548,7 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `jest_deep_match` call.
+    /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `MatchedRows`.
     pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
         self,
         global: &JSGlobalObject,
@@ -2877,6 +2877,20 @@ impl JSValue {
         })?;
         Ok((matched, rows))
     }
+    /// The matchers of `subset` that pass, for the message of a comparison that failed and gave `of_comparison`.
+    /// It asks the matchers that have no row there: call it in a collecting pass, so none of them waits.
+    pub fn jest_matched_rows(
+        self,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        of_comparison: MatchedRows,
+    ) -> JsResult<MatchedRows> {
+        let mut rows = MatchedRows::default();
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestMatchedRows(self, subset, global, of_comparison, &mut rows)
+        })?;
+        Ok(rows)
+    }
 
     // ── BigInt ordering. ────────────────────────────────
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
@@ -2989,6 +3003,13 @@ unsafe extern "C" {
         rows_when: bool,
         rows: Option<&mut MatchedRows>,
     ) -> bool;
+    safe fn JSC__JSValue__jestMatchedRows(
+        this: JSValue,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        of_comparison: MatchedRows,
+        rows: &mut MatchedRows,
+    );
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;

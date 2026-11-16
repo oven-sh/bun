@@ -884,7 +884,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.files().is_shorthand_ambient_module_symbol(sym) {
                 return TypeId::ANY;
             }
-            if self.p.aot_symbols().is_bun_module_without_values(sym) {
+            if self.p.aot_symbols.is_bun_module_without_values(sym) {
                 return TypeId::ANY;
             }
             return self.intern(TypeData::Anon {

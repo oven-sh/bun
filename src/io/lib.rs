@@ -232,12 +232,6 @@ pub use posix_event_loop::{FilePoll, Loop, OwnedFilePoll};
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 
-/// How a [`Loop`] is handed around: libuv's functions take a pointer.
-#[cfg(not(windows))]
-pub type LoopRef = &'static Loop;
-#[cfg(windows)]
-pub type LoopRef = *mut Loop;
-
 pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
 
 #[cfg(not(windows))]
@@ -363,7 +357,7 @@ pub use pipe_writer::{
     WriteStatus,
 };
 #[cfg(windows)]
-pub use source::Source;
+pub use source::{OwnedPipe, Source};
 
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
@@ -1724,7 +1718,7 @@ pub mod closer {
 
     #[cfg(windows)]
     impl Closer {
-        pub fn close(fd: Fd, loop_: *mut uv::Loop) {
+        pub fn close(fd: Fd, loop_: &uv::Loop) {
             let req = bun_ptr::AliasableBox::from(bun_core::boxed_zeroed::<uv::fs_t>());
             // SAFETY: `req` stays put until `on_close` takes it.
             let rc = unsafe { uv::uv_fs_close(loop_, req.as_ptr(), fd.uv(), Some(Self::on_close)) };

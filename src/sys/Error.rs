@@ -90,6 +90,13 @@ impl Error {
         Error::from_code(code.to_e(), syscall_tag)
     }
 
+    /// The error for a libuv call that failed with `code`.
+    #[cfg(windows)]
+    pub fn from_uv(code: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Error {
+        let errno = crate::windows::translate_uv_error_to_e(code.int());
+        Error::from_code(errno, syscall_tag)
+    }
+
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
         Error {
             errno: errno as Int,

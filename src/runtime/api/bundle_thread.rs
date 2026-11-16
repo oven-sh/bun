@@ -97,22 +97,15 @@ fn spawn() -> std::io::Result<&'static Waker> {
     waker_result.wait().map_err(std::io::Error::other)
 }
 
-/// Used to keep the bundle thread from spinning on Windows
-#[cfg(windows)]
-extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
-
 fn thread_main(waker: &Waker) -> ! {
     let uws_loop: &bun_uws::Loop = bun_uws::Loop::get();
     UWS_LOOP.store(core::ptr::from_ref(uws_loop).cast_mut(), Ordering::SeqCst);
 
-    // At function scope: the loop holds its address.
+    // Used to keep the bundle thread from spinning on Windows
     #[cfg(windows)]
-    let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
+    let timer = bun_sys::windows::libuv::Timer::init(uws_loop.uv_loop(), ());
     #[cfg(windows)]
-    {
-        timer.init(uws_loop.uv_loop());
-        timer.start(u64::MAX, u64::MAX, Some(timer_callback));
-    }
+    timer.start(u64::MAX, u64::MAX, |_| {});
 
     let mut generation: bun_core::Generation = 0;
     loop {

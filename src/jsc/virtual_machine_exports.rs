@@ -189,7 +189,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &VirtualMachine) -> *mut c_void {
-    jsc_vm.uv_loop().cast()
+    jsc_vm.uv_loop().as_ptr().cast()
 }
 
 // HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)

@@ -3,7 +3,7 @@
 //! Field-accurate `#[repr(C)]` mirrors of every `uv_*_t` Bun touches, derived
 //! from `vendor/libuv/include/uv.h` + `uv/win.h`. The mirrors are POD but for `fs_t` (`Copy` where
 //! `union`s permit), all-zero is a valid bit-pattern (libuv expects callers to
-//! `memset(0)` before `uv_*_init`), and no method allocates.
+//! `memset(0)` before `uv_*_init`).
 //!
 //! Layouts are layout-asserted at the bottom of this file against the
 //! authoritative `sizeof`s from a Windows-x64 build of libuv.
@@ -205,20 +205,19 @@ pub union handle_u {
 
 /// `uv_handle_t` (`UV_HANDLE_FIELDS`). All concrete handle types are
 /// layout-prefixed with these exact fields, so a `*mut Pipe` / `*mut Timer`
-/// is castable to `*mut Handle`.
+/// is castable to `*mut uv_handle_t`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Handle {
+pub struct uv_handle_t {
     pub data: *mut c_void,
     pub loop_: *mut Loop,
     pub type_: HandleType,
     pub close_cb: uv_close_cb,
     pub handle_queue: uv__queue,
     pub u: handle_u,
-    pub endgame_next: *mut Handle,
+    pub endgame_next: *mut uv_handle_t,
     pub(crate) flags: c_uint,
 }
-pub type uv_handle_t = Handle;
 
 /// `uv_handle_type` (uv.h). `#[repr(C)]` so it round-trips through
 /// `uv_guess_handle` / `uv_handle_get_type`.
@@ -289,9 +288,9 @@ pub type uv_async_cb = Option<unsafe extern "C" fn(*mut uv_async_t)>;
 pub type uv_prepare_cb = Option<unsafe extern "C" fn(*mut uv_prepare_t)>;
 pub type uv_check_cb = Option<unsafe extern "C" fn(*mut uv_check_t)>;
 pub type uv_idle_cb = Option<unsafe extern "C" fn(*mut uv_idle_t)>;
-pub type uv_poll_cb = Option<unsafe extern "C" fn(*mut uv_poll_t, c_int, c_int)>;
+pub type uv_poll_cb = Option<unsafe extern "C" fn(*mut uv_poll_t, ReturnCode, c_int)>;
 pub type uv_signal_cb = Option<unsafe extern "C" fn(*mut uv_signal_t, c_int)>;
-pub type uv_exit_cb = Option<unsafe extern "C" fn(*mut Process, i64, c_int)>;
+pub type uv_exit_cb = Option<unsafe extern "C" fn(*mut uv_process_t, i64, c_int)>;
 pub(crate) type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
 pub type uv_fs_cb = Option<unsafe extern "C" fn(*mut fs_t)>;
 pub type uv_fs_event_cb =
@@ -300,7 +299,7 @@ pub type uv_udp_send_cb = Option<unsafe extern "C" fn(*mut uv_udp_send_t, c_int)
 pub type uv_udp_recv_cb =
     Option<unsafe extern "C" fn(*mut uv_udp_t, isize, *const uv_buf_t, *const sockaddr, c_uint)>;
 pub type uv_getaddrinfo_cb =
-    Option<unsafe extern "C" fn(*mut uv_getaddrinfo_t, c_int, *mut addrinfo)>;
+    Option<unsafe extern "C" fn(*mut uv_getaddrinfo_t, ReturnCode, *mut addrinfo)>;
 pub type uv_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t)>;
 pub type uv_after_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t, c_int)>;
 pub type uv_malloc_func = Option<unsafe extern "C" fn(usize) -> *mut c_void>;
@@ -318,34 +317,34 @@ union active_reqs_u {
     unused: *mut c_void,
     count: c_uint,
 }
+/// All `Cell`s: libuv writes the fields under every call, and its pool threads write `wq*` at any time.
 #[repr(C)]
 pub struct Loop {
-    pub data: *mut c_void,
-    /// A `Cell` because Bun counts its own keep-alive refs here, through a `&Loop`.
+    data: Cell<*mut c_void>,
+    /// Bun counts its own keep-alive refs here too.
     pub active_handles: Cell<c_uint>,
-    /// A `Cell` because `uv_walk` relinks it, under the `&Loop` of `has_active_io_handles`.
-    pub handle_queue: Cell<uv__queue>,
-    active_reqs: active_reqs_u,
-    pub internal_fields: *mut c_void,
-    pub stop_flag: c_uint,
-    pub iocp: HANDLE,
-    pub time: u64,
-    pub pending_reqs_tail: *mut uv_req_t,
-    pub endgame_handles: *mut uv_handle_t,
-    pub timer_heap: *mut c_void,
-    pub prepare_handles: *mut uv_prepare_t,
-    pub check_handles: *mut uv_check_t,
-    pub idle_handles: *mut uv_idle_t,
-    pub next_prepare_handle: *mut uv_prepare_t,
-    pub next_check_handle: *mut uv_check_t,
-    pub next_idle_handle: *mut uv_idle_t,
-    pub poll_peer_sockets: [SOCKET; 4],
-    pub active_tcp_streams: c_uint,
-    pub active_udp_streams: c_uint,
-    pub timer_counter: u64,
-    pub wq: uv__queue,
-    pub wq_mutex: uv_mutex_t,
-    pub wq_async: uv_async_t,
+    handle_queue: Cell<uv__queue>,
+    active_reqs: Cell<active_reqs_u>,
+    internal_fields: Cell<*mut c_void>,
+    stop_flag: Cell<c_uint>,
+    iocp: Cell<HANDLE>,
+    time: Cell<u64>,
+    pending_reqs_tail: Cell<*mut uv_req_t>,
+    endgame_handles: Cell<*mut uv_handle_t>,
+    timer_heap: Cell<*mut c_void>,
+    prepare_handles: Cell<*mut uv_prepare_t>,
+    check_handles: Cell<*mut uv_check_t>,
+    idle_handles: Cell<*mut uv_idle_t>,
+    next_prepare_handle: Cell<*mut uv_prepare_t>,
+    next_check_handle: Cell<*mut uv_check_t>,
+    next_idle_handle: Cell<*mut uv_idle_t>,
+    poll_peer_sockets: Cell<[SOCKET; 4]>,
+    active_tcp_streams: Cell<c_uint>,
+    active_udp_streams: Cell<c_uint>,
+    timer_counter: Cell<u64>,
+    wq: Cell<uv__queue>,
+    wq_mutex: Cell<uv_mutex_t>,
+    wq_async: Cell<uv_async_t>,
 }
 pub type uv_loop_t = Loop;
 
@@ -362,10 +361,9 @@ thread_local! {
 //
 // Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
 // `uv_process_t` this thread initialises is listed here from `init`/`spawn`
-// until the `uv_close` for it is issued (`UvHandle::close`,
-// `Owned::drop`). Whoever currently drives the handle records
+// until the `uv_close` for it is issued. Whoever currently drives a stream records
 // itself with [`open_handles::set_owner`] — readers/writers do so through
-// `Source::set_owner`, IPC / named pipes / Process when they take the handle —
+// `Source::set_owner`, IPC / named pipes when they take the handle —
 // so a thread teardown can close each handle through its owner's ordinary
 // close path (parents observe the close; pending writes finish ECANCELED)
 // while the VM is alive, or directly if nothing ever adopted it. Keyed by the
@@ -375,25 +373,28 @@ thread_local! {
 #[path = "open_handles.rs"]
 pub mod open_handles;
 
+#[path = "handle.rs"]
+mod handle;
+pub use handle::*;
+
 impl Loop {
     /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
     /// its own loop; sharing `uv_default_loop()` across worker threads is
     /// unsound for the per-worker shutdown path.
-    pub fn get() -> *mut Loop {
+    pub fn get() -> &'static Loop {
         THREADLOCAL_LOOP.with(|slot| {
-            let existing = slot.get();
-            if !existing.is_null() {
-                return existing;
+            if slot.get().is_null() {
+                // `uv_loop_init` does not promise to write every byte.
+                let ptr_ = bun_core::heap::into_raw(Box::<Loop>::new_zeroed()).cast::<Loop>();
+                // SAFETY: `ptr_` is `sizeof(Loop)` heap storage owned by this thread.
+                if let Some(err) = unsafe { uv_loop_init(ptr_) }.raw_errno() {
+                    panic!("Failed to initialize libuv loop: errno {err}");
+                }
+                slot.set(ptr_);
             }
-            // `uv_loop_init` accepts uninitialized storage (it zero-fills internally).
-            let ptr_ = bun_core::heap::into_raw(Box::<Loop>::new_uninit()).cast::<Loop>();
-            // SAFETY: `ptr_` is `sizeof(Loop)` heap storage owned by this thread.
-            if let Some(err) = unsafe { uv_loop_init(ptr_) }.raw_errno() {
-                panic!("Failed to initialize libuv loop: errno {err}");
-            }
-            slot.set(ptr_);
-            ptr_
+            // SAFETY: initialised above, and freed only by `close_thread_loop`.
+            unsafe { &*slot.get() }
         })
     }
 
@@ -405,16 +406,19 @@ impl Loop {
     /// off-thread work (Node's `CleanupHandles`). `true` if anything ran.
     pub fn drain_requests() -> bool {
         THREADLOCAL_LOOP.with(|slot| {
-            let loop_ = slot.get();
-            if loop_.is_null() {
+            // SAFETY: null, or the live per-thread loop.
+            let Some(loop_) = (unsafe { slot.get().as_ref() }) else {
                 return false;
-            }
+            };
             let mut ran = false;
-            // SAFETY: live per-thread loop; `count` is the active arm of the
-            // union whenever the loop is initialised (uv/win.h).
+            // SAFETY: `count` is the active arm of the union whenever the loop
+            // is initialised (uv/win.h).
             unsafe {
-                while (*loop_).active_reqs.count > 0 {
-                    log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
+                while loop_.active_reqs.get().count > 0 {
+                    log!(
+                        "drain_requests: {} in flight",
+                        loop_.active_reqs.get().count
+                    );
                     uv_run(loop_, RunMode::Once);
                     ran = true;
                 }
@@ -432,7 +436,7 @@ impl Loop {
     /// pre/check/async/timer, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
     ///
-    /// SAFETY: no pointer to this loop is used again. The uws loop and the VM hold one.
+    /// SAFETY: what `get` returned on this thread is not used again. The uws loop and the VM hold it.
     pub unsafe fn close_thread_loop() {
         /// Caps how long `terminate()` and process exit wait for a close that
         /// never completes. A healthy teardown finishes in milliseconds.
@@ -454,8 +458,8 @@ impl Loop {
                     // owner that never closed it; name it under BUN_DEBUG_uv.
                     // SAFETY: every linked handle's storage is still allocated
                     // (owners are freed only after this returns).
-                    unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
-                    unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
+                    unsafe { uv_walk(&*loop_, Some(log_unclosed_cb), ptr::null_mut()) };
+                    unsafe { uv_walk(&*loop_, Some(close_walk_cb), ptr::null_mut()) };
                     // Poll with NoWait until the loop closes. A closing uv_poll_t
                     // is only unlinked after the kernel posts its canceled AFD
                     // poll's completion to the IOCP, and one NoWait turn dequeues
@@ -465,7 +469,7 @@ impl Loop {
                     let started = Instant::now();
                     loop {
                         // SAFETY: this thread's initialised loop; nothing else drives it.
-                        let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
+                        let _ = unsafe { uv_run(&*loop_, RunMode::NoWait) };
                         // SAFETY: as above.
                         rc = unsafe { uv_loop_close(loop_) };
                         if rc == ReturnCode::ZERO || started.elapsed() >= CLOSE_THREAD_LOOP_DEADLINE
@@ -520,7 +524,7 @@ impl Loop {
             .set(self.active_handles.get().saturating_sub(1));
     }
     #[inline]
-    pub fn stop(&mut self) {
+    pub fn stop(&self) {
         log!("stop");
         // SAFETY: self is a live loop.
         unsafe { uv_stop(self) };
@@ -533,11 +537,10 @@ impl Loop {
     /// Unlike `uv_loop_alive`, also finds unref'd handles. Only looks at I/O, process and fs-watch handles.
     pub fn has_active_io_handles(&self) -> bool {
         let mut found = false;
-        // SAFETY: self is a live loop, of which the walk writes only `handle_queue`;
-        // it is synchronous, so `found` outlives it.
+        // SAFETY: self is a live loop; the walk is synchronous, so `found` outlives it.
         unsafe {
             uv_walk(
-                ptr::from_ref(self).cast_mut(),
+                self,
                 Some(find_active_io_handle_cb),
                 (&raw mut found).cast(),
             )
@@ -545,9 +548,24 @@ impl Loop {
         found
     }
     #[inline]
-    pub fn tick(&mut self) {
+    pub fn tick(&self) {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::Default) };
+    }
+    /// The time that the loop cached, in milliseconds.
+    #[inline]
+    pub fn now(&self) -> u64 {
+        self.time.get()
+    }
+    #[inline]
+    pub fn update_time(&self) {
+        // SAFETY: self is a live loop.
+        unsafe { uv_update_time(self) };
+    }
+    /// For C and C++ code that calls libuv itself.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut Loop {
+        ptr::from_ref(self).cast_mut()
     }
 }
 
@@ -673,11 +691,14 @@ impl<T: ListItem> Drop for List<T> {
 // handle type opts into. All methods are `#[inline]` zero-cost casts.
 // ──────────────────────────────────────────────────────────────────────────
 /// Marker for `#[repr(C)]` structs whose first fields are exactly
-/// `UV_HANDLE_FIELDS` (i.e. layout-prefixed with [`Handle`]).
+/// `UV_HANDLE_FIELDS` (i.e. layout-prefixed with [`uv_handle_t`]).
 ///
 /// SAFETY: `Self` must be `#[repr(C)]` and start with the same fields as
-/// [`Handle`], so `*mut Self` is castable to `*mut uv_handle_t`.
+/// [`uv_handle_t`], so `*mut Self` is castable to `*mut uv_handle_t`. All-zero is
+/// valid if [`Owned`] has a constructor for `Self`.
 pub unsafe trait UvHandle: Sized {
+    type State: HandleState;
+
     #[inline]
     fn as_handle(&self) -> *const uv_handle_t {
         (self as *const Self).cast()
@@ -700,11 +721,6 @@ pub unsafe trait UvHandle: Sized {
     fn set_data(&mut self, ptr_: *mut c_void) {
         // SAFETY: handle prefix invariant.
         unsafe { uv_handle_set_data(self.as_handle_mut(), ptr_) };
-    }
-    #[inline]
-    fn get_loop(&self) -> *mut Loop {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_get_loop(self.as_handle()) }
     }
     /// `HandleMixin::close` — `cb` receives the same pointer cast back to
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
@@ -745,7 +761,7 @@ pub unsafe trait UvHandle: Sized {
     #[inline]
     fn is_closed(&self) -> bool {
         // SAFETY: handle prefix invariant.
-        uv_is_closed(unsafe { &*self.as_handle() })
+        unsafe { uv_is_closed(self.as_handle()) }
     }
     #[inline]
     fn is_active(&self) -> bool {
@@ -762,37 +778,39 @@ pub unsafe trait UvHandle: Sized {
         fd_
     }
 }
-// SAFETY: all of these are `#[repr(C)]` with `UV_HANDLE_FIELDS` first.
-unsafe impl UvHandle for Handle {}
-unsafe impl UvHandle for uv_stream_t {}
-unsafe impl UvHandle for Pipe {}
-unsafe impl UvHandle for uv_tcp_t {}
-unsafe impl UvHandle for uv_tty_t {}
-unsafe impl UvHandle for Tty {}
-unsafe impl UvHandle for uv_udp_t {}
-unsafe impl UvHandle for Timer {}
-unsafe impl UvHandle for uv_async_t {}
-unsafe impl UvHandle for uv_prepare_t {}
-unsafe impl UvHandle for uv_check_t {}
-unsafe impl UvHandle for uv_idle_t {}
-unsafe impl UvHandle for uv_poll_t {}
-unsafe impl UvHandle for uv_signal_t {}
-unsafe impl UvHandle for Process {}
-unsafe impl UvHandle for uv_fs_event_t {}
-unsafe impl UvHandle for uv_fs_poll_t {}
+macro_rules! impl_uv_handle {
+    ($($handle:ty => $state:ty),* $(,)?) => {$(
+        // SAFETY: all of these are `#[repr(C)]` with `UV_HANDLE_FIELDS` first.
+        unsafe impl UvHandle for $handle {
+            type State = $state;
+        }
+    )*};
+}
+impl_uv_handle! {
+    uv_stream_t => (),
+    Pipe => (),
+    ListeningPipe => (),
+    uv_tty_t => (),
+    Tty => (),
+    Timer => (),
+    uv_idle_t => (),
+    uv_poll_t => PollState,
+    uv_signal_t => (),
+    uv_fs_event_t => (),
+}
 
-/// A heap handle. Dropping it closes the handle, which is freed once libuv is done with it.
+/// A heap pipe or tty. Dropping it closes the handle, which is freed once libuv is done with it.
 #[repr(transparent)]
-pub struct Owned<H: UvHandle>(ptr::NonNull<H>);
+pub struct OwnedStream<H: UvHandle>(ptr::NonNull<H>);
 
-impl<H: UvHandle + bun_core::ffi::Zeroable> Owned<H> {
+impl<H: UvHandle + bun_core::ffi::Zeroable> OwnedStream<H> {
     /// A handle to `init`.
     pub fn zeroed() -> Self {
         Self(Box::into_non_null(bun_core::boxed_zeroed()))
     }
 }
 
-impl<H: UvHandle> Owned<H> {
+impl<H: UvHandle> OwnedStream<H> {
     /// `handle` is zeroed: libuv keeps the address of an initialised one.
     pub fn new(handle: H) -> Self {
         Self(Box::into_non_null(Box::new(handle)))
@@ -819,7 +837,7 @@ impl<H: UvHandle> Owned<H> {
     }
 }
 
-impl<H: UvHandle> core::ops::Deref for Owned<H> {
+impl<H: UvHandle> core::ops::Deref for OwnedStream<H> {
     type Target = H;
     fn deref(&self) -> &H {
         // SAFETY: live until `self` is dropped.
@@ -827,32 +845,29 @@ impl<H: UvHandle> core::ops::Deref for Owned<H> {
     }
 }
 
-impl<H: UvHandle> core::ops::DerefMut for Owned<H> {
+impl<H: UvHandle> core::ops::DerefMut for OwnedStream<H> {
     fn deref_mut(&mut self) -> &mut H {
         // SAFETY: live until `self` is dropped.
         unsafe { self.0.as_mut() }
     }
 }
 
-impl<H: UvHandle> Drop for Owned<H> {
+impl<H: UvHandle> Drop for OwnedStream<H> {
     fn drop(&mut self) {
         unsafe extern "C" fn free<H>(handle: *mut uv_handle_t) {
-            // SAFETY: the box `Owned` held, which is not on the loop.
+            // SAFETY: the box `OwnedStream` held, which is not on the loop.
             unsafe { bun_core::heap::destroy(handle.cast::<H>()) };
         }
         let handle = self.as_ptr().cast::<uv_handle_t>();
         // SAFETY: handle prefix invariant, and it is freed once it is off the loop.
         unsafe {
-            if (*handle).loop_.is_null() || uv_is_closed(&*handle) {
+            if (*handle).loop_.is_null() || uv_is_closed(handle) {
                 free::<H>(handle);
             } else if uv_is_closing(handle) != 0 {
                 // By the thread's teardown, without a callback.
                 (*handle).close_cb = Some(free::<H>);
             } else {
-                use HandleType::{NamedPipe, Process, Tty};
-                if matches!((*handle).type_, NamedPipe | Tty | Process) {
-                    open_handles::remove(handle);
-                }
+                open_handles::remove(handle);
                 uv_close(handle, Some(free::<H>));
             }
         }
@@ -901,7 +916,7 @@ pub unsafe trait UvStream: UvHandle {
     /// `extern "C"` trampoline. `context` is stashed in `handle.data` and
     /// recovered in the trampoline; the three callbacks are baked into the
     /// monomorphisation via the [`StreamReader`] trait (associated fns, so the
-    /// trampoline stays zero-alloc and `Handle` needs no spare storage).
+    /// trampoline stays zero-alloc and the handle needs no spare storage).
     ///
     /// `error_cb` receives the
     /// raw negative libuv errno (`c_int`); this crate is layered below
@@ -912,8 +927,8 @@ pub unsafe trait UvStream: UvHandle {
     #[inline]
     fn read_start_ctx<T: StreamReader>(&mut self, context: *const T) -> ReturnCode {
         // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
-        // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
-        let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
+        // `&mut uv_handle_t` for the leading `UV_HANDLE_FIELDS`.
+        let h = unsafe { &mut *(self as *mut Self).cast::<uv_handle_t>() };
         h.data = context.cast_mut().cast();
 
         unsafe extern "C" fn uv_allocb<T: StreamReader>(
@@ -972,7 +987,6 @@ pub unsafe trait StreamReader: Sized {
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}
 unsafe impl UvStream for Pipe {}
-unsafe impl UvStream for uv_tcp_t {}
 unsafe impl UvStream for uv_tty_t {}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1296,7 +1310,7 @@ impl Pipe {
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.
     #[inline]
-    pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
+    pub fn init(&mut self, loop_: &Loop, ipc: bool) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
         let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
         if rc.0 == 0 {
@@ -1308,39 +1322,6 @@ impl Pipe {
     pub fn open(&mut self, file: uv_file) -> ReturnCode {
         // SAFETY: pipe was `init`ed.
         unsafe { uv_pipe_open(self, file) }
-    }
-    #[inline]
-    pub(crate) fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
-        // SAFETY: pipe was `init`ed; libuv copies the name.
-        unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
-    }
-    /// Caller supplies a plain
-    /// `uv_connection_cb` and recovers its context from `handle.data` itself.
-    #[inline]
-    pub(crate) fn listen(
-        &mut self,
-        backlog: i32,
-        context: *mut c_void,
-        on_connect: unsafe extern "C" fn(*mut uv_stream_t, ReturnCode),
-    ) -> ReturnCode {
-        self.data = context;
-        // SAFETY: `Pipe` is layout-prefixed with `uv_stream_t`.
-        unsafe { uv_listen(self.as_stream(), backlog, Some(on_connect)) }
-    }
-    /// `Pipe::listenNamedPipe` — bind + listen.
-    #[inline]
-    pub fn listen_named_pipe(
-        &mut self,
-        named_pipe: &[u8],
-        backlog: i32,
-        context: *mut c_void,
-        on_connect: unsafe extern "C" fn(*mut uv_stream_t, ReturnCode),
-    ) -> ReturnCode {
-        let rc = self.bind(named_pipe, UV_PIPE_NO_TRUNCATE);
-        if rc.is_err() {
-            return rc;
-        }
-        self.listen(backlog, context, on_connect)
     }
     #[inline]
     pub fn connect(
@@ -1362,11 +1343,6 @@ impl Pipe {
                 Some(on_connect),
             )
         }
-    }
-    #[inline]
-    pub fn accept(&mut self, client: &mut Pipe) -> ReturnCode {
-        // SAFETY: both pipes embed `uv_stream_t` at offset 0.
-        unsafe { uv_accept(self.as_stream(), client.as_stream()) }
     }
 }
 
@@ -1441,7 +1417,7 @@ pub struct Tty {
 
 impl Tty {
     #[inline]
-    pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
+    pub fn init(&mut self, loop_: &Loop, file: uv_file) -> ReturnCode {
         // Init and register through a whole-struct pointer: the close paths
         // reclaim the full `Tty` from this address, and `&mut self.uv` would
         // narrow provenance to the field.
@@ -1477,26 +1453,26 @@ pub struct AFD_POLL_INFO {
 }
 #[repr(C)]
 pub struct uv_poll_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub poll_cb: uv_poll_cb,
-    pub socket: SOCKET,
-    pub peer_socket: SOCKET,
-    pub afd_poll_info_1: AFD_POLL_INFO,
-    pub afd_poll_info_2: AFD_POLL_INFO,
-    pub poll_req_1: uv_req_t,
-    pub poll_req_2: uv_req_t,
-    pub submitted_events_1: u8,
-    pub submitted_events_2: u8,
-    pub mask_events_1: u8,
-    pub mask_events_2: u8,
-    pub events: u8,
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    poll_cb: uv_poll_cb,
+    socket: SOCKET,
+    peer_socket: SOCKET,
+    afd_poll_info_1: AFD_POLL_INFO,
+    afd_poll_info_2: AFD_POLL_INFO,
+    poll_req_1: uv_req_t,
+    poll_req_2: uv_req_t,
+    submitted_events_1: u8,
+    submitted_events_2: u8,
+    mask_events_1: u8,
+    mask_events_2: u8,
+    events: u8,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1504,43 +1480,20 @@ pub struct uv_poll_t {
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(C)]
 pub struct Timer {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub heap_node: [*mut c_void; 3],
-    pub unused: c_int,
-    pub timeout: u64,
-    pub repeat: u64,
-    pub start_id: u64,
-    pub timer_cb: uv_timer_cb,
-}
-impl Timer {
-    #[inline]
-    pub fn init(&mut self, loop_: *mut Loop) {
-        // SAFETY: `self` is a valid `uv_timer_t`-sized allocation.
-        if unsafe { uv_timer_init(loop_, self) } != 0 {
-            panic!("internal error: uv_timer_init failed");
-        }
-    }
-    #[inline]
-    pub fn start(&mut self, timeout: u64, repeat: u64, callback: uv_timer_cb) {
-        // SAFETY: timer was `init`ed.
-        if unsafe { uv_timer_start(self, callback, timeout, repeat) } != 0 {
-            panic!("internal error: uv_timer_start failed");
-        }
-    }
-    #[inline]
-    pub fn stop(&mut self) {
-        // SAFETY: timer was `init`ed.
-        if unsafe { uv_timer_stop(self) } != 0 {
-            panic!("internal error: uv_timer_stop failed");
-        }
-    }
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    heap_node: [*mut c_void; 3],
+    unused: c_int,
+    timeout: u64,
+    repeat: u64,
+    start_id: u64,
+    timer_cb: uv_timer_cb,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1576,38 +1529,17 @@ pub struct uv_check_t {
 }
 #[repr(C)]
 pub struct uv_idle_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub idle_prev: *mut uv_idle_t,
-    pub idle_next: *mut uv_idle_t,
-    pub idle_cb: uv_idle_cb,
-}
-impl uv_idle_t {
-    #[inline]
-    pub fn init(&mut self, loop_: *mut Loop) {
-        // SAFETY: `self` is `#[repr(C)]` POD; all-zero is valid.
-        unsafe { ptr::write_bytes(self, 0, 1) };
-        // SAFETY: self is a valid `uv_idle_t`-sized allocation.
-        if unsafe { uv_idle_init(loop_, self) } != 0 {
-            panic!("internal error: uv_idle_init failed");
-        }
-    }
-    #[inline]
-    pub fn start(&mut self, cb: uv_idle_cb) {
-        // SAFETY: idle was `init`ed.
-        let _ = unsafe { uv_idle_start(self, cb) };
-    }
-    #[inline]
-    pub fn stop(&mut self) {
-        // SAFETY: idle was `init`ed.
-        let _ = unsafe { uv_idle_stop(self) };
-    }
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    idle_prev: *mut uv_idle_t,
+    idle_next: *mut uv_idle_t,
+    idle_cb: uv_idle_cb,
 }
 #[repr(C)]
 pub struct uv_async_t {
@@ -1625,7 +1557,7 @@ pub struct uv_async_t {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `Process` (`uv_process_t`) + spawn options.
+// `uv_process_t` + spawn options.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1637,40 +1569,23 @@ pub struct uv_process_exit_t {
     pub next_req: *mut uv_req_t,
 }
 #[repr(C)]
-pub struct Process {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub exit_cb: uv_exit_cb,
-    pub pid: c_int,
-    pub exit_req: uv_process_exit_t,
-    pub unused: *mut c_void,
-    pub exit_signal: c_int,
-    pub wait_handle: HANDLE,
-    pub process_handle: HANDLE,
-    pub exit_cb_pending: u8,
-}
-pub type uv_process_t = Process;
-impl Process {
-    #[inline]
-    pub fn spawn(&mut self, loop_: *mut Loop, options: *const uv_process_options_t) -> ReturnCode {
-        // SAFETY: `self` is a valid `uv_process_t`-sized allocation.
-        let rc = unsafe { uv_spawn(loop_, self, options) };
-        if rc.0 == 0 {
-            open_handles::add_process(self);
-        }
-        rc
-    }
-    #[inline]
-    pub fn kill(&mut self, signum: c_int) -> ReturnCode {
-        // SAFETY: process was spawned.
-        unsafe { uv_process_kill(self, signum) }
-    }
+pub struct uv_process_t {
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    exit_cb: uv_exit_cb,
+    pid: c_int,
+    exit_req: uv_process_exit_t,
+    unused: *mut c_void,
+    exit_signal: c_int,
+    wait_handle: HANDLE,
+    process_handle: HANDLE,
+    exit_cb_pending: u8,
 }
 
 #[repr(C)]
@@ -1717,46 +1632,23 @@ pub struct uv_fs_event_req_t {
 }
 #[repr(C)]
 pub struct uv_fs_event_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub path: *mut c_char,
-    pub req: uv_fs_event_req_t,
-    pub dir_handle: HANDLE,
-    pub req_pending: c_int,
-    pub cb: uv_fs_event_cb,
-    pub filew: *mut WCHAR,
-    pub short_filew: *mut WCHAR,
-    pub(crate) dirw: *mut WCHAR,
-    pub buffer: *mut u8,
-}
-impl uv_fs_event_t {
-    #[inline]
-    pub fn is_dir(&self) -> bool {
-        !self.dirw.is_null()
-    }
-
-    /// Wyhash over
-    /// `path ?? "null"`, `events` bytes, `filename`, `status` bytes.
-    pub fn hash(&self, filename: &[u8], events: c_int, status: ReturnCode) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        if self.path.is_null() {
-            hasher.update(b"null");
-        } else {
-            // SAFETY: `path` is a valid NUL-terminated C string owned by libuv
-            // for the lifetime of the open handle.
-            hasher.update(unsafe { core::ffi::CStr::from_ptr(self.path) }.to_bytes());
-        }
-        hasher.update(&events.to_ne_bytes());
-        hasher.update(filename);
-        hasher.update(&status.0.to_ne_bytes());
-        hasher.final_()
-    }
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    path: *mut c_char,
+    req: uv_fs_event_req_t,
+    dir_handle: HANDLE,
+    req_pending: c_int,
+    cb: uv_fs_event_cb,
+    filew: *mut WCHAR,
+    short_filew: *mut WCHAR,
+    dirw: *mut WCHAR,
+    buffer: *mut u8,
 }
 #[repr(C)]
 pub struct uv_fs_poll_t {
@@ -1780,19 +1672,19 @@ struct signal_tree_entry {
 }
 #[repr(C)]
 pub struct uv_signal_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub signal_cb: uv_signal_cb,
-    pub signum: c_int,
+    data: *mut c_void,
+    loop_: *mut Loop,
+    type_: HandleType,
+    close_cb: uv_close_cb,
+    handle_queue: uv__queue,
+    u: handle_u,
+    endgame_next: *mut uv_handle_t,
+    flags: c_uint,
+    signal_cb: uv_signal_cb,
+    signum: c_int,
     tree_entry: signal_tree_entry,
-    pub signal_req: uv_req_t,
-    pub pending_signum: c_ulong,
+    signal_req: uv_req_t,
+    pending_signum: c_ulong,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1800,20 +1692,20 @@ pub struct uv_signal_t {
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(C)]
 pub struct uv_getaddrinfo_t {
-    pub data: *mut c_void,
-    pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
-    pub u: req_u,
-    pub next_req: *mut uv_req_t,
-    pub loop_: *mut Loop,
-    pub work_req: uv__work,
-    pub getaddrinfo_cb: uv_getaddrinfo_cb,
-    pub alloc: *mut c_void,
-    pub node: *mut WCHAR,
-    pub service: *mut WCHAR,
-    pub addrinfow: *mut c_void,
-    pub addrinfo: *mut addrinfo,
-    pub retcode: ReturnCode,
+    data: *mut c_void,
+    type_: uv_req_type,
+    reserved: [*mut c_void; 6],
+    u: req_u,
+    next_req: *mut uv_req_t,
+    loop_: *mut Loop,
+    work_req: uv__work,
+    getaddrinfo_cb: uv_getaddrinfo_cb,
+    alloc: *mut c_void,
+    node: *mut WCHAR,
+    service: *mut WCHAR,
+    addrinfow: *mut c_void,
+    addrinfo: *mut addrinfo,
+    retcode: ReturnCode,
 }
 #[repr(C)]
 pub struct uv_work_t {
@@ -2296,6 +2188,9 @@ pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ReturnCode(pub(crate) c_int);
 
+/// `Err` returns what the call took if libuv refuses it. The callback does not run then.
+pub type StartResult<T> = Result<(), (T, ReturnCode)>;
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_core::ffi::Zeroable` impls (S021). Every libuv handle/request struct
 // above is `#[repr(C)]` POD whose fields are integers, raw pointers,
@@ -2312,23 +2207,12 @@ unsafe impl bun_core::ffi::Zeroable for uv_buf_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_req_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_write_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_connect_t {}
-unsafe impl bun_core::ffi::Zeroable for Handle {}
-unsafe impl bun_core::ffi::Zeroable for Timer {}
 unsafe impl bun_core::ffi::Zeroable for Pipe {}
-unsafe impl bun_core::ffi::Zeroable for uv_idle_t {}
-unsafe impl bun_core::ffi::Zeroable for uv_poll_t {}
-unsafe impl bun_core::ffi::Zeroable for uv_signal_t {}
-unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
-unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
 bun_core::impl_zeroable!(uv_stat_t, uv_utsname_t);
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);
-    #[inline]
-    pub const fn zero() -> ReturnCode {
-        ReturnCode(0)
-    }
     #[inline]
     pub const fn int(self) -> c_int {
         self.0
@@ -2349,6 +2233,10 @@ impl ReturnCode {
     #[inline]
     pub const fn is_err(self) -> bool {
         self.0 < 0
+    }
+    #[inline]
+    pub(crate) const fn into_result(self) -> Result<(), ReturnCode> {
+        if self.is_err() { Err(self) } else { Ok(()) }
     }
 }
 impl fmt::Debug for ReturnCode {
@@ -2669,9 +2557,13 @@ pub const SIGWINCH: c_int = 28;
 pub(crate) const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
 
 /// Non-ABI helper: `flags & UV_HANDLE_CLOSED != 0`.
+///
+/// # Safety
+/// `handle` is live.
 #[inline]
-pub(crate) fn uv_is_closed(handle: &uv_handle_t) -> bool {
-    handle.flags & UV_HANDLE_CLOSED != 0
+pub(crate) unsafe fn uv_is_closed(handle: *const uv_handle_t) -> bool {
+    // SAFETY: fn contract.
+    unsafe { (*handle).flags & UV_HANDLE_CLOSED != 0 }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2686,37 +2578,35 @@ unsafe extern "C" {
         free_func: uv_free_func,
     ) -> c_int;
     pub fn uv_default_loop() -> *mut Loop;
-    pub fn uv_loop_init(loop_: *mut Loop) -> ReturnCode;
-    pub fn uv_loop_close(loop_: *mut Loop) -> ReturnCode;
-    pub fn uv_loop_alive(loop_: *const Loop) -> c_int;
-    pub fn uv_run(loop_: *mut Loop, mode: RunMode) -> c_int;
-    pub fn uv_stop(loop_: *mut Loop);
-    pub fn uv_ref(handle: *mut uv_handle_t);
-    pub fn uv_unref(handle: *mut uv_handle_t);
-    pub fn uv_has_ref(handle: *const uv_handle_t) -> c_int;
-    pub fn uv_update_time(loop_: *mut Loop);
-    pub fn uv_now(loop_: *const Loop) -> u64;
+    fn uv_loop_init(loop_: *mut Loop) -> ReturnCode;
+    fn uv_loop_close(loop_: *mut Loop) -> ReturnCode;
+    fn uv_loop_alive(loop_: &Loop) -> c_int;
+    fn uv_run(loop_: &Loop, mode: RunMode) -> c_int;
+    fn uv_stop(loop_: &Loop);
+    fn uv_ref(handle: *mut uv_handle_t);
+    fn uv_unref(handle: *mut uv_handle_t);
+    fn uv_has_ref(handle: *const uv_handle_t) -> c_int;
+    fn uv_update_time(loop_: &Loop);
 
     // handle/req
     pub fn uv_handle_size(type_: uv_handle_type) -> usize;
     pub fn uv_handle_get_type(handle: *const uv_handle_t) -> uv_handle_type;
     pub fn uv_handle_type_name(type_: uv_handle_type) -> *const c_char;
     pub fn uv_handle_get_data(handle: *const uv_handle_t) -> *mut c_void;
-    pub fn uv_handle_get_loop(handle: *const uv_handle_t) -> *mut Loop;
     pub fn uv_handle_set_data(handle: *mut uv_handle_t, data: *mut c_void);
-    pub fn uv_is_active(handle: *const uv_handle_t) -> c_int;
-    pub fn uv_walk(loop_: *mut Loop, walk_cb: uv_walk_cb, arg: *mut c_void);
-    pub fn uv_close(handle: *mut uv_handle_t, close_cb: uv_close_cb);
+    fn uv_is_active(handle: *const uv_handle_t) -> c_int;
+    fn uv_walk(loop_: &Loop, walk_cb: uv_walk_cb, arg: *mut c_void);
+    fn uv_close(handle: *mut uv_handle_t, close_cb: uv_close_cb);
     pub fn uv_fileno(handle: *const uv_handle_t, fd: *mut uv_os_fd_t) -> c_int;
     pub fn uv_buf_init(base: *mut c_char, len: c_uint) -> uv_buf_t;
     pub fn uv_pipe(fds: *mut [uv_file; 2], read_flags: c_int, write_flags: c_int) -> ReturnCode;
-    pub fn uv_is_closing(handle: *const uv_handle_t) -> c_int;
+    fn uv_is_closing(handle: *const uv_handle_t) -> c_int;
     pub fn uv_cancel(req: *mut uv_req_t) -> c_int;
 
     // stream
     pub fn uv_stream_get_write_queue_size(stream: *const uv_stream_t) -> usize;
-    pub fn uv_listen(stream: *mut uv_stream_t, backlog: c_int, cb: uv_connection_cb) -> ReturnCode;
-    pub fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode;
+    fn uv_listen(stream: *mut uv_stream_t, backlog: c_int, cb: uv_connection_cb) -> ReturnCode;
+    fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode;
     pub fn uv_read_start(
         stream: *mut uv_stream_t,
         alloc_cb: uv_alloc_cb,
@@ -2741,7 +2631,7 @@ unsafe extern "C" {
 
     // tty
     pub fn uv_tty_init(
-        loop_: *mut Loop,
+        loop_: &Loop,
         handle: *mut uv_tty_t,
         fd: uv_file,
         readable: c_int,
@@ -2756,15 +2646,15 @@ unsafe extern "C" {
     pub safe fn uv_guess_handle_raw(file: uv_file) -> c_int;
 
     // pipe
-    pub fn uv_pipe_init(loop_: *mut Loop, handle: *mut Pipe, ipc: c_int) -> ReturnCode;
-    pub fn uv_pipe_open(handle: *mut Pipe, file: uv_file) -> ReturnCode;
-    pub fn uv_pipe_bind2(
+    fn uv_pipe_init(loop_: &Loop, handle: *mut Pipe, ipc: c_int) -> ReturnCode;
+    fn uv_pipe_open(handle: *mut Pipe, file: uv_file) -> ReturnCode;
+    fn uv_pipe_bind2(
         handle: *mut Pipe,
         name: *const u8,
         namelen: usize,
         flags: c_uint,
     ) -> ReturnCode;
-    pub fn uv_pipe_connect2(
+    fn uv_pipe_connect2(
         req: *mut uv_connect_t,
         handle: *mut Pipe,
         name: *const u8,
@@ -2774,23 +2664,24 @@ unsafe extern "C" {
     ) -> ReturnCode;
 
     // poll
-    pub fn uv_poll_init_socket(
-        loop_: *mut Loop,
+    fn uv_poll_init_socket(
+        loop_: &Loop,
         handle: *mut uv_poll_t,
         socket: uv_os_sock_t,
-    ) -> c_int;
-    pub fn uv_poll_start(handle: *mut uv_poll_t, events: c_int, cb: uv_poll_cb) -> c_int;
+    ) -> ReturnCode;
+    fn uv_poll_start(handle: *mut uv_poll_t, events: c_int, cb: uv_poll_cb) -> ReturnCode;
 
     // idle/async
-    pub fn uv_idle_init(loop_: *mut Loop, idle: *mut uv_idle_t) -> c_int;
-    pub fn uv_idle_start(idle: *mut uv_idle_t, cb: uv_idle_cb) -> c_int;
-    pub fn uv_idle_stop(idle: *mut uv_idle_t) -> c_int;
+    fn uv_idle_init(loop_: &Loop, idle: *mut uv_idle_t) -> ReturnCode;
+    fn uv_idle_start(idle: *mut uv_idle_t, cb: uv_idle_cb) -> ReturnCode;
+    fn uv_idle_stop(idle: *mut uv_idle_t) -> ReturnCode;
 
     // timer
-    pub fn uv_timer_init(loop_: *mut Loop, handle: *mut Timer) -> c_int;
-    pub fn uv_timer_start(handle: *mut Timer, cb: uv_timer_cb, timeout: u64, repeat: u64) -> c_int;
-    pub fn uv_timer_stop(handle: *mut Timer) -> c_int;
-    pub fn uv_timer_get_due_in(handle: *const Timer) -> u64;
+    fn uv_timer_init(loop_: &Loop, handle: *mut Timer) -> ReturnCode;
+    fn uv_timer_start(handle: *mut Timer, cb: uv_timer_cb, timeout: u64, repeat: u64)
+    -> ReturnCode;
+    fn uv_timer_stop(handle: *mut Timer) -> ReturnCode;
+    fn uv_timer_get_due_in(handle: *const Timer) -> u64;
 
     /// Winsock is initialized on first use inside libuv; anything that calls
     /// ws2_32 directly (or through c-ares/uSockets) must call this first.
@@ -2798,23 +2689,23 @@ unsafe extern "C" {
     pub safe fn uv__winsock_ensure();
 
     // dns
-    pub fn uv_getaddrinfo(
-        loop_: *mut Loop,
+    fn uv_getaddrinfo(
+        loop_: &Loop,
         req: *mut uv_getaddrinfo_t,
         getaddrinfo_cb: uv_getaddrinfo_cb,
         node: *const c_char,
         service: *const c_char,
-        hints: *const c_void,
+        hints: Option<&addrinfo>,
     ) -> ReturnCode;
-    pub fn uv_freeaddrinfo(ai: *mut c_void);
+    fn uv_freeaddrinfo(ai: *mut addrinfo);
 
     // process
-    pub fn uv_spawn(
-        loop_: *mut Loop,
-        handle: *mut Process,
+    fn uv_spawn(
+        loop_: &Loop,
+        handle: *mut uv_process_t,
         options: *const uv_process_options_t,
     ) -> ReturnCode;
-    pub fn uv_process_kill(handle: *mut Process, signum: c_int) -> ReturnCode;
+    fn uv_process_kill(handle: *mut uv_process_t, signum: c_int) -> ReturnCode;
 
     // misc
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
@@ -2837,10 +2728,14 @@ unsafe extern "C" {
 
     // fs
     pub fn uv_fs_req_cleanup(req: *mut fs_t);
-    pub fn uv_fs_close(loop_: *mut Loop, req: *mut fs_t, file: uv_file, cb: uv_fs_cb)
-    -> ReturnCode;
+    pub fn uv_fs_close(
+        loop_: *const Loop,
+        req: *mut fs_t,
+        file: uv_file,
+        cb: uv_fs_cb,
+    ) -> ReturnCode;
     pub fn uv_fs_open(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         flags: c_int,
@@ -2848,7 +2743,7 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_read(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         bufs: *const uv_buf_t,
@@ -2857,13 +2752,13 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_unlink(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_write(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         bufs: *const uv_buf_t,
@@ -2872,7 +2767,7 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_copyfile(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         new_path: *const c_char,
@@ -2880,63 +2775,71 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_mkdir(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         mode: c_int,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_mkdtemp(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         tpl: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_rmdir(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_stat(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
-    pub fn uv_fs_fstat(loop_: *mut Loop, req: *mut fs_t, file: uv_file, cb: uv_fs_cb)
-    -> ReturnCode;
+    pub fn uv_fs_fstat(
+        loop_: *const Loop,
+        req: *mut fs_t,
+        file: uv_file,
+        cb: uv_fs_cb,
+    ) -> ReturnCode;
     pub fn uv_fs_rename(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         new_path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
-    pub fn uv_fs_fsync(loop_: *mut Loop, req: *mut fs_t, file: uv_file, cb: uv_fs_cb)
-    -> ReturnCode;
+    pub fn uv_fs_fsync(
+        loop_: *const Loop,
+        req: *mut fs_t,
+        file: uv_file,
+        cb: uv_fs_cb,
+    ) -> ReturnCode;
     pub fn uv_fs_fdatasync(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_ftruncate(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         offset: i64,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_chmod(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         mode: c_int,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_utime(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         atime: f64,
@@ -2944,7 +2847,7 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_futime(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         atime: f64,
@@ -2952,7 +2855,7 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_lutime(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         atime: f64,
@@ -2960,20 +2863,20 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_lstat(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_link(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         new_path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_symlink(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         new_path: *const c_char,
@@ -2981,26 +2884,26 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_readlink(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_realpath(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_fchmod(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         mode: c_int,
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_chown(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         uid: uv_uid_t,
@@ -3008,7 +2911,7 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_fchown(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         file: uv_file,
         uid: uv_uid_t,
@@ -3016,7 +2919,7 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_lchown(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         uid: uv_uid_t,
@@ -3024,21 +2927,21 @@ unsafe extern "C" {
         cb: uv_fs_cb,
     ) -> ReturnCode;
     pub fn uv_fs_statfs(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         req: *mut fs_t,
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
 
     // fs_event / signal
-    pub fn uv_signal_init(loop_: *mut Loop, handle: *mut uv_signal_t) -> ReturnCode;
-    pub fn uv_signal_start(
+    fn uv_signal_init(loop_: &Loop, handle: *mut uv_signal_t) -> ReturnCode;
+    fn uv_signal_start(
         handle: *mut uv_signal_t,
         signal_cb: uv_signal_cb,
         signum: c_int,
     ) -> ReturnCode;
-    pub fn uv_fs_event_init(loop_: *mut Loop, handle: *mut uv_fs_event_t) -> ReturnCode;
-    pub fn uv_fs_event_start(
+    fn uv_fs_event_init(loop_: &Loop, handle: *mut uv_fs_event_t) -> ReturnCode;
+    fn uv_fs_event_start(
         handle: *mut uv_fs_event_t,
         cb: uv_fs_event_cb,
         path: *const c_char,
@@ -3115,15 +3018,15 @@ const _: () = {
 
     // `UV_HANDLE_FIELDS` header.
     assert_size!(handle_u, 32);
-    assert_size!(Handle, 96);
-    assert_offset!(Handle, data, 0);
-    assert_offset!(Handle, loop_, 8);
-    assert_offset!(Handle, type_, 16);
-    assert_offset!(Handle, close_cb, 24);
-    assert_offset!(Handle, handle_queue, 32);
-    assert_offset!(Handle, u, 48);
-    assert_offset!(Handle, endgame_next, 80);
-    assert_offset!(Handle, flags, 88);
+    assert_size!(uv_handle_t, 96);
+    assert_offset!(uv_handle_t, data, 0);
+    assert_offset!(uv_handle_t, loop_, 8);
+    assert_offset!(uv_handle_t, type_, 16);
+    assert_offset!(uv_handle_t, close_cb, 24);
+    assert_offset!(uv_handle_t, handle_queue, 32);
+    assert_offset!(uv_handle_t, u, 48);
+    assert_offset!(uv_handle_t, endgame_next, 80);
+    assert_offset!(uv_handle_t, flags, 88);
 
     // `UV_STREAM_FIELDS` header.
     assert_size!(uv_stream_t, 272);
@@ -3166,7 +3069,7 @@ const _: () = {
     assert_offset!(uv_tty_t, data, 0);
     assert_offset!(Timer, data, 0);
     assert_offset!(uv_async_t, data, 0);
-    assert_offset!(Process, data, 0);
+    assert_offset!(uv_process_t, data, 0);
     assert_offset!(uv_signal_t, data, 0);
     assert_offset!(uv_poll_t, data, 0);
     assert_offset!(uv_udp_t, data, 0);

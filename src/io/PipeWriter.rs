@@ -24,7 +24,7 @@ use crate::pipes::{FileType, PipeHandle};
 #[cfg(windows)]
 use crate::posix_event_loop::__bun_run_io;
 #[cfg(windows)]
-use crate::source::{File, Source};
+use crate::source::{File, OwnedPipe, Source};
 
 bun_core::define_scoped_log!(log, PipeWriter, hidden);
 
@@ -1067,7 +1067,7 @@ impl WindowsBufferedWriter {
         self.base.update_ref(value);
     }
 
-    pub fn set_pipe(&self, pipe: uv::Owned<uv::Pipe>) {
+    pub fn set_pipe(&self, pipe: OwnedPipe) {
         self.base.set_source(Source::Pipe(pipe));
     }
 
@@ -1426,11 +1426,11 @@ impl WindowsStreamingWriter {
             .with_source(|source| matches!(source, Source::SyncFile(_)).then(|| source.get_fd()))?
     }
 
-    pub fn set_pipe(&self, pipe: uv::Owned<uv::Pipe>) {
+    pub fn set_pipe(&self, pipe: OwnedPipe) {
         self.base.set_source(Source::Pipe(pipe));
     }
 
-    pub fn start_with_pipe(&self, handler: &impl WriteHandler, pipe: uv::Owned<uv::Pipe>) {
+    pub fn start_with_pipe(&self, handler: &impl WriteHandler, pipe: OwnedPipe) {
         self.set_pipe(pipe);
         self.start_with_current_pipe(handler);
     }

@@ -14,11 +14,11 @@ use bun_sys::ReturnCodeExt as _;
 
 bun_core::declare_scope!(PipeSource, hidden);
 
-pub type Pipe = uv::Pipe;
+pub type OwnedPipe = uv::OwnedStream<uv::Pipe>;
 pub use uv::Tty;
 
 pub enum Source {
-    Pipe(uv::Owned<Pipe>),
+    Pipe(OwnedPipe),
     Tty(OpenTty),
     File(OpenFile),
     SyncFile(OpenFile),
@@ -75,7 +75,7 @@ impl Drop for OpenTty {
         // Node only ever closes stdin on process exit.
         if !stdin_tty::is_stdin_tty(self.as_ptr()) {
             // SAFETY: the box `open_tty` made.
-            drop(unsafe { uv::Owned::from_raw(self.as_ptr()) });
+            drop(unsafe { uv::OwnedStream::from_raw(self.as_ptr()) });
         }
     }
 }
@@ -384,16 +384,16 @@ impl Source {
     }
 
     /// The pipe owns `fd` on `Ok`.
-    pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<uv::Owned<Pipe>> {
+    pub fn open_pipe(loop_: &uv::Loop, fd: Fd) -> bun_sys::Result<OwnedPipe> {
         bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
-        let mut pipe = uv::Owned::<Pipe>::zeroed();
+        let mut pipe = OwnedPipe::zeroed();
         // we should never init using IPC here
         pipe.init(loop_, false).to_result(bun_sys::Tag::pipe)?;
         pipe.open(fd.uv()).to_result(bun_sys::Tag::open)?;
         Ok(pipe)
     }
 
-    pub(crate) fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<OpenTty> {
+    pub(crate) fn open_tty(loop_: &uv::Loop, fd: Fd) -> bun_sys::Result<OpenTty> {
         bun_core::scoped_log!(PipeSource, "openTTY (fd = {})", fd);
 
         let uv_fd = fd.uv();
@@ -403,7 +403,7 @@ impl Source {
         }
 
         // Not `zeroed`: a zeroed `Vec` is UB.
-        let mut tty = uv::Owned::new(Tty {
+        let mut tty = uv::OwnedStream::new(Tty {
             uv: bun_core::ffi::zeroed(),
             read_scratch: Vec::new(),
         });
@@ -494,7 +494,7 @@ mod stdin_tty {
     }
 
     pub(super) fn get_stdin_tty(
-        loop_: *mut uv::Loop,
+        loop_: &uv::Loop,
     ) -> bun_sys::Result<bun_ptr::BackRef<Tty, bun_ptr::Mut>> {
         let _guard = LOCK.lock_guard();
 
@@ -523,7 +523,7 @@ mod stdin_tty {
 /// be a T6 dependency); the C++ caller
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
-extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
+extern "C" fn Source__setRawModeStdin(uv_loop: &uv::Loop, raw: bool) -> c_int {
     let tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,

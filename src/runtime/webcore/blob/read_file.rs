@@ -748,7 +748,7 @@ impl ReadFile {
 /// One owner at a time: a `Box` here, or libuv while it works for it.
 #[cfg(windows)]
 pub(crate) struct ReadFileUV {
-    pub(crate) loop_: *mut libuv::uv_loop_t,
+    pub(crate) loop_: &'static libuv::uv_loop_t,
     _keep_alive: bun_io::JsKeepAlive,
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
@@ -779,7 +779,7 @@ impl ReadFileUV {
         log!("ReadFileUV.start");
         let store = blob.store().expect("infallible: store present").clone();
         let mut this = Box::new(ReadFileUV {
-            loop_: cx.global().bun_vm().event_loop().uv_loop().cast(),
+            loop_: cx.global().bun_vm().event_loop().uv_loop(),
             _keep_alive: bun_io::JsKeepAlive::active(),
             store, // store.ref() — Arc clone owned here
             offset: blob.offset.get(),

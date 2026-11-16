@@ -308,10 +308,6 @@ pub(crate) fn run_task(
         task_tag::GetAddrInfoLibuvComplete => {
             boxed!(task, crate::dns_jsc::LibuvRequest).run();
         }
-        #[cfg(windows)]
-        task_tag::UvDnsPollFree => {
-            crate::dns_jsc::UvDnsPoll::destroy(cast_ptr!(crate::dns_jsc::UvDnsPoll));
-        }
         task_tag::ValkeyDeferredClose => {
             boxed_arm!(
                 task,
@@ -805,7 +801,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 82,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1736,12 +1732,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::GetAddrInfoLibuvComplete => {
             #[cfg(windows)]
             boxed!(task, crate::dns_jsc::LibuvRequest).release_unrun();
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::UvDnsPollFree => {
-            #[cfg(windows)]
-            release!(crate::dns_jsc::UvDnsPoll);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

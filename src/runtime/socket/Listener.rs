@@ -31,16 +31,11 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-use core::ptr::NonNull;
-
-#[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]
-use bun_core::strings;
+use bun_core::{ZStr, strings};
 #[cfg(windows)]
 use bun_jsc::GlobalRef;
-#[cfg(windows)]
-use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_node_path as node_path;
 #[cfg(windows)]
@@ -86,7 +81,7 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
 pub(crate) enum ListenerType {
     Uws(uws_sys::OwnedListenSocket),
     #[cfg(windows)]
-    NamedPipe(ListeningPipe),
+    NamedPipe(uv::Owned<uv::ListeningPipe, WindowsNamedPipeListeningContext>),
     #[default]
     None,
 }
@@ -286,7 +281,7 @@ impl Listener {
                     &pipe_buf[..pipe_len],
                     511,
                     ssl_cfg_taken.as_ref(),
-                    this,
+                    this_ref,
                 ) {
                     Ok(named_pipe) => this_ref.listener.set(ListenerType::NamedPipe(named_pipe)),
                     Err(e) => {
@@ -1497,10 +1492,7 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
             this.secure_ctx.set(Some(ctx));
         }
         #[cfg(windows)]
-        ListenerType::NamedPipe(pipe) => {
-            // SAFETY: the pipe context is live while `this.listener` holds it.
-            unsafe { pipe.0.as_ref() }.ctx.set(Some(ctx));
-        }
+        ListenerType::NamedPipe(pipe) => pipe.data.ctx.set(Some(ctx)),
         ListenerType::None => {}
     }
 }
@@ -1534,42 +1526,14 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 
 #[cfg(windows)]
 pub(crate) struct WindowsNamedPipeListeningContext {
-    pub(crate) uv_pipe: uv::Pipe,
-    /// BACKREF: the parent `Listener` allocated this context in
-    /// `listen_named_pipe` and outlives it (cleared to `None` in
-    /// `ListeningPipe::drop` before the listener is torn down). `BackRef`
-    /// centralises the safe deref so call sites don't open-code a raw
-    /// `NonNull::as_ref`.
-    pub(crate) listener: Option<bun_ptr::BackRef<Listener>>,
+    /// Owns the pipe, so it is live until the pipe is closing.
+    pub(crate) listener: bun_ptr::BackRef<Listener>,
     pub global_this: GlobalRef,
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
     /// Every accept wraps its pipe with this context.
     pub ctx: JsCell<Option<boring_sys::OwnedSslCtx>>,
-}
-
-/// A context whose pipe is on the loop, so it is freed once libuv has closed the pipe.
-#[cfg(windows)]
-pub(crate) struct ListeningPipe(NonNull<WindowsNamedPipeListeningContext>);
-
-#[cfg(windows)]
-impl Drop for ListeningPipe {
-    fn drop(&mut self) {
-        extern "C" fn on_closed(pipe: *mut uv::Pipe) {
-            // SAFETY: `data` is the box `listen` leaked, and libuv is done with it.
-            unsafe {
-                bun_core::heap::destroy((*pipe).data.cast::<WindowsNamedPipeListeningContext>())
-            };
-        }
-        let this = self.0.as_ptr();
-        // SAFETY: live until `on_closed` runs.
-        unsafe {
-            (*this).listener = None;
-            (*this).uv_pipe.data = this.cast::<c_void>();
-            (*this).uv_pipe.close(on_closed);
-        }
-    }
 }
 
 /// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.
@@ -1581,19 +1545,13 @@ enum ListenPipeError {
 
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
-    fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
-        // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
-        // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
-        // Shared borrow — `on_name_pipe_created` re-enters JS; the one `&mut`
-        // (the `uv_pipe` field) is taken through the root pointer below.
-        let this_ref = unsafe { &*this };
-        if status != uv::ReturnCode::ZERO || this_ref.listener.is_none() {
-            // connection dropped, or we are deiniting/closing
+    fn on_client_connect(server: &uv::Handle<uv::ListeningPipe, Self>, status: uv::ReturnCode) {
+        if status != uv::ReturnCode::ZERO {
+            // connection dropped
             return;
         }
-        // `BackRef` deref — owner `Listener` outlives this context (see field doc).
-        let listener_ref = this_ref.listener.unwrap();
-        let listener: &Listener = listener_ref.get();
+        let this_ref = &server.data;
+        let listener: &Listener = &this_ref.listener;
         // An accepted pipe is the listening script's.
         let entered = this_ref.vm.enter_context(listener.context);
         use crate::socket::windows_named_pipe_context::OwnedSocket;
@@ -1610,8 +1568,6 @@ impl WindowsNamedPipeListeningContext {
             socket,
         );
 
-        // SAFETY: from the root pointer, and `this_ref` (shared) never touches `uv_pipe`.
-        let server = unsafe { &mut (*this).uv_pipe };
         if (client.named_pipe)
             .get_accepted_by(server, ssl_ctx.as_ref())
             .is_err()
@@ -1621,25 +1577,13 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 
-    /// `uv_connection_cb` trampoline — recovers `*Self` from `handle.data`
-    /// (set by `Pipe::listen`) and forwards to [`on_client_connect`].
-    /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
-    /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
-    /// explicitly — matches the `extern "C" fn` callback convention used in
-    /// `udp_socket.rs` / `bun_io::BufferedReader`.
-    extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
-        // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
-        let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
-        Self::on_client_connect(this, status);
-    }
-
     fn listen(
         global_this: &JSGlobalObject,
         path: &[u8],
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
-        listener: *mut Listener,
-    ) -> Result<ListeningPipe, ListenPipeError> {
+        listener: &Listener,
+    ) -> Result<uv::Owned<uv::ListeningPipe, Self>, ListenPipeError> {
         let ctx = match ssl_config {
             Some(ssl_options) => {
                 boringssl::load();
@@ -1653,64 +1597,37 @@ impl WindowsNamedPipeListeningContext {
             None => None,
         };
 
-        // Heap-allocate at the final address so libuv can
-        // store a pointer back into `uv_pipe`.
-        let owned = bun_ptr::AliasableBox::new(WindowsNamedPipeListeningContext {
-            uv_pipe: bun_core::ffi::zeroed(),
-            listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
+        let vm = global_this.bun_vm();
+        let context = WindowsNamedPipeListeningContext {
+            listener: bun_ptr::BackRef::new(listener),
             global_this: GlobalRef::from(global_this),
-            vm: global_this.bun_vm(),
+            vm,
             ctx: JsCell::new(ctx),
-        });
-        let this = owned.as_ptr();
-
-        // SAFETY: `this` was just allocated above; `&mut uv_pipe` is scoped to
-        // this call.
-        let init_result = unsafe { (*this).uv_pipe.init((*this).vm.uv_loop().cast(), false) };
-        if init_result.is_err() {
-            return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
-        }
-        let pipe = ListeningPipe(owned.into_non_null());
-
-        let listen_rc = if path[path.len() - 1] == 0 {
+        };
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let name = if path[path.len() - 1] == 0 {
             // is already null terminated
-            // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
-            unsafe {
-                (*this).uv_pipe.listen_named_pipe(
-                    &path[..path.len() - 1],
-                    backlog,
-                    this.cast::<c_void>(),
-                    Self::uv_on_client_connect,
-                )
-            }
+            ZStr::from_slice_with_nul(path)
         } else {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
             // we need to null terminate the path
             let len = path.len().min(path_buf.len() - 1);
             path_buf[..len].copy_from_slice(&path[..len]);
-            path_buf[len] = 0;
-            // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
-            unsafe {
-                (*this).uv_pipe.listen_named_pipe(
-                    &path_buf[..len],
-                    backlog,
-                    this.cast::<c_void>(),
-                    Self::uv_on_client_connect,
-                )
-            }
+            ZStr::nul_terminate(&mut path_buf, len)
         };
-        if listen_rc.is_err() {
+        let pipe = uv::ListeningPipe::listen(
+            vm.uv_loop(),
+            name,
+            backlog,
+            context,
+            Self::on_client_connect,
+        )
+        .map_err(|listen_rc| {
             // Surface the real error code: EADDRINUSE (name taken) vs
             // EACCES (pipe namespace denied) need different caller
             // handling, and a generic bind failure hides that.
-            use bun_sys::ReturnCodeExt as _;
-            let raw = listen_rc.int();
-            return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
-                Some(err) => ListenPipeError::Sys(err, raw),
-                // Unreachable in practice: the uv→errno mapping is total.
-                None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
-            });
-        }
+            let err = bun_sys::Error::from_uv(listen_rc, bun_sys::Tag::listen);
+            ListenPipeError::Sys(err, listen_rc.int())
+        })?;
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
         // this.closePipeAndDeinit();
@@ -1723,8 +1640,7 @@ impl WindowsNamedPipeListeningContext {
         // applies to its handles); otherwise `server.unref()` drops the
         // `poll_ref` but the uv handle still pins `uv_loop_alive` and the
         // process never exits.
-        // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
-        unsafe { (*this).uv_pipe.unref() };
+        pipe.unref();
 
         Ok(pipe)
     }

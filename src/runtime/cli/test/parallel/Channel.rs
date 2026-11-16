@@ -131,7 +131,7 @@ impl Channel {
 
 #[cfg(windows)]
 pub(crate) struct WindowsBackend {
-    pub(crate) pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
+    pub(crate) pipe: JsCell<Option<bun_io::OwnedPipe>>,
     /// Read scratch — libuv asks us to allocate before each read.
     pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
     /// Payload owned by the in-flight uv_write; must stay stable until the
@@ -171,7 +171,7 @@ impl Channel {
             // the .ipc stdio container, which always inits with ipc=true) and
             // child end disagree on framing and the channel never delivers a
             // frame.
-            let mut pipe = uv::Owned::<uv::Pipe>::zeroed();
+            let mut pipe = bun_io::OwnedPipe::zeroed();
             if let Some(e) = pipe
                 .init(uv::Loop::get(), true)
                 .to_error(bun_sys::Tag::pipe)
@@ -212,7 +212,7 @@ impl Channel {
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
     /// reading. The pipe stays ref'd so the loop blocks for the peer's first frame.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(&self, mut pipe: uv::Owned<uv::Pipe>) -> bool {
+    pub(crate) fn adopt_pipe(&self, mut pipe: bun_io::OwnedPipe) -> bool {
         // The read callbacks are expressed via the `StreamReader` trait impl
         // below and routed through `read_start_ctx`, which stashes `self` in
         // `handle.data`.
@@ -272,7 +272,7 @@ impl Channel {
         // kept because EBADF/EPIPE here mean the pipe is dead and must not
         // silently drop the frame.
         let buf = uv::uv_buf_t::init(frame_bytes);
-        let try_write = |pipe: &mut uv::Owned<uv::Pipe>| pipe.try_write(&[buf]);
+        let try_write = |pipe: &mut bun_io::OwnedPipe| pipe.try_write(&[buf]);
         let Some(rc) = (self.backend.pipe).with_mut(|pipe| pipe.as_mut().map(try_write)) else {
             return;
         };

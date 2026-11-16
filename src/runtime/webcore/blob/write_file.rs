@@ -570,7 +570,6 @@ mod windows_impl {
                 _keep_alive: JsKeepAlive::active(),
                 owned_fd: false,
             });
-            write_file.io_request.loop_ = event_loop.uv_loop();
 
             let store = write_file.file_blob.store().unwrap();
             let Some(fd) = store.data.as_file().fd() else {
@@ -766,7 +765,7 @@ mod windows_impl {
     impl Drop for WriteFileWindows {
         fn drop(&mut self) {
             if self.fd > 0 && self.owned_fd {
-                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
+                aio::Closer::close(Fd::from_uv(self.fd), self.event_loop.uv_loop());
             }
         }
     }

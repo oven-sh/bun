@@ -9,7 +9,7 @@
 //! construction and `Environment::CleanupHandles()` (node/src/env.cc) walks that
 //! list calling `Close()`; `uv_walk` alone is not enough because it yields bare
 //! `uv_handle_t*`s with no typed owner to close through. Insert on open, remove
-//! on close — both keyed by address, so neither costs more as handles pile up.
+//! on close; neither costs more as handles pile up.
 //!
 //! A reader over a *file* has no handle — its `uv_fs_read` is a request, which
 //! cannot be closed and completes only when the loop is drained — so the reader
@@ -36,7 +36,6 @@ struct Entry {
 enum Kind {
     Pipe,
     Tty,
-    Process,
 }
 
 /// A file a reader holds: closed through that reader.
@@ -55,6 +54,96 @@ struct Open {
 
 std::thread_local! {
     static OPEN: RefCell<Open> = RefCell::new(Open::default());
+    static HANDLES: Cell<*const Link> = const { Cell::new(ptr::null()) };
+    static REQUESTS: Cell<*const Link> = const { Cell::new(ptr::null()) };
+}
+
+/// A node of one of this thread's lists, which it leaves when it is dropped.
+pub(super) struct Link {
+    next: Cell<*const Link>,
+    /// The cell that points to `self`. Null while it is on no list.
+    prev_next: Cell<*const Cell<*const Link>>,
+    stop: Cell<Option<(unsafe fn(*mut c_void), *mut c_void)>>,
+}
+
+impl Link {
+    pub(super) const fn new() -> Self {
+        Self {
+            next: Cell::new(ptr::null()),
+            prev_next: Cell::new(ptr::null()),
+            stop: Cell::new(None),
+        }
+    }
+
+    /// # Safety
+    /// `self` stays in place and on this thread, and `stop(holder)` may be called, until `remove`.
+    pub(super) unsafe fn add_handle(&self, holder: *mut c_void, stop: unsafe fn(*mut c_void)) {
+        // SAFETY: fn contract.
+        HANDLES.with(|head| unsafe { self.add(head, holder, stop) });
+    }
+
+    /// # Safety
+    /// As for `add_handle`.
+    pub(super) unsafe fn add_request(&self, holder: *mut c_void, stop: unsafe fn(*mut c_void)) {
+        // SAFETY: fn contract.
+        REQUESTS.with(|head| unsafe { self.add(head, holder, stop) });
+    }
+
+    /// # Safety
+    /// As for `add_handle`, and `head` lasts as long as the thread.
+    unsafe fn add(
+        &self,
+        head: &Cell<*const Link>,
+        holder: *mut c_void,
+        stop: unsafe fn(*mut c_void),
+    ) {
+        assert!(self.prev_next.get().is_null());
+        self.stop.set(Some((stop, holder)));
+        self.prev_next.set(head);
+        self.next.set(head.replace(self));
+        // SAFETY: what is listed is live.
+        if let Some(next) = unsafe { self.next.get().as_ref() } {
+            next.prev_next.set(&raw const self.next);
+        }
+    }
+
+    pub(super) fn remove(&self) {
+        let prev_next = self.prev_next.replace(ptr::null());
+        // SAFETY: what is listed is live, and so is the head.
+        unsafe {
+            let Some(prev_next) = prev_next.as_ref() else {
+                return;
+            };
+            prev_next.set(self.next.get());
+            if let Some(next) = self.next.get().as_ref() {
+                next.prev_next.set(prev_next);
+            }
+        }
+    }
+}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        self.remove();
+    }
+}
+
+/// One at a time: a `stop` can add and remove others.
+fn stop_all(head: &Cell<*const Link>) {
+    // SAFETY: what is listed is live, and `stop` has the contract of `add`.
+    unsafe {
+        while let Some(link) = head.get().as_ref() {
+            link.remove();
+            let (stop, holder) = link.stop.get().expect("set by `add`");
+            log!("teardown: stopping @{:p}", holder);
+            stop(holder);
+        }
+    }
+}
+
+/// Each `getaddrinfo` in flight completes as cancelled, or as usual if it is too late for that.
+pub fn cancel_requests_for_vm_teardown() {
+    REQUESTS.with(stop_all);
 }
 
 fn add(handle: *mut uv_handle_t, kind: Kind) {
@@ -76,9 +165,6 @@ pub(super) fn add_pipe(p: *mut Pipe) {
 }
 pub(super) fn add_tty(t: *mut uv_tty_t) {
     add(t.cast(), Kind::Tty);
-}
-pub(super) fn add_process(p: *mut Process) {
-    add(p.cast(), Kind::Process);
 }
 
 /// The `uv_close` for `handle` has been (or is about to be) issued.
@@ -128,14 +214,6 @@ pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<Clo
             e.close_via_owner = if owner.is_null() { None } else { close };
         }
     });
-}
-
-#[cfg(debug_assertions)]
-pub fn count() -> usize {
-    OPEN.with(|o| {
-        let o = o.borrow();
-        o.handles.len() + o.files.len()
-    })
 }
 
 enum Next {
@@ -192,7 +270,6 @@ pub fn stop_all_for_vm_teardown() {
             match e.kind {
                 Kind::Pipe => "pipe",
                 Kind::Tty => "tty",
-                Kind::Process => "process",
             },
             handle,
             e.owner
@@ -205,4 +282,6 @@ pub fn stop_all_for_vm_teardown() {
             None => unsafe { uv_close(handle, None) },
         }
     }
+    // Closing these runs no callback.
+    HANDLES.with(stop_all);
 }

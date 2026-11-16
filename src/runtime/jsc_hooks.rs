@@ -1337,9 +1337,10 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
         result = result.and(unsafe {
             crate::dns_jsc::Resolver::close_channel_for_terminate(resolver.as_ptr())
         });
-        #[cfg(windows)]
-        resolver.cancel_pending_uv_requests_for_teardown();
     }
+    // So that the drain of the loop's requests is prompt.
+    #[cfg(windows)]
+    bun_sys::windows::libuv::open_handles::cancel_requests_for_vm_teardown();
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
     result

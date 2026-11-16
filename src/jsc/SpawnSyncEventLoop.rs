@@ -22,8 +22,6 @@ use core::ptr::NonNull;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
 use bun_uws as uws;
 
 use crate::event_loop::EventLoop;
@@ -66,8 +64,10 @@ pub struct SpawnSyncEventLoop {
     // stored back into `internal_loop_data` (self-referential w.r.t. `event_loop`).
     uws_loop: NonNull<uws::Loop>,
 
+    /// Its data is whether it has fired.
     #[cfg(windows)]
-    uv_timer: core::cell::OnceCell<libuv::Owned<libuv::Timer>>,
+    uv_timer: core::cell::OnceCell<libuv::Owned<libuv::Timer, Cell<bool>>>,
+    #[cfg(not(windows))]
     did_timeout: Cell<bool>,
 }
 
@@ -100,7 +100,7 @@ mod handler {
 }
 
 impl SpawnSyncEventLoop {
-    /// `None` if the isolated loop cannot be created. Boxed: the Windows timeout timer keeps the address.
+    /// `None` if the isolated loop cannot be created. Boxed: a move would invalidate the pointers into `event_loop`.
     ///
     /// SAFETY: `vm` is this thread's `VirtualMachine`, and the result is dropped only with it.
     pub(crate) unsafe fn init(vm: &VirtualMachine) -> Option<Box<Self>> {
@@ -113,6 +113,7 @@ impl SpawnSyncEventLoop {
             uws_loop,
             #[cfg(windows)]
             uv_timer: Default::default(),
+            #[cfg(not(windows))]
             did_timeout: Cell::new(false),
             event_loop: Box::new(EventLoop::with_uws_loop(vm, loop_)),
         });
@@ -139,14 +140,14 @@ impl SpawnSyncEventLoop {
         unsafe { self.uws_loop.as_ref() }
     }
 
-    /// Runs `f` on the libuv timeout timer, if a call has needed one yet. Not from under `uv_run`.
+    #[cfg(not(windows))]
+    fn take_did_timeout(&self) -> bool {
+        self.did_timeout.take()
+    }
+
     #[cfg(windows)]
-    #[inline]
-    fn with_uv_timer(&self, f: impl FnOnce(&mut libuv::Timer)) {
-        if let Some(timer) = self.uv_timer.get() {
-            // SAFETY: libuv touches the handle inside `uv_run` alone, and `f` cannot get back here.
-            f(unsafe { &mut *timer.as_ptr() });
-        }
+    fn take_did_timeout(&self) -> bool {
+        self.uv_timer.get().is_some_and(|timer| timer.data.take())
     }
 }
 
@@ -169,12 +170,12 @@ impl SpawnSyncEventLoop {
     pub fn prepare(&self) -> PreparedSpawnSyncEventLoop<'_> {
         let vm = self.event_loop.vm_ref();
         self.event_loop.global.set(NonNull::new(vm.global.get()));
-        self.did_timeout.set(false);
+        self.take_did_timeout();
 
         #[cfg(windows)]
         let original_event_loop_handle = vm
             .event_loop_handle
-            .replace(Some(self.uws_loop().uv_loop()));
+            .replace(Some(self.event_loop.uv_loop()));
 
         PreparedSpawnSyncEventLoop {
             inner: self,
@@ -190,7 +191,7 @@ pub struct PreparedSpawnSyncEventLoop<'a> {
     inner: &'a SpawnSyncEventLoop,
     /// The VM's event_loop_handle, which `prepare` overrode.
     #[cfg(windows)]
-    original_event_loop_handle: Option<*mut libuv::Loop>,
+    original_event_loop_handle: Option<&'static libuv::Loop>,
 }
 
 impl core::ops::Deref for PreparedSpawnSyncEventLoop<'_> {
@@ -215,22 +216,11 @@ impl Drop for PreparedSpawnSyncEventLoop<'_> {
         {
             let vm = self.event_loop.vm_ref();
             vm.event_loop_handle.set(self.original_event_loop_handle);
-            self.with_uv_timer(|timer| {
+            if let Some(timer) = self.uv_timer.get() {
                 timer.stop();
                 timer.unref();
-            });
+            }
         }
-    }
-}
-
-#[cfg(windows)]
-extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
-    // SAFETY: `data` is the `SpawnSyncEventLoop` whose tick this fires under, set in `prepare_timer_on_windows`.
-    unsafe {
-        (*(*timer_).data.cast::<SpawnSyncEventLoop>())
-            .did_timeout
-            .set(true);
-        (*libuv::uv_handle_get_loop(timer_.cast())).stop();
     }
 }
 
@@ -243,26 +233,21 @@ pub enum TickState {
 impl PreparedSpawnSyncEventLoop<'_> {
     #[cfg(windows)]
     fn prepare_timer_on_windows(&self, ts: &Timespec) {
-        self.uv_timer.get_or_init(|| {
-            let mut timer = libuv::Owned::<libuv::Timer>::zeroed();
-            timer.init(self.uws_loop().uv_loop());
-            // The loop is boxed by `init` and outlives its timer.
-            timer.data = core::ptr::from_ref::<SpawnSyncEventLoop>(self.inner)
-                .cast_mut()
-                .cast();
-            timer
-        });
+        let uv_loop = self.uws_loop().uv_loop();
+        let timer = self
+            .uv_timer
+            .get_or_init(|| libuv::Timer::init(uv_loop, Cell::new(false)));
 
         // Refresh the loop's cached clock: this loop only runs while a spawnSync call is in
         // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be
         // staler than the timeout, which would make the timer fire immediately.
-        // SAFETY: `uv_loop` is the live initialized loop owned by `self.uws_loop`.
-        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop()) };
+        uv_loop.update_time();
 
-        self.with_uv_timer(|timer| {
-            timer.start(ts.ms_unsigned(), 0, Some(on_uv_timer));
-            timer.ref_();
+        timer.start(ts.ms_unsigned(), 0, |timer| {
+            timer.data.set(true);
+            timer.get_loop().stop();
         });
+        timer.ref_();
     }
 
     /// Tick the isolated event loop with an optional timeout
@@ -305,11 +290,9 @@ impl PreparedSpawnSyncEventLoop<'_> {
             #[cfg(windows)]
             let _ = ts;
             #[cfg(windows)]
-            {
-                self.with_uv_timer(|timer| {
-                    timer.unref();
-                    timer.stop();
-                });
+            if let Some(timer) = self.uv_timer.get() {
+                timer.unref();
+                timer.stop();
             }
             #[cfg(not(windows))]
             {
@@ -322,7 +305,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
 
         self.event_loop.tick_tasks_only();
 
-        let did_timeout = self.did_timeout.replace(false);
+        let did_timeout = self.take_did_timeout();
 
         if did_timeout {
             return TickState::Timeout;

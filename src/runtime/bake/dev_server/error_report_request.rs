@@ -31,33 +31,34 @@ use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
-use super::{CLIENT_PREFIX, DevServer};
+use super::{CLIENT_PREFIX, DevServer, DevServerState};
 use crate::server::static_route::InitFromBytesOptions;
 use crate::server::{PendingRequest, StaticRoute};
 use bun_core::fmt::parse_hex_to_u64;
 
 pub(crate) struct ErrorReportRequest {
-    dev: PendingRequest<bun_ptr::BackRef<DevServer>>,
+    server: PendingRequest,
 }
 
 impl BodyReaderHandler for ErrorReportRequest {
     fn on_body(&self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
-        self.run_with_body(body, resp).map_err(Into::into)
+        self.server
+            .with_dev_server(|dev_server| Self::run_with_body(&dev_server.state_mut(), body, resp))
+            .expect("a server with a pending request keeps its DevServer")
+            .map_err(Into::into)
     }
 }
 
 impl ErrorReportRequest {
-    pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
-        let dev = PendingRequest::new(bun_ptr::BackRef::new(dev));
-        uws::BodyReaderMixin::read_body(ErrorReportRequest { dev }, resp);
+    pub(crate) fn run<R: BodyResponse>(dev_server: &DevServer, _req: &mut Request, resp: &mut R) {
+        let server = PendingRequest::new(dev_server.server);
+        uws::BodyReaderMixin::read_body(ErrorReportRequest { server }, resp);
     }
 
-    fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {
+    fn run_with_body(dev: &DevServerState, body: &[u8], r: AnyResponse) -> crate::Result<()> {
         let mut reader = bun_io::FixedBufferStream::new(body);
 
         let arena = Arena::new();
-
-        let dev: &DevServer = self.dev.get();
 
         // Read payload, assemble ZigException
         let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
@@ -326,7 +327,7 @@ impl ErrorReportRequest {
             crate::webcore::blob::Any::from_array_list(out),
             InitFromBytesOptions {
                 mime_type: Some(&bun_http_types::MimeType::OTHER),
-                server: dev.server,
+                server: Some(dev.server),
                 ..Default::default()
             },
         );

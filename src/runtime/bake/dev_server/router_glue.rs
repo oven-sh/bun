@@ -57,14 +57,13 @@ fn report_hidden_page(route_path: &[u8], rel_path: &[u8]) {
     Output::flush();
 }
 
-impl DevServer {
+impl DevServerState {
     /// Reports each page that a route of the server hides: a route with the same path as a page
     /// that has no parameter.
     pub(super) fn report_pages_hidden_by_server_routes(&self) {
-        let Some(server) = self.server else { return };
         let keys = self.graphs.server.bundled_files.keys();
         for (route_path, route_index) in self.router.static_routes.iter() {
-            if !server.has_route(route_path) {
+            if !self.server.has_route(route_path) {
                 continue;
             }
             let Some(page) = self.router.route_ptr(*route_index).file_page else {
@@ -179,7 +178,7 @@ pub(super) fn from_opaque_file_id<const SIDE: bake::Side>(
     incremental_graph::FileIndex::<SIDE>::init(id.get())
 }
 
-impl DevServer {
+impl DevServerState {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
     /// The caller must provide a PathBuffer from the pool.
     pub(crate) fn relative_path<'a>(
@@ -191,7 +190,7 @@ impl DevServer {
     }
 }
 
-/// `DevServer::relative_path`, given `Graphs::root`.
+/// `DevServerState::relative_path`, given `Graphs::root`.
 pub(super) fn relative_path<'a>(
     root: &[u8],
     relative_path_buf: &'a mut PathBuffer,

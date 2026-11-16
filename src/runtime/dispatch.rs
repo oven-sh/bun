@@ -139,8 +139,9 @@ use bun_jsc::cpp_task::CppTask;
 use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
-use crate::bake::dev_server::DevServerTimers;
-use crate::bake::dev_server::PendingReloadEvent as BakePendingReloadEvent;
+use crate::bake::dev_server::{
+    DevServer, DevServerTimers, PendingReloadEvent as BakePendingReloadEvent,
+};
 
 #[cfg(windows)]
 use crate::node::fs::async_ as fs_async;
@@ -650,6 +651,10 @@ pub(crate) fn run_task(
             return Ok(RunTaskResult::EarlyReturn);
         }
         // ── bake dev-server ──────────────────────────────────────────────
+        task_tag::BakeFinishBundle => {
+            // SAFETY: §Dispatch — tag identifies pointee.
+            unsafe { DevServer::finish_bundle(cast_ptr!(DevServer)) }?;
+        }
         task_tag::BakePendingReloadEvent => {
             // SAFETY: §Dispatch — tag identifies pointee.
             unsafe { BakePendingReloadEvent::run(cast_ptr!(BakePendingReloadEvent)) };
@@ -800,7 +805,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1358,8 +1363,8 @@ pub(crate) fn fire_first_timer(
             [Bundler],
             into_owner_ptr::<DevServerSweepSourceMaps>,
             |timers: *mut DevServerTimers, now, _vm| {
-                // SAFETY: the `DevServer` owns `timers` and stays in its box. No borrow of it lasts across a turn of the event loop, and this runs no script.
-                let dev = unsafe { &mut *(*timers).dev };
+                // SAFETY: `timers` drops with the state of the `DevServer`, which stays in its box.
+                let dev = &mut *unsafe { &*(*timers).dev }.state_mut();
                 dev.source_maps
                     .sweep_weak_refs(now, dev.timers.as_pin_ref());
                 Ok(())
@@ -1370,7 +1375,8 @@ pub(crate) fn fire_first_timer(
             into_owner_ptr::<DevServerMemoryVisualizerTick>,
             |timers: *mut DevServerTimers, _now, _vm| {
                 // SAFETY: as above.
-                unsafe { &mut *(*timers).dev }.emit_memory_visualizer_message_timer();
+                let mut dev = unsafe { &*(*timers).dev }.state_mut();
+                dev.emit_memory_visualizer_message_timer();
                 Ok(())
             }
         ),
@@ -1546,6 +1552,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
+        task_tag::BakeFinishBundle => release!(DevServer),
         task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {

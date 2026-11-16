@@ -16,42 +16,38 @@ use super::*;
 
 struct InvalidMessage;
 
+/// A batch to release once the state is no longer borrowed.
+type MessageResult = Result<Option<TestingBatch>, InvalidMessage>;
+
 impl HmrSocket {
-    fn new(dev: *mut DevServer) -> Box<HmrSocket> {
-        Box::new(HmrSocket {
-            dev,
+    fn open(dev: &DevServerState, ws: AnyWebSocket) -> HmrSocket {
+        let mut socket = HmrSocket {
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
             referenced_source_maps: HashMap::default(),
-            underlying: None,
+            underlying: ws,
             inspector_connection_id: -1,
-        })
-    }
-
-    fn on_open(&mut self, dev: &DevServer, ws: AnyWebSocket) {
+        };
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);
         let send_status = ws.send(&header, Opcode::Binary, false, true);
-        self.underlying = Some(ws);
 
         if send_status != SendStatus::Dropped {
             // Notify inspector about client connection
             if let Some(agent) = dev.inspector() {
-                self.inspector_connection_id = agent.next_connection_id();
-                agent
-                    .notify_client_connected(dev.inspector_server_id, self.inspector_connection_id);
+                socket.inspector_connection_id = agent.next_connection_id();
+                agent.notify_client_connected(
+                    dev.inspector_server_id,
+                    socket.inspector_connection_id,
+                );
             }
         }
+        socket
     }
 
-    /// Closing the socket frees `self`, so the caller does it.
-    fn on_message(
-        &mut self,
-        dev: &mut DevServer,
-        ws: AnyWebSocket,
-        msg: &[u8],
-    ) -> Result<(), InvalidMessage> {
+    fn on_message(&mut self, dev: &mut DevServerState, msg: &[u8]) -> MessageResult {
+        let ws = self.underlying;
         if msg.is_empty() {
             return Err(InvalidMessage);
         }
@@ -81,7 +77,7 @@ impl HmrSocket {
                 let mut new_bits = HmrTopicBits::empty();
                 let topics = &msg[1..];
                 if topics.len() > HmrTopic::MAX_COUNT {
-                    return Ok(());
+                    return Ok(None);
                 }
                 for &ch in topics {
                     if let Some(topic) = HmrTopic::from_u8(ch) {
@@ -138,11 +134,11 @@ impl HmrSocket {
                     }
                 }
                 let Some(rbi) = maybe_rbi else {
-                    return Ok(());
+                    return Ok(None);
                 };
                 if let Some(old) = self.active_route {
                     if old == rbi {
-                        return Ok(());
+                        return Ok(None);
                     }
                     dev.route_bundle_ptr(old).active_viewers -= 1;
                 }
@@ -188,10 +184,10 @@ impl HmrSocket {
                         if dev.current_bundle.is_some() {
                             dev.testing_batch_events =
                                 super::TestingBatchEvents::ReleaseAfterBundle(batch);
-                            return Ok(());
+                            return Ok(None);
                         }
 
-                        dev.release_testing_batch(batch);
+                        return Ok(Some(batch));
                     }
                 }
             }
@@ -243,16 +239,16 @@ impl HmrSocket {
                         "unref_source_map: no entry found: {:x}\n",
                         source_map_id.get()
                     );
-                    return Ok(()); // no entry may happen.
+                    return Ok(None); // no entry may happen.
                 };
                 dev.source_maps.unref(kv.0);
             }
             _ => return Err(InvalidMessage),
         }
-        Ok(())
+        Ok(None)
     }
 
-    fn on_unsubscribe(dev: &mut DevServer, field: HmrTopicBits) {
+    fn on_unsubscribe(dev: &mut DevServerState, field: HmrTopicBits) {
         if feature_flags::BAKE_DEBUGGING_FEATURES {
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {
                 dev.emit_incremental_visualizer_events -= 1;
@@ -267,7 +263,7 @@ impl HmrSocket {
     }
 
     /// Drops this socket's visualizer subscriptions, `active_viewers` count and source map refs.
-    pub(super) fn release(&self, dev: &mut DevServer) {
+    fn release(&self, dev: &mut DevServerState) {
         Self::on_unsubscribe(dev, self.subscriptions);
 
         if self.inspector_connection_id > -1 {
@@ -290,16 +286,20 @@ impl HmrSocket {
     }
 }
 
-/// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
 pub(super) fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
+    bun_uws_sys::web_socket::Wrap::<DevServer, DevServer, SSL>::apply(&Default::default())
 }
 
-// `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
-// to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
-// `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
-// `dev_server::hmr_socket`.
-impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
+impl DevServerState {
+    fn remove_socket(&mut self, ws: AnyWebSocket) -> HmrSocket {
+        let sockets = &mut self.active_websocket_connections;
+        let index = (sockets.iter()).position(|socket| socket.underlying.raw() == ws.raw());
+        sockets.swap_remove(index.expect("added by `on_open`"))
+    }
+}
+
+/// The user data of every socket is the `DevServer`, which closes its sockets before it goes.
+impl bun_uws_sys::web_socket::WebSocketHandler for DevServer {
     // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
     // `HAS_ON_* == false`.
     const HAS_ON_DRAIN: bool = false;
@@ -308,9 +308,10 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
 
     #[inline]
     unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
-        // SAFETY: `this` is the live user-data pointer (per trait contract). The dev server closes
-        // its sockets before it goes, and `on_websocket_upgrade` keeps it without borrowing it.
-        unsafe { (*this).on_open(&*(*this).dev, ws) }
+        // SAFETY: `OwnedDevServer` closes the sockets before it drops.
+        let mut dev = unsafe { &*this }.state_mut();
+        let socket = HmrSocket::open(&dev, ws);
+        dev.active_websocket_connections.push(socket);
     }
     #[inline]
     unsafe fn on_message(
@@ -319,22 +320,24 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         message: &[u8],
         _opcode: bun_uws_sys::Opcode,
     ) {
-        // SAFETY: both are live, see `on_open`. The borrows end with the call, and ask for no more
-        // exclusivity than the HTTP handlers do (see `dev_route_tramp`).
-        if unsafe { (*this).on_message(&mut *(*this).dev, ws, message) }.is_err() {
-            ws.close();
+        // SAFETY: `OwnedDevServer` closes the sockets before it drops.
+        let dev_server = unsafe { &*this };
+        let mut dev = dev_server.state_mut();
+        let mut socket = dev.remove_socket(ws);
+        let result = socket.on_message(&mut dev, message);
+        dev.active_websocket_connections.push(socket);
+        drop(dev);
+        match result {
+            Ok(None) => {}
+            Ok(Some(batch)) => dev_server.release_testing_batch(batch),
+            Err(InvalidMessage) => ws.close(),
         }
     }
     #[inline]
-    unsafe fn on_close(this: *mut Self, _: bun_uws_sys::AnyWebSocket, _: i32, _: &[u8]) {
-        // SAFETY: `on_websocket_upgrade` gave up this `Box`, and uWS is done with it. `dev` is live
-        // or null. For its exclusivity, see `on_message`.
-        let (dev, socket) = unsafe { ((*this).dev.as_mut(), bun_core::heap::take(this)) };
-        if let Some(dev) = dev {
-            let removed = dev.active_websocket_connections.remove(&this);
-            debug_assert!(removed.is_some());
-            socket.release(dev);
-        }
+    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, _: i32, _: &[u8]) {
+        // SAFETY: `OwnedDevServer` closes the sockets before it drops.
+        let mut dev = unsafe { &*this }.state_mut();
+        dev.remove_socket(ws).release(&mut dev);
     }
     unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
     unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
@@ -350,68 +353,33 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         id: usize,
     ) {
         debug_assert_eq!(id, 0);
-        // Note: DevServer always registers `*mut Self` with `id == 0`
-        // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
-        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`,
-        // which reads the DevServer through the socket's backref, so no
-        // `&mut DevServer` may span it — the pre-upgrade borrows below are
-        // scoped to their statements. uWS guarantees `res` is non-null and live
-        // for the upgrade callback (`Response<SSL>` is an opaque handle); every
-        // `&mut *res` below is likewise statement-scoped.
-        //
-        // SAFETY: `this` is the live DevServer registered for the upgrade callback.
-        if !is_allowed_dev_host(unsafe { &*this }, req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            host_forbidden(unsafe { &mut *res }.as_any_response());
-            return;
+        // SAFETY: `set_routes` registered `this`. uWS passes a response that is live for the callback.
+        let (dev_server, res) = unsafe { (&*this, &mut *res) };
+        if !is_allowed_dev_host(dev_server, req) {
+            return host_forbidden(res.as_any_response());
         }
         if !is_allowed_dev_origin(req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            origin_forbidden(unsafe { &mut *res }.as_any_response());
-            return;
+            return origin_forbidden(res.as_any_response());
         }
-        let dw = bun_core::heap::into_raw(HmrSocket::new(this));
-        // SAFETY: `this` is live (see above).
-        let server = unsafe {
-            let _ = (*this).active_websocket_connections.insert(dw, ());
-            (*this).server.unwrap()
-        };
         // `upgrade` ends the HTTP connection, and a stopped server frees `this` with its last one.
-        let _pending = PendingRequest::new(server);
-        // SAFETY: `res` is live for this callback (see Note above); `on_open`
-        // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
-        let socket = unsafe {
-            (&mut *res).upgrade(
-                dw,
-                req.header(b"sec-websocket-key").unwrap_or(b""),
-                req.header(b"sec-websocket-protocol").unwrap_or(b""),
-                req.header(b"sec-websocket-extension").unwrap_or(b""),
-                Some(upgrade_ctx),
-            )
-        };
-        if socket.is_null() {
-            // The connection was already closed, so uWS never stored `dw` and `on_close` won't run.
-            // SAFETY: `this` is live (see above).
-            let _ = unsafe { (*this).active_websocket_connections.remove(&dw) };
-            // SAFETY: `dw` was allocated above and nothing else owns it.
-            drop(unsafe { bun_core::heap::take(dw) });
-        }
+        let _pending = PendingRequest::new(dev_server.server);
+        res.upgrade(
+            this,
+            req.header(b"sec-websocket-key").unwrap_or(b""),
+            req.header(b"sec-websocket-protocol").unwrap_or(b""),
+            req.header(b"sec-websocket-extension").unwrap_or(b""),
+            Some(upgrade_ctx),
+        );
     }
 }
 
-impl DevServer {
+impl DevServerState {
     pub(crate) fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
-        if let Some(s) = &self.server {
-            let _ = s.publish(&topic.uws_topic(), message, opcode, false);
-        }
+        let _ = (self.server).publish(&topic.uws_topic(), message, opcode, false);
     }
 
     pub(crate) fn num_subscribers(&self, topic: HmrTopic) -> u32 {
-        if let Some(s) = &self.server {
-            s.num_subscribers(&topic.uws_topic())
-        } else {
-            0
-        }
+        self.server.num_subscribers(&topic.uws_topic())
     }
 
     /// Either of two conditions make this true:

@@ -48,11 +48,7 @@ impl HotReloadEvent {
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
-    fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
-        // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
-        // drop, so it does not hold a borrow of `dev` for the scope.
-        let _g = dev.graph_safety_lock.guard();
-
+    fn process_file_list(&mut self, dev: &mut DevServerState, entry_points: &mut EntryPointList) {
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
@@ -62,7 +58,7 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                let _ = dev.server_transpiler.resolver.bust_dir_cache(changed_dir);
+                let _ = dev.server_resolver().bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
@@ -75,9 +71,8 @@ impl HotReloadEvent {
                         let source_file_path = dep.source_file_path;
                         it = dep.next;
 
-                        let resolved = dev
-                            .server_transpiler
-                            .resolver
+                        let transpilers = dev.transpilers.as_mut().expect("no bundle is running");
+                        let resolved = (transpilers.server.resolver)
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                                     source_file_path.slice(),
@@ -237,11 +232,12 @@ impl PendingReloadEvent {
     #[inline(never)]
     pub(crate) unsafe fn run(this: *mut Self) {
         bun_removable_features::removable_definition!(Bundler, Self::run);
-        // SAFETY: fn contract. `Drop for DevServer` clears `owner` on this thread.
-        let Some(dev) = (unsafe { Arc::from_raw(this).owner.load(Ordering::SeqCst).as_mut() })
-        else {
+        // SAFETY: fn contract. `Drop for DevServerState` clears `owner` on this thread.
+        let owner = unsafe { Arc::from_raw(this).owner.load(Ordering::SeqCst).as_ref() };
+        let Some(dev_server) = owner else {
             return;
         };
+        let mut dev = dev_server.state_mut();
         debug_assert!(dev.magic == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
         scopeguard::defer! {
@@ -274,13 +270,12 @@ impl PendingReloadEvent {
             TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
         }
 
-        if let Err(_err) = dev.start_async_bundle(entry_points, true, timer) {
-            return;
-        }
+        drop(dev);
+        dev_server.start_async_bundle(entry_points, true, timer);
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// Returns the time of the first change.
     pub(super) fn process_reload_events(&mut self, entry_points: &mut EntryPointList) -> Instant {
         let mut event = core::mem::take(&mut self.spare_reload_event);

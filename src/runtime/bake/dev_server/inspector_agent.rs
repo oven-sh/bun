@@ -201,7 +201,7 @@ mod ffi {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// The dev server's inspector agent, or `None` while the
     /// `BunFrontendDevServer` domain is disabled. The agent's state is
     /// `Cell`-based, so a shared borrow suffices. JS-thread only.

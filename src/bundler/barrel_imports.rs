@@ -11,7 +11,7 @@ use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, import_record};
-use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap, StringHashMap};
 
 use crate::Graph::InputFileFlags;
 use crate::Index;
@@ -182,13 +182,9 @@ fn apply_barrel_optimization_impl<'a>(
     // handles the case where file A imports Alpha from the barrel (previous
     // build) and file B adds Beta (current build). Without this, Alpha would
     // be re-deferred because only B's requests are in requested_exports.
-    // `DevServerHandle` is `Copy`; copied out so the `&self` borrow
-    // doesn't conflict with later `&mut this.requested_exports`.
-    let dev_handle = this.dev_server_handle().copied();
-    if let Some(dev) = dev_handle {
-        // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
-        // thread which holds the DevServer lock during this callback.
-        let needed = unsafe { &*dev.barrel_needed_exports() };
+    let has_dev_server = this.dev_server.as_mut().is_some();
+    if has_dev_server {
+        let needed = &this.dev_server_barrels.needed_exports;
         if let Some(persisted) = needed.get(result.source.path.text) {
             for alias in persisted.keys() {
                 if let Some(resolution) =
@@ -207,7 +203,7 @@ fn apply_barrel_optimization_impl<'a>(
     // (whose exports ARE needed) gets marked unused by HMR dedup. To prevent
     // both records from ending up unused, promote needed_records to cover ALL
     // import records that share a path with any needed record.
-    if dev_handle.is_some() {
+    if has_dev_server {
         // Collect paths of needed records.
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
 
@@ -283,9 +279,8 @@ fn apply_barrel_optimization_impl<'a>(
         // Register with DevServer so isFileCached returns null for this barrel,
         // ensuring it gets re-parsed on every incremental build. This is needed
         // because the set of needed exports can change when importing files change.
-        if let Some(dev) = dev_handle {
-            dev.register_barrel_with_deferrals(result.source.path.text)
-                .map_err(|_| AllocError)?;
+        if has_dev_server {
+            (this.dev_server_barrels.files_with_deferrals).get_or_put(result.source.path.text)?;
         }
     }
 
@@ -436,9 +431,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             &this.graph.ast.items_dynamic_import_aliases()[result_source_index as usize],
         );
 
-    // `DevServerHandle` copied out so `&mut this.*` field borrows
-    // don't conflict with the `&self` accessor.
-    let dev_handle = this.dev_server_handle().copied();
+    let has_dev_server = this.dev_server.as_mut().is_some();
 
     // Phase 1: Seed — eagerly record what this file requests from each target.
     // This runs for every file, even before any barrels are known. When a barrel
@@ -459,7 +452,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // `BackRef` is dereferenced (`record_target` re-derefs fresh each call).
     let path_to_source_index_map: Option<
         bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
-    > = if dev_handle.is_some() {
+    > = if has_dev_server {
         Some(bun_ptr::BackRef::new(
             this.path_to_source_index_map(result_ast_target),
         ))
@@ -484,7 +477,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Build a fallback: raw specifier → surviving record's resolved path
     // text, using non-unused records in this file. See #28886.
     let mut dedup_fallback: StringArrayHashMap<&[u8]> = StringArrayHashMap::default();
-    if dev_handle.is_some() {
+    if has_dev_server {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
                 || ir_probe.flags.contains(import_record::Flags::IS_INTERNAL)
@@ -551,8 +544,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 }
             }
             // Persist the export request on DevServer so it survives across builds.
-            if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+            if has_dev_server {
+                (this.dev_server_barrels).persist_export(resolved_path_text, alias)?;
             }
         }
     }
@@ -583,7 +576,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             // require() and import() expose the full module namespace: preserve
             // every export, unless the parser saw each name the result is read by.
             let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
-            match call_reads(&file_dynamic_uses, dev_handle.is_some(), idx, ir.kind) {
+            match call_reads(&file_dynamic_uses, has_dev_server, idx, ir.kind) {
                 Some(names) => {
                     if let RequestedExports::Partial(p) = value {
                         for name in names {
@@ -666,7 +659,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
         let should_add = ir.kind == ImportKind::Require || ir.kind == ImportKind::Dynamic;
         if should_add {
-            match call_reads(&file_dynamic_uses, dev_handle.is_some(), idx, ir.kind) {
+            match call_reads(&file_dynamic_uses, has_dev_server, idx, ir.kind) {
                 Some(names) => {
                     for alias in names {
                         queue.push(BarrelWorkItem {
@@ -987,10 +980,19 @@ pub(crate) fn schedule_barrel_deferred_imports(
     Ok(newly_scheduled)
 }
 
-/// Persist an export name for a barrel file on the DevServer. Called during
-/// seeding so that exports requested in previous builds are not lost when the
-/// barrel is re-parsed in an incremental build where the requesting file is
-/// not stale.
-fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
-    dev.register_barrel_export(barrel_path, alias)
+/// What DevServer keeps between bundles. It moves this into each one and takes it back.
+#[derive(Default)]
+pub struct DevServerBarrels {
+    /// Barrels with deferred import records. They are parsed in every bundle: the exports that are needed change.
+    pub(crate) files_with_deferrals: StringArrayHashMap<()>,
+    /// By barrel path, the exports that any bundle asked for, so that files that are not stale keep theirs.
+    needed_exports: StringArrayHashMap<StringHashMap<()>>,
+}
+
+impl DevServerBarrels {
+    fn persist_export(&mut self, barrel_path: &[u8], alias: &[u8]) -> Result<(), AllocError> {
+        let exports = self.needed_exports.get_or_put(barrel_path)?.value_ptr;
+        exports.get_or_put(alias)?;
+        Ok(())
+    }
 }

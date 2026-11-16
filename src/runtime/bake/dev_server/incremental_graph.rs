@@ -15,7 +15,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_core::strings;
 
 use super::{
-    Assets, CLIENT_PREFIX, ChunkKind, DevServer, EntryPointList, FileKind, GraphTraceState,
+    Assets, CLIENT_PREFIX, ChunkKind, DevServerState, EntryPointList, FileKind, GraphTraceState,
     IncrementalResult, RouteIndexAndRecurseFlag, SerializedFailure, TraceImportGoal, packed_map,
     relative_path, route_bundle, serialized_failure, source_map_store,
 };
@@ -253,7 +253,7 @@ pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) script_id: source_map_store::Key,
     /// `Graphs::root`. Only read for `ChunkKind::InitialResponse`.
     pub(crate) root: &'a [u8],
-    /// `DevServer::configuration_hash_key`. Only read for `ChunkKind::InitialResponse`.
+    /// `DevServerState::configuration_hash_key`. Only read for `ChunkKind::InitialResponse`.
     pub(crate) configuration_hash_key: &'a [u8; 16],
     pub(crate) initial_response_entry_point: &'a [u8],
     pub(crate) react_refresh_entry_point: &'a [u8],
@@ -495,7 +495,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     fn disconnect_and_delete_client_file(&mut self, file_index: ClientFileIndex) {
         let graph = &mut self.graphs.client;
         let lists = &mut graph.edge_lists[file_index.get() as usize];
@@ -578,7 +578,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// The code is kept in `current_chunk_code` until `reset`.
     pub(crate) fn receive_server_chunk(
         &mut self,
@@ -587,7 +587,6 @@ impl DevServer {
         content: ReceiveChunkContent,
         is_ssr_graph: bool,
     ) -> Result<(), crate::Error> {
-        self.graph_safety_lock.assert_locked();
         let graph = &mut self.graphs.server;
         let (file_index, found_existing) = graph.get_or_put_chunk_file(ctx, index, &content)?;
 
@@ -674,7 +673,6 @@ impl DevServer {
         index: bun_ast::Index,
         content: ReceiveChunkContent,
     ) -> Result<(), crate::Error> {
-        self.graph_safety_lock.assert_locked();
         let graph = &mut self.graphs.client;
         let (file_index, _) = graph.get_or_put_chunk_file(ctx, index, &content)?;
 

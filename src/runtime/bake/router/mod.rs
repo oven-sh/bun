@@ -663,7 +663,7 @@ impl FrameworkRouter {
                         let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
 
                         // For a path outside `self.root`, each root segment becomes "../".
-                        // `DevServer::relative_path` uses the same bound.
+                        // `DevServerState::relative_path` uses the same bound.
                         let in_root = abs_path.len() > self.root.len()
                             && abs_path.starts_with(&self.root)
                             && paths::is_sep_native(abs_path[self.root.len()]);

@@ -1,9 +1,9 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
-use bun_ptr::detach_lifetime_mut;
+use bun_ptr::AliasableBox;
 
-impl DevServer {
+impl DevServerState {
     pub(super) fn append_route_entry_points_if_not_stale(
         &mut self,
         entry_points: &mut EntryPointList,
@@ -84,15 +84,8 @@ pub(crate) struct CacheEntry {
     pub(crate) kind: FileKind,
 }
 
-impl DevServer {
-    pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
-        // Barrel files with deferred records must always be re-parsed.
-        if self.barrel_files_with_deferrals.contains_key(path) {
-            return None;
-        }
-
-        let _g = self.graph_safety_lock.guard();
-
+impl DevServerState {
+    pub(crate) fn is_file_cached(&self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
         macro_rules! check {
             ($g:expr, |$file:ident| $bundled_for_side:expr) => {{
                 let g = $g;
@@ -250,30 +243,19 @@ impl EntryPointList {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     pub(crate) fn put_or_overwrite_asset(
         &mut self,
         path: &bun_bundler::bun_fs::Path<'_>,
         contents: crate::webcore::blob::Any,
         content_hash: u64,
     ) -> crate::Result<()> {
-        let _g = self.graph_safety_lock.guard();
         let _ = self.replace_asset_path(
             path.text,
             contents,
             &MimeType::by_extension(path.name().ext_without_leading_dot()),
             content_hash,
         )?;
-        Ok(())
-    }
-
-    pub(crate) fn on_plugins_resolved(
-        &mut self,
-        plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
-    ) -> crate::Result<()> {
-        self.plugins = Some(Plugins::Borrowed(plugins));
-        self.plugin_state = PluginState::Loaded;
-        self.start_next_bundle_if_present();
         Ok(())
     }
 
@@ -290,7 +272,7 @@ impl DevServer {
         deferred_request::FailOnDrop {
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             in_handler,
-            _pending: self.server.map(PendingRequest::new),
+            _pending: PendingRequest::new(self.server),
         }
     }
 }
@@ -322,94 +304,113 @@ impl TestingBatch {
     }
 }
 
+/// A bundle and what it borrows. `'static` stands for the borrow of the other fields.
+pub(super) struct BundlePass {
+    bv2: AliasableBox<BundleV2<'static>>,
+    _ast_arena: AliasableBox<bun_ast::AstArena>,
+    transpilers: AliasableBox<Transpilers>,
+}
+
+impl BundlePass {
+    fn new(
+        transpilers_box: AliasableBox<Transpilers>,
+        plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
+        vm: &VirtualMachine,
+    ) -> Self {
+        let ast_arena_box = AliasableBox::new(bun_ast::AstArena::new());
+        // SAFETY: `Self` owns what these point to, and neither uses nor drops it before `bv2` drops.
+        let (ast_arena, transpilers) =
+            unsafe { (&*ast_arena_box.as_ptr(), &mut *transpilers_box.as_ptr()) };
+        let event_loop = ast_arena.alloc(bun_event_loop::AnyEventLoop::js(vm.event_loop_ptr()));
+        let framework = transpilers.server.options.framework.clone();
+        let bv2 = BundleV2::init(
+            &mut transpilers.server,
+            Some(bundler::bundle_v2::BakeOptions {
+                framework: framework.expect("set by DevServer::init"),
+                client_transpiler: &mut transpilers.client,
+                ssr_transpiler: transpilers.ssr.as_mut(),
+                plugins,
+            }),
+            ast_arena,
+            Some(::core::ptr::NonNull::from(event_loop)),
+            Some(::core::ptr::NonNull::from(
+                bun_threading::work_pool::WorkPool::get(),
+            )),
+            ast_arena,
+        );
+        Self {
+            bv2: bv2.into(),
+            _ast_arena: ast_arena_box,
+            transpilers: transpilers_box,
+        }
+    }
+
+    pub(super) fn with_bundle<R>(&mut self, f: impl FnOnce(&mut BundleV2<'_>) -> R) -> R {
+        f(&mut self.bv2)
+    }
+
+    /// Drops the bundle and gives `dev` back what it lent.
+    pub(super) fn end(mut self, dev: &mut DevServerState) {
+        dev.barrels = ::core::mem::take(&mut self.bv2.dev_server_barrels);
+        drop(self.bv2);
+        dev.transpilers = Some(self.transpilers);
+    }
+}
+
 impl DevServer {
+    pub(crate) fn on_plugins_resolved(
+        &self,
+        plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
+    ) {
+        let mut dev = self.state_mut();
+        dev.plugins = Some(Plugins::Borrowed(plugins));
+        dev.plugin_state = PluginState::Loaded;
+        drop(dev);
+        self.start_next_bundle_if_present();
+    }
+
     #[inline(never)]
     pub(crate) fn start_async_bundle(
-        &mut self,
+        &self,
         entry_points: EntryPointList,
         had_reload_event: bool,
         timer: Instant,
-    ) -> crate::Result<()> {
+    ) {
         bun_removable_features::removable_definition!(Bundler, Self::start_async_bundle);
-        debug_assert!(self.current_bundle.is_none());
+        let mut dev = self.state_mut();
+        debug_assert!(dev.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
-        self.log.clear_and_free();
+        dev.log.clear_and_free();
 
         // Notify inspector about bundle start
-        if let Some(agent) = self.inspector() {
+        if let Some(agent) = dev.inspector() {
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
             for key in entry_points.set.keys() {
                 trigger_files.push(BunString::clone_utf8(key));
             }
-            agent.notify_bundle_start(self.inspector_server_id, &mut trigger_files);
+            agent.notify_bundle_start(dev.inspector_server_id, &mut trigger_files);
         }
 
-        self.graphs.incremental_result.reset();
+        dev.graphs.incremental_result.reset();
 
-        let pending_request = self.server.map(PendingRequest::new);
+        let pending_request = PendingRequest::new(self.server);
 
-        // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
-        // borrows it (self-ref via `CurrentBundle`, see Note on
-        // `CurrentBundle.bv2`).
-        let ast_arena: Box<bun_ast::AstArena> = Box::default();
+        let transpilers = dev.transpilers.take().expect("no bundle is running");
+        let plugins = dev.plugins.as_ref().map(Plugins::as_non_null);
+        let mut pass = Box::new(BundlePass::new(transpilers, plugins, dev.vm()));
+        pass.bv2.asynchronous = true;
+        let handle = self.bundler_handle();
+        pass.bv2.dev_server_barrels = ::core::mem::take(&mut dev.barrels);
 
-        // The bundler stores
-        // `Option<NonNull<AnyEventLoop>>`. Park the value in `ast_arena`
-        // — bumpalo chunks are heap-allocated, so the address is stable across
-        // the move of `ast_arena` into `bv2.graph.heap` and lives exactly as long
-        // as `bv2`.
-        let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(::core::ptr::NonNull::from(ast_arena.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop_ptr()),
-            )));
-
-        let ast_arena_ptr: *const bun_ast::AstArena = &raw const *ast_arena;
-        // SAFETY: `ast_arena` is `Box`-allocated above and moved into
-        // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
-        // is stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let ast_arena_ref: &'static bun_ast::AstArena = unsafe { &*ast_arena_ptr };
-        // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
-        // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
-        // server one on this thread (`finalize_bundle`).
-        let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
-            (
-                self.ssr_transpiler
-                    .as_mut()
-                    .map(|ssr| detach_lifetime_mut(ssr)),
-                detach_lifetime_mut(&mut self.server_transpiler),
-                detach_lifetime_mut(&mut self.client_transpiler),
-            )
-        };
-        let framework = server_transpiler.options.framework.clone();
-        let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            server_transpiler,
-            Some(bundler::bundle_v2::BakeOptions {
-                framework: framework.expect("set by DevServer::init"),
-                client_transpiler,
-                ssr_transpiler,
-                plugins: self.plugins.as_ref().map(Plugins::as_non_null),
-            }),
-            ast_arena_ref,
-            event_loop,
-            Some(::core::ptr::NonNull::from(
-                bun_threading::work_pool::WorkPool::get(),
-            )),
-            ast_arena_ref,
-        );
-        bv2.asynchronous = true;
-        bv2.dev_server = Some(self.bundler_handle());
-
-        {
-            let _g = self.graph_safety_lock.guard();
-            self.graphs.client.reset();
-            self.graphs.server.reset();
-        }
+        dev.graphs.client.reset();
+        dev.graphs.server.reset();
+        drop(dev);
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
         // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
         // can name it without depending on `bun_runtime`). Convert by value —
         // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let start_data = bv2.start_from_bake_dev_server(&{
+        bun_core::handle_oom(pass.bv2.start_from_bake_dev_server(handle, &{
             let mut bt = bundler::bake_types::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
                 bun_core::handle_oom(
@@ -418,28 +419,26 @@ impl DevServer {
                 );
             }
             bt
-        })?;
+        }));
         drop(entry_points);
-        self.current_bundle = Some(CurrentBundle {
-            _bv2: bv2,
-            _ast_arena: ast_arena,
+
+        let dev = &mut *self.state_mut();
+        dev.current_bundle = Some(CurrentBundle {
+            pass: Some(pass),
             timer,
-            start_data,
             had_reload_event,
-            requests: ::core::mem::take(&mut self.next_bundle.requests),
+            requests: ::core::mem::take(&mut dev.next_bundle.requests),
             script_requests: Vec::new(),
             pending_request,
         });
 
-        self.next_bundle.route_queue.clear_retaining_capacity();
-        Ok(())
+        dev.next_bundle.route_queue.clear_retaining_capacity();
     }
 
     /// Bundle the files a testing batch collected, or report an empty batch.
-    pub(crate) fn release_testing_batch(&mut self, batch: TestingBatch) {
-        debug_assert!(self.current_bundle.is_none());
+    pub(crate) fn release_testing_batch(&self, batch: TestingBatch) {
         if batch.entry_points.set.count() == 0 {
-            self.publish(
+            self.state_mut().publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 2],
                 Opcode::BINARY,
@@ -447,12 +446,20 @@ impl DevServer {
             return;
         }
 
-        self.start_async_bundle(batch.entry_points, true, Instant::now())
-            // bun.handleOom(err) — Rust aborts on OOM by default
-            .expect("OOM");
+        self.start_async_bundle(batch.entry_points, true, Instant::now());
     }
 
-    pub(super) fn start_next_bundle_if_present(&mut self) {
+    pub(super) fn start_next_bundle_if_present(&self) {
+        let next = self.state_mut().take_next_bundle();
+        if let Some((entry_points, is_reload, timer)) = next {
+            self.start_async_bundle(entry_points, is_reload, timer);
+        }
+    }
+}
+
+impl DevServerState {
+    /// The arguments of `start_async_bundle`, if there is something to bundle.
+    fn take_next_bundle(&mut self) -> Option<(EntryPointList, bool, Instant)> {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle
         debug_assert!(self.current_bundle.is_none());
@@ -505,12 +512,12 @@ impl DevServer {
                 }
             }
 
-            if !entry_points.set.is_empty() {
-                self.start_async_bundle(entry_points, is_reload, timer)
-                    .expect("oom");
-            }
-
             self.next_bundle.route_queue.clear_retaining_capacity();
+
+            if !entry_points.set.is_empty() {
+                return Some((entry_points, is_reload, timer));
+            }
         }
+        None
     }
 }

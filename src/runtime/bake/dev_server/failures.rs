@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl DevServer {
+impl DevServerState {
     pub(super) fn encode_serialized_failures(
         &self,
         failures: &[SerializedFailure],
@@ -87,7 +87,7 @@ impl DevServer {
             crate::webcore::blob::Any::from_array_list(buf),
             crate::server::static_route::InitFromBytesOptions {
                 mime_type: Some(&MimeType::HTML),
-                server: self.server,
+                server: Some(self.server),
                 status_code: 500,
                 ..Default::default()
             },
@@ -114,7 +114,7 @@ pub(super) fn mark_all_route_children(
     }
 }
 
-impl DevServer {
+impl DevServerState {
     pub(crate) fn prepare_and_log_resolution_failures(
         &mut self,
         resolution_failures: &bundler::bundle_v2::ResolutionFailures,
@@ -328,8 +328,6 @@ impl DevServer {
         log: &Log,
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
-        let graph_lock = self.graph_safety_lock.guard();
-
         debug_log!(
             "handleParseTaskFailure({}, .{}, {}, {} messages)",
             err.name(),
@@ -373,8 +371,6 @@ impl DevServer {
                 bake::Graph::Client => self.graphs.insert_failure::<{ Side::Client }>(key, log)?,
             }
         }
-        // `track_resolution_failure` takes the graph lock itself.
-        drop(graph_lock);
 
         if watch_for_route_file {
             // Bundles the route again once its html file exists, like a failed import.
@@ -395,8 +391,6 @@ impl DevServer {
         graph: bake::Graph,
     ) -> Result<serialized_failure::OwnerPacked, AllocError> {
         debug_assert!(self.current_bundle.is_some());
-
-        let _g = self.graph_safety_lock.guard();
 
         Ok(if graph == bake::Graph::Client {
             let idx = self

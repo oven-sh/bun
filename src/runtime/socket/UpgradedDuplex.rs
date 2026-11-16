@@ -225,7 +225,7 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
-        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
+        // Retry writes parked during the handshake, like openssl.cpp's `ssl_write_wants_read`.
         if handshake_success && !this.is_shutdown() {
             (this.handlers.on_writable)(this.handlers.ctx);
         }

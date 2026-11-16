@@ -167,7 +167,7 @@ pub(super) mod ffi {
         );
         pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         /// Save/restore the per-loop BIO routing state around in-handshake JS
-        /// callbacks (defined in usockets' openssl.c). The caller's snapshot
+        /// callbacks (defined in usockets' openssl.cpp). The caller's snapshot
         /// array must have exactly `us_internal_ssl_loop_state_slots()`
         /// elements (US_SSL_LOOP_STATE_SLOTS in internal.h).
         pub(crate) safe fn us_internal_ssl_loop_state_slots() -> c_int;

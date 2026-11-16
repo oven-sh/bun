@@ -141,9 +141,6 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
 }
 
 extern "C" fn sink_on_free(owner: *mut c_void) {
-    if owner.is_null() {
-        return;
-    }
     // SAFETY: `owner` is the `heap::into_raw` from [`install`]; uSockets'
     // free callback fires exactly once on `SSL_free`.
     unsafe { bun_core::heap::destroy(owner.cast::<SessionSink>()) };
@@ -153,7 +150,7 @@ unsafe extern "C" {
     fn us_socket_set_session_sink(
         s: *mut bun_uws::us_socket_t,
         sink: *mut c_void,
-        on_free: Option<extern "C" fn(*mut c_void)>,
+        on_free: extern "C" fn(*mut c_void),
     );
     fn us_socket_session_sink(s: *mut bun_uws::us_socket_t) -> *mut c_void;
 }
@@ -204,7 +201,7 @@ pub(crate) unsafe fn install(
         us_socket_set_session_sink(
             socket,
             bun_core::heap::into_raw(sink).cast::<c_void>(),
-            Some(sink_on_free),
+            sink_on_free,
         );
     }
 }

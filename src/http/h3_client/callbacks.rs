@@ -217,7 +217,9 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
 
     let mut headers = Headers::default();
     let field_len = |h: &quic::Header| h.name_bytes().len() + h.value_bytes().len();
-    (headers.buf).reserve((0..n).filter_map(|i| s.header(i).map(field_len)).sum());
+    headers
+        .buf
+        .reserve((0..n).filter_map(|i| s.header(i).map(field_len)).sum());
     bun_core::handle_oom(headers.entries.ensure_total_capacity(n as usize));
     let mut status: u16 = 0;
     let mut i: c_uint = 0;

@@ -223,7 +223,9 @@ impl CppWebSocket {
         is_upgrade: bool,
         body: &[u8],
     ) -> HandshakeVerdict {
-        let headers: Vec<_> = (response.headers.iter())
+        let headers: Vec<_> = response
+            .headers
+            .iter()
             .map(|header| HandshakeRawHeader {
                 name: header.name().into(),
                 value: header.value().into(),

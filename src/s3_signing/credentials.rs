@@ -808,7 +808,9 @@ impl S3Credentials {
             storage_class.map(|value| Header::new(b"x-amz-storage-class", value)),
             content_disposition.map(|value| Header::new(b"content-disposition", value)),
             content_encoding.map(|value| Header::new(b"content-encoding", value)),
-            (content_md5.as_deref()).map(|value| Header::new(b"content-md5", value)),
+            content_md5
+                .as_deref()
+                .map(|value| Header::new(b"content-md5", value)),
             request_payer.then_some(Header::new(b"x-amz-request-payer", b"requester")),
         ];
         let headers = Headers::copy_of(headers.iter().copied().flatten());

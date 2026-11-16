@@ -73,7 +73,9 @@ mod head {
             let spare = response.headers.buf.capacity() - response.headers.buf.len();
             assert!(spare >= limits.spare_capacity);
             assert_eq!(parser.memory_cost(), 0);
-            let headers: Vec<_> = (response.headers.iter())
+            let headers: Vec<_> = response
+                .headers
+                .iter()
                 .map(|header| format!("{}={}", show(header.name()), show(header.value())))
                 .collect();
             return Ok(Some(format!(

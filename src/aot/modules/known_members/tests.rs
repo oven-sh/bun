@@ -68,6 +68,11 @@ fn members_of_enums_that_the_program_stores_into() {
         "Object.assign(State, { Ready: 9 });",
         "Object.defineProperty(State, 'Ready', { value: 9 });",
         "Reflect.set(State, process.argv[2], 9);",
+        "const held: any = new Proxy(State, {}); held.Ready = 9;",
+        "const held: any = new Proxy(State, {}); delete held[process.argv[2]];",
+        "Proxy.revocable(State, {});",
+        "Reflect.construct(Proxy, [State, {}]);",
+        "const make = (target: object) => new Proxy(target, {}); make(State);",
         "const held: any = State; held.Ready = 9;",
         "let held: any; held = process.argv[2] ? State : {}; held.Ready = 9;",
         "function set(held: any = State) { held.Ready = 9; } set();",
@@ -76,6 +81,14 @@ fn members_of_enums_that_the_program_stores_into() {
         "import { set } from './helper'; set(State, 'Ready');",
         "import * as helpers from './helper'; helpers.set(State, 'Ready');",
         "import * as all from './states'; (all.State as any).Ready = 9;",
+        "const box = { set(held: any) { held.Ready = 9; } }; box.set(State);",
+        "class Kinds { static set(held: any) { held.Ready = 9; } } Kinds.set(State);",
+        "function set(_: any, held: any) { held['Ready'] = 9; } (set as any)(...[1], State);",
+        "const all: any = { State }; all.State.Ready = 9;",
+        "const all: any = { State }; all.State[process.argv[2]] = 9;",
+        "const get = (): any => State; get().Ready = 9;",
+        "for (const held of [State] as any[]) delete held.Ready;",
+        "function set(this: any) { this.Ready = 9; } set.call(State);",
     ] {
         assert!(is_read_off_object_behind(store), "{store}");
     }
@@ -83,8 +96,13 @@ fn members_of_enums_that_the_program_stores_into() {
         "console.log(Object.values(State), { ...State });",
         "(State as any).Later = 9;",
         "Object.assign({}, State);",
+        "new Proxy({}, State as any);",
+        "console.log([State].length);",
         "const held: any = { ...State }; held.Ready = 9;",
         "import { read } from './helper'; read(State);",
+        "class Kind { Ready: any; constructor() { this.Ready = 9; } } console.log(new Kind(), State);",
+        "const paint: any = {}; paint.Ready = 9; console.log(paint, State);",
+        "const box = { set(held: any) { held.Ready = 9; } }; box.set({});",
     ] {
         assert!(!is_read_off_object_behind(read), "{read}");
     }

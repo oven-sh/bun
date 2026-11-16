@@ -818,18 +818,12 @@ impl Connection {
     }
 
     pub(crate) fn note_settings_sent(&mut self, sent: PendingLocalSettings) {
-        self.pending_local_settings_acks.push_back(sent);
-        self.allow_pending_header_table_sizes();
-    }
-
-    /// Jetty uses a larger table before it acknowledges it, which Node refuses.
-    fn allow_pending_header_table_sizes(&mut self) {
-        for sent in &self.pending_local_settings_acks {
-            if sent.has_header_table_size {
-                self.decoder
-                    .allow_table_size(sent.settings.header_table_size);
-            }
+        if sent.has_header_table_size {
+            // Jetty uses a larger table before it acknowledges it, which Node refuses.
+            self.decoder
+                .allow_table_size(sent.settings.header_table_size);
         }
+        self.pending_local_settings_acks.push_back(sent);
     }
 
     fn handle_settings(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
@@ -865,9 +859,13 @@ impl Connection {
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
             if acked.has_header_table_size {
-                self.decoder
-                    .set_max_table_size(acked.settings.header_table_size);
-                self.allow_pending_header_table_sizes();
+                // The peer may be using a larger one already.
+                let pending = self.pending_local_settings_acks.iter();
+                let largest = pending
+                    .filter(|sent| sent.has_header_table_size)
+                    .map(|sent| sent.settings.header_table_size)
+                    .fold(acked.settings.header_table_size, u32::max);
+                self.decoder.set_max_table_size(largest);
             }
             sink.on_local_settings(&acked.settings);
             return false;

@@ -1264,6 +1264,11 @@ impl PendingQueue {
         self.len == 0
     }
 
+    fn has_frame_up_to(&mut self, max_size: usize) -> bool {
+        self.peek_front()
+            .is_some_and(|front| max_size > 0 || front.slice().is_empty())
+    }
+
     fn dequeue_up_to(&mut self, max_size: usize) -> Option<Dequeued> {
         let front = self.peek_front()?;
         if front.slice().len() <= max_size {
@@ -1369,6 +1374,15 @@ impl Stream {
         let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
             .min(self.remote_window_available())
             .min(client.remote_window_available());
+        if !client.is_corked()
+            && self
+                .data_frame_queue
+                .with_taken(|queue| queue.has_frame_up_to(max_size))
+        {
+            // May run JS.
+            client.cork();
+            return self.flush_queue(client, written);
+        }
         // try to flush one frame
         let Some(dequeued) = self
             .data_frame_queue
@@ -4684,6 +4698,8 @@ impl H2FrameParser {
         let stream_id = stream.id;
         let mut enqueued = false;
 
+        let is_closed = || stream.state.get() == StreamState::CLOSED;
+
         let can_close = close && !stream.wait_for_trailers.get();
         if payload.is_empty() {
             // empty payload we still need to send a frame
@@ -4697,23 +4713,35 @@ impl H2FrameParser {
                 stream_identifier: stream_id,
                 length: 0,
             };
-            if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
-                enqueued = true;
-                stream.queue_data(self, b"", callback, close);
-            } else {
-                let mut writer = self.to_writer();
-                let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
+            let has_to_wait = self.has_backpressure() || self.outbound_queue_size.get() > 0;
+            if !has_to_wait {
+                // May run JS.
+                self.cork();
+            }
+            if !is_closed() {
+                if has_to_wait {
+                    enqueued = true;
+                    stream.queue_data(self, b"", callback, close);
+                } else {
+                    let mut writer = self.to_writer();
+                    let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
+                }
             }
         } else {
             let mut rest = payload;
 
-            while !rest.is_empty() {
+            while !rest.is_empty() && !is_closed() {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
                 let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
                     .min(self.remote_window_available())
                     .min(stream.remote_window_available());
                 if self.has_backpressure() || self.outbound_queue_size.get() > 0 || max_size == 0 {
                     break;
+                }
+                if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME && !self.is_corked() {
+                    // May run JS.
+                    self.cork();
+                    continue;
                 }
                 let size = rest.len().min(max_size);
 
@@ -4826,7 +4854,7 @@ impl H2FrameParser {
             // Preserve wire order: anything already batched goes out before the
             // queued remainder is flushed later by the drain path.
             self.flush_batch_buffer();
-            if !rest.is_empty() {
+            if !rest.is_empty() && !is_closed() {
                 enqueued = true;
                 // the callback will only be called after the last frame is sended
                 stream.queue_data(self, rest, callback, close);
@@ -4841,7 +4869,7 @@ impl H2FrameParser {
             } else {
                 self.dispatch_write_callback(callback);
             }
-            if close {
+            if close && !is_closed() {
                 if stream.wait_for_trailers.get() {
                     self.dispatch(js::on_want_trailers_get_cached, stream.get_identifier());
                 } else {
@@ -5229,6 +5257,11 @@ impl H2FrameParser {
                     return Ok(());
                 }
             }
+        }
+        // May run JS.
+        self.cork();
+        if stream.state.get() == StreamState::CLOSED {
+            return Ok(());
         }
         let Some(encoded_data) = self.encode_header_block(&fields) else {
             return Ok(());
@@ -6233,6 +6266,7 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
+        let mut signal = None;
         if !options.is_undefined_or_null() {
             if !options.is_object() {
                 stream.state.set(StreamState::CLOSED);
@@ -6376,7 +6410,7 @@ impl H2FrameParser {
                         self.abort_stream(&stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
-                    stream.attach_signal(self, signal_);
+                    signal = Some(signal_);
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"options.signal",
@@ -6583,6 +6617,17 @@ impl H2FrameParser {
 
                 offset += chunk_size;
             }
+        }
+
+        // Only now, as RST_STREAM has to follow HEADERS, and not after `free_resources`.
+        if let Some(signal) = signal
+            && stream.js_context.is_some()
+        {
+            if signal.aborted() {
+                self.abort_stream_for_signal(stream_id, signal.js_reason(global_object));
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+            stream.attach_signal(self, signal);
         }
 
         if end_stream {

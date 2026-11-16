@@ -4139,7 +4139,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
+      if (old_state != 5 && old_state != 7 && !stream.aborted) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
@@ -5174,7 +5174,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
+      if (old_state != 5 && old_state != 7 && !stream.aborted) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }

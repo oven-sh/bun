@@ -262,19 +262,29 @@ describe("PING (checklist §3.7)", () => {
   });
 });
 
+/** A socket for a session that is written in JS. */
+class Transport extends Duplex {
+  onNextWrite: (() => void) | undefined;
+
+  constructor(private send: (chunk: Buffer) => void = () => {}) {
+    super();
+  }
+
+  _read() {}
+
+  _write(chunk: Buffer, _: string, done: () => void) {
+    this.send(chunk);
+    const { onNextWrite } = this;
+    this.onNextWrite = undefined;
+    onNextWrite?.();
+    done();
+  }
+}
+
 test("a PING sent from the transport of another session goes out", async () => {
   const url = `http://127.0.0.1:${port}`;
   const socket = net.connect(port, "127.0.0.1");
-  let onWrite: (() => void) | undefined;
-  const transport = new Duplex({
-    read() {},
-    write(chunk, _, done) {
-      socket.write(chunk);
-      onWrite?.();
-      onWrite = undefined;
-      done();
-    },
-  });
+  const transport = new Transport(chunk => socket.write(chunk));
   socket.on("data", chunk => transport.push(chunk));
   const sessions = [http2.connect(url, { createConnection: () => transport }), http2.connect(url), http2.connect(url)];
   const ping = (session: http2.ClientHttp2Session) =>
@@ -284,7 +294,7 @@ test("a PING sent from the transport of another session goes out", async () => {
     const [overTransport, next, third] = sessions;
     for (const session of [next, third]) {
       const pings: Promise<void>[] = [];
-      onWrite = () => pings.push(ping(session));
+      transport.onNextWrite = () => pings.push(ping(session));
       pings.push(ping(overTransport));
       expect(pings.length).toBe(1);
       // Sessions share a buffer for what they write in one turn, so this has the first one send.
@@ -295,6 +305,109 @@ test("a PING sent from the transport of another session goes out", async () => {
   } finally {
     for (const session of sessions) session.destroy();
     socket.destroy();
+  }
+});
+
+test.each<[string, string[]]>([
+  ["request()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["a queued request", ["HEADERS 1", "HEADERS 3", "RST_STREAM 3"]],
+  ["write()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["a queued write", ["HEADERS 1", "RST_STREAM 1"]],
+  ["end()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["sendTrailers()", ["HEADERS 1", "DATA 1", "RST_STREAM 1"]],
+  ["sendTrailers({})", ["HEADERS 1", "DATA 1", "RST_STREAM 1"]],
+])("a signal is fired from the transport of another session during %s", async (during, expected) => {
+  const raw = await RawH2Server.listen();
+  const socket = net.connect(raw.port, "127.0.0.1");
+  const [toClient, toOther] = [new Transport(chunk => socket.write(chunk)), new Transport()];
+  const client = http2.connect("http://localhost", { createConnection: () => toClient });
+  const other = http2.connect("http://localhost", { createConnection: () => toOther });
+  const controller = new AbortController();
+  const { signal } = controller;
+  const failed = Promise.withResolvers<NodeJS.ErrnoException>();
+  let aborted = 0;
+  const request = () =>
+    client
+      .request({ ":method": "POST" }, { signal, waitForTrailers: during.startsWith("sendTrailers") })
+      .on("aborted", () => aborted++)
+      .on("error", failed.resolve);
+  const fireOnNextWrite = () => {
+    toOther.onNextWrite = () => controller.abort();
+    other.ping(() => {});
+  };
+  try {
+    // One stream at a time, and for a write to be queued, no window.
+    const settings = "000300000001" + (during === "a queued write" ? "000400000000" : "");
+    toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from(settings, "hex")));
+    await once(client, "remoteSettings");
+    const first = during === "a queued request" ? client.request().resume() : undefined;
+    const req = during === "request()" ? undefined : request();
+    if (during === "a queued write") req!.write("a");
+    if (during.startsWith("sendTrailers")) await Promise.all([once(req!, "wantTrailers"), req!.end("a")]);
+    // With all of that sent, and out of the read, so that the next push is read at once.
+    await new Promise(setImmediate);
+    if (first) {
+      first.prependListener("close", fireOnNextWrite);
+      toClient.push(encodeFrame(FrameType.HEADERS, 0x4 | 0x1, 1, Buffer.from([0x88])));
+      await once(first, "close");
+    } else {
+      fireOnNextWrite();
+      expect(signal.aborted).toBe(false);
+      if (during === "request()") request().end("a");
+      else if (during === "write()") req!.write("a");
+      else if (during === "end()") req!.end();
+      else if (during === "sendTrailers()") req!.sendTrailers({ "x-a": "b" });
+      else if (during === "sendTrailers({})") req!.sendTrailers({});
+      else toClient.push(encodeFrame(FrameType.WINDOW_UPDATE, 0, 1, Buffer.from("00000001", "hex")));
+    }
+    expect(signal.aborted).toBe(true);
+    expect((await failed.promise).code).toBe("ABORT_ERR");
+    // What destroying the stream has put off goes out ahead of the PING.
+    await new Promise(setImmediate);
+    client.ping(() => {});
+    await raw.waitFor(f => f.type === FrameType.PING);
+    const names = Object.keys(FrameType);
+    expect({
+      frames: raw.frames.filter(f => f.streamId !== 0).map(f => `${names[f.type]} ${f.streamId}`),
+      code: raw.frames.find(f => f.type === FrameType.RST_STREAM)?.payload.readUInt32BE(0),
+      queued: client.state.outboundQueueSize,
+    }).toEqual({ frames: expected, code: ErrorCode.CANCEL, queued: 0 });
+    if (/queued|write/.test(during)) expect(aborted).toBe(1);
+  } finally {
+    client.destroy();
+    other.destroy();
+    socket.destroy();
+    raw.close();
+  }
+});
+
+test.each(["reads", "writes"])("a queued write goes out when a session that may not send %s", async action => {
+  const [mine, other] = await Promise.all(
+    [new Transport(), new Transport()].map(async transport => {
+      const session = http2.connect("http://localhost", { createConnection: () => transport });
+      // No window.
+      transport.push(encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from("000400000000", "hex")));
+      await once(session, "remoteSettings");
+      const [first, second] = [1, 3].map(() => session.request({ ":method": "POST" }).on("error", () => {}));
+      first.write("a");
+      await new Promise(setImmediate);
+      return { transport, session, second };
+    }),
+  );
+  const windowUpdate = (id: number) => encodeFrame(FrameType.WINDOW_UPDATE, 0, id, Buffer.from("00000001", "hex"));
+  try {
+    mine.transport.push(windowUpdate(3));
+    await new Promise(setImmediate);
+    mine.session.ping(() => {});
+    const written = new Promise(resolve => mine.second.write("b", resolve));
+    expect(mine.session.state.outboundQueueSize).toBe(2);
+    if (action === "reads") other.transport.push(windowUpdate(0));
+    else other.second.write("c");
+    await written;
+    expect(mine.session.state.outboundQueueSize).toBe(1);
+  } finally {
+    mine.session.destroy();
+    other.session.destroy();
   }
 });
 
@@ -1327,7 +1440,9 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
   // What the peer sends with none, one and both of them acknowledged.
   test.each([
     [[0, 8192], ["", update[8192] + enters, indexed], "response response response"],
-    [[0, 8192], [enters, indexed], "response GOAWAY 9"],
+    [[0, 8192], [update[8192] + enters, indexed, indexed], "response response response"],
+    [[0, 8192], [enters, indexed], "response response"],
+    [[0, 1], [enters, indexed], "response GOAWAY 9"],
     [[8192, 0], [update[8192] + enters, indexed, update[0]], "response response response"],
     [[8192, 0], [update[8192] + enters, indexed, update[1]], "response response GOAWAY 9"],
     [[8192, 0], [update[8192] + enters, indexed, indexed], "response response GOAWAY 9"],
@@ -1412,15 +1527,7 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
       const { headerTableSize, initialWindowSize } = stream.session!.remoteSettings;
       stream.respond({ "x-sizes": `${headerTableSize} ${initialWindowSize}` }, { endStream: true });
     });
-    let onWrite: (() => void) | undefined;
-    const transport = new Duplex({
-      read() {},
-      write(_, __, done) {
-        onWrite?.();
-        onWrite = undefined;
-        done();
-      },
-    });
+    const transport = new Transport();
     const client = http2.connect(`http://127.0.0.1:${server.port}`);
     const other = http2.connect("http://localhost", { createConnection: () => transport });
     const get = () => once(client.request().resume(), "response").then(([headers]) => headers);
@@ -1429,7 +1536,7 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
       await run({
         client,
         other,
-        onOtherWrite: once => (onWrite = once),
+        onOtherWrite: once => (transport.onNextWrite = once),
         change: settings =>
           new Promise((resolve, reject) => client.settings(settings, error => (error ? reject(error) : resolve()))),
         get,
@@ -1477,25 +1584,15 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
     }));
 
   test("a client is destroyed from the transport of another session while it reads one", async () => {
-    let onWrite: (() => void) | undefined;
-    const transport = () =>
-      new Duplex({
-        read() {},
-        write(_, __, done) {
-          onWrite?.();
-          onWrite = undefined;
-          done();
-        },
-      });
-    const toClient = transport();
+    const [toClient, toOther] = [new Transport(), new Transport()];
     const client = http2.connect("http://localhost", { createConnection: () => toClient });
-    const other = http2.connect("http://localhost", { createConnection: transport });
+    const other = http2.connect("http://localhost", { createConnection: () => toOther });
     try {
       toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0));
       await once(client, "remoteSettings");
       // Out of that read, so that the next push is read at once.
       await new Promise(setImmediate);
-      onWrite = () => client.destroy();
+      toOther.onNextWrite = () => client.destroy();
       other.ping(() => {});
       expect(client.destroyed).toBe(false);
       toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSize(0)));

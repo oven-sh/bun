@@ -121,6 +121,7 @@ async function withRawH2Server(
     };
     let buf = Buffer.alloc(0);
     let prefaceSeen = false;
+    const fragments: Buffer[] = [];
     socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceSeen) {
@@ -138,8 +139,13 @@ async function withRawH2Server(
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
-        if (type === 1) state.onRequest?.(payload);
-        if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
+        if (type === 1 || type === 9) {
+          fragments.push(payload);
+          if (!(flags & 4)) continue;
+          const block = Buffer.concat(fragments.splice(0));
+          state.onRequest?.(block);
+          onStream(conn, id, connIndex); // a whole header block opens a stream
+        }
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
         if (type === 6 && !(flags & 1)) state.onPing?.(conn, payload);
       }
@@ -2689,6 +2695,8 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     await withRawH2Server(
       (conn, id) => conn.headers(id, hpackStatus(204), { endStream: true }),
       async (url, state) => {
+        const blocks: Buffer[] = [];
+        state.onRequest = block => blocks.push(block);
         await using proc = await spawnFetch(`
           for (const length of [65536, 65537, 10]) {
             const headers = { "x-big": Buffer.alloc(length - 5, "c").toString() };
@@ -2696,9 +2704,13 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           }
         `);
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, connections: state.connections, exitCode }).toEqual({
+        // The length, 65531 times the 5 bits of "c", and one bit of padding.
+        const value = [Buffer.from("fffebe02", "hex"), Buffer.alloc(40956, "2108421084", "hex"), Buffer.from([0x09])];
+        const whole = blocks.map(block => block.includes(Buffer.concat(value)));
+        expect({ stdout, stderr, whole, connections: state.connections, exitCode }).toEqual({
           stdout: "204\nUnableToEncode\n204\n",
           stderr: "",
+          whole: [true, false],
           connections: 2,
           exitCode: 0,
         });

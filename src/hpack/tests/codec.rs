@@ -823,6 +823,14 @@ mod decoder {
     }
 
     #[test]
+    fn scratch_with_spare_capacity() {
+        let block = [hex("01"), literal(&[b'0'; 300])].concat();
+        let (mut decoder, mut scratch) = (Decoder::new(), Vec::with_capacity(1000));
+        let mut fields = decoder.decode(&block, &mut scratch);
+        assert_eq!(fields.next().unwrap().unwrap().value, [b'0'; 300]);
+    }
+
+    #[test]
     fn names_of_entries_on_their_way_out() {
         let mut random = Random(2);
         for (size, max_len) in [
@@ -831,6 +839,7 @@ mod decoder {
             (4096, 300),
             (4096, 1500),
             (9000, 4000),
+            (20_000, 12_000),
         ] {
             let (mut decoder, mut model) = (decoder_with_table_size(size), Model::new());
             model.set_max_table_size(size as usize);
@@ -1000,6 +1009,14 @@ mod huffman {
             encoded.extend([0; 20]);
             assert_eq!(huffman_decode(&encoded), None);
             check(&encoded);
+        }
+    }
+
+    #[test]
+    fn full_lookups_after_the_longest_code() {
+        for before in 0..16 {
+            let text = [&vec![b'#'; before][..], b"\n##dddddddddddddddd"].concat();
+            check(&huffman_encode(&text));
         }
     }
 

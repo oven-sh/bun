@@ -10,6 +10,8 @@ const MIN_SPARE_LEN: usize = 128;
 const MIN_SPARE_ENTRIES: usize = 8;
 /// In bytes of memory.
 const NOT_WORTH_FREEING: usize = 1024;
+/// glibc up to 2.39 copies more with `rep movsb`, which Zen 3 and 4 are slow at for some distances (BZ 30994).
+const MAX_COPY_LEN: usize = 2048;
 
 /// What a field counts for in the size of a table.
 #[inline(always)]
@@ -110,7 +112,7 @@ impl<T> DynamicTable<T> {
         self.max_size = max_size;
         self.evict_down_to(max_size);
         if self.holds_too_much() {
-            self.relocate(0);
+            self.relocate(0, Name::New(&[]));
         }
     }
 
@@ -137,7 +139,7 @@ impl<T> DynamicTable<T> {
 
     /// Returns `None` if the field is too large to enter. What that evicts stays in its place for now.
     #[inline(always)]
-    pub(crate) fn insert(&mut self, name: Name<'_>, value: &[u8], links: T) -> Option<Place> {
+    pub(crate) fn insert(&mut self, mut name: Name<'_>, value: &[u8], links: T) -> Option<Place> {
         let name_len = self.name(name).len();
         let size = entry_size(name_len, value.len());
         self.evict_down_to(self.max_size.saturating_sub(size));
@@ -149,17 +151,17 @@ impl<T> DynamicTable<T> {
         let static_index = name.static_index();
         let name_len = if static_index == 0 { name_len } else { 0 };
         let len = name_len + value.len();
-        let previous;
-        let mut name = name;
         if self.holds_too_much() || !self.find_room(len) {
-            previous = self.relocate(len);
-            if let Name::Stored(start, len) = name {
-                name = Name::New(previous.get(range(start, len)).unwrap_or_default());
-            }
+            name = self.relocate(len, name);
         }
         let start = self.end;
         if let Name::Stored(from, len) = name {
-            self.storage.copy_within(range(from, len), start);
+            let from = range(from, len);
+            debug_assert!(!(from.start + 1..from.end).contains(&start));
+            for at in from.clone().step_by(MAX_COPY_LEN) {
+                let piece = at..from.end.min(at + MAX_COPY_LEN);
+                self.storage.copy_within(piece, start + at - from.start);
+            }
         }
         let room = self.storage.get_mut(start..start + len).unwrap_or_default();
         let (for_name, for_value) = room.split_at_mut(name_len);
@@ -205,34 +207,48 @@ impl<T> DynamicTable<T> {
     /// Never right after [`Self::relocate`].
     #[inline(always)]
     fn holds_too_much(&self) -> bool {
+        const { assert!(size_of::<Entry<T>>() <= ENTRY_OVERHEAD) };
         let held = self.storage.len() + self.entries.capacity() * size_of::<Entry<T>>();
         held > 2 * self.size + NOT_WORTH_FREEING
     }
 
-    /// Moves the entries to new storage that has at least `len` bytes for the next. Returns the old one.
-    #[cold]
-    #[inline(never)]
-    fn relocate(&mut self, len: usize) -> Box<[u8]> {
-        let entries = self.entries.iter();
-        let used: usize = entries.map(|entry| entry.place.stored_len()).sum();
+    fn capacity_for(&self, used: usize, len: usize) -> usize {
         let needed = used + len;
         // Moving that much is cheap. Beyond it, what is spare has to be in proportion to what moves.
         let limit = match self.max_size {
             ..=DEFAULT_TABLE_SIZE => DEFAULT_TABLE_SIZE,
             _ => u32::MAX as usize,
         };
-        let capacity = limit.min(needed + used.min(needed / 2) + MIN_SPARE_LEN);
+        limit.min(needed + used.min(needed / 2) + MIN_SPARE_LEN)
+    }
+
+    /// Moves the entries to new storage that has at least `len` bytes for the next, and its name with them.
+    #[cold]
+    #[inline(never)]
+    fn relocate<'a>(&mut self, len: usize, mut name: Name<'a>) -> Name<'a> {
+        let entries = self.entries.iter();
+        let used: usize = entries.map(|entry| entry.place.stored_len()).sum();
+        let capacity = self.capacity_for(used, len);
         let mut storage = Vec::with_capacity(capacity);
+        let mut keep = |start: &mut u32, len: u32| {
+            let bytes = self.storage.get(range(*start, len)).unwrap_or_default();
+            *start = storage.len() as u32;
+            for piece in bytes.chunks(MAX_COPY_LEN) {
+                storage.extend_from_slice(piece);
+            }
+        };
         for Entry { place, .. } in self.entries.iter_mut().rev() {
-            let bytes = range(place.start, place.name_len + place.value_len);
-            place.start = storage.len() as u32;
-            storage.extend_from_slice(self.storage.get(bytes).unwrap_or_default());
+            keep(&mut place.start, place.name_len + place.value_len);
+        }
+        if let Name::Stored(start, len) = &mut name {
+            keep(start, *len);
         }
         storage.resize(capacity, 0);
         (self.end, self.in_this_lap) = (used, self.entries.len());
         self.entries
             .shrink_to(2 * self.entries.len() + MIN_SPARE_ENTRIES);
-        core::mem::replace(&mut self.storage, storage.into())
+        self.storage = storage.into();
+        name
     }
 }
 
@@ -286,6 +302,12 @@ mod tests {
             }
             assert_eq!(held(&table).0, storage, "{lens:?}");
         }
+    }
+
+    #[test]
+    fn places_fit_in_32_bits() {
+        let table = with_max_size::<()>(u32::MAX as usize);
+        assert_eq!(table.capacity_for(4_000_000_000, 1), u32::MAX as usize);
     }
 
     #[test]

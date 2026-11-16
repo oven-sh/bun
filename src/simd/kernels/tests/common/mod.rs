@@ -1,12 +1,18 @@
 use bun_simd::{Target, limit_to};
 use core::fmt::Debug;
+use std::sync::LazyLock;
 
-pub(crate) fn targets() -> impl Iterator<Item = Target> {
-    // Miri lacks some of the intrinsics.
+/// Miri takes long to ask.
+static SUPPORTED: LazyLock<Vec<Target>> = LazyLock::new(|| {
+    // It lacks some of the intrinsics.
     let is_skipped = |target: Target| cfg!(miri) && target.arch() == Some("aarch64");
     let all = Target::ALL.into_iter();
-    let supported = all.filter(move |&it| it.is_supported() && !is_skipped(it));
-    supported.inspect(|&target| limit_to(target))
+    all.filter(|&it| it.is_supported() && !is_skipped(it))
+        .collect()
+});
+
+pub(crate) fn targets() -> impl Iterator<Item = Target> {
+    SUPPORTED.iter().copied().inspect(|&it| limit_to(it))
 }
 
 /// Returns numbers below its argument.

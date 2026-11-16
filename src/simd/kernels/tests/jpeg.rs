@@ -205,7 +205,7 @@ fn converted(y: &[u8], chroma: JpegChroma<'_>, width: usize, room: usize) -> Opt
 #[test]
 fn each_chroma() {
     let cr: [u8; 256] = from_fn(|i| i as u8);
-    for (cb, y) in sample((0..=255).zip(0..), 200) {
+    for (cb, y) in sample((0..=255).zip(0..), 256) {
         let (y, cb): ([u8; 256], _) = (from_fn(|i| (i * 7 + y * 31) as u8), [cb; 256]);
         let want = (0..256).map(|i| rgba(y[i], cb[i], cr[i])).collect();
         check(Some(want), || {
@@ -352,7 +352,7 @@ fn blocks_that_do_not_fit() {
 #[test]
 fn rows_that_do_not_fit() {
     let (full, half) = (&[0; 64][..], &[0; 36][..]);
-    for nth in sample(0..5, 3) {
+    for nth in sample(0..5, 5) {
         let rows = |row: &'static [u8]| [0, 1, 2, 3].map(|i| &row[usize::from(i == nth)..]);
         let ([cb, cr, ..], [a, b, c, d]) = (rows(full), rows(half));
         let (not_halved, half_width) = (Full { cb, cr }, HalfWidth { cb: a, cr: b });
@@ -375,29 +375,29 @@ fn planes_that_do_not_fit() {
         let ycc = [&mut *y, &mut *cb, &mut *cr];
         kernels::jpeg_rgba_to_ycc420(&rgba, rgba_stride, width, row_pairs, ycc, chroma_stride)
     };
-    let lens = [5 * 50 + 32, 5 * 40 + 32, 2 * 20 + 16, 2 * 20 + 16];
+    let lens = [5 * 70 + 32, 5 * 40 + 32, 2 * 20 + 16, 2 * 20 + 16];
     for it in [
-        [50, 32, 3, 20],
+        [70, 32, 3, 20],
         [0, 32, 3, 20],
-        [50, 0, 3, 20],
-        [50, 32, 0, 20],
+        [70, 0, 3, 20],
+        [70, 32, 0, 20],
     ] {
         check(Some(()), || fits(lens, it));
     }
     for nth in 0..4 {
         let mut lens = lens;
         lens[nth] -= 1;
-        check(None, || fits(lens, [50, 32, 3, 20]));
+        check(None, || fits(lens, [70, 32, 3, 20]));
     }
     for misfit in [
         [HUGE, 32, 1, 20],
         [0, 32, HUGE, 20],
-        [50, 32, 1, HUGE],
-        [50, 32, 1, 15],
+        [70, 32, 1, HUGE],
+        [70, 32, 1, 15],
     ] {
         check(None, || fits(lens, misfit));
     }
     for width in [16, 30, 34] {
-        check(None, || fits(lens, [50, width, 1, 20]));
+        check(None, || fits(lens, [70, width, 1, 20]));
     }
 }

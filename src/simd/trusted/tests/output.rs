@@ -151,7 +151,8 @@ fn initialized_memory_keeps_the_rest() {
 fn extend_vec_keeps_the_start() {
     let mut vec = vec![1];
     extend_vec(&mut vec, 40, |out| pushed(out.take(2), [2, 3]));
-    assert_eq!(vec, [1, 2, 3]);
+    extend_vec(&mut vec, 1, |out| out.fill_masked(Simd::from_array([4, 5])));
+    assert_eq!(vec, [1, 2, 3, 4]);
 }
 
 #[test]
@@ -263,7 +264,7 @@ fn more_than_there_was_room_for() {
 #[should_panic(expected = "assertion failed")]
 fn more_than_the_spare_capacity() {
     let mut vec = vec![(); usize::MAX - 1];
-    spare_capacity(&mut vec).1.append(&mut [(); 2]);
+    spare_capacity(&mut vec).1.append(vec![(); 2].leak());
 }
 
 #[test]

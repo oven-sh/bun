@@ -7,8 +7,8 @@ use common::on_each_target;
 use std::cell::Cell;
 use std::fmt::Debug;
 use std::hint::black_box;
+use std::mem::replace;
 use std::ops::Range;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
 const PAGE: usize = 4096;
@@ -103,10 +103,11 @@ mod simd {
         let (mut room, zero, one) = (Room::new(T::from(0)), T::from(0), T::from(1));
         let room = room.all();
         let test = |v: Vector<T, N>| v.simd_eq(one);
-        for range in ranges::<T>(N, alignments).filter(|it| it.len() == 13 * N - 1) {
+        let lens = [2 * N - 1, 4 * N - 1, 13 * N - 1];
+        for range in ranges::<T>(N, alignments).filter(|it| lens.contains(&it.len())) {
             let slice = &mut room[range];
             for apart in [0, 1, N, 2 * N, 3 * N] {
-                for first in 0..slice.len() - apart {
+                for first in 0..slice.len().saturating_sub(apart) {
                     (slice[first], slice[first + apart]) = (one, one);
                     let found = Vector::position(black_box(view(slice)), test);
                     assert_eq!(found, Some(first));
@@ -302,18 +303,19 @@ mod simd {
     /// In both ways.
     fn append_plus_one(from: &[u8], to: &mut impl Sink) {
         let from: Vec<u16> = from.iter().map(|&byte| byte.into()).collect();
-        let from = &from[..from.len().min(to.remaining())];
+        let len = from.len().min(to.remaining());
         let plus_one = |from: &[u16]| {
             let [low, high] = U16::load_or_zero(from);
             U8::narrow(low, high) + 1
         };
-        let (first, second) = from.split_at(from.len() / 2);
-        for (part, chunks) in [(first, from.len() % 8), (second, usize::MAX)] {
+        let (first, second) = from.split_at(len / 2);
+        for (part, chunks) in [(first, len % 8), (second, usize::MAX)] {
             let (start, left) = (to.len(), Cell::new(chunks));
             U8::append_chunks(to, part, |chunk| {
                 left.set(left.get().checked_sub(1)?);
                 Some(plus_one(chunk))
             });
+            let part = &part[..part.len().min(len - start)];
             let want = match part.len() {
                 len if len < U8::LEN / 2 => 0,
                 len if len.div_ceil(U8::LEN) > chunks => chunks * U8::LEN,
@@ -329,7 +331,7 @@ mod simd {
             let is_last = rest.len() == to.remaining();
             plus_one(rest).append_partial(to, if is_last { U8::LEN - 1 } else { rest.len() });
         }
-        assert_eq!(to.len(), from.len());
+        assert_eq!(to.len(), len);
     }
 
     /// `view` gives the input.
@@ -427,7 +429,9 @@ mod simd {
             U8::map(shared(from), to.into(), |v| v + 1);
         });
         maps(bytes(), |from, to| {
-            U8::zip_in_place(copy(from, to), from, |a, b| a + a - b + 1)
+            let to = copy(from, to);
+            U8::map_in_place(to, |v| v + v + 1);
+            U8::zip_in_place(to, from, |a, b| a - b)
         });
         maps(bytes(), |from, to| {
             U8::map_in_place(copy(from, to), |v| v + 1)
@@ -467,7 +471,9 @@ mod simd {
             Vector::map_in_place(copy(from, to), |v: Vector<T, N>| v + one)
         });
         maps(ranges(), |from, to| {
-            Vector::zip_in_place(copy(from, to), from, |a: Vector<T, N>, b| a + a - b + one)
+            let to = copy(from, to);
+            Vector::map_in_place(to, |v: Vector<T, N>| v + v + one);
+            Vector::zip_in_place(to, from, |a: Vector<T, N>, b| a - b)
         });
     }
 
@@ -547,8 +553,20 @@ mod simd {
         }
     }
 
+    fn narrow_and_shared<const N: usize>() {
+        let mut bytes = Vec::from_iter(0..4 * N as u8);
+        let four = Vector::<u8, N>::load4(shared(&mut bytes).as_chunks().0.as_array().unwrap());
+        assert_eq!(four.map(Vector::to_array).as_flattened(), bytes);
+        four[1].store_shared(shared_out(&mut bytes).first_chunk().unwrap());
+        assert_eq!(bytes[..2 * N], four[1].to_array().repeat(2));
+    }
+
     #[export]
     pub fn short_slices() {
+        narrow_and_shared::<2>();
+        narrow_and_shared::<4>();
+        narrow_and_shared::<8>();
+        narrow_and_shared::<16>();
         padded::<u8, _, { U8::LEN }>(plain);
         padded::<u8, _, { U8::LEN }>(shared);
         padded::<u8, _, 16>(plain);
@@ -801,19 +819,23 @@ fn store_a_whole_vector_without_a_mask() {
 
 #[test]
 fn readers_see_only_old_and_new_values() {
-    let rounds = if cfg!(miri) { 2 } else { 100_000 };
+    let loads = if cfg!(miri) { 140 } else { 1 << 22 };
     on_each_target(|| {
         for len in [2, 6, 18, 70] {
             let bytes: Vec<_> = (0..len).map(|i| AtomicU8::new(1 + i % 2)).collect();
+            let mut first = 0;
+            // Only those passes count that have met a write.
+            let has_changed = |_: &usize| {
+                assert!(bytes.iter().all(|byte| byte.load(Relaxed) != 0));
+                replace(&mut first, bytes[0].load(Relaxed)) != first
+            };
+            let mut passes = (0..loads / bytes.len()).filter(has_changed);
             std::thread::scope(|scope| {
-                let (writer, bytes) = (Arc::new(()), &bytes);
-                let writer_if_alive = Arc::downgrade(&writer);
-                scope.spawn(move || {
-                    while writer_if_alive.strong_count() > 0 {
-                        assert!(bytes.iter().all(|byte| byte.load(Relaxed) != 0));
-                    }
-                });
-                (0..rounds).for_each(|_| simd::swap_pairs(bytes));
+                let reader = scope.spawn(|| passes.nth(10_000));
+                simd::swap_pairs(&bytes);
+                while !reader.is_finished() {
+                    simd::swap_pairs(&bytes);
+                }
             });
         }
     });

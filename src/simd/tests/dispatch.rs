@@ -33,10 +33,12 @@ mod simd {
     }
 
     #[export(baseline)]
+    #[inline]
     pub fn baseline() -> &'static str {
         name()
     }
 
+    /// With a comment.
     #[cfg(false)]
     #[export]
     pub fn left_out() {}
@@ -63,15 +65,18 @@ mod simd {
         ([U8::LEN, isa::Isa::MASKED_BYTES], has.map(u8::from))
     }
 
-    struct Table<const N: usize>(isa::Vector<u8, N>);
+    struct Table<const N: usize, const UNUSED: usize = 1>(isa::Vector<u8, N>);
 
-    impl Default for Table<{ U8::LEN }> {
+    impl Default for Table<{ U8::LEN }, { U8::LEN / U8::LEN }> {
         fn default() -> Self {
             Self(U8::repeat([7; 16]))
         }
     }
 
-    impl Table<{ U8::LEN }> {
+    impl Table<{ U8::LEN }>
+    where
+        for<'a> &'a u8: Copy,
+    {
         const fn first() -> u8 {
             1
         }
@@ -85,6 +90,9 @@ mod simd {
     fn lanes(v: U8) -> impl Iterator<Item = u8> {
         let mut lanes = Vec::new();
         for lane in v.lookup(U8::zero()).to_array() {
+            fn _in_a_loop(v: U8) -> U8 {
+                v.lookup(v)
+            }
             lanes.push(lane);
         }
         lanes.into_iter()
@@ -100,8 +108,9 @@ mod simd {
     function!(pub(crate), from_macro);
 
     #[export]
-    pub fn names_of_the_macro(is_allowed: Kernel, choose: AtomicFn) -> u8 {
-        from_macro(U8::zero())[0] + is_allowed.0 + choose.0
+    pub fn names_of_the_macro(is_allowed: Kernel, mut choose: AtomicFn) -> u8 {
+        choose.0 += is_allowed.0;
+        from_macro(U8::zero())[0] + choose.0
     }
 
     /// With a comment.

@@ -114,8 +114,8 @@ mod simd {
                 "{name}"
             );
             assert_eq!(got.count(), u64::count_ones(bits) as usize, "{name}");
-            for lane in 0..=N {
-                let before = want[..lane].iter().filter(|&&it| it).count();
+            for lane in (0..=N).chain([usize::MAX / 2 + 1]) {
+                let before = want.iter().take(lane).filter(|&&it| it).count();
                 assert_eq!(got.count_before(lane), before, "{name}");
             }
             assert_eq!(got.to_vector().to_array(), vector, "{name}");
@@ -303,8 +303,15 @@ mod simd {
             let repeated = U8::repeat::<16>(*a.first_chunk().unwrap());
             assert_eq!(repeated.to_array(), from_fn(|i| a[i % 16]));
             assert_eq!(U8::repeat([a[0], a[1]]).to_array(), from_fn(|i| a[i % 2]));
-            let eight: [u8; 8] = from_fn(|i| a[i]);
+            let (four, eight): ([u8; 4], [u8; 8]) = (from_fn(|i| a[i]), from_fn(|i| a[i]));
+            assert_eq!(U8::repeat(four).to_array(), from_fn(|i| a[i % 4]));
             assert_eq!(U8::repeat(eight).to_array(), from_fn(|i| a[i % 8]));
+            let [first, second] = x.halves();
+            let swapped = U8::from_halves([second, first]);
+            assert_eq!(swapped.to_array(), from_fn(|i| a[(i + N / 2) % N]));
+            let [first, second] = x.bitcast::<U64>().halves();
+            let got: U8 = U64::from_halves([second, first]).bitcast();
+            assert_eq!(got.to_array(), swapped.to_array());
             let widened: I32 = Vector::from_slice(&a).cast();
             assert_eq!(widened.to_array(), from_fn(|i| a[i].into()));
             let is_negative = y.simd_lt(0).cast::<u8>().select(1, 0);

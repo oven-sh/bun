@@ -99,6 +99,18 @@ let v = bun_simd::sse4::U8::zero();
 v.shuffle::<Past>(v);
 ```
 
+More lanes to repeat than there is room for:
+
+```rust,compile_fail,E0080
+bun_simd::sse4::Vector::<u8, 8>::repeat([0; 16]);
+```
+
+More than 16 bytes to repeat:
+
+```rust,compile_fail,E0080
+bun_simd::sse4::Vector::<u8, 32>::repeat([0; 32]);
+```
+
 ## The gate
 
 Fewer features than the kernel has:
@@ -743,12 +755,72 @@ mod simd {
 simd::f(&[]);
 ```
 
+A store to it:
+
+```rust,compile_fail,E0080
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f(bytes: &[bun_simd::SharedOutU8]) {
+        isa::Vector::<u8, 32>::zero().store_shared(bytes.first_chunk().unwrap());
+    }
+}
+simd::f(&[]);
+```
+
+Sums that overflow a byte:
+
+```rust,compile_fail,E0080
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f(text: &[u8]) -> usize {
+        isa::U8::sum_of_bytes::<_, 64>(text, |v| v)
+    }
+}
+simd::f(b"");
+```
+
+Sums of vectors of another size:
+
+```rust,compile_fail,E0080
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f(text: &[u8]) -> usize {
+        isa::x128::U8::sum_of_bytes::<_, 1>(text, |_| isa::U8::zero())
+    }
+}
+simd::f(b"");
+```
+
+Halves of chunks that can end inside of a vector:
+
+```rust,compile_fail,E0080
+#[bun_simd::foreach_target]
+mod simd {
+    #[export]
+    pub fn f(from: &[u8], to: bun_simd::Out<'_, u8>) {
+        isa::U8::append_chunks(&mut to.into_writer(), from, |it| Some(isa::U8::load(it)));
+    }
+}
+simd::f(b"", [0; 0][..].as_mut().into());
+```
+
 A limit that is no target of a CPU:
 
 ```rust,compile_fail
 #[bun_simd::foreach_target]
 mod simd {
     #[export(up_to = portable)]
+    pub fn f() {}
+}
+```
+
+```rust,compile_fail
+#[bun_simd::foreach_target]
+mod simd {
+    #[export(up_to = avx, up_to = neon)]
     pub fn f() {}
 }
 ```
@@ -811,18 +883,18 @@ take! {}
 # fn main() {}
 ```
 
-A fragment of a macro, for which `C` would be 3:
+A fragment of a macro, for which `C` would be -4:
 
 ```rust,compile_fail
 macro_rules! make {
     ($e:expr) => {
         #[bun_simd::foreach_target]
         mod simd {
-            pub const C: u8 = $e * 2;
+            pub const C: i8 = $e.pow(2);
         }
     };
 }
-make!(1 + 1);
+make!(-2i8);
 # fn main() {}
 ```
 
@@ -833,11 +905,11 @@ Its neighbour:
 #     ($e:expr) => {
 #         #[bun_simd::foreach_target]
 #         mod simd {
-#             pub const C: u8 = $e * 2;
+#             pub const C: i8 = $e.pow(2);
 #         }
 #     };
 # }
-make!((1 + 1));
+make!((-2i8));
 fn main() {
     assert_eq!(simd::portable::C, 4);
 }

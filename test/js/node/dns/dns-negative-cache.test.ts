@@ -61,12 +61,9 @@ test("dns.Resolver re-queries after a NODATA response", async () => {
     const resolver = new dns.promises.Resolver({ tries: 1, timeout: 1000 });
     resolver.setServers(["127.0.0.1:" + socket.address().port]);
 
-    expect(
-      await resolver.resolveTxt(hostname).then(
-        () => "found",
-        () => "absent",
-      ),
-    ).toBe("absent");
+    // A DNS NODATA reply, not an unrelated timeout or network error, must
+    // be what we avoid caching. The ENODATA mapping is fixed separately.
+    await expect(resolver.resolveTxt(hostname)).rejects.toHaveProperty("code", "ENOTFOUND");
     expect(queries).toBe(1);
 
     recordExists = true;

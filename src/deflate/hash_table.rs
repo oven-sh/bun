@@ -3,7 +3,7 @@
 use crate::hash_lists::HashLists;
 use crate::window::{Bytes, match_len, oldest_for, reach, u32_at};
 
-pub(crate) type HashTable<'a> = HashLists<'a, { 1 << 15 }>;
+pub(crate) type HashTable<'a> = HashLists<'a, 4, { 1 << 15 }>;
 
 impl HashTable<'_> {
     /// Returns the length, or 0, and the offset.

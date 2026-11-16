@@ -1,7 +1,7 @@
 //! Huffman codes for the compressor.
 
 use crate::format::Codeword;
-use crate::{wrapped, wrapped_mut};
+use crate::{copy_prefix, wrapped, wrapped_mut};
 use core::array::from_fn;
 
 const SYMBOL_BITS: u32 = 10;
@@ -32,7 +32,7 @@ fn padded_lens(frequencies: &[u32], max_len: usize) -> [u8; 512] {
         return lens;
     }
 
-    nodes.get_mut(..used).unwrap_or_default().sort_unstable();
+    sort(nodes.get_mut(..used).unwrap_or_default());
     link_inner_nodes(&mut nodes, used);
     let counts = count_lens(&mut nodes, used - 2, max_len);
 
@@ -44,6 +44,33 @@ fn padded_lens(frequencies: &[u32], max_len: usize) -> [u8; 512] {
         }
     }
     lens
+}
+
+/// `leaves` are in the order of their symbols, so those with the same frequency only have to be put together.
+fn sort(leaves: &mut [u32]) {
+    /// From this frequency on, leaves are compared.
+    const FREQUENT: usize = 63;
+    if leaves.len() <= 32 {
+        return leaves.sort_unstable();
+    }
+    let group = |leaf: u32| FREQUENT.min((leaf >> SYMBOL_BITS) as usize);
+    let mut next = [0u16; FREQUENT + 1];
+    for &leaf in &*leaves {
+        *wrapped_mut(&mut next, group(leaf)) += 1;
+    }
+    let mut start = 0;
+    for next in &mut next {
+        start += core::mem::replace(next, start);
+    }
+    let rare = usize::from(next[FREQUENT]);
+    let mut grouped = [0; 512];
+    for &leaf in &*leaves {
+        let next = wrapped_mut(&mut next, group(leaf));
+        *wrapped_mut(&mut grouped, (*next).into()) = leaf;
+        *next += 1;
+    }
+    copy_prefix(leaves, &grouped);
+    leaves.get_mut(rare..).unwrap_or_default().sort_unstable();
 }
 
 /// Puts the inner nodes of the tree in the place of the `leaves`, which are sorted, each with the index of its parent.
@@ -104,18 +131,23 @@ fn count_lens(nodes: &mut [u32; 512], root: usize, max_len: usize) -> [u32; 16] 
     counts
 }
 
-/// RFC 1951 3.2.2
-pub(crate) fn codewords<const N: usize>(lens: &[u8; N]) -> [Codeword; N] {
+/// The first code of each length, with its first bit at the top of 16.
+fn first_codes(lens: &[u8]) -> [u16; 16] {
     let mut counts = [0u16; 16];
     for &len in lens {
         *wrapped_mut(&mut counts, len.into()) += 1;
     }
-    // With the first bit at the top of 16.
-    let (mut next, mut code) = ([0u16; 16], 0u16);
-    for (len, (next, count)) in next.iter_mut().zip(counts).enumerate().skip(1) {
-        *next = code;
+    let (mut first, mut code) = ([0; _], 0u16);
+    for (len, (first, count)) in first.iter_mut().zip(counts).enumerate().skip(1) {
+        *first = code;
         code = code.wrapping_add(count << (16 - len));
     }
+    first
+}
+
+/// RFC 1951 3.2.2
+pub(crate) fn codewords<const N: usize>(lens: &[u8; N]) -> [Codeword; N] {
+    let mut next = first_codes(lens);
     lens.map(|len| {
         let next = wrapped_mut(&mut next, len.into());
         let bits = next.reverse_bits().into();

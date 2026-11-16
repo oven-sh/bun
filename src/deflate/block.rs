@@ -10,6 +10,7 @@ use crate::format::{
 use crate::huffman::{codeword_lens, codewords};
 use crate::output::Sink;
 use crate::{Error, Result, copy_prefix, wrapped, wrapped_mut};
+use bun_highway::with_bmi2;
 use core::array::from_fn;
 use core::hint::{cold_path, select_unpredictable};
 
@@ -339,7 +340,7 @@ impl<'s, 'o> Stream<'s, 'o> {
             &dynamic_codewords
         };
         writer.flush(output);
-        write_symbols(&mut writer, output, data, sequences, codewords);
+        let writer = write_body(writer, output, data, sequences, codewords);
         if writer.end_after(0) + SLACK > output.len() {
             return Err(Error::InsufficientSpace);
         }
@@ -356,14 +357,26 @@ struct OffsetCode {
     len: u16,
 }
 
-#[inline(never)]
+with_bmi2! {
+    fn write_body(
+        writer: BitWriter,
+        output: &mut [u8],
+        data: &[u8],
+        sequences: &[Sequence],
+        codewords: &Codewords,
+    ) -> BitWriter {
+        write_symbols(writer, output, data, sequences, codewords)
+    }
+}
+
+#[inline(always)]
 fn write_symbols(
-    state: &mut BitWriter,
+    mut writer: BitWriter,
     output: &mut [u8],
     mut data: &[u8],
     sequences: &[Sequence],
     codewords: &Codewords,
-) {
+) -> BitWriter {
     /// Returns the last `literals.len() % 4`, which it does not write.
     #[inline(always)]
     fn write_fours<'a>(
@@ -402,7 +415,10 @@ fn write_symbols(
         }
     });
 
-    let mut writer = *state;
+    // Never true, but it spares an overflow check in each flush.
+    if output.len() < SLACK {
+        return writer;
+    }
     for sequence in sequences {
         let mut literals = sequence.literals as usize;
         if literals > 2 {
@@ -454,7 +470,7 @@ fn write_symbols(
     }
     writer.add_codeword(codewords.litlen[END_OF_BLOCK]);
     writer.flush(output);
-    *state = writer;
+    writer
 }
 
 #[cfg(test)]

@@ -802,9 +802,10 @@ bun::N_AVX3_DL::Crc32         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCL
 
 
 # ----------------------------------------------------------------------------
-# Bun DEFLATE decoder (src/deflate/decompressor.rs).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (2 symbols)
+# Bun DEFLATE (src/deflate).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
 # ----------------------------------------------------------------------------
+bun_deflate::block::write_body::bmi2             [BMI2]
 bun_deflate::decompressor::decode_blocks::bmi2   [BMI2]
 bun_deflate::decompressor::decode_dynamic::bmi2  [BMI2]
 

@@ -1,13 +1,12 @@
 //! Links each node to the last one before it whose first bytes have the same hash.
 
 use crate::window::{
-    Bytes, FIRST_NODE, GROUP, HASHED_GROUPS, Hashes, MAX_OFFSET, MatchFinder, Node, RING, SLIDE,
-    node_count, reach, slide_list, slide_table,
+    BATCH, Bytes, FIRST_NODE, GROUP, MAX_OFFSET, MatchFinder, Node, RING, SLIDE, node_count, reach,
+    replace, slide_list, slide_table,
 };
-use crate::{Result, grow, grow_to_array, wrapped, wrapped_mut};
+use crate::{Result, copy_prefix, grow, grow_to_array, wrapped, wrapped_mut};
+use core::hint::cold_path;
 use core::ops::Range;
-
-const HASHED_NODES: usize = HASHED_GROUPS * GROUP;
 
 #[derive(Default)]
 pub(crate) struct Storage {
@@ -15,11 +14,14 @@ pub(crate) struct Storage {
     links: Vec<Node>,
 }
 
+fn file_first_node(heads: &mut [Node]) {
+    copy_prefix(heads, &[FIRST_NODE as Node]);
+}
+
 /// Keeps the links of all nodes.
-pub(crate) struct HashLists<'a, const HEADS: usize> {
+pub(crate) struct HashLists<'a, const PREFIX_LEN: u32, const HEADS: usize> {
     heads: &'a mut [Node; HEADS],
     links: &'a mut [Node],
-    hashes: Hashes,
     /// After how many bytes the data may repeat itself from node `periodic_from` on.
     period: usize,
     periodic_from: usize,
@@ -27,17 +29,20 @@ pub(crate) struct HashLists<'a, const HEADS: usize> {
     has_repeated: bool,
 }
 
-impl<'a, const HEADS: usize> HashLists<'a, HEADS> {
-    pub(crate) fn new(storage: &'a mut Storage, prefix_len: u32, input_len: usize) -> Result<Self> {
+impl<'a, const PREFIX_LEN: u32, const HEADS: usize> HashLists<'a, PREFIX_LEN, HEADS> {
+    pub(crate) fn new(storage: &'a mut Storage, input_len: usize) -> Result<Self> {
         storage.heads.clear();
-        Ok(Self {
-            heads: grow_to_array(&mut storage.heads)?,
+        let heads = grow_to_array(&mut storage.heads)?;
+        file_first_node(heads);
+        let mut lists = Self {
+            heads,
             links: grow(&mut storage.links, node_count(input_len))?,
-            hashes: Hashes::new(prefix_len, HEADS.ilog2()),
             period: 0,
             periodic_from: usize::MAX / 2,
             has_repeated: false,
-        })
+        };
+        lists.leave_out(0..FIRST_NODE + 1);
+        Ok(lists)
     }
 
     pub(crate) fn links(&self) -> &[Node] {
@@ -50,53 +55,51 @@ impl<'a, const HEADS: usize> HashLists<'a, HEADS> {
 
     #[inline(always)]
     pub(crate) fn next(&self, node: usize) -> usize {
-        self.links.get(node).map_or(0, |&next| next.into())
+        let Some(&next) = self.links.get(node) else {
+            cold_path();
+            return 0;
+        };
+        next.into()
     }
 
     #[inline(always)]
     fn link(&mut self, window: &Bytes, groups: Range<usize>) {
-        self.hashes.compute(window, groups.start);
         let (links, _) = self.links.as_chunks_mut();
         let links = links.get_mut(groups.start..groups.end).unwrap_or_default();
         for (index, links) in links.iter_mut().enumerate() {
-            self.hashes.replace(self.heads, groups.start + index, links);
-        }
-    }
-
-    /// Gives `nodes` the links of the nodes `distance` before them, moved up as far.
-    fn repeat(&mut self, nodes: Range<usize>, distance: usize) {
-        let links = self.links.split_at_mut_checked(nodes.start);
-        let (old, new) = links.unwrap_or_default();
-        let old = old.get(nodes.start - distance..).unwrap_or_default();
-        for (new, old) in new.iter_mut().zip(old).take(nodes.len()) {
-            *new = old.wrapping_add(distance as Node);
+            replace::<PREFIX_LEN, _>(self.heads, window, groups.start + index, links);
         }
     }
 
     #[cold]
     fn update_heads(&mut self, window: &Bytes, end: usize) {
-        let start = end - self.period.div_ceil(HASHED_NODES) * HASHED_GROUPS;
-        for first in (start..end).step_by(HASHED_GROUPS) {
-            self.hashes.compute(window, first);
-            for group in first..first + HASHED_GROUPS {
-                self.hashes.replace(self.heads, group, &mut [0; _]);
-            }
+        for group in end - self.period.div_ceil(GROUP)..end {
+            replace::<PREFIX_LEN, _>(self.heads, window, group, &mut [0; _]);
         }
     }
 }
 
-impl<const HEADS: usize> MatchFinder for HashLists<'_, HEADS> {
+/// Gives `nodes` the links of the nodes `distance` before them, moved up as far.
+fn repeat(links: &mut [Node], nodes: Range<usize>, distance: usize) {
+    let (old, new) = links.split_at_mut_checked(nodes.start).unwrap_or_default();
+    let old = old.get(nodes.start - distance..).unwrap_or_default();
+    for (new, old) in new.iter_mut().zip(old).take(nodes.len()) {
+        *new = old.wrapping_add(distance as Node);
+    }
+}
+
+impl<const PREFIX_LEN: u32, const HEADS: usize> MatchFinder for HashLists<'_, PREFIX_LEN, HEADS> {
     #[inline(never)]
     fn insert(&mut self, window: &Bytes, groups: Range<usize>) {
         let nodes = groups.start * GROUP..groups.end * GROUP;
-        let hashed = |node| reach(window, node).split_at(HASHED_NODES + 3).0;
+        let hashed = |node| reach(window, node).split_at(BATCH + 3).0;
         let (here, before) = (hashed(nodes.start), hashed(nodes.start - self.period));
         let is_periodic = here.last_chunk::<8>() == before.last_chunk() && here == before;
         // Where the data repeats itself the links do so too, which takes no hashes.
         if is_periodic {
-            let distance = HASHED_NODES.next_multiple_of(self.period.max(1));
+            let distance = BATCH.next_multiple_of(self.period.max(1));
             if nodes.start >= self.periodic_from + distance + self.period {
-                self.repeat(nodes, distance);
+                repeat(self.links, nodes, distance);
                 self.has_repeated = true;
                 return;
             }
@@ -106,7 +109,9 @@ impl<const HEADS: usize> MatchFinder for HashLists<'_, HEADS> {
         }
         self.link(window, groups);
         if !is_periodic || self.period == 0 {
-            self.period = MAX_OFFSET.min(nodes.end - 1 - self.next(nodes.end - 1));
+            // At another place in aligned records each time, since some have the same bytes nearer by.
+            let sample = nodes.end - 1 - nodes.end / BATCH;
+            self.period = MAX_OFFSET.min(sample - self.next(sample));
             // The first node is not in the list that its bytes belong in.
             self.periodic_from = (nodes.end - self.period).max(FIRST_NODE + 1);
         }
@@ -124,22 +129,20 @@ impl<const HEADS: usize> MatchFinder for HashLists<'_, HEADS> {
 }
 
 /// Only keeps the links of the last [`RING`] nodes, among which are those that the parser has yet to get to.
-pub(crate) struct RecentLinks<'a, const HEADS: usize> {
+pub(crate) struct RecentLinks<'a, const PREFIX_LEN: u32, const HEADS: usize> {
     heads: &'a mut Vec<Node>,
     ring: [[Node; GROUP]; RING / GROUP],
-    hashes: Hashes,
     /// The group after the last in `heads`, or 0 if that has to be cleared first.
     groups_end: usize,
 }
 
-impl<'a, const HEADS: usize> RecentLinks<'a, HEADS> {
-    pub(crate) fn new(heads: &'a mut Vec<Node>, prefix_len: u32) -> Result<Self> {
+impl<'a, const PREFIX_LEN: u32, const HEADS: usize> RecentLinks<'a, PREFIX_LEN, HEADS> {
+    pub(crate) fn new(heads: &'a mut Vec<Node>) -> Result<Self> {
         heads.clear();
         heads.try_reserve_exact(HEADS)?;
         Ok(Self {
             heads,
             ring: [[0; _]; _],
-            hashes: Hashes::new(prefix_len, HEADS.ilog2()),
             groups_end: 0,
         })
     }
@@ -155,19 +158,15 @@ impl<'a, const HEADS: usize> RecentLinks<'a, HEADS> {
         if self.groups_end == 0 {
             self.heads.clear();
             self.heads.resize(HEADS, 0);
+            // After a slide, no node can match it.
+            file_first_node(self.heads);
+            self.groups_end = FIRST_NODE / GROUP + 1;
         }
         let Some(heads) = self.heads.first_chunk_mut::<HEADS>() else {
             return;
         };
-        let start = self
-            .groups_end
-            .max(groups.start / HASHED_GROUPS * HASHED_GROUPS);
-        for first in (start..groups.end).step_by(HASHED_GROUPS) {
-            self.hashes.compute(window, first);
-            for group in first..groups.end.min(first + HASHED_GROUPS) {
-                let old = wrapped_mut(&mut self.ring, group);
-                self.hashes.replace(heads, group, old);
-            }
+        for group in self.groups_end.max(groups.start)..groups.end {
+            replace::<PREFIX_LEN, _>(heads, window, group, wrapped_mut(&mut self.ring, group));
         }
         self.groups_end = groups.end;
     }

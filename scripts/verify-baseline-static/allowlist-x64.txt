@@ -828,9 +828,10 @@ _ZN3bun9N_AVX3_DLL5Crc32EjPKhm          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL,
 
 
 # ----------------------------------------------------------------------------
-# Bun DEFLATE decoder (src/deflate/decompressor.rs).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (2 symbols)
+# Bun DEFLATE (src/deflate).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (3 symbols)
 # ----------------------------------------------------------------------------
+_RNvNvNt<rust-hash>11bun_deflate5block10write_body4bmi2              [BMI2]
 _RNvNvNt<rust-hash>11bun_deflate12decompressor13decode_blocks4bmi2   [BMI2]
 _RNvNvNt<rust-hash>11bun_deflate12decompressor14decode_dynamic4bmi2  [BMI2]
 

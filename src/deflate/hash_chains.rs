@@ -24,8 +24,8 @@ pub(crate) struct Storage {
 }
 
 pub(crate) struct HashChains<'a> {
-    recent3: RecentLinks<'a, { 1 << 15 }>,
-    lists4: HashLists<'a, { 1 << 16 }>,
+    recent3: RecentLinks<'a, 3, { 1 << 15 }>,
+    lists4: HashLists<'a, 4, { 1 << 16 }>,
     /// The group after the last in `lists4`.
     groups_end: usize,
     shortcuts: &'a mut Vec<Shortcut>,
@@ -33,26 +33,21 @@ pub(crate) struct HashChains<'a> {
     /// The first node without a shortcut.
     shortcuts_end: usize,
     takes_shortcuts: bool,
-    /// About how many nodes searches looked at since `counted_from`.
-    pub(crate) visited: usize,
-    /// About how many nodes since `counted_from` were in runs of one byte.
-    in_runs: usize,
-    counted_from: usize,
+    /// About how many nodes searches have looked at lately, less what shortcuts cost by that measure.
+    pub(crate) credit: usize,
 }
 
 impl<'a> HashChains<'a> {
     pub(crate) fn new(storage: &'a mut Storage, input_len: usize) -> Result<Self> {
         Ok(Self {
-            recent3: RecentLinks::new(&mut storage.recent3, 3)?,
-            lists4: HashLists::new(&mut storage.lists4, 4, input_len)?,
+            recent3: RecentLinks::new(&mut storage.recent3)?,
+            lists4: HashLists::new(&mut storage.lists4, input_len)?,
             groups_end: 0,
             shortcuts: &mut storage.shortcuts,
             node_count: node_count(input_len),
             shortcuts_end: 0,
             takes_shortcuts: false,
-            visited: 0,
-            in_runs: 0,
-            counted_from: 0,
+            credit: 0,
         })
     }
 
@@ -64,13 +59,10 @@ impl<'a> HashChains<'a> {
 
     /// Only if searches have been long. Returns whether those from `node` on are to take them.
     pub(crate) fn make_shortcuts(&mut self, node: usize) -> bool {
-        let counted = node.wrapping_sub(self.counted_from);
-        if counted >= 2048 {
-            let eighths = if self.takes_shortcuts { 3 } else { 6 };
-            // In a run of one byte, making a shortcut waits for the store of the one before.
-            self.takes_shortcuts = 8 * self.visited >= eighths * counted + 32 * self.in_runs;
-            (self.visited, self.in_runs, self.counted_from) = (0, 0, node);
-        }
+        // Starting to take them costs a whole window of them.
+        let most = node.clamp(4096, 32768) / 4;
+        self.takes_shortcuts = self.credit >= most || (self.takes_shortcuts && self.credit != 0);
+        self.credit = self.credit.min(most);
         self.takes_shortcuts && self.extend_shortcuts(oldest_for(node)).is_ok()
     }
 
@@ -102,6 +94,7 @@ impl<'a> HashChains<'a> {
         max_depth: usize,
         visited: &mut usize,
     ) -> (usize, usize) {
+        debug_assert!(nice_len <= max_len);
         let here = reach(window, node);
         let oldest = oldest_for(node);
         let last = usize::from(best_len.saturating_sub(3) as u8);
@@ -131,6 +124,8 @@ impl<'a> HashChains<'a> {
                     || nth(3) < oldest
                     || depth <= 4
                 {
+                    // About as many as without shortcuts.
+                    *visited += 2 * usize::from(nth(1) >= oldest);
                     break;
                 }
                 depth -= 4;
@@ -202,16 +197,16 @@ impl Search<'_> {
         (self.best_len, self.best) = (len, candidate);
         self.last = usize::from((len - 3) as u8);
         self.suffix = u32_at(self.here, self.last);
-        len >= self.nice_len.min(self.max_len)
+        len >= self.nice_len
     }
 }
 
 impl MatchFinder for HashChains<'_> {
     fn insert(&mut self, window: &Bytes, groups: Range<usize>) {
         self.groups_end = groups.end;
-        if self.lists4.is_in_run() {
-            self.in_runs += GROUP * groups.len();
-        }
+        // In a run of one byte, making a shortcut waits for the store of the one before.
+        let cost = if self.lists4.is_in_run() { 16 } else { 4 };
+        self.credit = self.credit.saturating_sub(cost * groups.len());
         self.lists4.insert(window, groups);
     }
 
@@ -222,7 +217,6 @@ impl MatchFinder for HashChains<'_> {
     fn slide(&mut self) {
         self.recent3.slide();
         self.lists4.slide();
-        self.counted_from = self.counted_from.wrapping_sub(SLIDE);
         self.shortcuts_end = self.shortcuts_end.saturating_sub(SLIDE);
         if self.shortcuts_end != 0 {
             let nodes = bun_pod::try_cast_slice_mut(self.shortcuts.as_mut_slice());

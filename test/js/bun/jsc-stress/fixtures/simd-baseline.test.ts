@@ -466,7 +466,7 @@ describe("PNG codec: Highway runtime dispatch", () => {
 
 describe("DEFLATE: Highway runtime dispatch", () => {
   // src/jsc/bindings/highway_crc32.cpp has code for each width of vector, for what is left after it, and for the
-  // start of a long input. src/deflate/decompressor.rs is compiled with BMI2 and without.
+  // start of a long input. Parts of src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
   const library = "libdeflate";
   const bytes = Buffer.alloc(140_000);
   for (let i = 0, state = 1; i < bytes.length; i++) {

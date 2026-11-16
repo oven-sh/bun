@@ -7,7 +7,7 @@ use core::cell::Cell;
 /// How many lengths a [`Summary`] has the offset slots of.
 pub(crate) const SHORT_LENS: usize = 8;
 pub(crate) const MIN_LONG_LEN: usize = MIN_MATCH_LEN + SHORT_LENS;
-pub(crate) const SLOT_BITS: u32 = OFFSET_SYMBOLS.ilog2();
+const SLOT_BITS: u32 = OFFSET_SYMBOLS.ilog2();
 /// For a length that no match has.
 pub(crate) const NO_SLOT: usize = OFFSET_SYMBOLS - 1;
 const SLOTS_BITS: u32 = SHORT_LENS as u32 * SLOT_BITS;

@@ -18,8 +18,8 @@ pub(crate) struct Storage {
 }
 
 pub(crate) struct BinaryTrees<'a> {
-    lists3: HashLists<'a, { 1 << 16 }>,
-    roots: RecentLinks<'a, { 1 << 16 }>,
+    lists3: HashLists<'a, 3, { 1 << 16 }>,
+    roots: RecentLinks<'a, 4, { 1 << 16 }>,
     /// The lesser and the greater child of each node.
     children: &'a mut [Node],
 }
@@ -27,8 +27,8 @@ pub(crate) struct BinaryTrees<'a> {
 impl<'a> BinaryTrees<'a> {
     pub(crate) fn new(storage: &'a mut Storage, input_len: usize) -> Result<Self> {
         Ok(Self {
-            lists3: HashLists::new(&mut storage.lists3, 3, input_len)?,
-            roots: RecentLinks::new(&mut storage.roots, 4)?,
+            lists3: HashLists::new(&mut storage.lists3, input_len)?,
+            roots: RecentLinks::new(&mut storage.roots)?,
             children: grow(&mut storage.children, 2 * node_count(input_len))?,
         })
     }

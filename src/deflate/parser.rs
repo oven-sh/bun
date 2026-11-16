@@ -5,11 +5,12 @@ use crate::block_splitter::{
     MIN_BLOCK_LEN, OBSERVATIONS_PER_CHECK, Observations, SOFT_MAX_BLOCK_LEN, max_block_end,
     may_split, observations, should_split,
 };
-use crate::format::MIN_MATCH_LEN;
+use crate::format::{MAX_MATCH_LEN, MIN_MATCH_LEN};
 use crate::hash_chains::{self, HashChains, MAX_OFFSET_OF_3};
 use crate::hash_table::HashTable;
 use crate::window::{Bytes, MatchFinder, Window, reach};
 use crate::{Result, hash_lists, wrapped_mut};
+use core::hint::cold_path;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Effort {
@@ -205,7 +206,7 @@ pub(crate) fn compress_fastest(
         max_depth: None,
         updates_min_len: false,
     };
-    let table = HashTable::new(storage, 4, window.input().len())?;
+    let table = HashTable::new(storage, window.input().len())?;
     compress(
         window,
         table,
@@ -280,7 +281,7 @@ fn parse<const LAZINESS: usize, const TAKES_SHORTCUTS: bool>(
     min_len: usize,
     Effort {
         max_depth,
-        nice_len,
+        mut nice_len,
     }: Effort,
 ) -> usize {
     let max_offset_of_shortest = MAX_OFFSET_OF_3 / if LAZINESS == GREEDY { 2 } else { 1 };
@@ -289,30 +290,36 @@ fn parse<const LAZINESS: usize, const TAKES_SHORTCUTS: bool>(
         chains.index_3_bytes(window, node);
     }
     let mut visited = 0;
+    let (mut max_len, near_end) = (MAX_MATCH_LEN, input_end.saturating_sub(MAX_MATCH_LEN));
     let mut longest_match = #[inline(always)]
-    |node: usize, best_len, depth| {
-        let max_len = input_end - node;
+    |node: usize, best_len, depth, nice_len: &mut usize| {
+        if node > near_end {
+            cold_path();
+            max_len = input_end - node;
+            *nice_len = max_len.min(*nice_len);
+        }
         chains.longest_match::<TAKES_SHORTCUTS>(
             window,
             node,
             best_len,
             max_len,
-            nice_len,
+            *nice_len,
             depth,
             &mut visited,
         )
     };
     while node < span.stop {
-        let (mut len, mut offset) = longest_match(node, min_len - 1, max_depth);
+        let (mut len, mut offset) = longest_match(node, min_len - 1, max_depth, &mut nice_len);
         if len < min_len || (len == MIN_MATCH_LEN && offset > max_offset_of_shortest) {
             span.choose_literal(node);
             node += 1;
             continue;
         }
-        'defer: while len < nice_len.min(input_end - node) {
+        'defer: while len < nice_len {
             for (ahead, min_gain) in [(1, 3), (2, 7)].into_iter().take(LAZINESS) {
                 let next = node + ahead;
-                let (next_len, next_offset) = longest_match(next, len - 1, max_depth >> ahead);
+                let (next_len, next_offset) =
+                    longest_match(next, len - 1, max_depth >> ahead, &mut nice_len);
                 if next_len >= len
                     && 4 * (next_len - len) as u32 + (offset | 1).ilog2()
                         >= (next_offset | 1).ilog2() + min_gain
@@ -328,7 +335,7 @@ fn parse<const LAZINESS: usize, const TAKES_SHORTCUTS: bool>(
         node += len;
     }
     if LAZINESS != GREEDY {
-        chains.visited += visited;
+        chains.credit += visited;
     }
     node
 }

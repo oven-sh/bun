@@ -186,6 +186,26 @@ fn short_inputs() {
 }
 
 #[test]
+fn matches_end_with_the_input() {
+    let run = [Part::Even(190, 256, 0), Part::Even(280, 1, 65)];
+    let pairs = [Part::Even(300, 256, 0), Part::Even(2720, 2, 65)];
+    let (mut compressor, mut room) = (Compressor::default(), [0; 1000]);
+    for (parts, step, efforts) in [(run, 1, 1..=Level::MAX), (pairs, 5, 5..=8)] {
+        let data = generate(1, &parts);
+        for level in efforts.map(level) {
+            // What a longer input left behind goes on matching.
+            for data in (0..40).map(|steps| &data[..data.len() - steps * step]) {
+                let output = Output::Slice(&mut room);
+                let written = compressor.compress(data, Format::Raw, level, output);
+                let stream = &room[..written.unwrap()];
+                assert!(stream == compress_to_vec(data, Format::Raw, level).unwrap());
+                inflates_to(stream, data);
+            }
+        }
+    }
+}
+
+#[test]
 fn stored_blocks() {
     let data = Random(1).bytes(3 * 65535);
     for (len, blocks) in [(65534, 1), (65535, 1), (65536, 2), (131070, 2), (131071, 3)] {

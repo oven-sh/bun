@@ -253,6 +253,7 @@ fn gives(decode: Decode, input: &[u8], read: usize, data: &[u8]) {
         (Some(0), usize::MAX),
         (Some(len / 2), len),
         (Some(len), len),
+        (Some(len), usize::MAX),
         (Some(len + 40000), usize::MAX),
     ];
     let expected = Ok((read, data.to_vec()));
@@ -461,31 +462,25 @@ fn headers_of_all_forms() {
         let precode = sparse(19, precode).try_into().unwrap_or([0; 19]);
         let mut stream = Stream::default();
         stream.described(true, litlen, offset, &precode, items);
-        for literal in (0..=255).filter(|&it| litlen[usize::from(it)] != 0) {
-            stream.literals(&[literal; 4]);
-        }
+        let literals = (0..=255).filter(|&it| litlen[usize::from(it)] != 0);
+        let literals = literals.collect::<Vec<u8>>().repeat(4);
+        stream.literals(&literals);
         for distance in (1..=offset.len().min(4)).filter(|it| offset[it - 1] != 0) {
-            stream.copy(3, distance);
+            stream.copy(3, distance).literals(&literals);
         }
         stream.end().is_accepted();
     };
 
     // Runs from one code into the other
-    let litlen = sparse(259, &[(0, 2), (256, 2), (257, 2), (258, 2)]);
-    let precode = [(2, 2), (16, 2), (18, 1)];
-    let items = [(2, 0), (18, 127), (18, 106), (2, 0), (16, 3)];
-    check(&litlen, &[2; 4], &precode, &items);
-    let items = [
-        (2, 0),
-        (18, 127),
-        (18, 106),
-        (2, 0),
-        (2, 0),
-        (16, 0),
-        (2, 0),
-        (2, 0),
-    ];
-    check(&litlen, &[2; 4], &precode, &items);
+    let litlen = sparse(259, &[(0, 3), (1, 3), (256, 2), (257, 2), (258, 2)]);
+    let precode = [(2, 2), (3, 2), (16, 2), (18, 2)];
+    for (before, run) in [(1, 3), (1, 6), (2, 3), (2, 5), (3, 3), (3, 4)] {
+        let mut items = vec![(3, 0), (3, 0), (18, 127), (18, 105)];
+        items.extend(vec![(2, 0); before]);
+        items.push((16, run as u32 - 3));
+        items.extend(vec![(2, 0); 7 - before - run]);
+        check(&litlen, &[2; 4], &precode, &items);
+    }
     for (unused, symbol) in [(1, 17), (8, 17), (9, 18), (28, 18)] {
         let litlen = sparse(258 + unused, &[(0, 2), (256, 2), (257, 1)]);
         let items = runs(&[&litlen[..], &[0, 0, 1, 1]].concat());
@@ -622,8 +617,13 @@ fn codes_that_do_not_add_up() {
         (&good, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
     ];
     for (litlen, offset) in codes {
-        let mut stream = Stream::default();
-        stream.dynamic(true, litlen, offset).end().is_refused();
+        for blocks_before in 0..2 {
+            let mut stream = Stream::default();
+            for _ in 0..blocks_before {
+                stream.dynamic(false, &good, &[1]).end();
+            }
+            stream.dynamic(true, litlen, offset).end().is_refused();
+        }
     }
     Stream::default()
         .dynamic(true, &[0; 257], &[0])

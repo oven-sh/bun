@@ -10,9 +10,7 @@ use crate::format::{
     MAX_MATCH_LEN, MIN_MATCH_LEN, OFFSET_SYMBOLS, length_slot, length_slot_of, offset_slot,
     offset_slot_of,
 };
-use crate::match_cache::{
-    MAX_MATCHES, MIN_LONG_LEN, Match, MatchCache, NO_SLOT, SHORT_LENS, SLOT_BITS,
-};
+use crate::match_cache::{MAX_MATCHES, MIN_LONG_LEN, Match, MatchCache, NO_SLOT, SHORT_LENS};
 use crate::parser::{Effort, initial_min_match_len, min_match_len};
 use crate::window::{Bytes, Window};
 use crate::{Result, chunk_at, grow, wrapped, wrapped_mut};
@@ -289,18 +287,16 @@ fn find_cheapest_path(
     const MARGIN: u32 = 1 << 17;
 
     let mut length_costs = [0u32; LIVE + 1];
-    for ((len, to), cost) in (0..)
-        .zip(&mut length_costs)
-        .skip(MIN_MATCH_LEN)
-        .zip(costs.length)
-    {
-        *to = (cost << LEN_BITS) | len;
+    let (_, of_matches) = length_costs.split_at_mut(MIN_MATCH_LEN);
+    for (index, (to, cost)) in of_matches.iter_mut().zip(&costs.length).enumerate() {
+        *to = (cost << LEN_BITS) | (MIN_MATCH_LEN + index) as u32;
     }
     let literal_costs = costs.literal.map(|cost| cost << LEN_BITS);
     let mut offset_costs = costs.offset_slot.map(|cost| cost << LEN_BITS);
     offset_costs[NO_SLOT] = 1 << 30;
-    let pair_costs: [[u32; 2]; OFFSET_SYMBOLS * OFFSET_SYMBOLS] =
-        from_fn(|pair| [pair, pair >> SLOT_BITS].map(|slot| *wrapped(&offset_costs, slot)));
+    let pair_costs = offset_costs.map(|second| offset_costs.map(|first| [first, second]));
+    let pair_costs: &[_; OFFSET_SYMBOLS * OFFSET_SYMBOLS] =
+        chunk_at(pair_costs.as_flattened(), 0).unwrap_or(&[[0; 2]; _]);
     let short_costs: &[u32; SHORT_LENS] = chunk_at(&length_costs, MIN_MATCH_LEN).unwrap_or(&[0; _]);
 
     // Less `base`. No path leads past the end of the block.
@@ -324,7 +320,7 @@ fn find_cheapest_path(
                 let after_short: &[u32; SHORT_LENS] =
                     chunk_at(ahead, MIN_MATCH_LEN).unwrap_or(&[0; _]);
                 let short: [u32; SHORT_LENS] = from_fn(|index| {
-                    let offset_costs = wrapped(&pair_costs, summary.slots(index / 2));
+                    let offset_costs = wrapped(pair_costs, summary.slots(index / 2));
                     let cost = wrapped(offset_costs, index) + wrapped(short_costs, index);
                     cost + wrapped(after_short, index)
                 });

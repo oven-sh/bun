@@ -114,8 +114,14 @@ test.skipIf(!isLinux && !(isWindows && !isArm64))(
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // The word alone is not enough: the line has to name the frame that holds it, or the frame records above it.
+    const frames = isWindows
+      ? /in the frame of \S+\+0x[0-9a-f]+, 0x[0-9a-f]+ above its stack pointer/
+      : /records below: .*\| records above, each the caller of the one before: \+0x[0-9a-f]+ \S+\+0x[0-9a-f]+/;
     expect({ stdout, exitCode }).toEqual({
-      stdout: expect.stringMatching(/ \(Held\) lies at 0x[0-9a-f]+, 0x[0-9a-f]+ below the end of the stack \| /),
+      stdout: expect.stringMatching(
+        new RegExp(/ \(Held\) lies at 0x[0-9a-f]+, 0x[0-9a-f]+ below the end of the stack \| /.source + frames.source),
+      ),
       exitCode: 0,
     });
   },

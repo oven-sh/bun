@@ -1824,64 +1824,73 @@ impl Drop for RewriterPipe {
 impl crate::webcore::sink::JsSinkType for RewriterPipe {
     const NAME: &'static str = "HTMLRewriterSink";
 
+    type Entered<'a> = &'a Self;
+    unsafe fn enter<'a>(this: NonNull<Self>) -> &'a Self {
+        // SAFETY: trait contract.
+        unsafe { this.as_ref() }
+    }
+
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        RewriterPipe::write(self, data)
+    fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult) -> Writable {
+        RewriterPipe::write(this, data)
     }
-    fn write_utf16(&mut self, text: &[u16]) -> Writable {
+    fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
         let _ = buf.write_utf16(text);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(this, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
+    fn write_latin1(this: &mut Self::Entered<'_>, data: &StreamResult) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
-            return RewriterPipe::write(self, data);
+            return RewriterPipe::write(this, data);
         }
         let mut buf = Vec::new();
         let _ = buf.write_latin1(bytes);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(this, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+    fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> bun_sys::Result<()> {
+        this.end_from_stream(err.map(StreamError::Error));
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        self.end_from_stream(None);
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        _cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        this.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
     fn flush_from_js(
-        &mut self,
+        this: &mut Self::Entered<'_>,
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         use streams::PendingState;
-        if self.pending.get().state == PendingState::Pending {
-            let prom_js = self.pending.with_mut(|p| p.promise(cx));
-            if let Some(cell) = self.cell.try_get() {
+        if this.pending.get().state == PendingState::Pending {
+            let prom_js = this.pending.with_mut(|p| p.promise(cx));
+            if let Some(cell) = this.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }
             return bun_sys::Result::Ok(prom_js);
         }
-        if self.done.get() || self.phase.get() == RewritePhase::Done {
+        if this.done.get() || this.phase.get() == RewritePhase::Done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
         if wait
-            && (self.driving.get()
-                || self.is_suspended()
-                || self.output_backpressured()
-                || self.background_pull_armed.get())
+            && (this.driving.get()
+                || this.is_suspended()
+                || this.output_backpressured()
+                || this.background_pull_armed.get())
         {
-            let prom_js = self.pending.with_mut(|p| {
+            let prom_js = this.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);
                 p.promise(cx)
             });
-            if let Some(cell) = self.cell.try_get() {
+            if let Some(cell) = this.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }
             return bun_sys::Result::Ok(prom_js);
@@ -1892,7 +1901,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         ))
     }
     fn start(
-        &mut self,
+        _this: &mut Self::Entered<'_>,
         _config: Start,
         _context: &bun_jsc::ScriptExecutionContext,
     ) -> bun_sys::Result<()> {
@@ -1923,8 +1932,8 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
         )));
         bun_sys::Result::Ok(())
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        self.input_source.get_mut()
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        &this.input_source
     }
 }
 

@@ -16,8 +16,6 @@ use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
 use bun_core::{CStrList, CStrRef};
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
@@ -585,12 +583,7 @@ impl ShellSubprocess {
         // populated `exec.subproc.child`.
         unsafe { *out_subproc = subprocess };
 
-        let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
-            Ok(w) => w,
-            Err(WritableInitError::UnexpectedCreatingStdin) => {
-                panic!("unexpected error while creating stdin");
-            }
-        };
+        let stdin = Writable::init(stdio0, event_loop, subprocess, spawn_stdin);
         let stdout = Readable::init(
             OutKind::Stdout,
             &spawn_args.stdio[1],
@@ -764,12 +757,6 @@ impl ShellSubprocess {
 // Writable
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum WritableInitError {
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
-}
-
 pub enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd,
@@ -798,44 +785,39 @@ impl Writable {
         event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
         result: StdioResult,
-    ) -> Result<Writable, WritableInitError> {
+    ) -> Writable {
         #[cfg(windows)]
         {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buf) = result {
                         let pipe = FileSink::create_with_pipe(event_loop, buf);
-                        if let bun_sys::Result::Err(_err) =
-                            pipe.writer.with_mut(|w| w.start_with_current_pipe())
-                        {
-                            return Err(WritableInitError::UnexpectedCreatingStdin);
-                        }
 
                         // TODO: uncoment this when is ready, commented because was not compiling
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
-                        return Ok(Writable::Pipe(pipe));
+                        return Writable::Pipe(pipe);
                     }
-                    return Ok(Writable::Inherit);
+                    return Writable::Inherit;
                 }
 
                 Stdio::Blob(blob) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                    return Writable::Buffer(StaticPipeWriter::create(
                         event_loop, subprocess, result, blob,
-                    )));
+                    ));
                 }
                 Stdio::Fd(_) | Stdio::Dup2(_) => {
-                    return Ok(Writable::Fd);
+                    return Writable::Fd;
                 }
                 Stdio::Inherit => {
-                    return Ok(Writable::Inherit);
+                    return Writable::Inherit;
                 }
                 Stdio::Path(_) | Stdio::Ignore => {
-                    return Ok(Writable::Ignore);
+                    return Writable::Ignore;
                 }
                 Stdio::Ipc | Stdio::Capture => {
-                    return Ok(Writable::Ignore);
+                    return Writable::Ignore;
                 }
                 Stdio::SocketFd => {
                     // The shell never uses this; rejected at i < 3 anyway.
@@ -855,15 +837,15 @@ impl Writable {
                     panic!("Unimplemented stdin pipe");
                 }
 
-                Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                Stdio::Blob(blob) => Writable::Buffer(StaticPipeWriter::create(
                     event_loop, subprocess, result, blob,
-                ))),
+                )),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
-                Stdio::Fd(_) => Ok(Writable::Fd),
-                Stdio::Inherit => Ok(Writable::Inherit),
-                Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-                Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
+                Stdio::Fd(_) => Writable::Fd,
+                Stdio::Inherit => Writable::Inherit,
+                Stdio::Path(_) | Stdio::Ignore => Writable::Ignore,
+                Stdio::Ipc | Stdio::Capture => Writable::Ignore,
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");

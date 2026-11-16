@@ -2224,7 +2224,7 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             {
-                let envp = Some(options.envp.unwrap_or_else(|| bun_sys::environ_list()));
+                let envp = Some(options.envp.unwrap_or_else(|| bun_core::os::environ()));
                 if options.stdin != SyncStdio::Buffer
                     && options.stderr != SyncStdio::Buffer
                     && options.stdout != SyncStdio::Buffer

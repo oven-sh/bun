@@ -24,7 +24,7 @@
 // # RUN(NUMBERED): emit f8:Body mechanisms=all testing=CheckProofsAtRunTime
 // # NUMBERED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
 // # NUMBERED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
-// # NUMBERED: = Load({{*}}AOTObject_shapeNumber, ReadsImmutableHeap, origin = [[read]])
+// # NUMBERED: = Load({{*}}AOTObject_shapeNumber, origin = [[read]])
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 268 of 268 of 268

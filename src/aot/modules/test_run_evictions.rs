@@ -537,6 +537,7 @@ pub(super) fn find_reloadable_files(
     input: &BindInput<'_, '_>,
     scans: &Scans,
     absent: &[ModuleRef],
+    test_files_that_ask_loader: &[FileId],
 ) -> Vec<bool> {
     let files = input.files;
     let mut is_reloadable = vec![false; files.modules.len()];
@@ -554,7 +555,7 @@ pub(super) fn find_reloadable_files(
         }
         return is_reloadable;
     };
-    if named.is_empty() && absent.is_empty() {
+    if named.is_empty() && absent.is_empty() && test_files_that_ask_loader.is_empty() {
         return is_reloadable;
     }
     let mut importers: Vec<(FileId, FileId)> = Vec::new();
@@ -589,6 +590,12 @@ pub(super) fn find_reloadable_files(
     }
     importers.shared_sort_unstable();
     importers.dedup();
+    let is_imported = |file: FileId| {
+        let first = importers.partition_point(|import| import.0 < file);
+        importers.get(first).is_some_and(|import| import.0 == file)
+    };
+    let test_files_alone = test_files_that_ask_loader.iter().copied();
+    to_follow.extend(test_files_alone.filter(|&file| !is_imported(file)));
     while let Some(file) = to_follow.pop() {
         if replace(&mut is_reloadable[file.idx()], true) {
             continue;
@@ -601,6 +608,31 @@ pub(super) fn find_reloadable_files(
         limit_reloadable_files(input, scans, absent, &importers, &mut is_reloadable);
     }
     is_reloadable
+}
+
+#[optimize(size)]
+pub(super) fn find_test_files_that_ask_loader(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    run_again: &mut Vec<ModuleRef>,
+) -> Vec<FileId> {
+    let mut asking = Vec::new();
+    for &file in &input.run.test_files {
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        let mut sites = input.files.analysis(file).import_sites.iter();
+        if sites.any(|site| matches!(site.kind, ImportSiteKind::MockModule(_))) {
+            continue;
+        }
+        match scan.interop.kind {
+            ModuleKind::CommonJs => run_again.push(ModuleRef::File(file)),
+            ModuleKind::SourceText if !scan.left_to_loader.is_empty() => asking.push(file),
+            _ => {}
+        }
+    }
+    asking.shared_sort_unstable();
+    asking
 }
 
 /// The CommonJS files that `bun test` may evict with a mocked module: the files that a mock names, and those that import

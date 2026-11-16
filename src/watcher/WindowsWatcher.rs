@@ -1,6 +1,5 @@
 //! Bun's filesystem watcher implementation for windows using kernel32
 
-use core::mem::size_of;
 use core::ptr;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::Arc;
@@ -165,48 +164,24 @@ impl WindowsWatcher {
         use bun_paths::string_paths as paths;
         let mut pathbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
-        let path_len_bytes: u16 = (wpath.len() * 2) as u16;
-        let mut nt_name = w::UNICODE_STRING {
-            Length: path_len_bytes,
-            MaximumLength: path_len_bytes,
-            Buffer: wpath.as_ptr().cast_mut().cast::<u16>(),
-        };
-        let mut attr = w::OBJECT_ATTRIBUTES {
-            Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-            RootDirectory: ptr::null_mut(),
-            Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-            ObjectName: &mut nt_name,
-            SecurityDescriptor: ptr::null_mut(),
-            SecurityQualityOfService: ptr::null_mut(),
-        };
-        let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
-        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-        // SAFETY: all pointer params point to valid stack locals for the duration of the call.
-        let rc = unsafe {
-            w::ntdll::NtCreateFile(
-                &mut handle,
-                w::FILE_LIST_DIRECTORY,
-                &mut attr,
-                &mut io,
-                ptr::null_mut(),
-                0,
-                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                w::FILE_OPEN,
-                w::FILE_DIRECTORY_FILE | w::FILE_OPEN_FOR_BACKUP_INTENT,
-                ptr::null_mut(),
-                0,
-            )
-        };
-
-        if rc != w::NTSTATUS::SUCCESS {
+        let dir_handle = w::NtCreateFile(
+            None,
+            wpath,
+            bun_sys::NtCreateFileOptions {
+                access_mask: w::FILE_LIST_DIRECTORY,
+                disposition: w::FILE_OPEN,
+                options: w::FILE_DIRECTORY_FILE | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                attributes: 0,
+                sharing_mode: w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+            },
+        )
+        .map_err(|rc| {
             let err = w::Win32Error::from_nt_status(rc);
             bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
-            return Err(Error::CreateFileFailed.into());
-        }
-        // SAFETY: just opened.
-        let dir_handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+            Error::CreateFileFailed
+        })?;
 
-        let port = w::CreateIoCompletionPort(handle, ptr::null_mut(), 0, 1)
+        let port = w::CreateIoCompletionPort(dir_handle.as_raw_handle(), ptr::null_mut(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
 
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);

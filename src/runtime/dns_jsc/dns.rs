@@ -1168,20 +1168,8 @@ pub(crate) mod internal {
         Quic(PendingConnect),
     }
 
-    // SAFETY: no VM state is read: `notify_threadsafe` only queues the socket for its loop's thread.
+    // SAFETY: no VM state is read: `after_result_entries` only queues the socket for its loop's thread.
     unsafe impl Send for DNSRequestOwner {}
-
-    impl DNSRequestOwner {
-        fn notify_threadsafe(self) {
-            match self {
-                // SAFETY: a socket lives until it is notified or has cancelled.
-                DNSRequestOwner::Socket(socket) => unsafe {
-                    us_internal_dns_callback_threadsafe(socket)
-                },
-                DNSRequestOwner::Quic(pc) => pc.on_dns_resolved_threadsafe(),
-            }
-        }
-    }
 
     #[repr(C)]
     pub(crate) struct ResultEntry {
@@ -1303,17 +1291,24 @@ pub(crate) mod internal {
     }
 
     fn after_result_entries(req: Arc<Request>, result: Result<Box<[ResultEntry]>, c_int>) {
-        let notify = {
-            let mut notify = req.notify.lock();
-            let _ = req.result.set(result);
-            core::mem::take(&mut *notify)
-        };
-        // Before notifying: `Bun__addrinfo_freeRequest` evicts only if its ref and the cache's are the last two.
-        drop(req);
-
-        for query in notify {
-            query.notify_threadsafe();
+        let guard = global_cache().lock();
+        let mut notify = req.notify.lock();
+        let _ = req.result.set(result);
+        for query in notify.drain(..) {
+            match query {
+                // SAFETY: the contract of `Bun__addrinfo_set`. `Bun__addrinfo_cancel` waits for `notify`,
+                // and `Bun__addrinfo_freeRequest` for `guard`.
+                DNSRequestOwner::Socket(socket) => unsafe {
+                    us_internal_dns_callback_threadsafe(socket)
+                },
+                DNSRequestOwner::Quic(pc) => pc.on_dns_resolved_threadsafe(),
+            }
         }
+        notify.shrink_to_fit();
+        drop(notify);
+        // Before the unlock: `Bun__addrinfo_freeRequest` evicts only if its ref and the cache's are the last two.
+        drop(req);
+        drop(guard);
     }
 
     fn work_pool_callback(req: Arc<Request>) {
@@ -1700,15 +1695,18 @@ pub(crate) mod internal {
         if is_cache_hit { 0 } else { 1 }
     }
 
+    /// SAFETY: on the thread of `socket`'s loop. `socket` lives until it is notified or has cancelled, and
+    /// the loop until `Bun__addrinfo_cancel` or `Bun__addrinfo_freeRequest` has returned for `socket`.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__addrinfo_set(request: &Request, socket: *mut ConnectingSocket) {
-        if let Err(query) = request.join(DNSRequestOwner::Socket(socket)) {
+    unsafe extern "C" fn Bun__addrinfo_set(request: &Request, socket: *mut ConnectingSocket) {
+        if request.join(DNSRequestOwner::Socket(socket)).is_err() {
             // Also wakes the loop: this can run inside the dns_ready_head drain itself.
-            query.notify_threadsafe();
+            // SAFETY: caller contract.
+            unsafe { us_internal_dns_callback_threadsafe(socket) };
         }
     }
 
-    /// 0 once there is a result: the callback has fired or is about to fire on the worker thread.
+    /// 0 once there is a result: `socket` is queued on its loop, and the lookup is done with that loop.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_cancel(request: &Request, socket: *mut ConnectingSocket) -> c_int {
         let mut notify = request.notify.lock();

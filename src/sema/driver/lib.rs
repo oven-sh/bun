@@ -6162,7 +6162,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 };
                 // A task requests its next file before it commits the last one, and that commit can make a discarded
                 // file the next.
-                let file = first.take().or_else(&mut next);
+                let file = first.take().or_else(next);
                 first = file.and_then(|file| run_task(file, &mut next));
                 if file.is_some() && is_called_again {
                     return true;

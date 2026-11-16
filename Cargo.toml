@@ -274,7 +274,7 @@ map_clone = "deny"
 trivially_copy_pass_by_ref = "deny"
 large_types_passed_by_value = "deny"
 large_enum_variant = "deny"
-large_stack_frames = "deny"
+large_unopt_stack_frames = "deny"
 vec_init_then_push = "deny"
 format_collect = "deny"
 manual_memcpy = "deny"
@@ -352,6 +352,8 @@ only_used_in_recursion = "allow"
 unnecessary_cast = "allow"
 new_ret_no_self = "allow"
 map_identity = "allow"
+# `v = Vec::new()` is how a buffer over its retention cap is freed; `clear()` keeps it
+new_instead_of_clear = "allow"
 
 [workspace.dependencies]
 rust-argon2 = { path = "vendor/rust-argon2" }
@@ -362,9 +364,7 @@ strum = { version = "0.26", features = ["derive"] }
 # implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
 # would bind `A` to `core::alloc::Allocator` directly) because it also enables
 # `min_specialization` on `T: Copy`, which our pinned nightly rejects with
-# "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
-# `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
-# without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
+# "cannot specialize on trait `Copy`". So: use the polyfill trait, and bridge
 # `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }

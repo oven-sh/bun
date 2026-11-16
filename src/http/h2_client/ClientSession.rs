@@ -404,7 +404,7 @@ impl ClientSession {
         self.port == port
             && self.pool.id == pool_id
             && mine == ssl_config
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
     fn adopt_client(&mut self, client: &mut HTTPClient) {

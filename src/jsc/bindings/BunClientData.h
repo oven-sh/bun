@@ -65,7 +65,10 @@ class DOMWrapperWorld;
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
+#include <wtf/UniqueRef.h>
+#include <JavaScriptCore/IsoHeapCellType.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/WeakHashSet.h>
@@ -178,14 +181,6 @@ public:
             func(*space);
     }
 
-    JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
-    JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
-    JSC::IsoHeapCellType m_heapCellTypeForHandleScopeImpl;
-    JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
-    JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
-    JSC::IsoHeapCellType m_heapCellTypeForJSModuleGraph;
-    // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
-
 private:
     Lock m_lock;
 
@@ -234,6 +229,8 @@ public:
     }
 
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
+
+    JSC::ConsoleClient& consoleClient() { return m_consoleClient; }
 
     JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }
 
@@ -288,6 +285,9 @@ public:
     // filled on first use so each name is atomized once however many chunks
     // import or export it (BunAnalyzeTranspiledModule.cpp).
     Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+
+    // "process", "stdout" and "stderr", atomized by the first jsFunctionIsStandardOutputStream.
+    std::array<JSC::Identifier, 3> standardOutputStreamNames;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
@@ -346,6 +346,7 @@ private:
     std::unique_ptr<JSHeapData, JSHeapDataDeleter> m_heapData;
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
+    const UniqueRef<JSC::ConsoleClient> m_consoleClient;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
@@ -410,7 +411,7 @@ struct SubspaceForInit {
     bool hasOutputConstraints;
 };
 
-JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&));
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, const JSC::HeapCellType& (*getCustomHeapCellType)());
 
 template<typename T, UseCustomHeapCellType useCustomHeapCellType>
 inline constexpr SubspaceForInit subspaceForInit {
@@ -422,6 +423,14 @@ inline constexpr SubspaceForInit subspaceForInit {
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
 };
 
+// Holds only `T::destroy`, so every VM uses the same one.
+template<typename T>
+const JSC::HeapCellType& customHeapCellType()
+{
+    static NeverDestroyed<JSC::IsoHeapCellType> heapCellType { JSC::IsoHeapCellType::Args<T>() };
+    return heapCellType;
+}
+
 // True when T::destroy is JSCell::destroy, which runs no destructor. A non-public destroy can only be an override.
 template<typename T>
 inline constexpr bool inheritsJSCellDestroy = [] {
@@ -432,16 +441,19 @@ inline constexpr bool inheritsJSCellDestroy = [] {
 }();
 
 template<typename T, UseCustomHeapCellType useCustomHeapCellType>
-ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
+ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceSlots slots)
 {
     static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
-    static_assert(T::needsDestruction == JSC::DoesNotNeedDestruction || std::is_trivially_destructible_v<T> || !inheritsJSCellDestroy<T>,
-        "the GC sweeps this cell type with JSCell::destroy, so its members' destructors never run; define `static void destroy(JSC::JSCell*)`");
+    static_assert(std::is_trivially_destructible_v<T> || (T::needsDestruction != JSC::DoesNotNeedDestruction && !inheritsJSCellDestroy<T>),
+        "the GC never runs the destructors of this cell type's members; set `needsDestruction` and define `static void destroy(JSC::JSCell*)`");
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
     auto* clientSpace = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
     if (clientSpace)
         return clientSpace;
-    return subspaceForImplSlow(vm, subspaceForInit<T, useCustomHeapCellType>, slots, getCustomHeapCellType);
+    if constexpr (useCustomHeapCellType == UseCustomHeapCellType::Yes)
+        return subspaceForImplSlow(vm, subspaceForInit<T, useCustomHeapCellType>, slots, customHeapCellType<T>);
+    else
+        return subspaceForImplSlow(vm, subspaceForInit<T, useCustomHeapCellType>, slots, nullptr);
 }
 
 static JSVMClientData* clientData(JSC::VM& vm)

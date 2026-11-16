@@ -3038,17 +3038,14 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. `Resolution`, `Bin` and `DependencyVersion` share it.
+// sites stay safe. `Resolution` and `Bin` share it.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
 // `debug_assert!(self.$tag_field == $TagTy::$Variant)`.
 //
 // Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
-// formed (defensive against partially-initialized padding). The trailing
-// `as *const $Ty` cast is identity for plain fields and unwraps
-// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `DependencyVersionValue`
-// case without needing a separate macro arm.
+// formed (defensive against partially-initialized padding).
 //
 // Syntax:
 //   extern_union_accessors! {
@@ -3089,9 +3086,8 @@ macro_rules! extern_union_accessors {
         pub fn $field(&self) -> &$Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
-            // intermediate `&Union`. Cast is identity for plain fields and
-            // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$field) as *const $Ty) }
+            // intermediate `&Union`.
+            unsafe { &*::core::ptr::addr_of!(self.$vf.$field) }
         }
     };
     (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $field_mut:ident, $Ty:ty) => {
@@ -3099,7 +3095,7 @@ macro_rules! extern_union_accessors {
         pub fn $field_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$field) as *mut $Ty) }
+            unsafe { &mut *::core::ptr::addr_of_mut!(self.$vf.$field) }
         }
     };
 }
@@ -3399,6 +3395,7 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
@@ -3411,8 +3408,9 @@ pub mod base64 {
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        let mut dest = BorrowedBuf::from(dest);
+        simdutf::base64::encode(source, dest.unfilled(), false);
+        dest.len()
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.
@@ -3542,7 +3540,7 @@ impl Clone for SensitiveCString {
 
 impl PartialEq for SensitiveCString {
     fn eq(&self, other: &Self) -> bool {
-        crate::strings::eql_long(self.as_bytes(), other.as_bytes(), true)
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes())
     }
 }
 

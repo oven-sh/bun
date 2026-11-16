@@ -826,6 +826,8 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 - Absolute paths (`'/path/to/module'`)
 - Package names (`'lodash'`)
 
+In a CommonJS file, `jest.requireActual()`, `jest.requireMock()` and `jest.createMockFromModule()` load the file that `require()` loads. If a package has one file for `import` and another for `require()`, a mock of its name replaces the file for `import` only. To replace the other file too, mock its path: `mock.module(require.resolve("pkg"), factory)`.
+
 ### Import Timing Effects
 
 - **When mocking before first import**: The original module isn't evaluated, unless something still needs it, such as a factory that declares `importOriginal`, `vi.importActual()`, a mock that has neither a factory nor a `__mocks__` file, or a module in `node_modules` that imports a package you mock with `vi.mock()`

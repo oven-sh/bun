@@ -160,3 +160,14 @@ pub(crate) fn load() -> bool {
         })
         .is_some()
 }
+
+/// Loads QuartzCore, where `CAMetalLayer` lives: wgpu looks the class up by name when it makes a surface. A process that has a window has usually loaded it already.
+pub(crate) fn load_quartz_core() -> bool {
+    static QUARTZ_CORE: OnceLock<bool> = OnceLock::new();
+    *QUARTZ_CORE.get_or_init(|| {
+        Framework::open(zstr!(
+            "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"
+        ))
+        .is_some()
+    })
+}

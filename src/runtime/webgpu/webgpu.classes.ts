@@ -124,6 +124,14 @@ export default [
     { values: ["device", "mappedRanges", "pendingMap"], estimatedSize: true },
   ),
 
+  // The native half of UnsafeWindowSurface and its GPUCanvasContext (src/js/internal/webgpu.ts). Not a global.
+  gpu("GPUSurfaceHandle", {
+    configure: fn("configure", 6),
+    unconfigure: fn("unconfigure", 0),
+    getCurrentTexture: fn("getCurrentTexture", 0),
+    present: fn("present", 0),
+  }),
+
   gpu(
     "GPUTexture",
     {

@@ -16,6 +16,8 @@ bun_core.workspace = true
 bun_threading.workspace = true
 wgpu-core = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
 wgpu-types = { version = "30.0.1", default-features = false, features = ["std"] }
+# The window handles wgpu-core takes to make a surface (the version wgpu-core uses).
+raw-window-handle = { version = "0.6.2", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies]
 wgpu-core = { version = "30.0.1", default-features = false, features = ["vulkan"] }

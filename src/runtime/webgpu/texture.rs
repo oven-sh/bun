@@ -111,6 +111,38 @@ impl GPUTexture {
         Ok(device.adopt(global, texture, set_device))
     }
 
+    /// The `GPUTexture` of a surface's current frame: a 2D texture with one mip level and one sample, `raw` already acquired from the surface.
+    pub(crate) fn from_surface(
+        global: &JSGlobalObject,
+        device: &DeviceRef,
+        raw: bun_webgpu::Texture,
+        width: u32,
+        height: u32,
+        format: wgt::TextureFormat,
+        usage: u32,
+    ) -> JSValue {
+        let texture = GPUTexture {
+            device: Rc::clone(device),
+            raw: Rc::new(raw),
+            label: JsCell::new(bun_core::String::EMPTY),
+            size: wgt::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgt::TextureDimension::D2,
+            format,
+            usage,
+            destroyed: Cell::new(false),
+            invalid: false,
+        }
+        .to_js(global);
+        let set_device = crate::generated_classes::js_GPUTexture::device_set_cached;
+        device.adopt(global, texture, set_device)
+    }
+
     pub(crate) fn create_view(
         &self,
         global: &JSGlobalObject,

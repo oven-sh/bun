@@ -1,11 +1,13 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
-import { isWindows, tempDir } from "harness";
+import { closeSync, openSync, writeSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { constants } from "os";
 import { join } from "path";
+import { openFifo, untilWatched } from "../io/fifo-helpers";
 
 // Reading a Bun.file() backed by a file descriptor goes through
-// ReadFile.runAsync -> getFd (opened_fd already set) -> runAsyncWithFD ->
-// resolveSizeAndLastModified, which derives total_size from fstat. That
+// ReadFile::open, which derives the expected size from fstat. That
 // computation previously used @intCast to u52 guarded by a dead @truncate,
 // so an abnormal fstat size could trip integerOutOfBounds. Triggering that
 // directly requires fstat to report > 4.5 PB which is not achievable here,
@@ -36,7 +38,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     using dir = tempDir("bun-file-fd-read", { "fd-slice.txt": "0123456789" });
     const path = join(String(dir), "fd-slice.txt");
 
-    // total_size should come from fstat (10), not from the requested slice
+    // The expected size should come from fstat (10), not from the requested slice
     // end, so the initial buffer allocation stays small.
     expect(await withFd(path, fd => Bun.file(fd).slice(0, Number.MAX_SAFE_INTEGER).text())).toBe("0123456789");
     expect(await withFd(path, fd => Bun.file(fd).slice(2, 5).text())).toBe("234");
@@ -49,4 +51,83 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
   });
+});
+
+test.skipIf(isWindows)("an empty slice of a pipe that nobody writes to resolves", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  expect(await Bun.file(fifo.path).slice(0, 0).text()).toBe("");
+  expect(await Bun.file(fifo.reader).slice(0, 0).text()).toBe("");
+});
+
+describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {
+  const read = (fd: number) =>
+    Bun.file(fd)
+      .text()
+      .catch(({ errno, syscall }) => ({ errno, syscall }));
+
+  test("rejects with the error of the socket", async () => {
+    await using peer = Bun.spawn({ cmd: ["sleep", "60"], env: bunEnv, stdio: ["ignore", "ignore", "inherit", "pipe"] });
+    const socket = peer.stdio[3] as number;
+    writeSync(socket, "unread");
+    const result = read(socket);
+    await untilWatched(socket);
+    peer.kill();
+    expect(await result).toEqual({ errno: -constants.errno.ECONNRESET, syscall: "read" });
+  });
+
+  // read() has nothing to report here, and epoll never stops reporting it.
+  test("rejects when it stands for a message in the error queue", async () => {
+    const { socket, setsockopt, connect } = dlopen(libcPathForDlopen(), {
+      socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+      connect: { args: ["i32", "ptr", "u32"], returns: "i32" },
+    }).symbols;
+    const [AF_INET, SOCK_DGRAM, SOCK_NONBLOCK, SOL_SOCKET, SO_TIMESTAMPING] = [2, 2, 0o4000, 1, 37];
+    const timestampWhatIsSent = new Int32Array([(1 << 1) | (1 << 4)]);
+    const peer = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+    const address = new Uint8Array([AF_INET, 0, peer.port >> 8, peer.port & 255, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    try {
+      expect(setsockopt(fd, SOL_SOCKET, SO_TIMESTAMPING, ptr(timestampWhatIsSent), 4)).toBe(0);
+      expect(connect(fd, ptr(address), address.length)).toBe(0);
+      const result = read(fd);
+      await untilWatched(fd);
+      writeSync(fd, "x");
+      expect(await result).toEqual({ errno: 0, syscall: "epoll_ctl" });
+    } finally {
+      closeSync(fd);
+      peer.close();
+    }
+  });
+});
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// FUSE, /proc/kmsg and trace_pipe do this, and need root.
+test.skipIf(!isLinux || !cc)("read() is called again after EAGAIN from a regular file", async () => {
+  using dir = tempDir("bun-file-fd-read", { "file.txt": "hello" });
+  const file = join(String(dir), "file.txt");
+  const supervisor = join(String(dir), "fail-nth-read");
+  const source = join(import.meta.dir, "..", "io", "fail-nth-read.c");
+  await using compile = Bun.spawn({ cmd: [cc!, "-O0", "-o", supervisor, source], env: bunEnv, stderr: "inherit" });
+  expect(await compile.exited).toBe(0);
+
+  // The second read() is the one that finds the end of the file, so no bytes are lost.
+  const failSecondRead = [supervisor, file, "2", String(constants.errno.EAGAIN), "--"];
+  await using proc = Bun.spawn({
+    cmd: [...failSecondRead, bunExe(), "-e", "console.log(await Bun.file(process.argv[1]).text())", file],
+    // LeakSanitizer does not work under ptrace.
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: "detect_leaks=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("hello\n");
+  expect(stderr).toContain("matched read() calls on target: 3\n");
+  expect(exitCode).toBe(0);
 });

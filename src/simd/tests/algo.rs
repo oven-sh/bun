@@ -7,8 +7,8 @@ use common::on_each_target;
 use std::cell::Cell;
 use std::fmt::Debug;
 use std::hint::black_box;
+use std::mem::replace;
 use std::ops::Range;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
 const PAGE: usize = 4096;
@@ -814,19 +814,23 @@ fn store_a_whole_vector_without_a_mask() {
 
 #[test]
 fn readers_see_only_old_and_new_values() {
-    let rounds = if cfg!(miri) { 2 } else { 100_000 };
+    let loads = if cfg!(miri) { 140 } else { 1 << 22 };
     on_each_target(|| {
         for len in [2, 6, 18, 70] {
             let bytes: Vec<_> = (0..len).map(|i| AtomicU8::new(1 + i % 2)).collect();
+            let mut first = 0;
+            // Only those passes count that have met a write.
+            let has_changed = |_: &usize| {
+                assert!(bytes.iter().all(|byte| byte.load(Relaxed) != 0));
+                replace(&mut first, bytes[0].load(Relaxed)) != first
+            };
+            let mut passes = (0..loads / bytes.len()).filter(has_changed);
             std::thread::scope(|scope| {
-                let (writer, bytes) = (Arc::new(()), &bytes);
-                let writer_if_alive = Arc::downgrade(&writer);
-                scope.spawn(move || {
-                    while writer_if_alive.strong_count() > 0 {
-                        assert!(bytes.iter().all(|byte| byte.load(Relaxed) != 0));
-                    }
-                });
-                (0..rounds).for_each(|_| simd::swap_pairs(bytes));
+                let reader = scope.spawn(|| passes.nth(10_000));
+                simd::swap_pairs(&bytes);
+                while !reader.is_finished() {
+                    simd::swap_pairs(&bytes);
+                }
             });
         }
     });

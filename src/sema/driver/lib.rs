@@ -526,8 +526,18 @@ pub fn did_read_source(bytes: usize) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static POOL_OF_TEST: Cell<Option<&'static bun_threading::ThreadPool>> =
+        const { Cell::new(None) };
+}
+
 /// The pool that parallel regions run on.
 fn region_pool() -> &'static bun_threading::ThreadPool {
+    #[cfg(test)]
+    if let Some(pool) = POOL_OF_TEST.get() {
+        return pool;
+    }
     dedicated_pool().unwrap_or_else(|| bun_threading::WorkPool::get())
 }
 

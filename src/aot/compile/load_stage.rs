@@ -27,7 +27,8 @@ use crate::load::runtime_roots::{
     may_interpret_files,
 };
 use crate::load::sources::{
-    FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
+    FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources,
+    may_evaluate_text, parsed_source,
 };
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
@@ -894,9 +895,7 @@ impl<'a> Build<'a> {
         // A string can import code from disk, and that code any built-in module.
         let evaluates_text = options.aot.loads_code_from_disk
             && !options.load.runs_tests
-            && (files.compiled_files().iter())
-                .filter_map(|&file| parsed_source(files, file))
-                .any(|source| source.builtins.mentions_evaluator());
+            && may_evaluate_text(files);
         let inputs =
             self.create_runtime_load_inputs(shared, session, &roots, &contents, evaluates_text);
         let takes_known_regions = Cell::new(true);

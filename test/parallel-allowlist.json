@@ -1904,6 +1904,9 @@
     "aot/type-errors-that-several-projects-are-asked-about.test.ts",
     "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts",
     "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts",
-    "aot/what-a-build-says-is-written-at-once.test.ts"
+    "aot/what-a-build-says-is-written-at-once.test.ts",
+    "aot/files-that-load-again-by-module.test.ts",
+    "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts",
+    "aot/a-todo-for-one-platform-counts-there-alone.test.ts"
   ]
 }

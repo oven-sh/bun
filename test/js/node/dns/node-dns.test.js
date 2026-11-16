@@ -1196,7 +1196,7 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
       labels.push(query.toString("latin1", off + 1, off + 1 + len));
       off += len + 1;
     }
-    if (off + 5 > query.length) throw new Error("malformed DNS query");
+    if (off + 5 > query.length) return null;
     return {
       qname: labels.join("."),
       qtype: query.readUInt16BE(off + 1),
@@ -1240,7 +1240,7 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
       return { rcode: 0 };
     }
     if (base === "aaaa-only.test") {
-      if (qtype === 28) return { rcode: 0, rdata: AAAA, rrtype: 28 };
+      if (qtype === 28 || qtype === 255) return { rcode: 0, rdata: AAAA, rrtype: 28 };
       return { rcode: 0 };
     }
     if (base === "no-any.test") return { rcode: 0 };
@@ -1257,11 +1257,10 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     previousServers = dns.getServers();
     socket = dgram.createSocket("udp4");
     socket.on("message", (query, rinfo) => {
-      try {
-        const { qname, qtype } = parseQuestion(query);
-        const ans = answerFor(qname, qtype);
-        socket.send(reply(query, ans.rcode, ans.rdata, ans.rrtype ?? qtype), rinfo.port, rinfo.address);
-      } catch {}
+      const q = parseQuestion(query);
+      if (!q) return;
+      const ans = answerFor(q.qname, q.qtype);
+      socket.send(reply(query, ans.rcode, ans.rdata, ans.rrtype ?? q.qtype), rinfo.port, rinfo.address);
     });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
@@ -1309,7 +1308,7 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
     message: `${syscall} ENOTFOUND ${hostname}`,
   });
 
-  test("A records with no AAAA are ENODATA; NXDOMAIN is ENOTFOUND", async () => {
+  test("NODATA is ENODATA and NXDOMAIN is ENOTFOUND for each record type", async () => {
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
     const promises = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
     resolver.setServers(dns.getServers());
@@ -1416,6 +1415,7 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   });
 
   test("lookupService of an address whose PTR answer is not a PTR is ENOTFOUND", async () => {
+    // Only the code is under test: Bun's getnameinfo hostname is "addr|port" (Node: addr).
     expect(await promiseResult(dns_promises.lookupService(NON_PTR_ADDRESS, 80))).toMatchObject({
       code: "ENOTFOUND",
       syscall: "getnameinfo",

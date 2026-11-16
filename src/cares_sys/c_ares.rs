@@ -1824,7 +1824,7 @@ impl Error {
 
     /// `dns.lookup` / `dns.lookupService` report libuv `UV_EAI_NODATA` as
     /// `ENOTFOUND`. c-ares uses `ARES_ENODATA` for that same "no address".
-    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L811-L812
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L811-L816
     /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.cc#L1786-L1787
     /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/dns.js#L111
     /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/dns.js#L263
@@ -1839,7 +1839,7 @@ impl Error {
     pub fn get(rc: i32) -> Option<Error> {
         // `ares_query` `ARES_ENODATA` stays `ENODATA`. Node's
         // `ToErrorCodeString` returns `"ENODATA"`, and `DNSException` does not
-        // rewrite string codes. `ARES_ENONAME` is reported as `ENOTFOUND`.
+        // rewrite string codes.
         // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.h#L61
         // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/dns/callback_resolver.js#L44-L45
         // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L807-L815

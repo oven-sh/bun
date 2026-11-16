@@ -3,12 +3,14 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// How much memory these crates ask for is up to a file or a caller, so a refusal is an error there and not the end of the
-// process, which is what the calls named below make of it. Ask with `try_reserve()` or `try_reserve_exact()`.
+const crates = ["brotli", "jpeg", "png"];
+
+// How much memory these crates ask for is up to a file or a caller, so a refusal is an error there and not the end of
+// the process, which is what the calls named below make of it. Ask with `try_reserve()` or `try_reserve_exact()`.
 //
 // What fills a `Vec` (`push()`, `extend()`, `resize()`) is invisible to this lint. It aborts in the same way once it
 // leaves the room that was reserved.
-test.each(["png", "brotli"])("bun_%s does not ask for memory in a way that aborts when it is refused", async name => {
+test.each(crates)("bun_%s does not ask for memory in a way that aborts when it is refused", async name => {
   const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
   const functions = `
     with_capacity reserve reserve_exact shrink_to shrink_to_fit into_boxed_slice to_vec to_owned into_owned to_string

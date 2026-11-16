@@ -132,9 +132,10 @@ impl Default for Names {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_long = boxed(NO_LONG);
         let mut known_others = Vec::new();
+        // Without `Atom::NONE`, which no text names.
         let with_numbers = KNOWN_TEXTS
             .iter()
-            .zip(0u32..)
+            .zip(0..Atom::NONE.0)
             .map(|(&text, atom)| (text, atom));
         let keywords = KEYWORDS.iter().map(|&(text, _)| (text, u32::MAX));
         for (text, atom) in with_numbers.chain(keywords) {

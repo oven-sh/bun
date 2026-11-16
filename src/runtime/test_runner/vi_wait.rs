@@ -196,13 +196,11 @@ impl ViWait {
             global.create_error_instance(format_args!("{}", kind.timeout_message())),
         );
 
-        let this_ptr = ViWait::from_js(this_value).expect("to_js returns the wrapper");
-        // SAFETY: the wrapper owns the payload, and `this_value` is kept alive to the end of this function.
-        let this = unsafe { &*this_ptr };
+        let this = ViWait::from_js(&this_value).expect("to_js returns the wrapper");
         this.root.set(Strong::create(this_value, global));
         this.keep_alive.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
-        unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
+        unsafe { AbortHandle::arm_owner(this.as_ptr(), cx.context()) };
 
         if let Err(err) = this.poll(global, this_value, true) {
             match thrown_value(global, err) {
@@ -218,7 +216,6 @@ impl ViWait {
             this.deadline.set(now.add_ms(i64::from(timeout_ms)));
             this.arm(&now);
         }
-        this_value.ensure_still_alive();
         Ok(promise)
     }
 
@@ -361,13 +358,11 @@ impl ViWait {
         settled_with: JSValue,
         report: fn(&ViWait, &JSGlobalObject, JSValue, JSValue) -> JsResult<()>,
     ) -> JsResult<()> {
-        let Some(this) = ViWait::from_js(this_value) else {
+        let Some(this) = ViWait::from_js(&this_value) else {
             return Ok(());
         };
-        // SAFETY: the wrapper owns the payload and is this call's `this`.
-        let this = unsafe { &*this };
         if this.callback_pending.replace(false) {
-            report(this, global, this_value, settled_with)?;
+            report(&this, global, this_value, settled_with)?;
         }
         Ok(())
     }

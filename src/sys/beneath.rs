@@ -330,11 +330,8 @@ fn kernel_resolves_beneath(dir: Fd) -> Maybe<bool> {
     }
     let leave = || crate::openat(dir, bun_core::zstr!(".."), SEARCH | O_RESOLVE_BENEATH, 0);
     let known = kernel_may_resolve()
-        && match leave() {
-            Ok(fd) => {
-                let _ = crate::close(fd);
-                false
-            }
+        && match leave().map(crate::CloseOnDrop::new) {
+            Ok(_) => false,
             Err(err) => match i32::from(err.errno) {
                 ENOTCAPABLE => true,
                 // These say nothing about the flag, so they are not remembered.

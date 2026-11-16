@@ -6,7 +6,7 @@ use std::rc::{Rc, Weak};
 
 use bun_core::{Output, Timespec};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong, StrongCell};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::{CellExt as _, RefPtr};
@@ -214,7 +214,7 @@ pub(crate) mod js_fns {
             if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback))
             | (_, GenericHookTag::AroundAll, Some(callback)) = (flavor, tag, args.callback)
             {
-                fixtures = Some(this_value.to_js()).filter(|&this| TestFixtures::from_js(this).is_some());
+                fixtures = Some(this_value.to_js()).filter(|this| this.is::<TestFixtures>());
                 let context_index = usize::from(tag.around().is_some());
                 args.callback = Some(test_context::suite_hook(global_this, tag_name, callback, context_index, fixtures.is_some())?);
             }
@@ -961,7 +961,7 @@ impl BunTest {
         let _g = group_begin!();
 
         let global_this = cx.global();
-        let Some(this) = this_value.to_js().as_class_ref::<DoneCallback>() else {
+        let Some(this) = this_value.as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
@@ -975,7 +975,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                Self::on_done_error(global_this, this, value);
+                Self::on_done_error(global_this, &this, value);
             }
         }
         this.called.set(true);
@@ -1295,7 +1295,7 @@ impl BunTest {
             }
         }
 
-        let mut uncalled_done: Option<&DoneCallback> = None;
+        let mut uncalled_done = None;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
                 if dcb_data.called.get() {
@@ -1320,6 +1320,7 @@ impl BunTest {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefPtr<RefData> = uncalled_done
+                            .as_ref()
                             .and_then(|done| done.r#ref.with_taken(|r#ref| r#ref.clone()))
                             .unwrap_or_else(|| Self::ref_(this, cfg_data));
                         let key = this_ref.as_ptr();

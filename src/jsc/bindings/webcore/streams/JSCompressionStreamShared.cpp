@@ -167,7 +167,7 @@ static constexpr size_t kAsyncCodecThreshold = 128 * 1024;
 // chunk's state, so ClearAlgorithms defers the coder release meanwhile (the close algorithm
 // clears algorithms while a multi-step flush is still being drained).
 
-static void*& coderOf(JSTransformStream* stream)
+static std::unique_ptr<CompressionStreamCoder>& coderOf(JSTransformStream* stream)
 {
     if (auto* s = dynamicDowncast<JSCompressionStream>(stream))
         return s->m_coder;
@@ -184,7 +184,7 @@ struct CodecStepResult {
 // One step on this thread, delivered straight into the native sink when one is attached
 // (no JSUint8Array), otherwise enqueued. `input` is only passed on a chunk's first step. A codec
 // error or failed delivery throws.
-static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, const uint8_t* input, size_t inputLen, bool finish)
+static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStream* stream, CompressionStreamCoder* coder, const uint8_t* input, size_t inputLen, bool finish)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -223,7 +223,7 @@ static bool consumerFull(JSTransformStream* stream, const CodecStepResult& step)
 // Steps on this thread until the chunk completes, fails (throws), or its consumer is full. `input`
 // is only fed on the first step. The caller holds m_nativeStateInUse, so a terminal reached from
 // inside a delivery defers the coder release instead of freeing it under the loop.
-static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, const uint8_t* input, size_t inputLen, bool finish)
+static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStream* stream, CompressionStreamCoder* coder, const uint8_t* input, size_t inputLen, bool finish)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -244,10 +244,10 @@ static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStrea
     }
 }
 
-static void dispatchStepOffThread(JSGlobalObject* globalObject, JSTransformStream* stream, void*& coder, JSValue chunk, const uint8_t* input, size_t inputLen, bool finish)
+static void dispatchStepOffThread(JSGlobalObject* globalObject, JSTransformStream* stream, std::unique_ptr<CompressionStreamCoder>& coder, JSValue chunk, const uint8_t* input, size_t inputLen, bool finish)
 {
     stream->m_asyncCodecInFlight = true;
-    CompressionStreamCoder__transformAsync(std::exchange(coder, nullptr), globalObject, JSValue::encode(stream), JSValue::encode(chunk), input, inputLen, finish);
+    CompressionStreamCoder__transformAsync(coder.release(), globalObject, JSValue::encode(stream), JSValue::encode(chunk), input, inputLen, finish);
 }
 
 // Takes the pending chunk's promise off the stream; the coder is idle again, so a deferred
@@ -292,7 +292,7 @@ static void settlePendingChunk(JSGlobalObject* globalObject, JSTransformStream* 
 
 // The transform / flush arm (under runNativeArm). It returns a promise, so a failed step is its
 // rejection: an arm must never throw synchronously into ProcessWrite/ProcessClose.
-static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream* stream, void*& coder, JSValue chunk, const uint8_t* input, size_t inputLen, bool finish)
+static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream* stream, std::unique_ptr<CompressionStreamCoder>& coder, JSValue chunk, const uint8_t* input, size_t inputLen, bool finish)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -313,7 +313,7 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
 
     RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, input, inputLen, finish);
+        CodecOutcome outcome = stepChunkHere(globalObject, stream, coder.get(), input, inputLen, finish);
         RETURN_IF_EXCEPTION(scope, nullptr);
         switch (outcome) {
         case CodecOutcome::Done:
@@ -342,7 +342,7 @@ NEVER_INLINE void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformS
     // A step already on the pool re-dispatches itself from deliverAsync while there is room.
     if (stream->m_asyncCodecInFlight)
         return;
-    void*& coder = coderOf(stream);
+    auto& coder = coderOf(stream);
     ASSERT(coder);
     if (!coder) [[unlikely]]
         RELEASE_AND_RETURN(scope, settleCodecChunk(globalObject, stream, JSValue()));
@@ -354,7 +354,7 @@ NEVER_INLINE void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformS
     atStreamsBoundary(globalObject, [&] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         stream->m_nativeStateInUse = true;
-        CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, nullptr, 0, false);
+        CodecOutcome outcome = stepChunkHere(globalObject, stream, coder.get(), nullptr, 0, false);
         stream->m_nativeStateInUse = false;
         RETURN_IF_EXCEPTION(scope, );
         RELEASE_AND_RETURN(scope, settlePendingChunk(globalObject, stream, outcome)); }, [&](JSValue thrown) {
@@ -443,15 +443,15 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
 // consumed BEFORE m_asyncCodecInFlight is cleared and the coder may be released or
 // re-dispatched. Entered from the event loop with no JS above it (a TopExceptionScope, and
 // atStreamsBoundary for the delivery): a failed delivery is the pending chunk's rejection.
-extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, void* returnedCoder, const uint8_t* out, size_t outLen, bool more, JSC::EncodedJSValue error)
+extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, CompressionStreamCoder* returnedCoder, const uint8_t* out, size_t outLen, bool more, JSC::EncodedJSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* stream = uncheckedDowncast<JSTransformStream>(JSValue::decode(streamCell));
     ASSERT(stream->m_asyncCodecInFlight);
-    void*& coder = coderOf(stream);
+    auto& coder = coderOf(stream);
     ASSERT(!coder);
-    coder = returnedCoder;
+    coder.reset(returnedCoder);
 
     CodecStepResult step;
     step.more = more;
@@ -461,7 +461,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     } else if (outLen && stream->m_codecPromise) {
         atStreamsBoundary(globalObject, [&] { step = deliverAsyncOutput(globalObject, stream, out, outLen, more); }, [&](JSValue error) { thrown = error; });
         if (scope.exception()) [[unlikely]] {
-            // VM termination: the chunk stays pending; teardown's finalizer releases the coder.
+            // VM termination: the chunk stays pending; teardown destroys the cell and its coder.
             Bun__VM__takeTerminationOutsideScript(globalObject);
             stream->m_asyncCodecInFlight = false;
             return;

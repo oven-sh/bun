@@ -1,3 +1,5 @@
+#[cfg(not(windows))]
+use core::cell::Cell;
 #[cfg(unix)]
 use core::ffi::c_int;
 #[cfg(not(windows))]
@@ -9,8 +11,10 @@ use core::ptr;
 
 #[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
+#[cfg(not(windows))]
 use bun_uws_sys::Loop as UwsLoop;
 
+#[cfg(not(windows))]
 pub type Loop = UwsLoop;
 
 #[cfg(not(windows))]
@@ -68,14 +72,17 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-pub use crate::{EventLoopCtx, EventLoopCtxKind, OpaqueCallback};
+#[cfg(not(windows))]
+use crate::OpaqueCallback;
+use crate::max_buf::Kind;
+pub use crate::{EventLoopCtx, EventLoopCtxKind};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
-    // safe: by-value enum arg only; the `#[no_mangle] pub fn` body in
+    // safe: the `#[no_mangle] pub fn` body in
     // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
     // no memory-safety preconditions.
-    safe fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
+    safe fn __bun_get_vm_ctx() -> EventLoopCtx;
 }
 
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
@@ -91,34 +98,18 @@ pub enum FileType {
     Socket,
 }
 
+#[cfg(not(windows))]
 impl FileType {
     pub(crate) fn is_blocking(self) -> bool {
         self == FileType::Pipe
     }
 }
 
-#[inline]
-pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
-    // Link-time-resolved Rust-ABI fn; `kind` selects between the
-    // process-global JS VM and Mini loop, both initialised before any
-    // `KeepAlive`/`FilePoll` caller reaches this.
-    __bun_get_vm_ctx(kind)
-}
-
 /// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
-///
-/// The crate split routes through the
-/// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.
-/// Every `Js`-tier caller (i.e. everything outside the install/Mini loop)
-/// wants exactly `get_vm_ctx(AllocatorType::Js)`, so this shorthand replaces
-/// the ~21 byte-identical local wrappers each ported file grew independently.
 #[inline]
 pub fn js_vm_ctx() -> EventLoopCtx {
-    get_vm_ctx(AllocatorType::Js)
+    __bun_get_vm_ctx()
 }
-
-// `KeepAlive` (struct + 14-method impl) was duplicated here and in
-// `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll
@@ -172,15 +163,11 @@ const EV_EOF: u16 = 0x8000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
-// Low tier (here) stores `(tag: u8, ptr: *mut ())`; `bun_runtime::dispatch::on_poll`
+// Low tier (here) stores a tag and a `*mut ()`; `bun_runtime::dispatch::__bun_run_io`
 // owns the per-tag `match` so the variant types are never named in this crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Closed set of `FilePoll` owner kinds. Variant types live in higher-tier
-/// crates; `__bun_run_file_poll` (link-time, in `bun_runtime::dispatch`)
-/// matches on this and calls the per-kind handler directly — same enum-dispatch
-/// shape as `EventLoopCtx`, with the match on the runtime side because there
-/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
+/// Closed set of [`Owner`] kinds, which `bun_runtime::dispatch::__bun_run_io` matches on.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PollTag {
@@ -189,124 +176,149 @@ pub enum PollTag {
     StaticPipeWriter,
     ShellStaticPipeWriter,
     SecurityScanStaticPipeWriter,
-    BufferedReader,
+    #[cfg(not(windows))]
     DnsResolver,
+    #[cfg(target_os = "macos")]
     GetAddrInfoRequest,
+    #[cfg(not(windows))]
     Process,
     ShellBufferedWriter,
+    #[cfg(not(windows))]
     TerminalPoll,
+    #[cfg(target_os = "macos")]
     ParentDeathWatchdog,
-    LifecycleScriptSubprocessOutputReader,
+    #[cfg(not(windows))]
     MemoryPressure,
+    SubprocessPipeReader,
+    ShellPipeReader,
+    ShellIoReader,
+    FileReader,
+    FileResponseStream,
+    TerminalReader,
+    CronRegister,
+    CronRemove,
+    FilterRunHandle,
+    MultiRunPipeReader,
+    TestParallelWorker,
+    LifecycleScript,
+    InstallGit,
+    SecurityScanReader,
 }
 
-/// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
-/// `poll_tag::FILE_SINK`. Re-export the enum variants under the old constant
-/// names; the literal values are unchanged. New code should use
-/// `PollTag::FileSink` directly.
-pub mod poll_tag {
-    use super::PollTag;
-    pub const NULL: PollTag = PollTag::Null;
-    pub const FILE_SINK: PollTag = PollTag::FileSink;
-    pub const STATIC_PIPE_WRITER: PollTag = PollTag::StaticPipeWriter;
-    pub const SHELL_STATIC_PIPE_WRITER: PollTag = PollTag::ShellStaticPipeWriter;
-    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: PollTag = PollTag::SecurityScanStaticPipeWriter;
-    pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
-    pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
-    pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const PROCESS: PollTag = PollTag::Process;
-    pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
-    pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
-    pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
-    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
-        PollTag::LifecycleScriptSubprocessOutputReader;
-    pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
-}
-
+/// The receiver of an [`IoEvent`]. Safe to build: `set_owner` and `OwnedFilePoll::new` carry the contract.
 #[derive(Copy, Clone)]
 pub struct Owner {
-    pub(crate) tag: PollTag,
-    pub ptr: *mut (),
+    tag: PollTag,
+    /// Tells the two readers of one owner apart.
+    kind: Kind,
+    ptr: *mut (),
 }
 
 impl Owner {
-    #[cfg(not(windows))]
-    pub(crate) const NULL: Owner = Owner {
-        tag: PollTag::Null,
-        ptr: core::ptr::null_mut(),
-    };
+    pub(crate) const NULL: Owner = Owner::new(PollTag::Null, core::ptr::null_mut());
     #[inline]
     pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
-        Owner { tag, ptr }
+        Owner::with_kind(tag, Kind::Stdout, ptr)
     }
     #[inline]
-    pub fn is_null(&self) -> bool {
-        self.ptr.is_null()
-    }
-    #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn clear(&mut self) {
-        *self = Self::NULL;
+    pub const fn with_kind(tag: PollTag, kind: Kind, ptr: *mut ()) -> Owner {
+        Owner { tag, kind, ptr }
     }
     #[inline]
     pub fn tag(&self) -> PollTag {
         self.tag
     }
+    #[inline]
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+    #[inline]
+    pub fn ptr(&self) -> *mut () {
+        self.ptr
+    }
+}
+
+#[cfg(windows)]
+pub enum IoEvent {
+    Read(crate::pipe_reader::ReadEvent),
+}
+
+/// What a poll that fired tells its owner.
+#[cfg(not(windows))]
+#[derive(Copy, Clone)]
+pub struct IoEvent {
+    pub fd: Fd,
+    pub flags: FlagsSet,
+    pub size_or_offset: i64,
+}
+
+#[cfg(not(windows))]
+impl IoEvent {
+    pub fn is_hup(&self) -> bool {
+        self.flags.contains(Flags::Hup)
+    }
 }
 
 unsafe extern "Rust" {
-    fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
+    pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum AllocatorType {
-    #[default]
-    Js,
-    Mini,
-    /// The loop `Bun.spawnSync` waits on. Only what that call makes for its own child lives there.
-    SpawnSync,
-}
-
-// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
-// generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
-// `crate::FilePoll`/`crate::Store` so the right one is picked.
+/// Shared borrows only: the kernel holds its address.
 #[cfg(not(windows))]
 pub struct FilePoll {
-    pub fd: Fd,
-    pub flags: FlagsSet,
-    pub owner: Owner,
+    fd: Fd,
+    flags: Cell<FlagsSet>,
+    owner: Cell<Owner>,
 
     /// We re-use FilePoll objects to avoid allocating new ones.
     ///
     /// That means we might run into situations where the event is stale.
     /// on macOS kevent64 has an extra pointer field so we use it for that
     /// linux doesn't have a field like that
-    pub(crate) generation_number: KQueueGenerationNumber,
-    pub(crate) next_to_free: *mut FilePoll,
+    generation_number: KQueueGenerationNumber,
+    next_to_free: Cell<*mut FilePoll>,
 
-    pub(crate) allocator_type: AllocatorType,
+    /// Where it is registered and counted, and whose `Store` the slot is from.
+    event_loop: EventLoopCtx,
 }
 
 #[cfg(not(windows))]
 impl FilePoll {
-    fn update_flags(&mut self, updated: FlagsSet) {
-        let mut flags = self.flags;
-        flags.remove(Flags::Readable);
-        flags.remove(Flags::Writable);
-        flags.remove(Flags::Process);
-        flags.remove(Flags::Machport);
-        flags.remove(Flags::MemoryPressure);
-        flags.remove(Flags::Eof);
-        flags.remove(Flags::Hup);
+    pub fn has_flag(&self, flag: Flags) -> bool {
+        self.flags.get().contains(flag)
+    }
 
-        flags |= updated;
-        self.flags = flags;
+    pub(crate) fn set_flag(&self, flag: Flags) {
+        self.flags.update(|flags| flags | flag);
+    }
+
+    fn remove_flags(&self, removed: impl Into<FlagsSet>) {
+        self.flags.update(|flags| flags - removed);
+    }
+
+    /// # Safety
+    /// See [`crate::OwnedFilePoll::new`].
+    pub unsafe fn set_owner(&self, owner: Owner) {
+        self.owner.set(owner);
+    }
+
+    fn update_flags(&self, updated: FlagsSet) {
+        self.remove_flags(
+            Flags::Readable
+                | Flags::Writable
+                | Flags::Process
+                | Flags::Machport
+                | Flags::MemoryPressure
+                | Flags::Eof
+                | Flags::Hup,
+        );
+        self.flags.update(|flags| flags | updated);
     }
 
     pub(crate) fn file_type(&self) -> FileType {
-        let flags = self.flags;
+        let flags = self.flags.get();
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
         }
@@ -320,7 +332,7 @@ impl FilePoll {
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
+    fn on_kqueue_event(&self, kqueue_event: &KQueueEvent) -> IoEvent {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
         syslog!("onKQueueEvent: {}", self);
 
@@ -331,195 +343,122 @@ impl FilePoll {
         // thread it through `size_or_offset` so the dispatch arm can read it.
         #[cfg(target_os = "macos")]
         if kqueue_event.filter == bun_sys::darwin::EVFILT::MEMORYSTATUS {
-            self.on_update(kqueue_event.fflags as i64);
-            return;
+            return self.on_update(kqueue_event.fflags as i64);
         }
 
-        self.on_update(kqueue_event.data as i64);
+        self.on_update(kqueue_event.data as i64)
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
+    fn on_epoll_event(&self, epoll_event: &bun_sys::linux::epoll_event) -> IoEvent {
         self.update_flags(Flags::from_epoll_event(epoll_event));
-        self.on_update(0);
+        self.on_update(0)
     }
 
-    pub fn is_readable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Readable);
-        self.flags.remove(Flags::Readable);
-        readable
-    }
+    /// Returns whether it was ever registered.
+    fn reset(&self, force_unregister: bool) -> bool {
+        let _ = self.unregister(force_unregister);
 
-    pub fn is_writable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Writable);
-        self.flags.remove(Flags::Writable);
-        readable
-    }
-
-    /// Returns the rest of what `Store::put` takes.
-    pub(crate) fn reset(&mut self, force_unregister: bool) -> (EventLoopCtx, bool) {
-        let vm = get_vm_ctx(self.allocator_type);
-        let _ = self.unregister(vm.loop_(), force_unregister);
-
-        self.owner.clear();
-        let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
-        self.flags = FlagsSet::empty();
-        self.fd = INVALID_FD;
-        (vm, was_ever_registered)
+        self.owner.set(Owner::NULL);
+        self.flags.take().contains(Flags::WasEverRegistered)
     }
 
     pub(crate) fn is_registered(&self) -> bool {
-        self.flags.contains(Flags::PollWritable)
-            || self.flags.contains(Flags::PollReadable)
-            || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport)
-            || self.flags.contains(Flags::PollMemoryPressure)
+        self.has_flag(Flags::PollWritable)
+            || self.has_flag(Flags::PollReadable)
+            || self.has_flag(Flags::PollProcess)
+            || self.has_flag(Flags::PollMachport)
+            || self.has_flag(Flags::PollMemoryPressure)
     }
 
-    pub(crate) fn on_update(&mut self, size_or_offset: i64) {
-        if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::NeedsRearm) {
-            self.flags.insert(Flags::NeedsRearm);
+    fn on_update(&self, size_or_offset: i64) -> IoEvent {
+        if self.has_flag(Flags::OneShot) {
+            self.set_flag(Flags::NeedsRearm);
         }
 
-        debug_assert!(!self.owner.is_null());
-
-        // Hot-path hoisted-match: the per-tag `match` lives in
-        // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
-        // this T3 crate names no variant types.
-        // SAFETY: `self` is a live FilePoll for the duration of the call
-        // (guaranteed by the uws loop callback contract).
-        unsafe { __bun_run_file_poll(self, size_or_offset) };
-    }
-
-    #[inline]
-    pub(crate) fn is_active(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
+        IoEvent {
+            fd: self.fd,
+            flags: self.flags.get(),
+            size_or_offset,
+        }
     }
 
     #[inline]
     pub(crate) fn is_watching(&self) -> bool {
-        !self.flags.contains(Flags::NeedsRearm)
-            && (self.flags.contains(Flags::PollReadable)
-                || self.flags.contains(Flags::PollWritable)
-                || self.flags.contains(Flags::PollProcess))
+        !self.has_flag(Flags::NeedsRearm)
+            && (self.has_flag(Flags::PollReadable)
+                || self.has_flag(Flags::PollWritable)
+                || self.has_flag(Flags::PollProcess))
     }
 
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
-    pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        event_loop_ctx
-            .loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+    pub fn disable_keeping_process_alive(&self) {
+        self.event_loop
+            .loop_sub_active(self.has_flag(Flags::HasIncrementedActiveCount) as u32);
 
-        self.flags.remove(Flags::KeepsEventLoopAlive);
-        self.flags.remove(Flags::HasIncrementedActiveCount);
+        self.remove_flags(Flags::KeepsEventLoopAlive | Flags::HasIncrementedActiveCount);
     }
 
-    pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
+    pub fn enable_keeping_process_alive(&self) {
+        self.event_loop
+            .loop_add_active((!self.has_flag(Flags::HasIncrementedActiveCount)) as u32);
+
+        self.set_flag(Flags::KeepsEventLoopAlive);
+        self.set_flag(Flags::HasIncrementedActiveCount);
+    }
+
+    pub(crate) fn set_keeping_process_alive(&self, value: bool) {
+        if value {
+            self.enable_keeping_process_alive()
+        } else {
+            self.disable_keeping_process_alive()
         }
-
-        event_loop_ctx
-            .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-
-        self.flags.insert(Flags::KeepsEventLoopAlive);
-        self.flags.insert(Flags::HasIncrementedActiveCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, loop_: &Loop) {
-        if self.flags.contains(Flags::HasIncrementedPollCount) {
+    fn deactivate(&self, loop_: &Loop) {
+        if self.has_flag(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
-        self.flags.remove(Flags::HasIncrementedPollCount);
+        self.remove_flags(Flags::HasIncrementedPollCount);
 
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
-        self.flags.remove(Flags::KeepsEventLoopAlive);
-        self.flags.remove(Flags::HasIncrementedActiveCount);
+        loop_.sub_active(self.has_flag(Flags::HasIncrementedActiveCount) as u32);
+        self.remove_flags(Flags::KeepsEventLoopAlive | Flags::HasIncrementedActiveCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, loop_: &Loop) {
-        self.flags.remove(Flags::Closed);
-
-        if !self.flags.contains(Flags::HasIncrementedPollCount) {
+    fn activate(&self, loop_: &Loop) {
+        if !self.has_flag(Flags::HasIncrementedPollCount) {
             loop_.inc();
         }
-        self.flags.insert(Flags::HasIncrementedPollCount);
+        self.set_flag(Flags::HasIncrementedPollCount);
 
-        if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-            self.flags.insert(Flags::HasIncrementedActiveCount);
+        if self.has_flag(Flags::KeepsEventLoopAlive) {
+            loop_.add_active((!self.has_flag(Flags::HasIncrementedActiveCount)) as u32);
+            self.set_flag(Flags::HasIncrementedActiveCount);
         }
     }
 
-    /// Build a fully-initialized `FilePoll` value for `Store::get_init`.
-    ///
-    /// Note: the previous `&mut *pool.get()` + field-assign pattern was
-    /// instant validity UB — `FilePoll.owner`/`allocator_type` are enums with
-    /// niches, and `&mut FilePoll` over an uninitialized hive slot asserts a
-    /// valid discriminant. It also left `generation_number` uninitialized on
-    /// non-macOS-debug builds and then read it in the `syslog!` below. Building
-    /// the whole struct by value fixes both.
-    #[inline]
-    fn new_value(vm: EventLoopCtx, fd: Fd, owner: Owner) -> FilePoll {
-        FilePoll {
-            fd,
-            flags: FlagsSet::empty(),
-            owner,
-            next_to_free: ptr::null_mut(),
-            allocator_type: vm.allocator_type(),
-            #[cfg(all(target_os = "macos", debug_assertions))]
-            // Single-threaded event loop so `Relaxed` ordering is sufficient.
-            generation_number: MAX_GENERATION_NUMBER
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-                .wrapping_add(1),
-            #[cfg(not(all(target_os = "macos", debug_assertions)))]
-            generation_number: 0,
-        }
-    }
-
-    // Note: callers normalize to EventLoopCtx before calling.
-    pub(crate) fn init(vm: EventLoopCtx, fd: Fd, owner: Owner) -> ptr::NonNull<FilePoll> {
-        let value = Self::new_value(vm, fd, owner);
-        let generation_number = value.generation_number;
-        let poll = vm.alloc_file_poll(value);
-        syslog!(
-            "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            poll.addr(),
-            generation_number,
-            fd
-        );
-        poll
-    }
-
-    pub fn register(&mut self, loop_: &Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
-        self.register_with_fd(
-            loop_,
+    pub fn register(&self, flag: Flags, one_shot: bool) -> sys::Result<()> {
+        self.register_with(
             flag,
             if one_shot {
                 OneShotFlag::OneShot
             } else {
                 OneShotFlag::None
             },
-            self.fd,
         )
     }
 
-    pub fn register_with_fd(
-        &mut self,
-        loop_: &Loop,
-        flag: Flags,
-        one_shot: OneShotFlag,
-        fd: Fd,
-    ) -> sys::Result<()> {
+    pub(crate) fn register_with(&self, flag: Flags, one_shot: OneShotFlag) -> sys::Result<()> {
         #[cfg(any(
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+        return self.register_impl(flag, one_shot);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -527,7 +466,7 @@ impl FilePoll {
             target_os = "freebsd"
         )))]
         {
-            let _ = (loop_, flag, one_shot, fd);
+            let _ = (flag, one_shot);
             sys::Result::Ok(())
         }
     }
@@ -538,18 +477,13 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn register_with_fd_impl(
-        &mut self,
-        loop_: &Loop,
-        flag: Flags,
-        one_shot: OneShotFlag,
-        fd: Fd,
-    ) -> sys::Result<()> {
+    fn register_impl(&self, flag: Flags, one_shot: OneShotFlag) -> sys::Result<()> {
+        let (loop_, fd) = (self.event_loop.loop_(), self.fd);
         let watcher_fd = loop_.fd();
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
-            std::ptr::from_mut(self) as usize,
+            std::ptr::from_ref(self) as usize,
             self.generation_number,
             <&'static str>::from(flag),
             fd
@@ -558,13 +492,13 @@ impl FilePoll {
         debug_assert!(fd != INVALID_FD);
 
         if one_shot != OneShotFlag::None {
-            self.flags.insert(Flags::OneShot);
+            self.set_flag(Flags::OneShot);
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_sys::linux::{self, EPOLL};
-            let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot) {
+            let one_shot_flag: u32 = if !self.has_flag(Flags::OneShot) {
                 0
             } else {
                 EPOLL::ONESHOT
@@ -581,12 +515,12 @@ impl FilePoll {
             // registered on this poll, preserve it in the CTL_MOD mask.
             // (EPOLLONESHOT disarms the whole fd after the first event in
             // either direction, so bidirectional one-shot is not supported.)
-            if flag == Flags::Readable && self.flags.contains(Flags::PollWritable) {
-                debug_assert!(!self.flags.contains(Flags::OneShot));
+            if flag == Flags::Readable && self.has_flag(Flags::PollWritable) {
+                debug_assert!(!self.has_flag(Flags::OneShot));
                 flags |= EPOLL::OUT | EPOLL::ERR;
             }
-            if flag == Flags::Writable && self.flags.contains(Flags::PollReadable) {
-                debug_assert!(!self.flags.contains(Flags::OneShot));
+            if flag == Flags::Writable && self.has_flag(Flags::PollReadable) {
+                debug_assert!(!self.has_flag(Flags::OneShot));
                 flags |= EPOLL::IN;
             }
 
@@ -596,7 +530,7 @@ impl FilePoll {
                 u64: Pollable::init(self).ptr() as u64,
             };
 
-            let op: c_int = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
+            let op: c_int = if self.is_registered() || self.has_flag(Flags::NeedsRearm) {
                 EPOLL::CTL_MOD
             } else {
                 EPOLL::CTL_ADD
@@ -607,7 +541,7 @@ impl FilePoll {
             // when it fired, which is not reported again. `Store::put` then holds the slot back,
             // marked `IgnoreUpdates`, until a tick returns, when no event fetched for it is left.
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event)) };
-            self.flags.insert(Flags::WasEverRegistered);
+            self.set_flag(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
                 return errno;
@@ -618,7 +552,7 @@ impl FilePoll {
             use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64_s};
             // SAFETY: all-zero is a valid kevent64_s
             let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
-            let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
+            let one_shot_flag: u16 = if !self.has_flag(Flags::OneShot) {
                 0
             } else if one_shot == OneShotFlag::Dispatch {
                 EV::DISPATCH | EV::ENABLE
@@ -705,7 +639,7 @@ impl FilePoll {
                 break 'rc rc;
             };
 
-            self.flags.insert(Flags::WasEverRegistered);
+            self.set_flag(Flags::WasEverRegistered);
 
             // If an error occurs while
             // processing an element of the changelist and there is enough room
@@ -729,7 +663,7 @@ impl FilePoll {
             use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
             // SAFETY: all-zero is a valid Kevent
             let mut changelist: [Kevent; 1] = bun_core::ffi::zeroed();
-            let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
+            let one_shot_flag: u16 = if !self.has_flag(Flags::OneShot) {
                 0
             } else if one_shot == OneShotFlag::Dispatch {
                 EV::DISPATCH | EV::ENABLE
@@ -782,7 +716,7 @@ impl FilePoll {
                 break 'rc rc;
             };
 
-            self.flags.insert(Flags::WasEverRegistered);
+            self.set_flag(Flags::WasEverRegistered);
             if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
                 self.deactivate(loop_);
                 return err;
@@ -790,7 +724,7 @@ impl FilePoll {
         }
 
         self.activate(loop_);
-        self.flags.insert(match flag {
+        self.set_flag(match flag {
             Flags::Readable => Flags::PollReadable,
             Flags::Process => {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -807,21 +741,13 @@ impl FilePoll {
             Flags::MemoryPressure => Flags::PollMemoryPressure,
             _ => unreachable!(),
         });
-        self.flags.remove(Flags::NeedsRearm);
+        self.remove_flags(Flags::NeedsRearm);
 
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &Loop, force_unregister: bool) -> sys::Result<()> {
-        self.unregister_with_fd(loop_, self.fd, force_unregister)
-    }
-
-    pub(crate) fn unregister_with_fd(
-        &mut self,
-        loop_: &Loop,
-        fd: Fd,
-        force_unregister: bool,
-    ) -> sys::Result<()> {
+    pub fn unregister(&self, force_unregister: bool) -> sys::Result<()> {
+        let loop_ = self.event_loop.loop_();
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
@@ -830,7 +756,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
+        let result = self.unregister_impl(loop_, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -838,7 +764,7 @@ impl FilePoll {
             target_os = "freebsd"
         )))]
         let result: sys::Result<()> = {
-            let _ = (fd, force_unregister);
+            let _ = force_unregister;
             sys::Result::Ok(())
         };
         self.deactivate(loop_);
@@ -851,65 +777,58 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn unregister_with_fd_impl(
-        &mut self,
-        loop_: &Loop,
-        fd: Fd,
-        force_unregister: bool,
-    ) -> sys::Result<()> {
+    fn unregister_impl(&self, loop_: &Loop, force_unregister: bool) -> sys::Result<()> {
+        let fd = self.fd;
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
-        let registered = self.flags.contains(Flags::PollReadable)
-            || self.flags.contains(Flags::PollWritable)
-            || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport)
-            || self.flags.contains(Flags::PollMemoryPressure);
+        let registered = self.is_registered();
         // The `needs_rearm` skip below keeps the disarmed kernel registration, so teardown must still delete it.
-        let disarmed_only = !registered && self.flags.contains(Flags::NeedsRearm);
+        let disarmed_only = !registered && self.has_flag(Flags::NeedsRearm);
         if !registered && !(disarmed_only && force_unregister) {
             return sys::Result::Ok(());
         }
 
         let watcher_fd = loop_.fd();
         let both_directions = disarmed_only
-            || (self.flags.contains(Flags::PollReadable)
-                && self.flags.contains(Flags::PollWritable));
+            || (self.has_flag(Flags::PollReadable) && self.has_flag(Flags::PollWritable));
         let flag: Flags = 'brk: {
-            if disarmed_only || self.flags.contains(Flags::PollReadable) {
+            if disarmed_only || self.has_flag(Flags::PollReadable) {
                 break 'brk Flags::Readable;
             }
-            if self.flags.contains(Flags::PollWritable) {
+            if self.has_flag(Flags::PollWritable) {
                 break 'brk Flags::Writable;
             }
-            if self.flags.contains(Flags::PollProcess) {
+            if self.has_flag(Flags::PollProcess) {
                 break 'brk Flags::Process;
             }
-            if self.flags.contains(Flags::PollMachport) {
+            if self.has_flag(Flags::PollMachport) {
                 break 'brk Flags::Machport;
             }
-            if self.flags.contains(Flags::PollMemoryPressure) {
+            if self.has_flag(Flags::PollMemoryPressure) {
                 break 'brk Flags::MemoryPressure;
             }
             return sys::Result::Ok(());
         };
 
-        if self.flags.contains(Flags::NeedsRearm) && !force_unregister {
+        if self.has_flag(Flags::NeedsRearm) && !force_unregister {
             syslog!(
                 "unregister: {} ({}) skipped due to needs_rearm",
                 <&'static str>::from(flag),
                 fd
             );
-            self.flags.remove(Flags::PollProcess);
-            self.flags.remove(Flags::PollReadable);
-            self.flags.remove(Flags::PollWritable);
-            self.flags.remove(Flags::PollMachport);
-            self.flags.remove(Flags::PollMemoryPressure);
+            self.remove_flags(
+                Flags::PollProcess
+                    | Flags::PollReadable
+                    | Flags::PollWritable
+                    | Flags::PollMachport
+                    | Flags::PollMemoryPressure,
+            );
             return sys::Result::Ok(());
         }
 
         syslog!(
             "unregister: FilePoll(0x{:x}, generation_number={}) {}{} ({})",
-            std::ptr::from_mut(self) as usize,
+            std::ptr::from_ref(self) as usize,
             self.generation_number,
             <&'static str>::from(flag),
             if both_directions { "+writable" } else { "" },
@@ -1093,13 +1012,15 @@ impl FilePoll {
             }
         }
 
-        self.flags.remove(Flags::NeedsRearm);
-        self.flags.remove(Flags::OneShot);
-        self.flags.remove(Flags::PollReadable);
-        self.flags.remove(Flags::PollWritable);
-        self.flags.remove(Flags::PollProcess);
-        self.flags.remove(Flags::PollMachport);
-        self.flags.remove(Flags::PollMemoryPressure);
+        self.remove_flags(
+            Flags::NeedsRearm
+                | Flags::OneShot
+                | Flags::PollReadable
+                | Flags::PollWritable
+                | Flags::PollProcess
+                | Flags::PollMachport
+                | Flags::PollMemoryPressure,
+        );
 
         sys::Result::Ok(())
     }
@@ -1113,7 +1034,7 @@ impl fmt::Display for FilePoll {
             "FilePoll(fd={}, generation_number={}) = {}",
             self.fd,
             self.generation_number,
-            FlagsFormatter(self.flags)
+            FlagsFormatter(self.flags.get())
         )
     }
 }
@@ -1122,6 +1043,7 @@ impl fmt::Display for FilePoll {
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 #[derive(enumset::EnumSetType, strum::IntoStaticStr, Debug)]
 #[strum(serialize_all = "snake_case")]
 pub enum Flags {
@@ -1154,7 +1076,6 @@ pub enum Flags {
 
     HasIncrementedPollCount,
     HasIncrementedActiveCount,
-    Closed,
 
     KeepsEventLoopAlive,
 
@@ -1167,8 +1088,10 @@ pub enum Flags {
     Tty,
 }
 
+#[cfg(not(windows))]
 pub type FlagsSet = enumset::EnumSet<Flags>;
 
+#[cfg(not(windows))]
 impl Flags {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
@@ -1260,8 +1183,8 @@ type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 #[cfg(not(windows))]
 pub struct Store {
     hive: FilePollHive,
-    pending_free_head: *mut FilePoll,
-    pending_free_tail: *mut FilePoll,
+    pending_free_head: Cell<*mut FilePoll>,
+    pending_free_tail: Cell<*mut FilePoll>,
 }
 
 #[cfg(not(windows))]
@@ -1269,34 +1192,22 @@ impl Store {
     pub fn init() -> Store {
         Store {
             hive: FilePollHive::init(),
-            pending_free_head: ptr::null_mut(),
-            pending_free_tail: ptr::null_mut(),
+            pending_free_head: Cell::new(ptr::null_mut()),
+            pending_free_tail: Cell::new(ptr::null_mut()),
         }
     }
 
-    /// Claim a hive slot and move `value` into it. Infallible (heap fallback).
-    #[inline]
-    pub(crate) fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
-        self.hive.get_init(value)
-    }
-
-    pub(crate) fn process_deferred_frees(&mut self) {
-        let mut next = self.pending_free_head;
+    fn process_deferred_frees(&self) {
+        let mut next = self.pending_free_head.replace(ptr::null_mut());
+        self.pending_free_tail.set(ptr::null_mut());
         while !next.is_null() {
             let current = next;
-            // SAFETY: intrusive list; nodes were allocated by this hive. Walk via
-            // raw-pointer reads/writes only — materializing a `&mut FilePoll`
-            // here would alias the `&mut self.hive` borrow taken by `put()`
-            // below (the slot may live inside the inline hive array).
+            // SAFETY: `put` linked these slots of the hive, and nothing else names them.
             unsafe {
-                next = (*current).next_to_free;
-                (*current).next_to_free = ptr::null_mut();
-                // FilePoll has no drop glue; `put` is a no-op drop + recycle.
+                next = (*current).next_to_free.get();
                 self.hive.put(current);
             }
         }
-        self.pending_free_head = ptr::null_mut();
-        self.pending_free_tail = ptr::null_mut();
     }
 
     /// Counts fired one-shot polls awaiting rearm. They're still in the JS loop's `num_polls` but can't fire.
@@ -1304,59 +1215,39 @@ impl Store {
         let mut count = 0;
         let mut used = self.hive.hive.used.iter_set();
         while let Some(index) = used.next() {
-            let poll = self.hive.hive.ptr_at(index);
-            // SAFETY: slots are only claimed through `get_init`, so a used slot is initialized; this only reads `Copy` fields.
-            let (flags, allocator_type) = unsafe { ((*poll).flags, (*poll).allocator_type) };
+            // SAFETY: slots are only claimed through `get_init`, so a used slot is initialized.
+            let poll = unsafe { &*self.hive.hive.ptr_at(index) };
             count += i32::from(
-                allocator_type == AllocatorType::Js
-                    && flags.contains(Flags::HasIncrementedPollCount)
-                    && flags.contains(Flags::NeedsRearm)
-                    && !flags.contains(Flags::HasIncrementedActiveCount),
+                poll.event_loop.is(EventLoopCtxKind::Js)
+                    && poll.has_flag(Flags::HasIncrementedPollCount)
+                    && poll.has_flag(Flags::NeedsRearm)
+                    && !poll.has_flag(Flags::HasIncrementedActiveCount),
             );
         }
         count
     }
 
-    /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
-    /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
-    /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
-    /// storage under Stacked Borrows (UB). Take it as a raw pointer and
-    /// touch fields only through raw pointer ops — same
-    /// rationale as `process_deferred_frees` above.
-    pub(crate) fn put(
-        &mut self,
-        poll: ptr::NonNull<FilePoll>,
-        vm: EventLoopCtx,
-        ever_registered: bool,
-    ) {
+    /// # Safety
+    /// `poll` is a slot of `self.hive` that the caller gives up, `vm` is the loop that has this store.
+    unsafe fn put(&self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
         if !ever_registered {
-            // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
-            // drop glue, so `put` is a no-op drop + recycle.
+            // SAFETY: caller contract, and the kernel was never told of it.
             unsafe { self.hive.put(poll) };
             return;
         }
 
-        // SAFETY: `poll` is a live hive slot (see fn-level comment); raw read of a POD field.
-        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
-
-        if !self.pending_free_tail.is_null() {
-            debug_assert!(!self.pending_free_head.is_null());
-            // SAFETY: tail is non-null and points into the hive.
-            unsafe {
-                debug_assert!((*self.pending_free_tail).next_to_free.is_null());
-                (*self.pending_free_tail).next_to_free = poll;
-            }
+        let tail = self.pending_free_tail.replace(poll);
+        if tail.is_null() {
+            debug_assert!(self.pending_free_head.get().is_null());
+            self.pending_free_head.set(poll);
+        } else {
+            // SAFETY: a slot on the list is live until `process_deferred_frees`.
+            unsafe { (*tail).next_to_free.set(poll) };
         }
 
-        if self.pending_free_head.is_null() {
-            self.pending_free_head = poll;
-            debug_assert!(self.pending_free_tail.is_null());
-        }
-
-        // SAFETY: see fn-level comment — raw-pointer field access only.
-        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
-        self.pending_free_tail = poll;
+        // SAFETY: caller contract.
+        unsafe { (*poll).set_flag(Flags::IgnoreUpdates) };
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
         debug_assert!(
@@ -1365,17 +1256,13 @@ impl Store {
         );
         vm.set_after_event_loop_callback(
             Some(callback),
-            core::ptr::NonNull::new(std::ptr::from_mut::<Store>(self).cast::<c_void>()),
+            Some(ptr::NonNull::from(self).cast::<c_void>()),
         );
     }
 
-    // Safe fn item: module-private thunk, only coerced to the C-ABI
-    // `OpaqueCallback` fn-pointer type — never callable by name outside
-    // `Store`. Body wraps its raw-ptr op explicitly.
-    extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
-        // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
-        this.process_deferred_frees();
+    unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
+        // SAFETY: the store that `put` passed, which lives as long as the loop that calls this.
+        unsafe { &*ctx.cast::<Store>() }.process_deferred_frees();
     }
 }
 
@@ -1385,6 +1272,64 @@ impl Store {
 impl Drop for Store {
     fn drop(&mut self) {
         self.process_deferred_frees();
+    }
+}
+
+/// A slot of the event loop's `Store`. Dropping it unregisters the poll and puts the slot back.
+#[cfg(not(windows))]
+pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(ptr::NonNull<FilePoll>);
+
+#[cfg(not(windows))]
+impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until the poll
+    /// is dropped or has another owner.
+    pub unsafe fn new(event_loop: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
+        let poll = FilePoll {
+            fd,
+            flags: Cell::new(FlagsSet::empty()),
+            owner: Cell::new(owner),
+            next_to_free: Cell::new(ptr::null_mut()),
+            event_loop,
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            // Single-threaded event loop so `Relaxed` ordering is sufficient.
+            generation_number: MAX_GENERATION_NUMBER
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1),
+            #[cfg(not(all(target_os = "macos", debug_assertions)))]
+            generation_number: 0,
+        };
+        let this = Self(event_loop.file_polls().hive.get_init(poll));
+        syslog!(
+            "FilePoll.init(0x{:x}, generation_number={}, fd={})",
+            this.0.addr(),
+            this.generation_number,
+            fd
+        );
+        this
+    }
+}
+
+#[cfg(not(windows))]
+impl<const FORCE_UNREGISTER: bool> core::ops::Deref for OwnedFilePoll<FORCE_UNREGISTER> {
+    type Target = FilePoll;
+    fn deref(&self) -> &FilePoll {
+        // SAFETY: the slot is this value's until it drops, and nothing borrows it mutably.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+#[cfg(not(windows))]
+impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
+    fn drop(&mut self) {
+        let was_ever_registered = self.reset(FORCE_UNREGISTER);
+        let event_loop = self.event_loop;
+        // SAFETY: `new` took the slot from this store.
+        unsafe {
+            event_loop
+                .file_polls()
+                .put(self.0, event_loop, was_ever_registered)
+        };
     }
 }
 
@@ -1452,7 +1397,7 @@ impl Pollable {
 #[unsafe(no_mangle)]
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
-/// was registered via `Pollable::init` in `register_with_fd`.
+/// was registered via `Pollable::init` in `register_impl`.
 unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
@@ -1460,18 +1405,22 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_poin
         return;
     }
 
-    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_file_poll() };
-    if file_poll.flags.contains(Flags::IgnoreUpdates) {
+    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_impl.
+    // Not used once the owner runs, which may free the slot.
+    let file_poll = unsafe { &*tag.as_file_poll() };
+    if file_poll.has_flag(Flags::IgnoreUpdates) {
         return;
     }
 
     let ev = loop_.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    file_poll.on_kqueue_event(&ev);
+    let event = file_poll.on_kqueue_event(&ev);
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    file_poll.on_epoll_event(&ev);
+    let event = file_poll.on_epoll_event(&ev);
+
+    // SAFETY: the contract of `OwnedFilePoll::new` and `FilePoll::set_owner`.
+    unsafe { __bun_run_io(file_poll.owner.get(), event) };
 }
 
 #[cfg(target_os = "macos")]
@@ -1480,9 +1429,10 @@ static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_nsec: 0,
 };
 
+#[cfg(not(windows))]
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum OneShotFlag {
+pub(crate) enum OneShotFlag {
     Dispatch,
     OneShot,
     None,

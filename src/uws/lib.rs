@@ -188,7 +188,7 @@ pub mod ssl_wrapper {
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 
-    // Mimics the behavior of openssl.c in uSockets, wrapping data that can be
+    // Mimics the behavior of openssl.cpp in uSockets, wrapping data that can be
     // received from anywhere (network, DuplexStream, etc).
     //
     // receive_data() is called when we receive data from the network
@@ -283,7 +283,7 @@ pub mod ssl_wrapper {
         static METHOD: OnceLock<AtomicPtr<boring_sys::BIO_METHOD>> = OnceLock::new();
         METHOD
             .get_or_init(|| {
-                // A type of its own: see `us_ssl_is_socket` in openssl.c.
+                // A type of its own: see `us_ssl_is_socket` in openssl.cpp.
                 let r#type = boring_sys::BIO_get_new_index() | boring_sys::BIO_TYPE_SOURCE_SINK;
                 // SAFETY: the name is static, and a null `method` does not get past the check.
                 unsafe {
@@ -302,14 +302,14 @@ pub mod ssl_wrapper {
 
     /// Cap on peer-initiated TLS renegotiations per
     /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
-    /// the uSockets C path (openssl.c) and Node's
+    /// the uSockets C path (openssl.cpp) and Node's
     /// `CLIENT_RENEG_LIMIT`/`CLIENT_RENEG_WINDOW`. Unbounded renegotiation is
     /// a CPU DoS (CVE-2011-1473).
     const MAX_RENEGOTIATIONS: u8 = 3;
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
 
-    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c.
+    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.cpp.
     const FATAL_ERROR_REASON_MAX: usize = 256;
 
     /// What BoringSSL's callbacks read and write. The `SSL` points at it: see `us_ssl_set_wrapper`.
@@ -1434,14 +1434,14 @@ pub mod ssl_wrapper {
         1
     }
 
-    /// openssl.c's name check of the verify step, for an `SSL` that no `us_socket_t` drives: a `US_IDENTITY_*` verdict.
+    /// openssl.cpp's name check of the verify step, for an `SSL` that no `us_socket_t` drives: a `US_IDENTITY_*` verdict.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_server_identity(
         state: *const CallbackState,
         ssl: *mut boring_sys::SSL,
     ) -> c_int {
         use bun_boringssl::ServerIdentity;
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on this live `ssl`.
+        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on this live `ssl`.
         let state = unsafe { &*state };
         let Some(check) = state.server_identity else {
             return ServerIdentity::Unchecked as c_int;
@@ -1459,7 +1459,7 @@ pub mod ssl_wrapper {
 
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_identity_checked(state: *const CallbackState) -> c_int {
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on a live `SSL`.
+        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on a live `SSL`.
         c_int::from(unsafe { &*state }.identity_checked.get())
     }
 
@@ -1473,13 +1473,13 @@ pub mod ssl_wrapper {
         bun_boringssl::check_server_identity(ssl, host)
     }
 
-    /// openssl.c's new-session callback, for an `SSL` that no `us_socket_t` drives.
+    /// openssl.cpp's new-session callback, for an `SSL` that no `us_socket_t` drives.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_new_session(
         state: *const CallbackState,
         session: *mut boring_sys::SSL_SESSION,
     ) {
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
+        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
         let state = unsafe { &*state };
         let Some(session) = NonNull::new(session).filter(|_| state.wants_session) else {
             return;
@@ -1503,19 +1503,19 @@ pub mod ssl_wrapper {
         state.sessions.borrow_mut().push_back(bytes);
     }
 
-    /// openssl.c's keylog callback, for an `SSL` that no `us_socket_t` drives.
+    /// openssl.cpp's keylog callback, for an `SSL` that no `us_socket_t` drives.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_keylog(
         state: *const CallbackState,
         line: *const c_char,
         len: usize,
     ) {
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
+        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
         let state = unsafe { &*state };
         if !state.wants_keylog {
             return;
         }
-        // SAFETY: openssl.c passes `len` readable bytes.
+        // SAFETY: openssl.cpp passes `len` readable bytes.
         let line = unsafe { core::slice::from_raw_parts(line.cast::<u8>(), len) };
         // Node appends the newline before it emits 'keylog'.
         let entry = [line, b"\n"].concat().into_boxed_slice();
@@ -1523,7 +1523,7 @@ pub mod ssl_wrapper {
     }
 
     unsafe extern "C" {
-        /// openssl.c: the client half of `us_internal_ssl_attach`. `ssl` was made from `ctx`.
+        /// openssl.cpp: the client half of `us_internal_ssl_attach`. `ssl` was made from `ctx`.
         fn us_internal_ssl_client_verify_defaults(
             ssl: *mut boring_sys::SSL,
             ctx: *mut boring_sys::SSL_CTX,
@@ -1531,13 +1531,13 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
-        /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
+        /// openssl.cpp: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
-        /// openssl.c: formats the reason into `reason[..length]`, NUL-terminated. 0 when nothing is queued.
+        /// openssl.cpp: formats the reason into `reason[..length]`, NUL-terminated. 0 when nothing is queued.
         fn us_ssl_take_error_reason(reason: *mut c_char, length: usize) -> c_int;
-        /// openssl.c: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
+        /// openssl.cpp: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
         fn us_ssl_set_wrapper(ssl: *mut boring_sys::SSL, wrapper: *mut c_void);
-        /// openssl.c: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.
+        /// openssl.cpp: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.
         fn us_ssl_wrapper_from_verify(ctx: *mut boring_sys::X509_STORE_CTX) -> *mut c_void;
         fn i2d_SSL_SESSION(session: *mut boring_sys::SSL_SESSION, out: *mut *mut u8) -> c_int;
     }

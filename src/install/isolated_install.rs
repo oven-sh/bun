@@ -1623,8 +1623,9 @@ fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
     // `exists_at_type` reports a junction itself, so a dangling one would pass.
     #[cfg(windows)]
     {
-        use bun_sys::FdExt as _;
-        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())
+        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0)
+            .map(sys::File::from_fd)
+            .map(drop)
     }
     #[cfg(not(windows))]
     {

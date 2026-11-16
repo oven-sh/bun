@@ -18,7 +18,7 @@ import { join } from "node:path";
 // MAGIC_VALID assert; release builds wrote through freed memory, which in
 // practice manifested as a process stuck idle with no error and no exit.
 //
-// The fix routes the start_with_current_pipe() error through on_reader_error
+// The fix routes the start_with_current_pipe() error through on_read_result
 // (matching what POSIX already does for register_poll failure), so the pipe is
 // torn down and detached from the Subprocess before the exit callback runs.
 //
@@ -742,8 +742,8 @@ describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be sig
   });
 });
 
-// The POSIX reader reports a failed registration by calling on_reader_error
-// from inside start(), and start() still returns Ok. Terminal's reader
+// The POSIX reader used to report a failed registration by calling on_reader_error
+// from inside start(), and start() still returned Ok. Terminal's reader
 // callbacks end by releasing the reader's ref, which the constructor used to
 // take only after start() returned: the release freed the Terminal while the
 // constructor was still using it. A reader that ends during the constructor's

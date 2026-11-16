@@ -40,6 +40,7 @@ public:
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static WebSocket* toWrapped(JSC::VM&, JSC::JSValue);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSWebSocket*>(cell)->JSWebSocket::~JSWebSocket(); }
 
     DECLARE_INFO;
 

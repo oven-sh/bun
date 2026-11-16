@@ -7,8 +7,8 @@ use bun_sema::erasure::{
 };
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{
-    BinOp, ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, find_transpiled_mark,
-    start_of,
+    BinOp, ExprId, ExprKind, FnBody, FnId, PropKind, StmtId, StmtKind, end_of_expr,
+    find_transpiled_mark, start_of,
 };
 use bun_sema::module_format::list_this_of_file;
 use rustc_hash::FxHashMap;
@@ -161,10 +161,30 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             left_out.push((statement.start, statement.loc.end));
             not_evaluated.push((statement.start, statement.loc.end));
+            let in_front = match self.bound.parent_of_stmt(id) {
+                Parent::FnBody(function) => match hir[function].body {
+                    FnBody::Block(statements) => hir
+                        .ids(statements)
+                        .take_while(|&it| it != id)
+                        .filter(|&it| !hir.is_erased_statement(it))
+                        .last(),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let ends_directive = in_front.is_some_and(|it| {
+                let last = (hir[it].loc.end as usize).wrapping_sub(1);
+                matches!(hir[it].kind, StmtKind::Directive { .. })
+                    && hir.text.get(last) != Some(&b';')
+            });
             replaced.push(ReplacedText {
                 start: statement.start,
                 end: statement.loc.end,
-                text: Box::new(*b";"),
+                // The first `;` only ends a directive that has none.
+                text: match ends_directive {
+                    true => Box::new(*b";;"),
+                    false => Box::new(*b";"),
+                },
             });
         }
         let this_of_file: &[u8] = match self.inputs.modules.kind(self.file) {

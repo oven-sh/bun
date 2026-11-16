@@ -117,21 +117,36 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let is_of_file = self.has_context(ctx::TOP_LEVEL);
         let Some(&Stmt {
             kind: StmtKind::Expr(expr),
+            start,
             ..
         }) = self.f.stmts.get(statement.idx())
         else {
-            return is_of_file && !self.f.is_js && self.f.is_erased_statement(statement);
+            return (is_of_file || self.options.compiles)
+                && !self.f.is_js
+                && self.f.is_erased_statement(statement);
         };
         let is_transpiled = self.options.compiles && find_transpiled_mark(self.lx.src).is_none();
-        let raw = match is_of_file && is_transpiled {
-            true => self.f.value_read_as_directive(expr),
-            false => self.text_of_directive(expr),
+        // As the bundler reads it: the string is the first token, and types may follow it.
+        let text = match is_transpiled {
+            true => self.f.skip_type_assertions(expr),
+            false => expr,
         };
-        let Some(raw) = raw else {
+        if self
+            .f
+            .exprs
+            .get(text.idx())
+            .is_none_or(|it| it.pos != start)
+        {
+            return false;
+        }
+        let Some(raw) = self.text_of_directive(text) else {
             return false;
         };
         if let Some(it) = self.f.stmts.get_mut(statement.idx()) {
             it.kind = StmtKind::Directive { expr, raw };
+        }
+        if !is_of_file && self.options.compiles {
+            self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
         }
         if raw == known::use_strict && (is_of_file || self.options.compiles) {
             self.context |= ctx::STRICT;

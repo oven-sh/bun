@@ -41,6 +41,9 @@
 #include <wtf/WeakListHashSet.h>
 #include <wtf/WeakPtr.h>
 
+// `Timeout` in src/jsc/AbortSignal.rs.
+BUN_DECLARE_FFI_DELETER(AbortSignalTimeout, AbortSignal__Timeout__deinit);
+
 namespace WebCore {
 
 class AbortAlgorithm;
@@ -57,8 +60,6 @@ enum class CommonAbortReason : uint8_t {
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
-
-typedef void* AbortSignalTimeout;
 
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
@@ -106,7 +107,7 @@ public:
     // (WebCore__AbortSignal__cancelTimer) when it discards the timer unfired: hasActiveTimeoutTimer()
     // has to turn false then, or JSAbortSignalOwner::isReachableFromOpaqueRoots keeps an observed
     // signal's wrapper alive for a timeout that can no longer fire.
-    void cancelTimer();
+    void cancelTimer() { m_timeout = nullptr; }
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
     bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 
@@ -156,7 +157,7 @@ public:
 
     size_t memoryCost() const;
 
-    AbortSignalTimeout getTimeout() const { return m_timeout; }
+    AbortSignalTimeout* getTimeout() const { return m_timeout.get(); }
 
 private:
     enum class Aborted : bool {
@@ -222,7 +223,7 @@ private:
     // m_abortAlgorithms, dependent signals.
     std::atomic<uint32_t> m_timeoutObserverCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
-    AbortSignalTimeout m_timeout { nullptr };
+    std::unique_ptr<AbortSignalTimeout> m_timeout;
     uint8_t m_flags { 0 };
 };
 

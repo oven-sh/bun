@@ -38,21 +38,22 @@ namespace WebCore {
 
 static constexpr size_t tagSize = 16;
 
+using ScopedAeadCtx = OpenSSLCryptoScoped<EVP_AEAD_CTX, EVP_AEAD_CTX_init, EVP_AEAD_CTX_cleanup>;
+
 static std::optional<Vector<uint8_t>> aeadSeal(const Vector<uint8_t>& key, const Vector<uint8_t>& nonce, const Vector<uint8_t>& plainText, const Vector<uint8_t>& additionalData)
 {
     Vector<uint8_t> cipherText;
     if (!tryAllocateOutputBuffer(cipherText, plainText.size() + tagSize)) [[unlikely]]
         return std::nullopt;
 
-    EVP_AEAD_CTX ctx;
-    if (!EVP_AEAD_CTX_init(&ctx, EVP_aead_chacha20_poly1305(), key.begin(), key.size(), tagSize, nullptr))
+    ScopedAeadCtx ctx(EVP_aead_chacha20_poly1305(), key.begin(), key.size(), tagSize, nullptr);
+    if (!EVP_AEAD_CTX_aead(ctx.get()))
         return std::nullopt;
 
     size_t outLength = 0;
-    bool ok = EVP_AEAD_CTX_seal(&ctx, cipherText.begin(), &outLength, cipherText.size(),
+    bool ok = EVP_AEAD_CTX_seal(ctx.get(), cipherText.begin(), &outLength, cipherText.size(),
         nonce.begin(), nonce.size(), plainText.begin(), plainText.size(),
         additionalData.begin(), additionalData.size());
-    EVP_AEAD_CTX_cleanup(&ctx);
     if (!ok)
         return std::nullopt;
 
@@ -66,15 +67,14 @@ static std::optional<Vector<uint8_t>> aeadOpen(const Vector<uint8_t>& key, const
     if (!tryAllocateOutputBuffer(plainText, cipherText.size())) [[unlikely]]
         return std::nullopt;
 
-    EVP_AEAD_CTX ctx;
-    if (!EVP_AEAD_CTX_init(&ctx, EVP_aead_chacha20_poly1305(), key.begin(), key.size(), tagSize, nullptr))
+    ScopedAeadCtx ctx(EVP_aead_chacha20_poly1305(), key.begin(), key.size(), tagSize, nullptr);
+    if (!EVP_AEAD_CTX_aead(ctx.get()))
         return std::nullopt;
 
     size_t outLength = 0;
-    bool ok = EVP_AEAD_CTX_open(&ctx, plainText.begin(), &outLength, plainText.size(),
+    bool ok = EVP_AEAD_CTX_open(ctx.get(), plainText.begin(), &outLength, plainText.size(),
         nonce.begin(), nonce.size(), cipherText.begin(), cipherText.size(),
         additionalData.begin(), additionalData.size());
-    EVP_AEAD_CTX_cleanup(&ctx);
     if (!ok)
         return std::nullopt;
 

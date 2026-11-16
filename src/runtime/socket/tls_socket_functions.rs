@@ -3,7 +3,6 @@ use core::ffi::{c_char, c_int, c_void};
 use crate::api::bun_secure_context::SecureContext;
 use bun_boringssl_sys as boringssl;
 use bun_core::{EncodedSlice, String as BunString, strings};
-use bun_jsc::JsClass as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -167,7 +166,7 @@ pub(super) mod ffi {
         );
         pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         /// Save/restore the per-loop BIO routing state around in-handshake JS
-        /// callbacks (defined in usockets' openssl.c). The caller's snapshot
+        /// callbacks (defined in usockets' openssl.cpp). The caller's snapshot
         /// array must have exactly `us_internal_ssl_loop_state_slots()`
         /// elements (US_SSL_LOOP_STATE_SLOTS in internal.h).
         pub(crate) safe fn us_internal_ssl_loop_state_slots() -> c_int;
@@ -743,7 +742,7 @@ impl TLSSocket {
         if self.socket.get().is_detached() {
             return Ok(());
         }
-        let Some(sc) = SecureContext::from_js(context.to_js()) else {
+        let Some(sc) = context.as_class_ref::<SecureContext>() else {
             return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
         };
         let Some(ssl_ptr) = self.socket.get().ssl() else {
@@ -751,7 +750,7 @@ impl TLSSocket {
         };
         // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
         unsafe {
-            let ctx = &(*sc).ctx;
+            let ctx = &sc.ctx;
             ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
             // A client keeps no session id context (see `us_internal_ssl_attach`).
             if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {

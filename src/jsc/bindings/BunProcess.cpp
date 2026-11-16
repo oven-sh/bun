@@ -566,7 +566,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path) || Bun::hasCompiledModules()) {
         BunString bunStr = Bun::toString(filename);
-        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
+        auto resolved = Bun::OwnedString::adopt(Bun__resolveEmbeddedNodeFile(&bunStr));
         if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
@@ -1081,10 +1081,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
 static HashMap<int, Vector<String, 2>>* signalNumberToNamesMap = nullptr;
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
+#if OS(WINDOWS)
+extern "C" void Bun__UVSignalHandle__close(uv_signal_t*);
+struct SignalHandleCloser {
+    void operator()(uv_signal_t* handle) const { Bun__UVSignalHandle__close(handle); }
+};
+#endif
 // On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
 struct SignalHandleValue {
 #if OS(WINDOWS)
-    uv_signal_t* handle;
+    std::unique_ptr<uv_signal_t, SignalHandleCloser> handle;
 #endif
 };
 static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
@@ -1349,7 +1355,6 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
 
 #if OS(WINDOWS)
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
-extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
 #endif
 
 #if !OS(WINDOWS)
@@ -1604,9 +1609,9 @@ extern "C" bool Bun__AOT__isRecordingOrder();
 // `bun run --watch` keeps this signal's handler installed for the process
 // lifetime (node's watcher process owns SIGINT the same way), so the
 // listener-removal path below must never restore SIG_DFL for it.
+#if !OS(WINDOWS)
 static int watchModeStickySignal = 0;
 
-#if !OS(WINDOWS)
 __attribute__((noinline)) static void forwardSignal(int signalNumber, siginfo_t* info, void* context)
 {
     Bun::reportOwnCrash(signalNumber, info, context);
@@ -1740,39 +1745,31 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
-                        SignalHandleValue signal_handle = {
-#if OS(WINDOWS)
-                            .handle = nullptr,
-#endif
-                        };
+                        SignalHandleValue signal_handle;
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
                         installForwardSignalHandler(signalNumber);
 #else
-                        signal_handle.handle = Bun__UVSignalHandle__init(
+                        signal_handle.handle.reset(Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
                             signalNumber,
-                            &signalHandler);
+                            &signalHandler));
 
                         if (!signal_handle.handle) [[unlikely]]
                             return;
 #endif
 
-                        signalToContextIdsMap->set(signalNumber, signal_handle);
+                        signalToContextIdsMap->set(signalNumber, WTF::move(signal_handle));
                     }
                 } else {
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && listenerCount == 0) {
                         // The watch-mode sticky signal keeps its OS handler installed; only the
                         // handler teardown is skipped. The map entry is still removed — it is the
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
-                        if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
+                        if (signalNumber != watchModeStickySignal)
                             uninstallForwardSignalHandler(signalNumber);
-#else
-                            SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-                            Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
-                        }
                         signalToContextIdsMap->remove(signalNumber);
                     }
                 }
@@ -1969,7 +1966,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     args.append(this);
     // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
     JSValue redirectPath = jsUndefined();
-    BunString redirect = Bun__Node__getRedirectWarnings();
+    auto redirect = Bun::OwnedString::adopt(Bun__Node__getRedirectWarnings());
     if (!redirect.isDead()) {
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {

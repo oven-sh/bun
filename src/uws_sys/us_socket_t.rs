@@ -23,7 +23,7 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 /// Which of the three codes a close uses decides whether the close callback
 /// has run by the time `close()` returns. Only `failure` guarantees that: for
-/// the other two, `us_internal_ssl_close` (crypto/openssl.c) keeps a TLS
+/// the other two, `us_internal_ssl_close` (crypto/openssl.cpp) keeps a TLS
 /// socket open while it still owns the loop's ciphertext spill, i.e. when the
 /// last batch flush hit a full kernel buffer, and finishes the close from the
 /// next writable event or the peer's FIN, which a peer that stopped reading

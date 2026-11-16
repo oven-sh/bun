@@ -226,8 +226,10 @@ impl MiniEventLoop {
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+        // Read first: the push lets a bundle finish and drop `self`. The main and bundle threads never call `free_thread_loop`.
+        let loop_ = self.loop_;
         self.concurrent_tasks.push(task);
-        self.loop_.wakeup();
+        loop_.wakeup();
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -249,10 +251,7 @@ impl MiniEventLoop {
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
         // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.concurrent_tasks
-            .push(unsafe { NonNull::new_unchecked(task) });
-
-        self.loop_.wakeup();
+        self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
     }
 }
 

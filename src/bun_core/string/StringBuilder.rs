@@ -11,7 +11,7 @@ use crate::string::{StringPointer, ZStr};
 // Note: the `append*` methods return `&[u8]` borrowing `self.ptr` while also
 // taking `&mut self`, so callers cannot hold two returned slices at once.
 // Callers that need to interleave appends
-// use `StringPointer` offsets or the unsafe `append_raw` escape hatch below.
+// use `StringPointer` offsets.
 #[derive(Default)]
 pub struct StringBuilder {
     pub len: usize,
@@ -62,33 +62,6 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap);
 
         &self.allocated_slice()[start..start + slice.len()]
-    }
-
-    /// Copy `slice` into the reserved buffer and return a borrow of the copied
-    /// bytes with an *unbound* lifetime, so callers may interleave appends and
-    /// stash both slices (e.g. `picohttp::Header::clone`).
-    ///
-    /// # Safety
-    /// The returned slice aliases `self.ptr` and is only valid until the
-    /// builder is dropped or `move_to_slice()` is called. Caller must keep the
-    /// builder (or the moved-out buffer) alive while the slice is in use.
-    pub unsafe fn append_raw<'a>(&mut self, slice: &[u8]) -> &'a [u8] {
-        debug_assert!(self.len + slice.len() <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        // Reuse the safe `writable()` accessor for the bounds-checked copy
-        // instead of open-coding `ptr.add(len)` + `copy_nonoverlapping` here.
-        let dst = &mut self.writable()[..slice.len()];
-        dst.copy_from_slice(slice);
-        let base = dst.as_ptr();
-        self.len += slice.len();
-
-        debug_assert!(self.len <= self.cap);
-
-        // SAFETY: `base..base+slice.len()` was just initialized above and lives
-        // for as long as `self.ptr` (heap allocation never moves). The unbound
-        // `'a` lifetime is the documented caller contract of `append_raw`.
-        unsafe { core::slice::from_raw_parts(base, slice.len()) }
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {

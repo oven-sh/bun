@@ -758,7 +758,7 @@ impl ExpectDeferred {
                 continue;
             }
             let is_handled = js::promise_get_cached(deferred)
-                .is_some_and(|promise| ExpectDeferred__isHandled(promise));
+                .is_some_and(ExpectDeferred__isHandled);
             // SAFETY: as above; `deferred` is on the stack.
             crate::dispatch::fold(unsafe { &*this }.abandon(global, deferred, Some(buntest)));
             if is_handled {

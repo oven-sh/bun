@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, expectRssDeltaBelow, gc, isASAN, isCI, isDebug } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -251,6 +251,34 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60000);
 
+test.concurrent("an unread chunked response does not hold memory for its framing", async () => {
+  const code = `
+    const { estimateShallowMemoryUsageOf } = require("bun:jsc");
+    const head = "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n";
+    const reply = head + Buffer.alloc(1024 * 6, "1\\r\\nx\\r\\n") + "0\\r\\n\\r\\n";
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: socket => void socket.write(reply) } });
+    const batch = () => Promise.all(Array.from({ length: 20 }, () => fetch("http://127.0.0.1:" + server.port)));
+
+    for (let i = 0; i < 10; i++) for (const res of await batch()) await res.bytes();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    const held = [];
+    while (held.length < ${isASAN || isDebug ? 1500 : 10_000}) {
+      for (const res of await batch()) {
+        // Only a body that arrived with its head is in the allocation that it was decoded into.
+        if (estimateShallowMemoryUsageOf(res) > 1024) held.push(res);
+        else await res.bytes();
+      }
+    }
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - baseline) / 1024 / 1024 }));
+  `;
+
+  // Without the framing: 21 MiB in release, 4 MiB in debug. With it: 59 MiB and 12 MiB.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 8.5 });
+});
+
 test("fetch() compress option does not leak bodies or compressor state", async () => {
   // Exercises:
   //  - all four encodings
@@ -329,7 +357,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
 // the libdeflate one-shot fast path (InternalState.rs:256) and allocates a
 // boxed streaming Decompressor (zlib/brotli/zstd FFI handle) per request,
 // freed via Drop on InternalState::reset(). Dripping the body over chunked
-// transfer encoding forces handle_response_body_chunked_encoding_from_multiple_packets.
+// transfer encoding forces that path.
 // Paired with compress: on the request side so the same loop covers the
 // multi-write send of a large compressed request body too.
 test("fetch() does not leak streaming decompressor state across fragmented compressed responses", async () => {

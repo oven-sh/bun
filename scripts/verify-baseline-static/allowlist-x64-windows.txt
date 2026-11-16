@@ -779,6 +779,13 @@ bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
+# Bun byte sets (src/jsc/bindings/highway_byte_set.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::LongByteSetPrefixLengthImpl                             [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # BoringSSL AES.
 # (15 symbols)
 # ----------------------------------------------------------------------------

@@ -5,7 +5,7 @@
 //! connection-scoped state — HPACK tables, write/read buffers, server
 //! SETTINGS — and a map of active `Stream`s, each bound to one `HTTPClient`.
 //! Response frames are parsed into per-stream buffers and then handed to the
-//! same `picohttp.Response` / `handleResponseBody` machinery the HTTP/1.1
+//! same `Response` / `handleResponseBody` machinery the HTTP/1.1
 //! path uses, so redirects, decompression and the result callback are shared.
 
 use core::sync::atomic::AtomicI32;
@@ -108,10 +108,6 @@ mod bridge {
             socket: HTTPSocket<true>,
         ) {
             self.do_redirect::<true>(ctx, socket);
-        }
-        #[inline]
-        pub(crate) fn h2_clone_metadata(&mut self, response: &bun_picohttp::Response<'_>) {
-            self.clone_metadata(response);
         }
         #[inline]
         pub(crate) fn h2_handle_response_body(

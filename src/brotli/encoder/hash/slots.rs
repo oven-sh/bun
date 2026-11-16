@@ -96,8 +96,14 @@ pub(in crate::encoder) struct Linked {
 
 impl Linked {
     pub(in crate::encoder) fn new(input_size: usize) -> Result<Self> {
+        /// The size of the output chunks of `node:zlib`. Only the garbage collector frees those, so the allocator has no warm block next to them.
+        const AVOIDED: usize = (16 << 10) / size_of::<u16>();
+        let heads = match (8 * input_size).next_power_of_two() {
+            AVOIDED => AVOIDED / 2,
+            heads => heads,
+        };
         Ok(Self {
-            heads: memory::zeroed((8 * input_size).next_power_of_two())?,
+            heads: memory::zeroed(heads)?,
             links: memory::zeroed(input_size)?,
         })
     }

@@ -13,12 +13,13 @@ use super::command::{
     Command, Commands, DISTANCE_CODE_OFFSET, DistancePrefix, codes_of_short_lengths,
     combine_length_codes, copy_length_code, insert_length_code,
 };
-use super::hash::{BinaryTree, Candidate};
+use super::hash::{BinaryTree, Candidate, Candidates};
 use super::histogram::DISTANCE_SYMBOLS;
 use super::input_block::InputBlock;
 use super::literal_cost;
 use super::log2::{const_log2, fast_log2};
 use super::matching::{bytes_at, match_length};
+use super::prepared_dictionary::PreparedDictionary;
 use super::ring_buffer::Window;
 use super::symbol_set::SymbolSet;
 use super::words::WordMatches;
@@ -551,8 +552,22 @@ impl<'a> Paths<'a> {
         }
     }
 
+    /// Has the last two of `length` bytes.
     #[inline(always)]
-    fn match_at(&self, position: usize, data: &[u8], distance: usize) -> ShortMatch {
+    fn place_for(&self, offset: usize, length: usize) -> BrotliPlace<'a> {
+        let pair = bytes_at(self.padded, offset + length - 2);
+        (self.block.window).place(self.block.position + offset, length - 2, pair)
+    }
+
+    /// `None` if the byte after `tried` ends it.
+    #[inline(always)]
+    fn match_at(
+        &self,
+        position: usize,
+        data: &[u8],
+        distance: usize,
+        tried: usize,
+    ) -> Option<ShortMatch> {
         let block = &self.block;
         let mut max_tried = block.window.before_end(position);
         let source = if distance.wrapping_sub(1) < block.max_backward(position) {
@@ -564,11 +579,11 @@ impl<'a> Paths<'a> {
                 .and_then(|dictionary| dictionary.at_distance(distance, end_distance))
                 .unwrap_or_default()
         };
-        ShortMatch {
+        (source.get(tried)? == data.get(tried)?).then(|| ShortMatch {
             distance,
             length: match_length(source, data),
             max_tried,
-        }
+        })
     }
 
     #[inline(always)]
@@ -666,7 +681,10 @@ impl<'a> Paths<'a> {
             let base = last_distances[usize::from(SHORT_CODE_BASES[code]) % 4];
             let distance = (base + i32::from(SHORT_CODE_DELTAS[code])) as usize;
             if distance != found.distance {
-                found = self.match_at(position, data, distance);
+                let Some(longer) = self.match_at(position, data, distance, tried) else {
+                    continue;
+                };
+                found = longer;
             }
             if found.length <= tried || tried > found.max_tried {
                 continue;
@@ -680,8 +698,23 @@ impl<'a> Paths<'a> {
             let bases = [insert.cost + self.symbols.distances[code], insert.cost];
             self.try_lengths(attempt, tried + 1..=found.length, insert.code, bases, node);
             tried = found.length;
+            let shift = bit / 16 * 16;
+            if (promising >> shift) as u16 != 0 && self.block.dictionary.is_none() {
+                let longer = self.longer_than(rank, attempt.offset, tried);
+                promising &= !(u64::from(!longer) << shift);
+            }
         }
         attempt.last_match = found;
+    }
+
+    /// A bit for each short distance code that may lead to a longer match.
+    #[inline(always)]
+    fn longer_than(&self, rank: usize, offset: usize, length: usize) -> u16 {
+        if offset + length >= self.block.length {
+            return 0;
+        }
+        let last_distances = &self.starts.last_distances[self.starts.get(rank).slot];
+        brotli_short_codes(self.place_for(offset, length + 1), last_distances) as u16
     }
 
     #[inline(always)]
@@ -763,8 +796,7 @@ impl<'a> Paths<'a> {
         let hopeless = best.relative_cost
             + self.symbols.most_saved[insert_length_code(offset - best.offset)]
             + (self.literals[offset] + 256.0) * MARGIN;
-        let pair = bytes_at(self.padded, offset + min_length - 2);
-        let place = (self.block.window).place(self.block.position + offset, min_length - 2, pair);
+        let place = self.place_for(offset, min_length);
         let (first, others) = self.starts.promising(starts, place, hopeless);
         let all = || u128::from(first) | (u128::from(others) << 16);
         let mut attempt = Attempt {
@@ -933,30 +965,31 @@ struct Finder<'a, 'b> {
 }
 
 impl Finder<'_, '_> {
-    const MAX_CANDIDATES: usize = 2 * BinaryTree::MAX_CANDIDATES;
-
-    /// Appends to `found`, which has room. Only the last candidate stays if it is longer than `long`.
+    /// Returns how many it found. Only the last candidate stays if it is longer than `long`.
     #[inline(always)]
-    fn find(&mut self, offset: usize, nearby: usize, long: usize, found: &mut Vec<Candidate>) {
+    fn find(&mut self, offset: usize, nearby: usize, long: usize, found: &mut Candidates) -> usize {
+        const MOST: usize = BinaryTree::MAX_CANDIDATES + PreparedDictionary::MAX_CANDIDATES;
+        const { assert!((MOST + LANES) * size_of::<Candidate>() <= size_of::<Candidates>()) };
         let position = self.block.position + offset;
         let search = self
             .block
             .search_at(position, &self.block.padded()[offset..]);
-        let first = found.len();
-        self.tree.find_all(&search, nearby, &mut self.words, found);
+        let mut count = self.tree.find_all(&search, nearby, &mut self.words, found);
         if let Some(dictionary) = self.block.dictionary {
             self.in_window.clear();
-            self.in_window.extend(found.drain(first..));
+            self.in_window.extend_from_slice(&found[..count]);
             self.in_dictionary.clear();
             dictionary.find_all(&self.block.query_at(position), &mut self.in_dictionary);
-            merge(&self.in_dictionary, &self.in_window, found);
+            count += self.in_dictionary.len();
+            merge(&self.in_dictionary, &self.in_window, &mut found[..count]);
         }
-        if let Some(&last) = found[first..].last()
+        if let Some(&last) = found[..count].last()
             && last.length() > long
         {
-            found.truncate(first);
-            found.push(last);
+            found[0] = last;
+            return 1;
         }
+        count
     }
 
     fn store_between(&mut self, offset: usize, next: usize) {
@@ -967,18 +1000,16 @@ impl Finder<'_, '_> {
     }
 }
 
-fn merge(mut a: &[Candidate], mut b: &[Candidate], merged: &mut Vec<Candidate>) {
-    while let ([first_a, rest_a @ ..], [first_b, rest_b @ ..]) = (a, b) {
-        if (first_a.length(), first_a.distance()) < (first_b.length(), first_b.distance()) {
-            merged.push(*first_a);
-            a = rest_a;
-        } else {
-            merged.push(*first_b);
-            b = rest_b;
-        }
+fn merge<'a>(mut a: &'a [Candidate], mut b: &'a [Candidate], merged: &mut [Candidate]) {
+    let order = |first: &Candidate| (first.length(), first.distance());
+    for slot in merged {
+        let from = match (a.first(), b.first()) {
+            (Some(first_a), Some(first_b)) if order(first_a) >= order(first_b) => &mut b,
+            (None, _) => &mut b,
+            _ => &mut a,
+        };
+        *slot = from.split_off_first().copied().unwrap_or_default();
     }
-    merged.extend_from_slice(a);
-    merged.extend_from_slice(b);
 }
 
 #[inline(never)]
@@ -987,27 +1018,25 @@ pub(super) fn add_commands(
     block: &InputBlock<'_>,
     commands: &mut Commands,
 ) -> Result<()> {
-    let scratch = block.dictionary.map_or(0, |_| BinaryTree::MAX_CANDIDATES);
+    let scratch = |size| memory::empty(block.dictionary.map_or(0, |_| size));
     let mut finder = Finder {
         tree,
         block: *block,
         words: WordMatches::new(),
-        in_window: memory::empty(scratch)?,
-        in_dictionary: memory::empty(scratch)?,
+        in_window: scratch(BinaryTree::MAX_CANDIDATES)?,
+        in_dictionary: scratch(PreparedDictionary::MAX_CANDIDATES)?,
     };
     let mut refined;
     let mut paths = Paths::new(block, commands.last_distances)?;
     let long = paths.max_varied_length;
     let searched = searched_length(block);
+    let blank: Candidates = [Candidate::default(); _];
 
     if block.params.quality == 10 {
-        let mut found = memory::empty(Finder::MAX_CANDIDATES + LANES)?;
+        let mut found = blank;
         let mut offset = 0;
         while offset < searched {
-            found.clear();
-            finder.find(offset, 16, long, &mut found);
-            let count = found.len();
-            found.extend([Candidate::default(); LANES]);
+            let count = finder.find(offset, 16, long, &mut found);
             let next = paths.step(1, offset, &found, count);
             if next > offset + 1 {
                 finder.store_between(offset, next);
@@ -1017,15 +1046,19 @@ pub(super) fn add_commands(
         return paths.add_cheapest_to(commands);
     }
 
-    let mut found = memory::empty(4 * block.length)?;
+    let mut found = memory::empty(4 * block.length + 2 * blank.len())?;
     let mut counts = memory::zeroed::<u8>(block.length)?;
-    let mut offset = 0;
+    let (mut offset, mut total) = (0, 0);
     while offset < searched {
-        memory::try_reserve(&mut found, Finder::MAX_CANDIDATES)?;
-        let first = found.len();
-        finder.find(offset, 64, long, &mut found);
-        counts[offset] = (found.len() - first) as u8;
-        offset = match found[first..] {
+        let Some(room) = found[total..].first_chunk_mut() else {
+            memory::try_reserve(&mut found, blank.len())?;
+            found.extend_from_slice(&blank);
+            continue;
+        };
+        let count = finder.find(offset, 64, long, room);
+        counts[offset] = count as u8;
+        total += count;
+        offset = match room[..count] {
             [only] if only.length() > long => {
                 finder.store_between(offset, offset + only.length());
                 offset + only.length()
@@ -1033,9 +1066,6 @@ pub(super) fn add_commands(
             _ => offset + 1,
         };
     }
-
-    memory::try_reserve(&mut found, LANES)?;
-    found.extend([Candidate::default(); LANES]);
 
     let (first, literal_count) = (commands.list.len(), commands.literal_count);
     let pending_literals = commands.pending_literals;

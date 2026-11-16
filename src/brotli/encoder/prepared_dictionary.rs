@@ -60,6 +60,9 @@ fn hash(eight_bytes: u64, bucket_bits: u32) -> usize {
 }
 
 impl PreparedDictionary {
+    /// The most that [`find_all`](Self::find_all) adds.
+    pub(super) const MAX_CANDIDATES: usize = BUCKET_LIMIT as usize;
+
     pub(super) fn new(bytes: &[u8]) -> Result<Self> {
         let mut padded = memory::empty(bytes.len() + SLACK)?;
         padded.extend_from_slice(bytes);

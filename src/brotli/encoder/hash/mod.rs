@@ -8,7 +8,7 @@ mod rolling;
 mod slots;
 mod small;
 
-pub(super) use binary_tree::{BinaryTree, Candidate};
+pub(super) use binary_tree::{BinaryTree, Candidate, Candidates};
 pub(super) use buckets::{Buckets, TaggedBuckets};
 pub(super) use chains::{Chains, ForgetfulChains};
 pub(super) use quick::Quick;
@@ -97,6 +97,12 @@ pub(super) struct Search<'a> {
     pub(super) to_beat: usize,
 }
 
+/// Whether the distance is in `1..=max_backward`.
+#[inline(always)]
+fn is_within(max_backward: usize, position: usize, earlier: usize) -> bool {
+    max_backward.wrapping_sub(position).wrapping_add(earlier) < max_backward
+}
+
 impl<'a> Search<'a> {
     #[inline(always)]
     fn data(&self) -> &'a [u8] {
@@ -116,8 +122,7 @@ impl<'a> Search<'a> {
     /// [`Self::reaches`] for a position, in fewer steps for each of many.
     #[inline(always)]
     fn reaches_back_to(&self, earlier: usize) -> bool {
-        let offset = self.max_backward.wrapping_sub(self.position);
-        offset.wrapping_add(earlier) < self.max_backward
+        is_within(self.max_backward, self.position, earlier)
     }
 
     #[inline(always)]

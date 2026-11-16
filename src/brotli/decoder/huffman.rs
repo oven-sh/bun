@@ -106,8 +106,9 @@ impl Root {
 
 const NARROW_SIZE: usize = 1 << Root::Narrow.bits();
 
-/// Only a table with codes of several lengths has more entries than codes, and no two have the same size.
-const MAX_EXCESS: usize = 256;
+/// A table for codes with `a` to `b` more bits has `2^b` entries for `2^a + b - a` codes or more, and the next one has `b` bits or more.
+const MAX_EXCESS: usize = (1 << MAX_MORE_BITS) - (1 << 1) - (MAX_MORE_BITS - 1);
+const MAX_MORE_BITS: usize = MAX_CODE_LENGTH - Root::Narrow.bits() as usize;
 
 /// The trees of a meta-block.
 #[derive(Default)]
@@ -115,7 +116,7 @@ pub(super) struct Forest<E> {
     /// Keeps its length from one meta-block to the next, so that it is not zeroed again.
     entries: Vec<E>,
     used: usize,
-    /// What the trees that there is room for come to at most. Growing goes straight there, so that they only move once.
+    /// Growing goes straight there, so that the trees only move once.
     max_len: usize,
     starts: Vec<u32>,
 }

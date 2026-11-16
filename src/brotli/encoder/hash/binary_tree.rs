@@ -2,11 +2,11 @@ use core::hint::{Locality, prefetch_read, select_unpredictable};
 
 use bun_highway::{BROTLI_LENGTH_SHIFT, brotli_pairs_before};
 
-use super::Search;
 use super::slots::{Linked, Slots};
+use super::{Search, is_within};
 use crate::dictionary::MIN_WORD_LENGTH;
 use crate::encoder::input_block::InputBlock;
-use crate::encoder::matching::{hash_of_four, load32, load64};
+use crate::encoder::matching::{hash_of_four, load32, load64, match_length};
 use crate::encoder::ring_buffer::{SLACK, Window};
 use crate::encoder::words::{MAX_MATCH_LENGTH, WordMatches};
 use crate::format::WINDOW_GAP;
@@ -47,6 +47,9 @@ impl Candidate {
         Some((without_length >> 32) as usize).filter(|&length| length != 0)
     }
 }
+
+/// For those at one position.
+pub(in crate::encoder) type Candidates = [Candidate; 128];
 
 #[inline(always)]
 fn key(data: &[u8], at: usize) -> usize {
@@ -94,8 +97,8 @@ pub(in crate::encoder) struct BinaryTree {
 impl BinaryTree {
     /// How many bytes decide the order.
     pub(in crate::encoder) const LOOKAHEAD: usize = 128;
-    /// The most that [`find_all`](Self::find_all) adds.
-    pub(in crate::encoder) const MAX_CANDIDATES: usize = 128;
+    /// The most that [`find_all`](Self::find_all) finds. Two are from nearby, and there are only words after short matches.
+    pub(in crate::encoder) const MAX_CANDIDATES: usize = 2 + MAX_DEPTH;
 
     pub(in crate::encoder) fn new(window_bits: u32, small_size: Option<usize>) -> Result<Self> {
         Ok(Self {
@@ -150,7 +153,7 @@ impl BinaryTree {
         self.walk::<true>(window, position, padded, max_backward, None);
     }
 
-    /// Reports the matches on the way down. With `STORE`, makes `position` the root.
+    /// Reports the matches on the way down. `STORE`, for [`LOOKAHEAD`](Self::LOOKAHEAD) bytes or more, makes `position` the root.
     #[inline(always)]
     fn walk<const STORE: bool>(
         &mut self,
@@ -160,57 +163,74 @@ impl BinaryTree {
         max_backward: usize,
         mut longer: Option<&mut Longer<'_>>,
     ) {
-        let mut earlier = self.roots.find(key(padded, 0), STORE.then_some(position));
-        let max_length = padded.len() - SLACK;
-        let compared = max_length.min(Self::LOOKAHEAD);
-        let left_of = |position: usize| 2 * (position & self.window_mask);
-        let children = &mut *self.children;
-        let (mut left, mut right) = (left_of(position), left_of(position) + 1);
-        let (mut left_length, mut right_length) = (0, 0);
-        for _ in 0..MAX_DEPTH {
-            let distance = position.wrapping_sub(earlier);
-            if distance.wrapping_sub(1) >= max_backward {
-                break;
+        const PER_CHILD: usize = BinaryTree::LOOKAHEAD;
+        let compared = if STORE {
+            PER_CHILD
+        } else {
+            padded.len() - SLACK
+        };
+        debug_assert!(STORE || compared < PER_CHILD);
+        let data = &padded[..compared + SLACK];
+        let mut earlier = self.roots.find(key(data, 0), STORE.then_some(position));
+        let (children, window_mask) = (&mut *self.children, self.window_mask);
+        // Where in `children` the next smaller and larger positions go, and below that the length of the match with the previous ones.
+        let mut left = 2 * PER_CHILD * (position & window_mask);
+        let mut right = left + PER_CHILD;
+        let (mut known, mut depth) = (0, 0);
+        let same = 'walk: loop {
+            if !is_within(max_backward, position, earlier) || depth == MAX_DEPTH {
+                break None;
             }
-            let node = left_of(earlier);
-            let below = &children[node..node + 2];
-            let (left_child, right_child) = (below[0], below[1]);
-
-            let other = window.from(earlier);
-            let mut length = left_length.min(right_length);
-            let (ours, theirs) = loop {
-                let (ours, theirs) = (load64(padded, length), load64(other, length));
-                if ours != theirs || length + 8 >= max_length {
-                    break (ours, theirs);
+            let node = earlier & window_mask;
+            let below: [u32; 2] = children.as_chunks().0[node];
+            let at = window.index(earlier);
+            let other = &window.bytes[at..at + data.len()];
+            let (mut ours, mut theirs) = (load64(data, known), load64(other, known));
+            if ours == theirs {
+                loop {
+                    known += 8;
+                    if known >= compared {
+                        break 'walk Some(below);
+                    }
+                    (ours, theirs) = (load64(data, known), load64(other, known));
+                    if ours != theirs {
+                        break;
+                    }
                 }
-                length += 8;
-            };
-            length += ((ours ^ theirs).trailing_zeros() / 8) as usize;
-            length = length.min(max_length);
-            if let Some(longer) = &mut longer {
-                longer.add(distance, length);
             }
+            let length = known + ((ours ^ theirs).trailing_zeros() / 8) as usize;
             if length >= compared {
-                if STORE {
-                    children[left] = left_child;
-                    children[right] = right_child;
-                }
-                return;
+                break Some(below);
+            }
+            depth += 1;
+            if let Some(longer) = &mut longer {
+                longer.add(position - earlier, length);
             }
 
+            let here = 2 * PER_CHILD * node + length;
             let go_right = ours.swap_bytes() > theirs.swap_bytes();
+            let filled = select_unpredictable(go_right, left, right);
+            let open = select_unpredictable(go_right, right, left);
+            let next = select_unpredictable(go_right, below[1], below[0]);
+            left = select_unpredictable(go_right, here + PER_CHILD, left);
+            right = select_unpredictable(go_right, right, here);
+            known = length.min(open % PER_CHILD);
             if STORE {
-                children[select_unpredictable(go_right, left, right)] = earlier as u32;
+                children[filled / PER_CHILD] = earlier as u32;
             }
-            (left, left_length) =
-                select_unpredictable(go_right, (node + 1, length), (left, left_length));
-            (right, right_length) =
-                select_unpredictable(go_right, (right, right_length), (node, length));
-            earlier = select_unpredictable(go_right, right_child, left_child) as usize;
-        }
+            earlier = next as usize;
+        };
         if STORE {
-            children[left] = NONE;
-            children[right] = NONE;
+            let [left_child, right_child] = same.unwrap_or([NONE; 2]);
+            children[left / PER_CHILD] = left_child;
+            children[right / PER_CHILD] = right_child;
+        }
+        if let Some(longer) = longer
+            && same.is_some()
+        {
+            let rest = &padded[compared..padded.len() - SLACK];
+            let more = match_length(&window.from(earlier)[compared..], rest);
+            longer.add(position - earlier, compared + more);
         }
     }
 
@@ -228,15 +248,15 @@ impl BinaryTree {
         }
     }
 
-    /// Appends matches of increasing length to `found`, which has room for them, and stores the position.
+    /// Returns how many matches of increasing length `found` begins with now, and stores the position.
     #[inline(always)]
     pub(in crate::encoder) fn find_all(
         &mut self,
         search: &Search<'_>,
         short_match_range: usize,
         words: &mut WordMatches,
-        found: &mut Vec<Candidate>,
-    ) {
+        found: &mut Candidates,
+    ) -> usize {
         let &Search {
             window,
             position,
@@ -245,7 +265,11 @@ impl BinaryTree {
             ..
         } = search;
         self.prefetch(window, padded);
-        let mut longer = Longer { than: 1, found };
+        let mut longer = Longer {
+            than: 1,
+            count: 0,
+            found,
+        };
         find_nearby(search, short_match_range, &mut longer);
         let data = search.data();
         if data.len() >= Self::LOOKAHEAD.max(longer.than + 1) {
@@ -255,31 +279,34 @@ impl BinaryTree {
         }
 
         let min_length = (longer.than + 1).max(MIN_WORD_LENGTH);
+        let mut count = longer.count;
         if min_length > MAX_MATCH_LENGTH.min(data.len()) {
-            return;
+            return count;
         }
         words.find(padded, min_length);
         for (address, length, word_length) in words.from_length(min_length) {
             let distance = search.block.max_copy_distance(position) + 1 + address;
             if distance <= search.block.params.distance.max_distance {
-                found.push(Candidate::word(distance, length, word_length));
+                found[count] = Candidate::word(distance, length, word_length);
+                count += 1;
             }
         }
+        count
     }
 }
 
 struct Longer<'a> {
     than: usize,
-    found: &'a mut Vec<Candidate>,
+    count: usize,
+    found: &'a mut Candidates,
 }
 
 impl Longer<'_> {
     #[inline(always)]
     fn add(&mut self, distance: usize, length: usize) {
-        let kept = self.found.len() + usize::from(length > self.than);
+        self.found[self.count % self.found.len()] = Candidate::new(distance, length);
+        self.count += usize::from(length > self.than);
         self.than = self.than.max(length);
-        self.found.push(Candidate::new(distance, length));
-        self.found.truncate(kept);
     }
 }
 

@@ -249,3 +249,30 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+it("console.dir quotes primitive strings", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        console.dir("hello");
+        console.dir("it's");
+        console.dir("x", { depth: 0 });
+        console.dir(new String("x"));
+        console.dir(42);
+        console.dir({ a: "b" });
+        console.dir(["c"]);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.replaceAll("\r\n", "\n")).toBe(
+    [`"hello"`, `"it's"`, `"x"`, `[String: "x"]`, "42", `{\n  a: "b",\n}`, `[ "c" ]`, ""].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});

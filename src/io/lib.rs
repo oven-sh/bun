@@ -339,7 +339,7 @@ pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
-pub mod pipe_writer;
+mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
 pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
@@ -359,7 +359,8 @@ pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};
 
 pub use pipe_writer::{
-    BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult, WriteStatus,
+    BufferedWriteHandler, BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult,
+    WriteStatus,
 };
 #[cfg(windows)]
 pub use source::Source;

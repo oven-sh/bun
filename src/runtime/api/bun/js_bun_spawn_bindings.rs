@@ -1203,8 +1203,8 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
-    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
+    let subprocess = unsafe { &*subprocess_ptr };
     #[cfg(windows)]
     SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
@@ -1241,13 +1241,16 @@ fn spawn_maybe_sync(
         _ => None,
     };
 
-    match Writable::init(
-        stdin,
-        event_loop,
-        subprocess,
-        spawned_stdin,
-        &mut promise_for_stream,
-    ) {
+    // SAFETY: the `Ok` arm stores it in `subprocess.stdin`.
+    match unsafe {
+        Writable::init(
+            stdin,
+            event_loop,
+            &subprocess_ref,
+            spawned_stdin,
+            &mut promise_for_stream,
+        )
+    } {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
             // stdout/stderr are still `.ignore` — close the raw
@@ -1494,15 +1497,15 @@ fn spawn_maybe_sync(
 
     let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => {
-            let start_ref = buffer.clone();
-            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+            let started = buffer.start(loop_handle);
+            started.map(|state| subprocess.on_stdin_state(state)).err()
         }
         _ => None,
     };
     #[cfg(unix)] // Windows adopts the pipe at create and start() cannot fail there.
     if setup_err.is_some() {
-        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
-        subprocess.on_close_stdin();
+        // A Buffer left here pins the wrapper.
+        subprocess.close_stdin_buffer();
     } else {
         setup_err = posix_ipc_err;
     }
@@ -1539,9 +1542,6 @@ fn spawn_maybe_sync(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // An already-aborted signal runs the abort callback before this
-        // returns, which re-enters via `subprocess_ptr`: hold no
-        // `&mut Subprocess` across the call.
         // SAFETY: `subprocess_ptr` is live and heap-pinned.
         unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }
@@ -1659,7 +1659,7 @@ fn spawn_maybe_sync(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-                Writable::buffer_writer_mut(buffer).watch();
+                subprocess.on_stdin_state(buffer.watch());
             }
 
             pipes.iter().rev().flatten().for_each(PipeReader::watch);

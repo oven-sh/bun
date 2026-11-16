@@ -3086,7 +3086,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
     pub(crate) fn write_chunk(
         &self,
-        stream: &WebCore::streams::Result,
+        stream: &WebCore::streams::Result<'_>,
     ) -> WebCore::streams::Writable {
         let this = self;
         if this.is_aborted_or_ended() {
@@ -3815,9 +3815,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
             let _exit = vm.enter_event_loop_scope();
 
-            // `RawSlice` is non-owning; ownership of `chunk` stays with the
-            // caller for the duration of the synchronous `on_data` call.
-            let borrowed = bun_ptr::RawSlice::new(chunk);
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
@@ -3826,7 +3823,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
-                bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+                bytes.on_data(WebCore::streams::Result::Temporary(chunk));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffered_len();
@@ -3857,7 +3854,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 );
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
-                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
+                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(chunk));
             }
 
             return;

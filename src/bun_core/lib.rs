@@ -132,10 +132,6 @@ impl<T> RawSlice<T> {
         RawSlice(core::ptr::from_ref(s))
     }
     #[inline]
-    pub const fn as_ptr(self) -> *const [T] {
-        self.0
-    }
-    #[inline]
     pub const fn len(self) -> usize {
         self.0.len()
     }

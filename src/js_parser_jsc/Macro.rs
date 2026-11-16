@@ -186,11 +186,6 @@ fn call_macro(
 
 // `bun_js_parser` cannot name `Transpiler` or JSC types, so it calls these, which are resolved at link time.
 
-#[unsafe(no_mangle)]
-fn __bun_macro_drop_source_code_printer() {
-    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
-}
-
 /// Exposed for `bun_bundler::ThreadPool::Worker::drop` (which has no
 /// `bun_jsc` dependency) to sweep the per-worker macro VM. See [`collect_macro_vm_garbage`].
 ///
@@ -283,12 +278,7 @@ fn load_macro(
     specifier: &[u8],
     hash: i32,
 ) -> crate::Result<()> {
-    // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
-    // (which runs the macro module's top-level JS via `wait_for_promise`) so
-    // a top-level `Bun.Transpiler#transformSync` doesn't see
-    // `macro_guard_depth == 0` and free the printer mid-load. Drops on every
-    // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
-    // own `MacroModeGuard` re-enables for the actual macro call.
+    // Covers `configure_defines` and the macro module's top-level code.
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
     if is_new_vm {

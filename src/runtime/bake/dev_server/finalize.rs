@@ -269,7 +269,7 @@ fn finalize_bundle_inner(
     {
         scb_bitset.set(*source_index as usize);
         scb_bitset.set(*ref_index as usize);
-        if (*ssr_index as usize) < scb_bitset.capacity() {
+        if (*ssr_index as usize) < scb_bitset.bit_length() {
             scb_bitset.set(*ssr_index as usize);
         }
     }

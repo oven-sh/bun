@@ -661,52 +661,10 @@ pub(crate) fn upload_stream(
             )
             .to_js());
         }
-        // The File/Bytes payload types
-        // differ (`*FileReader` vs `*ByteStream`), so the arms are
-        // unrolled here.
         ReadableStreamPtr::Bytes(_) => {
-            // BACKREF: see `Source::bytes()` — payload live while the
-            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
             let stream = readable_stream.ptr.bytes().expect("matched Bytes");
-            if matches!(
-                stream.pending.get().result,
-                crate::webcore::streams::StreamResult::Err(_)
-            ) {
+            if let Some(err) = stream.take_pending_error() {
                 // we got an error, fail early
-                let err = match stream.pending.with_mut(|p| {
-                    core::mem::replace(&mut p.result, crate::webcore::streams::StreamResult::Done)
-                }) {
-                    crate::webcore::streams::StreamResult::Err(err) => err,
-                    _ => unreachable!(),
-                };
-                stream.pending.set(crate::webcore::streams::Pending {
-                    result: crate::webcore::streams::StreamResult::Done,
-                    ..Default::default()
-                });
-                let js_err = err.to_js(cx.global());
-                js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
-            }
-        }
-        ReadableStreamPtr::File(_) => {
-            // BACKREF: see `Source::file()` — payload live while the
-            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
-            let stream = readable_stream.ptr.file().expect("matched File");
-            if matches!(
-                stream.pending.get().result,
-                crate::webcore::streams::StreamResult::Err(_)
-            ) {
-                // we got an error, fail early
-                let err = match stream.pending.with_mut(|p| {
-                    core::mem::replace(&mut p.result, crate::webcore::streams::StreamResult::Done)
-                }) {
-                    crate::webcore::streams::StreamResult::Err(err) => err,
-                    _ => unreachable!(),
-                };
-                stream.pending.set(crate::webcore::streams::Pending {
-                    result: crate::webcore::streams::StreamResult::Done,
-                    ..Default::default()
-                });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
                 return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
@@ -1079,8 +1037,7 @@ impl S3DownloadStreamWrapper {
                 return;
             };
             bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                // chunk.list is borrowed for the duration of on_data.
-                bun_ptr::RawSlice::new(chunk.list.as_slice()),
+                chunk.list.as_slice(),
             ));
             // `on_data` can cancel us, which releases the hold.
             if self.stream.is_held() {
@@ -1092,8 +1049,7 @@ impl S3DownloadStreamWrapper {
             return;
         };
         bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-            // chunk.list is borrowed for the duration of on_data.
-            bun_ptr::RawSlice::new(chunk.list.as_slice()),
+            chunk.list.as_slice(),
         ));
     }
 

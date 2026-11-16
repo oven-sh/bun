@@ -139,7 +139,7 @@ test.concurrent.skipIf(!slow)(
       expect(summary.attempts).toBeGreaterThan(100);
       // The deadlines did land inside both calls (about 45% of them do here),
       // and on the end() path some were taken right after the native writeHead
-      // had put the head out (15 to 30% of that path's attempts here).
+      // had put the head out. The fixture goes on until it has seen each.
       const [end, flushHeaders] = summary.paths;
       expect({
         end: end.inCall > 0,

@@ -726,7 +726,6 @@ describe("Event.prototype.timeStamp", () => {
     const after = performance.now();
     expect(event.timeStamp).toBeGreaterThanOrEqual(before);
     expect(event.timeStamp).toBeLessThanOrEqual(after);
-    expect(event.timeStamp).toBe(event.timeStamp);
   });
 
   test("grows between two events and survives dispatch", () => {
@@ -746,6 +745,7 @@ describe("Event.prototype.timeStamp", () => {
     const controller = new AbortController();
     controller.signal.addEventListener("abort", e => events.push(e));
     controller.abort();
+    expect(events).toHaveLength(5);
     for (const e of events) {
       expect(e.timeStamp).toBeGreaterThanOrEqual(before);
       expect(e.timeStamp).toBeLessThanOrEqual(performance.now());

@@ -81,7 +81,7 @@ public:
     bool cancelable() const { return m_cancelable; }
     bool composed() const { return m_composed; }
 
-    DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
+    DOMHighResTimeStamp timeStamp() const { return static_cast<double>(m_createTimeNs) / 1000000.0; }
 
     void setEventPath(const EventPath&);
     Vector<Ref<EventTarget>> composedPath() const;

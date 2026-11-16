@@ -51,7 +51,7 @@ typedef double DOMHighResTimeStamp;
     readonly attribute boolean composed;
 
     [LegacyUnforgeable] readonly attribute boolean isTrusted;
-    [CallWith=RelevantScriptExecutionContext, ImplementedAs=timeStampForBindings] readonly attribute DOMHighResTimeStamp timeStamp;
+    readonly attribute DOMHighResTimeStamp timeStamp;
 
     undefined initEvent(DOMString type, optional boolean bubbles = false, optional boolean cancelable = false); // Historical.
 

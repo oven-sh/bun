@@ -139,11 +139,6 @@ Vector<Ref<EventTarget>> Event::composedPath() const
     return m_eventPath->computePathUnclosedToTarget(*m_currentTarget);
 }
 
-DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext&) const
-{
-    return static_cast<double>(m_createTimeNs) / 1000000.0;
-}
-
 void Event::resetAfterDispatch()
 {
     m_eventPath = nullptr;
